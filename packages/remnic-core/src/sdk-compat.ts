@@ -13,6 +13,8 @@ export interface SdkCapabilities {
   hasBeforePromptBuild: boolean;
   /** api.registerMemoryPromptSection() exists */
   hasRegisterMemoryPromptSection: boolean;
+  /** api.registerMemoryCapability() exists (new SDK >=2026.4.5) */
+  hasRegisterMemoryCapability: boolean;
   /** definePluginEntry from openclaw/plugin-sdk/plugin-entry is importable */
   hasDefinePluginEntry: boolean;
   /** api.runtime.* namespace exists */
@@ -30,6 +32,8 @@ export interface SdkCapabilities {
 export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabilities {
   const hasRegisterMemoryPromptSection =
     typeof (api as any).registerMemoryPromptSection === "function";
+  const hasRegisterMemoryCapability =
+    typeof (api as any).registerMemoryCapability === "function";
   const hasRuntimeNamespace =
     typeof (api as any).runtime === "object" && (api as any).runtime !== null;
   const hasRegistrationMode = typeof (api as any).registrationMode === "string";
@@ -43,7 +47,7 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
 
   // New SDK is indicated by any of the new API surfaces being present.
   const isNewSdk =
-    hasRegisterMemoryPromptSection || hasRuntimeNamespace || hasRegistrationMode;
+    hasRegisterMemoryPromptSection || hasRegisterMemoryCapability || hasRuntimeNamespace || hasRegistrationMode;
 
   // New hook system requires registerMemoryPromptSection or registrationMode.
   // Just having runtime.version is NOT sufficient — some legacy builds expose it.
@@ -52,6 +56,7 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
   return {
     hasBeforePromptBuild: hasNewHookSystem,
     hasRegisterMemoryPromptSection,
+    hasRegisterMemoryCapability,
     hasDefinePluginEntry: isNewSdk, // entry point is less risky, keep broad detection
     hasRuntimeNamespace,
     hasRegistrationMode,

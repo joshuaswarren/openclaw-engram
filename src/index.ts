@@ -35,6 +35,7 @@ import { createOpikExporter } from "./opik-exporter.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import { migrateFromEngram } from "./migrate/from-engram.js";
 import { cleanUserMessage } from "./user-message-cleaning.js";
+import { listRemnicPublicArtifacts } from "../packages/plugin-openclaw/src/public-artifacts.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -512,6 +513,41 @@ const pluginDefinition = {
       (memoryBuildFn as any).id = "engram-memory";
       (memoryBuildFn as any).label = "Engram Memory Context";
       api.registerMemoryPromptSection(memoryBuildFn as any);
+    }
+
+    // ========================================================================
+    // registerMemoryCapability — unified memory plugin registration (new SDK)
+    // ========================================================================
+    // When registerMemoryCapability is available (>=2026.4.5), register the
+    // full capability object including publicArtifacts so memory-wiki bridge
+    // mode can discover and ingest Remnic artifacts.
+    //
+    // This does NOT replace the existing registerMemoryPromptSection / hook
+    // paths above — those handle recall injection. registerMemoryCapability
+    // adds the publicArtifacts provider and establishes Remnic as the active
+    // memory plugin for the gateway.
+    if (
+      sdkCaps.hasRegisterMemoryCapability &&
+      typeof (api as any).registerMemoryCapability === "function"
+    ) {
+      const memoryCapability: import("openclaw/plugin-sdk").MemoryPluginCapability = {
+        publicArtifacts: {
+          listArtifacts: async (_params: { cfg: unknown }) => {
+            try {
+              return await listRemnicPublicArtifacts({
+                memoryDir: orchestrator.config.memoryDir,
+                workspaceDir: orchestrator.config.workspaceDir || defaultWorkspaceDir(),
+                agentIds: ["generalist"],
+              });
+            } catch (err) {
+              log.error("publicArtifacts.listArtifacts failed", err);
+              return [];
+            }
+          },
+        },
+      };
+      (api as any).registerMemoryCapability(memoryCapability);
+      log.info("registered memory capability with publicArtifacts provider");
     }
 
     // ========================================================================

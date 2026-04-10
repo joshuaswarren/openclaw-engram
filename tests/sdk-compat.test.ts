@@ -14,6 +14,7 @@ test("legacy api (no new fields) → all capabilities false, sdkVersion 'legacy'
 
   assert.equal(caps.hasBeforePromptBuild, false);
   assert.equal(caps.hasRegisterMemoryPromptSection, false);
+  assert.equal(caps.hasRegisterMemoryCapability, false);
   assert.equal(caps.hasDefinePluginEntry, false);
   assert.equal(caps.hasRuntimeNamespace, false);
   assert.equal(caps.hasRegistrationMode, false);
@@ -160,4 +161,43 @@ test("registrationMode 'setup-runtime' is passed through correctly", () => {
 
   assert.equal(caps.registrationMode, "setup-runtime");
   assert.equal(caps.hasRegistrationMode, true);
+});
+
+test("registerMemoryCapability detection when present", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryCapability: () => {},
+    runtime: { version: "2026.4.9" },
+    registrationMode: "full",
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRegisterMemoryCapability, true);
+  assert.equal(caps.hasDefinePluginEntry, true);
+});
+
+test("registerMemoryCapability absent on legacy SDK", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryPromptSection: () => {},
+    runtime: { version: "2026.3.22" },
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRegisterMemoryCapability, false);
+  assert.equal(caps.hasRegisterMemoryPromptSection, true);
+});
+
+test("registerMemoryCapability alone implies isNewSdk", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryCapability: () => {},
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRegisterMemoryCapability, true);
+  assert.equal(caps.hasDefinePluginEntry, true, "registerMemoryCapability should imply isNewSdk");
 });
