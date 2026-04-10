@@ -1,6 +1,6 @@
 {
   "name": "@joshuaswarren/openclaw-engram",
-  "version": "9.3.0",
+  "version": "9.3.1",
   "description": "Deprecated compatibility shim for Engram installs. Re-exports @remnic/plugin-openclaw and forwards engram-access to @remnic/core.",
   "type": "module",
   "main": "dist/index.js",
@@ -38,8 +38,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@remnic/core": "workspace:*",
-    "@remnic/plugin-openclaw": "workspace:*"
+    "@remnic/core": "^1.0.0",
+    "@remnic/plugin-openclaw": "^1.0.1"
   },
   "peerDependencies": {
     "openclaw": "*"

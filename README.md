@@ -95,7 +95,12 @@ cd remnic
 pnpm install && pnpm run build
 cd packages/remnic-cli && pnpm link --global  # Makes `remnic` and `engram` available on PATH
 cd ../..
-remnic init
+remnic init                     # Create remnic.config.json
+export OPENAI_API_KEY=sk-...
+export REMNIC_AUTH_TOKEN=$(openssl rand -hex 32)
+remnic daemon start             # Start background server
+remnic status                   # Verify it's running
+remnic query "hello" --explain  # Test query with tier breakdown
 ```
 
 > **Note:** `remnic` is the canonical CLI. The legacy `engram` binary is a compatibility forwarder to the same implementation. Running `pnpm link --global` from `packages/remnic-cli/` (not the repo root) makes both names available on PATH. Alternatively, invoke directly: `npx tsx packages/remnic-cli/src/index.ts <command>`.
@@ -325,7 +330,7 @@ Engram is organized as a monorepo with a core engine, standalone server/CLI, and
 | `@remnic/bench` | (private) | Latency ladder benchmarks with CI regression gates |
 | `@remnic/plugin-openclaw` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-openclaw)](https://www.npmjs.com/package/@remnic/plugin-openclaw) | OpenClaw adapter — thin bridge (embedded or delegate mode) |
 | `remnic-hermes` | [![PyPI](https://img.shields.io/pypi/v/remnic-hermes)](https://pypi.org/project/remnic-hermes/) | Python MemoryProvider for Hermes Agent |
-| `@remnic/plugin-claude-code` | (installed via `remnic connectors install`) | Native Claude Code plugin — hooks, skills, MCP |
+| `@remnic/plugin-claude-code` | Installed via `remnic connectors install` | Native Claude Code plugin — hooks, skills, MCP |
 | `@remnic/plugin-codex` | (installed via `remnic connectors install`) | Native Codex CLI plugin — hooks, skills, MCP |
 
 The old `@joshuaswarren/openclaw-engram` package is **deprecated**. Use `@remnic/plugin-openclaw` for OpenClaw installs and `@remnic/*` for standalone or multi-platform use.
