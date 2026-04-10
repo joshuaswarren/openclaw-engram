@@ -82,8 +82,22 @@ async function isContainedWithin(target: string, boundary: string): Promise<bool
  * Skips symlinked directories/files that resolve outside the boundary
  * to prevent symlink traversal attacks.
  */
-async function listMarkdownFilesRecursive(rootDir: string, boundary?: string): Promise<string[]> {
+async function listMarkdownFilesRecursive(
+  rootDir: string,
+  boundary?: string,
+  visited?: Set<string>,
+): Promise<string[]> {
   const boundaryDir = boundary ?? rootDir;
+  // Track visited real paths to detect symlink cycles
+  const visitedPaths = visited ?? new Set<string>();
+  try {
+    const resolvedRoot = await realpath(rootDir);
+    if (visitedPaths.has(resolvedRoot)) return []; // Cycle detected — stop
+    visitedPaths.add(resolvedRoot);
+  } catch {
+    return [];
+  }
+
   let entries: import("node:fs").Dirent[];
   try {
     entries = await readdir(rootDir, { withFileTypes: true }) as import("node:fs").Dirent[];
@@ -118,7 +132,7 @@ async function listMarkdownFilesRecursive(rootDir: string, boundary?: string): P
     }
 
     if (isDir) {
-      files.push(...(await listMarkdownFilesRecursive(fullPath, boundaryDir)));
+      files.push(...(await listMarkdownFilesRecursive(fullPath, boundaryDir, visitedPaths)));
       continue;
     }
     if (isFile && String(entry.name).endsWith(".md")) {

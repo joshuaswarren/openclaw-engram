@@ -392,6 +392,15 @@ const pluginDefinition = {
     }
 
     if (!useMemoryPromptSection) {
+      // When registerMemoryCapability is available but registerMemoryPromptSection
+      // is not (capability-only SDK), we need a hybrid approach: continue using
+      // the hook for backward compat, but also populate cachedMemoryBySession so
+      // the capability's promptBuilder can return recall context for runtimes
+      // that treat the capability as the authoritative source.
+      const needsCacheFallback =
+        sdkCaps.hasRegisterMemoryCapability &&
+        typeof (api as any).registerMemoryCapability === "function";
+
       if (sdkCaps.hasBeforePromptBuild) {
         // New SDK path — literal string for compat checker detection
         api.on(
@@ -399,7 +408,15 @@ const pluginDefinition = {
           async (
             event: Record<string, unknown>,
             ctx: Record<string, unknown>,
-          ) => recallHookHandler("before_prompt_build", event, ctx),
+          ) => {
+            const result = await recallHookHandler("before_prompt_build", event, ctx);
+            // Also populate cache for capability promptBuilder fallback
+            if (needsCacheFallback && result?.prependSystemContext) {
+              const sessionKey = (ctx?.sessionKey as string) ?? "default";
+              cachedMemoryBySession.set(sessionKey, [result.prependSystemContext as string]);
+            }
+            return result;
+          },
         );
       } else {
         // Legacy SDK path — literal string for compat checker detection

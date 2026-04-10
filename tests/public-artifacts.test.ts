@@ -324,6 +324,31 @@ test("follows symlinks within memoryDir boundary", async () => {
   }
 });
 
+test("handles symlink cycles without infinite recursion", async () => {
+  const dir = await createTempMemoryDir();
+  try {
+    const factsDir = path.join(dir, "facts");
+    await mkdir(factsDir, { recursive: true });
+    await writeFile(path.join(factsDir, "real.md"), "real fact");
+
+    // Create a symlink cycle: facts/loop -> facts
+    await symlink(factsDir, path.join(factsDir, "loop"), "dir");
+
+    const artifacts = await listRemnicPublicArtifacts({
+      memoryDir: dir,
+      workspaceDir: "/tmp/workspace",
+      agentIds: AGENT_IDS,
+    });
+
+    // Should find the real file but not loop infinitely
+    const factPaths = artifacts.filter((a) => a.kind === "fact").map((a) => a.relativePath);
+    assert.ok(factPaths.includes("facts/real.md"), "should find real.md");
+    // No infinite loop — test would timeout if it occurred
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("blocks symlink traversal outside memoryDir", async () => {
   const dir = await createTempMemoryDir();
   const outsideDir = await createTempMemoryDir();
