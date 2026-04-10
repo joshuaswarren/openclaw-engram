@@ -186,7 +186,10 @@ export async function listRemnicPublicArtifacts(params: {
     // Block symlink traversal: verify the directory resolves within memoryDir
     if (!(await isContainedWithin(dirPath, memoryDir))) continue;
 
-    const files = await listMarkdownFilesRecursive(dirPath, memoryDir);
+    // Use the specific public directory as the containment boundary (not
+    // memoryDir), so symlinks within e.g. facts/ cannot escape into private
+    // directories like state/ or questions/ that live under memoryDir.
+    const files = await listMarkdownFilesRecursive(dirPath, dirPath);
 
     for (const absolutePath of files) {
       const relativePath = path.relative(memoryDir, absolutePath).replace(/\\/g, "/");

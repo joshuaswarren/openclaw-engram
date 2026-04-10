@@ -324,6 +324,36 @@ test("follows symlinks within memoryDir boundary", async () => {
   }
 });
 
+test("blocks symlinks from public dirs into private memory paths", async () => {
+  const dir = await createTempMemoryDir();
+  try {
+    // Create a private directory with sensitive data
+    const stateDir = path.join(dir, "state");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(path.join(stateDir, "internal.md"), "private runtime state");
+
+    // Create a public directory with a symlink pointing to the private dir
+    const factsDir = path.join(dir, "facts");
+    await mkdir(factsDir, { recursive: true });
+    await writeFile(path.join(factsDir, "legit.md"), "legitimate fact");
+    await symlink(stateDir, path.join(factsDir, "alias"), "dir");
+
+    const artifacts = await listRemnicPublicArtifacts({
+      memoryDir: dir,
+      workspaceDir: "/tmp/workspace",
+      agentIds: AGENT_IDS,
+    });
+
+    // Should find the legit fact but NOT expose state/ via the symlink
+    const factPaths = artifacts.map((a) => a.relativePath);
+    assert.ok(factPaths.includes("facts/legit.md"), "should find legit.md");
+    const leaked = artifacts.filter((a) => a.absolutePath.startsWith(stateDir));
+    assert.equal(leaked.length, 0, "symlink from facts/ to state/ must not expose private data");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("handles symlink cycles without infinite recursion", async () => {
   const dir = await createTempMemoryDir();
   try {
