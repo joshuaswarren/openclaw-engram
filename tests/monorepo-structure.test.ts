@@ -148,20 +148,7 @@ test("plugin-openclaw publishes under the Remnic scope", () => {
   );
 });
 
-test("OpenClaw-facing packages require openclaw 2026.4.8 or greater", () => {
-  const rootPkgPath = path.join(ROOT, "package.json");
-  const rootPkg = JSON.parse(fs.readFileSync(rootPkgPath, "utf-8"));
-  assert.equal(
-    rootPkg.peerDependencies?.openclaw,
-    ">=2026.4.8",
-    "Root package must require openclaw >=2026.4.8",
-  );
-  assert.equal(
-    rootPkg.devDependencies?.openclaw,
-    "^2026.4.8",
-    "Root workspace must install openclaw ^2026.4.8 for local builds/tests",
-  );
-
+test("published OpenClaw packages require openclaw 2026.4.8 or greater", () => {
   for (const packageDir of ["plugin-openclaw", "shim-openclaw-engram"]) {
     const pkgJsonPath = path.join(PACKAGES_DIR, packageDir, "package.json");
     assert.ok(fs.existsSync(pkgJsonPath), `${packageDir}/package.json must exist`);
