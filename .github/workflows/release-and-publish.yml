@@ -314,6 +314,14 @@ jobs:
       - name: Checkout release tag source for publish
         run: git checkout --detach "${{ steps.version.outputs.tag_name }}"
 
+      - name: Restore npm auth after tag checkout
+        run: |
+          # setup-node wrote registry auth into .npmrc, but git checkout
+          # replaced it with the repo's version. Re-inject the auth line.
+          if ! grep -q '_authToken' .npmrc 2>/dev/null; then
+            echo '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}' >> .npmrc
+          fi
+
       - name: Install dependencies for tagged source
         run: pnpm install --frozen-lockfile
 
