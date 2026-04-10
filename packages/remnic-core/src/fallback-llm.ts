@@ -1,11 +1,50 @@
 import { log } from "./logger.js";
-import type { GatewayConfig, ModelProviderConfig, AgentPersona } from "./types.js";
+import type { GatewayConfig, ModelProviderConfig, ModelApi, AgentPersona } from "./types.js";
 import { extractJsonCandidates } from "./json-extract.js";
 import {
   buildChatCompletionTokenLimit,
   shouldAssumeOpenAiChatCompletions,
 } from "./openai-chat-compat.js";
 import { resolveProviderApiKey } from "./resolve-provider-secret.js";
+
+/**
+ * Map of well-known provider ID prefixes to their API format and base URL.
+ * Used to synthesize a ModelProviderConfig when the provider isn't declared
+ * in the user's models.providers config (e.g., OAuth-based providers like
+ * openai-codex or anthropic-enterprise).
+ */
+const KNOWN_PROVIDER_DEFAULTS: Record<
+  string,
+  { format: ModelApi; baseUrl: string }
+> = {
+  openai: { format: "openai-completions", baseUrl: "https://api.openai.com/v1" },
+  anthropic: { format: "anthropic-messages", baseUrl: "https://api.anthropic.com" },
+  google: { format: "google-generative", baseUrl: "https://generativelanguage.googleapis.com" },
+};
+
+/**
+ * Infer the API format and base URL for a provider ID that isn't in the
+ * explicit providers map. Matches exact entries first, then tries prefixes
+ * (e.g., "openai-codex" matches the "openai" prefix). For completely
+ * unknown providers, falls back to OpenAI-compatible format since that's
+ * the most common API shape for third-party providers.
+ */
+function inferApiFormat(
+  providerId: string,
+): { format: ModelApi; baseUrl: string } {
+  if (KNOWN_PROVIDER_DEFAULTS[providerId]) {
+    return KNOWN_PROVIDER_DEFAULTS[providerId];
+  }
+  for (const [prefix, defaults] of Object.entries(KNOWN_PROVIDER_DEFAULTS)) {
+    if (providerId.startsWith(`${prefix}-`)) {
+      return defaults;
+    }
+  }
+  // Unknown provider — assume OpenAI-compatible. The gateway resolver will
+  // handle auth; if it can't resolve a key, tryModel() will skip this
+  // provider and the chain continues to the next fallback.
+  return { format: "openai-completions", baseUrl: "https://api.openai.com/v1" };
+}
 
 export interface FallbackLlmOptions {
   temperature?: number;
@@ -240,13 +279,32 @@ export class FallbackLlmClient {
     const providerId = parts[0];
     const modelId = parts.slice(1).join("/"); // Handle cases like "openai/gpt-5.2-turbo"
 
-    const providerConfig = providers[providerId];
-    if (!providerConfig) {
-      log.warn(`fallback LLM: provider not found: ${providerId}`);
-      return null;
-    }
+    // Look up explicit config first; fall back to synthesizing a config
+    // for built-in providers (e.g., OAuth-based providers like openai-codex)
+    const providerConfig = providers[providerId] ?? this.synthesizeBuiltinProvider(providerId);
 
     return { providerId, modelId, providerConfig, modelString };
+  }
+
+  /**
+   * Synthesize a ModelProviderConfig for a provider that isn't declared in
+   * models.providers (e.g., "openai-codex" using OAuth, or any built-in
+   * OpenClaw provider).
+   *
+   * The gateway's resolveApiKeyForProvider() knows how to resolve auth for
+   * these providers, so we only need to supply enough config for the HTTP
+   * call. The API format and base URL are inferred from the provider ID.
+   */
+  private synthesizeBuiltinProvider(providerId: string): ModelProviderConfig {
+    const api = inferApiFormat(providerId);
+
+    log.debug(`fallback LLM: synthesizing config for built-in provider "${providerId}" (api: ${api.format})`);
+    return {
+      baseUrl: api.baseUrl,
+      apiKey: "secretref-managed",
+      api: api.format,
+      models: [],
+    };
   }
 
   /**
