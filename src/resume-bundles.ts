@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/resume-bundles.js";
+export * from "../packages/remnic-core/src/resume-bundles.js";

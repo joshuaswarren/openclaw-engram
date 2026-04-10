@@ -1,7 +1,7 @@
 /**
- * @engram/hermes-provider
+ * @remnic/hermes-provider
  *
- * Typed HTTP client for the Engram memory API.
+ * Typed HTTP client for the Remnic memory API.
  *
  * Usage:
  *   const client = new HermesClient({ baseUrl: "http://127.0.0.1:4318", authToken: "secret" });

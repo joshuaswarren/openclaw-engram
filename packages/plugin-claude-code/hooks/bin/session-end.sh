@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Engram session cleanup for Claude Code.
+# Remnic session cleanup for Claude Code.
 # Removes cursor and lock files for the session.
 #
 # NOTE: Claude Code does not support a Stop/SessionEnd hook event.
@@ -13,6 +13,8 @@ echo '{"continue":true}'
 
 [ -z "$SESSION_ID" ] && exit 0
 
+rm -f "/tmp/remnic-cursor-${SESSION_ID}" 2>/dev/null
+rmdir "/tmp/remnic-lock-${SESSION_ID}.d" 2>/dev/null
 rm -f "/tmp/engram-cursor-${SESSION_ID}" 2>/dev/null
 rmdir "/tmp/engram-lock-${SESSION_ID}.d" 2>/dev/null
 

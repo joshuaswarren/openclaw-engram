@@ -1,31 +1,50 @@
 #!/usr/bin/env bash
-# Engram Stop hook for Codex.
+# Remnic Stop hook for Codex.
 # Performs final observe flush then cleans up cursor/lock files.
 
 set -euo pipefail
 
-ENGRAM_HOST="${ENGRAM_HOST:-127.0.0.1}"
-ENGRAM_PORT="${ENGRAM_PORT:-4318}"
-ENGRAM_URL="http://${ENGRAM_HOST}:${ENGRAM_PORT}/engram/v1/observe"
-TOKEN_FILE="${HOME}/.engram/tokens.json"
+ensure_migrated() {
+  if [ -f "${HOME}/.remnic/.migrated-from-engram" ]; then
+    return 0
+  fi
+  if [ ! -d "${HOME}/.engram" ] && [ ! -f "${HOME}/.config/engram/config.json" ]; then
+    return 0
+  fi
+  if command -v remnic >/dev/null 2>&1; then
+    remnic migrate >/dev/null 2>&1 || true
+  elif command -v engram >/dev/null 2>&1; then
+    engram migrate >/dev/null 2>&1 || true
+  fi
+}
 
-LOG="${HOME}/.engram/logs/engram-codex-session-end.log"
+ensure_migrated
+
+REMNIC_HOST="${REMNIC_HOST:-${ENGRAM_HOST:-127.0.0.1}}"
+REMNIC_PORT="${REMNIC_PORT:-${ENGRAM_PORT:-4318}}"
+REMNIC_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/observe"
+
+LOG="${HOME}/.remnic/logs/remnic-codex-session-end.log"
 mkdir -p "$(dirname "$LOG")"
 log() { echo "$(date '+%F %T') [codex-stop] $*" >> "$LOG"; }
 
-ENGRAM_TOKEN=""
-if [ -f "$TOKEN_FILE" ]; then
-  ENGRAM_TOKEN="$(node -e "
-    const store = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
+REMNIC_TOKEN=""
+for TOKEN_FILE in "${HOME}/.remnic/tokens.json" "${HOME}/.engram/tokens.json"; do
+  [ ! -f "$TOKEN_FILE" ] && continue
+  REMNIC_TOKEN="$(node -e "
+    const fs = require('fs');
+    const tokenFile = process.argv[1];
+    const store = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
     const tokens = store.tokens || [];
     const cx = tokens.find(t => t.connector === 'codex');
     const oc = tokens.find(t => t.connector === 'openclaw');
     let tok = (cx && cx.token) || (oc && oc.token) || '';
     if (!tok) { tok = store['codex'] || store['openclaw'] || ''; }
     process.stdout.write(tok);
-  " 2>/dev/null || echo "")"
-fi
-[ -z "$ENGRAM_TOKEN" ] && ENGRAM_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"
+  " "$TOKEN_FILE" 2>/dev/null || echo "")"
+  [ -n "$REMNIC_TOKEN" ] && break
+done
+[ -z "$REMNIC_TOKEN" ] && REMNIC_TOKEN="${OPENCLAW_REMNIC_ACCESS_TOKEN:-${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}}"
 
 INPUT="$(cat)"
 SESSION_ID="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.session_id||'')" "$INPUT" 2>/dev/null || echo "")"
@@ -34,8 +53,12 @@ TRANSCRIPT_PATH="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.
 echo '{"continue":true}'
 
 # Final observe flush if we have transcript
-if [ -n "$ENGRAM_TOKEN" ] && [ -n "$SESSION_ID" ] && [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
-  CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
+if [ -n "$REMNIC_TOKEN" ] && [ -n "$SESSION_ID" ] && [ -n "$TRANSCRIPT_PATH" ] && [ -f "$TRANSCRIPT_PATH" ]; then
+  LEGACY_CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
+  CURSOR_FILE="/tmp/remnic-cursor-${SESSION_ID}"
+  if [ ! -f "$CURSOR_FILE" ] && [ -f "$LEGACY_CURSOR_FILE" ]; then
+    CURSOR_FILE="$LEGACY_CURSOR_FILE"
+  fi
   LAST_COUNT=0
   [ -f "$CURSOR_FILE" ] && LAST_COUNT="$(cat "$CURSOR_FILE" 2>/dev/null || echo 0)"
 
@@ -65,8 +88,8 @@ if [ -n "$ENGRAM_TOKEN" ] && [ -n "$SESSION_ID" ] && [ -n "$TRANSCRIPT_PATH" ] &
   if [ -n "$PAYLOAD" ]; then
     log "final flush for $SESSION_ID"
     curl -s --max-time 30 \
-      -X POST "$ENGRAM_URL" \
-      -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
+      -X POST "$REMNIC_URL" \
+      -H "Authorization: Bearer ${REMNIC_TOKEN}" \
       -H "Content-Type: application/json" \
       -H "X-Engram-Client-Id: codex" \
       -d "$PAYLOAD" >/dev/null 2>&1 || log "final flush failed"
@@ -74,6 +97,8 @@ if [ -n "$ENGRAM_TOKEN" ] && [ -n "$SESSION_ID" ] && [ -n "$TRANSCRIPT_PATH" ] &
 fi
 
 # Cleanup
+rm -f "/tmp/remnic-cursor-${SESSION_ID}" 2>/dev/null
+rmdir "/tmp/remnic-lock-${SESSION_ID}.d" 2>/dev/null
 rm -f "/tmp/engram-cursor-${SESSION_ID}" 2>/dev/null
 rmdir "/tmp/engram-lock-${SESSION_ID}.d" 2>/dev/null
 

@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/namespaces/principal.js";
+export * from "../../packages/remnic-core/src/namespaces/principal.js";

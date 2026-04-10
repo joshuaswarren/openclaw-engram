@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from engram_hermes.provider import EngramMemoryProvider
+from remnic_hermes.provider import EngramMemoryProvider
 
 
 @pytest.fixture
@@ -16,7 +16,7 @@ class TestProviderLifecycle:
     @pytest.mark.asyncio
     async def test_initialize_creates_client(self, provider):
         """initialize() should create an EngramClient."""
-        with patch("engram_hermes.provider.EngramClient") as MockClient:
+        with patch("remnic_hermes.provider.EngramClient") as MockClient:
             instance = MockClient.return_value
             instance.health = AsyncMock()
             await provider.initialize()
@@ -26,7 +26,7 @@ class TestProviderLifecycle:
     @pytest.mark.asyncio
     async def test_shutdown_closes_client(self, provider):
         """shutdown() should close the HTTP client."""
-        with patch("engram_hermes.provider.EngramClient") as MockClient:
+        with patch("remnic_hermes.provider.EngramClient") as MockClient:
             instance = MockClient.return_value
             instance.health = AsyncMock()
             instance.close = AsyncMock()
@@ -45,7 +45,7 @@ class TestPreLlmCall:
     @pytest.mark.asyncio
     async def test_skips_short_queries(self, provider):
         """pre_llm_call skips queries shorter than 3 words."""
-        with patch("engram_hermes.provider.EngramClient") as MockClient:
+        with patch("remnic_hermes.provider.EngramClient") as MockClient:
             instance = MockClient.return_value
             instance.health = AsyncMock()
             instance.recall = AsyncMock()
@@ -64,7 +64,7 @@ class TestSyncTurn:
     @pytest.mark.asyncio
     async def test_sends_recent_messages(self, provider):
         """sync_turn sends last 2 messages to observe endpoint."""
-        with patch("engram_hermes.provider.EngramClient") as MockClient:
+        with patch("remnic_hermes.provider.EngramClient") as MockClient:
             instance = MockClient.return_value
             instance.health = AsyncMock()
             instance.observe = AsyncMock(return_value={})

@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/boxes.js";
+export * from "../packages/remnic-core/src/boxes.js";

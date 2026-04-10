@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/transcript.js";
+export * from "../packages/remnic-core/src/transcript.js";

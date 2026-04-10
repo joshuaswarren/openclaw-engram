@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/dashboard-runtime.js";
+export * from "../packages/remnic-core/src/dashboard-runtime.js";

@@ -1,7 +1,7 @@
-name: engram
+name: remnic
 version: 0.1.0
 description: Universal memory for AI agents — MemoryProvider integration for Hermes
 author: Joshua Warren
-homepage: https://github.com/joshuaswarren/openclaw-engram
-entry: engram_hermes
+homepage: https://github.com/joshuaswarren/remnic
+entry: remnic_hermes
 type: memory_provider

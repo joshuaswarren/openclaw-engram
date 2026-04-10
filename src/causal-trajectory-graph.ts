@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/causal-trajectory-graph.js";
+export * from "../packages/remnic-core/src/causal-trajectory-graph.js";

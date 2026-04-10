@@ -1,0 +1,45 @@
+{
+  "name": "@remnic/cli",
+  "version": "1.0.0",
+  "description": "CLI for Remnic memory — init, query, doctor, daemon management",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "remnic": "./bin/remnic.cjs",
+    "engram": "./bin/engram.cjs"
+  },
+  "files": [
+    "dist",
+    "bin/remnic.cjs",
+    "bin/engram.cjs",
+    "templates"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --target es2022 --platform node --outDir dist --no-external @remnic/bench",
+    "check-types": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@remnic/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@remnic/bench": "workspace:*",
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuaswarren/remnic.git",
+    "directory": "packages/remnic-cli"
+  }
+}

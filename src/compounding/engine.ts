@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/compounding/engine.js";
+export * from "../../packages/remnic-core/src/compounding/engine.js";

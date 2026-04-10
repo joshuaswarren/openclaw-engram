@@ -2,7 +2,7 @@
 
 ## Introduction
 
-Engram can run as a standalone HTTP server that provides persistent memory to multiple agent harnesses simultaneously. In plugin mode, Engram is embedded inside a single OpenClaw gateway process. In standalone mode, Engram runs as its own process and exposes both a REST API and an MCP-over-HTTP endpoint that any number of clients can connect to — OpenClaw, Codex CLI, Claude Code, custom scripts, or any MCP-compatible agent.
+Remnic can run as a standalone HTTP server that provides persistent memory to multiple agent harnesses simultaneously. In plugin mode, Remnic is embedded inside a single OpenClaw gateway process. In standalone mode, Engram runs as its own process and exposes both a REST API and an MCP-over-HTTP endpoint that any number of clients can connect to — OpenClaw, Codex CLI, Claude Code, custom scripts, or any MCP-compatible agent.
 
 Use standalone mode when:
 
@@ -83,7 +83,7 @@ If you are also running a standalone server for other clients, OpenClaw's plugin
 
 ### Codex CLI (MCP over HTTP)
 
-Start the Engram server as shown in Quick Start, then add to `~/.codex/config.toml`:
+Start the Remnic server as shown in Quick Start, then add to `~/.codex/config.toml`:
 
 ```toml
 [mcp_servers.engram]

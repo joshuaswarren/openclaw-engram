@@ -1,1 +1,1 @@
-export * from "../../../packages/engram-core/src/replay/normalizers/claude.js";
+export * from "../../../packages/remnic-core/src/replay/normalizers/claude.js";

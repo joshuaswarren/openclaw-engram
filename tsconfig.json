@@ -15,6 +15,6 @@
     "declarationMap": true,
     "sourceMap": true
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "packages/engram-core/src/**/*.ts"],
+  "include": ["src/**/*.ts", "src/**/*.d.ts", "packages/remnic-core/src/**/*.ts"],
   "exclude": ["node_modules", "dist", "scripts", ".worktrees"]
 }

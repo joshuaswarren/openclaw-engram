@@ -1,6 +1,6 @@
 # Embedded vs Delegate Mode
 
-The OpenClaw Engram Orchestrator (OEO) plugin supports two operational modes.
+The OpenClaw Remnic bridge plugin supports two operational modes.
 
 ## Embedded Mode (Default)
 

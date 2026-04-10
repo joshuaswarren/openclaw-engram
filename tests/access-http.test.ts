@@ -1406,7 +1406,7 @@ test("access HTTP server exposes MCP JSON-RPC endpoint at /mcp", async () => {
     assert.equal(initPayload.jsonrpc, "2.0");
     assert.equal(initPayload.id, 1);
     assert.equal(initPayload.result.protocolVersion, "2024-11-05");
-    assert.equal(initPayload.result.serverInfo.name, "openclaw-engram");
+    assert.equal(initPayload.result.serverInfo.name, "remnic");
 
     // list tools
     const toolsRes = await fetch(`${base}/mcp`, {
@@ -1423,11 +1423,12 @@ test("access HTTP server exposes MCP JSON-RPC endpoint at /mcp", async () => {
       result: { tools: Array<{ name: string }> };
     };
     const toolNames = toolsPayload.result.tools.map((t) => t.name);
+    assert.ok(toolNames.includes("remnic.recall"));
+    assert.ok(toolNames.includes("remnic.memory_store"));
+    assert.ok(toolNames.includes("remnic.entity_get"));
     assert.ok(toolNames.includes("engram.recall"));
-    assert.ok(toolNames.includes("engram.memory_store"));
-    assert.ok(toolNames.includes("engram.entity_get"));
 
-    // call engram.recall tool
+    // call remnic.recall tool
     const callRes = await fetch(`${base}/mcp`, {
       method: "POST",
       headers,
@@ -1436,7 +1437,7 @@ test("access HTTP server exposes MCP JSON-RPC endpoint at /mcp", async () => {
         id: 3,
         method: "tools/call",
         params: {
-          name: "engram.recall",
+          name: "remnic.recall",
           arguments: { query: "what did we decide?" },
         },
       }),

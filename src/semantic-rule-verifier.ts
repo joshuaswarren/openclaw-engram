@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/semantic-rule-verifier.js";
+export * from "../packages/remnic-core/src/semantic-rule-verifier.js";

@@ -64,9 +64,9 @@ importers:
 
   packages/bench:
     dependencies:
-      '@engram/core':
+      '@remnic/core':
         specifier: workspace:*
-        version: link:../engram-core
+        version: link:../remnic-core
     devDependencies:
       tsup:
         specifier: ^8.5.1
@@ -77,13 +77,42 @@ importers:
 
   packages/connector-replit: {}
 
-  packages/engram-cli:
-    dependencies:
-      '@engram/core':
-        specifier: workspace:*
-        version: link:../engram-core
+  packages/hermes-provider:
     devDependencies:
-      '@engram/bench':
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(jiti@2.6.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
+  packages/plugin-claude-code: {}
+
+  packages/plugin-codex: {}
+
+  packages/plugin-openclaw:
+    dependencies:
+      '@remnic/core':
+        specifier: workspace:*
+        version: link:../remnic-core
+      openclaw:
+        specifier: '*'
+        version: 2026.4.2(@napi-rs/canvas@0.1.97)
+    devDependencies:
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(jiti@2.6.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
+
+  packages/remnic-cli:
+    dependencies:
+      '@remnic/core':
+        specifier: workspace:*
+        version: link:../remnic-core
+    devDependencies:
+      '@remnic/bench':
         specifier: workspace:*
         version: link:../bench
       tsup:
@@ -93,7 +122,7 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  packages/engram-core:
+  packages/remnic-core:
     dependencies:
       '@honcho-ai/sdk':
         specifier: ^2.0.0
@@ -143,11 +172,11 @@ importers:
         specifier: ^0.26.2
         version: 0.26.2
 
-  packages/engram-server:
+  packages/remnic-server:
     dependencies:
-      '@engram/core':
+      '@remnic/core':
         specifier: workspace:*
-        version: link:../engram-core
+        version: link:../remnic-core
     devDependencies:
       tsup:
         specifier: ^8.5.1
@@ -156,24 +185,14 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
-  packages/hermes-provider:
-    devDependencies:
-      tsup:
-        specifier: ^8.0.0
-        version: 8.5.1(jiti@2.6.1)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
-      typescript:
-        specifier: ^5.7.0
-        version: 5.9.3
-
-  packages/plugin-claude-code: {}
-
-  packages/plugin-codex: {}
-
-  packages/plugin-openclaw:
+  packages/shim-openclaw-engram:
     dependencies:
-      '@engram/core':
+      '@remnic/core':
         specifier: workspace:*
-        version: link:../engram-core
+        version: link:../remnic-core
+      '@remnic/plugin-openclaw':
+        specifier: workspace:*
+        version: link:../plugin-openclaw
       openclaw:
         specifier: '*'
         version: 2026.4.2(@napi-rs/canvas@0.1.97)
@@ -1509,6 +1528,7 @@ packages:
   basic-ftp@5.2.0:
     resolution: {integrity: sha512-VoMINM2rqJwJgfdHq6RiUudKt2BV+FY5ZFezP/ypmwayk68+NzzAQy4XXLlqsGD4MCzq3DrmNFD/uUmBJuGoXw==}
     engines: {node: '>=10.0.0'}
+    deprecated: Security vulnerability fixed in 5.2.1, please upgrade
 
   better-sqlite3@12.8.0:
     resolution: {integrity: sha512-RxD2Vd96sQDjQr20kdP+F+dK/1OUNiVOl200vKBZY8u0vTwysfolF6Hq+3ZK2+h8My9YvZhHsF+RSGZW2VYrPQ==}

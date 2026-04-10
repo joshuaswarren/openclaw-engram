@@ -1,6 +1,6 @@
 # Architecture
 
-Engram is a local-first memory plugin for the [OpenClaw](https://github.com/openclaw/openclaw) gateway. For a detailed walkthrough, see the docs below.
+Remnic is a local-first memory plugin for the [OpenClaw](https://github.com/openclaw/openclaw) gateway. For a detailed walkthrough, see the docs below.
 
 ## System Overview
 

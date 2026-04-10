@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/embedding-fallback.js";
+export * from "../packages/remnic-core/src/embedding-fallback.js";

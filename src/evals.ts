@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/evals.js";
+export * from "../packages/remnic-core/src/evals.js";

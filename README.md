@@ -1,29 +1,30 @@
-# Engram
+# Remnic
 
-**Persistent, private memory for AI agents.** Your agents forget everything between sessions — Engram fixes that.
+**Persistent, private memory for AI agents.** Your agents forget everything between sessions — Remnic fixes that.
 
-Engram gives AI agents long-term memory that survives across conversations. Decisions, preferences, project context, personal details, past mistakes — everything your agent learns persists and resurfaces exactly when it's needed. All data stays on your machine as plain markdown files. No cloud services, no subscriptions, no sharing your data with third parties.
+Remnic gives AI agents long-term memory that survives across conversations. Decisions, preferences, project context, personal details, past mistakes — everything your agent learns persists and resurfaces exactly when it's needed. All data stays on your machine as plain markdown files. No cloud services, no subscriptions, no sharing your data with third parties.
 
 [![npm version](https://img.shields.io/npm/v/@joshuaswarren/openclaw-engram)](https://www.npmjs.com/package/@joshuaswarren/openclaw-engram)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink)](https://github.com/sponsors/joshuaswarren)
 
-> **Engram is now a monorepo.** For standalone (non-OpenClaw) use, install the scoped packages:
-> [`@engram/core`](https://www.npmjs.com/package/@engram/core),
-> [`@engram/server`](https://www.npmjs.com/package/@engram/server),
-> [`@engram/cli`](https://www.npmjs.com/package/@engram/cli).
-> The `openclaw-engram` and `@joshuaswarren/openclaw-engram` packages remain the OpenClaw plugin entry point.
-> Python users: [`engram-hermes`](https://pypi.org/project/engram-hermes/) on PyPI.
+> **Engram is now Remnic.** Canonical packages live under the `@remnic/*` scope:
+> [`@remnic/core`](https://www.npmjs.com/package/@remnic/core),
+> [`@remnic/server`](https://www.npmjs.com/package/@remnic/server),
+> [`@remnic/cli`](https://www.npmjs.com/package/@remnic/cli).
+> OpenClaw installs should use [`@remnic/plugin-openclaw`](https://www.npmjs.com/package/@remnic/plugin-openclaw).
+> The legacy `engram` CLI name remains available as a forwarder during the rename window.
+> Python users: [`remnic-hermes`](https://pypi.org/project/remnic-hermes/) on PyPI.
 
-## Support Engram
+## Support Remnic
 
 Every bit of support is genuinely appreciated and helps keep this project alive and free for everyone.
 
-If you're able to, [sponsoring on GitHub](https://github.com/sponsors/joshuaswarren) or sending a Lightning donation to `joshuaswarren@strike.me` directly funds continued development, new integrations, and keeping Engram open source.
+If you're able to, [sponsoring on GitHub](https://github.com/sponsors/joshuaswarren) or sending a Lightning donation to `joshuaswarren@strike.me` directly funds continued development, new integrations, and keeping Remnic open source.
 
 [![Sponsor](https://img.shields.io/badge/Sponsor-%E2%9D%A4-pink?style=for-the-badge)](https://github.com/sponsors/joshuaswarren)
 
-If financial support isn't an option, you can still make a big difference — [star the repo on GitHub](https://github.com/joshuaswarren/openclaw-engram), share it on social media, or recommend it to a friend or colleague. Word of mouth is how most people find Engram, and it means the world.
+If financial support isn't an option, you can still make a big difference — [star the repo on GitHub](https://github.com/joshuaswarren/remnic), share it on social media, or recommend it to a friend or colleague. Word of mouth is how most people find Remnic, and it means the world.
 
 ## The Problem
 
@@ -33,11 +34,11 @@ OpenClaw's built-in memory works for simple cases, but it doesn't scale. It lack
 
 ## The Solution
 
-Engram is an open-source, local-first memory system that replaces OpenClaw's default memory with something much more capable — while keeping everything on your machine. It watches your agent conversations, extracts durable knowledge, and injects the right memories back at the start of every session. Use OpenAI or a **local LLM** (Ollama, LM Studio, etc.) for extraction — your choice.
+Remnic is an open-source, local-first memory system that replaces OpenClaw's default memory with something much more capable — while keeping everything on your machine. It watches your agent conversations, extracts durable knowledge, and injects the right memories back at the start of every session. Use OpenAI or a **local LLM** (Ollama, LM Studio, etc.) for extraction — your choice.
 
-Engram is the **universal memory layer for AI agents**. It works natively with **[OpenClaw](https://github.com/openclaw/openclaw)**, **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)**, **[Codex CLI](https://github.com/openai/codex)**, **[Hermes Agent](https://github.com/hermes-agent/hermes)**, and any **MCP-compatible client** (Replit, Cursor, etc.). When you tell any agent a preference, every agent knows it — they share one memory store.
+Remnic is the **universal memory layer for AI agents**. It works natively with **[OpenClaw](https://github.com/openclaw/openclaw)**, **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)**, **[Codex CLI](https://github.com/openai/codex)**, **[Hermes Agent](https://github.com/hermes-agent/hermes)**, and any **MCP-compatible client** (Replit, Cursor, etc.). When you tell any agent a preference, every agent knows it — they share one memory store.
 
-| Without Engram | With Engram |
+| Without Remnic | With Remnic |
 |---|---|
 | Re-explain who you are and what you're working on | Agent recalls your identity, projects, and preferences automatically |
 | Repeat context for every task | Entity knowledge surfaces people, projects, tools, and relationships on demand |
@@ -52,23 +53,23 @@ Engram is the **universal memory layer for AI agents**. It works natively with *
 ### Option 1: Install from the CLI
 
 ```bash
-openclaw plugins install @joshuaswarren/openclaw-engram --pin
+openclaw plugins install @remnic/plugin-openclaw --pin
 ```
 
 ### Option 2: Ask your OpenClaw agent to install it
 
 Tell any OpenClaw agent:
 
-> Install the openclaw-engram plugin and configure it as my memory system.
+> Install the @remnic/plugin-openclaw plugin and configure it as my memory system.
 
 Your agent will run the install command, update `openclaw.json`, and restart the gateway for you.
 
 ### Option 3: Developer install from source
 
 ```bash
-git clone https://github.com/joshuaswarren/openclaw-engram.git \
-  ~/.openclaw/extensions/openclaw-engram
-cd ~/.openclaw/extensions/openclaw-engram
+git clone https://github.com/joshuaswarren/remnic.git \
+  ~/.openclaw/extensions/remnic
+cd ~/.openclaw/extensions/remnic
 npm ci && npm run build
 ```
 
@@ -77,39 +78,39 @@ npm ci && npm run build
 **From npm (recommended):**
 
 ```bash
-npm install -g @engram/cli      # Installs the `engram` binary
-engram init                     # Create engram.config.json
+npm install -g @remnic/cli      # Installs `remnic` plus the legacy `engram` forwarder
+remnic init                     # Create remnic.config.json
 export OPENAI_API_KEY=sk-...
-export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
-engram daemon start             # Start background server
-engram status                   # Verify it's running
-engram query "hello" --explain  # Test query with tier breakdown
+export REMNIC_AUTH_TOKEN=$(openssl rand -hex 32)
+remnic daemon start             # Start background server
+remnic status                   # Verify it's running
+remnic query "hello" --explain  # Test query with tier breakdown
 ```
 
 **From source** (requires [Node.js](https://nodejs.org/) 22.12+ and [pnpm](https://pnpm.io/)):
 
 ```bash
-git clone https://github.com/joshuaswarren/openclaw-engram.git
-cd openclaw-engram
+git clone https://github.com/joshuaswarren/remnic.git
+cd remnic
 pnpm install && pnpm run build
-cd packages/engram-cli && pnpm link --global  # Makes `engram` available on PATH
+cd packages/remnic-cli && pnpm link --global  # Makes `remnic` and `engram` available on PATH
 cd ../..
-engram init
+remnic init
 ```
 
-> **Note:** The `engram` binary (`packages/cli/bin/engram.cjs`) is a CJS wrapper that auto-locates `tsx` from `node_modules` (falling back to a global `tsx`). Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/src/index.ts <command>`.
+> **Note:** `remnic` is the canonical CLI. The legacy `engram` binary is a compatibility forwarder to the same implementation. Running `pnpm link --global` from `packages/remnic-cli/` (not the repo root) makes both names available on PATH. Alternatively, invoke directly: `npx tsx packages/remnic-cli/src/index.ts <command>`.
 
 The standalone CLI provides 15+ commands for memory management, project onboarding, curation, diff-aware sync, dedup, connectors, spaces, and benchmarks -- all without requiring OpenClaw. See the [Platform Migration Guide](docs/guides/platform-migration.md) for the full command reference.
 
 ### Option 5: Connect Other AI Agents
 
-Once the Engram daemon is running, connect any supported agent:
+Once the Remnic daemon is running, connect any supported agent:
 
 ```bash
-engram connectors install claude-code   # Claude Code (hooks + MCP)
-engram connectors install codex-cli     # Codex CLI (hooks + MCP)
-engram connectors install replit        # Replit (MCP only)
-pip install engram-hermes               # Hermes Agent (Python MemoryProvider)
+remnic connectors install claude-code   # Claude Code (hooks + MCP)
+remnic connectors install codex-cli     # Codex CLI (hooks + MCP)
+remnic connectors install replit        # Replit (MCP only)
+pip install remnic-hermes               # Hermes Agent (Python MemoryProvider)
 ```
 
 Each connector generates a unique auth token, installs the appropriate plugin/hooks, and verifies the connection. All agents share the same memory store — tell one agent your preference, and every agent remembers it.
@@ -124,7 +125,7 @@ Each connector generates a unique auth token, installs the appropriate plugin/ho
 
 ### Configure
 
-After installation, add Engram to your `openclaw.json`:
+After installation, add the Remnic bridge plugin to your `openclaw.json`:
 
 ```jsonc
 {
@@ -154,7 +155,7 @@ After installation, add Engram to your `openclaw.json`:
 }
 ```
 
-> **Gateway model source:** When `modelSource` is `"gateway"`, Engram routes all LLM calls (extraction, consolidation, reranking) through an OpenClaw agent persona's model chain instead of its own config. Extraction starts on the `gatewayAgentId` chain directly in this mode; `localLlm*` settings do not control primary extraction order. Define agent personas in `openclaw.json → agents.list[]` with a `primary` model and `fallbacks[]` array — Engram tries each in order until one succeeds. This lets you build multi-provider fallback chains like Fireworks → local LLM → cloud OpenAI. See the [Gateway Model Source](docs/config-reference.md#gateway-model-source) guide for full setup.
+> **Gateway model source:** When `modelSource` is `"gateway"`, Remnic routes all LLM calls (extraction, consolidation, reranking) through an OpenClaw agent persona's model chain instead of its own config. Extraction starts on the `gatewayAgentId` chain directly in this mode; `localLlm*` settings do not control primary extraction order. Define agent personas in `openclaw.json → agents.list[]` with a `primary` model and `fallbacks[]` array — Remnic tries each in order until one succeeds. This lets you build multi-provider fallback chains like Fireworks → local LLM → cloud OpenAI. See the [Gateway Model Source](docs/config-reference.md#gateway-model-source) guide for full setup.
 
 Restart the gateway:
 
@@ -163,9 +164,9 @@ launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway   # macOS
 # or: systemctl restart openclaw-gateway                    # Linux
 ```
 
-Start a conversation — Engram begins learning immediately.
+Start a conversation — Remnic begins learning immediately.
 
-> **Note:** This shows only the minimal config. Engram has 60+ configuration options for search backends, capture modes, memory OS features, and more. See the [full config reference](docs/config-reference.md) for every setting.
+> **Note:** This shows only the minimal config. Remnic has 60+ configuration options for search backends, capture modes, memory OS features, and more. See the [full config reference](docs/config-reference.md) for every setting.
 
 ### Verify installation
 
@@ -229,33 +230,33 @@ See the [Standalone Server Guide](docs/guides/standalone-server.md) for multi-te
 
 ## Standalone Usage
 
-Engram also works as a standalone tool without OpenClaw. Install and run the CLI directly:
+Remnic also works as a standalone tool without OpenClaw. Install and run the CLI directly:
 
 ```bash
-npm install -g @joshuaswarren/openclaw-engram
-engram init                     # create engram.config.json
+npm install -g @remnic/cli
+remnic init                     # create remnic.config.json
 export OPENAI_API_KEY=sk-...
-export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
-engram daemon start             # start background server
-engram query "hello"            # verify
+export REMNIC_AUTH_TOKEN=$(openssl rand -hex 32)
+remnic daemon start             # start background server
+remnic query "hello"            # verify
 ```
 
 The CLI provides 15+ commands for querying, onboarding projects, curating files, managing spaces, running benchmarks, and more. See the [full CLI reference](docs/api.md#standalone-cli-commands) for all commands.
 
 ### Connect to any coding tool
 
-Engram works with 10+ coding tools via MCP or HTTP. See the [Connector Setup Guide](docs/integration/connector-setup.md) for config snippets for Claude Code, Codex CLI, Cursor, GitHub Copilot, Cline, Roo Code, Windsurf, Amp, Replit, and any generic MCP client.
+Remnic works with 10+ coding tools via MCP or HTTP. See the [Connector Setup Guide](docs/integration/connector-setup.md) for config snippets for Claude Code, Codex CLI, Cursor, GitHub Copilot, Cline, Roo Code, Windsurf, Amp, Replit, and any generic MCP client.
 
 OpenClaw remains the recommended path for most users. The standalone CLI is useful for CI/CD pipelines, scripted memory operations, and environments without OpenClaw.
 
 ### Package Architecture
 
 ```
-@engram/core            — Framework-agnostic engine (re-exports orchestrator, config, storage, search, extraction, graph, trust zones)
-@engram/cli             — Standalone CLI binary (15+ commands)
-@engram/server          — Standalone HTTP/MCP server
-@engram/bench           — Benchmarks + CI regression gates
-@engram/hermes-provider — HTTP client for remote Engram instances
+@remnic/core            — Framework-agnostic engine (re-exports orchestrator, config, storage, search, extraction, graph, trust zones)
+@remnic/cli             — Standalone CLI binary (15+ commands)
+@remnic/server          — Standalone HTTP/MCP server
+@remnic/bench           — Benchmarks + CI regression gates
+@remnic/hermes-provider — HTTP client for remote Remnic instances
 ```
 
 ## How It Works
@@ -289,38 +290,39 @@ Engram is organized as a monorepo with a core engine, standalone server/CLI, and
 
 ```
                          ┌─────────────────┐
-                         │  @engram/core   │
+                         │  @remnic/core   │
                          │  (engine)       │
                          └────────┬────────┘
                                   │
         ┌──────────┬──────────┬───┴────┬──────────┬──────────┐
         │          │          │        │          │          │
   ┌─────┴─────┐ ┌─┴──────┐ ┌┴─────┐ ┌┴────────┐ │  Native  │
-  │ @engram/  │ │@engram/│ │engram│ │openclaw- │ │ Plugins  │
-  │ cli       │ │server  │ │hermes│ │engram    │ │          │
+  │ @remnic/  │ │@remnic/│ │remnic│ │@remnic/  │ │ Plugins  │
+  │ cli       │ │server  │ │-hermes│ │plugin-   │ │          │
+  │           │ │        │ │       │ │openclaw  │ │          │
   └───────────┘ └────────┘ └──────┘ └─────────┘ └──────────┘
                     │                             │
               ┌─────┴─────┐        ┌──────────────┼──────────┐
-              │ @engram/  │        │              │          │
+              │ @remnic/  │        │              │          │
               │ bench     │   claude-code     codex     replit
               └───────────┘
 ```
 
 | Package | npm/PyPI | Description |
 |---------|----------|-------------|
-| `@engram/core` | [![npm](https://img.shields.io/npm/v/@engram/core)](https://www.npmjs.com/package/@engram/core) | Framework-agnostic engine — orchestrator, storage, search, extraction, graph, trust zones |
-| `@engram/server` | [![npm](https://img.shields.io/npm/v/@engram/server)](https://www.npmjs.com/package/@engram/server) | Standalone HTTP/MCP server with multi-token auth. Run as daemon via launchd/systemd |
-| `@engram/cli` | [![npm](https://img.shields.io/npm/v/@engram/cli)](https://www.npmjs.com/package/@engram/cli) | CLI binary — memory management, daemon lifecycle, connectors, tokens, spaces, benchmarks |
-| `@engram/hermes-provider` | [![npm](https://img.shields.io/npm/v/@engram/hermes-provider)](https://www.npmjs.com/package/@engram/hermes-provider) | TypeScript HTTP client for remote Engram instances |
-| `@engram/bench` | (private) | Latency ladder benchmarks with CI regression gates |
-| `openclaw-engram` | [![npm](https://img.shields.io/npm/v/openclaw-engram)](https://www.npmjs.com/package/openclaw-engram) | OpenClaw adapter — thin bridge (embedded or delegate mode) |
-| `engram-hermes` | [![PyPI](https://img.shields.io/pypi/v/engram-hermes)](https://pypi.org/project/engram-hermes/) | Python MemoryProvider for Hermes Agent |
-| `@engram/plugin-claude-code` | (installed via `engram connectors install`) | Native Claude Code plugin — hooks, skills, MCP |
-| `@engram/plugin-codex` | (installed via `engram connectors install`) | Native Codex CLI plugin — hooks, skills, MCP |
+| `@remnic/core` | [![npm](https://img.shields.io/npm/v/@remnic/core)](https://www.npmjs.com/package/@remnic/core) | Framework-agnostic engine — orchestrator, storage, search, extraction, graph, trust zones |
+| `@remnic/server` | [![npm](https://img.shields.io/npm/v/@remnic/server)](https://www.npmjs.com/package/@remnic/server) | Standalone HTTP/MCP server with multi-token auth. Run as daemon via launchd/systemd |
+| `@remnic/cli` | [![npm](https://img.shields.io/npm/v/@remnic/cli)](https://www.npmjs.com/package/@remnic/cli) | CLI binary — memory management, daemon lifecycle, connectors, tokens, spaces, benchmarks |
+| `@remnic/hermes-provider` | [![npm](https://img.shields.io/npm/v/@remnic/hermes-provider)](https://www.npmjs.com/package/@remnic/hermes-provider) | TypeScript HTTP client for remote Remnic instances |
+| `@remnic/bench` | (private) | Latency ladder benchmarks with CI regression gates |
+| `@remnic/plugin-openclaw` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-openclaw)](https://www.npmjs.com/package/@remnic/plugin-openclaw) | OpenClaw adapter — thin bridge (embedded or delegate mode) |
+| `remnic-hermes` | [![PyPI](https://img.shields.io/pypi/v/remnic-hermes)](https://pypi.org/project/remnic-hermes/) | Python MemoryProvider for Hermes Agent |
+| `@remnic/plugin-claude-code` | (installed via `remnic connectors install`) | Native Claude Code plugin — hooks, skills, MCP |
+| `@remnic/plugin-codex` | (installed via `remnic connectors install`) | Native Codex CLI plugin — hooks, skills, MCP |
 
-The `@joshuaswarren/openclaw-engram` npm package is **deprecated** — use `openclaw-engram` (for OpenClaw) or the `@engram/*` packages (for standalone/multi-platform use).
+The old `@joshuaswarren/openclaw-engram` package is **deprecated**. Use `@remnic/plugin-openclaw` for OpenClaw installs and `@remnic/*` for standalone or multi-platform use.
 
-## Why Engram?
+## Why Remnic?
 
 ### Your data stays yours
 
@@ -332,7 +334,7 @@ OpenClaw's built-in memory is basic — it works for getting started, but lacks 
 
 ### Smart recall, not keyword search
 
-Engram uses hybrid search (BM25 + vector + reranking via [QMD](https://github.com/tobilu/qmd)) to find semantically relevant memories. It doesn't just match keywords — it understands what you're working on and surfaces the right context.
+Remnic uses hybrid search (BM25 + vector + reranking via [QMD](https://github.com/tobilu/qmd)) to find semantically relevant memories. It doesn't just match keywords — it understands what you're working on and surfaces the right context.
 
 ### Flexible LLM routing — OpenAI, local, or gateway model chain
 
@@ -680,7 +682,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Enable All Features](docs/enable-all-v8.md) — Full-feature config profile
 - [Migration Guide](docs/guides/migrations.md) — Upgrading from older versions
 - [Platform Migration Guide](docs/guides/platform-migration.md) — Migrating to the monorepo architecture (v9.1.36+)
-- [Hermes Setup](docs/integration/hermes-setup.md) — HTTP client for remote Engram instances
+- [Hermes Setup](docs/integration/hermes-setup.md) — HTTP client for remote Remnic instances
 - [Deployment Topologies](docs/integration/deployment-topologies.md) — Localhost, LAN, remote, containerized, standalone
 
 ## Contributing

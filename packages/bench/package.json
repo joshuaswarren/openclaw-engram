@@ -1,8 +1,8 @@
 {
-  "name": "@engram/bench",
-  "version": "0.1.0",
+  "name": "@remnic/bench",
+  "version": "1.0.0",
   "private": true,
-  "description": "Retrieval latency ladder benchmarks + CI regression gates for @engram/core",
+  "description": "Retrieval latency ladder benchmarks + CI regression gates for @remnic/core",
   "type": "module",
   "main": "src/index.ts",
   "types": "src/types.ts",
@@ -11,7 +11,7 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@engram/core": "workspace:*"
+    "@remnic/core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

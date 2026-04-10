@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/cue-anchors.js";
+export * from "../packages/remnic-core/src/cue-anchors.js";

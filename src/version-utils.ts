@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/version-utils.js";
+export * from "../packages/remnic-core/src/version-utils.js";

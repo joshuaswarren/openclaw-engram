@@ -10,21 +10,21 @@ const PACKAGES_DIR = path.join(ROOT, "packages");
 
 // Expected packages after the monorepo migration
 const EXPECTED_PACKAGES = [
-  { dir: "engram-core", name: "@engram/core" },
-  { dir: "engram-server", name: "@engram/server" },
-  { dir: "engram-cli", name: "@engram/cli" },
-  { dir: "plugin-openclaw", name: "openclaw-engram" },
-  { dir: "plugin-claude-code", name: "@engram/plugin-claude-code" },
-  { dir: "plugin-codex", name: "@engram/plugin-codex" },
-  { dir: "connector-replit", name: "@engram/replit" },
-  { dir: "bench", name: "@engram/bench" },
+  { dir: "remnic-core", name: "@remnic/core" },
+  { dir: "remnic-server", name: "@remnic/server" },
+  { dir: "remnic-cli", name: "@remnic/cli" },
+  { dir: "plugin-openclaw", name: "@remnic/plugin-openclaw" },
+  { dir: "plugin-claude-code", name: "@remnic/plugin-claude-code" },
+  { dir: "plugin-codex", name: "@remnic/plugin-codex" },
+  { dir: "connector-replit", name: "@remnic/replit" },
+  { dir: "bench", name: "@remnic/bench" },
 ];
 
 // Packages that must exist NOW (renamed to target names)
 const REQUIRED_NOW = [
-  "engram-core",
-  "engram-server",
-  "engram-cli",
+  "remnic-core",
+  "remnic-server",
+  "remnic-cli",
 ];
 
 test("packages/ directory exists", () => {
@@ -93,7 +93,7 @@ test("no circular dependencies between packages", () => {
 
     for (const dep of Object.keys(allDeps)) {
       // Only track internal workspace deps
-      if (dep.startsWith("@engram/") || dep === "openclaw-engram") {
+      if (dep.startsWith("@remnic/")) {
         graph.get(pkg.name)!.add(dep);
       }
     }
@@ -136,22 +136,14 @@ test("root package.json lists workspaces", () => {
   );
 });
 
-test("plugin-openclaw publishes as 'openclaw-engram' for backward compat", () => {
-  // Check both current and target directory names
-  const candidates = ["plugin-openclaw", "adapter-openclaw"];
-  for (const dir of candidates) {
-    const pkgJsonPath = path.join(PACKAGES_DIR, dir, "package.json");
-    if (!fs.existsSync(pkgJsonPath)) continue;
+test("plugin-openclaw publishes under the Remnic scope", () => {
+  const pkgJsonPath = path.join(PACKAGES_DIR, "plugin-openclaw", "package.json");
+  assert.ok(fs.existsSync(pkgJsonPath), "plugin-openclaw/package.json must exist");
 
-    const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
-    // During migration, the name might still be @engram/adapter-openclaw
-    // After migration, it must be openclaw-engram
-    // This test documents the requirement
-    assert.ok(
-      pkg.name === "openclaw-engram" || pkg.name === "@engram/adapter-openclaw",
-      `OpenClaw plugin package must be named "openclaw-engram" (got "${pkg.name}")`,
-    );
-    return;
-  }
-  // If neither directory exists yet, that's ok during early phases
+  const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf-8"));
+  assert.equal(
+    pkg.name,
+    "@remnic/plugin-openclaw",
+    `OpenClaw plugin package must be named "@remnic/plugin-openclaw" (got "${pkg.name}")`,
+  );
 });

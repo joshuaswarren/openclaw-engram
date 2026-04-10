@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/utility-telemetry.js";
+export * from "../packages/remnic-core/src/utility-telemetry.js";

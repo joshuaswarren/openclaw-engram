@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/objective-state.js";
+export * from "../packages/remnic-core/src/objective-state.js";

@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/release-changelog.js";
+export * from "../packages/remnic-core/src/release-changelog.js";

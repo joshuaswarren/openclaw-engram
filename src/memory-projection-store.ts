@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/memory-projection-store.js";
+export * from "../packages/remnic-core/src/memory-projection-store.js";

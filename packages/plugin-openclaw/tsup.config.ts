@@ -9,7 +9,7 @@ export default defineConfig({
   clean: true,
   external: [
     "openclaw",
-    "@engram/core",
+    "@remnic/core",
     "@lancedb/lancedb",
     "meilisearch",
     "@orama/orama",

@@ -1,8 +1,9 @@
 {
-  "name": "@joshuaswarren/openclaw-engram",
-  "version": "9.2.7",
+  "name": "remnic-workspace",
+  "version": "1.0.0",
+  "private": true,
   "type": "module",
-  "description": "DEPRECATED: Use @engram/core, @engram/server, @engram/cli instead. Universal memory layer for AI agents — LLM-powered extraction, markdown storage, hybrid search.",
+  "description": "Workspace root for the Remnic monorepo.",
   "keywords": [
     "openclaw",
     "memory",
@@ -24,11 +25,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/joshuaswarren/openclaw-engram.git"
+    "url": "https://github.com/joshuaswarren/remnic.git"
   },
-  "homepage": "https://github.com/joshuaswarren/openclaw-engram#readme",
+  "homepage": "https://github.com/joshuaswarren/remnic#readme",
   "bugs": {
-    "url": "https://github.com/joshuaswarren/openclaw-engram/issues"
+    "url": "https://github.com/joshuaswarren/remnic/issues"
   },
   "author": "Joshua Warren",
   "workspaces": [
@@ -84,7 +85,7 @@
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "check-config-contract": "tsx scripts/validate-config-contract.ts",
-    "test": "tsx --test 'tests/**/*.test.ts' 'packages/engram-core/src/**/*.test.ts'",
+    "test": "tsx --test 'tests/**/*.test.ts' 'packages/remnic-core/src/**/*.test.ts'",
     "eval:ci-gate": "tsx scripts/eval-ci-gate.ts",
     "eval:run": "tsx evals/run.ts",
     "eval:download": "bash evals/scripts/download-datasets.sh",
@@ -95,10 +96,6 @@
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
     "prepack": "npm run build"
-  },
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

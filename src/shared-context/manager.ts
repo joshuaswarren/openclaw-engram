@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/shared-context/manager.js";
+export * from "../../packages/remnic-core/src/shared-context/manager.js";

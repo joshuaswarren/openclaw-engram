@@ -33,7 +33,7 @@ The merged recommendation is a **two-speed roadmap**:
   - harden Engram's current HTTP access surface
   - ship an official Hermes provider against the existing OpenClaw-hosted Engram API
 - **Speed lane 2: strategic platform**
-  - extract `@engram/core`
+  - extract `@remnic/core`
   - preserve OpenClaw parity through a thin adapter
   - ship a standalone server and `engram` CLI/daemon/TUI
   - add the product layers that beat ByteRover in real workflows
@@ -191,7 +191,7 @@ The architecture refactor succeeds only if the OpenClaw adapter preserves curren
 
 ### Decision 4: Adapters must stay thin
 
-Core memory logic belongs in `@engram/core`. Host packages should map lifecycle, config, tools, and transport, but not duplicate memory logic.
+Core memory logic belongs in `@remnic/core`. Host packages should map lifecycle, config, tools, and transport, but not duplicate memory logic.
 
 ### Decision 5: Fast interoperability comes before full platform polish
 
@@ -209,10 +209,10 @@ This makes Engram portable and stable.
 
 - HTTP API hardening
 - Hermes provider over current API
-- `@engram/core`
-- `@engram/adapter-openclaw`
-- `@engram/server`
-- `@engram/cli`
+- `@remnic/core`
+- `@remnic/adapter-openclaw`
+- `@remnic/server`
+- `@remnic/cli`
 - host interface and storage abstractions
 
 ### Layer B: Developer Product
@@ -244,19 +244,19 @@ This makes Engram clearly stronger than ByteRover and more defensible long-term.
 
 | Package / component | Purpose |
 |---|---|
-| `@engram/core` | Portable memory engine containing orchestration, storage, search, extraction, graph, governance, trust, and recall assembly |
-| `@engram/adapter-openclaw` | Thin adapter preserving current OpenClaw behavior |
-| `@engram/server` | Standalone HTTP/MCP service wrapping `@engram/core` |
-| `@engram/cli` | First-class `engram` binary, daemon control, user-facing commands, TUI launcher |
+| `@remnic/core` | Portable memory engine containing orchestration, storage, search, extraction, graph, governance, trust, and recall assembly |
+| `@remnic/adapter-openclaw` | Thin adapter preserving current OpenClaw behavior |
+| `@remnic/server` | Standalone HTTP/MCP service wrapping `@remnic/core` |
+| `@remnic/cli` | First-class `engram` binary, daemon control, user-facing commands, TUI launcher |
 | Hermes HTTP provider | Short-term provider that talks to the existing OpenClaw-hosted Engram API |
 | Hermes embedded adapter | Long-term provider that runs against standalone `engram-server` or a managed local subprocess |
-| `@engram/adapter-replit` | Replit-focused adapter with degraded optional capabilities where required |
+| `@remnic/adapter-replit` | Replit-focused adapter with degraded optional capabilities where required |
 | Connector registry | Metadata-driven connector install/doctor/remove system for coding tools |
 | Workspace projection system | Generates `.engram/context-tree` and related views from canonical Engram memory |
 
 ### 10.2 Core responsibilities
 
-`@engram/core` should own:
+`@remnic/core` should own:
 
 - recall pipeline
 - extraction and consolidation
@@ -288,7 +288,7 @@ Adapters should own:
 
 #### OpenClaw
 
-OpenClaw remains a first-class host. The goal is to move OpenClaw-specific behavior into `@engram/adapter-openclaw` without asking existing users to relearn Engram.
+OpenClaw remains a first-class host. The goal is to move OpenClaw-specific behavior into `@remnic/adapter-openclaw` without asking existing users to relearn Engram.
 
 #### Hermes, short-term
 
@@ -296,7 +296,7 @@ The fastest Hermes path is an **HTTP provider** that talks to the current OpenCl
 
 #### Hermes, long-term
 
-Once `@engram/core` and `@engram/server` exist, Hermes should also support a stronger path that runs against standalone Engram. That may be either:
+Once `@remnic/core` and `@remnic/server` exist, Hermes should also support a stronger path that runs against standalone Engram. That may be either:
 
 - a local `engram-server` the user manages
 - or a subprocess lifecycle managed by the Hermes provider
@@ -333,7 +333,7 @@ This separation is important because it lets Engram stay deeper than ByteRover i
 | Milestone | Outcome |
 |---|---|
 | M0 | Harden current external access and ship official Hermes provider over the existing OpenClaw-hosted API |
-| M1 | Extract `@engram/core` and preserve full OpenClaw parity through a thin adapter |
+| M1 | Extract `@remnic/core` and preserve full OpenClaw parity through a thin adapter |
 | M2 | Ship standalone `engram-server` and `engram` CLI/daemon foundation |
 | M3 | Make memory repo-visible with the workspace tree and expandable TUI |
 | M4 | Ship onboarding, curation, provenance, dedupe, and diff-aware sync |
@@ -406,16 +406,16 @@ The milestones are ordered by strategic dependency, not only feature attractiven
 
 **In scope:**
 
-1. Create `@engram/core` with framework-agnostic logic (orchestrator, storage, search, extraction, graph, transcript, namespace, trust, governance, recall, quality)
+1. Create `@remnic/core` with framework-agnostic logic (orchestrator, storage, search, extraction, graph, transcript, namespace, trust, governance, recall, quality)
 2. Define stable host contracts (memory dir, workspace dir, model/provider config, session/principal, logging, host-specific overrides)
 3. Replace hidden singleton coupling with explicit instance lifecycle
-4. Build `@engram/adapter-openclaw` (hook/tool/CLI/SDK registration, config, logging bridge)
+4. Build `@remnic/adapter-openclaw` (hook/tool/CLI/SDK registration, config, logging bridge)
 5. Parity testing via snapshot and behavior tests
 
 **Exit criteria:**
 
 - existing OpenClaw use cases still work through the adapter
-- `@engram/core` can be imported independently
+- `@remnic/core` can be imported independently
 - no direct OpenClaw dependency in core
 - stable base for standalone packaging
 
@@ -667,7 +667,7 @@ The milestones are ordered by strategic dependency, not only feature attractiven
 
 ## 17. Open Questions
 
-1. Should `@engram/core` be published as a public package immediately, or should it begin as an internal package until the adapter boundaries settle?
+1. Should `@remnic/core` be published as a public package immediately, or should it begin as an internal package until the adapter boundaries settle?
 
 2. What is the minimum viable standalone install surface for the first public release: npm only, or npm plus Homebrew and Docker?
 

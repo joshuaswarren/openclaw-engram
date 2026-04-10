@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/search/noop-backend.js";
+export * from "../../packages/remnic-core/src/search/noop-backend.js";

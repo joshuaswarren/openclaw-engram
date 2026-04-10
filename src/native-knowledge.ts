@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/native-knowledge.js";
+export * from "../packages/remnic-core/src/native-knowledge.js";

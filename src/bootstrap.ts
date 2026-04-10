@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/bootstrap.js";
+export * from "../packages/remnic-core/src/bootstrap.js";

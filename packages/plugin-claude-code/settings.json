@@ -1,8 +1,8 @@
 {
   "permissions": {
     "mcp": {
-      "engram": {
-        "allow": ["engram_*"]
+      "remnic": {
+        "allow": ["remnic_*", "engram_*"]
       }
     }
   }

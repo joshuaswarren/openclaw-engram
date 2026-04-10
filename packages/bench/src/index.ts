@@ -1,5 +1,5 @@
 /**
- * @engram/bench — barrel re-export
+ * @remnic/bench — barrel re-export
  */
 
 export type {

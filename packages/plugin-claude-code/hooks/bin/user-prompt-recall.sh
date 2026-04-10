@@ -1,37 +1,56 @@
 #!/usr/bin/env bash
-# Engram UserPromptSubmit hook for Claude Code.
+# Remnic UserPromptSubmit hook for Claude Code.
 # Recalls per-prompt context using the user's message as query.
 # Skips short prompts (<4 words). Minimal mode, 20s timeout.
 
 set -euo pipefail
 
-ENGRAM_HOST="${ENGRAM_HOST:-127.0.0.1}"
-ENGRAM_PORT="${ENGRAM_PORT:-4318}"
-ENGRAM_URL="http://${ENGRAM_HOST}:${ENGRAM_PORT}/engram/v1/recall"
-TOKEN_FILE="${HOME}/.engram/tokens.json"
+ensure_migrated() {
+  if [ -f "${HOME}/.remnic/.migrated-from-engram" ]; then
+    return 0
+  fi
+  if [ ! -d "${HOME}/.engram" ] && [ ! -f "${HOME}/.config/engram/config.json" ]; then
+    return 0
+  fi
+  if command -v remnic >/dev/null 2>&1; then
+    remnic migrate >/dev/null 2>&1 || true
+  elif command -v engram >/dev/null 2>&1; then
+    engram migrate >/dev/null 2>&1 || true
+  fi
+}
 
-LOG="${HOME}/.engram/logs/engram-user-prompt-recall.log"
+ensure_migrated
+
+REMNIC_HOST="${REMNIC_HOST:-${ENGRAM_HOST:-127.0.0.1}}"
+REMNIC_PORT="${REMNIC_PORT:-${ENGRAM_PORT:-4318}}"
+REMNIC_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/recall"
+
+LOG="${HOME}/.remnic/logs/remnic-user-prompt-recall.log"
 mkdir -p "$(dirname "$LOG")"
 log() { echo "$(date '+%F %T') [user-prompt] $*" >> "$LOG"; }
 
 # Read token
-ENGRAM_TOKEN=""
-if [ -f "$TOKEN_FILE" ]; then
-  ENGRAM_TOKEN="$(node -e "
-    const store = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
+REMNIC_TOKEN=""
+for TOKEN_FILE in "${HOME}/.remnic/tokens.json" "${HOME}/.engram/tokens.json"; do
+  [ ! -f "$TOKEN_FILE" ] && continue
+  REMNIC_TOKEN="$(node -e "
+    const fs = require('fs');
+    const tokenFile = process.argv[1];
+    const store = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
     const tokens = store.tokens || [];
     const cc = tokens.find(t => t.connector === 'claude-code');
     const oc = tokens.find(t => t.connector === 'openclaw');
     let tok = (cc && cc.token) || (oc && oc.token) || '';
     if (!tok) { tok = store['claude-code'] || store['openclaw'] || ''; }
     process.stdout.write(tok);
-  " 2>/dev/null || echo "")"
-fi
-[ -z "$ENGRAM_TOKEN" ] && ENGRAM_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"
+  " "$TOKEN_FILE" 2>/dev/null || echo "")"
+  [ -n "$REMNIC_TOKEN" ] && break
+done
+[ -z "$REMNIC_TOKEN" ] && REMNIC_TOKEN="${OPENCLAW_REMNIC_ACCESS_TOKEN:-${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}}"
 
 INPUT="$(cat)"
 
-if [ -z "$ENGRAM_TOKEN" ]; then
+if [ -z "$REMNIC_TOKEN" ]; then
   echo '{"continue":true}'
   exit 0
 fi
@@ -58,8 +77,8 @@ REQUEST_BODY="$(node -e "process.stdout.write(JSON.stringify({
 [ -z "$REQUEST_BODY" ] && echo '{"continue":true}' && exit 0
 
 RAW="$(curl -s -w "\n%{http_code}" --max-time 20 \
-  -X POST "$ENGRAM_URL" \
-  -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
+  -X POST "$REMNIC_URL" \
+  -H "Authorization: Bearer ${REMNIC_TOKEN}" \
   -H "Content-Type: application/json" \
   -H "X-Engram-Client-Id: claude-code" \
   -d "$REQUEST_BODY" 2>/dev/null)"
@@ -84,7 +103,7 @@ node -e "
       continue: true,
       hookSpecificOutput: {
         hookEventName: 'UserPromptSubmit',
-        additionalContext: '<engram-memory count=\"' + count + '\">\n' + ctx + '\n</engram-memory>'
+        additionalContext: '<remnic-memory count=\"' + count + '\">\n' + ctx + '\n</remnic-memory>'
       }
     }));
   }

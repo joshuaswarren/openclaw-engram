@@ -1,6 +1,6 @@
 # Deployment Topologies
 
-Engram's HTTP access server supports several deployment topologies depending on your environment and use case.
+Remnic's HTTP access server supports several deployment topologies depending on your environment and use case.
 
 ## 1. Localhost (Default)
 
@@ -14,19 +14,19 @@ All endpoints are available at `http://127.0.0.1:4318/engram/v1/`.
 
 ## 2. LAN (Network-Accessible)
 
-Run Engram on a dedicated machine accessible from your local network (e.g., a Mac Mini or home server).
+Run Remnic on a dedicated machine accessible from your local network (e.g., a Mac Mini or home server).
 
 ```bash
 openclaw engram access http-serve --host 0.0.0.0 --port 4318 --token "$TOKEN"
 ```
 
-Other machines on the LAN can reach Engram at `http://<machine-ip>:4318/engram/v1/`.
+Other machines on the LAN can reach Remnic at `http://<machine-ip>:4318/engram/v1/`.
 
 **Security note:** Binding to `0.0.0.0` exposes the server to all network interfaces. Use a firewall or VPN to restrict access. The bearer token is required for all requests.
 
 ## 3. Remote (Self-Hosted)
 
-Run Engram on a remote server or VPS. Use a reverse proxy (nginx, Caddy) with TLS termination.
+Run Remnic on a remote server or VPS. Use a reverse proxy (nginx, Caddy) with TLS termination.
 
 ```nginx
 server {
@@ -45,7 +45,7 @@ server {
 }
 ```
 
-Start Engram binding to localhost behind the proxy:
+Start Remnic binding to localhost behind the proxy:
 
 ```bash
 openclaw engram access http-serve --host 127.0.0.1 --port 4318 --token "$TOKEN"
@@ -53,40 +53,40 @@ openclaw engram access http-serve --host 127.0.0.1 --port 4318 --token "$TOKEN"
 
 ## 4. Standalone (No OpenClaw)
 
-Run Engram as a standalone CLI/HTTP server using the `engram` binary. Requires [tsx](https://github.com/privatenumber/tsx) on PATH. This topology is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
+Run Remnic as a standalone CLI/HTTP server using the `remnic` binary. Requires [tsx](https://github.com/privatenumber/tsx) on PATH. This topology is useful for CI/CD pipelines, scripted memory operations, or environments where OpenClaw is not available.
 
-> **Build from source required:** The `engram` CLI binary (`bin/engram.cjs`) auto-locates `tsx` from local `node_modules`, falling back to a global `tsx` if needed. The `daemon start` command launches the server via a monorepo-relative path that only exists when built from source.
+> **Build from source required:** The canonical `remnic` CLI auto-locates `tsx` from local `node_modules`, falling back to a global `tsx` if needed. The legacy `engram` binary remains as a forwarder. The `daemon start` command launches the server via a monorepo-relative path that only exists when built from source.
 
 ```bash
 # Prerequisite
 npm install -g tsx
 
 # Build from source (required for daemon start)
-git clone https://github.com/joshuaswarren/openclaw-engram.git
-cd openclaw-engram && npm ci && npm run build
-cd packages/cli && npm link       # Makes `engram` available on PATH
+git clone https://github.com/joshuaswarren/remnic.git
+cd remnic && npm ci && npm run build
+cd packages/remnic-cli && npm link # Makes `remnic` available on PATH
 cd ../..
 
 # Initialize configuration
-engram init
+remnic init
 
 # Set required environment variables
 export OPENAI_API_KEY=sk-...
-export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
+export REMNIC_AUTH_TOKEN=$(openssl rand -hex 32)
 
 # Start the server
-engram daemon start
-engram status    # verify it's running
+remnic daemon start
+remnic status    # verify it's running
 ```
 
-Connect from any HTTP client or use `@engram/hermes-provider`:
+Connect from any HTTP client or use `@remnic/hermes-provider`:
 
 ```typescript
-import { HermesClient } from "@engram/hermes-provider";
+import { HermesClient } from "@remnic/hermes-provider";
 
 const client = new HermesClient({
   baseUrl: "http://127.0.0.1:4318",
-  authToken: process.env.ENGRAM_AUTH_TOKEN,
+  authToken: process.env.REMNIC_AUTH_TOKEN,
 });
 ```
 
@@ -96,10 +96,10 @@ For MCP clients, point at `http://127.0.0.1:4318/mcp`:
 // Claude Code config (~/.claude.json)
 {
   "mcpServers": {
-    "engram": {
+    "remnic": {
       "url": "http://localhost:4318/mcp",
       "headers": {
-        "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}"
+        "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}"
       }
     }
   }
@@ -110,7 +110,7 @@ The standalone topology supports all the same endpoints and MCP tools as the Ope
 
 ## 5. Containerized (Docker)
 
-Run Engram in Docker, either standalone or as a sidecar alongside other services.
+Run Remnic in Docker, either standalone or as a sidecar alongside other services.
 
 ```yaml
 # docker-compose.yml
@@ -133,8 +133,8 @@ services:
 
 | Port | Use Case |
 |------|----------|
-| 4318 | Default Engram HTTP port (configurable via `--port`) |
-| 18789 | OpenClaw gateway (Engram plugin mode) |
+| 4318 | Default Remnic HTTP port (configurable via `--port`) |
+| 18789 | OpenClaw gateway (Remnic plugin mode) |
 
 ## Authentication
 

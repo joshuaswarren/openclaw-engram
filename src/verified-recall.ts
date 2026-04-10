@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/verified-recall.js";
+export * from "../packages/remnic-core/src/verified-recall.js";

@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/transfer/sqlite-schema.js";
+export * from "../../packages/remnic-core/src/transfer/sqlite-schema.js";

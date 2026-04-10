@@ -10,7 +10,7 @@
 
 Rename Engram to **Remnic** — **R**ecall **E**ngine: **M**emory **N**etwork
 for **I**ntelligent **C**ollaboration — before we cut the first 1.0.0 npm and
-PyPI publish. Because the `@engram/*` workspace packages and `engram-hermes`
+PyPI publish. Because the `@remnic/*` workspace packages and `remnic-hermes`
 were never actually published, they rename for free. The only install base
 that needs a migration path is `@joshuaswarren/openclaw-engram@9.2.7`.
 
@@ -79,7 +79,7 @@ thirty other things, the recommendation dies in the search bar.
 ### 4. The timing is free
 
 Phase 9 merged the monorepo and the publish config, but `npm publish` never
-ran. `@engram/core`, `@engram/server`, `@engram/cli`, and `engram-hermes`
+ran. `@remnic/core`, `@remnic/server`, `@remnic/cli`, and `remnic-hermes`
 are all 404 on their respective registries right now. We can rename every
 workspace package *before first publish* and skip the shim work entirely
 for them. Only one package — `@joshuaswarren/openclaw-engram@9.2.7` —
@@ -97,14 +97,14 @@ handful of early adopters. Tomorrow is worse.
 | Artifact | State |
 |---|---|
 | Phase 9 code (monorepo + publish config) | ✅ Merged to `main` (PRs #348–352) |
-| `@engram/core`, `@engram/server`, `@engram/cli`, etc. | ❌ Never published — 404 on npm |
-| `engram-hermes` on PyPI | ❌ Does not exist |
+| `@remnic/core`, `@remnic/server`, `@remnic/cli`, etc. | ❌ Never published — 404 on npm |
+| `remnic-hermes` on PyPI | ❌ Does not exist |
 | `openclaw-engram` on npm (unscoped) | ⚠️ Owned by a different, unrelated project |
 | `@joshuaswarren/openclaw-engram` | ✅ Published at 9.2.7 — **the only live artifact** |
 | `@remnic/*` npm scope | ✅ Claimed (empty) |
 | `remnic` on PyPI | ✅ Claimed at 0.0.1 placeholder |
 | `remnic.ai` | ✅ Live landing page |
-| GitHub repo | `joshuaswarren/openclaw-engram` → rename to `joshuaswarren/remnic` |
+| GitHub repo | ✅ Renamed to `joshuaswarren/remnic` |
 
 **Install base to migrate: one package.** Everything else is free namespace.
 
@@ -117,17 +117,17 @@ handful of early adopters. Tomorrow is worse.
 | Product | Engram | Remnic |
 | Backronym | — | Recall Engine: Memory Network for Intelligent Collaboration |
 | GitHub repo | `joshuaswarren/openclaw-engram` | `joshuaswarren/remnic` |
-| npm scope | `@engram/*` (unpublished) | `@remnic/*` |
-| `packages/engram-core` | `@engram/core` | `@remnic/core` |
-| `packages/engram-server` | `@engram/server` | `@remnic/server` |
-| `packages/engram-cli` | `@engram/cli` | `@remnic/cli` |
+| npm scope | `@remnic/*` (unpublished) | `@remnic/*` |
+| `packages/remnic-core` | `@remnic/core` | `@remnic/core` |
+| `packages/remnic-server` | `@remnic/server` | `@remnic/server` |
+| `packages/remnic-cli` | `@remnic/cli` | `@remnic/cli` |
 | `packages/plugin-openclaw` | `openclaw-engram` | `@remnic/plugin-openclaw` |
-| `packages/plugin-claude-code` | `@engram/plugin-claude-code` | `@remnic/plugin-claude-code` |
-| `packages/plugin-codex` | `@engram/plugin-codex` | `@remnic/plugin-codex` |
-| `packages/plugin-hermes` (Python) | `engram-hermes` (unpublished) | `remnic-hermes` |
-| `packages/connector-replit` | `@engram/replit` | `@remnic/replit` |
-| `packages/hermes-provider` | `@engram/hermes-provider` | `@remnic/hermes-provider` |
-| `packages/bench` | `@engram/bench` | `@remnic/bench` |
+| `packages/plugin-claude-code` | `@remnic/plugin-claude-code` | `@remnic/plugin-claude-code` |
+| `packages/plugin-codex` | `@remnic/plugin-codex` | `@remnic/plugin-codex` |
+| `packages/plugin-hermes` (Python) | `remnic-hermes` (unpublished) | `remnic-hermes` |
+| `packages/connector-replit` | `@remnic/replit` | `@remnic/replit` |
+| `packages/hermes-provider` | `@remnic/hermes-provider` | `@remnic/hermes-provider` |
+| `packages/bench` | `@remnic/bench` | `@remnic/bench` |
 | CLI binary | `engram` | `remnic` (+ `engram` forwarder through v1.x, removed in v2.0.0) |
 | Config dir | `~/.engram/` | `~/.remnic/` (auto-migrated) |
 | Log dir | `~/.engram/logs/` | `~/.remnic/logs/` |
@@ -247,7 +247,7 @@ previous state.
 
 ### Workspace packages — fresh publish
 All `@remnic/*` packages ship as 1.0.0 to npm. No shim work required because
-`@engram/*` never existed on the registry.
+`@remnic/*` never existed on the registry.
 
 ### PyPI
 - `remnic-hermes@1.0.0` — real package (Python MemoryProvider for Hermes)
@@ -274,8 +274,9 @@ The shim stays on the registry **forever**. Never unpublished. Just frozen
 after v2.0.0 of the new packages when we drop the dependency fan-in.
 
 ### GitHub repo rename
-`joshuaswarren/openclaw-engram` → `joshuaswarren/remnic`. GitHub auto-redirects
-clone URLs, PR URLs, issue URLs, raw file URLs. Existing clones continue to work.
+The repo is now `joshuaswarren/remnic`. GitHub auto-redirects old clone URLs,
+PR URLs, issue URLs, and raw file URLs. Existing clones continue to work, but
+all canonical links should now use the new repo path.
 
 ---
 

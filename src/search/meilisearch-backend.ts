@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/search/meilisearch-backend.js";
+export * from "../../packages/remnic-core/src/search/meilisearch-backend.js";

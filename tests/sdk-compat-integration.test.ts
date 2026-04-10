@@ -22,10 +22,35 @@ const ACCESS_SVC_KEY = "__openclawEngramAccessService";
 const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
 const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
 const INIT_PROMISE_KEY = "__openclawEngramInitPromise";
+const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
+const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
 
 // ============================================================================
 // Helpers
 // ============================================================================
+
+async function awaitPendingMigration() {
+  const pending = (globalThis as any)[MIGRATION_PROMISE_KEY];
+  if (pending && typeof pending.then === "function") {
+    try {
+      await pending;
+    } catch {}
+  }
+}
+
+function disableRegisterMigrationForTest(): string | undefined {
+  const previous = process.env[DISABLE_REGISTER_MIGRATION_ENV];
+  process.env[DISABLE_REGISTER_MIGRATION_ENV] = "1";
+  return previous;
+}
+
+function restoreRegisterMigrationEnv(previous: string | undefined) {
+  if (previous === undefined) {
+    delete process.env[DISABLE_REGISTER_MIGRATION_ENV];
+    return;
+  }
+  process.env[DISABLE_REGISTER_MIGRATION_ENV] = previous;
+}
 
 function resetGlobals() {
   for (const key of [
@@ -36,6 +61,7 @@ function resetGlobals() {
     ACCESS_HTTP_KEY,
     SERVICE_STARTED_KEY,
     INIT_PROMISE_KEY,
+    MIGRATION_PROMISE_KEY,
   ]) {
     delete (globalThis as any)[key];
   }
@@ -120,6 +146,7 @@ function buildLegacySdkApi(label: string): MockApi {
 // ============================================================================
 test("new SDK api gets all new hooks + memory section", async () => {
   resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
   try {
     const { default: plugin } = await import("../src/index.js");
 
@@ -196,6 +223,8 @@ test("new SDK api gets all new hooks + memory section", async () => {
       "service should be registered",
     );
   } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     resetGlobals();
   }
 });
@@ -205,6 +234,7 @@ test("new SDK api gets all new hooks + memory section", async () => {
 // ============================================================================
 test("legacy SDK api gets legacy hooks only", async () => {
   resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
   try {
     const { default: plugin } = await import("../src/index.js");
 
@@ -279,6 +309,8 @@ test("legacy SDK api gets legacy hooks only", async () => {
       "service should still be registered on legacy SDK",
     );
   } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     resetGlobals();
   }
 });
@@ -290,7 +322,7 @@ test("tryDefinePluginEntry: fallback produces correct plugin shape when SDK modu
   const mod = await import("../src/index.js");
   const plugin = mod.default;
   assert.equal(plugin.id, "openclaw-engram");
-  assert.equal(plugin.name, "Engram (Local Memory)");
+  assert.equal(plugin.name, "Remnic (Local Memory)");
   assert.equal(plugin.kind, "memory");
   assert.equal(typeof plugin.register, "function");
 });
@@ -300,6 +332,7 @@ test("tryDefinePluginEntry: fallback produces correct plugin shape when SDK modu
 // ============================================================================
 test("setup-only mode skips all registration", async () => {
   resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
   try {
     const { default: plugin } = await import("../src/index.js");
 
@@ -334,6 +367,8 @@ test("setup-only mode skips all registration", async () => {
       "registerMemoryPromptSection should NOT be called in setup-only mode",
     );
   } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
     resetGlobals();
   }
 });

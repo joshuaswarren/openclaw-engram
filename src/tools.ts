@@ -2338,7 +2338,7 @@ Best for:
     {
       name: "memory_governance_run",
       label: "Run Memory Governance",
-      description: `Run Engram memory governance in a bounded shadow/apply pass.
+      description: `Run Remnic memory governance in a bounded shadow/apply pass.
 
 Cost: Low to medium (local file scan only)
 Speed: Fast for bounded windows
@@ -3038,7 +3038,7 @@ Best for:
   // ── Profiling Report ──────────────────────────────────────────────────
   api.registerTool(
     {
-      name: "engram_profiling_report",
+      name: "remnic_profiling_report",
       label: "Profiling Report",
       description: `Returns timing and performance data for Engram's recall and extraction pipelines.
 
@@ -3086,6 +3086,85 @@ Returns: Performance trace data with timing breakdown`,
         lines.push("");
 
         // Stats summary — stats is { byKind: Record<string, …>, bySpan: Record<string, …> }
+        type BucketEntry = { count: number; avgMs: number; p50Ms: number; p95Ms: number; maxMs: number };
+        const allBuckets: Array<[string, Record<string, BucketEntry>]> = [
+          ["byKind", stats.byKind],
+          ["bySpan", stats.bySpan],
+        ];
+        const hasStats = allBuckets.some(([, entries]) => Object.keys(entries).length > 0);
+        if (hasStats) {
+          lines.push("Aggregate Stats (all retained traces):");
+          for (const [bucket, entries] of allBuckets) {
+            for (const [key, s] of Object.entries(entries)) {
+              lines.push(
+                `  ${bucket}/${key}: avg=${s.avgMs}ms p50=${s.p50Ms}ms p95=${s.p95Ms}ms max=${s.maxMs}ms (n=${s.count})`,
+              );
+            }
+          }
+          lines.push("");
+        }
+
+        if (bottleneck) {
+          lines.push(`Bottleneck: ${bottleneck}`);
+          lines.push("");
+        }
+
+        if (traces.length === 0) {
+          lines.push("No traces recorded yet. Trigger a recall or extraction to see timing data.");
+        } else {
+          for (const trace of traces) {
+            lines.push(formatProfileTraceAscii(trace));
+            lines.push("");
+          }
+        }
+
+        return toolResult(lines.join("\n"));
+      },
+    },
+    { name: "remnic_profiling_report" },
+  );
+  api.registerTool(
+    {
+      name: "engram_profiling_report",
+      label: "Profiling Report",
+      description: `Legacy alias for remnic_profiling_report.`,
+      parameters: Type.Object({
+        format: Type.Optional(
+          Type.String({
+            description: 'Output format: "ascii" for human-readable or "json" for structured data',
+          }),
+        ),
+        limit: Type.Optional(
+          Type.Number({
+            description: "Number of recent traces to include (1-20, default 5)",
+            minimum: 1,
+            maximum: 20,
+          }),
+        ),
+      }),
+      async execute(_toolCallId, params) {
+        const profiler = orchestrator.profiler;
+        if (!profiler.isEnabled) {
+          return toolResult(
+            "Profiling is disabled. Set profilingEnabled: true in your plugin config to enable.",
+          );
+        }
+
+        const format = asNonEmptyString(params.format) ?? "ascii";
+        const limit = Math.min(typeof params.limit === "number" ? params.limit : 5, 20);
+        const traces = profiler.getRecentTraces(limit);
+        const stats = profiler.getStats();
+        const bottleneck = profiler.identifyBottleneck();
+
+        if (format === "json") {
+          return toolResult(JSON.stringify({ traces, stats, bottleneck }, null, 2));
+        }
+
+        const lines: string[] = [];
+        lines.push("Engram Profiling Report");
+        lines.push("=".repeat(60));
+        lines.push("");
+
         type BucketEntry = { count: number; avgMs: number; p50Ms: number; p95Ms: number; maxMs: number };
         const allBuckets: Array<[string, Record<string, BucketEntry>]> = [
           ["byKind", stats.byKind],

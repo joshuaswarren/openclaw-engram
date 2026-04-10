@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/recall-qos.js";
+export * from "../packages/remnic-core/src/recall-qos.js";

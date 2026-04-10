@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/entity-retrieval.js";
+export * from "../packages/remnic-core/src/entity-retrieval.js";

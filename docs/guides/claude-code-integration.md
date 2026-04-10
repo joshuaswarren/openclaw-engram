@@ -240,7 +240,7 @@ additionalContext            additionalContext          cursor advanced
 **Key differences from Claude Code:**
 
 - Three hooks only — no `SessionEnd`. The `Stop` hook detects `"stop_hook_active": false` to identify the final turn and clean up the cursor file then.
-- Default `ENGRAM_HOST` should point to your Engram server (e.g. a Tailscale IP if Codex runs on a different machine than the one hosting the gateway), rather than `127.0.0.1`.
+- Default `REMNIC_HOST` should point to your Remnic server (e.g. a Tailscale IP if Codex runs on a different machine than the one hosting the gateway), rather than `127.0.0.1`.
 - Hook output uses `hookEventName` field in `hookSpecificOutput`: `{ "hookEventName": "SessionStart", "additionalContext": "..." }`.
 
 ### Setup
@@ -318,8 +318,8 @@ tail -f ~/.codex/logs/engram-session-store.log        # Stop store + final flush
 | Variable | Default (Claude Code) | Default (Codex) | Description |
 |---|---|---|---|
 | `OPENCLAW_ENGRAM_ACCESS_TOKEN` | (required) | (required) | Bearer token for Engram REST API |
-| `ENGRAM_HOST` | `127.0.0.1` | your-engram-server | Engram server hostname or IP |
-| `ENGRAM_PORT` | `4318` | `4318` | Engram server port |
+| `REMNIC_HOST` | `127.0.0.1` | your-remnic-server | Remnic server hostname or IP |
+| `REMNIC_PORT` | `4318` | `4318` | Remnic server port |
 
 ## Troubleshooting
 
@@ -333,4 +333,4 @@ tail -f ~/.codex/logs/engram-session-store.log        # Stop store + final flush
 
 **Token not found**: Run `echo $OPENCLAW_ENGRAM_ACCESS_TOKEN` in a new terminal. If empty, the variable isn't being exported from your shell profile. Add `export OPENCLAW_ENGRAM_ACCESS_TOKEN="..."` to `~/.zshrc` (not just `.zprofile` if Claude Code uses a login shell).
 
-**Namespace-aware deployments**: The hook scripts forward the Claude/Codex `session_id` as the `sessionKey` but do not supply a namespace or principal override. On installs that use `principalFromSessionKeyRules` or other namespace routing, observe/recall will use the server's default principal and namespace. To isolate hook sessions into a specific namespace, start the Engram server with a fixed `--principal` flag that matches your desired namespace, or configure `principalFromSessionKeyRules` to match the session key pattern used by Claude Code / Codex.
+**Namespace-aware deployments**: The hook scripts forward the Claude/Codex `session_id` as the `sessionKey` but do not supply a namespace or principal override. On installs that use `principalFromSessionKeyRules` or other namespace routing, observe/recall will use the server's default principal and namespace. To isolate hook sessions into a specific namespace, start the Remnic server with a fixed `--principal` flag that matches your desired namespace, or configure `principalFromSessionKeyRules` to match the session key pattern used by Claude Code / Codex.

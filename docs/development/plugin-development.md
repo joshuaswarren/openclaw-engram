@@ -1,16 +1,16 @@
 # Plugin Development Guide
 
-How to create an Engram plugin for a new AI agent platform.
+How to create a Remnic plugin for a new AI agent platform.
 
 ## Architecture
 
-Every Engram plugin follows the same pattern:
+Every Remnic plugin follows the same pattern:
 
 1. **Connect to EMO** — via HTTP API or MCP protocol on `:4318`
 2. **Auto-recall** — inject memory context before the agent processes a prompt
 3. **Auto-observe** — capture conversation turns and file changes for memory extraction
 4. **Explicit tools** — provide the agent with direct recall/store/search capabilities
-5. **Authenticate** — use a per-plugin token from `~/.engram/tokens.json`
+5. **Authenticate** — use a per-plugin token from `~/.remnic/tokens.json` with `~/.engram/tokens.json` as a migration fallback
 
 ## Integration Depth Tiers
 
@@ -23,7 +23,7 @@ The platform supports MCP but has no plugin/hook system. The agent must explicit
   "mcpServers": {
     "engram": {
       "url": "http://localhost:4318/mcp",
-      "headers": { "Authorization": "Bearer ${ENGRAM_AUTH_TOKEN}" }
+      "headers": { "Authorization": "Bearer ${REMNIC_AUTH_TOKEN}" }
     }
   }
 }
@@ -66,13 +66,13 @@ cd packages/plugin-myplatform
 
 ```json
 {
-  "name": "@engram/plugin-myplatform",
+  "name": "@remnic/plugin-myplatform",
   "version": "0.1.0",
   "type": "module",
-  "description": "Engram memory plugin for MyPlatform",
+  "description": "Remnic memory plugin for MyPlatform",
   "main": "dist/index.js",
   "dependencies": {
-    "@engram/core": "workspace:*"
+    "@remnic/core": "workspace:*"
   }
 }
 ```
@@ -101,7 +101,7 @@ export async function install(options: { tokenStore: TokenStore; configDir: stri
 
 ### Step 5: Register the Connector
 
-Add the connector manifest to the connector registry in `@engram/core`:
+Add the connector manifest to the connector registry in `@remnic/core`:
 
 ```typescript
 {
@@ -114,7 +114,7 @@ Add the connector manifest to the connector registry in `@engram/core`:
 
 ### Step 6: Add an Adapter (Optional)
 
-If the platform sends identifiable headers or `clientInfo`, add an adapter in `@engram/core/adapters/`:
+If the platform sends identifiable headers or `clientInfo`, add an adapter in `@remnic/core/adapters/`:
 
 ```typescript
 export class MyPlatformAdapter implements EngramAdapter {
@@ -133,11 +133,18 @@ For platforms with lifecycle hooks (Tier 2):
 # Hook: [event name]
 # Reads JSON from stdin, writes JSON to stdout
 
-ENGRAM_HOST="${ENGRAM_HOST:-127.0.0.1}"
-ENGRAM_PORT="${ENGRAM_PORT:-4318}"
-ENGRAM_TOKEN="$(node -e "
-  const t = require('$HOME/.engram/tokens.json');
-  process.stdout.write(t['myplatform'] || '');
+REMNIC_HOST="${REMNIC_HOST:-127.0.0.1}"
+REMNIC_PORT="${REMNIC_PORT:-4318}"
+REMNIC_TOKEN="$(node -e "
+  const fs = require('fs');
+  const path = require('path');
+  const remnic = path.join(process.env.HOME, '.remnic', 'tokens.json');
+  const engram = path.join(process.env.HOME, '.engram', 'tokens.json');
+  const tokenFile = fs.existsSync(remnic) ? remnic : engram;
+  if (fs.existsSync(tokenFile)) {
+    const t = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
+    process.stdout.write(t['myplatform'] || '');
+  }
 ")"
 
 INPUT="$(cat)"
@@ -148,10 +155,10 @@ INPUT="$(cat)"
 
 ```bash
 # Unit tests
-pnpm test --filter=@engram/plugin-myplatform
+pnpm test --filter=@remnic/plugin-myplatform
 
 # Integration test: start daemon, install plugin, simulate hook
-engram daemon start
-engram connectors install myplatform
-engram connectors doctor myplatform
+remnic daemon start
+remnic connectors install myplatform
+remnic connectors doctor myplatform
 ```

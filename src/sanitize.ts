@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/sanitize.js";
+export * from "../packages/remnic-core/src/sanitize.js";

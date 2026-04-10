@@ -4,16 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### The Remnic Release
+- Engram is now Remnic across the canonical package, docs, repo, and runtime surfaces.
+- The canonical install paths are `@remnic/plugin-openclaw`, `@remnic/core`, `@remnic/server`, `@remnic/cli`, and `remnic-hermes`.
+- First-run migration now copies legacy `~/.engram/` state into `~/.remnic/`, rewrites token/config surfaces, and preserves rollback metadata.
+- The legacy `engram` CLI name remains as a forwarder during the 1.x compatibility window.
+
 ### Added
-- **Phase 9: Publish + Deprecate** — initial 1.0.0 release of Engram workspace packages
-  - `@engram/core` 1.0.0 — framework-agnostic memory engine with multi-token auth
-  - `@engram/server` 1.0.0 — standalone HTTP/MCP server with daemon lifecycle (launchd/systemd)
-  - `@engram/cli` 1.0.0 — CLI with daemon management, connector install, token management
-  - `@engram/hermes-provider` 1.0.0 — TypeScript HTTP client for Engram API
-  - `engram-hermes` 1.0.0 on PyPI — Python MemoryProvider for Hermes Agent
-  - Native plugins for Claude Code (`engram connectors install claude-code`) and Codex CLI (`engram connectors install codex-cli`)
+- **Phase 9: Publish + Deprecate** — initial 1.0.0 release of Remnic workspace packages
+  - `@remnic/core` 1.0.0 — framework-agnostic memory engine with multi-token auth
+  - `@remnic/server` 1.0.0 — standalone HTTP/MCP server with daemon lifecycle (launchd/systemd)
+  - `@remnic/cli` 1.0.0 — CLI with daemon management, connector install, token management
+  - `@remnic/hermes-provider` 1.0.0 — TypeScript HTTP client for the Remnic API
+  - `remnic-hermes` 1.0.0 on PyPI — Python MemoryProvider for Hermes Agent
+  - Native plugins for Claude Code (`remnic connectors install claude-code`) and Codex CLI (`remnic connectors install codex-cli`)
 - README updated with universal memory layer positioning and multi-platform install instructions
-- Root package `@joshuaswarren/openclaw-engram` marked as deprecated in favor of `@engram/*` packages
+- Root package `@joshuaswarren/openclaw-engram` marked as deprecated in favor of `@remnic/*` packages
 
 ## [v9.2.7] — 2026-04-05
 
@@ -109,10 +115,10 @@ All notable changes to this project will be documented in this file.
 
 **Platform architecture (M0-M7)**
 
-- **Monorepo packages** — repository reorganized into five packages: `@engram/core` (framework-agnostic engine), `@engram/cli` (standalone CLI binary), `@engram/server` (standalone HTTP/MCP server), `@engram/bench` (benchmarks + CI regression gates), `@engram/hermes-provider` (HTTP client for remote Engram instances)
+- **Monorepo packages** — repository reorganized into five packages: `@remnic/core` (framework-agnostic engine), `@remnic/cli` (standalone CLI binary), `@remnic/server` (standalone HTTP/MCP server), `@remnic/bench` (benchmarks + CI regression gates), `@remnic/hermes-provider` (HTTP client for remote Remnic instances)
 - **Schema validation** — `access-schema.ts` with Zod validates all HTTP and MCP request bodies before processing; structured error responses with `error`, `code`, `details` fields and `X-Request-Id` correlation IDs
 - **Standalone CLI** — 15+ commands: `init`, `status`, `query`, `doctor`, `config`, `daemon`, `tree`, `onboard`, `curate`, `review`, `sync`, `dedup`, `connectors`, `space`, `benchmark`
-- **Hermes provider** — `@engram/hermes-provider` lightweight HTTP client for connecting LLM agents to remote Engram instances
+- **Hermes provider** — `@remnic/hermes-provider` lightweight HTTP client for connecting LLM agents to remote Remnic instances
 - **Workspace tree projection** — context tree generation from workspace directory structure
 - **Onboarding** — project ingestion with language detection, doc discovery, and ingestion planning (`engram onboard`)
 - **Curation** — file curation into memory with duplicate and contradiction detection (`engram curate`)
@@ -206,14 +212,14 @@ All notable changes to this project will be documented in this file.
 
 ## [v9.0.84 through v9.0.99] — 2026-03-14 to 2026-03-21
 
-This project auto-releases on every merge to `main`. Per-release notes for individual tags are available in [GitHub Releases](https://github.com/joshuaswarren/openclaw-engram/releases).
+This project auto-releases on every merge to `main`. Per-release notes for individual tags are available in [GitHub Releases](https://github.com/joshuaswarren/remnic/releases).
 
 ### Fixed
 - **Orchestrator init gate**: resolve the init gate after essential state loading (storage, aliases, relevance, transcript, summarizer) instead of waiting for slow QMD collection setup to finish. QMD probe and `ensureCollection` (~96s) now runs after the gate opens. Recall already degrades gracefully when QMD isn't ready, so there's no correctness risk. Fixes init gate timing out (15s timeout vs ~96s actual) and blocking recall on every startup.
 
 ## [v9.0.1 through v9.0.83] — 2026-03-07 to 2026-03-14
 
-This project auto-releases on every merge to `main`. Per-release notes for individual tags are available in [GitHub Releases](https://github.com/joshuaswarren/openclaw-engram/releases).
+This project auto-releases on every merge to `main`. Per-release notes for individual tags are available in [GitHub Releases](https://github.com/joshuaswarren/remnic/releases).
 
 ## [9.0.0] — 2026-03-02
 
@@ -804,7 +810,7 @@ This project auto-releases on every merge to `main`. Per-release notes for indiv
   - npm publish uses npm trusted publishing (OIDC via GitHub Actions) instead of `NPM_TOKEN` secrets.
   - Next-version tag discovery ignores non-`vX.Y.Z` tags to avoid malformed version parsing.
 - Node version alignment with OpenClaw: `engines.node` is now `>=22.12.0`.
-- Installation docs now lead with `openclaw plugins install @joshuaswarren/openclaw-engram --pin`.
+- Installation docs now lead with `openclaw plugins install @remnic/plugin-openclaw --pin`.
 - `agent_end` ingestion now ignores non-`user`/`assistant` message roles.
 - Recall keeps fail-open headroom: hard recall guard reduced to 75s to stay above QMD worst cases.
 

@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/memory-action-policy.js";
+export * from "../packages/remnic-core/src/memory-action-policy.js";

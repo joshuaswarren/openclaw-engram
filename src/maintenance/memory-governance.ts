@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/maintenance/memory-governance.js";
+export * from "../../packages/remnic-core/src/maintenance/memory-governance.js";

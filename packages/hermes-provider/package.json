@@ -1,7 +1,7 @@
 {
-  "name": "@engram/hermes-provider",
+  "name": "@remnic/hermes-provider",
   "version": "1.0.0",
-  "description": "Typed HTTP client for the Engram memory API",
+  "description": "Typed HTTP client for the Remnic memory API",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -28,8 +28,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "url": "https://github.com/joshuaswarren/remnic.git",
     "directory": "packages/hermes-provider"
   },
-  "keywords": ["engram", "memory", "ai", "agent", "openclaw"]
+  "keywords": ["remnic", "memory", "ai", "agent", "openclaw"]
 }

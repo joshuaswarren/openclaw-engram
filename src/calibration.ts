@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/calibration.js";
+export * from "../packages/remnic-core/src/calibration.js";

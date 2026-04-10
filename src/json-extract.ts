@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/json-extract.js";
+export * from "../packages/remnic-core/src/json-extract.js";

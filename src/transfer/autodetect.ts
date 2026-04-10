@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/transfer/autodetect.js";
+export * from "../../packages/remnic-core/src/transfer/autodetect.js";

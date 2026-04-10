@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/himem.js";
+export * from "../packages/remnic-core/src/himem.js";

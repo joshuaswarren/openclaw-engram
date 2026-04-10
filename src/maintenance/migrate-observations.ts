@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/maintenance/migrate-observations.js";
+export * from "../../packages/remnic-core/src/maintenance/migrate-observations.js";

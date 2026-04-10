@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/utility-learner.js";
+export * from "../packages/remnic-core/src/utility-learner.js";

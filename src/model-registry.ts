@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/model-registry.js";
+export * from "../packages/remnic-core/src/model-registry.js";

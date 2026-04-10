@@ -1,19 +1,19 @@
 # OpenClaw Plugin (OEO)
 
-The OpenClaw Engram Orchestrator (OEO) is a memory-slot plugin that bridges OpenClaw to the Engram memory engine.
+The OpenClaw Remnic bridge is a memory-slot plugin that bridges OpenClaw to the Remnic memory engine.
 
 ## Installation
 
-OEO is the original Engram integration. If you're already using Engram with OpenClaw, you have it.
+OEO is the original OpenClaw memory integration. If you're already using Engram or Remnic with OpenClaw, this is the bridge plugin.
 
 ```bash
-openclaw plugins install openclaw-engram
+openclaw plugins install @remnic/plugin-openclaw --pin
 ```
 
-Or via the Engram CLI:
+Or via the Remnic CLI:
 
 ```bash
-engram connectors install openclaw
+remnic connectors install openclaw
 ```
 
 ## What It Does
@@ -30,7 +30,7 @@ OEO registers with OpenClaw's exclusive memory slot:
 
 ### 43+ Tools
 
-All Engram tools are registered with OpenClaw's tool system — recall, observe, governance, work tracking, shared context, identity continuity, etc.
+All Remnic tools are registered with OpenClaw's tool system — recall, observe, governance, work tracking, shared context, identity continuity, etc.
 
 ### HTTP Server for External Agents
 
@@ -65,7 +65,7 @@ OEO stores memories at `~/.openclaw/workspace/memory/local/` — the standard Op
 
 If you're upgrading from the monolithic Engram plugin to the new EMO/OEO architecture:
 
-1. The npm package name is unchanged: `openclaw-engram`
+1. The bridge package is now `@remnic/plugin-openclaw`
 2. Memory files stay at `~/.openclaw/workspace/memory/local/` — no migration needed
 3. All OpenClaw tools keep working — same names, same behavior
 4. **New:** `:4318` is now exposed for external agents (Claude Code, Codex, etc.)
@@ -73,7 +73,7 @@ If you're upgrading from the monolithic Engram plugin to the new EMO/OEO archite
 To connect other agents after upgrading:
 
 ```bash
-engram connectors install claude-code   # now shares memory with OpenClaw
+remnic connectors install claude-code   # now shares memory with OpenClaw
 ```
 
 ## Troubleshooting

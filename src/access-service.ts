@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/access-service.js";
+export * from "../packages/remnic-core/src/access-service.js";

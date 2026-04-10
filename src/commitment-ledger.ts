@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/commitment-ledger.js";
+export * from "../packages/remnic-core/src/commitment-ledger.js";

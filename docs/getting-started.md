@@ -11,39 +11,39 @@
 ### Option A: npm (recommended)
 
 ```bash
-openclaw plugins install @joshuaswarren/openclaw-engram --pin
+openclaw plugins install @remnic/plugin-openclaw --pin
 ```
 
 ### Option B: Developer install (from Git)
 
 ```bash
-git clone https://github.com/joshuaswarren/openclaw-engram.git \
-  ~/.openclaw/extensions/openclaw-engram
-cd ~/.openclaw/extensions/openclaw-engram
+git clone https://github.com/joshuaswarren/remnic.git \
+  ~/.openclaw/extensions/remnic
+cd ~/.openclaw/extensions/remnic
 npm ci && npm run build
 ```
 
 ### Option C: Standalone (no OpenClaw)
 
-Use Engram as a standalone memory system without OpenClaw. Requires [Node.js](https://nodejs.org/) 22.12+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
+Use Remnic as a standalone memory system without OpenClaw. Requires [Node.js](https://nodejs.org/) 22.12+ and [tsx](https://github.com/privatenumber/tsx) (`npm install -g tsx`).
 
 Build from source and use the standalone CLI:
 
 ```bash
 npm install -g tsx               # Required — CLI entry point is TypeScript
-git clone https://github.com/joshuaswarren/openclaw-engram.git
-cd openclaw-engram && npm ci && npm run build
-cd packages/cli && npm link       # Makes `engram` available on PATH
+git clone https://github.com/joshuaswarren/remnic.git
+cd remnic && npm ci && npm run build
+cd packages/remnic-cli && npm link # Makes `remnic` available on PATH
 cd ../..
-engram init                      # Create config in current directory
+remnic init                      # Create config in current directory
 export OPENAI_API_KEY=sk-...
-export ENGRAM_AUTH_TOKEN=$(openssl rand -hex 32)
-engram daemon start              # Start background server (requires source build)
-engram status                    # Verify it's running
-engram query "hello" --explain   # Test with tier breakdown
+export REMNIC_AUTH_TOKEN=$(openssl rand -hex 32)
+remnic daemon start              # Start background server (requires source build)
+remnic status                    # Verify it's running
+remnic query "hello" --explain   # Test with tier breakdown
 ```
 
-> **Note:** The `engram` binary (`packages/cli/bin/engram.cjs`) is a CJS wrapper that auto-locates `tsx` from `node_modules` (falling back to a global `tsx`). Running `npm link` from `packages/cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/cli/src/index.ts <command>`.
+> **Note:** The canonical CLI is `remnic`. The legacy `engram` binary remains as a forwarder during the rename window. Running `npm link` from `packages/remnic-cli/` (not the repo root) makes the CLI globally available — the root package only exposes `engram-access`. Alternatively, invoke directly: `npx tsx packages/remnic-cli/src/index.ts <command>`.
 
 Standalone mode provides 15+ CLI commands for querying, onboarding projects, curating files, managing spaces, running benchmarks, and more. See the [Platform Migration Guide](guides/platform-migration.md) for standalone adoption details.
 
@@ -77,7 +77,7 @@ grep '\[engram\]' ~/.openclaw/logs/gateway.log | tail -5
 
 ## Set Up QMD (Recommended)
 
-[QMD](https://github.com/tobi/qmd) provides hybrid BM25 + vector + reranking search. Without it, Engram falls back to semantic embedding search (using your OpenAI key when available) and then recency-ordered file reads.
+[QMD](https://github.com/tobi/qmd) provides hybrid BM25 + vector + reranking search. Without it, Remnic falls back to semantic embedding search (using your OpenAI key when available) and then recency-ordered file reads.
 
 **QMD 2.0+ is recommended.** QMD 1.x still works but 2.0 resolves several known issues natively (session ID crash, model override env vars, join performance). Install via bun or npm:
 

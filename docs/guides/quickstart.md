@@ -1,6 +1,6 @@
 # Quickstart: Install Engram in 5 Minutes
 
-Engram is a universal memory system for AI agents. Install it once, connect your tools, and all your agents share the same memory.
+Remnic is a universal memory system for AI agents. Install it once, connect your tools, and all your agents share the same memory.
 
 ## Step 1: Install Engram
 

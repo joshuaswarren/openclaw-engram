@@ -13,14 +13,14 @@ const ROOT = path.resolve(__dirname, "../..");
 
 test("EngramAccessHttpServer options accepts authTokens array", async () => {
   // Verify the type accepts authTokens
-  const accessHttpPath = path.join(ROOT, "packages/engram-core/src/access-http.ts");
+  const accessHttpPath = path.join(ROOT, "packages/remnic-core/src/access-http.ts");
   const content = fs.readFileSync(accessHttpPath, "utf-8");
   assert.ok(content.includes("authTokens"), "access-http.ts must define authTokens option");
   assert.ok(content.includes("authTokens?: string[]"), "authTokens must be string[]");
 });
 
 test("EngramAccessHttpServer isAuthorized checks both primary and connector tokens", async () => {
-  const accessHttpPath = path.join(ROOT, "packages/engram-core/src/access-http.ts");
+  const accessHttpPath = path.join(ROOT, "packages/remnic-core/src/access-http.ts");
   const content = fs.readFileSync(accessHttpPath, "utf-8");
   // Verify the isAuthorized method checks both token sources
   assert.ok(content.includes("this.authTokens"), "Must check authTokens array");
@@ -28,7 +28,7 @@ test("EngramAccessHttpServer isAuthorized checks both primary and connector toke
 });
 
 test("Server loads connector tokens dynamically via authTokensGetter", async () => {
-  const serverPath = path.join(ROOT, "packages/engram-server/src/index.ts");
+  const serverPath = path.join(ROOT, "packages/remnic-server/src/index.ts");
   const content = fs.readFileSync(serverPath, "utf-8");
   assert.ok(content.includes("getAllValidTokens"), "Server must import getAllValidTokens");
   assert.ok(content.includes("authTokensGetter"), "Server must use authTokensGetter for dynamic token loading");
@@ -38,17 +38,17 @@ test("Server loads connector tokens dynamically via authTokensGetter", async () 
 // Package dependency validation
 // ---------------------------------------------------------------------------
 
-test("@engram/core exports token management functions", async () => {
-  const indexPath = path.join(ROOT, "packages/engram-core/src/index.ts");
+test("@remnic/core exports token management functions", async () => {
+  const indexPath = path.join(ROOT, "packages/remnic-core/src/index.ts");
   const content = fs.readFileSync(indexPath, "utf-8");
   const requiredExports = ["generateToken", "listTokens", "revokeToken", "getAllValidTokens", "resolveConnectorFromToken"];
   for (const name of requiredExports) {
-    assert.ok(content.includes(name), `@engram/core must export ${name}`);
+    assert.ok(content.includes(name), `@remnic/core must export ${name}`);
   }
 });
 
-test("@engram/cli imports token management from @engram/core", async () => {
-  const cliPath = path.join(ROOT, "packages/engram-cli/src/index.ts");
+test("@remnic/cli imports token management from @remnic/core", async () => {
+  const cliPath = path.join(ROOT, "packages/remnic-cli/src/index.ts");
   const content = fs.readFileSync(cliPath, "utf-8");
   assert.ok(content.includes("generateToken"), "CLI must import generateToken");
   assert.ok(content.includes("listTokens"), "CLI must import listTokens");

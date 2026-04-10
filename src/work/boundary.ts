@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/work/boundary.js";
+export * from "../../packages/remnic-core/src/work/boundary.js";

@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/adapters/codex.js";
+export * from "../../packages/remnic-core/src/adapters/codex.js";

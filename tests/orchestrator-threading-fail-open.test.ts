@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 test("runExtraction handles pre-persist threading errors fail-open", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -18,7 +18,7 @@ test("runExtraction handles pre-persist threading errors fail-open", () => {
 
 test("persistExtraction updates in-memory thread episode IDs before graph edge construction", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -45,7 +45,7 @@ test("persistExtraction updates in-memory thread episode IDs before graph edge c
 
 test("persistExtraction avoids per-memory thread file writes", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -63,7 +63,7 @@ test("persistExtraction avoids per-memory thread file writes", () => {
 
 test("in-memory thread episode context updates for chunked and non-chunked writes", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
   assert.match(
@@ -80,7 +80,7 @@ test("in-memory thread episode context updates for chunked and non-chunked write
 
 test("buildGraphEdge does not read global current thread ID", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -93,7 +93,7 @@ test("buildGraphEdge does not read global current thread ID", () => {
 
 test("buildGraphEdge does not reload thread file per memory write", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -111,7 +111,7 @@ test("buildGraphEdge does not reload thread file per memory write", () => {
 
 test("persisted path resolution does not call getMemoryById in per-fact write flow", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
   const helperMatch = source.match(
@@ -129,7 +129,7 @@ test("persisted path resolution does not call getMemoryById in per-fact write fl
 
 test("persisted path resolution is not short-circuited by set-before-resolve", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
   assert.doesNotMatch(
@@ -141,7 +141,7 @@ test("persisted path resolution is not short-circuited by set-before-resolve", (
 
 test("buildGraphEdge forwards fallback causal predecessor when thread context is absent", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
   assert.match(
@@ -153,7 +153,7 @@ test("buildGraphEdge forwards fallback causal predecessor when thread context is
 
 test("persistExtraction includes written question IDs in persistedIds", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
   assert.match(

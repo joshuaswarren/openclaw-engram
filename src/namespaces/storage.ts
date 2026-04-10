@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/namespaces/storage.js";
+export * from "../../packages/remnic-core/src/namespaces/storage.js";

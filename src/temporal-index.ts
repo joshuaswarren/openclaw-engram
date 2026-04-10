@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/temporal-index.js";
+export * from "../packages/remnic-core/src/temporal-index.js";

@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/tier-migration.js";
+export * from "../packages/remnic-core/src/tier-migration.js";

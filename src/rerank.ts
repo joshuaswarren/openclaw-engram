@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/rerank.js";
+export * from "../packages/remnic-core/src/rerank.js";

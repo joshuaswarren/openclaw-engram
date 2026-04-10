@@ -20,7 +20,9 @@ const GLOBAL_KEYS = [
   "__openclawEngramAccessHttpServer",
   "__openclawEngramServiceStarted",
   "__openclawEngramInitPromise",
+  "__openclawEngramMigrationPromise",
 ];
+const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
 
 function cleanGlobalThis() {
   for (const key of GLOBAL_KEYS) {
@@ -28,8 +30,14 @@ function cleanGlobalThis() {
   }
 }
 
-test.beforeEach(() => cleanGlobalThis());
-test.afterEach(() => cleanGlobalThis());
+test.beforeEach(() => {
+  process.env[DISABLE_REGISTER_MIGRATION_ENV] = "1";
+  cleanGlobalThis();
+});
+test.afterEach(() => {
+  delete process.env[DISABLE_REGISTER_MIGRATION_ENV];
+  cleanGlobalThis();
+});
 
 // ============================================================================
 // Helper: build a new-SDK mock api that captures handler functions

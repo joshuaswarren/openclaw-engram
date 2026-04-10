@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/identity-continuity.js";
+export * from "../packages/remnic-core/src/identity-continuity.js";

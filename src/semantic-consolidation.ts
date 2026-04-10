@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/semantic-consolidation.js";
+export * from "../packages/remnic-core/src/semantic-consolidation.js";

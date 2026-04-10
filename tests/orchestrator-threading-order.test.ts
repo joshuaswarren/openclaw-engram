@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 test("runExtraction establishes thread context before persistExtraction", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 
@@ -30,7 +30,7 @@ test("runExtraction establishes thread context before persistExtraction", () => 
 
 test("runExtraction batch-appends persisted IDs after persistExtraction", () => {
   const source = readFileSync(
-    resolve(import.meta.dirname, "..", "packages", "engram-core", "src", "orchestrator.ts"),
+    resolve(import.meta.dirname, "..", "packages", "remnic-core", "src", "orchestrator.ts"),
     "utf-8",
   );
 

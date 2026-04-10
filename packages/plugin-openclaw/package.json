@@ -1,7 +1,7 @@
 {
-  "name": "openclaw-engram",
-  "version": "9.1.28",
-  "description": "OpenClaw adapter for Engram memory — thin wrapper delegating to @engram/core",
+  "name": "@remnic/plugin-openclaw",
+  "version": "1.0.0",
+  "description": "OpenClaw adapter for Remnic memory — thin wrapper delegating to @remnic/core",
   "type": "module",
   "main": "dist/index.js",
   "exports": {
@@ -29,7 +29,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@engram/core": "workspace:*"
+    "@remnic/core": "workspace:*"
   },
   "peerDependencies": {
     "openclaw": "*"
@@ -41,8 +41,14 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/joshuaswarren/openclaw-engram.git",
+    "url": "https://github.com/joshuaswarren/remnic.git",
     "directory": "packages/plugin-openclaw"
   },
-  "keywords": ["engram", "memory", "openclaw", "adapter", "plugin"]
+  "keywords": [
+    "remnic",
+    "memory",
+    "openclaw",
+    "adapter",
+    "plugin"
+  ]
 }

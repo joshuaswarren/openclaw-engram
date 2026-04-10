@@ -16,7 +16,7 @@ test("plugin-claude-code has required plugin manifest", () => {
   const manifest = path.join(PACKAGES, "plugin-claude-code", ".claude-plugin", "plugin.json");
   assert.ok(fs.existsSync(manifest), ".claude-plugin/plugin.json must exist");
   const pkg = JSON.parse(fs.readFileSync(manifest, "utf-8"));
-  assert.equal(pkg.name, "engram");
+  assert.equal(pkg.name, "remnic");
   assert.ok(pkg.version);
   assert.ok(pkg.description);
 });
@@ -53,8 +53,8 @@ test("plugin-claude-code has .mcp.json", () => {
   const mcpFile = path.join(PACKAGES, "plugin-claude-code", ".mcp.json");
   assert.ok(fs.existsSync(mcpFile));
   const mcp = JSON.parse(fs.readFileSync(mcpFile, "utf-8"));
-  assert.ok(mcp.mcpServers?.engram, "Must define engram MCP server");
-  assert.ok(mcp.mcpServers.engram.url.includes("4318"), "Must point to EMO port");
+  assert.ok(mcp.mcpServers?.remnic, "Must define remnic MCP server");
+  assert.ok(mcp.mcpServers.remnic.url.includes("4318"), "Must point to RMO port");
 });
 
 // ---------------------------------------------------------------------------
@@ -65,7 +65,7 @@ test("plugin-codex has required plugin manifest", () => {
   const manifest = path.join(PACKAGES, "plugin-codex", ".codex-plugin", "plugin.json");
   assert.ok(fs.existsSync(manifest), ".codex-plugin/plugin.json must exist");
   const pkg = JSON.parse(fs.readFileSync(manifest, "utf-8"));
-  assert.equal(pkg.name, "engram");
+  assert.equal(pkg.name, "remnic");
 });
 
 test("plugin-codex has Stop hook (unique to Codex)", () => {
@@ -94,11 +94,11 @@ test("plugin-hermes has pyproject.toml", () => {
   const pyproject = path.join(PACKAGES, "plugin-hermes", "pyproject.toml");
   assert.ok(fs.existsSync(pyproject));
   const content = fs.readFileSync(pyproject, "utf-8");
-  assert.ok(content.includes('name = "engram-hermes"'));
+  assert.ok(content.includes('name = "remnic-hermes"'));
 });
 
 test("plugin-hermes has MemoryProvider module", () => {
-  const initPy = path.join(PACKAGES, "plugin-hermes", "engram_hermes", "__init__.py");
+  const initPy = path.join(PACKAGES, "plugin-hermes", "remnic_hermes", "__init__.py");
   assert.ok(fs.existsSync(initPy));
   const content = fs.readFileSync(initPy, "utf-8");
   assert.ok(content.includes("EngramMemoryProvider"), "Must export EngramMemoryProvider");
@@ -106,7 +106,7 @@ test("plugin-hermes has MemoryProvider module", () => {
 });
 
 test("plugin-hermes provider implements MemoryProvider protocol", () => {
-  const provider = path.join(PACKAGES, "plugin-hermes", "engram_hermes", "provider.py");
+  const provider = path.join(PACKAGES, "plugin-hermes", "remnic_hermes", "provider.py");
   assert.ok(fs.existsSync(provider));
   const content = fs.readFileSync(provider, "utf-8");
   const requiredMethods = ["pre_llm_call", "sync_turn", "extract_memories", "shutdown", "initialize"];
@@ -131,11 +131,11 @@ test("connector-replit has setup snippet", () => {
 // plugin-openclaw backward compatibility
 // ---------------------------------------------------------------------------
 
-test("plugin-openclaw publishes as 'openclaw-engram'", () => {
+test("plugin-openclaw publishes under the Remnic scope", () => {
   const pkgJson = path.join(PACKAGES, "plugin-openclaw", "package.json");
   assert.ok(fs.existsSync(pkgJson));
   const pkg = JSON.parse(fs.readFileSync(pkgJson, "utf-8"));
-  assert.equal(pkg.name, "openclaw-engram", "Must use backward-compat npm name");
+  assert.equal(pkg.name, "@remnic/plugin-openclaw", "Must use canonical Remnic npm name");
 });
 
 // ---------------------------------------------------------------------------
@@ -143,19 +143,19 @@ test("plugin-openclaw publishes as 'openclaw-engram'", () => {
 // ---------------------------------------------------------------------------
 
 test("CLI has launchd plist template", () => {
-  const plist = path.join(PACKAGES, "engram-cli", "templates", "launchd", "ai.engram.daemon.plist");
+  const plist = path.join(PACKAGES, "remnic-cli", "templates", "launchd", "ai.remnic.daemon.plist");
   assert.ok(fs.existsSync(plist));
   const content = fs.readFileSync(plist, "utf-8");
-  assert.ok(content.includes("ai.engram.daemon"), "Must have correct launchd label");
+  assert.ok(content.includes("ai.remnic.daemon"), "Must have correct launchd label");
   assert.ok(content.includes("RunAtLoad"), "Must run at load");
   assert.ok(content.includes("KeepAlive"), "Must keep alive");
 });
 
 test("CLI has systemd service template", () => {
-  const service = path.join(PACKAGES, "engram-cli", "templates", "systemd", "engram.service");
+  const service = path.join(PACKAGES, "remnic-cli", "templates", "systemd", "remnic.service");
   assert.ok(fs.existsSync(service));
   const content = fs.readFileSync(service, "utf-8");
-  assert.ok(content.includes("Engram Memory Orchestrator"), "Must have description");
+  assert.ok(content.includes("Remnic Memory Orchestrator"), "Must have description");
   assert.ok(content.includes("Restart=on-failure"), "Must restart on failure");
   assert.ok(content.includes("WantedBy=default.target"), "Must be wanted by default target");
 });
@@ -164,28 +164,32 @@ test("CLI has systemd service template", () => {
 // Server has no root src/ leak
 // ---------------------------------------------------------------------------
 
-test("server imports from @engram/core, not ../../../src/", () => {
-  const serverIndex = path.join(PACKAGES, "engram-server", "src", "index.ts");
+test("server imports from @remnic/core, not ../../../src/", () => {
+  const serverIndex = path.join(PACKAGES, "remnic-server", "src", "index.ts");
   const content = fs.readFileSync(serverIndex, "utf-8");
   assert.ok(!content.includes("../../../src/"), "Must not import from root src/");
-  assert.ok(content.includes("@engram/core"), "Must import from @engram/core");
+  assert.ok(content.includes("@remnic/core"), "Must import from @remnic/core");
 });
 
 // ---------------------------------------------------------------------------
 // Hook scripts use per-plugin tokens
 // ---------------------------------------------------------------------------
 
-test("Claude Code hooks read from ~/.engram/tokens.json", () => {
+test("Claude Code hooks prefer ~/.remnic/tokens.json with Engram fallback", () => {
   const sessionStart = path.join(PACKAGES, "plugin-claude-code", "hooks", "bin", "session-start.sh");
   const content = fs.readFileSync(sessionStart, "utf-8");
   assert.ok(content.includes("tokens.json"), "Must read from token file");
+  assert.ok(content.includes(".remnic"), "Must prefer Remnic token path");
+  assert.ok(content.includes(".engram"), "Must preserve Engram token fallback");
   assert.ok(content.includes("claude-code"), "Must look for claude-code token key");
   assert.ok(content.includes("X-Engram-Client-Id"), "Must send client ID header");
 });
 
-test("Codex hooks read from ~/.engram/tokens.json", () => {
+test("Codex hooks prefer ~/.remnic/tokens.json with Engram fallback", () => {
   const sessionStart = path.join(PACKAGES, "plugin-codex", "hooks", "bin", "session-start.sh");
   const content = fs.readFileSync(sessionStart, "utf-8");
   assert.ok(content.includes("tokens.json"), "Must read from token file");
+  assert.ok(content.includes(".remnic"), "Must prefer Remnic token path");
+  assert.ok(content.includes(".engram"), "Must preserve Engram token fallback");
   assert.ok(content.includes("codex"), "Must look for codex token key");
 });

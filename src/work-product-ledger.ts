@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/work-product-ledger.js";
+export * from "../packages/remnic-core/src/work-product-ledger.js";

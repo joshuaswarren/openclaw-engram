@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/search/factory.js";
+export * from "../../packages/remnic-core/src/search/factory.js";

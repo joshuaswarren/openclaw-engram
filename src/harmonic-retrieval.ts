@@ -1,1 +1,1 @@
-export * from "../packages/engram-core/src/harmonic-retrieval.js";
+export * from "../packages/remnic-core/src/harmonic-retrieval.js";

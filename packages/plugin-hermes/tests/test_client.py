@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 
-from engram_hermes.client import EngramClient
+from remnic_hermes.client import EngramClient
 
 
 @pytest.fixture

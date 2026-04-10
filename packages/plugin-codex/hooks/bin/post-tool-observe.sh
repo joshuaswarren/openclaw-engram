@@ -1,40 +1,59 @@
 #!/usr/bin/env bash
-# Engram PostToolUse hook for Codex.
+# Remnic PostToolUse hook for Codex.
 # Observes Bash tool executions by sending transcript delta to the
 # observe endpoint. Runs in background, never blocks.
 
 set -euo pipefail
 
-ENGRAM_HOST="${ENGRAM_HOST:-127.0.0.1}"
-ENGRAM_PORT="${ENGRAM_PORT:-4318}"
-ENGRAM_URL="http://${ENGRAM_HOST}:${ENGRAM_PORT}/engram/v1/observe"
-TOKEN_FILE="${HOME}/.engram/tokens.json"
+ensure_migrated() {
+  if [ -f "${HOME}/.remnic/.migrated-from-engram" ]; then
+    return 0
+  fi
+  if [ ! -d "${HOME}/.engram" ] && [ ! -f "${HOME}/.config/engram/config.json" ]; then
+    return 0
+  fi
+  if command -v remnic >/dev/null 2>&1; then
+    remnic migrate >/dev/null 2>&1 || true
+  elif command -v engram >/dev/null 2>&1; then
+    engram migrate >/dev/null 2>&1 || true
+  fi
+}
 
-LOG="${HOME}/.engram/logs/engram-post-tool-observe.log"
+ensure_migrated
+
+REMNIC_HOST="${REMNIC_HOST:-${ENGRAM_HOST:-127.0.0.1}}"
+REMNIC_PORT="${REMNIC_PORT:-${ENGRAM_PORT:-4318}}"
+REMNIC_URL="http://${REMNIC_HOST}:${REMNIC_PORT}/engram/v1/observe"
+
+LOG="${HOME}/.remnic/logs/remnic-post-tool-observe.log"
 mkdir -p "$(dirname "$LOG")"
 log() { echo "$(date '+%F %T') [codex-post-tool] $*" >> "$LOG"; }
 
 # Read token
-ENGRAM_TOKEN=""
-if [ -f "$TOKEN_FILE" ]; then
-  ENGRAM_TOKEN="$(node -e "
-    const store = JSON.parse(require('fs').readFileSync('$TOKEN_FILE','utf8'));
+REMNIC_TOKEN=""
+for TOKEN_FILE in "${HOME}/.remnic/tokens.json" "${HOME}/.engram/tokens.json"; do
+  [ ! -f "$TOKEN_FILE" ] && continue
+  REMNIC_TOKEN="$(node -e "
+    const fs = require('fs');
+    const tokenFile = process.argv[1];
+    const store = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
     const tokens = store.tokens || [];
     const cx = tokens.find(t => t.connector === 'codex');
     const oc = tokens.find(t => t.connector === 'openclaw');
     let tok = (cx && cx.token) || (oc && oc.token) || '';
     if (!tok) { tok = store['codex'] || store['openclaw'] || ''; }
     process.stdout.write(tok);
-  " 2>/dev/null || echo "")"
-fi
-[ -z "$ENGRAM_TOKEN" ] && ENGRAM_TOKEN="${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}"
+  " "$TOKEN_FILE" 2>/dev/null || echo "")"
+  [ -n "$REMNIC_TOKEN" ] && break
+done
+[ -z "$REMNIC_TOKEN" ] && REMNIC_TOKEN="${OPENCLAW_REMNIC_ACCESS_TOKEN:-${OPENCLAW_ENGRAM_ACCESS_TOKEN:-}}"
 
 INPUT="$(cat)"
 
 # Return immediately — never block the tool
 echo '{"continue":true}'
 
-[ -z "$ENGRAM_TOKEN" ] && exit 0
+[ -z "$REMNIC_TOKEN" ] && exit 0
 
 SESSION_ID="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.session_id||'')" "$INPUT" 2>/dev/null || echo "")"
 TRANSCRIPT_PATH="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.transcript_path||'')" "$INPUT" 2>/dev/null || echo "")"
@@ -45,8 +64,15 @@ PROJECT_NAME="$(basename "$CWD" 2>/dev/null || echo "unknown")"
 [ -z "$SESSION_ID" ] && exit 0
 { [ -z "$TRANSCRIPT_PATH" ] || [ ! -f "$TRANSCRIPT_PATH" ]; } && exit 0
 
-CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
-LOCK_DIR="/tmp/engram-lock-${SESSION_ID}.d"
+LEGACY_CURSOR_FILE="/tmp/engram-cursor-${SESSION_ID}"
+CURSOR_FILE="/tmp/remnic-cursor-${SESSION_ID}"
+LEGACY_LOCK_DIR="/tmp/engram-lock-${SESSION_ID}.d"
+LOCK_DIR="/tmp/remnic-lock-${SESSION_ID}.d"
+
+if [ ! -f "$CURSOR_FILE" ] && { [ -f "$LEGACY_CURSOR_FILE" ] || [ -d "$LEGACY_LOCK_DIR" ]; }; then
+  CURSOR_FILE="$LEGACY_CURSOR_FILE"
+  LOCK_DIR="$LEGACY_LOCK_DIR"
+fi
 
 (
   # Acquire exclusive lock
@@ -117,8 +143,8 @@ LOCK_DIR="/tmp/engram-lock-${SESSION_ID}.d"
   log "observing $MSG_COUNT new messages (cursor $LAST_COUNT->$TOTAL) project=$PROJECT_NAME tool=$TOOL_NAME"
 
   RAW="$(curl -s -w "\n%{http_code}" --max-time 120 \
-    -X POST "$ENGRAM_URL" \
-    -H "Authorization: Bearer ${ENGRAM_TOKEN}" \
+    -X POST "$REMNIC_URL" \
+    -H "Authorization: Bearer ${REMNIC_TOKEN}" \
     -H "Content-Type: application/json" \
     -H "X-Engram-Client-Id: codex" \
     -d "$CLEAN" 2>/dev/null)"

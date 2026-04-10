@@ -5,16 +5,16 @@
 ```
 openclaw-engram/
 ├── packages/
-│   ├── engram-core/          @engram/core          Memory engine (0 internal deps)
-│   ├── engram-server/        @engram/server         HTTP + MCP server
+│   ├── engram-core/          @remnic/core          Memory engine (0 internal deps)
+│   ├── engram-server/        @remnic/server         HTTP + MCP server
 │   ├── engram-cli/           engram                 CLI binary (daemon, connectors, tokens)
 │   ├── plugin-openclaw/      openclaw-engram        OEO bridge (backward-compat npm name)
-│   ├── plugin-claude-code/   @engram/plugin-claude-code    Claude Code native plugin
-│   ├── plugin-codex/         @engram/plugin-codex          Codex CLI native plugin
-│   ├── plugin-hermes/        engram-hermes (PyPI)   Hermes MemoryProvider (Python)
-│   ├── connector-replit/     @engram/replit          Replit MCP connector
-│   └── bench/                @engram/bench           Benchmarks
-├── src/                      Compatibility shims (re-exports from @engram/core)
+│   ├── plugin-claude-code/   @remnic/plugin-claude-code    Claude Code native plugin
+│   ├── plugin-codex/         @remnic/plugin-codex          Codex CLI native plugin
+│   ├── plugin-hermes/        remnic-hermes (PyPI)   Hermes MemoryProvider (Python)
+│   ├── connector-replit/     @remnic/replit          Replit MCP connector
+│   └── bench/                @remnic/bench           Benchmarks
+├── src/                      Compatibility shims (re-exports from @remnic/core)
 ├── tests/                    Cross-package integration tests
 ├── docs/                     All documentation
 └── evals/                    Evaluation harness
@@ -23,43 +23,43 @@ openclaw-engram/
 ## Dependency Graph
 
 ```
-@engram/core ← no internal deps, no OpenClaw imports
+@remnic/core ← no internal deps, no OpenClaw imports
 │
-├── @engram/server ← depends on core
-├── @engram/cli ← depends on core, server
-├── @engram/bench ← depends on core
+├── @remnic/server ← depends on core
+├── @remnic/cli ← depends on core, server
+├── @remnic/bench ← depends on core
 ├── openclaw-engram ← depends on core
-├── @engram/plugin-claude-code ← depends on core (installer only)
-├── @engram/plugin-codex ← depends on core (installer only)
-└── @engram/replit ← depends on core (installer only)
+├── @remnic/plugin-claude-code ← depends on core (installer only)
+├── @remnic/plugin-codex ← depends on core (installer only)
+└── @remnic/replit ← depends on core (installer only)
 
-@engram/hermes-provider ← standalone TS HTTP client (0 internal deps)
-engram-hermes (Python) ← standalone, HTTP to EMO (0 internal deps)
+@remnic/hermes-provider ← standalone TS HTTP client (0 internal deps)
+remnic-hermes (Python) ← standalone, HTTP to EMO (0 internal deps)
 ```
 
 ## Build Order
 
 Turborepo handles this automatically via `turbo.json`:
 
-1. `@engram/core` (foundation — everything depends on this)
-2. `@engram/server`, `openclaw-engram`, `@engram/bench` (depend on core)
-3. `@engram/cli` (depends on core + server)
-4. `@engram/plugin-claude-code`, `@engram/plugin-codex`, `@engram/replit` (depend on core for installers)
-5. `engram-hermes` (Python — separate build pipeline)
+1. `@remnic/core` (foundation — everything depends on this)
+2. `@remnic/server`, `openclaw-engram`, `@remnic/bench` (depend on core)
+3. `@remnic/cli` (depends on core + server)
+4. `@remnic/plugin-claude-code`, `@remnic/plugin-codex`, `@remnic/replit` (depend on core for installers)
+5. `remnic-hermes` (Python — separate build pipeline)
 
 ## Package Details
 
-### @engram/core
+### @remnic/core
 
 The memory engine. Contains the Orchestrator, StorageManager, ExtractionEngine, all search backends, trust zones, namespace isolation, LCM, entity graph, compounding, shared context, work layer, and all supporting modules.
 
 **Zero OpenClaw imports.** Can be used by any host.
 
-### @engram/server
+### @remnic/server
 
-Standalone HTTP + MCP server. Wraps `@engram/core` with `EngramAccessService`, `EngramAccessHttpServer`, and `EngramMcpServer`. Includes adapter registry for client identity resolution.
+Standalone HTTP + MCP server. Wraps `@remnic/core` with `EngramAccessService`, `EngramAccessHttpServer`, and `EngramMcpServer`. Includes adapter registry for client identity resolution.
 
-### @engram/cli (engram)
+### @remnic/cli (engram)
 
 CLI binary providing:
 - `engram daemon install|uninstall|start|stop|status` — daemon lifecycle
@@ -71,9 +71,9 @@ CLI binary providing:
 
 ### openclaw-engram (plugin-openclaw)
 
-OEO bridge plugin. Publishes as `openclaw-engram` on npm for backward compatibility with OpenClaw's plugin loader. Depends on `@engram/core`. Supports embedded and delegate modes.
+OEO bridge plugin. Publishes as `openclaw-engram` on npm for backward compatibility with OpenClaw's plugin loader. Depends on `@remnic/core`. Supports embedded and delegate modes.
 
-### @engram/plugin-claude-code
+### @remnic/plugin-claude-code
 
 Native Claude Code plugin. Contains:
 - `.claude-plugin/plugin.json` — plugin manifest
@@ -82,7 +82,7 @@ Native Claude Code plugin. Contains:
 - `agents/` — memory review agent
 - `.mcp.json` — MCP server pointing to EMO
 
-### @engram/plugin-codex
+### @remnic/plugin-codex
 
 Native Codex CLI plugin. Contains:
 - `.codex-plugin/plugin.json` — plugin manifest
@@ -90,7 +90,7 @@ Native Codex CLI plugin. Contains:
 - `skills/` — memory workflow instructions
 - `.mcp.json` — MCP server pointing to EMO
 
-### engram-hermes (Python)
+### remnic-hermes (Python)
 
 Hermes MemoryProvider plugin. Distributed via PyPI. Implements the Hermes v0.7.0+ MemoryProvider protocol:
 - `pre_llm_call` — inject recalled memories every turn
@@ -98,11 +98,11 @@ Hermes MemoryProvider plugin. Distributed via PyPI. Implements the Hermes v0.7.0
 - `extract_memories` — structured extraction on session end
 - Also registers explicit tools (recall, store, search)
 
-### @engram/replit
+### @remnic/replit
 
 Replit MCP connector. Minimal package — setup instructions, config template, and installer that generates a token.
 
-### @engram/bench
+### @remnic/bench
 
 Retrieval latency benchmarks and CI regression gates.
 
@@ -132,7 +132,7 @@ After the core extraction, root `src/` contains one-line re-exports:
 
 ```typescript
 // src/orchestrator.ts
-export * from "@engram/core/orchestrator";
+export * from "@remnic/core/orchestrator";
 ```
 
 These ensure:
@@ -140,4 +140,4 @@ These ensure:
 - The root `tsup.config.ts` build still produces a valid `dist/index.js`
 - Any external code importing from the root package isn't broken
 
-Shims are removed once all consumers migrate to `@engram/core`.
+Shims are removed once all consumers migrate to `@remnic/core`.

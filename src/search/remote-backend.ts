@@ -1,1 +1,1 @@
-export * from "../../packages/engram-core/src/search/remote-backend.js";
+export * from "../../packages/remnic-core/src/search/remote-backend.js";
