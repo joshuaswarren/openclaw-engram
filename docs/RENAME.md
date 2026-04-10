@@ -1,6 +1,6 @@
 # Engram → Remnic Rename Plan
 
-**Status:** Proposed
+**Status:** In Progress
 **Owner:** @joshuaswarren
 **Target:** Execute before first 1.0.0 publish
 
@@ -484,7 +484,7 @@ conditions are evidence-based, not calendar-based.
 
 ## Decisions Open
 
-_None — plan is fully locked. Ready to merge and execute Phase A + B._
+_None — plan is fully locked. Execution is underway; publish and brand rollout remain._
 
 ---
 

@@ -177,6 +177,43 @@ jobs:
           MINOR="${REST%%.*}"
           PATCH="${REST##*.}"
           BUMP_TYPE="${{ steps.bump.outputs.bump_type }}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          BOOTSTRAP_PACKAGE="@remnic/core"
+          BOOTSTRAP_PUBLISHED="false"
+          if npm view "${BOOTSTRAP_PACKAGE}" version >/dev/null 2>&1; then
+            BOOTSTRAP_PUBLISHED="true"
+          fi
+          if [ "${BOOTSTRAP_PUBLISHED}" != "true" ]; then
+            BOOTSTRAP_TAG="v${PKG_VERSION}"
+            {
+              echo "bootstrap_release=true"
+            } >> "$GITHUB_OUTPUT"
+            if git rev-parse -q --verify "refs/tags/${BOOTSTRAP_TAG}" >/dev/null; then
+              {
+                echo "tag_exists=true"
+                echo "tag_name=${BOOTSTRAP_TAG}"
+                echo "new_version=${PKG_VERSION}"
+                echo "bump_type=bootstrap"
+              } >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            {
+              echo "tag_exists=false"
+              echo "tag_name=${BOOTSTRAP_TAG}"
+              echo "new_version=${PKG_VERSION}"
+              echo "bump_type=bootstrap"
+            } >> "$GITHUB_OUTPUT"
+            echo "::notice title=Bootstrap release::${BOOTSTRAP_PACKAGE} is not published yet; using package.json version ${PKG_VERSION}."
+            pnpm version "${PKG_VERSION}" --no-git-tag-version --allow-same-version
+            git add package.json pnpm-lock.yaml package-lock.json 2>/dev/null || true
+            if git diff --cached --quiet; then
+              echo "::notice title=Release commit skipped::Version already matches v${PKG_VERSION}; no package files changed."
+            else
+              git commit -m "chore(release): v${PKG_VERSION} [skip ci]"
+            fi
+            exit 0
+          fi
+
           case "${BUMP_TYPE}" in
             major)
               AUTO_VERSION="$((MAJOR + 1)).0.0"
@@ -193,7 +230,6 @@ jobs:
           # This lets PRs that intentionally set a version (e.g. 9.1.0) win
           # over the auto-increment (e.g. 9.0.109). PRs that don't touch
           # the version still get auto-incremented as before.
-          PKG_VERSION="$(node -p "require('./package.json').version")"
           # Compare using node for reliable semver comparison
           USE_PKG="$(node -e "
             const [a, b] = ['${PKG_VERSION}', '${AUTO_VERSION}'].map(v => v.split('.').map(Number));

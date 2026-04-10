@@ -72,7 +72,7 @@ Verify startup:
 
 ```bash
 grep '\[engram\]' ~/.openclaw/logs/gateway.log | tail -5
-# Should see: [engram] started
+# Should see the memory service start line (the log prefix remains [engram] during v1.x)
 ```
 
 ## Set Up QMD (Recommended)
@@ -145,7 +145,7 @@ qmd status           # should show existing collections
 # 4. Restart the gateway
 launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
 
-# 5. Verify Engram picked up QMD 2.0
+# 5. Verify Remnic picked up QMD 2.0
 grep "cliVersion" ~/.openclaw/logs/gateway.log | tail -1
 # Should show: cliVersion=qmd 2.0.x
 ```

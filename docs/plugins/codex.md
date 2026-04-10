@@ -1,19 +1,19 @@
 # Codex CLI Plugin
 
-Native Engram plugin for OpenAI Codex CLI. Provides automatic memory recall, observation, and session-end learning capture.
+Native Remnic plugin for OpenAI Codex CLI. Provides automatic memory recall, observation, and session-end learning capture.
 
 ## Installation
 
 ```bash
-engram connectors install codex
+remnic connectors install codex
 ```
 
 This:
-1. Starts the EMO daemon if not running
+1. Starts the Remnic daemon if not running
 2. Generates a dedicated auth token
 3. Installs the plugin to `~/.codex/plugins/`
 4. Enables hooks (`[features] codex_hooks = true` in `~/.codex/config.toml`)
-5. Configures MCP server pointing to EMO
+5. Configures MCP server pointing to Remnic
 6. Runs a health check
 
 ## What It Does
@@ -35,7 +35,7 @@ This:
 
 ### MCP Tools
 
-All 44 Engram MCP tools available via the `.mcp.json` configuration.
+All 44 Remnic MCP tools are available via the `.mcp.json` configuration. The legacy `engram.*` aliases remain available during v1.x.
 
 ## How It Differs from Claude Code Plugin
 
@@ -46,7 +46,7 @@ All 44 Engram MCP tools available via the `.mcp.json` configuration.
 
 ## Configuration
 
-Token read from `~/.engram/tokens.json`. Server defaults to `127.0.0.1:4318`.
+Token is read from `~/.remnic/tokens.json`, with `~/.engram/tokens.json` still accepted as a migration fallback. Server defaults to `127.0.0.1:4318`.
 
 ## Troubleshooting
 
@@ -66,5 +66,5 @@ grep codex_hooks ~/.codex/config.toml
 ## Uninstall
 
 ```bash
-engram connectors remove codex
+remnic connectors remove codex
 ```

@@ -1,15 +1,15 @@
 # Claude Code Plugin
 
-Native Engram plugin for Claude Code. Provides automatic memory recall on every prompt, observation of file changes, and explicit memory skills.
+Native Remnic plugin for Claude Code. Provides automatic memory recall on every prompt, observation of file changes, and explicit memory skills.
 
 ## Installation
 
 ```bash
-engram connectors install claude-code
+remnic connectors install claude-code
 ```
 
 This:
-1. Starts the EMO daemon if not running (with auto-start on boot)
+1. Starts the Remnic daemon if not running (with auto-start on boot)
 2. Generates a dedicated auth token
 3. Installs the plugin to Claude Code's plugin directory
 4. Configures MCP server pointing to `http://localhost:4318/mcp`
@@ -37,11 +37,11 @@ Memory is **mandatory** — the plugin enforces it via lifecycle hooks. You don'
 | `/engram:recall <query>` | Search memories ("what do I know about auth?") |
 | `/engram:search <query>` | Semantic search across all memories |
 | `/engram:entities` | List all tracked entities (people, projects, tools) |
-| `/engram:status` | Show Engram connection status and memory stats |
+| `/engram:status` | Show Remnic connection status and memory stats |
 
 ### MCP Tools
 
-All 44 Engram MCP tools are available for advanced operations: governance, work tracking, shared context, identity continuity, etc.
+All 44 Remnic MCP tools are available for advanced operations: governance, work tracking, shared context, identity continuity, etc. The slash commands still use the legacy `/engram:*` names during the v1.x compatibility window.
 
 ## How Memory Injection Works
 
@@ -76,7 +76,7 @@ When Claude Code writes or edits a file, the hook:
 
 ## Configuration
 
-The plugin reads its token from `~/.engram/tokens.json` and connects to EMO at `127.0.0.1:4318`.
+The plugin reads its token from `~/.remnic/tokens.json`, with `~/.engram/tokens.json` still accepted as a migration fallback, and connects to the Remnic daemon at `127.0.0.1:4318`.
 
 Override the server address:
 
@@ -87,13 +87,13 @@ export REMNIC_PORT=4318
 
 ## Troubleshooting
 
-### "Engram: server unreachable"
+### "Remnic: server unreachable"
 
-EMO daemon isn't running. Fix:
+The Remnic daemon isn't running. Fix:
 
 ```bash
-engram daemon status     # check
-engram daemon install    # install + start
+remnic daemon status     # check
+remnic daemon install    # install + start
 ```
 
 ### Slow recall on prompts
@@ -101,7 +101,7 @@ engram daemon install    # install + start
 The `UserPromptSubmit` hook has a 20s timeout. If recall is consistently slow:
 
 ```bash
-engram doctor            # check search backend health
+remnic doctor            # check search backend health
 ```
 
 ### No memories being stored
@@ -109,17 +109,17 @@ engram doctor            # check search backend health
 Check that the `PostToolUse` hook is firing:
 
 ```bash
-tail -f ~/.engram/logs/engram-post-tool-observe.log
+tail -f ~/.remnic/logs/engram-post-tool-observe.log
 ```
 
 ### Plugin not loading
 
 ```bash
-engram connectors doctor claude-code
+remnic connectors doctor claude-code
 ```
 
 ## Uninstall
 
 ```bash
-engram connectors remove claude-code
+remnic connectors remove claude-code
 ```

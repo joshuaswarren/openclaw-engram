@@ -2,7 +2,7 @@
 
 # Default target
 help:
-	@echo "openclaw-engram — available make targets:"
+	@echo "remnic — available make targets:"
 	@echo ""
 	@echo "  make build           Compile TypeScript to dist/"
 	@echo "  make test            Run full test suite"

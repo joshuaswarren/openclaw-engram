@@ -15,7 +15,7 @@ remnic connectors install hermes
 
 ```bash
 # Copy to Hermes plugins directory
-cp -r packages/plugin-hermes/remnic_hermes ~/.hermes/plugins/engram/
+cp -r packages/plugin-hermes/remnic_hermes ~/.hermes/plugins/remnic/
 
 # Or install as development plugin
 cd packages/plugin-hermes
@@ -23,7 +23,7 @@ pip install -e .
 ```
 
 The `remnic connectors install hermes` command:
-1. Starts the EMO daemon if not running
+1. Starts the Remnic daemon if not running
 2. Generates a dedicated auth token
 3. Writes Hermes `config.yaml` entry
 4. Runs a health check
@@ -36,9 +36,9 @@ The plugin implements Hermes v0.7.0+ MemoryProvider protocol:
 
 | Method | When | What Happens |
 |--------|------|-------------|
-| `initialize(config)` | Plugin loads | Connects to EMO, validates token |
+| `initialize(config)` | Plugin loads | Connects to Remnic, validates token |
 | `pre_llm_call(messages)` | Before every LLM call | Recalls relevant memories, injects into system prompt |
-| `sync_turn(transcript)` | After every response | Observes conversation turn, sends to EMO for extraction |
+| `sync_turn(transcript)` | After every response | Observes conversation turn, sends to Remnic for extraction |
 | `extract_memories(session)` | Session ends | Triggers structured extraction of session learnings |
 | `shutdown()` | Plugin unloads | Cleanup, flush pending observations |
 
@@ -51,6 +51,10 @@ The plugin also registers tools the agent can call directly:
 | `engram_recall` | Search memories with a query |
 | `engram_store` | Store a memory explicitly |
 | `engram_search` | Semantic search across all memories |
+
+Hermes still exposes the legacy `engram_*` tool names today. The product and
+connector are Remnic; the tool names stay legacy until the Hermes-side
+compatibility window closes.
 
 ## Why MemoryProvider > MCP
 
@@ -97,13 +101,13 @@ Hermes profiles isolate agent state under `~/.hermes/profiles/<name>/`. Each pro
 ```yaml
 # Profile: research
 memory_providers:
-  - name: engram
+  - name: remnic
     config:
       namespace: "research"
 
 # Profile: coding
 memory_providers:
-  - name: engram
+  - name: remnic
     config:
       namespace: "coding"
 ```
@@ -114,7 +118,7 @@ Or use the default namespace to share memories across profiles.
 
 ### "MemoryProvider remnic failed to initialize"
 
-EMO daemon isn't running:
+Remnic daemon isn't running:
 
 ```bash
 remnic daemon status
@@ -123,10 +127,11 @@ remnic daemon install
 
 ### Memories not appearing in context
 
-Check that `pre_llm_call` is being called:
+Check both sides of the integration:
 
 ```bash
-tail -f ~/.engram/logs/hermes-provider.log
+remnic daemon status
+hermes --version
 ```
 
 ### Import errors
@@ -142,5 +147,5 @@ pip show remnic-hermes
 
 ```bash
 pip uninstall remnic-hermes
-engram connectors remove hermes
+remnic connectors remove hermes
 ```
