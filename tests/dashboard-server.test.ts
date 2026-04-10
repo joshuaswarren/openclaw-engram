@@ -55,45 +55,47 @@ test("dashboard server serves health, graph, static assets, and websocket upgrad
     publicDir: path.join(process.cwd(), "dashboard", "public"),
   });
   const started = await server.start();
-  assert.equal(started.running, true);
-  assert.equal(started.port > 0, true);
+  try {
+    assert.equal(started.running, true);
+    assert.equal(started.port > 0, true);
 
-  const base = `http://${started.host}:${started.port}`;
-  const healthRes = await fetch(`${base}/api/health`);
-  assert.equal(healthRes.status, 200);
-  const health = await healthRes.json() as { ok: boolean };
-  assert.equal(health.ok, true);
+    const base = `http://${started.host}:${started.port}`;
+    const healthRes = await fetch(`${base}/api/health`);
+    assert.equal(healthRes.status, 200);
+    const health = await healthRes.json() as { ok: boolean };
+    assert.equal(health.ok, true);
 
-  const graphRes = await fetch(`${base}/api/graph`);
-  assert.equal(graphRes.status, 200);
-  const graph = await graphRes.json() as { stats: { edges: number; nodes: number } };
-  assert.equal(graph.stats.edges, 1);
-  assert.equal(graph.stats.nodes, 2);
+    const graphRes = await fetch(`${base}/api/graph`);
+    assert.equal(graphRes.status, 200);
+    const graph = await graphRes.json() as { stats: { edges: number; nodes: number } };
+    assert.equal(graph.stats.edges, 1);
+    assert.equal(graph.stats.nodes, 2);
 
-  const htmlRes = await fetch(`${base}/`);
-  assert.equal(htmlRes.status, 200);
-  const html = await htmlRes.text();
-  assert.match(html, /Engram Graph Dashboard/);
+    const htmlRes = await fetch(`${base}/`);
+    assert.equal(htmlRes.status, 200);
+    const html = await htmlRes.text();
+    assert.match(html, /Remnic Graph Dashboard/);
 
-  const socket = net.createConnection({ host: started.host, port: started.port });
-  socket.write(
-    [
-      "GET / HTTP/1.1",
-      `Host: ${started.host}:${started.port}`,
-      "Upgrade: WebSocket",
-      "Connection: Upgrade",
-      `Origin: http://${started.host}:${started.port}`,
-      "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
-      "Sec-WebSocket-Version: 13",
-      "",
-      "",
-    ].join("\r\n"),
-  );
-  const upgradeResponse = await waitForSocketChunk(socket);
-  assert.match(upgradeResponse, /101 Switching Protocols/);
-  socket.destroy();
-
-  await server.stop();
+    const socket = net.createConnection({ host: started.host, port: started.port });
+    socket.write(
+      [
+        "GET / HTTP/1.1",
+        `Host: ${started.host}:${started.port}`,
+        "Upgrade: WebSocket",
+        "Connection: Upgrade",
+        `Origin: http://${started.host}:${started.port}`,
+        "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
+        "Sec-WebSocket-Version: 13",
+        "",
+        "",
+      ].join("\r\n"),
+    );
+    const upgradeResponse = await waitForSocketChunk(socket);
+    assert.match(upgradeResponse, /101 Switching Protocols/);
+    socket.destroy();
+  } finally {
+    await server.stop();
+  }
 });
 
 test("dashboard origin check allows explicit and default http port 80", () => {
@@ -136,26 +138,27 @@ test("dashboard websocket upgrade rejects non-loopback origin", async () => {
     publicDir: path.join(process.cwd(), "dashboard", "public"),
   });
   const started = await server.start();
-
-  const socket = net.createConnection({ host: started.host, port: started.port });
-  socket.write(
-    [
-      "GET / HTTP/1.1",
-      `Host: ${started.host}:${started.port}`,
-      "Upgrade: WebSocket",
-      "Connection: Upgrade",
-      "Origin: http://evil.example",
-      "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
-      "Sec-WebSocket-Version: 13",
-      "",
-      "",
-    ].join("\r\n"),
-  );
-  const upgradeResponse = await waitForSocketChunk(socket);
-  assert.match(upgradeResponse, /403 Forbidden/);
-  socket.destroy();
-
-  await server.stop();
+  try {
+    const socket = net.createConnection({ host: started.host, port: started.port });
+    socket.write(
+      [
+        "GET / HTTP/1.1",
+        `Host: ${started.host}:${started.port}`,
+        "Upgrade: WebSocket",
+        "Connection: Upgrade",
+        "Origin: http://evil.example",
+        "Sec-WebSocket-Key: AAAAAAAAAAAAAAAAAAAAAA==",
+        "Sec-WebSocket-Version: 13",
+        "",
+        "",
+      ].join("\r\n"),
+    );
+    const upgradeResponse = await waitForSocketChunk(socket);
+    assert.match(upgradeResponse, /403 Forbidden/);
+    socket.destroy();
+  } finally {
+    await server.stop();
+  }
 });
 
 test("dashboard server start recovers after listen failure", async () => {
