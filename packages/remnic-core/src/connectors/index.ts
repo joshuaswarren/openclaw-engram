@@ -973,11 +973,25 @@ export function removeConnector(connectorId: string): RemoveResult {
   const configPath = path.join(configDir, `${connectorId}.json`);
 
   if (!fs.existsSync(configPath)) {
+    // Best-effort: revoke any orphan token that may have survived a prior partial
+    // cleanup (e.g. connector JSON deleted manually or XDG_CONFIG_HOME change).
+    // This prevents a stale bearer token from remaining valid in tokens.json while
+    // the connector appears "not installed" to the caller.
+    let staleTokenRevoked = false;
+    try {
+      staleTokenRevoked = revokeToken(connectorId);
+    } catch {
+      // Best-effort: token store may be missing or read-only; do not mask the
+      // not_found signal to the caller.
+    }
+    const message = staleTokenRevoked
+      ? `${connectorId} is not installed. Removed stale token entry for ${connectorId}.`
+      : `${connectorId} is not installed.`;
     return {
       connectorId,
       configPath,
       status: "not_found",
-      message: "Not installed",
+      message,
     };
   }
 

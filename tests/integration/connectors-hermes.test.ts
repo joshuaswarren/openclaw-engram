@@ -2103,3 +2103,79 @@ test("removeConnector: unlink failure for non-hermes connector uses connector ID
     }
   });
 });
+
+// ── Round 11: revoke token on stale not_found path (PRRT_kwDORJXyws56UWH6) ──
+
+test("removeConnector: best-effort revokeToken on not_found path clears orphan token", async () => {
+  // Simulate partial cleanup: connector JSON was manually deleted (or moved due
+  // to XDG_CONFIG_HOME change) while tokens.json still contains the connector's
+  // bearer token. Expected outcome: removeConnector returns status "not_found"
+  // AND the stale token is revoked (removed from tokens.json).
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Set up Hermes profile dir so install can write config.yaml.
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // Install hermes so both tokens.json entry and connector JSON exist.
+        const installResult = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "default", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(installResult.status, "installed", "Pre-condition: install must succeed");
+
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const storeBefore = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        assert.ok(
+          storeBefore.tokens.find((t) => t.connector === "hermes"),
+          "Pre-condition: hermes token must exist after install",
+        );
+
+        // Simulate partial cleanup: manually delete the connector JSON so
+        // removeConnector will hit the not_found early-return path.
+        fs.unlinkSync(installResult.configPath!);
+        assert.ok(
+          !fs.existsSync(installResult.configPath!),
+          "Pre-condition: connector JSON must be gone before removeConnector call",
+        );
+
+        // Call removeConnector — should hit the not_found path and revoke the stale token.
+        const removeResult = mod.removeConnector("hermes");
+
+        // Must return not_found status (connector JSON was absent).
+        assert.equal(
+          removeResult.status,
+          "not_found",
+          "removeConnector must return status: not_found when connector JSON is missing",
+        );
+
+        // Message must mention that the stale token was revoked.
+        assert.ok(
+          removeResult.message.includes("stale token"),
+          "Message must mention that a stale token was revoked",
+        );
+        assert.ok(
+          removeResult.message.includes("hermes"),
+          "Message must identify the connector",
+        );
+
+        // The stale token must no longer be in tokens.json.
+        const storeAfter = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        assert.ok(
+          !storeAfter.tokens.find((t) => t.connector === "hermes"),
+          "tokens.json must NOT contain a hermes entry after stale-token revoke",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
