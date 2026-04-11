@@ -242,13 +242,31 @@ export async function applyTemporalSupersession(args: {
         continue;
       }
 
+      // Finding 2 fix: the `supersededAt` / `updated` timestamps written to the
+      // old fact must never run backwards relative to its own persisted
+      // `created` timestamp.  If the caller-supplied `args.createdAt` (which
+      // represents "when the new replacing fact was authored") is earlier than
+      // either the new fact's persisted `created` (T_new) or the old fact's
+      // persisted `created` (T_old), we'd be writing a nonsensical
+      // `supersededAt` that precedes the old memory's own creation.  Clamp to
+      // the monotonic maximum so time only moves forward.
+      const oldCreatedMs = new Date(fresh.frontmatter.created).getTime();
+      const newCreatedMs = new Date(persistedCreatedAt).getTime();
+      const argCreatedMs = new Date(args.createdAt).getTime();
+      const maxMs = Math.max(
+        Number.isFinite(oldCreatedMs) ? oldCreatedMs : 0,
+        Number.isFinite(newCreatedMs) ? newCreatedMs : 0,
+        Number.isFinite(argCreatedMs) ? argCreatedMs : 0,
+      );
+      const supersededAt = new Date(maxMs).toISOString();
+
       const wrote = await args.storage.writeMemoryFrontmatter(
         fresh,
         {
           status: "superseded",
           supersededBy: args.newMemoryId,
-          supersededAt: args.createdAt,
-          updated: args.createdAt,
+          supersededAt,
+          updated: supersededAt,
         },
         {
           actor: "temporal-supersession",

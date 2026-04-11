@@ -610,6 +610,79 @@ test("applyTemporalSupersession: uses persisted frontmatter.created, old memory 
   }
 });
 
+test("applyTemporalSupersession: supersededAt/updated are monotonic when wall clock is stale", async () => {
+  // Finding 2 regression: when the caller-supplied `createdAt` is earlier
+  // than the old memory's persisted `created`, the written `supersededAt`
+  // must not predate the old memory's own createdAt — otherwise the
+  // supersession event appears to occur before the fact it supersedes.
+  //
+  // Setup: old fact persisted at T_old = 2026-04-11T12:00:00Z.
+  // New fact persisted at T_new = 2026-04-11T13:00:00Z (newer — so old is
+  // eligible for supersession).
+  // Caller passes stale wall-clock createdAt = 2026-04-11T11:00:00Z
+  // (earlier than BOTH).  The written supersededAt must equal the max of
+  // the three (T_new = 13:00), never the stale 11:00.
+  const { storage, cleanup } = await makeStorage("engram-temporal-monotonic-");
+  try {
+    const tOld = "2026-04-11T12:00:00.000Z";
+    const tNew = "2026-04-11T13:00:00.000Z";
+    const staleWallClock = "2026-04-11T11:00:00.000Z";
+
+    // Write old fact and patch created to T_old.
+    const oldId = await writeFact(storage, "entity lives in Austin", TEST_ENTITY, { city: "Austin" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const oldMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === oldId);
+    assert.ok(oldMem);
+    await storage.writeMemoryFrontmatter(oldMem!, { created: tOld, updated: tOld });
+
+    // Write new fact and patch created to T_new (so persisted T_new > T_old).
+    const newId = await writeFact(storage, "entity moved to NYC", TEST_ENTITY, { city: "NYC" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const newMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === newId);
+    assert.ok(newMem);
+    await storage.writeMemoryFrontmatter(newMem!, { created: tNew, updated: tNew });
+
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: newId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },
+      createdAt: staleWallClock, // stale — earlier than both persisted timestamps
+      enabled: true,
+    });
+
+    assert.deepEqual(result.supersededIds, [oldId], "old fact should still be superseded");
+
+    const oldFm = await readFrontmatterById(storage, oldId);
+    assert.equal(oldFm?.status, "superseded");
+    assert.equal(oldFm?.supersededBy, newId);
+    // The written supersededAt / updated must be the monotonic max — the
+    // new fact's persisted T_new — NOT the stale wall-clock value.
+    assert.equal(
+      oldFm?.supersededAt,
+      tNew,
+      "supersededAt must be the monotonic max of (old.created, new.created, args.createdAt)",
+    );
+    assert.equal(
+      oldFm?.updated,
+      tNew,
+      "updated must match supersededAt after supersession",
+    );
+
+    // Sanity check: supersededAt is never earlier than the old fact's own
+    // createdAt — time must not run backwards.
+    const oldCreatedMs = new Date(oldFm!.created).getTime();
+    const supersededAtMs = new Date(oldFm!.supersededAt!).getTime();
+    assert.ok(
+      supersededAtMs >= oldCreatedMs,
+      `supersededAt (${oldFm?.supersededAt}) must not predate created (${oldFm?.created})`,
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
 test("applyTemporalSupersession: stale extraction (new write has T0, existing has T1) does not supersede existing", async () => {
   // Simulate stale extraction: an existing memory has T1 (newer) but a new
   // write arrives with T0 (older persisted created).  The existing T1 memory
