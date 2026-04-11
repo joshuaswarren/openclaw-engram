@@ -629,6 +629,24 @@ const pluginDefinition = {
             return lines;
           };
 
+      // Derive the agent id owning this memory from the registration-time
+      // runtime context. Each plugin register() call is scoped to one agent
+      // (see singleton guard comment above), so api.runtime?.agent?.id is
+      // authoritative for this registry. Fall back to "generalist" only when
+      // the runtime does not expose an agent id (older new-SDK shapes).
+      const runtimeAgent = (api as any).runtime?.agent;
+      const runtimeAgentId =
+        typeof runtimeAgent?.id === "string" && runtimeAgent.id.length > 0
+          ? runtimeAgent.id
+          : undefined;
+      const capabilityAgentIds = runtimeAgentId ? [runtimeAgentId] : ["generalist"];
+      const capabilityWorkspaceDir =
+        (typeof runtimeAgent?.workspaceDir === "string" && runtimeAgent.workspaceDir.length > 0
+          ? runtimeAgent.workspaceDir
+          : undefined) ??
+        orchestrator.config.workspaceDir ??
+        defaultWorkspaceDir();
+
       const memoryCapability: import("openclaw/plugin-sdk").MemoryPluginCapability = {
         // Include the promptBuilder so runtimes that treat unified capability
         // registration as authoritative (SDK >=2026.4.5) continue to inject
@@ -641,8 +659,8 @@ const pluginDefinition = {
             try {
               return await listRemnicPublicArtifacts({
                 memoryDir: orchestrator.config.memoryDir,
-                workspaceDir: orchestrator.config.workspaceDir || defaultWorkspaceDir(),
-                agentIds: ["generalist"],
+                workspaceDir: capabilityWorkspaceDir,
+                agentIds: capabilityAgentIds,
               });
             } catch (err) {
               log.error("publicArtifacts.listArtifacts failed", err);

@@ -77,13 +77,15 @@ interface MockApi {
   registerService: (spec: { id: string; start: () => Promise<void>; stop: () => Promise<void> }) => void;
   on: (event: string, handler: unknown) => void;
   registerHook?: (events: unknown, handler: unknown, opts?: unknown) => void;
-  runtime?: { version: string };
+  runtime?: { version: string; agent?: { id?: string; workspaceDir?: string } };
   registrationMode?: string;
   registerMemoryPromptSection?: (spec: unknown) => void;
+  registerMemoryCapability?: (spec: unknown) => void;
   _registeredHooks: string[];
   _registeredToolCount: number;
   _registeredServiceIds: string[];
   _memoryPromptSectionRegistered: boolean;
+  _registeredMemoryCapability?: any;
 }
 
 function buildNewSdkApi(label: string): MockApi {
@@ -366,6 +368,88 @@ test("setup-only mode skips all registration", async () => {
       !api._memoryPromptSectionRegistered,
       "registerMemoryPromptSection should NOT be called in setup-only mode",
     );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+// ============================================================================
+// Test 5: publicArtifacts.listArtifacts derives agentIds from runtime
+// ============================================================================
+test("publicArtifacts.listArtifacts derives agentIds from api.runtime.agent.id", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("capability-runtime-agent-test");
+    // Simulate a new SDK runtime that supplies an agent id out-of-band.
+    api.runtime = {
+      version: "2026.4.9",
+      agent: { id: "wiki-bridge-agent", workspaceDir: "/tmp/wiki-ws" },
+    };
+    api.registerMemoryCapability = (spec: any) => {
+      api._registeredMemoryCapability = spec;
+    };
+
+    plugin.register(api as any);
+
+    // Capability must have been registered
+    assert.ok(
+      api._registeredMemoryCapability,
+      "registerMemoryCapability should have been called on a new SDK that exposes it",
+    );
+    const cap = api._registeredMemoryCapability;
+    assert.ok(cap.publicArtifacts, "capability must expose publicArtifacts");
+    assert.equal(typeof cap.publicArtifacts.listArtifacts, "function");
+
+    const result = await cap.publicArtifacts.listArtifacts({ cfg: {} });
+    // Whether or not artifacts are found (memoryDir likely empty), every
+    // returned artifact must carry the runtime agent id — never the hardcoded
+    // "generalist" fallback.
+    assert.ok(Array.isArray(result), "listArtifacts must return an array");
+    for (const artifact of result) {
+      assert.deepStrictEqual(
+        artifact.agentIds,
+        ["wiki-bridge-agent"],
+        "agentIds should be derived from api.runtime.agent.id, not hardcoded",
+      );
+    }
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("publicArtifacts.listArtifacts falls back to default agent id when runtime agent is absent", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("capability-no-runtime-agent-test");
+    // runtime is present but without an agent.id — older new-SDK shape.
+    api.runtime = { version: "2026.4.9" };
+    api.registerMemoryCapability = (spec: any) => {
+      api._registeredMemoryCapability = spec;
+    };
+
+    plugin.register(api as any);
+
+    assert.ok(api._registeredMemoryCapability);
+    const cap = api._registeredMemoryCapability;
+    const result = await cap.publicArtifacts.listArtifacts({ cfg: {} });
+    assert.ok(Array.isArray(result));
+    // Every returned artifact must carry a non-empty agentIds array.
+    for (const artifact of result) {
+      assert.ok(
+        Array.isArray(artifact.agentIds) && artifact.agentIds.length > 0,
+        "agentIds fallback must be a non-empty array",
+      );
+    }
   } finally {
     await awaitPendingMigration();
     restoreRegisterMigrationEnv(previousDisableMigration);
