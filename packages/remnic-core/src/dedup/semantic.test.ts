@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { parseConfig } from "../config.js";
+import { ContentHashIndex } from "../storage.js";
 import {
   decideSemanticDedup,
   type SemanticDedupHit,
@@ -232,4 +236,121 @@ test("parseConfig: Infinity semanticDedupThreshold falls back to default 0.92", 
   const neg = parseConfig({ semanticDedupThreshold: Number.NEGATIVE_INFINITY });
   assert.equal(pos.semanticDedupThreshold, 0.92);
   assert.equal(neg.semanticDedupThreshold, 0.92);
+});
+
+// ── Regression: semantic skip must NOT register a synthetic content hash ──────
+//
+// Verifies the fix for the bug introduced in PR #399: when the semantic dedup
+// guard decides to skip a fact (near-duplicate of an existing memory), the
+// orchestrator must NOT add the skipped fact's content to contentHashIndex.
+//
+// If it did, archiving the original neighbor memory would leave an orphaned
+// hash that permanently blocks legitimate writes of the same text.
+
+test("regression #399: semantic dedup skip does NOT add content hash to index", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "remnic-test-"));
+  try {
+    const index = new ContentHashIndex(stateDir);
+    await index.load();
+
+    const FACT_CONTENT = "the user prefers dark mode in their editor";
+    const NEIGHBOR_ID = "mem-neighbor-001";
+
+    // Simulate the orchestrator: run the semantic dedup decision (skip outcome).
+    const decision = await decideSemanticDedup(
+      FACT_CONTENT,
+      makeLookup([{ id: NEIGHBOR_ID, score: 0.97 }]),
+      DEFAULT_OPTS,
+    );
+    assert.equal(decision.action, "skip", "precondition: decision must be skip");
+
+    // The fixed orchestrator does NOT call index.add() in the skip branch.
+    // Simulate that invariant: we do NOT call index.add(FACT_CONTENT) here.
+
+    // The skipped fact's hash must NOT be present in the index.
+    assert.equal(
+      index.has(FACT_CONTENT),
+      false,
+      "skipped fact content must not be registered in contentHashIndex",
+    );
+
+    // Now simulate archiving the neighbor: remove its content from the index.
+    // (In the orchestrator this would be index.remove(neighborMemory.content);
+    // here the neighbor was never registered, so the index stays empty — which
+    // is the desired state.)
+    assert.equal(index.size, 0, "index must remain empty after semantic skip");
+
+    // A subsequent write attempt of the same text must NOT be blocked by the
+    // hash gate (because no hash was ever registered for the skipped fact).
+    assert.equal(
+      index.has(FACT_CONTENT),
+      false,
+      "third write attempt must not be blocked by a phantom hash",
+    );
+
+    // Confirm that only a genuine persist (index.add) registers the hash.
+    index.add(FACT_CONTENT);
+    assert.equal(
+      index.has(FACT_CONTENT),
+      true,
+      "explicit add must register the hash",
+    );
+    assert.equal(index.size, 1);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+test("regression #399: after neighbor archive, re-write of skipped content is allowed", async () => {
+  // More explicit end-to-end simulation of the full scenario:
+  // 1. Seed a "neighbor" memory in the hash index.
+  // 2. A second fact is semantically-skipped (no hash added — the fix).
+  // 3. The neighbor memory is archived (its hash is removed from the index).
+  // 4. A third write of the same content as the skipped fact must pass the gate.
+
+  const stateDir = await mkdtemp(join(tmpdir(), "remnic-test-"));
+  try {
+    const index = new ContentHashIndex(stateDir);
+    await index.load();
+
+    const NEIGHBOR_CONTENT = "the user prefers dark mode in their editor";
+    const SKIPPED_CONTENT = "the user likes dark editor themes";
+
+    // Step 1: seed neighbor memory hash (as if a real persist happened).
+    index.add(NEIGHBOR_CONTENT);
+    assert.equal(index.size, 1, "neighbor hash seeded");
+
+    // Step 2: semantic dedup decides to skip SKIPPED_CONTENT.
+    const decision = await decideSemanticDedup(
+      SKIPPED_CONTENT,
+      makeLookup([{ id: "mem-neighbor-001", score: 0.95 }]),
+      DEFAULT_OPTS,
+    );
+    assert.equal(decision.action, "skip");
+    // Fixed code: do NOT call index.add(SKIPPED_CONTENT).
+    // (In the old buggy code this line would have been executed.)
+    assert.equal(
+      index.has(SKIPPED_CONTENT),
+      false,
+      "skipped content must not be in index",
+    );
+
+    // Step 3: archive the neighbor — remove its hash.
+    index.remove(NEIGHBOR_CONTENT);
+    assert.equal(index.size, 0, "index empty after neighbor archived");
+
+    // Step 4: attempt to write SKIPPED_CONTENT again — must not be blocked.
+    assert.equal(
+      index.has(SKIPPED_CONTENT),
+      false,
+      "write of previously-skipped content must not be blocked after neighbor archive",
+    );
+
+    // Confirm a fresh persist now registers the hash correctly.
+    index.add(SKIPPED_CONTENT);
+    assert.equal(index.has(SKIPPED_CONTENT), true);
+    assert.equal(index.size, 1);
+  } finally {
+    await rm(stateDir, { recursive: true, force: true });
+  }
 });

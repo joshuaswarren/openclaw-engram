@@ -8665,11 +8665,10 @@ export class Orchestrator {
             )} neighbor=${semanticDecision.topId}`,
           );
           dedupedCount++;
-          // Still record the content hash so a later exact-copy attempt
-          // short-circuits on the cheaper hash path without re-embedding.
-          if (this.contentHashIndex) {
-            this.contentHashIndex.add(fact.content);
-          }
+          // Do NOT add fact.content to contentHashIndex here. No memory was
+          // persisted for this fact, so registering a synthetic hash would
+          // permanently suppress exact-copy writes once the neighbor memory is
+          // archived or deleted (the hash would linger with no backing record).
           continue;
         }
       }
