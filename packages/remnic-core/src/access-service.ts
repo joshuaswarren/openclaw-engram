@@ -871,7 +871,20 @@ export class EngramAccessService {
       throw new EngramAccessInputError(`invalid briefing window: ${token}`);
     }
 
-    const focus = parseBriefingFocus(request.focus);
+    // Validate focus: only treat undefined / empty strings as "no filter".
+    // Anything else that parses to null (e.g. "project:", "topic:") is malformed
+    // and must be rejected so a templating miss never silently broadens the
+    // briefing from a targeted project view to all memories.
+    const rawFocus = typeof request.focus === "string" ? request.focus.trim() : "";
+    let focus = null;
+    if (rawFocus.length > 0) {
+      focus = parseBriefingFocus(rawFocus);
+      if (!focus) {
+        throw new EngramAccessInputError(
+          `invalid briefing focus filter: ${request.focus}`,
+        );
+      }
+    }
 
     const format: "markdown" | "json" = request.format === "json"
       ? "json"

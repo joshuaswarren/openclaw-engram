@@ -125,3 +125,102 @@ test("FileCalendarSource returns [] when JSON is malformed", async () => {
     await rm(path.dirname(filePath), { recursive: true, force: true });
   }
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// #396 Codex follow-up: ICS DTSTART/DTEND must preserve TZID params. An event
+// at 23:30 America/New_York on 2026-04-11 = 03:30 UTC on 2026-04-12, so it
+// must appear in the 2026-04-12 briefing (not 2026-04-11).
+// ──────────────────────────────────────────────────────────────────────────
+
+test("FileCalendarSource preserves DTSTART TZID and shifts to the correct UTC date", async () => {
+  // 2026-04-11 is inside US DST (second Sunday of March → first Sunday of
+  // November), so America/New_York is UTC-4 (EDT). 23:30 ET → 03:30 UTC next day.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:synthetic-ics-tz-1",
+    "SUMMARY:Late night review",
+    "DTSTART;TZID=America/New_York:20260411T233000",
+    "DTEND;TZID=America/New_York:20260412T003000",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const filePath = await makeTempFile("tz.ics", ics);
+  try {
+    const source = new FileCalendarSource(filePath);
+
+    // Must NOT appear on 2026-04-11 UTC.
+    const apr11 = await source.eventsForDate("2026-04-11");
+    assert.equal(
+      apr11.length,
+      0,
+      "23:30 ET on 2026-04-11 is 03:30 UTC on 2026-04-12, not 2026-04-11",
+    );
+
+    // Must appear on 2026-04-12 UTC.
+    const apr12 = await source.eventsForDate("2026-04-12");
+    assert.equal(apr12.length, 1, "event must land on the 2026-04-12 UTC briefing");
+    assert.equal(apr12[0].title, "Late night review");
+    assert.equal(apr12[0].id, "synthetic-ics-tz-1");
+    // DTSTART at 23:30 ET (UTC-4 during DST) → 03:30 UTC
+    assert.equal(apr12[0].start, "2026-04-12T03:30:00.000Z");
+    // DTEND at 00:30 ET (next day) → 04:30 UTC same day
+    assert.equal(apr12[0].end, "2026-04-12T04:30:00.000Z");
+  } finally {
+    await rm(path.dirname(filePath), { recursive: true, force: true });
+  }
+});
+
+test("FileCalendarSource treats DTSTART without TZID as floating-local", async () => {
+  // No TZID, no Z → floating. Must match its own calendar day regardless of
+  // the server's local timezone.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:synthetic-ics-floating",
+    "SUMMARY:Floating event",
+    "DTSTART:20260411T143000",
+    "DTEND:20260411T150000",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const filePath = await makeTempFile("floating.ics", ics);
+  try {
+    const source = new FileCalendarSource(filePath);
+    const apr11 = await source.eventsForDate("2026-04-11");
+    assert.equal(apr11.length, 1, "floating event must match its own calendar day");
+    assert.equal(apr11[0].title, "Floating event");
+  } finally {
+    await rm(path.dirname(filePath), { recursive: true, force: true });
+  }
+});
+
+test("FileCalendarSource falls back to UTC when TZID is unknown", async () => {
+  // Unknown TZID: conservative behaviour is to treat the wallclock as UTC
+  // (logged warning) rather than dropping the event entirely.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "BEGIN:VEVENT",
+    "UID:synthetic-ics-unknown-tz",
+    "SUMMARY:Unknown-zone event",
+    "DTSTART;TZID=Nowhere/NotReal:20260411T120000",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const filePath = await makeTempFile("unknown-tz.ics", ics);
+  try {
+    const source = new FileCalendarSource(filePath);
+    // With the UTC fallback, 12:00 wallclock → 12:00 UTC, so it lands on 2026-04-11.
+    const apr11 = await source.eventsForDate("2026-04-11");
+    assert.equal(apr11.length, 1, "unknown TZID should fall back to UTC, not drop the event");
+    assert.equal(apr11[0].title, "Unknown-zone event");
+  } finally {
+    await rm(path.dirname(filePath), { recursive: true, force: true });
+  }
+});

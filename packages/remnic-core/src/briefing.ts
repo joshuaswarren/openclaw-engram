@@ -257,6 +257,53 @@ function parseJsonEvents(raw: string): CalendarEvent[] {
   }
 }
 
+interface IcsParsedLine {
+  property: string;
+  params: Record<string, string>;
+  value: string;
+}
+
+/**
+ * Parse a single ICS content line into its property, parameters, and value.
+ * Returns null if the line is not a well-formed property line.
+ *
+ * Example:
+ *   `DTSTART;TZID=America/New_York:20260411T233000`
+ *   → { property: "DTSTART", params: { TZID: "America/New_York" }, value: "20260411T233000" }
+ */
+function parseIcsLine(line: string): IcsParsedLine | null {
+  // Find the first `:` outside of any parameter value. Per RFC 5545 parameter
+  // values may be quoted, but the minimal-parser use case here only needs to
+  // handle unquoted TZID values.
+  const colonIdx = line.indexOf(":");
+  if (colonIdx <= 0) return null;
+  const head = line.slice(0, colonIdx);
+  const value = line.slice(colonIdx + 1).trim();
+  // Head is of the form `PROPERTY[;PARAM=val[;PARAM=val]]`.
+  const headParts = head.split(";");
+  const property = headParts[0]!.toUpperCase();
+  if (!/^[A-Z0-9-]+$/.test(property)) return null;
+  const params: Record<string, string> = {};
+  for (let i = 1; i < headParts.length; i++) {
+    const segment = headParts[i]!;
+    const eqIdx = segment.indexOf("=");
+    if (eqIdx <= 0) continue;
+    const name = segment.slice(0, eqIdx).toUpperCase();
+    let val = segment.slice(eqIdx + 1);
+    // Strip surrounding quotes if present (RFC 5545 §3.1).
+    if (val.startsWith('"') && val.endsWith('"') && val.length >= 2) {
+      val = val.slice(1, -1);
+    }
+    params[name] = val;
+  }
+  return { property, params, value };
+}
+
+interface IcsDateField {
+  raw: string;
+  params: Record<string, string>;
+}
+
 function parseIcsEvents(raw: string): CalendarEvent[] {
   const events: CalendarEvent[] = [];
   const normalized = raw.replace(/\r\n/g, "\n");
@@ -264,45 +311,165 @@ function parseIcsEvents(raw: string): CalendarEvent[] {
   for (const block of blocks) {
     const endIdx = block.search(/END:VEVENT/i);
     const body = endIdx === -1 ? block : block.slice(0, endIdx);
-    const fields: Record<string, string> = {};
+    const simpleFields: Record<string, string> = {};
+    const dateFields: Record<string, IcsDateField> = {};
     for (const line of body.split("\n")) {
-      const m = line.match(/^([A-Z0-9-]+)(?:;[^:]*)?:(.*)$/i);
-      if (!m) continue;
-      const key = m[1].toUpperCase();
-      const value = m[2].trim();
-      if (fields[key] === undefined) fields[key] = value;
+      const parsed = parseIcsLine(line);
+      if (!parsed) continue;
+      const { property, params, value } = parsed;
+      if (property === "DTSTART" || property === "DTEND") {
+        if (dateFields[property] === undefined) {
+          dateFields[property] = { raw: value, params };
+        }
+      } else if (simpleFields[property] === undefined) {
+        simpleFields[property] = value;
+      }
     }
-    const title = fields.SUMMARY;
-    const start = fields.DTSTART;
-    if (!title || !start) continue;
+    const title = simpleFields.SUMMARY;
+    const dtstart = dateFields.DTSTART;
+    if (!title || !dtstart) continue;
+    const dtend = dateFields.DTEND;
     events.push({
-      id: fields.UID ?? cryptoRandomId(),
+      id: simpleFields.UID ?? cryptoRandomId(),
       title,
-      start: normalizeIcsDate(start),
-      end: fields.DTEND ? normalizeIcsDate(fields.DTEND) : undefined,
-      location: fields.LOCATION,
-      notes: fields.DESCRIPTION,
+      start: normalizeIcsDate(dtstart.raw, dtstart.params),
+      end: dtend ? normalizeIcsDate(dtend.raw, dtend.params) : undefined,
+      location: simpleFields.LOCATION,
+      notes: simpleFields.DESCRIPTION,
     });
   }
   return events;
 }
 
-function normalizeIcsDate(value: string): string {
-  // ICS basic forms: 20260411T150000Z or 20260411
-  if (/^\d{8}T\d{6}Z?$/.test(value)) {
+/**
+ * Normalise an ICS date/datetime value (optionally with a `TZID` parameter)
+ * into an ISO 8601 string that downstream code can compare unambiguously.
+ *
+ * Behaviour:
+ *   - `20260411T150000Z` → `2026-04-11T15:00:00Z`
+ *   - `20260411` → `2026-04-11T00:00:00Z` (date-only events are day-boundaries)
+ *   - `20260411T150000` (floating, no Z, no TZID) → `2026-04-11T15:00:00` (floating)
+ *   - `20260411T233000` with `TZID=America/New_York` → `2026-04-12T03:30:00Z`
+ *     (applies the zone offset at that wallclock time; DST-aware via Intl)
+ *   - Unknown TZID falls back to UTC with a logged warning (conservative:
+ *     the event still appears, but on the UTC date).
+ */
+function normalizeIcsDate(value: string, params: Record<string, string> = {}): string {
+  // Date-time with explicit Z suffix (UTC).
+  if (/^\d{8}T\d{6}Z$/.test(value)) {
     const y = value.slice(0, 4);
     const m = value.slice(4, 6);
     const d = value.slice(6, 8);
     const hh = value.slice(9, 11);
     const mm = value.slice(11, 13);
     const ss = value.slice(13, 15);
-    const tz = value.endsWith("Z") ? "Z" : "";
-    return `${y}-${m}-${d}T${hh}:${mm}:${ss}${tz}`;
+    return `${y}-${m}-${d}T${hh}:${mm}:${ss}Z`;
   }
+  // Date-time without Z: may be floating or zoned via TZID.
+  if (/^\d{8}T\d{6}$/.test(value)) {
+    const y = value.slice(0, 4);
+    const m = value.slice(4, 6);
+    const d = value.slice(6, 8);
+    const hh = value.slice(9, 11);
+    const mm = value.slice(11, 13);
+    const ss = value.slice(13, 15);
+    const local = `${y}-${m}-${d}T${hh}:${mm}:${ss}`;
+    const tzid = params.TZID;
+    if (tzid) {
+      const utcIso = icsWallclockToUtc(local, tzid);
+      if (utcIso) return utcIso;
+      log.warn(
+        `briefing: unsupported TZID "${tzid}" — treating as UTC for ${local}`,
+      );
+      return `${local}Z`;
+    }
+    // No TZID → floating. Downstream compares the date slice directly.
+    return local;
+  }
+  // Date-only (all-day event). Date-only values carry no TZID per RFC 5545.
   if (/^\d{8}$/.test(value)) {
     return `${value.slice(0, 4)}-${value.slice(4, 6)}-${value.slice(6, 8)}T00:00:00Z`;
   }
   return value;
+}
+
+/**
+ * Convert a wallclock local datetime in a named IANA timezone to a UTC ISO
+ * string. Returns null if the timezone is unsupported by the runtime.
+ *
+ * Implementation note: this is the standard "invert the formatter" technique.
+ * We treat the local wallclock as though it were UTC, ask the runtime what
+ * time that instant shows in the target zone, and the delta is the zone's
+ * offset at that wallclock moment (DST-aware).
+ */
+function icsWallclockToUtc(local: string, tzid: string): string | null {
+  const match = local.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const [, y, mo, d, hh, mm, ss] = match;
+  // Treat the wallclock as UTC for the first probe.
+  const naiveUtcMs = Date.UTC(
+    Number(y),
+    Number(mo) - 1,
+    Number(d),
+    Number(hh),
+    Number(mm),
+    Number(ss),
+  );
+  if (!Number.isFinite(naiveUtcMs)) return null;
+
+  let formatter: Intl.DateTimeFormat;
+  try {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tzid,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    });
+  } catch {
+    return null;
+  }
+
+  const zonedMs = zonedFormatToMs(formatter, new Date(naiveUtcMs));
+  if (zonedMs === null) return null;
+  // Offset = naiveUtc − zonedAtNaiveUtc (positive for zones east of UTC).
+  const offsetMs = naiveUtcMs - zonedMs;
+  // Apply the offset once to land on the real UTC instant.
+  const realUtcMs = naiveUtcMs + offsetMs;
+  // Second pass: offsets can differ when the wallclock crosses a DST boundary.
+  const zonedMs2 = zonedFormatToMs(formatter, new Date(realUtcMs));
+  if (zonedMs2 !== null) {
+    const offsetMs2 = realUtcMs - zonedMs2;
+    if (offsetMs2 !== offsetMs) {
+      return new Date(naiveUtcMs + offsetMs2).toISOString();
+    }
+  }
+  return new Date(realUtcMs).toISOString();
+}
+
+/**
+ * Format a Date in the given timezone and return the absolute ms timestamp
+ * of that wallclock time interpreted as if it were UTC. Used only by
+ * `icsWallclockToUtc` to compute zone offsets.
+ */
+function zonedFormatToMs(formatter: Intl.DateTimeFormat, date: Date): number | null {
+  const parts = formatter.formatToParts(date);
+  const get = (type: string): string | undefined =>
+    parts.find((p) => p.type === type)?.value;
+  const y = get("year");
+  const mo = get("month");
+  const d = get("day");
+  const hh = get("hour");
+  const mm = get("minute");
+  const ss = get("second");
+  if (!y || !mo || !d || !hh || !mm || !ss) return null;
+  // `Intl.DateTimeFormat` returns "24" for midnight in some runtimes — clamp.
+  const hour = Number(hh) === 24 ? 0 : Number(hh);
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), hour, Number(mm), Number(ss));
+  return Number.isFinite(ms) ? ms : null;
 }
 
 /** @internal — exported for testing only. */

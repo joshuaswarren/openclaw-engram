@@ -2355,6 +2355,53 @@ test("briefing() rejects invalid since token even when a default exists", async 
 });
 
 // ──────────────────────────────────────────────────────────────────────────
+// Focus filter validation (#396 Codex follow-up): `parseBriefingFocus` returns
+// null for malformed values like "project:" (empty suffix). `briefing()` must
+// reject these explicitly so a templating miss in automation cannot silently
+// broaden a targeted project briefing into an unscoped, all-memories briefing.
+// ──────────────────────────────────────────────────────────────────────────
+
+test("briefing() rejects malformed focus filter 'project:' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ focus: "project:" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /invalid briefing focus filter/.test(err.message),
+  );
+});
+
+test("briefing() rejects malformed focus filter 'topic:' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ focus: "topic:" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /invalid briefing focus filter/.test(err.message),
+  );
+});
+
+test("briefing() accepts undefined focus (no filter applied)", async () => {
+  const service = createBriefingService();
+  // No focus supplied — the briefing should build normally.
+  const result = await service.briefing({});
+  assert.ok(result, "briefing should succeed with no focus filter");
+});
+
+test("briefing() accepts empty-string focus as 'no filter'", async () => {
+  const service = createBriefingService();
+  // Empty / whitespace-only string is treated as absent, not malformed.
+  const result = await service.briefing({ focus: "   " });
+  assert.ok(result, "briefing should succeed with whitespace-only focus");
+});
+
+test("briefing() accepts a well-formed focus filter 'project:remnic-core'", async () => {
+  const service = createBriefingService();
+  const result = await service.briefing({ focus: "project:remnic-core" });
+  assert.ok(result, "briefing should succeed with a valid focus filter");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
 // Finding 6 (#396): briefing() uses caller principal for namespace access
 // ──────────────────────────────────────────────────────────────────────────
 
