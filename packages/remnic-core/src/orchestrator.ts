@@ -8327,6 +8327,14 @@ export class Orchestrator {
     // Emitted via the `importance_gated` metric below and rolled into the
     // final `persisted:` log line so operators can tune the threshold.
     let importanceGatedCount = 0;
+    // UUI2: short-circuit semantic dedup after first backend-unavailable signal
+    // within this batch. Once any fact in the batch gets reason="backend_unavailable"
+    // (meaning the embedding backend is degraded), subsequent facts skip the
+    // lookup entirely and proceed directly to write. This prevents N-fact batches
+    // from paying N × timeout when the backend is down. The flag resets per-batch
+    // (declared here, inside persistExtraction) so a transient hiccup in one
+    // batch does not permanently disable dedup in future batches.
+    let batchBackendUnavailable = false;
     const behaviorSignalsByStorage = new Map<
       string,
       { storage: StorageManager; events: BehaviorSignalEvent[] }
@@ -8662,31 +8670,43 @@ export class Orchestrator {
       let pendingSemanticSkip: (SemanticDedupDecision & { action: "skip" }) | null = null;
       if (this.config.semanticDedupEnabled) {
         let semanticDecision: SemanticDedupDecision;
-        try {
-          // Pass the resolved target storage so the lookup scopes the
-          // embedding index to the target namespace (PR #399 P1 fix).
-          // Without this, a high-similarity hit in a different namespace
-          // would cause the fact to be dropped here — cross-namespace
-          // write suppression / data loss.
-          const lookupStorage = targetStorage;
-          semanticDecision = await decideSemanticDedup(
-            fact.content,
-            (content, limit) =>
-              this.semanticDedupLookup(content, limit, lookupStorage),
-            {
-              enabled: true,
-              threshold: this.config.semanticDedupThreshold,
-              candidates: this.config.semanticDedupCandidates,
-            },
-          );
-        } catch (err) {
-          log.warn(
-            `semantic dedup decision failed; failing open and writing fact: ${err}`,
-          );
-          semanticDecision = {
-            action: "keep",
-            reason: "backend_unavailable",
-          };
+        // UUI2: skip embedding lookup for the rest of this batch once we know
+        // the backend is unavailable. The flag is reset per-batch (set to false
+        // at the top of persistExtraction), so a transient hiccup in one call
+        // does not permanently disable dedup in subsequent calls.
+        if (batchBackendUnavailable) {
+          semanticDecision = { action: "keep", reason: "backend_unavailable" };
+        } else {
+          try {
+            // Pass the resolved target storage so the lookup scopes the
+            // embedding index to the target namespace (PR #399 P1 fix).
+            // Without this, a high-similarity hit in a different namespace
+            // would cause the fact to be dropped here — cross-namespace
+            // write suppression / data loss.
+            const lookupStorage = targetStorage;
+            semanticDecision = await decideSemanticDedup(
+              fact.content,
+              (content, limit) =>
+                this.semanticDedupLookup(content, limit, lookupStorage),
+              {
+                enabled: true,
+                threshold: this.config.semanticDedupThreshold,
+                candidates: this.config.semanticDedupCandidates,
+              },
+            );
+          } catch (err) {
+            log.warn(
+              `semantic dedup decision failed; failing open and writing fact: ${err}`,
+            );
+            semanticDecision = {
+              action: "keep",
+              reason: "backend_unavailable",
+            };
+          }
+          // UUI2: cache the backend-unavailable signal for the rest of this batch.
+          if (semanticDecision.reason === "backend_unavailable") {
+            batchBackendUnavailable = true;
+          }
         }
         if (semanticDecision.action === "skip") {
           pendingSemanticSkip = semanticDecision;
@@ -8750,7 +8770,15 @@ export class Orchestrator {
       // This check intentionally runs BEFORE the chunking branch so that a
       // fact flagged as a semantic near-duplicate cannot be persisted (with its
       // hash registered) simply because it was long enough to trigger chunking.
-      if (pendingSemanticSkip && !supersedes) {
+      //
+      // UUI1: correction category writes are NEVER suppressed by the semantic
+      // skip fallback, regardless of whether supersedes is set. When contradiction
+      // detection is disabled or QMD is unavailable, supersedes is never set —
+      // without this exemption a high-similarity correction would be silently
+      // dropped, leaving a stale fact active. writeCategory (not fact.category)
+      // is used because routing rules may have overridden the raw category.
+      const isCorrection = writeCategory === "correction";
+      if (pendingSemanticSkip && !supersedes && !isCorrection) {
         log.debug(
           `dedup: skipping semantic near-duplicate fact "${fact.content
             .slice(0, 60)

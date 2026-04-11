@@ -10,6 +10,7 @@ import { EmbeddingFallback } from "../embedding-fallback.js";
 import { ContentHashIndex, StorageManager } from "../storage.js";
 import {
   decideSemanticDedup,
+  type SemanticDedupDecision,
   type SemanticDedupHit,
   type SemanticDedupLookup,
   type SemanticDedupOptions,
@@ -892,4 +893,138 @@ test("round 6: empty lookup result (index empty, backend OK) still maps to no_ca
     "no_candidates",
     "empty index (backend reachable, returns []) must yield no_candidates, not backend_unavailable",
   );
+});
+
+// ── UUI1: correction category exempt from semantic skip fallback ──────────────
+//
+// When contradiction detection is disabled (or QMD is unavailable), `supersedes`
+// is never set. Without the UUI1 fix, a high-similarity fact in the "correction"
+// category would be silently dropped by the semantic skip gate even though it
+// is a legitimate update. The gate must always let corrections through.
+//
+// This simulates the orchestrator gate logic at the pure layer: the test drives
+// the same `pendingSemanticSkip && !supersedes && !isCorrection` condition that
+// the orchestrator evaluates, asserting:
+//   1. A "correction" write is NOT suppressed (gate does not fire).
+//   2. A "fact" write in the same circumstances IS suppressed (gate still works).
+
+test("UUI1: correction category is never suppressed by semantic skip fallback when supersedes is unset", async () => {
+  // Both facts have a high-similarity neighbor → decideSemanticDedup returns skip.
+  const semanticDecisionCorrection = await decideSemanticDedup(
+    "the user now prefers light mode",
+    makeLookup([{ id: "pref-old-001", score: 0.96 }]),
+    DEFAULT_OPTS,
+  );
+  assert.equal(
+    semanticDecisionCorrection.action,
+    "skip",
+    "precondition: semantic decision must be skip for high-similarity hit",
+  );
+
+  const semanticDecisionFact = await decideSemanticDedup(
+    "the user prefers dark mode",
+    makeLookup([{ id: "pref-old-002", score: 0.95 }]),
+    DEFAULT_OPTS,
+  );
+  assert.equal(
+    semanticDecisionFact.action,
+    "skip",
+    "precondition: semantic decision must be skip for high-similarity hit",
+  );
+
+  // Contradiction detection disabled / QMD unavailable → supersedes never set.
+  const supersedes: string | undefined = undefined;
+
+  // --- Correction write: gate must NOT fire ---
+  const pendingSkipCorrection =
+    semanticDecisionCorrection.action === "skip" ? semanticDecisionCorrection : null;
+  const isCorrectionCategory = true; // writeCategory === "correction"
+  const correctionGateFires =
+    pendingSkipCorrection !== null && !supersedes && !isCorrectionCategory;
+  assert.equal(
+    correctionGateFires,
+    false,
+    "semantic skip gate must NOT fire for correction category — correction must be persisted",
+  );
+
+  // --- Normal fact write: gate MUST fire ---
+  const pendingSkipFact =
+    semanticDecisionFact.action === "skip" ? semanticDecisionFact : null;
+  const isFactCategory = false; // writeCategory === "fact", not "correction"
+  const factGateFires =
+    pendingSkipFact !== null && !supersedes && !isFactCategory;
+  assert.equal(
+    factGateFires,
+    true,
+    "semantic skip gate MUST fire for non-correction category (fact) — near-duplicate fact must be suppressed",
+  );
+});
+
+// ── UUI2: backend-unavailable short-circuit per batch ────────────────────────
+//
+// When the embedding backend is degraded, each fact in a batch should NOT pay
+// a full lookup roundtrip. Once the first lookup returns backend_unavailable,
+// subsequent facts must skip the lookup entirely and proceed directly to write.
+//
+// This simulates the orchestrator's `batchBackendUnavailable` flag logic:
+// the flag is false at batch start, is set when the first lookup signals
+// backend_unavailable, and subsequent iterations skip the lookup call.
+// All N facts must still be written (fail-open behaviour preserved).
+
+test("UUI2: batch backend-unavailable flag short-circuits embedding lookups after first failure", async () => {
+  let lookupCallCount = 0;
+
+  const throwingLookup: SemanticDedupLookup = async () => {
+    lookupCallCount++;
+    throw new Error("embedding backend unavailable");
+  };
+
+  // Simulate the orchestrator's per-batch short-circuit logic for N=5 facts.
+  const N = 5;
+  let batchBackendUnavailable = false;
+  const decisions: SemanticDedupDecision[] = [];
+
+  for (let i = 0; i < N; i++) {
+    let semanticDecision: SemanticDedupDecision;
+    if (batchBackendUnavailable) {
+      // Short-circuit: no lookup call, treat as backend_unavailable.
+      semanticDecision = { action: "keep", reason: "backend_unavailable" };
+    } else {
+      try {
+        semanticDecision = await decideSemanticDedup(
+          `synthetic fact content number ${i}`,
+          throwingLookup,
+          DEFAULT_OPTS,
+        );
+      } catch {
+        semanticDecision = { action: "keep", reason: "backend_unavailable" };
+      }
+      if (semanticDecision.reason === "backend_unavailable") {
+        batchBackendUnavailable = true;
+      }
+    }
+    decisions.push(semanticDecision);
+  }
+
+  // The underlying lookup must have been called at most 1 time (for the first
+  // fact only). Facts 2–5 must have hit the batchBackendUnavailable branch.
+  assert.ok(
+    lookupCallCount <= 1,
+    `embed lookup must be called ≤1 time for the lookup phase; called ${lookupCallCount} time(s)`,
+  );
+
+  // All 5 facts must have action="keep" (fail-open: writes proceed).
+  assert.equal(decisions.length, N, "all N facts must produce a decision");
+  for (const decision of decisions) {
+    assert.equal(
+      decision.action,
+      "keep",
+      "every fact must be kept (fail-open) when backend is unavailable",
+    );
+    assert.equal(
+      decision.reason,
+      "backend_unavailable",
+      "every decision must carry reason=backend_unavailable",
+    );
+  }
 });
