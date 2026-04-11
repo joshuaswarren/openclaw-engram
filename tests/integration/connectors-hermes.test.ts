@@ -370,6 +370,43 @@ test("force-reinstall produces a new token and removes the old one", () => {
   });
 });
 
+test("installConnector skips upsertHermesConfig when tokenEntry is null (P1 guard)", () => {
+  // When generateToken fails (tokenEntry === null), installConnector must NOT call
+  // upsertHermesConfig to avoid overwriting a valid existing token with an empty string.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+  // Verify the guard: upsertHermesConfig is inside the `if (!tokenEntry) { ... } else { upsertHermesConfig }`
+  // pattern, meaning it's only called when tokenEntry is non-null.
+  const upsertIdx = content.indexOf("upsertHermesConfig({");
+  assert.ok(upsertIdx >= 0, "upsertHermesConfig must be called");
+  // The code before upsertHermesConfig must contain the `else {` guard
+  const before = content.slice(0, upsertIdx);
+  const elseIdx = before.lastIndexOf("} else {");
+  const tokenNullGuardIdx = before.lastIndexOf("if (!tokenEntry)");
+  assert.ok(tokenNullGuardIdx >= 0, "Must have if (!tokenEntry) guard before upsertHermesConfig");
+  assert.ok(
+    elseIdx > tokenNullGuardIdx,
+    "upsertHermesConfig must be in the else branch of if (!tokenEntry)",
+  );
+});
+
+test("removeConnector wraps revokeToken in try-catch (P2 guard)", () => {
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+  // Verify revokeToken is wrapped in try { ... } catch
+  // Find the revokeToken call and check it's inside a try block
+  const revokeIdx = content.indexOf("revokeToken(connectorId)");
+  assert.ok(revokeIdx >= 0, "revokeToken must be called in removeConnector");
+  // The code before revokeToken must contain `try {`
+  const before = content.slice(0, revokeIdx);
+  const tryIdx = before.lastIndexOf("try {");
+  assert.ok(tryIdx >= 0, "revokeToken must be inside a try block");
+  // And the code after revokeToken must contain `} catch {`
+  const after = content.slice(revokeIdx);
+  assert.ok(
+    after.indexOf("} catch {") >= 0 && after.indexOf("} catch {") < 200,
+    "revokeToken must be followed by a catch block",
+  );
+});
+
 test("removeConnector hermes removes the tokens.json entry", () => {
   withTempHome((tmpHome) => {
     const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");

@@ -589,30 +589,42 @@ export function installConnector(options: InstallOptions): InstallResult {
 
   const notes: string[] = [];
 
-  // Hermes-specific: write the remnic: block to config.yaml
+  // Hermes-specific: write the remnic: block to config.yaml.
+  // We skip the YAML update when token generation failed: writing an empty token
+  // to config.yaml would overwrite a potentially valid existing token and break
+  // auth silently. The connector config file is still created; the user can run
+  // `remnic token generate hermes` to create the token, then re-run install.
   if (options.connectorId === "hermes") {
-    const profile = (options.config?.profile as string | undefined) ?? "default";
-    const host = (options.config?.host as string | undefined) ?? "127.0.0.1";
-    const port = (options.config?.port as number | undefined) ?? 4318;
-    const yamlResult = upsertHermesConfig({
-      profile,
-      host,
-      port,
-      token: tokenEntry?.token ?? "",
-    });
-    if (yamlResult.updated) {
-      notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
-    } else if (yamlResult.skipped) {
-      notes.push(`Hermes config not written: ${yamlResult.reason}`);
+    const hermesProfile = (options.config?.profile as string | undefined) ?? "default";
+    const hermesHost = (options.config?.host as string | undefined) ?? "127.0.0.1";
+    const hermesPort = (options.config?.port as number | undefined) ?? 4318;
+
+    if (!tokenEntry) {
+      notes.push(
+        "Token store unavailable — skipped Hermes config.yaml update. " +
+          "Run `remnic token generate hermes` then reinstall to complete setup.",
+      );
+    } else {
+      const yamlResult = upsertHermesConfig({
+        profile: hermesProfile,
+        host: hermesHost,
+        port: hermesPort,
+        token: tokenEntry.token,
+      });
+      if (yamlResult.updated) {
+        notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
+      } else if (yamlResult.skipped) {
+        notes.push(`Hermes config not written: ${yamlResult.reason}`);
+      }
     }
 
-    // Health-check the daemon (non-fatal)
-    const daemonOk = checkDaemonHealth(host, port);
+    // Health-check the daemon (non-fatal, independent of token availability)
+    const daemonOk = checkDaemonHealth(hermesHost, hermesPort);
     if (daemonOk) {
       notes.push("Daemon health check: OK");
     } else {
       notes.push(
-        `Daemon not reachable at ${host}:${port} — start with: remnic daemon start`,
+        `Daemon not reachable at ${hermesHost}:${hermesPort} — start with: remnic daemon start`,
       );
     }
   }
@@ -652,7 +664,14 @@ export function removeConnector(connectorId: string): RemoveResult {
   }
 
   // Revoke the auth token for this connector so the daemon stops accepting it.
-  revokeToken(connectorId);
+  // Non-fatal: if the token store is read-only or missing, connector removal
+  // should still succeed. Stale tokens will be rejected by the daemon when the
+  // token file is later accessible.
+  try {
+    revokeToken(connectorId);
+  } catch {
+    // Best-effort: log nothing here; caller sees the config removal succeed.
+  }
 
   fs.unlinkSync(configPath);
 
