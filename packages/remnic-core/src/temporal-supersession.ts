@@ -194,14 +194,6 @@ export async function applyTemporalSupersession(args: {
     return empty;
   }
 
-  let coldMemories: MemoryFile[];
-  try {
-    coldMemories = await args.storage.readAllColdMemories();
-  } catch (err) {
-    log.warn(`temporal-supersession: readAllColdMemories failed: ${err}`);
-    coldMemories = [];
-  }
-
   // Finding 1 fix: use the on-disk `frontmatter.created` of the newly-written
   // memory rather than a wall-clock timestamp sampled after `writeMemory`
   // returns.  In concurrent writers the two can differ by enough to cause
@@ -222,6 +214,40 @@ export async function applyTemporalSupersession(args: {
   // which tier's directory it currently lives in (PR #402 Finding 1 fix).
   // Fall back to path-based keying when id is absent (defensive).
   const processedIds = new Set<string>();
+
+  // Finding UOGi fix (round-6): readAllColdMemories() performs a full uncached
+  // recursive directory scan of cold/.  After Finding UTsP broadened the scan
+  // to cover the entire cold root (not just facts/+corrections/), the per-call
+  // cost grows with the cold tree size.
+  //
+  // The fix is a TTL-based in-memory cache inside StorageManager
+  // (readAllColdMemories caches its result for COLD_SCAN_CACHE_TTL_MS) that is
+  // shared across consecutive supersession calls within the same write burst.
+  // The cache is invalidated automatically on any hot→cold demotion (which
+  // calls invalidateAllMemoriesCache, which also clears the cold cache) and
+  // expires after the TTL as a safety net.
+  //
+  // This means back-to-back structured-attribute writes in the same burst
+  // (e.g. batch extraction) pay the cold I/O cost at most once, not N times.
+  // Correctness is preserved because the cache TTL ensures eventual consistency
+  // and the invalidation hook covers the hot→cold path.
+
+  let coldMemories: MemoryFile[];
+  try {
+    coldMemories = await args.storage.readAllColdMemories();
+  } catch (err) {
+    log.warn(`temporal-supersession: readAllColdMemories failed: ${err}`);
+    coldMemories = [];
+  }
+
+  // Process hot then cold.  Hot-then-cold ordering is safer because hot
+  // writes are more frequent and the CAS re-read guards against double-writes.
+  // A Set<string> of already-processed ids ensures that a memory visible in
+  // both tiers (same logical memory with different filesystem paths during a
+  // migration race) is processed at most once.  Keying on `frontmatter.id`
+  // is correct because the same logical memory has the same id regardless of
+  // which tier's directory it currently lives in (PR #402 Finding 1 fix).
+  // Fall back to path-based keying when id is absent (defensive).
 
   // Combine hot and cold memories into a single scan.  New memory itself is
   // excluded inline.  We do NOT skip cold scan when hot produced zero

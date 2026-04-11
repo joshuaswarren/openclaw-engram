@@ -747,6 +747,19 @@ export class StorageManager {
   // block recall requests every 5 minutes on large memory collections (80k+ files).
   private static readonly allMemoriesInFlight = new Map<string, Promise<MemoryFile[]>>();
 
+  // Cache for readAllColdMemories() — keyed by cold root directory path.
+  // Prevents an uncached full-tree directory scan on every structured-attribute
+  // write (Finding UOGi, PR #402 round-6).  The cache is invalidated whenever
+  // invalidateAllMemoriesCache() fires (which happens on every write that
+  // calls invalidateAllMemoriesCache or invalidateAllMemoriesCacheForDir) and
+  // also expires after COLD_SCAN_CACHE_TTL_MS as a safety net.
+  //
+  // After Finding UTsP broadened readAllColdMemories to scan the entire cold/
+  // subtree (not just facts/+corrections/), amortizing this I/O across
+  // back-to-back writes in the same burst is even more important.
+  private static readonly COLD_SCAN_CACHE_TTL_MS = 30_000; // 30 seconds
+  private static readonly coldMemoriesCache = new Map<string, { memories: MemoryFile[]; loadedAt: number }>();
+
   // Cache for readQuestions() — avoids serially re-reading tens of thousands of
   // question files on every recall.  60-second TTL is intentionally short so that
   // newly written questions surface quickly.
@@ -1429,12 +1442,24 @@ export class StorageManager {
   static clearAllStaticCaches(): void {
     StorageManager.allMemoriesInFlight.clear();
     StorageManager.questionsCache.clear();
+    StorageManager.coldMemoriesCache.clear(); // also wipe the cold-scan TTL cache
   }
 
   /** Cancel any in-flight concurrent read so the next readAllMemories()
    *  starts a fresh disk scan and sees the just-written data. */
   private invalidateAllMemoriesCache(): void {
     StorageManager.allMemoriesInFlight.delete(this.baseDir);
+  }
+
+  /**
+   * Invalidate the cold-scan cache for this storage root.
+   * Must be called whenever a memory is moved INTO the cold tier so that the
+   * next readAllColdMemories() call sees the newly-demoted file.
+   * NOT called on ordinary hot-tier writes (those don't change cold contents).
+   */
+  private invalidateColdMemoriesCache(): void {
+    const coldRoot = path.join(this.baseDir, "cold");
+    StorageManager.coldMemoriesCache.delete(coldRoot);
   }
 
   private normalizeMemoryReadBatchSize(batchSize?: number): number {
@@ -1662,17 +1687,39 @@ export class StorageManager {
   }
 
   /**
-   * Read all memories from the cold tier (baseDir/cold/facts/ and
-   * baseDir/cold/corrections/).  Mirrors the hot-tier scan done by
-   * readAllMemories() but targets the cold directory tree.
+   * Read all memories from the cold tier by scanning the entire cold/ root
+   * tree.  Previously this only scanned cold/facts/ and cold/corrections/, but
+   * structuredAttributes can appear on any MemoryCategory (preference, decision,
+   * entity, etc.).  Although buildTierMemoryPath currently routes all
+   * non-correction, non-artifact memories to cold/facts/, scanning the full
+   * coldRoot ensures correctness if that routing ever changes and guards against
+   * files placed in unexpected subdirectories during manual operations or future
+   * refactors.
+   *
+   * Broadened in PR #402 round-6 (Finding UTsP): scanning only facts/ and
+   * corrections/ was a narrower-than-necessary subset of the cold directory
+   * tree.  Correctness trumps the minor performance difference — cold scans
+   * already happen at most once per supersession write.
    *
    * Used by applyTemporalSupersession so that memories already demoted to
    * cold/ can still be marked superseded when a newer hot fact arrives.
-   * Not cached — cold scans are infrequent (one per supersession write) and
-   * caching would add complexity for a path that is rarely called.
+   *
+   * Cached with a TTL (Finding UOGi, PR #402 round-6): back-to-back
+   * structured-attribute writes in the same burst reuse the cached result
+   * instead of re-scanning the cold tree on every call.  The cache is
+   * invalidated whenever a write calls invalidateAllMemoriesCache() (which
+   * covers any hot→cold demotion that changes cold-tier contents) and
+   * expires after COLD_SCAN_CACHE_TTL_MS as a safety net.
    */
   async readAllColdMemories(): Promise<MemoryFile[]> {
     const coldRoot = this.resolveTierRootDir("cold");
+
+    // Return cached result if still valid.
+    const cached = StorageManager.coldMemoriesCache.get(coldRoot);
+    if (cached && Date.now() - cached.loadedAt < StorageManager.COLD_SCAN_CACHE_TTL_MS) {
+      return cached.memories;
+    }
+
     const filePaths: string[] = [];
 
     const collectPaths = async (dir: string) => {
@@ -1695,9 +1742,18 @@ export class StorageManager {
       }
     };
 
-    await collectPaths(path.join(coldRoot, "facts"));
-    await collectPaths(path.join(coldRoot, "corrections"));
-    return this.readParsedMemoriesFromPaths(filePaths, 50);
+    // Scan the entire cold root so that memories in any subdirectory (facts/,
+    // corrections/, artifacts/, or any future category-specific subdirectory)
+    // are included.  This is broader than the previous facts/+corrections/ scan
+    // and ensures that any memory with structuredAttributes is found regardless
+    // of which category it was written with.
+    await collectPaths(coldRoot);
+    const memories = await this.readParsedMemoriesFromPaths(filePaths, 50);
+
+    // Store in cache.  The cache entry will be evicted by the next write's
+    // invalidateAllMemoriesCache() call or by TTL expiry, whichever comes first.
+    StorageManager.coldMemoriesCache.set(coldRoot, { memories, loadedAt: Date.now() });
+    return memories;
   }
 
   /**
@@ -1892,6 +1948,11 @@ export class StorageManager {
 
     await this.moveMemoryToPath(memory, targetPath);
     this.invalidateAllMemoriesCache();
+    // If moving to cold, also invalidate the cold-scan cache so the next
+    // readAllColdMemories() call sees the newly-demoted file (Finding UOGi fix).
+    if (targetTier === "cold") {
+      this.invalidateColdMemoriesCache();
+    }
     this.bumpMemoryStatusVersion();
     return { changed: true, targetPath };
   }

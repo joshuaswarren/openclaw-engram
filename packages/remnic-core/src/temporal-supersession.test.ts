@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -1572,5 +1572,151 @@ test("applyTemporalSupersession: supersedes stale shared-namespace copy with str
     assert.equal(staleFm!.supersededBy, promotedId);
   } finally {
     await cleanupShared();
+  }
+});
+
+// ─── Regression: Finding UTsP — cold scan covers ALL category subdirectories ──
+//
+// Previously readAllColdMemories only scanned cold/facts/ and cold/corrections/.
+// Any memory stored in a non-standard cold subdirectory (e.g. cold/preferences/)
+// would be silently skipped.  After the fix, the scan starts from the cold root
+// and recurses into every subdirectory.
+
+test("readAllColdMemories: finds .md files in non-standard cold subdirectory (e.g. cold/preferences/)", async () => {
+  // Arrange: write a fact to hot, get its serialized content, then manually
+  // place a copy in cold/preferences/ (a subdirectory the previous code would
+  // have skipped).  Verify that readAllColdMemories() returns it and that
+  // applyTemporalSupersession marks it superseded.
+  const { storage, memoryDir, cleanup } = await makeStorage("engram-cold-all-categories-");
+  try {
+    // Write the old fact (city=Austin) to hot so we can get a valid file.
+    const oldId = await writeFact(storage, "entity lives in Austin", TEST_ENTITY, { city: "Austin" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const hotMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === oldId);
+    assert.ok(hotMem, "old memory must exist in hot tier");
+
+    // Manually copy the file into cold/preferences/ (non-standard path that the
+    // previous facts/+corrections/ scan would have missed).
+    const coldPrefsDir = path.join(memoryDir, "cold", "preferences");
+    await mkdir(coldPrefsDir, { recursive: true });
+    const coldPrefsPath = path.join(coldPrefsDir, `${oldId}.md`);
+    // Read the raw hot file and write it verbatim to cold/preferences/.
+    const { readFile } = await import("node:fs/promises");
+    const rawContent = await readFile(hotMem.path, "utf-8");
+    await writeFile(coldPrefsPath, rawContent, "utf-8");
+
+    // Delete the hot copy so readAllMemories() doesn't return it (simulating demotion).
+    const { unlink } = await import("node:fs/promises");
+    await unlink(hotMem.path);
+    storage.invalidateAllMemoriesCacheForDir();
+    StorageManager.clearAllStaticCaches();
+
+    // Verify readAllColdMemories finds the file in the non-standard directory.
+    const coldMems = await storage.readAllColdMemories();
+    const found = coldMems.find((m) => m.frontmatter.id === oldId);
+    assert.ok(
+      found,
+      "readAllColdMemories must find .md files in cold/preferences/ (non-standard subdirectory)",
+    );
+
+    // Write a new hot fact that supersedes the old one.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const newId = await writeFact(storage, "entity moved to NYC", TEST_ENTITY, { city: "NYC" });
+
+    storage.invalidateAllMemoriesCacheForDir();
+    StorageManager.clearAllStaticCaches();
+
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: newId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },
+      createdAt: new Date().toISOString(),
+      enabled: true,
+    });
+
+    assert.deepEqual(
+      result.supersededIds,
+      [oldId],
+      "memory in cold/preferences/ must be superseded when full cold tree is scanned",
+    );
+
+    // Verify the file on disk was updated.
+    const coldMem = await storage.readMemoryByPath(coldPrefsPath);
+    assert.ok(coldMem, "cold/preferences/ file must still exist");
+    assert.equal(coldMem!.frontmatter.status, "superseded");
+    assert.equal(coldMem!.frontmatter.supersededBy, newId);
+  } finally {
+    await cleanup();
+  }
+});
+
+// ─── Regression: Finding UOGi — cold-scan result is cached across burst writes ─
+//
+// readAllColdMemories() previously performed an uncached full-tree directory scan
+// on every structured-attribute write call.  After the fix it caches the result
+// for COLD_SCAN_CACHE_TTL_MS; back-to-back hot-tier writes in the same burst
+// reuse the cached result instead of re-scanning.
+
+test("readAllColdMemories: cold-scan cache is a hit when no cold demotion occurs between calls", async () => {
+  // Strategy: populate the cold-scan cache via a first readAllColdMemories() call.
+  // Then add a new .md file directly to cold/ WITHOUT going through
+  // migrateMemoryToTier (which would invalidate the cache).  A second call to
+  // readAllColdMemories() must return the CACHED snapshot (missing the new file),
+  // proving the cache was not re-read from disk.
+  //
+  // This mirrors the real burst-write scenario: N hot-tier writes happen without
+  // any cold demotion, so the cold-scan cache remains valid across all N calls.
+  const { storage, memoryDir, cleanup } = await makeStorage("engram-cold-cache-hit-");
+  try {
+    StorageManager.clearAllStaticCaches();
+
+    // Place an existing cold fact via migrateMemoryToTier (this invalidates the
+    // cold cache, which is correct — we want the first real call to scan disk).
+    const baseId = await writeFact(storage, "entity in Austin", TEST_ENTITY, { city: "Austin" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    storage.invalidateAllMemoriesCacheForDir();
+    const baseMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === baseId);
+    assert.ok(baseMem);
+    await storage.migrateMemoryToTier(baseMem!, "cold");
+    storage.invalidateAllMemoriesCacheForDir();
+
+    // First call — cache miss.  Scans disk and caches the result (one fact in cold).
+    const firstResult = await storage.readAllColdMemories();
+    assert.ok(
+      firstResult.some((m) => m.frontmatter.id === baseId),
+      "first readAllColdMemories must return the demoted fact",
+    );
+
+    // Now add a new .md file directly to cold/facts/ BYPASSING migrateMemoryToTier
+    // so the cold-scan cache is NOT invalidated.
+    const ghostId = `fact-ghost-${Date.now()}`;
+    const coldFactsDir = path.join(memoryDir, "cold", "facts", "2026-01-01");
+    await mkdir(coldFactsDir, { recursive: true });
+    const ghostContent = `---\nid: ${ghostId}\ncategory: fact\ncreated: 2026-01-01T00:00:00.000Z\nupdated: 2026-01-01T00:00:00.000Z\nsource: test\nconfidence: 0.9\nconfidenceTier: explicit\ntags: []\nentityRef: ${TEST_ENTITY}\nstructuredAttributes:\n  city: Ghost\nstatus: active\n---\n\nGhost fact added directly to disk.\n`;
+    await writeFile(path.join(coldFactsDir, `${ghostId}.md`), ghostContent, "utf-8");
+
+    // Second call — must be a cache HIT and must NOT include the ghost file.
+    const secondResult = await storage.readAllColdMemories();
+    assert.ok(
+      !secondResult.some((m) => m.frontmatter.id === ghostId),
+      "second readAllColdMemories (cache hit) must NOT return the ghost file written directly to disk",
+    );
+    assert.equal(
+      secondResult.length,
+      firstResult.length,
+      "cached result must have same length as first result (no re-scan)",
+    );
+
+    // After invalidating the cache, a third call MUST do a fresh disk scan
+    // and return the ghost file.
+    StorageManager.clearAllStaticCaches();
+    const thirdResult = await storage.readAllColdMemories();
+    assert.ok(
+      thirdResult.some((m) => m.frontmatter.id === ghostId),
+      "after cache invalidation, readAllColdMemories must find the ghost file on disk",
+    );
+  } finally {
+    await cleanup();
   }
 });
