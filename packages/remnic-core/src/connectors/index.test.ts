@@ -1289,3 +1289,59 @@ test(
     );
   },
 );
+
+// ── Codex PRRT_kwDORJXyws56VJRa (P1): claude-code must write a token entry on install ──
+//
+// Regression test: installing the claude-code connector MUST write a token entry
+// to tokens.json. The session-start.sh, user-prompt-recall.sh, and post-tool-observe.sh
+// hooks in plugin-claude-code read this entry for Bearer auth when calling the
+// recall/observe HTTP endpoints. Without requiresToken: true on the claude-code manifest
+// the round-17 token-gating change caused fresh installs to skip the token write,
+// silently disabling authenticated memory recall for all Claude Code hook users.
+
+test(
+  "installConnector writes a remnic_cc_ token entry for claude-code connector (PRRT_kwDORJXyws56VJRa P1 regression)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+        CODEX_HOME: sandbox.codexHome,
+      },
+      () => {
+        const result = installConnector({ connectorId: "claude-code" });
+
+        assert.equal(result.status, "installed", `expected status "installed", got: "${result.status}"`);
+
+        // tokens.json MUST contain a claude-code entry.
+        const store = loadTokenStore();
+        const ccEntry = store.tokens.find((e) => e.connector === "claude-code");
+        assert.ok(
+          ccEntry !== undefined,
+          "tokens.json must contain a token entry for claude-code after install",
+        );
+
+        // The token must carry the recognizable remnic_cc_ prefix so the
+        // session-start.sh / user-prompt-recall.sh / post-tool-observe.sh hooks
+        // can use it as a Bearer credential.
+        assert.ok(
+          ccEntry!.token.startsWith("remnic_cc_"),
+          `claude-code token must start with "remnic_cc_", got: "${ccEntry!.token.slice(0, 20)}..."`,
+        );
+
+        // The saved connector.json must NOT contain a token field (security: tokens
+        // live only in the 0o600 tokens.json, never in the connector config).
+        assert.ok(result.configPath, "configPath should be set");
+        const saved = JSON.parse(fs.readFileSync(result.configPath as string, "utf8")) as Record<string, unknown>;
+        assert.equal(
+          "token" in saved,
+          false,
+          "claude-code connector.json must NOT contain a 'token' field",
+        );
+      },
+    );
+  },
+);

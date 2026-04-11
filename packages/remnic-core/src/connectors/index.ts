@@ -204,6 +204,7 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
     homepage: "https://claude.ai/code",
     author: "Anthropic",
     tags: ["official", "ai", "claude"],
+    requiresToken: true,
   },
   {
     id: "codex-cli",
