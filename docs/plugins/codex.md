@@ -29,9 +29,18 @@ This:
 
 ### Explicit Skills
 
-| Skill | Description |
-|-------|-------------|
-| `memory-workflow` | Instructions for memory-aware coding workflows |
+Skills ship as `packages/plugin-codex/skills/<slug>/SKILL.md` folders and are
+materialized into `~/.codex/memories/skills/<slug>/SKILL.md` by the Codex
+materializer.
+
+| Skill folder | Description |
+|--------------|-------------|
+| `remnic-memory-workflow/` | Umbrella workflow: recall, observe, remember. |
+| `remnic-recall/` | Search memories by natural-language query. |
+| `remnic-remember/` | Store a durable memory for cross-agent recall. |
+| `remnic-search/` | Full-text search across all stored memories. |
+| `remnic-entities/` | Browse entities in the Remnic knowledge graph. |
+| `remnic-status/` | Check Remnic daemon and memory system health. |
 
 ### MCP Tools
 
