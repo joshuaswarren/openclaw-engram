@@ -2281,8 +2281,8 @@
       "semanticDedupCandidates": {
         "type": "number",
         "default": 5,
-        "minimum": 1,
-        "description": "Number of nearest-neighbor candidates to inspect during the write-time semantic dedup check."
+        "minimum": 0,
+        "description": "Number of nearest-neighbor candidates to inspect during the write-time semantic dedup check. Set to 0 to disable the embedding lookup entirely (equivalent to semanticDedupEnabled=false)."
       },
       "factArchivalEnabled": {
         "type": "boolean",
