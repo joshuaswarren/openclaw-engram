@@ -613,6 +613,10 @@ export class EngramAccessService {
     this.idempotency = new AccessIdempotencyStore(orchestrator.config.memoryDir);
   }
 
+  get briefingEnabled(): boolean {
+    return this.orchestrator.config.briefing.enabled === true;
+  }
+
   private resolveNamespace(namespace?: string): string {
     const requested = namespace?.trim();
     if (!requested) return this.orchestrator.config.defaultNamespace;

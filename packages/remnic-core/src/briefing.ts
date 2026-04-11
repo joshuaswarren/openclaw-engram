@@ -281,7 +281,12 @@ function normalizeIcsDate(value: string): string {
 /** @internal — exported for testing only. */
 export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean {
   const target = dateIso.slice(0, 10);
-  const startDay = new Date(event.start).toISOString().slice(0, 10);
+  const parsed = new Date(event.start);
+  if (!Number.isFinite(parsed.getTime())) {
+    log.debug(`briefing: skipping calendar event with invalid start value: ${JSON.stringify(event.start)}`);
+    return false;
+  }
+  const startDay = parsed.toISOString().slice(0, 10);
   return startDay === target;
 }
 

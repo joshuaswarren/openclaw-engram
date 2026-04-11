@@ -718,7 +718,7 @@ export class EngramMcpServer {
         },
       },
       // ── Daily Context Briefing (#370) ───────────────────────────────────
-      {
+      ...(service.briefingEnabled ? [{
         name: "engram.briefing",
         description: "Generate a daily context briefing by cross-referencing active entities, recent facts, open commitments, and optional calendar events.",
         inputSchema: {
@@ -732,7 +732,7 @@ export class EngramMcpServer {
           },
           additionalProperties: false,
         },
-      },
+      }] : []),
     ].flatMap((tool) => withToolAliases(tool));
   }
 

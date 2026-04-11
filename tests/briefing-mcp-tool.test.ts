@@ -13,6 +13,7 @@ interface CapturedBriefingCall {
 
 function createBriefingOnlyService(captured: CapturedBriefingCall[]): EngramAccessService {
   const stub: Partial<EngramAccessService> = {
+    briefingEnabled: true,
     briefing: async (request) => {
       captured.push({ ...request });
       return {
@@ -105,4 +106,33 @@ test("engram.briefing legacy alias dispatches to the same service path", async (
 
   assert.equal(captured.length, 1);
   assert.equal(captured[0].format, "json");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Regression — Bug 2 (#396): briefing tool must NOT appear when disabled
+// ──────────────────────────────────────────────────────────────────────────
+
+test("engram.briefing and remnic.briefing are absent from tools/list when briefing.enabled = false", async () => {
+  const disabledService = {
+    briefingEnabled: false,
+  } as unknown as EngramAccessService;
+
+  const server = new EngramMcpServer(disabledService);
+  const tools = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/list",
+    params: {},
+  });
+  const listed = (tools?.result as { tools: Array<{ name: string }> }).tools.map((t) => t.name);
+  assert.equal(
+    listed.includes("engram.briefing"),
+    false,
+    "engram.briefing must not appear in tools/list when briefing is disabled",
+  );
+  assert.equal(
+    listed.includes("remnic.briefing"),
+    false,
+    "remnic.briefing must not appear in tools/list when briefing is disabled",
+  );
 });

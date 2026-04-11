@@ -112,6 +112,7 @@ function createFakeService(): EngramAccessService {
       runId: "gov-1",
       reviewQueue: [{ memoryId: "fact-1", reasonCode: "disputed_memory" }],
     }),
+    briefingEnabled: true,
   } as unknown as EngramAccessService;
 }
 

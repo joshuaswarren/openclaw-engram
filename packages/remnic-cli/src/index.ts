@@ -34,7 +34,6 @@ import {
   parseConfig,
   Orchestrator,
   EngramAccessService,
-  StorageManager,
   initLogger,
   onboard,
   curate,
@@ -354,8 +353,9 @@ async function cmdBriefing(rest: string[]): Promise<void> {
   const format: "markdown" | "json" =
     formatFlag === "json" ? "json" : formatFlag === "markdown" ? "markdown" : config.briefing.defaultFormat;
 
-  const memoryDir = resolveMemoryDir();
-  const storage = new StorageManager(memoryDir);
+  const orchestrator = new Orchestrator(config);
+  await orchestrator.initialize();
+  const storage = await orchestrator.getStorage(config.defaultNamespace);
 
   const calendarSource = config.briefing.calendarSource
     ? new FileCalendarSource(config.briefing.calendarSource)

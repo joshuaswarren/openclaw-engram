@@ -137,3 +137,23 @@ test("eventFallsOnDate: plain UTC ISO timestamp matches target date", () => {
   assert.equal(eventFallsOnDate(event, "2026-04-11"), true);
   assert.equal(eventFallsOnDate(event, "2026-04-10"), false);
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// Regression — Bug 3 (#396): invalid event.start must not throw RangeError
+// ──────────────────────────────────────────────────────────────────────────
+
+test("eventFallsOnDate: invalid start string returns false and does not throw", () => {
+  const event = makeCalendarEvent("not-a-date");
+  assert.doesNotThrow(() => {
+    const result = eventFallsOnDate(event, "2026-04-11");
+    assert.equal(result, false, "invalid start should be treated as non-matching");
+  });
+});
+
+test("eventFallsOnDate: empty start string returns false and does not throw", () => {
+  const event = makeCalendarEvent("");
+  assert.doesNotThrow(() => {
+    const result = eventFallsOnDate(event, "2026-04-11");
+    assert.equal(result, false);
+  });
+});
