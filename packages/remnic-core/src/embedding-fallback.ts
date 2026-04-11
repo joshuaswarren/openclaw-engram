@@ -346,9 +346,20 @@ function toMemoryRelativePath(memoryDir: string, filePath: string): string {
  * comparison. Entries are stored as `path.relative(memoryDir, …)` output,
  * which on Windows uses back-slashes. Normalize both sides so prefix
  * matching is OS-independent.
+ *
+ * Also strip a leading `./` so this helper's output is symmetric with
+ * `normalizePathPrefix` below. `toMemoryRelativePath` is a pass-through for
+ * non-absolute filePath inputs, so an index entry could legitimately carry a
+ * stored path like `"./namespaces/alpha/facts/f.md"`. Without this strip, a
+ * caller-supplied prefix `"./namespaces/alpha"` (which `normalizePathPrefix`
+ * rewrites to `"namespaces/alpha/"`) would silently miss that entry and
+ * namespace-scoped dedup would either let a near-duplicate through or fail
+ * to exclude a cross-namespace hit.
  */
 function normalizeEntryPath(p: string): string {
-  return p.replace(/\\/g, "/");
+  let out = p.replace(/\\/g, "/");
+  if (out.startsWith("./")) out = out.slice(2);
+  return out;
 }
 
 /**
