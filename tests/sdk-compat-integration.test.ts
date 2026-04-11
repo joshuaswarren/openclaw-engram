@@ -35,6 +35,11 @@ const ACCESS_HTTP_KEY = `__openclawEngramAccessHttpServer::${SERVICE_ID}`;
 const SERVICE_STARTED_KEY = `__openclawEngramServiceStarted::${SERVICE_ID}`;
 const INIT_PROMISE_KEY = `__openclawEngramInitPromise::${SERVICE_ID}`;
 const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
+// Unkeyed mirror that register() maintains as a "last registered Remnic
+// orchestrator" pointer for cross-plugin observers (notably the orchestrator
+// itself).  Must be cleaned alongside the keyed slots so per-test state does
+// not leak across cases.
+const UNKEYED_ORCH_MIRROR_KEY = "__openclawEngramOrchestrator";
 const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
 
 // ============================================================================
@@ -96,6 +101,7 @@ function resetGlobals() {
     GUARD_KEY,
     HOOK_APIS_KEY,
     ORCH_KEY,
+    UNKEYED_ORCH_MIRROR_KEY,
     ACCESS_SVC_KEY,
     ACCESS_HTTP_KEY,
     SERVICE_STARTED_KEY,
