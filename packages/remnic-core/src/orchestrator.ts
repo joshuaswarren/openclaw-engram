@@ -54,6 +54,7 @@ import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
 import {
   applyTemporalSupersession,
+  normalizeSupersessionKey,
   shouldFilterSupersededFromRecall,
 } from "./temporal-supersession.js";
 import { RelevanceStore } from "./relevance.js";
@@ -8462,9 +8463,25 @@ export class Orchestrator {
               // structuredAttributes are present, but hasFactContentHash hashes
               // only the raw (non-enriched) content — so the matching must strip
               // the enrichment to obtain the same normalized base.
+              // PR #402 round-12 (Finding Uybg): restrict hash-dedup matching to
+              // the SAME entity.  Content-hash equality alone can collide across
+              // entities when two entities share identical fact text.  Using an
+              // unrelated entity's existing fact as `newMemoryId` would anchor
+              // supersession to that entity's record and corrupt its
+              // `supersededBy` links.  Only consider facts whose normalized
+              // `entityRef` matches the incoming entity.
+              const incomingEntityNorm = normalizeSupersessionKey(options.entityRef);
               const matchingFact = allShared.find((m) => {
                 if (m.frontmatter.category !== "fact") return false;
                 if ((m.frontmatter.status ?? "active") !== "active") return false;
+                // Same-entity guard: skip if entity doesn't match.
+                if (!m.frontmatter.entityRef) return false;
+                if (normalizeSupersessionKey(m.frontmatter.entityRef) !== incomingEntityNorm) {
+                  log.debug(
+                    `persistExtraction: hash-dedup skipping cross-entity match (incoming="${incomingEntityNorm}" candidate="${normalizeSupersessionKey(m.frontmatter.entityRef)}")`,
+                  );
+                  return false;
+                }
                 const rawBody = (m.content ?? "").replace(/\n\[Attributes:[^\]]*\]\s*$/, "").trimEnd();
                 return ContentHashIndex.normalizeContent(rawBody) === normalizedIncoming;
               });
@@ -8475,6 +8492,14 @@ export class Orchestrator {
                 // `created` predates the incoming promotion event — using it as
                 // `createdAt` would make the new memory appear older than the
                 // existing one, preventing supersession from firing.
+                // PR #402 round-12 (Finding Uyui): the matching fact is an
+                // existing OLD memory — its persisted `frontmatter.created` is
+                // stale relative to the incoming promotion event.  Pass
+                // `useCallerTimestamp: true` so the function uses
+                // `createdAt` (current wall-clock) as the ordering anchor
+                // instead of the old fact's timestamp, ensuring supersession
+                // fires correctly even when the matching fact predates
+                // conflicting candidates.
                 await applyTemporalSupersession({
                   storage: sharedStorage,
                   newMemoryId: matchingFact.frontmatter.id,
@@ -8482,6 +8507,7 @@ export class Orchestrator {
                   structuredAttributes: options.structuredAttributes,
                   createdAt: new Date().toISOString(),
                   enabled: true,
+                  useCallerTimestamp: true,
                 });
               }
             } catch (hashDedupSupersessionErr) {

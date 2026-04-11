@@ -2005,3 +2005,164 @@ test("readAllColdMemories: cold-scan cache is a hit when no cold demotion occurs
     await cleanup();
   }
 });
+
+// ─── Regression: Finding Uybg — hash-dedup must NOT supersede across entities ─
+//
+// When the shared hash-dedup path finds a memory with matching content, it must
+// restrict the match to the SAME entity.  If two entities share identical fact
+// text, the older-entity fact must NOT be used as the supersession anchor for
+// the incoming entity, as that would create incorrect cross-entity supersededBy
+// links and could hide valid memories for either entity.
+//
+// This test verifies that a cross-entity content-hash collision is silently
+// skipped and leaves both entities' memories untouched.
+
+test("applyTemporalSupersession: cross-entity hash collision does NOT supersede (Finding Uybg)", async () => {
+  const { storage, cleanup } = await makeStorage("engram-cross-entity-hash-dedup-");
+  try {
+    const ENTITY_A = "entity-alpha";
+    const ENTITY_B = "entity-beta";
+
+    // T0: seed entity-alpha with city=Austin.  This is the "stale" fact we want
+    // to verify is NOT touched by entity-beta's operations.
+    const t0 = "2025-03-01T00:00:00.000Z";
+    const entityAStaleId = await writeFact(storage, "lives in Austin", ENTITY_A, { city: "Austin" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const entityAMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === entityAStaleId);
+    assert.ok(entityAMem, "entity-alpha stale fact must exist");
+    await storage.writeMemoryFrontmatter(entityAMem!, { created: t0, updated: t0 });
+
+    // T1: seed a fact for entity-alpha whose raw text is IDENTICAL to what
+    // entity-beta will promote.  Simulates a shared-namespace memory that was
+    // content-hash deduped from entity-alpha's side first.
+    const t1 = "2025-06-01T00:00:00.000Z";
+    const sharedText = "the subject prefers morning schedules";
+    const entityAMatchId = await writeFact(storage, sharedText, ENTITY_A, { preference: "morning" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const entityAMatchMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === entityAMatchId);
+    assert.ok(entityAMatchMem, "entity-alpha matching fact must exist");
+    await storage.writeMemoryFrontmatter(entityAMatchMem!, { created: t1, updated: t1 });
+
+    // Simulate entity-beta's incoming promotion using entity-alpha's matching
+    // fact as the anchor ID (the bug: cross-entity match from content-hash only).
+    //
+    // With the fix, shouldSupersedeExisting returns null for entity-alpha's stale
+    // memory (ENTITY_A !== ENTITY_B), so no supersession fires.
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: entityAMatchId,           // entity-alpha's fact used as anchor
+      entityRef: ENTITY_B,                   // entity-beta is the incoming entity
+      structuredAttributes: { city: "NYC" }, // entity-beta's new attributes
+      createdAt: new Date().toISOString(),
+      enabled: true,
+    });
+
+    // No supersession must occur: entity-alpha's stale city=Austin memory must
+    // NOT be touched because entity-beta != entity-alpha.
+    assert.deepEqual(
+      result.supersededIds,
+      [],
+      "cross-entity hash collision: entity-alpha stale fact must NOT be superseded by entity-beta promotion",
+    );
+    assert.deepEqual(result.matchedKeys, []);
+
+    // Verify entity-alpha's stale fact is still active on disk.
+    const staleFm = await readFrontmatterById(storage, entityAStaleId);
+    assert.equal(
+      staleFm?.status ?? "active",
+      "active",
+      "entity-alpha stale fact must remain active after cross-entity hash-dedup call",
+    );
+
+    // Verify entity-alpha's matching fact is also still active.
+    const matchFm = await readFrontmatterById(storage, entityAMatchId);
+    assert.equal(
+      matchFm?.status ?? "active",
+      "active",
+      "entity-alpha matching fact must remain active after cross-entity hash-dedup call",
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+// ─── Regression: Finding Uyui — hash-dedup stale timestamp ordering fix ──────
+//
+// In the hash-dedup path, `applyTemporalSupersession` is called with
+// `newMemoryId` pointing to the OLD existing matching fact (no new file is
+// written).  Line 203 resolves `persistedCreatedAt` from that old fact's
+// `frontmatter.created`, which can be arbitrarily old — older than the
+// conflicting stale fact being retired.  When `persistedCreatedAt < stale.created`,
+// the ordering guard `candidateCreated >= newCreated` fires and supersession is
+// silently skipped, leaving stale data active.
+//
+// The fix takes `max(persistedCreatedAt, args.createdAt)` so that the caller's
+// wall-clock timestamp (always "now") wins when the persisted value is stale.
+
+test("applyTemporalSupersession: hash-dedup stale timestamp — max(persisted, wall-clock) ensures ordering is correct (Finding Uyui)", async () => {
+  const { storage, cleanup } = await makeStorage("engram-uyui-stale-ts-");
+  try {
+    // Timeline:
+    //   T_very_old = old matching fact's created (the existing deduped fact)
+    //   T_mid      = stale conflicting fact's created  (must be superseded)
+    //   T_now      = wall-clock / args.createdAt passed by the orchestrator
+    //
+    // Bug: persistedCreatedAt = T_very_old < T_mid → ordering guard fires → NO supersession.
+    // Fix: persistedCreatedAt = max(T_very_old, T_now) = T_now > T_mid → supersession fires.
+
+    const tVeryOld = "2024-01-01T00:00:00.000Z"; // old matching fact (hash-dedup anchor)
+    const tMid     = "2025-01-01T00:00:00.000Z"; // stale conflicting fact (must be retired)
+    const tNow     = new Date().toISOString();   // current wall-clock (args.createdAt)
+
+    // Seed the stale conflicting fact (city=Austin, created=T_mid).
+    const staleId = await writeFact(storage, "subject is in Austin", TEST_ENTITY, { city: "Austin" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const staleMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === staleId);
+    assert.ok(staleMem, "stale conflicting fact must exist");
+    await storage.writeMemoryFrontmatter(staleMem!, { created: tMid, updated: tMid });
+
+    // Seed the old matching fact (the deduped anchor, created=T_very_old).
+    // In the real scenario this is the fact whose content hash triggered the
+    // short-circuit, and it predates the stale conflicting fact.
+    const oldMatchId = await writeFact(storage, "subject relocated to NYC", TEST_ENTITY, { city: "NYC" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const oldMatchMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === oldMatchId);
+    assert.ok(oldMatchMem, "old matching fact must exist");
+    await storage.writeMemoryFrontmatter(oldMatchMem!, { created: tVeryOld, updated: tVeryOld });
+
+    // Simulate the hash-dedup call: newMemoryId = oldMatchId (T_very_old),
+    // createdAt = tNow (current wall-clock).
+    //
+    // Before the fix: persistedCreatedAt = T_very_old < T_mid → no supersession.
+    // After the fix:  useCallerTimestamp=true → persistedCreatedAt = T_now > T_mid → supersession fires.
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: oldMatchId,               // old fact's ID (T_very_old) — the bug scenario
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" }, // new attributes from the incoming promotion
+      createdAt: tNow,                       // wall-clock passed by orchestrator
+      enabled: true,
+      useCallerTimestamp: true,              // hash-dedup path: skip persisted stale timestamp
+    });
+
+    assert.deepEqual(
+      result.supersededIds,
+      [staleId],
+      "hash-dedup stale-ts: stale Austin fact (T_mid) must be superseded when max(T_very_old, T_now) is used as ordering anchor",
+    );
+    assert.deepEqual(result.matchedKeys, [`${TEST_ENTITY}::city`]);
+
+    // Verify on-disk status.
+    const staleFm = await readFrontmatterById(storage, staleId);
+    assert.equal(staleFm?.status, "superseded", "stale fact must be marked superseded");
+    assert.equal(staleFm?.supersededBy, oldMatchId, "stale fact must link to the old matching fact");
+
+    // The old matching fact must remain active (it IS the supersessor anchor).
+    const oldMatchFm = await readFrontmatterById(storage, oldMatchId);
+    assert.equal(oldMatchFm?.status ?? "active", "active", "old matching fact must remain active");
+  } finally {
+    await cleanup();
+  }
+});

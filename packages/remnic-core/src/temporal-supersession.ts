@@ -173,6 +173,14 @@ export async function applyTemporalSupersession(args: {
   structuredAttributes?: Record<string, string>;
   createdAt: string;
   enabled: boolean;
+  /**
+   * When true, skip the persisted `frontmatter.created` lookup and use
+   * `args.createdAt` directly as the ordering anchor.  Set this on the
+   * hash-dedup short-circuit path where `newMemoryId` points to an existing
+   * OLD fact (no new file is written) and its persisted timestamp would be
+   * stale relative to the incoming promotion event (PR #402 Finding Uyui).
+   */
+  useCallerTimestamp?: boolean;
 }): Promise<TemporalSupersessionResult> {
   const empty: TemporalSupersessionResult = { supersededIds: [], matchedKeys: [] };
   if (!args.enabled) return empty;
@@ -199,8 +207,18 @@ export async function applyTemporalSupersession(args: {
   // returns.  In concurrent writers the two can differ by enough to cause
   // wrong-direction supersession.  If the memory is not yet visible in the
   // cache (edge case during fast concurrent writes) fall back to args.createdAt.
+  //
+  // PR #402 round-12 (Finding Uyui): on the hash-dedup early-return path the
+  // caller supplies the OLD matching fact's id as `newMemoryId` (no new file is
+  // written).  That makes `newMemoryFile.frontmatter.created` an arbitrarily
+  // old timestamp.  When `args.useCallerTimestamp` is set the caller explicitly
+  // opts out of the persisted-timestamp lookup so `args.createdAt` (the current
+  // wall-clock) is used directly, keeping ordering correct regardless of how
+  // old the matching fact is.
   const newMemoryFile = hotMemories.find((m) => m.frontmatter.id === args.newMemoryId);
-  const persistedCreatedAt = newMemoryFile?.frontmatter.created ?? args.createdAt;
+  const persistedCreatedAt = args.useCallerTimestamp
+    ? args.createdAt
+    : (newMemoryFile?.frontmatter.created ?? args.createdAt);
 
   const supersededIds: string[] = [];
   const matchedKeys = new Set<string>();
