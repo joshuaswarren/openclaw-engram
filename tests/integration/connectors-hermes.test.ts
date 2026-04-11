@@ -2857,11 +2857,12 @@ test("round-5 fix 2 (source): extension-install error message is gated on rollba
   );
 
   // The message must be conditional — there must be a ternary or if/else that
-  // selects between rollback-success and rollback-failure wording.
-  assert.ok(
-    content.includes("extensionErrTokenRolledBack\n          ? \"Token has been rolled back.\"") ||
-    content.includes('extensionErrTokenRolledBack\n          ? "Token has been rolled back."') ||
-    content.includes("extensionErrTokenRolledBack ?"),
+  // selects between rollback-success and rollback-failure wording. Use a regex
+  // that tolerates nested-ternary indentation added when the outer
+  // manifest.requiresToken gate was introduced.
+  assert.match(
+    content,
+    /extensionErrTokenRolledBack\s*\?\s*["'] ?Token has been rolled back\./,
     "Extension install error path must conditionally report rollback outcome",
   );
 
@@ -2884,11 +2885,12 @@ test("round-5 fix 3 (source): config-write error message is gated on rollback su
   );
 
   // The message must be conditional — there must be a ternary that selects
-  // between rollback-success and rollback-failure wording.
-  assert.ok(
-    content.includes("configWriteTokenRolledBack\n      ? \"Token has been rolled back.\"") ||
-    content.includes('configWriteTokenRolledBack\n      ? "Token has been rolled back."') ||
-    content.includes("configWriteTokenRolledBack ?"),
+  // between rollback-success and rollback-failure wording. Use a regex that
+  // tolerates nested-ternary indentation added when the outer
+  // manifest.requiresToken gate was introduced.
+  assert.match(
+    content,
+    /configWriteTokenRolledBack\s*\?\s*["'] ?Token has been rolled back\./,
     "Config write error path must conditionally report rollback outcome",
   );
 
