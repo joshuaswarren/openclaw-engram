@@ -615,15 +615,10 @@ export function removeConnector(connectorId: string): RemoveResult {
   }
 
   if (!fs.existsSync(configPath)) {
-    // Still try to clean up a stray extension if removeConnector is called
-    // in recovery mode, but only if extension management was not disabled.
-    if (connectorId === "codex-cli" && savedInstallExtension !== false) {
-      try {
-        removeCodexMemoryExtension({ codexHome: codexHomeOverride });
-      } catch {
-        // swallow
-      }
-    }
+    // Config file is missing — we have no evidence that this installation ever
+    // managed the extension directory, so it is unsafe to remove it (the user
+    // may have self-managed it or installed with installExtension=false).
+    // Skip removeCodexMemoryExtension entirely in this recovery path.
     return {
       connectorId,
       configPath,
@@ -992,11 +987,35 @@ export function installCodexMemoryExtension(
   try {
     filesCopied = copyDirRecursiveSync(sourceDir, tmpDir);
 
-    // Atomic replace: remove old remnic/ (only) and rename tmp into place.
-    if (fs.existsSync(paths.remnicExtensionDir)) {
-      fs.rmSync(paths.remnicExtensionDir, { recursive: true, force: true });
+    // Atomic replace: rename old remnic/ to a timestamped backup, then rename
+    // the tmp dir into place.  If the second rename fails, restore from backup
+    // so the old extension is never permanently lost.
+    const backupDir = `${paths.remnicExtensionDir}.bak-${Date.now()}`;
+    const hadExisting = fs.existsSync(paths.remnicExtensionDir);
+    if (hadExisting) {
+      fs.renameSync(paths.remnicExtensionDir, backupDir);
     }
-    fs.renameSync(tmpDir, paths.remnicExtensionDir);
+    try {
+      fs.renameSync(tmpDir, paths.remnicExtensionDir);
+    } catch (renameErr) {
+      // New rename failed — restore backup so the old extension survives.
+      if (hadExisting) {
+        try {
+          fs.renameSync(backupDir, paths.remnicExtensionDir);
+        } catch {
+          // swallow — backup restore best-effort
+        }
+      }
+      throw renameErr;
+    }
+    // New extension is in place — remove the backup.
+    if (hadExisting) {
+      try {
+        fs.rmSync(backupDir, { recursive: true, force: true });
+      } catch {
+        // swallow — stale backup is harmless
+      }
+    }
   } catch (err) {
     // Best-effort cleanup so we never leave .tmp garbage behind.
     if (fs.existsSync(tmpDir)) {

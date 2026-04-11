@@ -549,3 +549,172 @@ test("installConnector persists resolved $CODEX_HOME even without explicit codex
     },
   );
 });
+
+// ── PR #394 Finding 1: recovery branch must NOT remove extension when config is missing
+
+test("removeConnector with missing config does not remove a self-managed extension", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      // Simulate a user who self-manages the extension directory — it exists but
+      // there is no remnic connector config (deleted/corrupted or never existed).
+      const paths = resolveCodexMemoryExtensionPaths(sandbox.codexHome);
+      fs.mkdirSync(paths.remnicExtensionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(paths.remnicExtensionDir, "instructions.md"),
+        "# user-managed extension\n",
+      );
+
+      // Make sure the config file does NOT exist.
+      // getConnectorsDir() uses XDG_CONFIG_HOME → engram/.engram-connectors/connectors
+      const connectorsDir = path.join(sandbox.xdgConfigHome, "engram", ".engram-connectors", "connectors");
+      const configPath = path.join(connectorsDir, "codex-cli.json");
+      assert.equal(fs.existsSync(configPath), false, "precondition: config must be absent");
+
+      // removeConnector in recovery mode.
+      const removeResult = removeConnector("codex-cli");
+      assert.equal(removeResult.message, "Not installed", `expected 'Not installed', got: ${removeResult.message}`);
+
+      // The self-managed extension must still be present.
+      assert.ok(
+        fs.existsSync(paths.remnicExtensionDir),
+        "self-managed extension must NOT be removed when config file is missing",
+      );
+    },
+  );
+});
+
+// ── PR #394 Finding 2: atomic replace restores backup when renameSync to final destination fails
+
+test("installCodexMemoryExtension restores backup when final rename fails", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      // Do a real first install so an existing extension is in place.
+      const first = installCodexMemoryExtension({
+        codexHome: sandbox.codexHome,
+        sourceDir: sandbox.syntheticSourceDir,
+      });
+      assert.ok(fs.existsSync(first.remnicExtensionDir), "first install must succeed");
+
+      // Record original contents to verify restoration later.
+      const originalContent = fs.readFileSync(
+        path.join(first.remnicExtensionDir, "instructions.md"),
+        "utf8",
+      );
+
+      // Prepare a second source dir with different content.
+      const secondSource = path.join(sandbox.root, "second-extension-source");
+      fs.mkdirSync(secondSource, { recursive: true });
+      fs.writeFileSync(path.join(secondSource, "instructions.md"), "# second version\n");
+
+      // Simulate renameSync failing on the *final* rename (tmp → destination) by
+      // replacing the destination with a regular file whose name matches remnicExtensionDir.
+      // Strategy: make the extensionsRoot read-only so renameSync into it fails,
+      // but only for the final rename. We achieve this by making the target path
+      // a regular file — renameSync will fail with ENOTDIR/EEXIST on most platforms.
+      // We remove it first so the backup rename can proceed, then put it back.
+      //
+      // Simpler: mock fs.renameSync to fail only on the second call (the final rename).
+      const originalRenameSync = fs.renameSync.bind(fs);
+      let renameCallCount = 0;
+      const mockRename = t.mock.method(fs, "renameSync", (...args: Parameters<typeof fs.renameSync>) => {
+        renameCallCount++;
+        if (renameCallCount === 2) {
+          // This is the final rename (tmp → remnicExtensionDir) — simulate failure.
+          throw new Error("EACCES: permission denied (simulated)");
+        }
+        return originalRenameSync(...args);
+      });
+
+      assert.throws(
+        () =>
+          installCodexMemoryExtension({
+            codexHome: sandbox.codexHome,
+            sourceDir: secondSource,
+          }),
+        /EACCES|simulated/,
+        "install must throw when final rename fails",
+      );
+
+      // Restore the mock so cleanup works correctly.
+      mockRename.mock.restore();
+
+      // The original extension must have been restored from backup.
+      assert.ok(
+        fs.existsSync(first.remnicExtensionDir),
+        "old extension must be restored after failed rename",
+      );
+      const restoredContent = fs.readFileSync(
+        path.join(first.remnicExtensionDir, "instructions.md"),
+        "utf8",
+      );
+      assert.equal(restoredContent, originalContent, "restored extension must match original content");
+
+      // No .bak-* directories should remain (they get cleaned up on success; on failure the
+      // backup is renamed back — so it becomes remnicExtensionDir again and no .bak remains).
+      const extRoot = path.dirname(first.remnicExtensionDir);
+      const entries = fs.readdirSync(extRoot);
+      const bakEntries = entries.filter((e) => e.includes(".bak-"));
+      assert.equal(bakEntries.length, 0, `no .bak-* dirs should remain, found: ${bakEntries.join(", ")}`);
+    },
+  );
+});
+
+// ── PR #394 Finding 2: happy-path atomic replace regression test
+
+test("installCodexMemoryExtension atomic replace happy path — no backup directory left behind", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      // First install.
+      installCodexMemoryExtension({
+        codexHome: sandbox.codexHome,
+        sourceDir: sandbox.syntheticSourceDir,
+      });
+
+      // Prepare a second source dir.
+      const secondSource = path.join(sandbox.root, "second-ext-source");
+      fs.mkdirSync(secondSource, { recursive: true });
+      fs.writeFileSync(path.join(secondSource, "instructions.md"), "# v2 extension\n");
+
+      // Second install (replace).
+      const second = installCodexMemoryExtension({
+        codexHome: sandbox.codexHome,
+        sourceDir: secondSource,
+      });
+
+      // New extension must be in place with updated content.
+      assert.ok(fs.existsSync(second.remnicExtensionDir), "extension dir must exist after replace");
+      const content = fs.readFileSync(path.join(second.remnicExtensionDir, "instructions.md"), "utf8");
+      assert.equal(content, "# v2 extension\n", "extension content must reflect second install");
+
+      // No .bak-* directories must be left behind.
+      const extRoot = path.dirname(second.remnicExtensionDir);
+      const entries = fs.readdirSync(extRoot);
+      const bakEntries = entries.filter((e) => e.includes(".bak-"));
+      assert.equal(bakEntries.length, 0, `no .bak-* dirs should remain after successful replace, found: ${bakEntries.join(", ")}`);
+    },
+  );
+});
