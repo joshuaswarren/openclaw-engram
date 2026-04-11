@@ -240,15 +240,6 @@ export async function applyTemporalSupersession(args: {
     coldMemories = [];
   }
 
-  // Process hot then cold.  Hot-then-cold ordering is safer because hot
-  // writes are more frequent and the CAS re-read guards against double-writes.
-  // A Set<string> of already-processed ids ensures that a memory visible in
-  // both tiers (same logical memory with different filesystem paths during a
-  // migration race) is processed at most once.  Keying on `frontmatter.id`
-  // is correct because the same logical memory has the same id regardless of
-  // which tier's directory it currently lives in (PR #402 Finding 1 fix).
-  // Fall back to path-based keying when id is absent (defensive).
-
   // Combine hot and cold memories into a single scan.  New memory itself is
   // excluded inline.  We do NOT skip cold scan when hot produced zero
   // supersessions — the P1 finding is precisely that stale cold facts leak

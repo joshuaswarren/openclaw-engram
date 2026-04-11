@@ -1446,9 +1446,14 @@ export class StorageManager {
   }
 
   /** Cancel any in-flight concurrent read so the next readAllMemories()
-   *  starts a fresh disk scan and sees the just-written data. */
+   *  starts a fresh disk scan and sees the just-written data.  Also clears
+   *  the cold-scan cache so that readAllColdMemories() re-scans on the next
+   *  call — required whenever a hot→cold demotion may have changed cold-tier
+   *  contents (and harmless for ordinary hot-tier writes). */
   private invalidateAllMemoriesCache(): void {
     StorageManager.allMemoriesInFlight.delete(this.baseDir);
+    const coldRoot = path.join(this.baseDir, "cold");
+    StorageManager.coldMemoriesCache.delete(coldRoot);
   }
 
   /**

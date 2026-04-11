@@ -1651,6 +1651,69 @@ test("readAllColdMemories: finds .md files in non-standard cold subdirectory (e.
   }
 });
 
+// ─── Regression: Finding UXw3 — invalidateAllMemoriesCache must also clear cold cache ─
+//
+// The coldMemoriesCache comment and the readAllColdMemories JSDoc both state that
+// the cold-scan cache is evicted whenever invalidateAllMemoriesCache() fires.
+// Before the fix, invalidateAllMemoriesCache() only cleared allMemoriesInFlight and
+// left coldMemoriesCache intact, so a stale cold snapshot could persist after a
+// hot-tier write that triggered the hot invalidation.
+
+test("readAllColdMemories: cold-scan cache is invalidated by a hot-tier write (invalidateAllMemoriesCache)", async () => {
+  // Strategy:
+  // 1. Seed cold tier via migrateMemoryToTier.
+  // 2. Call readAllColdMemories() once to populate the cold-scan cache.
+  // 3. Inject a ghost file directly into cold/ on disk (bypasses all invalidation).
+  // 4. Trigger a hot-tier write (writeFact), which calls invalidateAllMemoriesCache().
+  // 5. Call readAllColdMemories() again — the cold cache must have been evicted by
+  //    step 4, so the fresh disk scan returns the ghost file.
+  const { storage, memoryDir, cleanup } = await makeStorage("engram-uxw3-cold-evict-");
+  try {
+    StorageManager.clearAllStaticCaches();
+
+    // Seed an existing cold fact.
+    const baseId = await writeFact(storage, "entity in Portland", TEST_ENTITY, { city: "Portland" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    storage.invalidateAllMemoriesCacheForDir();
+    const baseMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === baseId);
+    assert.ok(baseMem, "seed fact must be readable");
+    await storage.migrateMemoryToTier(baseMem!, "cold");
+    StorageManager.clearAllStaticCaches();
+
+    // Step 2: Populate the cold-scan cache with a known set (one fact).
+    const firstResult = await storage.readAllColdMemories();
+    assert.ok(
+      firstResult.some((m) => m.frontmatter.id === baseId),
+      "first readAllColdMemories must contain the demoted fact",
+    );
+
+    // Step 3: Inject a ghost file directly into cold/ WITHOUT invalidating the cache.
+    const ghostId = `fact-ghost-uxw3-${Date.now()}`;
+    const coldFactsDir = path.join(memoryDir, "cold", "facts", "2026-01-01");
+    await mkdir(coldFactsDir, { recursive: true });
+    const ghostContent =
+      `---\nid: ${ghostId}\ncategory: fact\ncreated: 2026-01-01T00:00:00.000Z\n` +
+      `updated: 2026-01-01T00:00:00.000Z\nsource: test\nconfidence: 0.9\n` +
+      `confidenceTier: explicit\ntags: []\nentityRef: ${TEST_ENTITY}\n` +
+      `structuredAttributes:\n  city: Ghost\nstatus: active\n---\n\nGhost fact (UXw3 test).\n`;
+    await writeFile(path.join(coldFactsDir, `${ghostId}.md`), ghostContent, "utf-8");
+
+    // Step 4: Hot-tier write — triggers invalidateAllMemoriesCache(), which must
+    // now also evict coldMemoriesCache (the UXw3 fix).
+    await writeFact(storage, "entity has new role", TEST_ENTITY, { role: "engineer" });
+
+    // Step 5: A fresh readAllColdMemories() must NOT return the stale cached
+    // snapshot — the ghost file must be visible because the cache was evicted.
+    const afterHotWrite = await storage.readAllColdMemories();
+    assert.ok(
+      afterHotWrite.some((m) => m.frontmatter.id === ghostId),
+      "after hot-tier write, readAllColdMemories must re-scan disk and find the ghost file",
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
 // ─── Regression: Finding UOGi — cold-scan result is cached across burst writes ─
 //
 // readAllColdMemories() previously performed an uncached full-tree directory scan
