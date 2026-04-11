@@ -587,7 +587,9 @@ const pluginDefinition = {
         // Include the promptBuilder so runtimes that treat unified capability
         // registration as authoritative (SDK >=2026.4.5) continue to inject
         // recall context via the prompt builder.
-        promptBuilder: capabilityPromptBuilder,
+        // Respect promptInjectionAllowed policy — omit promptBuilder if injection
+        // is disabled, so the capability only provides publicArtifacts.
+        ...(promptInjectionAllowed ? { promptBuilder: capabilityPromptBuilder } : {}),
         publicArtifacts: {
           listArtifacts: async (_params: { cfg: unknown }) => {
             try {
