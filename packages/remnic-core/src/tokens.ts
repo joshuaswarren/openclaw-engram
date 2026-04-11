@@ -97,20 +97,6 @@ export function saveTokenStore(store: TokenStore, tokensPath?: string): void {
 }
 
 /**
- * Read the current TokenEntry for a connector WITHOUT modifying the store.
- * Callers use this to snapshot the prior entry BEFORE calling commitTokenEntry()
- * so that a throw inside commitTokenEntry (e.g., ENOSPC in saveTokenStore) does
- * not prevent rollback — the caller already holds the prior value independently
- * of the commit's return path (UXJI/UXJT fix).
- *
- * Returns null when no entry exists for the connector.
- */
-export function readTokenEntry(connector: string, tokensPath?: string): TokenEntry | null {
-  const store = loadTokenStore(tokensPath);
-  return store.tokens.find((t) => t.connector === connector) ?? null;
-}
-
-/**
  * Build a TokenEntry candidate WITHOUT saving it to the store.
  * Callers use this when they need to defer the save until after a
  * dependent write (e.g. Hermes config.yaml) succeeds — see

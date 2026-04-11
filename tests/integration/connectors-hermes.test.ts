@@ -2384,6 +2384,93 @@ test("removeConnector: best-effort revokeToken on not_found path clears orphan t
   });
 });
 
+// ── Round 13: YAML rollback failure in Phase D (PRRT_kwDORJXyws56UeYj) ──────
+
+test("Phase D: YAML rollback failure surfaces inconsistent-state warning (not clean-restoration claim)", async () => {
+  // Regression test for PRRT_kwDORJXyws56UeYj: when commitTokenEntry throws AND
+  // the YAML rollback also fails (e.g. ENOSPC / read-only filesystem), the prior
+  // code unconditionally claimed "config.yaml has been restored to its prior state"
+  // even though the restore itself had failed.  The fix tracks both rollback
+  // outcomes and emits an explicit inconsistent-state warning when the YAML
+  // rollback fails.
+  //
+  // Strategy — monkey-patch fs.writeFileSync on the shared node:fs module so we
+  // can control which writes succeed vs. fail without touching the filesystem:
+  //   Write 1: Phase C upsertHermesConfig YAML write   → SUCCEED
+  //   Write 2: Phase D commitTokenEntry token write     → FAIL  (ENOSPC)
+  //   Write 3: Phase D token-store rollback             → SUCCEED (tokens restored)
+  //   Write 4: Phase D YAML rollback                   → FAIL  (ENOSPC)
+  //
+  // Because ESM module caching shares the `fs` singleton, patching
+  // `fs.writeFileSync` here affects the calls inside writeSecretFileSync and
+  // saveTokenStore inside the already-imported `mod`.
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+
+        // Step 1: Initial install to establish prior state.
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "default", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install1.status, "installed", "Initial install must succeed");
+
+        // Step 2: Monkey-patch fs.writeFileSync to inject failures on writes 2 and 4.
+        const originalWriteFileSync = (fs as unknown as { writeFileSync: typeof fs.writeFileSync }).writeFileSync;
+        let writeCallCount = 0;
+        const failOnCalls = new Set([2, 4]);
+        const patchedWriteFileSync: typeof fs.writeFileSync = function(...args: Parameters<typeof fs.writeFileSync>) {
+          writeCallCount++;
+          if (failOnCalls.has(writeCallCount)) {
+            const err = Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
+            throw err;
+          }
+          return originalWriteFileSync.apply(fs, args);
+        };
+        (fs as unknown as { writeFileSync: typeof fs.writeFileSync }).writeFileSync = patchedWriteFileSync;
+
+        let result: ReturnType<typeof mod.installConnector>;
+        try {
+          result = mod.installConnector({
+            connectorId: "hermes",
+            force: true,
+            config: { profile: "default", host: "127.0.0.1", port: 4318 },
+          });
+        } finally {
+          // Always restore the original writeFileSync.
+          (fs as unknown as { writeFileSync: typeof fs.writeFileSync }).writeFileSync = originalWriteFileSync;
+        }
+
+        // Must return soft error (not throw).
+        assert.equal(result!.status, "error", "Phase D double-failure must return status: error");
+
+        // Must NOT claim clean restoration of config.yaml.
+        assert.ok(
+          !result!.message.includes("config.yaml has been restored to its prior state"),
+          `Error message must NOT claim clean YAML restoration, got: ${result!.message}`,
+        );
+
+        // Must mention the YAML rollback failure or inconsistent state.
+        assert.ok(
+          result!.message.includes("config.yaml rollback") ||
+          result!.message.includes("inconsistent state") ||
+          result!.message.includes("ALSO failed"),
+          `Error message must warn about YAML rollback failure / inconsistent state, got: ${result!.message}`,
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
 // ── Round 12: UXJG (Codex P1) — full-store snapshot rollback for replit ──
 
 test("non-Hermes replit: force-reinstall config write failure restores prior token via full-store snapshot", async () => {

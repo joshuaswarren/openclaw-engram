@@ -830,13 +830,17 @@ export function installConnector(options: InstallOptions): InstallResult {
       // Roll back the token store: restore the full snapshot so a partial write
       // (e.g. ENOSPC truncating tokens.json mid-write) cannot leave the store
       // corrupt or missing the prior hermes entry.
+      let tokensRolledBack = true;
+      let tokensRollbackErrMsg = "";
       try {
         saveTokenStore(priorTokenStore);
-      } catch {
-        // Best-effort: if the restore also fails, we'll still report the
-        // original commit error so the user knows to intervene manually.
+      } catch (tokenRestoreErr) {
+        tokensRolledBack = false;
+        tokensRollbackErrMsg = tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr);
       }
       // Roll back the YAML write: restore prior content (or delete newly-created file).
+      let yamlRolledBack = true;
+      let yamlRollbackErrMsg = "";
       try {
         if (yamlResult.priorContent === null) {
           // File was created new — remove it entirely.
@@ -845,18 +849,49 @@ export function installConnector(options: InstallOptions): InstallResult {
           // File existed before — restore original content.
           writeSecretFileSync(yamlResult.configPath, yamlResult.priorContent);
         }
-      } catch {
-        // Best-effort rollback: if restore fails, note the inconsistency below
-        // but still report failure so the user knows to check manually.
+      } catch (yamlRestoreErr) {
+        yamlRolledBack = false;
+        yamlRollbackErrMsg = yamlRestoreErr instanceof Error ? yamlRestoreErr.message : String(yamlRestoreErr);
+      }
+      // Build an error message that accurately reflects which rollbacks succeeded.
+      const commitErrMsg = commitErr instanceof Error ? commitErr.message : String(commitErr);
+      let message: string;
+      if (tokensRolledBack && yamlRolledBack) {
+        message =
+          `Hermes install failed during token commit — ` +
+          `${commitErrMsg}. ` +
+          `config.yaml and tokens.json restored to prior state. ` +
+          `Resolve the tokens.json access issue, then reinstall.`;
+      } else if (!yamlRolledBack && tokensRolledBack) {
+        message =
+          `Hermes install failed during token commit — ` +
+          `${commitErrMsg}. ` +
+          `tokens.json restored but config.yaml rollback ALSO failed ` +
+          `(${yamlRollbackErrMsg}). ` +
+          `Hermes daemon may be in an inconsistent state: config references a stale token. ` +
+          `Manually inspect ~/.hermes/profiles/${hermesProfile}/config.yaml and reinstall.`;
+      } else if (yamlRolledBack && !tokensRolledBack) {
+        message =
+          `Hermes install failed during token commit — ` +
+          `${commitErrMsg}. ` +
+          `config.yaml restored but tokens.json rollback ALSO failed ` +
+          `(${tokensRollbackErrMsg}). ` +
+          `Hermes daemon may be in an inconsistent state: tokens.json is corrupt or incomplete. ` +
+          `Manually inspect ~/.remnic/tokens.json and reinstall.`;
+      } else {
+        message =
+          `Hermes install failed during token commit — ` +
+          `${commitErrMsg}. ` +
+          `BOTH rollbacks failed: config.yaml rollback failed (${yamlRollbackErrMsg}); ` +
+          `tokens.json rollback failed (${tokensRollbackErrMsg}). ` +
+          `Hermes daemon is likely in an inconsistent state. ` +
+          `Manually inspect ~/.hermes/profiles/${hermesProfile}/config.yaml ` +
+          `and ~/.remnic/tokens.json, then reinstall.`;
       }
       return {
         connectorId: options.connectorId,
         status: "error",
-        message:
-          `Hermes install aborted: token store commit failed — ` +
-          `${commitErr instanceof Error ? commitErr.message : String(commitErr)}. ` +
-          `config.yaml has been restored to its prior state. ` +
-          `Resolve the tokens.json access issue, then reinstall.`,
+        message,
       };
     }
 
