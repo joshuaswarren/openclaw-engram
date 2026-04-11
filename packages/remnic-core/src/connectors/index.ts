@@ -559,6 +559,19 @@ export function listConnectors(): {
   return { installed, available };
 }
 
+// ── Get connector token ────────────────────────────────────────────────────
+// Codex P1 (PRRT_kwDORJXyws56U9U0): tokens are stored exclusively in
+// tokens.json. This helper is the canonical way to retrieve the bearer token
+// for a connector — connector.json never contains it.
+
+export function getConnectorToken(connectorId: string): string | undefined {
+  try {
+    return loadTokenStore().tokens.find((t) => t.connector === connectorId)?.token;
+  } catch {
+    return undefined;
+  }
+}
+
 // ── Install connector ───────────────────────────────────────────────────────
 
 export function installConnector(options: InstallOptions): InstallResult {
