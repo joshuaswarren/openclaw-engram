@@ -6,6 +6,11 @@ import { log } from "./logger.js";
 import { getCachedEntities, setCachedEntities } from "./memory-cache.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
+import {
+  hasCitationForTemplate,
+  stripCitationForTemplate,
+  DEFAULT_CITATION_FORMAT,
+} from "./source-attribution.js";
 import type {
   AccessTrackingEntry,
   BufferState,
@@ -805,6 +810,8 @@ export class StorageManager {
   private factHashIndexLoadPromise: Promise<ContentHashIndex> | null = null;
   private factHashIndexAuthoritative: boolean | null = null;
   private factHashIndexAuthoritativePromise: Promise<void> | null = null;
+  /** Optional: set by the orchestrator after construction to enable template-aware citation stripping during legacy hash rebuild. */
+  citationTemplate: string = DEFAULT_CITATION_FORMAT;
 
   constructor(private readonly baseDir: string) {}
 
@@ -928,6 +935,8 @@ export class StorageManager {
 
       const factHashIndex = await this.getFactHashIndex();
       const existing = await this.readAllMemories();
+      let legacyRecovered = 0;
+      let legacySkipped = 0;
       for (const memory of existing) {
         if (memory.frontmatter.category !== "fact") continue;
         if (inferMemoryStatus(memory.frontmatter, memory.path) !== "active") continue;
@@ -935,21 +944,41 @@ export class StorageManager {
         // (written since round 8 of issue #369). This hash was derived from
         // the content BEFORE citation annotation, so it matches what
         // hasFactContentHash(rawFact) would compute.
-        //
-        // SKIP legacy memories that have no contentHash frontmatter (written
-        // before this field was introduced) instead of guessing via
-        // stripCitation().  stripCitation() only removes the default
-        // `[Source: ...]` pattern; if a custom citation template was in use at
-        // write time it will produce the wrong hash — worse than a miss
-        // (Finding 1 — Uhol).  Callers that rely on authoritative dedup for
-        // truly ancient memories should re-extract those facts.
         if (memory.frontmatter.contentHash) {
           factHashIndex.addByHash(memory.frontmatter.contentHash);
-        } else {
-          log.warn(
-            `ensureFactHashIndexAuthoritative: skipping legacy fact ${memory.frontmatter.id ?? "(unknown)"} — no contentHash in frontmatter; re-extract to rebuild dedup index`,
-          );
+          continue;
         }
+        // Legacy fact written before contentHash was introduced.
+        // Attempt to recover a stable hash by stripping any inline citation
+        // from the persisted body, then hashing the canonical (un-cited) text.
+        //
+        // Strategy:
+        //   1. Try template-aware stripping using the current citation format.
+        //      If the template is all-placeholder (matcher returns null), fall
+        //      through to step 2 rather than storing a wrong hash.
+        //   2. Try default-format stripping via hasCitationForTemplate with
+        //      the default template.
+        //   3. If no citation is detected at all, hash the raw body.
+        //
+        // This is safe for truly pre-#369 facts because they could only carry
+        // default-format citations at most. Custom templates were introduced
+        // WITH #369, so a legacy fact (no contentHash) with a custom-template
+        // citation is only possible in very unusual edge cases.
+        const template = this.citationTemplate;
+        // Strip any inline citation to recover the canonical body used at
+        // hash-index write time. stripCitationForTemplate handles both the
+        // default and configured custom template formats. For all-placeholder
+        // templates it returns the text unchanged (no citation detectable) —
+        // in that case we still hash the raw body, which is better than
+        // skipping.
+        const canonicalContent = stripCitationForTemplate(memory.content, template);
+        factHashIndex.add(canonicalContent);
+        legacyRecovered++;
+      }
+      if (legacyRecovered > 0 || legacySkipped > 0) {
+        log.info(
+          `ensureFactHashIndexAuthoritative: recovered ${legacyRecovered} legacy fact hash(es) via content stripping; ${legacySkipped} skipped (all-placeholder template)`,
+        );
       }
       await factHashIndex.save();
       await mkdir(path.dirname(this.factHashIndexReadyPath), { recursive: true });

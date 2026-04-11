@@ -552,3 +552,76 @@ export function stripCitation(text: string): string {
 
   return result.trimEnd();
 }
+
+/**
+ * Strip an inline citation from text using a specific template regex.
+ *
+ * This is the template-aware counterpart to {@link stripCitation}. When the
+ * caller holds the configured `inlineSourceAttributionFormat`, use this
+ * function to strip citations produced by that template — including custom
+ * templates that differ from the default `[Source: ...]` pattern.
+ *
+ * Behaviour:
+ *  - If the text has a **default-format** citation, delegates to
+ *    {@link stripCitation} (always safe).
+ *  - If the text has a **custom-template** citation detected by
+ *    `hasCitationForTemplate`, builds the template regex and removes every
+ *    occurrence (citations are appended at the end of the fact body by
+ *    {@link attachCitation}).
+ *  - All-placeholder templates (no literal prefix/suffix/separator) cannot
+ *    produce a reliable matcher. `hasCitationForTemplate` already returns
+ *    `false` for such templates, so this function never attempts to strip an
+ *    undetectable citation. The text is returned unchanged when no citation
+ *    is detected.
+ *  - If no citation is detected for the given template, returns the text
+ *    unchanged.
+ *
+ * @returns The stripped text (or the original text when no citation is found).
+ */
+export function stripCitationForTemplate(
+  text: string,
+  template: string,
+): string {
+  if (typeof text !== "string" || text.length === 0) return text;
+
+  // Fast path: default-format citation — delegate to the existing stripper.
+  if (hasCitation(text)) return stripCitation(text);
+
+  // No default citation; check whether the custom template produced one.
+  // hasCitationForTemplate returns false for all-placeholder templates (no
+  // reliable matcher), so those pass through unchanged below.
+  if (!hasCitationForTemplate(text, template)) return text;
+
+  // Build the template matcher. hasCitationForTemplate already returned true,
+  // which means templateMatcher produced a non-null result. The null branch
+  // here is a defensive fallback only — delegate to stripCitation.
+  const matcher = templateMatcher(template);
+  if (!matcher) return stripCitation(text);
+
+  // The matcher regex was built without the global flag; add it for exec loop.
+  const globalMatcher = new RegExp(
+    matcher.source,
+    matcher.flags.includes("g") ? matcher.flags : matcher.flags + "g",
+  );
+  let result = "";
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = globalMatcher.exec(text)) !== null) {
+    const before = text.slice(lastIndex, match.index).replace(/[ \t]+$/, "");
+    result += before;
+    lastIndex = match.index + match[0].length;
+    // Guard against zero-width matches causing an infinite loop.
+    if (match[0].length === 0) {
+      globalMatcher.lastIndex++;
+    }
+  }
+
+  const after = text.slice(lastIndex).replace(/^[ \t]+/, "");
+  if (after.length > 0) {
+    if (result.length > 0) result += " ";
+    result += after;
+  }
+
+  return result.trimEnd();
+}

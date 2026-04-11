@@ -2,14 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, mkdir } from "node:fs/promises";
 
 import { parseConfig } from "./config.js";
 import { Orchestrator } from "./orchestrator.js";
+import { ContentHashIndex } from "./storage.js";
 import {
   hasCitation,
   parseCitation,
   stripCitation,
+  attachCitation,
 } from "./source-attribution.js";
 import type { ExtractionResult } from "./types.js";
 
@@ -206,4 +208,86 @@ test("persistExtraction does not double-inject a citation on facts that already 
   assert.equal(parsed!.agent, "upstream");
   assert.equal(parsed!.session, "legacy");
   assert.equal(parsed!.ts, "2025-01-01T00:00:00Z");
+});
+
+// ---------------------------------------------------------------------------
+// Fix #1 regression: Codex P2 — Canonicalize pre-tagged facts before hashing
+// ---------------------------------------------------------------------------
+
+test("dedup: pre-tagged fact is not re-persisted when canonical body is already in the hash index", async () => {
+  // When a fact arrives with an existing citation (e.g. relayed from another
+  // system), the dedup check must canonicalize to the raw body BEFORE hashing
+  // so it matches the entry stored from the original write.
+  const { orchestrator, storage, memoryDir } = await makeOrchestrator({
+    inlineSourceAttributionEnabled: true,
+    factDeduplicationEnabled: true,
+  });
+
+  // Inject a real ContentHashIndex so the dedup path is active.
+  const stateDir = `${memoryDir}/state`;
+  await mkdir(stateDir, { recursive: true });
+  const hashIndex = new ContentHashIndex(stateDir);
+  await hashIndex.load();
+  (orchestrator as any).contentHashIndex = hashIndex;
+
+  const rawBody = "The canary deploys complete in under two minutes.";
+
+  // First persist: write the raw fact; the orchestrator appends its own citation
+  // and also registers the raw-content hash in the index via contentHashSource.
+  const firstResult: ExtractionResult = {
+    facts: [makeFact(rawBody)],
+    entities: [],
+    relationships: [],
+    questions: [],
+    profileUpdates: [],
+  } as ExtractionResult;
+
+  const firstIds = await orchestrator.persistExtraction(
+    firstResult,
+    storage,
+    null,
+    { sessionKey: "agent:planner:main", principal: "planner" },
+  );
+  assert.equal(firstIds.length, 1, "first persist must succeed");
+
+  // Read back the persisted body so we have the exact cited form.
+  const memories = await storage.readAllMemories();
+  const firstMemory = memories.find((m: any) => m.frontmatter.id === firstIds[0]);
+  assert.ok(firstMemory, "first memory must be readable");
+  assert.ok(hasCitation(firstMemory.content), "first write must carry a citation");
+
+  // Second persist: submit the ALREADY-CITED body as if it arrived from a relay.
+  // The orchestrator must canonicalize before dedup and skip the write.
+  const secondResult: ExtractionResult = {
+    facts: [makeFact(firstMemory.content)],
+    entities: [],
+    relationships: [],
+    questions: [],
+    profileUpdates: [],
+  } as ExtractionResult;
+
+  const secondIds = await orchestrator.persistExtraction(
+    secondResult,
+    storage,
+    null,
+    { sessionKey: "agent:planner:main", principal: "planner" },
+  );
+
+  // The pre-tagged fact should be deduped — nothing new is persisted.
+  assert.equal(
+    secondIds.length,
+    0,
+    "pre-tagged duplicate must be caught by dedup after canonicalization",
+  );
+
+  // Confirm only one memory with that content exists on disk.
+  const allMemories = await storage.readAllMemories();
+  const matching = allMemories.filter(
+    (m: any) => stripCitation(m.content) === rawBody,
+  );
+  assert.equal(
+    matching.length,
+    1,
+    "only one copy of the fact must be stored",
+  );
 });

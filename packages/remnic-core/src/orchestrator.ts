@@ -21,10 +21,12 @@ import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   attachCitation,
   type CitationContext,
+  hasCitationForTemplate,
+  stripCitationForTemplate,
 } from "./source-attribution.js";
-// stripCitation removed: legacy archive fallback replaced by skip-with-warning
-// strategy (Finding 2 — Urgw).  See archive paths in semantic-consolidation
-// and fact-archival.
+// stripCitation (default-format only) is intentionally NOT used on the
+// legacy archive path — replaced by skip-with-warning (Finding 2 — Urgw).
+// stripCitationForTemplate IS used for pre-tagged dedup canonicalization.
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
 import type {
   SearchBackend,
@@ -1197,6 +1199,9 @@ export class Orchestrator {
       this.storageRouter,
     );
     this.storage = new StorageManager(config.memoryDir);
+    // Propagate the inline-attribution template so the storage layer can strip
+    // citations from legacy facts during the hash-index rebuild path.
+    this.storage.citationTemplate = config.inlineSourceAttributionFormat;
     this.qmd = createSearchBackend(config);
     const conversationIndexRuntime = createConversationIndexRuntime(config, {
       getQmd: () => this.conversationQmd,
@@ -8646,12 +8651,31 @@ export class Orchestrator {
           : 0.7;
 
       // Content-hash dedup check (v6.0)
-      if (this.contentHashIndex && this.contentHashIndex.has(fact.content)) {
-        log.debug(
-          `dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`,
-        );
-        dedupedCount++;
-        continue;
+      //
+      // Canonicalize pre-tagged facts before hashing (Codex P2 — issue #369).
+      // When a fact already carries an inline citation (e.g. relayed or
+      // reprocessed), hashing `fact.content` as-is would produce a different
+      // hash than the one stored from the original write (which used the raw,
+      // un-cited body as contentHashSource). Strip any citation first so the
+      // dedup key matches what the hash index recorded.
+      //
+      // stripCitationForTemplate handles both the default and custom template
+      // formats. For all-placeholder templates it cannot detect citations and
+      // returns the text unchanged — dedup may miss in that edge case, which
+      // is acceptable (no false-positive suppression).
+      if (this.contentHashIndex) {
+        const canonicalContent =
+          citationEnabled &&
+          hasCitationForTemplate(fact.content, citationTemplate)
+            ? stripCitationForTemplate(fact.content, citationTemplate)
+            : fact.content;
+        if (this.contentHashIndex.has(canonicalContent)) {
+          log.debug(
+            `dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`,
+          );
+          dedupedCount++;
+          continue;
+        }
       }
 
       // Score importance using local heuristics (Phase 1B)
