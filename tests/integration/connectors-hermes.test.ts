@@ -1698,15 +1698,18 @@ test("atomic flow: happy path — connector.json and token written only after YA
 
 // ── Round 8 regression: partial-failure rollback (PRRT_kwDORJXyws56UNDM) ────
 
-test("installConnector Phase E failure: connector JSON write fails → token and YAML rolled back", async () => {
+test("installConnector Phase E failure: connector JSON write fails → token store and YAML rolled back (fresh install)", async () => {
   // Simulate writeSecretFileSync failing for the connector JSON (Phase E) while
   // the Hermes YAML (Phase C) and token commit (Phase D) already succeeded.
   // Strategy: do a first install to establish the connectors dir path, read it
   // from installResult.configPath, then make that dir read-only, then force
   // reinstall. The force reinstall triggers Phases C+D again and then tries
   // Phase E, which fails — rollback must undo D and C.
-  // Expected outcome: installConnector returns status "error" AND:
-  //   - tokens.json no longer contains a hermes entry (token revoked by rollback)
+  //
+  // Expected outcome (force-reinstall case — PRRT_kwDORJXyws56UTrT fix):
+  //   - installConnector returns status "error"
+  //   - tokens.json is restored to its pre-commit snapshot, which means the
+  //     ORIGINAL hermes token from the first install is still present
   //   - config.yaml is restored to its prior content (YAML rolled back to first-install state)
   const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
 
@@ -1731,6 +1734,14 @@ test("installConnector Phase E failure: connector JSON write fails → token and
         const cfgPath = path.join(profileDir, "config.yaml");
         assert.ok(fs.existsSync(cfgPath), "Pre-condition: config.yaml must exist after first install");
         const yamlAfterFirst = fs.readFileSync(cfgPath, "utf-8");
+
+        // Capture the first-install token — this is what Phase E rollback must restore.
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const storeAfterFirst = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const originalToken = storeAfterFirst.tokens.find((t) => t.connector === "hermes")?.token;
+        assert.ok(originalToken, "Pre-condition: first install must produce a hermes token");
 
         // Remove the existing connector.json so the force reinstall will try to
         // CREATE a new file (not overwrite). On a 0o555 dir, creating a new file
@@ -1760,17 +1771,23 @@ test("installConnector Phase E failure: connector JSON write fails → token and
           "Error message must mention the connector config write failure",
         );
 
-        // Token must have been rolled back — tokens.json must have no hermes entry.
-        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
-        if (fs.existsSync(tokensPath)) {
-          const store = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
-            tokens: Array<{ connector: string }>;
-          };
-          assert.ok(
-            !store.tokens.find((t) => t.connector === "hermes"),
-            "tokens.json must not contain a hermes entry after Phase E rollback",
-          );
-        }
+        // Token store must be restored to the pre-commit snapshot — the original
+        // hermes token from the first install must still be present.
+        // (PRRT_kwDORJXyws56UTrT fix: snapshot restore, not simple revoke.)
+        assert.ok(fs.existsSync(tokensPath), "tokens.json must exist after Phase E rollback");
+        const storeAfterRollback = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const restoredEntry = storeAfterRollback.tokens.find((t) => t.connector === "hermes");
+        assert.ok(
+          restoredEntry,
+          "tokens.json must still contain a hermes entry after Phase E rollback (prior token restored)",
+        );
+        assert.equal(
+          restoredEntry!.token,
+          originalToken,
+          "tokens.json must contain the ORIGINAL hermes token from the first install after rollback",
+        );
 
         // config.yaml must have been rolled back to its state before the force reinstall
         // (priorContent was the first-install content, not null — so it must be restored).
@@ -1780,8 +1797,6 @@ test("installConnector Phase E failure: connector JSON write fails → token and
         );
         const yamlAfterRollback = fs.readFileSync(cfgPath, "utf-8");
         // The rollback restores the YAML content from before the force reinstall attempt.
-        // The content may differ from yamlAfterFirst in token value only — either way the
-        // file must exist and the remnic: block must be present.
         assert.ok(
           yamlAfterRollback.includes("remnic:"),
           "config.yaml must contain remnic: block after rollback (restored to prior state)",
@@ -1795,6 +1810,109 @@ test("installConnector Phase E failure: connector JSON write fails → token and
           yamlAfterRollback,
           yamlAfterFirst,
           "config.yaml must be restored to exactly its pre-reinstall content",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// ── Round 10 regression: Phase E rollback reinstates prior token (PRRT_kwDORJXyws56UTrT) ──
+
+test("installConnector Phase E failure on force-reinstall: prior hermes token is reinstated in tokens.json", async () => {
+  // Regression test for PRRT_kwDORJXyws56UTrT: when Phase E (connector JSON
+  // write) fails during a force-reinstall of an existing Hermes setup, the
+  // rollback must restore the full token store snapshot (including the prior
+  // hermes token) — not just revoke the new token. Without this fix, a Phase E
+  // failure would leave tokens.json without any hermes entry while config.yaml
+  // was restored to the old token, breaking Hermes auth.
+  //
+  // This test explicitly verifies the force-reinstall case where a prior token
+  // already exists, and asserts that the ORIGINAL token value (not "no entry")
+  // is present after rollback.
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+
+        // Set up a Hermes profile dir.
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // ── Step 1: Initial install (establishes the "prior" token) ──
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "default", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install1.status, "installed", "Initial install must succeed");
+
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const store1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const priorToken = store1.tokens.find((t) => t.connector === "hermes")?.token;
+        assert.ok(priorToken, "Initial install must write a hermes token");
+        assert.ok(priorToken.startsWith("remnic_hm_"), "Prior token must have hermes prefix");
+
+        const cfgPath = path.join(profileDir, "config.yaml");
+        const yamlAfterInstall1 = fs.readFileSync(cfgPath, "utf-8");
+        assert.ok(yamlAfterInstall1.includes(priorToken), "config.yaml must reference the prior token");
+
+        // ── Step 2: Force-reinstall that fails at Phase E ──
+        // Remove connector.json first (new-file creation fails on 0o555 dir).
+        fs.unlinkSync(install1.configPath!);
+        const connectorsDir = path.dirname(install1.configPath!);
+        fs.chmodSync(connectorsDir, 0o555);
+
+        let install2: ReturnType<typeof mod.installConnector>;
+        try {
+          install2 = mod.installConnector({
+            connectorId: "hermes",
+            force: true,
+            config: { profile: "default", host: "127.0.0.1", port: 4318 },
+          });
+        } finally {
+          try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
+        }
+
+        // ── Step 3: Assertions ──
+
+        // Must return error (Phase E write failed).
+        assert.equal(install2!.status, "error", "Phase E failure must return status: error");
+
+        // The ORIGINAL prior token must be reinstated in tokens.json.
+        assert.ok(fs.existsSync(tokensPath), "tokens.json must exist");
+        const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const restoredEntry = store2.tokens.find((t) => t.connector === "hermes");
+        assert.ok(
+          restoredEntry,
+          "tokens.json must contain a hermes entry after Phase E rollback on force-reinstall",
+        );
+        assert.equal(
+          restoredEntry!.token,
+          priorToken,
+          "The ORIGINAL prior hermes token must be reinstated — not absent, not a new token",
+        );
+
+        // config.yaml must be restored to its state from after install1
+        // (same prior token, same content).
+        assert.ok(fs.existsSync(cfgPath), "config.yaml must exist after rollback");
+        const yamlAfterRollback = fs.readFileSync(cfgPath, "utf-8");
+        assert.equal(
+          yamlAfterRollback,
+          yamlAfterInstall1,
+          "config.yaml must be restored to exactly its pre-reinstall content",
+        );
+        // config.yaml must still reference the original token (not the new rotated one).
+        assert.ok(
+          yamlAfterRollback.includes(priorToken),
+          "config.yaml must reference the original prior token after rollback",
         );
       });
       resolve();

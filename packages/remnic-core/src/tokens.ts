@@ -116,8 +116,27 @@ export function buildTokenEntry(connector: string): TokenEntry {
  * Persist a pre-built TokenEntry into the store, replacing any existing
  * entry for the same connector. Used together with buildTokenEntry() when
  * the caller wants to defer the save until after a dependent write succeeds.
+ *
+ * Returns the prior TokenEntry that was displaced (if any), or `null` when
+ * no entry existed for this connector before the commit. Callers that need
+ * transactional rollback (e.g. Hermes Phase E) can use the returned value to
+ * restore the previous token if a subsequent write fails.
  */
-export function commitTokenEntry(entry: TokenEntry, tokensPath?: string): void {
+export function commitTokenEntry(entry: TokenEntry, tokensPath?: string): TokenEntry | null {
+  const store = loadTokenStore(tokensPath);
+  const prior = store.tokens.find((t) => t.connector === entry.connector) ?? null;
+  store.tokens = store.tokens.filter((t) => t.connector !== entry.connector);
+  store.tokens.push(entry);
+  saveTokenStore(store, tokensPath);
+  return prior;
+}
+
+/**
+ * Restore a previously displaced TokenEntry into the store, replacing any
+ * current entry for the same connector. Used by rollback paths to undo a
+ * commitTokenEntry call when a subsequent operation fails.
+ */
+export function restoreTokenEntry(entry: TokenEntry, tokensPath?: string): void {
   const store = loadTokenStore(tokensPath);
   store.tokens = store.tokens.filter((t) => t.connector !== entry.connector);
   store.tokens.push(entry);

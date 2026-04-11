@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry } from "../tokens.js";
+import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry, restoreTokenEntry, loadTokenStore, saveTokenStore } from "../tokens.js";
 
 // Native memory artifact materialization for Codex CLI (#378). Surfaced here
 // so downstream callers can `import { materializeForNamespace } from "@remnic/core/connectors"`.
@@ -802,11 +802,28 @@ export function installConnector(options: InstallOptions): InstallResult {
     // (d) Commit token to tokens.json. If this fails, roll back the YAML write
     // and abort — the old token must remain valid and connector.json must stay
     // unchanged so the daemon keeps working.
+    //
+    // Snapshot the full token store BEFORE the commit so Phase E rollback (and
+    // Phase D rollback) can restore the exact prior state — including the
+    // previous hermes token entry if this is a force-reinstall. Without the
+    // snapshot, Phase E rollback would only revoke the new token, leaving
+    // tokens.json with NO hermes entry even though config.yaml was rolled back
+    // to the old token value (PRRT_kwDORJXyws56UTrT).
+    const priorTokenStore = loadTokenStore();
     let committed = false;
     try {
       commitTokenEntry(tokenEntry);
       committed = true;
     } catch (commitErr) {
+      // Roll back the token store: restore the exact prior snapshot so that
+      // a partial write (e.g. ENOSPC truncating tokens.json mid-write) cannot
+      // leave the store without the prior hermes entry.
+      try {
+        saveTokenStore(priorTokenStore);
+      } catch {
+        // Best-effort: if the restore also fails, we'll still report the
+        // original commit error so the user knows to intervene manually.
+      }
       // Roll back the YAML write: restore prior content (or delete newly-created file).
       try {
         if (yamlResult.priorContent === null) {
@@ -834,18 +851,22 @@ export function installConnector(options: InstallOptions): InstallResult {
     // (e) Both YAML write and token commit succeeded — now attempt to write connector.json.
     // If this write fails (e.g. connectors dir is not writable), roll back Phase D (token
     // commit) and Phase C (YAML upsert) so no partial-install state is left behind.
-    // Note: we intentionally do NOT reintroduce the prior token — the old token was
-    // already removed from tokens.json by commitTokenEntry. We revoke the newly-committed
-    // entry instead, leaving no token for this connector.
+    // We restore the full token store snapshot from before Phase D so that a force-
+    // reinstall over an existing Hermes setup correctly reinserts the prior token
+    // entry — not just revokes the new one — leaving tokens.json consistent with
+    // the rolled-back config.yaml (PRRT_kwDORJXyws56UTrT).
     try {
       writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
     } catch (writeErr) {
-      // Roll back Phase D: revoke the newly-committed token entry.
-      let tokenRollbackMsg = "token entry revoked";
+      // Roll back Phase D: restore the pre-commit token store snapshot so the
+      // prior hermes token (if any) is reinstated in tokens.json.
+      let tokenRollbackFailed = false;
+      let tokenRollbackMsg = "token store restored to prior snapshot";
       try {
-        revokeToken(options.connectorId);
-      } catch (revokeErr) {
-        tokenRollbackMsg = `token rollback failed: ${revokeErr instanceof Error ? revokeErr.message : String(revokeErr)}`;
+        saveTokenStore(priorTokenStore);
+      } catch (tokenRestoreErr) {
+        tokenRollbackFailed = true;
+        tokenRollbackMsg = `token store rollback failed: ${tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr)}`;
       }
       // Roll back Phase C: restore config.yaml to its prior content.
       let yamlRollbackMsg = "config.yaml restored";
@@ -866,14 +887,17 @@ export function installConnector(options: InstallOptions): InstallResult {
       } catch (yamlRollbackErr) {
         yamlRollbackMsg = `config.yaml rollback failed: ${yamlRollbackErr instanceof Error ? yamlRollbackErr.message : String(yamlRollbackErr)}`;
       }
+      const urgentSuffix = tokenRollbackFailed
+        ? ` tokens.json may be in an inconsistent state — manually restore hermes token with 'remnic token generate hermes'.`
+        : "";
       return {
         connectorId: options.connectorId,
         status: "error",
         message:
           `Hermes install aborted: connector config write failed — ` +
           `connector directory may not be writable. ` +
-          `Rollback: ${tokenRollbackMsg}; ${yamlRollbackMsg}. ` +
-          `Resolve the permission issue, then reinstall.`,
+          `Rollback: ${tokenRollbackMsg}; ${yamlRollbackMsg}.` +
+          `${urgentSuffix} Resolve the permission issue, then reinstall.`,
       };
     }
 
