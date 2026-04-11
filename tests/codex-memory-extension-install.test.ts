@@ -343,3 +343,153 @@ test("installCodexMemoryExtension copies the ENTIRE source payload — not just 
     await rm(codexHome, { recursive: true, force: true });
   }
 });
+
+// ── Finding 2 (PR #394): bundled payload must include resources/namespace-cheatsheet.md ─
+
+test("bundled codex payload contains resources/namespace-cheatsheet.md", () => {
+  // The canonical source (packages/plugin-codex/memories_extensions/remnic/) has
+  // a resources/ subdirectory. The bundled path (packages/remnic-core/src/connectors/codex/)
+  // must mirror it so installs via the bundled path are complete.
+  const sourceDir = locatePluginCodexExtensionSource(null);
+  const cheatsheetPath = path.join(sourceDir, "resources", "namespace-cheatsheet.md");
+  assert.ok(
+    fs.existsSync(cheatsheetPath),
+    `bundled payload must include resources/namespace-cheatsheet.md at ${cheatsheetPath}`,
+  );
+  const content = fs.readFileSync(cheatsheetPath, "utf8");
+  assert.ok(content.length > 0, "namespace-cheatsheet.md must be non-empty");
+});
+
+test("bundled codex payload matches the canonical plugin-codex source file set", () => {
+  // Walk upward from __dirname to find the monorepo root (contains packages/).
+  // This assertion ensures the bundled path is always kept in sync with the
+  // canonical source.
+  let repoRoot: string | null = null;
+  let dir = path.dirname(new URL(import.meta.url).pathname);
+  for (let depth = 0; depth < 8; depth++) {
+    if (fs.existsSync(path.join(dir, "packages", "plugin-codex"))) {
+      repoRoot = dir;
+      break;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (repoRoot === null) {
+    // Not running inside the monorepo (e.g. standalone install) — skip.
+    return;
+  }
+
+  const canonicalSource = path.join(
+    repoRoot,
+    "packages",
+    "plugin-codex",
+    "memories_extensions",
+    "remnic",
+  );
+  if (!fs.existsSync(canonicalSource)) {
+    // plugin-codex not present in this environment — skip.
+    return;
+  }
+
+  const bundledSource = locatePluginCodexExtensionSource(null);
+  const canonicalFiles = collectRelativeFiles(canonicalSource);
+  const bundledFiles = collectRelativeFiles(bundledSource);
+
+  assert.deepEqual(
+    bundledFiles,
+    canonicalFiles,
+    "bundled payload (packages/remnic-core/src/connectors/codex/) must contain " +
+      "exactly the same relative file set as the canonical source " +
+      "(packages/plugin-codex/memories_extensions/remnic/). " +
+      "Run: cp -r packages/plugin-codex/memories_extensions/remnic/resources " +
+      "packages/remnic-core/src/connectors/codex/",
+  );
+});
+
+// ── Finding 3 (PR #394): rollback extension when config write fails ───────────
+
+test("installConnector(codex-cli) rolls back extension when config write fails", async () => {
+  const codexHome = await makeTempCodexHome();
+  // Use a temp XDG_CONFIG_HOME so the config dir is predictable.
+  const xdg = await makeTempRemnicConfigHome();
+
+  // Derive the connectors dir from XDG_CONFIG_HOME (same logic as getConnectorsDir()).
+  const connectorsDir = path.join(xdg, "engram", ".engram-connectors", "connectors");
+  fs.mkdirSync(connectorsDir, { recursive: true });
+  const configPath = path.join(connectorsDir, "codex-cli.json");
+  // Create a directory at the config path so writeFileSync throws EISDIR.
+  fs.mkdirSync(configPath, { recursive: true });
+
+  try {
+    const result = installConnector({
+      connectorId: "codex-cli",
+      config: { codexHome },
+      force: true,
+    });
+
+    // Config write must fail, returning an error status.
+    assert.equal(result.status, "error", `expected error status, got: ${result.status} — ${result.message}`);
+
+    // The extension must have been rolled back — the remnic dir should not exist.
+    const remnicDir = path.join(codexHome, "memories_extensions", "remnic");
+    assert.ok(
+      !fs.existsSync(remnicDir),
+      `extension directory should be rolled back after config write failure, but found: ${remnicDir}`,
+    );
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
+    await rm(xdg, { recursive: true, force: true });
+  }
+});
+
+// ── Finding 4 (PR #394): preserve malformed codex config when skipping cleanup ─
+
+test("removeConnector(codex-cli) with malformed config leaves config and extension untouched", async () => {
+  const codexHome = await makeTempCodexHome();
+  const xdg = await makeTempRemnicConfigHome();
+
+  try {
+    // Install normally first so the extension directory exists.
+    installConnector({
+      connectorId: "codex-cli",
+      config: { codexHome },
+      force: true,
+    });
+
+    // Corrupt the saved config file using the same dir derivation as getConnectorsDir().
+    const connectorsDir = path.join(xdg, "engram", ".engram-connectors", "connectors");
+    const configPath = path.join(connectorsDir, "codex-cli.json");
+    fs.writeFileSync(configPath, "{ this is not valid JSON !!!!");
+
+    const remnicDir = path.join(codexHome, "memories_extensions", "remnic");
+    assert.ok(fs.existsSync(remnicDir), "extension dir should exist before removeConnector");
+    assert.ok(fs.existsSync(configPath), "config should exist before removeConnector");
+
+    // Run removeConnector — should abort gracefully.
+    const result = removeConnector("codex-cli");
+
+    // Config file must still exist (provenance preserved for retry).
+    assert.ok(
+      fs.existsSync(configPath),
+      "malformed config file must NOT be deleted — operator needs it for inspection/retry",
+    );
+
+    // Extension directory must NOT have been touched.
+    assert.ok(
+      fs.existsSync(remnicDir),
+      "extension directory must NOT be removed when config is malformed",
+    );
+
+    // Return value must signal the skip.
+    assert.equal(
+      result.status,
+      "skipped",
+      `expected status "skipped", got: ${result.status} — ${result.message}`,
+    );
+    assert.equal(result.reason, "config-parse-failed");
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
+    await rm(xdg, { recursive: true, force: true });
+  }
+});

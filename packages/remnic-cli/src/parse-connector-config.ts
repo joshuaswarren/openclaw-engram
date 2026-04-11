@@ -42,3 +42,40 @@ export function parseConnectorConfig(args: string[]): Record<string, unknown> {
   }
   return config;
 }
+
+/**
+ * Strip the argv tokens that are consumed by `--config` flags from the given
+ * args array, returning a new array with those tokens removed.
+ *
+ * This is used by `cmdConnectors` to compute the connector ID from the
+ * remaining positional arguments without accidentally picking up the value
+ * token of a split-form `--config key=value`.
+ *
+ * Examples (tokens removed shown with strikethrough in comments):
+ *   ["--config", "installExtension=false", "codex-cli"]
+ *     → ["codex-cli"]
+ *   ["--config=installExtension=false", "codex-cli"]
+ *     → ["codex-cli"]   (joined form: only the one token is removed)
+ *   ["--force", "codex-cli"]
+ *     → ["--force", "codex-cli"]   (no --config: nothing removed)
+ */
+export function stripConfigArgv(args: string[]): string[] {
+  const result: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg.startsWith("--config=")) {
+      // Joined form: the flag+value is a single token — skip it.
+      continue;
+    } else if (arg === "--config") {
+      // Split form: peek at the next token. If it looks like key=value, skip
+      // both the flag and its value; otherwise skip only the flag (malformed).
+      const next = args[i + 1];
+      if (next !== undefined && next.includes("=") && !next.startsWith("--")) {
+        i++; // skip value token too
+      }
+      continue;
+    }
+    result.push(arg);
+  }
+  return result;
+}

@@ -73,9 +73,9 @@ import {
   type BenchConfig,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
-import { parseConnectorConfig } from "./parse-connector-config.js";
+import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
 
-export { parseConnectorConfig };
+export { parseConnectorConfig, stripConfigArgv };
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -534,8 +534,14 @@ function cmdDedup(json: boolean): void {
 // ── M5 connectors command ────────────────────────────────────────────────────
 
 async function cmdConnectors(action: string, rest: string[], json: boolean): Promise<void> {
-  // For install/remove/doctor, the connector ID is the second non-flag arg after the action
-  const nonFlagArgs = rest.filter((a) => !a.startsWith("--"));
+  // For install/remove/doctor, the connector ID is the first non-flag positional
+  // arg. We must strip the value tokens consumed by split-form `--config key=value`
+  // flags BEFORE filtering for non-flags, otherwise `installExtension=false`
+  // (the value of `--config installExtension=false`) would be mistaken for the
+  // connector ID when the user writes:
+  //   remnic connectors install --config installExtension=false codex-cli
+  const strippedRest = stripConfigArgv(rest);
+  const nonFlagArgs = strippedRest.filter((a) => !a.startsWith("--"));
   const connectorId = nonFlagArgs[0];
 
   if (action === "list") {

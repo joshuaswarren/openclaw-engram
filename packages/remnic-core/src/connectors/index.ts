@@ -135,6 +135,14 @@ export interface RemoveResult {
   configPath: string;
   /** Message */
   message: string;
+  /**
+   * Optional status discriminant. When present and "skipped", the removal was
+   * aborted (e.g. malformed config) and no files were changed. Absent for the
+   * normal success path to stay backward-compatible.
+   */
+  status?: "skipped";
+  /** Machine-readable skip reason (present when status === "skipped"). */
+  reason?: string;
 }
 
 export interface DoctorResult {
@@ -612,7 +620,36 @@ export function installConnector(options: InstallOptions): InstallResult {
     delete resolvedConfig[key];
   }
 
-  fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
+  // Finding 3: wrap the config write so that if it fails (e.g. unwritable dir,
+  // disk full), we roll back the extension that was already installed. Without
+  // this cleanup a dangling memories_extensions/remnic directory would be left
+  // with no config provenance for removeConnector to find and clean up later.
+  try {
+    fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
+  } catch (writeErr) {
+    // Config write failed — remove the extension we just installed, if any.
+    if (options.connectorId === "codex-cli" && extensionMessage.startsWith(" (memory extension:") && !extensionMessage.includes("skipped")) {
+      try {
+        const resolvedCodexHome =
+          typeof resolvedConfig.codexHome === "string" ? (resolvedConfig.codexHome as string) : null;
+        if (resolvedCodexHome) {
+          removeCodexMemoryExtension({ codexHome: resolvedCodexHome });
+        }
+      } catch {
+        // Best-effort rollback: log but don't mask the original write error.
+        console.warn(
+          "[remnic/connectors] installConnector: config write failed and extension rollback also failed — " +
+            "manual cleanup of memories_extensions/remnic may be required.",
+        );
+      }
+    }
+    const errMsg = writeErr instanceof Error ? writeErr.message : "unknown error";
+    return {
+      connectorId: options.connectorId,
+      status: "error",
+      message: `Config write failed (extension rolled back) — ${errMsg}`,
+    };
+  }
 
   return {
     connectorId: options.connectorId,
@@ -670,17 +707,35 @@ export function removeConnector(connectorId: string): RemoveResult {
     };
   }
 
+  // Finding 4: if the codex-cli config exists but failed to parse, abort the
+  // entire removal. Leave both the config file AND the extension directory
+  // untouched so the operator can inspect/fix the config file and retry.
+  // Unlinking the config here would destroy the only provenance record and make
+  // deterministic retry impossible.
+  if (connectorId === "codex-cli" && fs.existsSync(configPath) && !configParsed) {
+    console.warn(
+      "[remnic/connectors] removeConnector: codex-cli.json is malformed — " +
+        "aborting removal to preserve provenance. Fix or delete " +
+        configPath +
+        " manually and retry.",
+    );
+    return {
+      connectorId,
+      configPath,
+      message: "Removal aborted: codex-cli.json is malformed. Config file left in place for inspection.",
+      status: "skipped",
+      reason: "config-parse-failed",
+    };
+  }
+
   // Finding 5: remove extension BEFORE deleting the config file. If extension
   // removal throws (e.g. EPERM/EBUSY), we re-throw WITHOUT deleting the config
   // so the user can retry — the config still has the persisted codexHome needed
   // to locate the extension directory.
   let extensionMessage = "";
   if (connectorId === "codex-cli") {
-    // Finding 1: config parse failed — skip extension removal entirely.
-    if (!configParsed) {
-      extensionMessage = " (memory extension: skipped — config parse failed)";
     // Finding 4: skip extension deletion when installExtension was explicitly disabled.
-    } else if (savedInstallExtension === false) {
+    if (savedInstallExtension === false) {
       extensionMessage = " (memory extension: skipped — installExtension=false)";
     // Finding 3: require EXPLICIT provenance (installExtension===true AND a saved
     // codexHome) before removing the extension. Legacy configs that pre-date this
