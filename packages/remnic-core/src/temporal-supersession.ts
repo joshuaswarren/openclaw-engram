@@ -57,6 +57,26 @@ export function supersessionKeysForFact(spec: {
 }
 
 /**
+ * Look up a structured-attribute value by a raw key, normalizing both sides
+ * with trim + toLowerCase before comparing.  This ensures that keys written
+ * by the LLM with mixed case or surrounding whitespace (e.g. `"City"`,
+ * `" city "`) are matched against normalized keys produced by
+ * `computeSupersessionKey` (which always lowercases + trims).
+ *
+ * The storage format is NOT changed — we only normalize at lookup time.
+ */
+export function lookupAttributeByNormalizedKey(
+  attributes: Record<string, unknown>,
+  rawKey: string,
+): unknown {
+  const normalizedTarget = rawKey.trim().toLowerCase();
+  for (const [k, v] of Object.entries(attributes)) {
+    if (k.trim().toLowerCase() === normalizedTarget) return v;
+  }
+  return undefined;
+}
+
+/**
  * Decide whether an existing memory should be superseded by a newly-written
  * memory that carries the supplied supersession key set.
  *
@@ -97,10 +117,15 @@ export function shouldSupersedeExisting(args: {
 
   const matchedKeys: string[] = [];
   for (const [attrName, newValue] of Object.entries(newAttributes)) {
-    const candidateValue = candidate.structuredAttributes[attrName];
+    // Use normalized key lookup so mixed-case or whitespace-padded keys
+    // stored by the LLM are matched correctly (Finding 2 fix).
+    const candidateValue = lookupAttributeByNormalizedKey(
+      candidate.structuredAttributes,
+      attrName,
+    );
     if (candidateValue === undefined) continue;
     // Only supersede on conflicting values — identical values are a no-op.
-    if (normalizeValue(candidateValue) === normalizeValue(newValue)) continue;
+    if (normalizeValue(String(candidateValue)) === normalizeValue(newValue)) continue;
     const key = computeSupersessionKey(newEntityRef, attrName);
     if (key) matchedKeys.push(key);
   }
@@ -150,6 +175,14 @@ export async function applyTemporalSupersession(args: {
     return empty;
   }
 
+  // Finding 1 fix: use the on-disk `frontmatter.created` of the newly-written
+  // memory rather than a wall-clock timestamp sampled after `writeMemory`
+  // returns.  In concurrent writers the two can differ by enough to cause
+  // wrong-direction supersession.  If the memory is not yet visible in the
+  // cache (edge case during fast concurrent writes) fall back to args.createdAt.
+  const newMemoryFile = memories.find((m) => m.frontmatter.id === args.newMemoryId);
+  const persistedCreatedAt = newMemoryFile?.frontmatter.created ?? args.createdAt;
+
   const supersededIds: string[] = [];
   const matchedKeys = new Set<string>();
 
@@ -159,7 +192,7 @@ export async function applyTemporalSupersession(args: {
       candidate: memory.frontmatter,
       newEntityRef: args.entityRef,
       newAttributes: args.structuredAttributes,
-      newCreatedAt: args.createdAt,
+      newCreatedAt: persistedCreatedAt,
       newMemoryId: args.newMemoryId,
     });
     if (!decision) continue;

@@ -8,6 +8,7 @@ import { StorageManager } from "./storage.js";
 import {
   applyTemporalSupersession,
   computeSupersessionKey,
+  lookupAttributeByNormalizedKey,
   shouldFilterSupersededFromRecall,
   shouldSupersedeExisting,
   supersessionKeysForFact,
@@ -456,4 +457,198 @@ test("shouldFilterSupersededFromRecall: includeInRecall=true returns both supers
     auditFiltered.map((fm) => fm.id),
     ["fact-old", "fact-new"],
   );
+});
+
+// ─── Regression: Finding 2 — case/whitespace-normalized attribute key lookup ──
+
+test("lookupAttributeByNormalizedKey: exact match works", () => {
+  assert.equal(lookupAttributeByNormalizedKey({ city: "Austin" }, "city"), "Austin");
+});
+
+test("lookupAttributeByNormalizedKey: mixed-case key is found", () => {
+  assert.equal(lookupAttributeByNormalizedKey({ City: "Austin" }, "city"), "Austin");
+  assert.equal(lookupAttributeByNormalizedKey({ CITY: "Austin" }, "City"), "Austin");
+});
+
+test("lookupAttributeByNormalizedKey: whitespace-padded key is found", () => {
+  assert.equal(lookupAttributeByNormalizedKey({ " city ": "Austin" }, "city"), "Austin");
+  assert.equal(lookupAttributeByNormalizedKey({ city: "Austin" }, " city "), "Austin");
+});
+
+test("lookupAttributeByNormalizedKey: missing key returns undefined", () => {
+  assert.equal(lookupAttributeByNormalizedKey({ tool: "vim" }, "city"), undefined);
+});
+
+test("shouldSupersedeExisting: mixed-case attribute keys trigger supersession", () => {
+  // Candidate stored key is "City" (mixed-case), new fact uses "city" (lower).
+  const candidateFm: MemoryFrontmatter = {
+    id: "fact-old-mixed",
+    category: "fact",
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+    source: "test",
+    confidence: 0.9,
+    confidenceTier: "explicit",
+    tags: [],
+    entityRef: TEST_ENTITY,
+    structuredAttributes: { City: "NYC" },
+    status: "active",
+  };
+
+  const decision = shouldSupersedeExisting({
+    candidate: candidateFm,
+    newEntityRef: TEST_ENTITY,
+    newAttributes: { city: "Austin" },
+    newCreatedAt: "2026-02-01T00:00:00.000Z",
+    newMemoryId: "fact-new-mixed",
+  });
+  assert.ok(decision, "mixed-case key should trigger supersession");
+  assert.deepEqual(decision?.matchedKeys, [`${TEST_ENTITY}::city`]);
+});
+
+test("shouldSupersedeExisting: whitespace-padded attribute keys trigger supersession", () => {
+  // Candidate stored key has surrounding whitespace.
+  const candidateFm: MemoryFrontmatter = {
+    id: "fact-old-ws",
+    category: "fact",
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+    source: "test",
+    confidence: 0.9,
+    confidenceTier: "explicit",
+    tags: [],
+    entityRef: TEST_ENTITY,
+    structuredAttributes: { " city ": "NYC" },
+    status: "active",
+  };
+
+  const decision = shouldSupersedeExisting({
+    candidate: candidateFm,
+    newEntityRef: TEST_ENTITY,
+    newAttributes: { city: "Austin" },
+    newCreatedAt: "2026-02-01T00:00:00.000Z",
+    newMemoryId: "fact-new-ws",
+  });
+  assert.ok(decision, "whitespace-padded key should trigger supersession");
+  assert.deepEqual(decision?.matchedKeys, [`${TEST_ENTITY}::city`]);
+});
+
+test("shouldSupersedeExisting: identical values with mixed-case keys are a no-op", () => {
+  const candidateFm: MemoryFrontmatter = {
+    id: "fact-old-same",
+    category: "fact",
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+    source: "test",
+    confidence: 0.9,
+    confidenceTier: "explicit",
+    tags: [],
+    entityRef: TEST_ENTITY,
+    structuredAttributes: { City: "Austin" },
+    status: "active",
+  };
+
+  const decision = shouldSupersedeExisting({
+    candidate: candidateFm,
+    newEntityRef: TEST_ENTITY,
+    newAttributes: { city: "Austin" },
+    newCreatedAt: "2026-02-01T00:00:00.000Z",
+    newMemoryId: "fact-new-same",
+  });
+  assert.equal(decision, null, "identical values (case-insensitive match) should not supersede");
+});
+
+// ─── Regression: Finding 1 — persisted frontmatter.created for ordering ───────
+
+test("applyTemporalSupersession: uses persisted frontmatter.created, old memory is superseded when T0 < T1", async () => {
+  // Seed an existing memory with a known T0 timestamp.  Then write a newer
+  // memory (T1 > T0) and call applyTemporalSupersession.  The old memory
+  // must be marked superseded regardless of when the wall clock is sampled.
+  const { storage, cleanup } = await makeStorage("engram-temporal-t0-t1-");
+  try {
+    const t0 = "2026-01-01T00:00:00.000Z";
+    const t1 = "2026-02-01T00:00:00.000Z";
+
+    // Write old fact (T0).
+    const oldId = await writeFact(storage, "entity lives in Austin", TEST_ENTITY, { city: "Austin" });
+    // Manually patch the created timestamp to T0 so the test is deterministic.
+    storage.invalidateAllMemoriesCacheForDir();
+    const oldMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === oldId);
+    assert.ok(oldMem, "old memory should exist");
+    await storage.writeMemoryFrontmatter(oldMem!, { created: t0, updated: t0 });
+
+    // Write new fact — its persisted created will be T1-ish (we patch it too).
+    const newId = await writeFact(storage, "entity moved to NYC", TEST_ENTITY, { city: "NYC" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const newMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === newId);
+    assert.ok(newMem, "new memory should exist");
+    await storage.writeMemoryFrontmatter(newMem!, { created: t1, updated: t1 });
+
+    // Pass a stale wall-clock time that is EARLIER than T0 — the fix should
+    // ignore this in favour of the on-disk T1 for the new memory.
+    const staleWallClock = "2025-12-01T00:00:00.000Z"; // before T0
+
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: newId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },
+      createdAt: staleWallClock,
+      enabled: true,
+    });
+
+    // With the fix the persisted T1 is used, so old (T0) is correctly older.
+    assert.deepEqual(result.supersededIds, [oldId], "old fact (T0) should be superseded by new fact (T1)");
+
+    const oldFm = await readFrontmatterById(storage, oldId);
+    assert.equal(oldFm?.status, "superseded");
+    assert.equal(oldFm?.supersededBy, newId);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("applyTemporalSupersession: stale extraction (new write has T0, existing has T1) does not supersede existing", async () => {
+  // Simulate stale extraction: an existing memory has T1 (newer) but a new
+  // write arrives with T0 (older persisted created).  The existing T1 memory
+  // should NOT be superseded because it is newer.
+  const { storage, cleanup } = await makeStorage("engram-temporal-stale-");
+  try {
+    const t0 = "2026-01-01T00:00:00.000Z";
+    const t1 = "2026-02-01T00:00:00.000Z";
+
+    // Write "existing" fact and patch to T1.
+    const existingId = await writeFact(storage, "entity lives in NYC", TEST_ENTITY, { city: "NYC" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const existingMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === existingId);
+    assert.ok(existingMem);
+    await storage.writeMemoryFrontmatter(existingMem!, { created: t1, updated: t1 });
+
+    // Write "stale" fact and patch to T0 (older).
+    const staleId = await writeFact(storage, "entity lived in Austin", TEST_ENTITY, { city: "Austin" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const staleMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === staleId);
+    assert.ok(staleMem);
+    await storage.writeMemoryFrontmatter(staleMem!, { created: t0, updated: t0 });
+
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: staleId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "Austin" },
+      createdAt: new Date().toISOString(), // wall-clock, should be overridden by persisted T0
+      enabled: true,
+    });
+
+    // The stale write (T0) is older than the existing memory (T1), so it
+    // cannot supersede it.
+    assert.deepEqual(result.supersededIds, [], "stale write (T0) must not supersede newer existing (T1)");
+
+    const existingFm = await readFrontmatterById(storage, existingId);
+    assert.equal(existingFm?.status ?? "active", "active", "newer existing fact should remain active");
+  } finally {
+    await cleanup();
+  }
 });
