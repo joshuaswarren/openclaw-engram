@@ -1,5 +1,5 @@
 import { defineConfig } from "tsup";
-import { readdirSync, mkdirSync, copyFileSync } from "node:fs";
+import { readdirSync, cpSync } from "node:fs";
 import { join } from "node:path";
 
 // Build all .ts files in src/ as individual entry points.
@@ -25,12 +25,15 @@ export default defineConfig({
     "@orama/plugin-data-persistence",
   ],
   async onSuccess() {
-    // Copy the bundled Codex extension payload into dist/ so it is shipped
-    // with the @remnic/core npm package. locatePluginCodexExtensionSource()
+    // Recursively copy the entire Codex extension payload into dist/ so it is
+    // shipped with the @remnic/core npm package. locatePluginCodexExtensionSource()
     // looks for dist/connectors/codex/ at runtime.
+    //
+    // Using recursive: true ensures any future subdirectories or additional
+    // asset files added under src/connectors/codex/ are automatically included
+    // in the built artifact without requiring further changes here.
     const src = join(__dirname, "src", "connectors", "codex");
     const dest = join(__dirname, "dist", "connectors", "codex");
-    mkdirSync(dest, { recursive: true });
-    copyFileSync(join(src, "instructions.md"), join(dest, "instructions.md"));
+    cpSync(src, dest, { recursive: true });
   },
 });

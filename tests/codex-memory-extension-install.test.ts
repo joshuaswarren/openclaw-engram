@@ -295,3 +295,51 @@ test("installCodexMemoryExtension works against a temp codexHome using only bund
     await rm(codexHome, { recursive: true, force: true });
   }
 });
+
+// ── Whole-payload install: all source files/dirs reach the destination ────────
+
+/**
+ * Recursively collect all relative file paths under a directory.
+ * Symlinks and non-file entries are skipped — consistent with copyDirRecursiveSync.
+ */
+function collectRelativeFiles(dir: string, base = dir): string[] {
+  const results: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      results.push(...collectRelativeFiles(full, base));
+    } else if (entry.isFile()) {
+      results.push(path.relative(base, full));
+    }
+  }
+  return results.sort();
+}
+
+test("installCodexMemoryExtension copies the ENTIRE source payload — not just instructions.md", async () => {
+  // Locate the bundled source so we know exactly what should be installed.
+  const sourceDir = locatePluginCodexExtensionSource(null);
+  const sourceFiles = collectRelativeFiles(sourceDir);
+
+  // There must be at least one file (instructions.md) to make this test meaningful.
+  assert.ok(sourceFiles.length >= 1, "source payload must have at least one file");
+
+  const codexHome = await makeTempCodexHome();
+  try {
+    const result = installCodexMemoryExtension({ codexHome });
+    const destFiles = collectRelativeFiles(result.remnicExtensionDir);
+
+    assert.deepEqual(
+      destFiles,
+      sourceFiles,
+      "installed extension must contain exactly the same files as the source payload " +
+        "(recursive copy via tsup onSuccess must include all files and subdirectories)",
+    );
+    assert.equal(
+      result.filesCopied,
+      sourceFiles.length,
+      "filesCopied must equal the number of files in the source payload",
+    );
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
+  }
+});
