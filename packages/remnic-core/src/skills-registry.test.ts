@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { BUILTIN_SKILLS, isValidSkillSlug } from "./skills-registry.js";
@@ -53,6 +53,19 @@ test("isValidSkillSlug rejects invalid slugs", () => {
   assert.equal(isValidSkillSlug("remnic memory"), false, "rejects whitespace");
 });
 
+test("isValidSkillSlug rejects trailing dashes and consecutive dashes", () => {
+  assert.equal(isValidSkillSlug("remnic-"), false, "rejects trailing dash");
+  assert.equal(isValidSkillSlug("a--b"), false, "rejects consecutive dashes");
+  assert.equal(isValidSkillSlug(""), false, "rejects empty string");
+  assert.equal(isValidSkillSlug("-foo"), false, "rejects leading dash");
+});
+
+test("isValidSkillSlug accepts well-formed slugs", () => {
+  assert.equal(isValidSkillSlug("a"), true, "accepts single char");
+  assert.equal(isValidSkillSlug("remnic-core"), true, "accepts remnic-core");
+  assert.equal(isValidSkillSlug("a-b-c"), true, "accepts a-b-c");
+});
+
 // ---------------------------------------------------------------------------
 // BUILTIN_SKILLS shape
 // ---------------------------------------------------------------------------
@@ -91,9 +104,10 @@ test("each BUILTIN_SKILLS staticPath points at a real SKILL.md on disk", () => {
     );
     const stat = statSync(skill.staticPath);
     assert.ok(stat.isFile(), `${skill.staticPath} should be a file`);
-    assert.ok(
-      skill.staticPath.endsWith("/SKILL.md"),
-      `${skill.slug} staticPath should end with /SKILL.md`,
+    assert.equal(
+      basename(skill.staticPath),
+      "SKILL.md",
+      `${skill.slug} staticPath filename should be SKILL.md`,
     );
   }
 });

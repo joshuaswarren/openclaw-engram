@@ -42,7 +42,9 @@ export interface RemnicSkillSource {
  * This is the same shape the Codex skills directory expects.
  */
 export function isValidSkillSlug(slug: string): boolean {
-  return /^[a-z0-9][a-z0-9-]{0,63}$/.test(slug);
+  // Must start with alphanumeric; each dash must be followed by alphanumeric
+  // (no trailing dashes, no consecutive dashes); 1–64 characters total.
+  return /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,63}$/.test(slug);
 }
 
 // ---------------------------------------------------------------------------
