@@ -75,14 +75,16 @@ function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
     const config = JSON.parse(content);
     // Resolve via the active memory slot first so migration configs that have
     // both entries honour whichever id the operator has set (#403).
+    // Use ternary-plus-?? to match the same pattern in access-cli.ts and
+    // operator-toolkit.ts so all entry-point loaders agree on the selection.
     const activeSlot: string | undefined = config?.plugins?.slots?.memory;
-    if (activeSlot && config?.plugins?.entries?.[activeSlot] !== undefined) {
-      return config.plugins.entries[activeSlot] as Record<string, unknown>;
-    }
-    // Fall back to canonical id order for configs without a slot declaration.
-    return (config?.plugins?.entries?.[PLUGIN_ID] ?? config?.plugins?.entries?.[LEGACY_PLUGIN_ID]) as
-      | Record<string, unknown>
-      | undefined;
+    return (
+      (activeSlot && config?.plugins?.entries?.[activeSlot] !== undefined
+        ? config.plugins.entries[activeSlot]
+        : undefined) ??
+      config?.plugins?.entries?.[PLUGIN_ID] ??
+      config?.plugins?.entries?.[LEGACY_PLUGIN_ID]
+    ) as Record<string, unknown> | undefined;
   } catch (err) {
     log.warn(`Failed to load config from file: ${err}`);
     return undefined;
@@ -183,6 +185,12 @@ const pluginDefinition = {
   kind: "memory" as const,
 
   register(api: OpenClawPluginApi) {
+    // Capture the id from the definition object so shim re-exports with
+    // overridden ids (e.g. "openclaw-engram" in the backward-compat shim)
+    // still register the service under the correct id (#403).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const serviceId: string = (this as any).id ?? PLUGIN_ID;
+
     // Initialize logger early (debug off until config is parsed).
     initLogger(api.logger, false);
 
@@ -1424,7 +1432,7 @@ const pluginDefinition = {
     // start() threw before successfully initializing).
     let didCountStart = false;
     api.registerService({
-      id: PLUGIN_ID,
+      id: serviceId,
       start: async () => {
         // Check the in-flight promise BEFORE the started flag. ENGRAM_SERVICE_STARTED
         // is set to true inside the IIFE (only on success), so checking the flag
