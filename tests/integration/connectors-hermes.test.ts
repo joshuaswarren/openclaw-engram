@@ -2713,7 +2713,7 @@ test("codex-cli: token is rolled back when installCodexMemoryExtension throws (C
         const preSeedStore = {
           tokens: [
             {
-              token: "remnic_rl_SYNTHETICREPLIT1234567890abcdef",
+              token: "remnic_rl_SYNTHETICREPLITROUND15", // gitleaks:allow
               connector: "replit",
               createdAt: new Date().toISOString(),
             },
