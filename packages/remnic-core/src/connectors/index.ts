@@ -7,6 +7,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -124,6 +125,26 @@ export interface DoctorCheck {
   ok: boolean;
   /** Detail */
   detail: string;
+}
+
+// ── Helpers (Finding 1) ───────────────────────────────────────────────────
+
+/**
+ * Coerce the `installExtension` config value from a string (e.g. from CLI
+ * `--config installExtension=false`) to a proper boolean. Accepts the same
+ * truthy/falsy strings that common shells and env vars use.
+ *
+ * Returns `undefined` when the value is neither a boolean nor a recognised
+ * string, so callers can fall back to a default.
+ */
+export function coerceInstallExtension(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const v = value.trim().toLowerCase();
+    if (["false", "0", "no", "off"].includes(v)) return false;
+    if (["true", "1", "yes", "on"].includes(v)) return true;
+  }
+  return undefined;
 }
 
 // ── Built-in connector definitions ─────────────────────────────────────────
@@ -517,6 +538,13 @@ export function installConnector(options: InstallOptions): InstallResult {
   // explicitly opted out via `config.installExtension: false`.
   let extensionMessage = "";
   if (options.connectorId === "codex-cli") {
+    // Finding 1: coerce string "false"/"true" from CLI config parsing to a real
+    // boolean before the gate check, then persist the coerced value so it is
+    // stored as a boolean in the config file.
+    const coerced = coerceInstallExtension(resolvedConfig.installExtension);
+    if (coerced !== undefined) {
+      resolvedConfig.installExtension = coerced;
+    }
     const shouldInstall = resolvedConfig.installExtension !== false;
     // Resolve the Codex home path NOW so we can persist the absolute path
     // into the saved config. This guarantees removeConnector can target the
@@ -565,14 +593,21 @@ export function removeConnector(connectorId: string): RemoveResult {
   const configDir = getConnectorsDir();
   const configPath = path.join(configDir, `${connectorId}.json`);
 
-  // For codex-cli, remember the custom codexHome (if any) before we delete
-  // the config file so we can pass it to removeCodexMemoryExtension.
+  // For codex-cli, read the saved config BEFORE touching anything so we have
+  // both the persisted codexHome and the installExtension flag available for
+  // later use in extension removal (Findings 3, 4, 5).
   let codexHomeOverride: string | null = null;
+  let savedInstallExtension: boolean | undefined = undefined;
   if (connectorId === "codex-cli" && fs.existsSync(configPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
       if (typeof parsed.codexHome === "string" && parsed.codexHome.length > 0) {
         codexHomeOverride = parsed.codexHome;
+      }
+      // Finding 4: coerce saved installExtension so string "false" still works.
+      const coerced = coerceInstallExtension(parsed.installExtension);
+      if (coerced !== undefined) {
+        savedInstallExtension = coerced;
       }
     } catch {
       // ignore malformed config
@@ -581,8 +616,8 @@ export function removeConnector(connectorId: string): RemoveResult {
 
   if (!fs.existsSync(configPath)) {
     // Still try to clean up a stray extension if removeConnector is called
-    // in recovery mode.
-    if (connectorId === "codex-cli") {
+    // in recovery mode, but only if extension management was not disabled.
+    if (connectorId === "codex-cli" && savedInstallExtension !== false) {
       try {
         removeCodexMemoryExtension({ codexHome: codexHomeOverride });
       } catch {
@@ -596,20 +631,26 @@ export function removeConnector(connectorId: string): RemoveResult {
     };
   }
 
-  fs.unlinkSync(configPath);
-
+  // Finding 5: remove extension BEFORE deleting the config file. If extension
+  // removal throws (e.g. EPERM/EBUSY), we re-throw WITHOUT deleting the config
+  // so the user can retry — the config still has the persisted codexHome needed
+  // to locate the extension directory.
   let extensionMessage = "";
   if (connectorId === "codex-cli") {
-    try {
+    // Finding 4: skip extension deletion when installExtension was disabled.
+    if (savedInstallExtension === false) {
+      extensionMessage = " (memory extension: skipped — installExtension=false)";
+    } else {
       const extResult = removeCodexMemoryExtension({ codexHome: codexHomeOverride });
       extensionMessage = extResult.removed
         ? ` (memory extension removed: ${extResult.remnicExtensionDir})`
         : " (no memory extension present)";
-    } catch (err) {
-      extensionMessage =
-        ` (memory extension remove FAILED — ${err instanceof Error ? err.message : "unknown error"})`;
     }
   }
+
+  // Config deletion happens AFTER extension removal (Finding 5). If extension
+  // removal threw above, we never reach this line and the config is preserved.
+  fs.unlinkSync(configPath);
 
   return {
     connectorId,
@@ -785,10 +826,13 @@ export function resolveCodexMemoryExtensionPaths(
  * Locate the plugin-codex `memories_extensions/remnic/` source directory on
  * disk. Search order:
  *   1. explicit `override`
- *   2. walk upward from this file's location
- *   3. walk upward from `process.cwd()`
+ *   2. resolve via `@remnic/plugin-codex` package (handles global npm installs)
+ *   3. sibling `node_modules/@remnic/plugin-codex` relative to this module
+ *   4. walk upward from this file's location (monorepo development)
+ *   5. walk upward from `process.cwd()` (monorepo fallback)
  *
- * Returns the absolute path or throws if it cannot be found.
+ * Returns the absolute path or throws a descriptive error listing all paths
+ * searched when none exist.
  */
 export function locatePluginCodexExtensionSource(override?: string | null): string {
   if (override && typeof override === "string" && override.trim().length > 0) {
@@ -799,13 +843,61 @@ export function locatePluginCodexExtensionSource(override?: string | null): stri
     throw new Error(`Codex extension source directory not found: ${resolved}`);
   }
 
-  const RELATIVE_PATH = path.join(
+  const EXTENSION_SUBPATH = path.join("memories_extensions", "remnic");
+  const WORKSPACE_RELATIVE_PATH = path.join(
     "packages",
     "plugin-codex",
     "memories_extensions",
     "remnic",
   );
 
+  const searched: string[] = [];
+
+  // Finding 2 — path 1: resolve via `@remnic/plugin-codex` package.json.
+  // This covers global `npm install -g @remnic/remnic-core` or pnpm global installs
+  // where the package lives under the global node_modules tree.
+  try {
+    const requireFromHere = createRequire(import.meta.url);
+    const pluginPkgJsonPath = requireFromHere.resolve("@remnic/plugin-codex/package.json");
+    const pluginPkgRoot = path.dirname(pluginPkgJsonPath);
+    const candidate = path.join(pluginPkgRoot, EXTENSION_SUBPATH);
+    searched.push(candidate);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  } catch {
+    // @remnic/plugin-codex not installed — fall through to next strategy.
+  }
+
+  // Finding 2 — path 2: sibling node_modules under the module's own directory.
+  // Handles cases like:
+  //   .../node_modules/@remnic/remnic-core/src/connectors/index.js
+  //   .../node_modules/@remnic/plugin-codex/memories_extensions/remnic
+  try {
+    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+    let dir = moduleDir;
+    for (let depth = 0; depth < 8; depth += 1) {
+      const candidate = path.join(
+        dir,
+        "node_modules",
+        "@remnic",
+        "plugin-codex",
+        EXTENSION_SUBPATH,
+      );
+      searched.push(candidate);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        return candidate;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // import.meta.url unavailable — not running as ESM.
+  }
+
+  // Finding 2 — path 3 & 4: walk upward from this file's location and from
+  // process.cwd() looking for the monorepo layout (`packages/plugin-codex/…`).
   const anchors: string[] = [];
   try {
     anchors.push(path.dirname(fileURLToPath(import.meta.url)));
@@ -817,7 +909,8 @@ export function locatePluginCodexExtensionSource(override?: string | null): stri
   for (const anchor of anchors) {
     let dir = anchor;
     for (let depth = 0; depth < 12; depth += 1) {
-      const candidate = path.join(dir, RELATIVE_PATH);
+      const candidate = path.join(dir, WORKSPACE_RELATIVE_PATH);
+      searched.push(candidate);
       if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
         return candidate;
       }
@@ -828,8 +921,10 @@ export function locatePluginCodexExtensionSource(override?: string | null): stri
   }
 
   throw new Error(
-    "Could not locate packages/plugin-codex/memories_extensions/remnic source directory. " +
-      "Pass sourceDir explicitly if running outside the Remnic workspace.",
+    "Could not locate the plugin-codex memories_extensions/remnic source directory.\n" +
+      "Paths searched:\n" +
+      searched.map((p) => `  - ${p}`).join("\n") +
+      "\nInstall @remnic/plugin-codex or pass sourceDir explicitly.",
   );
 }
 
