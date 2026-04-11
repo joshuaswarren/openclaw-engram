@@ -48,7 +48,6 @@ import {
   readFileSync,
   renameSync,
   rmSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -227,10 +226,17 @@ export function materializeForNamespace(
   const rawMemories = renderRawMemories({ memories });
 
   const retainedRollouts = pruneRollouts(rolloutSummaries, rolloutRetentionDays, now);
-  const rolloutFiles = retainedRollouts.map((r) => ({
-    name: `${sanitizeSlug(r.slug)}.md`,
-    body: renderRolloutSummary(r),
-  }));
+  // Deduplicate on sanitized filename. Two different slugs ("Session 1" and
+  // "session_1") can sanitize to the same output ("session-1"), which would
+  // otherwise make the first entry's tmp file get overwritten and cause the
+  // later rename step to crash with ENOENT. We keep the *last* entry with a
+  // given sanitized name so the most-recent rollout for that slot wins.
+  const rolloutFileMap = new Map<string, { name: string; body: string }>();
+  for (const r of retainedRollouts) {
+    const name = `${sanitizeSlug(r.slug)}.md`;
+    rolloutFileMap.set(name, { name, body: renderRolloutSummary(r) });
+  }
+  const rolloutFiles = [...rolloutFileMap.values()];
 
   // ── Idempotence check ──────────────────────────────────────────────────
   const hash = computeContentHash({
@@ -819,15 +825,6 @@ export function describeMemoriesDir(memoriesDir: string): {
           files.push(path.join(ROLLOUT_SUBDIR, entry.name));
         }
       }
-    } catch {
-      // ignore
-    }
-  }
-  // Touch statSync so the compiler doesn't drop the import if unused in
-  // future edits — and it's genuinely useful when callers want mtimes.
-  if (files.length > 0) {
-    try {
-      statSync(path.join(memoriesDir, files[0]));
     } catch {
       // ignore
     }

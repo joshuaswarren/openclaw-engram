@@ -21,6 +21,17 @@ import {
   type RolloutSummaryInput,
 } from "./codex-materialize.js";
 
+/** Options accepted by the shared post-consolidation materialize helper. */
+export interface PostConsolidationMaterializeOptions {
+  config: PluginConfig;
+  namespace?: string;
+  memories?: MemoryFile[];
+  memoryDir?: string;
+  codexHome?: string;
+  rolloutSummaries?: RolloutSummaryInput[];
+  now?: Date;
+}
+
 /** Options accepted by the runner. */
 export interface RunMaterializeOptions {
   /** Remnic config — we only read the `codexMaterialize*` fields. */
@@ -109,6 +120,43 @@ export async function runCodexMaterialize(
   } catch (error) {
     log.warn(
       `[codex-materialize] run failed (non-fatal): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Shared helper for post-consolidation materialize hooks.
+ *
+ * `materializeAfterSemanticConsolidation` and `materializeAfterCausalConsolidation`
+ * used to be two nearly-identical copies of this logic; keeping the actual
+ * body here means any future guard/logging change happens in one place.
+ *
+ * The only per-caller knob is `logPrefix`, which is used to tag the
+ * non-fatal warning emitted when the materializer throws.
+ */
+export async function runPostConsolidationMaterialize(
+  logPrefix: string,
+  options: PostConsolidationMaterializeOptions,
+): Promise<MaterializeResult | null> {
+  if (!options.config.codexMaterializeMemories) return null;
+  if (!options.config.codexMaterializeOnConsolidation) return null;
+  try {
+    return await runCodexMaterialize({
+      config: options.config,
+      namespace: options.namespace,
+      memories: options.memories,
+      memoryDir: options.memoryDir,
+      codexHome: options.codexHome,
+      rolloutSummaries: options.rolloutSummaries,
+      now: options.now,
+      reason: "consolidation",
+    });
+  } catch (error) {
+    log.warn(
+      `${logPrefix} Codex materialize post-hook failed (non-fatal): ${
         error instanceof Error ? error.message : String(error)
       }`,
     );

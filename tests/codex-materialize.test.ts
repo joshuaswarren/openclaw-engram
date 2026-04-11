@@ -221,6 +221,43 @@ test("describeMemoriesDir reports owned files and sentinel state", () => {
   }
 });
 
+test("deduplicates rollouts whose slugs sanitize to the same filename", () => {
+  // Regression: two different input slugs can sanitize to the same .md name
+  // (e.g. "Session 1" and "session!!!1" both → "session-1.md"). The old
+  // code would write the same tmp file twice and then crash with ENOENT
+  // during rename. See Cursor Bugbot report on PR #392.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "dedupe-ns");
+    const result = materializeForNamespace("dedupe-ns", {
+      memories: [makeMemory({ content: "synthetic dedupe anchor" })],
+      codexHome: root,
+      rolloutSummaries: [
+        {
+          slug: "Session 1",
+          updatedAt: "2026-04-01T00:00:00Z",
+          body: "first synthetic recap.",
+        },
+        {
+          slug: "session!!!1",
+          updatedAt: "2026-04-01T12:00:00Z",
+          body: "second synthetic recap (collides on sanitized slug).",
+        },
+      ],
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+
+    assert.equal(result.wrote, true);
+    // Exactly one rollout file should be written for the collided name.
+    const rolloutFiles = result.filesWritten.filter((f) => f.includes("rollout_summaries"));
+    assert.equal(rolloutFiles.length, 1);
+    assert.ok(rolloutFiles[0].endsWith("session-1.md"));
+    assert.ok(existsSync(path.join(memoriesDir, "rollout_summaries", "session-1.md")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("does not overwrite a corrupted sentinel silently (treats as missing)", () => {
   const { root, memoriesDir } = makeTempCodexHome();
   try {

@@ -6,10 +6,9 @@
  * Reduces memory store bloat while preserving all unique information.
  */
 
-import { log } from "./logger.js";
 import type { MemoryFile, PluginConfig } from "./types.js";
 import { normalizeRecallTokens, countRecallTokenOverlap } from "./recall-tokenization.js";
-import { runCodexMaterialize } from "./connectors/codex-materialize-runner.js";
+import { runPostConsolidationMaterialize } from "./connectors/codex-materialize-runner.js";
 import type { MaterializeResult, RolloutSummaryInput } from "./connectors/codex-materialize.js";
 
 export interface ConsolidationCluster {
@@ -160,25 +159,7 @@ export async function materializeAfterSemanticConsolidation(options: {
   rolloutSummaries?: RolloutSummaryInput[];
   now?: Date;
 }): Promise<MaterializeResult | null> {
-  if (!options.config.codexMaterializeMemories) return null;
-  if (!options.config.codexMaterializeOnConsolidation) return null;
-  try {
-    return await runCodexMaterialize({
-      config: options.config,
-      namespace: options.namespace,
-      memories: options.memories,
-      memoryDir: options.memoryDir,
-      codexHome: options.codexHome,
-      rolloutSummaries: options.rolloutSummaries,
-      now: options.now,
-      reason: "consolidation",
-    });
-  } catch (error) {
-    log.warn(
-      `[semantic-consolidation] Codex materialize post-hook failed (non-fatal): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return null;
-  }
+  // Delegates to the shared post-consolidation helper so semantic and causal
+  // flows stay in lock-step — any guard/logging change happens in one place.
+  return runPostConsolidationMaterialize("[semantic-consolidation]", options);
 }

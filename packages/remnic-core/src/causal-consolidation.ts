@@ -21,7 +21,7 @@ import { FallbackLlmClient } from "./fallback-llm.js";
 import type { GatewayConfig, MemoryFile, PluginConfig } from "./types.js";
 import path from "node:path";
 import { log } from "./logger.js";
-import { runCodexMaterialize } from "./connectors/codex-materialize-runner.js";
+import { runPostConsolidationMaterialize } from "./connectors/codex-materialize-runner.js";
 import type { MaterializeResult, RolloutSummaryInput } from "./connectors/codex-materialize.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -350,25 +350,7 @@ export async function materializeAfterCausalConsolidation(options: {
   rolloutSummaries?: RolloutSummaryInput[];
   now?: Date;
 }): Promise<MaterializeResult | null> {
-  if (!options.config.codexMaterializeMemories) return null;
-  if (!options.config.codexMaterializeOnConsolidation) return null;
-  try {
-    return await runCodexMaterialize({
-      config: options.config,
-      namespace: options.namespace,
-      memories: options.memories,
-      memoryDir: options.memoryDir,
-      codexHome: options.codexHome,
-      rolloutSummaries: options.rolloutSummaries,
-      now: options.now,
-      reason: "consolidation",
-    });
-  } catch (error) {
-    log.warn(
-      `[cmc] Codex materialize post-hook failed (non-fatal): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return null;
-  }
+  // Delegates to the shared post-consolidation helper — see
+  // runPostConsolidationMaterialize in codex-materialize-runner.ts.
+  return runPostConsolidationMaterialize("[cmc]", options);
 }
