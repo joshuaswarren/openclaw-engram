@@ -34,6 +34,7 @@ import {
   parseConfig,
   Orchestrator,
   EngramAccessService,
+  StorageManager,
   initLogger,
   onboard,
   curate,
@@ -63,6 +64,12 @@ import {
   generateContextTree,
   migrateFromEngram,
   rollbackFromEngramMigration,
+  buildBriefing,
+  parseBriefingWindow,
+  parseBriefingFocus,
+  resolveBriefingSaveDir,
+  briefingFilename,
+  FileCalendarSource,
 } from "@remnic/core";
 import {
   runBenchSuite,
@@ -93,7 +100,8 @@ type CommandName =
   | "dedup"
   | "connectors"
   | "space"
-  | "benchmark";
+  | "benchmark"
+  | "briefing";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
@@ -310,6 +318,77 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
     }
     for (const m of memories) {
       console.log(`- ${m.content}`);
+    }
+  }
+}
+
+async function cmdBriefing(rest: string[]): Promise<void> {
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+
+  if (!config.briefing.enabled) {
+    console.error("Briefing is disabled in config (briefing.enabled = false).");
+    process.exit(1);
+  }
+
+  const sinceFlag = resolveFlag(rest, "--since");
+  const focusFlag = resolveFlag(rest, "--focus");
+  const formatFlag = resolveFlag(rest, "--format");
+  const save = rest.includes("--save") || config.briefing.saveByDefault;
+
+  const token = sinceFlag ?? config.briefing.defaultWindow;
+  const window = parseBriefingWindow(token);
+  if (!window) {
+    console.error(
+      `Invalid --since value: ${token}. Accepted: yesterday, today, NNh, NNd, NNw.`,
+    );
+    process.exit(1);
+  }
+
+  const focus = parseBriefingFocus(focusFlag);
+  const format: "markdown" | "json" =
+    formatFlag === "json" ? "json" : formatFlag === "markdown" ? "markdown" : config.briefing.defaultFormat;
+
+  const memoryDir = resolveMemoryDir();
+  const storage = new StorageManager(memoryDir);
+
+  const calendarSource = config.briefing.calendarSource
+    ? new FileCalendarSource(config.briefing.calendarSource)
+    : undefined;
+
+  const result = await buildBriefing({
+    storage,
+    window,
+    focus,
+    namespace: config.defaultNamespace,
+    calendarSource,
+    maxFollowups: config.briefing.maxFollowups,
+    allowLlm: config.briefing.llmFollowups,
+    openaiApiKey: config.openaiApiKey,
+    model: config.model,
+  });
+
+  const payload = format === "json" ? JSON.stringify(result.json, null, 2) : result.markdown;
+  console.log(payload);
+
+  if (save) {
+    try {
+      const saveDir = resolveBriefingSaveDir(config.briefing.saveDir);
+      fs.mkdirSync(saveDir, { recursive: true });
+      const filename = briefingFilename(new Date(), format);
+      const filePath = path.join(saveDir, filename);
+      fs.writeFileSync(filePath, payload + (payload.endsWith("\n") ? "" : "\n"));
+      if (format !== "json") {
+        console.error(`Saved briefing: ${filePath}`);
+      }
+    } catch (err) {
+      console.error(`Failed to save briefing: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
     }
   }
 }
@@ -1492,6 +1571,11 @@ Options:
       break;
     }
 
+    case "briefing": {
+      await cmdBriefing(rest);
+      break;
+    }
+
     default:
       console.log(`
 remnic — Remnic memory CLI
@@ -1516,6 +1600,9 @@ Usage:
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
   remnic benchmark <run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
+  remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
+    Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
+    Focus: person:<name>, project:<name>, topic:<name>.
 
 Options:
   --json    Output in JSON format

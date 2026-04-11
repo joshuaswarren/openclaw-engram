@@ -719,6 +719,114 @@ export interface PluginConfig {
   parallelAgentWeights: { direct: number; contextual: number; temporal: number };
   /** Max results fetched per agent before merge. */
   parallelMaxResultsPerAgent: number;
+
+  // Daily Context Briefing (Issue #370)
+  /** Briefing configuration knobs — see BriefingConfig for field docs. */
+  briefing: BriefingConfig;
+}
+
+/** Runtime configuration for the daily context briefing feature. */
+export interface BriefingConfig {
+  /** Whether `remnic briefing` CLI and MCP tool are enabled. */
+  enabled: boolean;
+  /** Default lookback window token (e.g. "yesterday", "3d", "1w", "24h"). */
+  defaultWindow: string;
+  /** Default output format for the CLI. */
+  defaultFormat: "markdown" | "json";
+  /** Maximum number of LLM-generated suggested follow-ups. */
+  maxFollowups: number;
+  /** Optional path to an ICS or JSON calendar file. null disables the section. */
+  calendarSource: string | null;
+  /** If true, CLI writes a dated briefing file by default. */
+  saveByDefault: boolean;
+  /** Override directory for saved briefings. null → $REMNIC_HOME/briefings/. */
+  saveDir: string | null;
+  /** Whether to call the Responses API for follow-up suggestions. */
+  llmFollowups: boolean;
+}
+
+/** Parsed representation of a briefing lookback window. */
+export type BriefingWindow = "yesterday" | "today" | string;
+
+/** Filter the briefing to a single entity / project / topic. */
+export interface BriefingFocus {
+  type: "person" | "project" | "topic";
+  value: string;
+}
+
+/** Calendar event surfaced by a CalendarSource implementation. */
+export interface CalendarEvent {
+  /** Stable identifier for dedupe / linking. */
+  id: string;
+  /** Event title (short). */
+  title: string;
+  /** ISO 8601 start timestamp. */
+  start: string;
+  /** Optional ISO 8601 end timestamp. */
+  end?: string;
+  /** Optional freeform location. */
+  location?: string;
+  /** Optional short notes. */
+  notes?: string;
+}
+
+/** Abstraction over any calendar backend. Concrete implementations: `FileCalendarSource`. */
+export interface CalendarSource {
+  /** Return events that fall on the given UTC date (YYYY-MM-DD). */
+  eventsForDate(dateIso: string): Promise<CalendarEvent[]>;
+}
+
+/** A single "active thread" surfaced in a briefing. */
+export interface BriefingActiveThread {
+  id: string;
+  title: string;
+  updatedAt: string;
+  reason: string;
+}
+
+/** A single "recent entity" entry. */
+export interface BriefingRecentEntity {
+  name: string;
+  type: string;
+  updatedAt: string;
+  score: number;
+  summary?: string;
+}
+
+/** A single unresolved commitment or open question. */
+export interface BriefingOpenCommitment {
+  id: string;
+  kind: "question" | "commitment" | "pending_memory";
+  text: string;
+  source?: string;
+  createdAt?: string;
+}
+
+/** An LLM-generated short follow-up suggestion. */
+export interface BriefingFollowup {
+  text: string;
+  rationale?: string;
+}
+
+/** Structured sections of a briefing result. */
+export interface BriefingSections {
+  activeThreads: BriefingActiveThread[];
+  recentEntities: BriefingRecentEntity[];
+  openCommitments: BriefingOpenCommitment[];
+  suggestedFollowups: BriefingFollowup[];
+  /** Only populated when a calendar source is configured and returns events. */
+  todayCalendar?: CalendarEvent[];
+}
+
+/** Result returned by `buildBriefing`. */
+export interface BriefingResult {
+  markdown: string;
+  json: Record<string, unknown>;
+  sections: BriefingSections;
+  /** Reason why suggested follow-ups were omitted (e.g. missing API key, LLM error). */
+  followupsUnavailableReason?: string;
+  /** Effective lookback window (ISO date range) used for this briefing. */
+  window: { from: string; to: string };
 }
 
 export interface BootstrapOptions {

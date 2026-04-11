@@ -108,6 +108,27 @@ export {
 export { loadDaySummaryPrompt } from "./day-summary.js";
 
 // ---------------------------------------------------------------------------
+// Daily Context Briefing (#370)
+// ---------------------------------------------------------------------------
+
+export {
+  buildBriefing,
+  parseBriefingWindow,
+  parseBriefingFocus,
+  focusMatchesMemory,
+  focusMatchesEntity,
+  renderBriefingMarkdown,
+  resolveBriefingSaveDir,
+  briefingFilename,
+  runBriefingTool,
+  FileCalendarSource,
+  type BuildBriefingOptions,
+  type BriefingFollowupGenerator,
+  type BriefingToolInput,
+  type ParsedBriefingWindow,
+} from "./briefing.js";
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
@@ -285,4 +306,15 @@ export type {
   MemoryActionEligibilityContext,
   MemoryActionEligibilitySource,
   ContinuityImprovementLoop,
+  BriefingConfig,
+  BriefingWindow,
+  BriefingFocus,
+  BriefingActiveThread,
+  BriefingRecentEntity,
+  BriefingOpenCommitment,
+  BriefingFollowup,
+  BriefingSections,
+  BriefingResult,
+  CalendarEvent,
+  CalendarSource,
 } from "./types.js";

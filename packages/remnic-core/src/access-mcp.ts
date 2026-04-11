@@ -717,6 +717,22 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      // ── Daily Context Briefing (#370) ───────────────────────────────────
+      {
+        name: "engram.briefing",
+        description: "Generate a daily context briefing by cross-referencing active entities, recent facts, open commitments, and optional calendar events.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            since: { type: "string", description: "Lookback window (e.g. 'yesterday', '3d', '1w', '24h')." },
+            focus: { type: "string", description: "Optional focus filter (e.g. 'person:Jane Doe', 'project:remnic-core', 'topic:retrieval')." },
+            namespace: { type: "string" },
+            format: { type: "string", enum: ["markdown", "json"] },
+            maxFollowups: { type: "number", description: "Maximum LLM-suggested follow-ups (0 disables that section)." },
+          },
+          additionalProperties: false,
+        },
+      },
     ].flatMap((tool) => withToolAliases(tool));
   }
 
@@ -1242,6 +1258,20 @@ export class EngramMcpServer {
           context: typeof args.context === "string" ? args.context : "",
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           principal: effectivePrincipal,
+        });
+      // ── Daily Context Briefing (#370) ───────────────────────────────────
+      case "remnic.briefing":
+      case "engram.briefing":
+        return this.service.briefing({
+          since: typeof args.since === "string" ? args.since : undefined,
+          focus: typeof args.focus === "string" ? args.focus : undefined,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          format:
+            args.format === "json" || args.format === "markdown"
+              ? (args.format as "json" | "markdown")
+              : undefined,
+          maxFollowups:
+            typeof args.maxFollowups === "number" ? args.maxFollowups : undefined,
         });
       default:
         throw new Error(`unknown tool: ${name}`);

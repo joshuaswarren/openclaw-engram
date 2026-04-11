@@ -42,6 +42,11 @@ import type {
 } from "./orchestrator.js";
 import { parseEntityFile } from "./storage.js";
 import {
+  buildBriefing,
+  parseBriefingFocus,
+  parseBriefingWindow,
+} from "./briefing.js";
+import {
   getTrustZoneStoreStatus,
   isTrustZoneName,
   listTrustZoneRecords,
@@ -148,6 +153,25 @@ export interface EngramAccessDaySummaryRequest {
   memories?: string;
   sessionKey?: string;
   namespace?: string;
+}
+
+/** Inputs accepted by the `remnic_briefing` MCP tool. */
+export interface EngramAccessBriefingRequest {
+  since?: string;
+  focus?: string;
+  namespace?: string;
+  format?: "markdown" | "json";
+  maxFollowups?: number;
+}
+
+/** Response for `remnic_briefing`. */
+export interface EngramAccessBriefingResponse {
+  format: "markdown" | "json";
+  window: { from: string; to: string };
+  namespace: string;
+  markdown: string;
+  json: Record<string, unknown>;
+  followupsUnavailableReason?: string;
 }
 
 export interface EngramAccessMemoryRecord {
@@ -815,6 +839,65 @@ export class EngramAccessService {
       return this.orchestrator.generateDaySummaryAuto(namespace);
     }
     return this.orchestrator.generateDaySummary(memories);
+  }
+
+  /**
+   * Build a daily context briefing. Gracefully degrades when the OpenAI key
+   * or Responses API is unavailable — never throws for LLM-related problems.
+   */
+  async briefing(
+    request: EngramAccessBriefingRequest,
+  ): Promise<EngramAccessBriefingResponse> {
+    const config = this.orchestrator.config;
+    if (!config.briefing.enabled) {
+      throw new EngramAccessInputError("briefing is disabled");
+    }
+
+    const namespace = this.resolveRecallNamespace(request.namespace, undefined)
+      ?? config.defaultNamespace;
+    const storage = await this.orchestrator.getStorage(namespace);
+
+    const token = typeof request.since === "string" && request.since.trim().length > 0
+      ? request.since.trim()
+      : config.briefing.defaultWindow;
+    const window = parseBriefingWindow(token) ?? parseBriefingWindow("yesterday")!;
+
+    const focus = parseBriefingFocus(request.focus);
+
+    const format: "markdown" | "json" = request.format === "json"
+      ? "json"
+      : request.format === "markdown"
+        ? "markdown"
+        : config.briefing.defaultFormat;
+
+    const maxFollowups = typeof request.maxFollowups === "number" && Number.isFinite(request.maxFollowups)
+      ? Math.max(0, Math.min(10, Math.floor(request.maxFollowups)))
+      : config.briefing.maxFollowups;
+
+    const calendarSource = config.briefing.calendarSource
+      ? new (await import("./briefing.js")).FileCalendarSource(config.briefing.calendarSource)
+      : undefined;
+
+    const result = await buildBriefing({
+      storage,
+      namespace,
+      window,
+      focus,
+      calendarSource,
+      maxFollowups,
+      allowLlm: config.briefing.llmFollowups,
+      openaiApiKey: config.openaiApiKey,
+      model: config.model,
+    });
+
+    return {
+      format,
+      window: result.window,
+      namespace,
+      markdown: result.markdown,
+      json: result.json,
+      followupsUnavailableReason: result.followupsUnavailableReason,
+    };
   }
 
   async recall(request: EngramAccessRecallRequest): Promise<EngramAccessRecallResponse> {
