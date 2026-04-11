@@ -555,18 +555,25 @@ const pluginDefinition = {
       sdkCaps.hasRegisterMemoryCapability &&
       typeof (api as any).registerMemoryCapability === "function"
     ) {
-      // When registerMemoryPromptSection was available, memoryPromptBuilder
-      // was already set above. In capability-only SDK shapes (where only
-      // registerMemoryCapability exists), we must still provide a promptBuilder
-      // so the runtime can inject recall context via the unified capability.
-      // The builder reads from the same cachedMemoryBySession cache that the
-      // before_prompt_build hook populates.
-      const capabilityPromptBuilder = memoryPromptBuilder ?? ((params: { sessionKey?: string }): string[] | null => {
-        const key = params?.sessionKey ?? "default";
-        const lines = cachedMemoryBySession.get(key) ?? null;
-        cachedMemoryBySession.delete(key);
-        return lines;
-      });
+      // Build a promptBuilder for the capability. When registerMemoryPromptSection
+      // was also registered, the section builder already does a destructive read
+      // (get + delete). To avoid double-consumption if the runtime calls both,
+      // the capability builder uses a non-destructive peek (get without delete).
+      // In capability-only SDK shapes, the capability builder IS the sole
+      // consumer so it performs the destructive read.
+      const capabilityPromptBuilder = memoryPromptBuilder
+        ? (params: { sessionKey?: string }): string[] | null => {
+            // Non-destructive peek — the section builder will handle cleanup
+            const key = params?.sessionKey ?? "default";
+            return cachedMemoryBySession.get(key) ?? null;
+          }
+        : (params: { sessionKey?: string }): string[] | null => {
+            // Capability-only: destructive read since we are the sole consumer
+            const key = params?.sessionKey ?? "default";
+            const lines = cachedMemoryBySession.get(key) ?? null;
+            cachedMemoryBySession.delete(key);
+            return lines;
+          };
 
       const memoryCapability: import("openclaw/plugin-sdk").MemoryPluginCapability = {
         // Include the promptBuilder so runtimes that treat unified capability
