@@ -51,3 +51,37 @@ test("parseConfig preserves zero recall timeout settings to disable those limits
   assert.equal(config.recallCoreDeadlineMs, 0);
   assert.equal(config.recallEnrichmentDeadlineMs, 0);
 });
+
+test("parseConfig applies MMR defaults (enabled, lambda=0.7, topN=40)", () => {
+  const config = parseConfig({});
+  assert.equal(config.recallMmrEnabled, true);
+  assert.equal(config.recallMmrLambda, 0.7);
+  assert.equal(config.recallMmrTopN, 40);
+});
+
+test("parseConfig honors explicit MMR overrides", () => {
+  const config = parseConfig({
+    recallMmrEnabled: false,
+    recallMmrLambda: 0.3,
+    recallMmrTopN: 25,
+  });
+  assert.equal(config.recallMmrEnabled, false);
+  assert.equal(config.recallMmrLambda, 0.3);
+  assert.equal(config.recallMmrTopN, 25);
+});
+
+test("parseConfig clamps MMR lambda into [0, 1]", () => {
+  const tooLow = parseConfig({ recallMmrLambda: -0.5 });
+  assert.equal(tooLow.recallMmrLambda, 0);
+  const tooHigh = parseConfig({ recallMmrLambda: 1.7 });
+  assert.equal(tooHigh.recallMmrLambda, 1);
+});
+
+test("parseConfig preserves recallMmrTopN=0 as a true zero limit", () => {
+  // AGENTS.md §4 ("Config is runtime API"): `0` limits are compatibility
+  // guarantees. The write-time representation of `recallMmrTopN=0` must be
+  // preserved, and the read-time behavior in applyMmrToQmdResults must
+  // honor the zero limit by skipping MMR entirely (see orchestrator.ts).
+  const config = parseConfig({ recallMmrTopN: 0 });
+  assert.equal(config.recallMmrTopN, 0);
+});

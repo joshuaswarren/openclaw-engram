@@ -51,6 +51,7 @@ import {
   type ParallelSearchResult,
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
+import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import {
@@ -6817,7 +6818,14 @@ export class Orchestrator {
         }
       }
 
-      memoryResults = memoryResults.slice(0, recallResultLimit);
+      // Diversify via MMR over the full candidate pool *before* truncating to
+      // the final recall limit. Running MMR after the slice would be unable
+      // to promote diverse candidates sitting just below the cutoff.
+      memoryResults = this.diversifyAndLimitRecallResults(
+        "memories",
+        memoryResults,
+        recallResultLimit,
+      );
 
       // E-Mem-inspired memory reconstruction: fill gaps for referenced entities
       if (this.config.memoryReconstructionEnabled && memoryResults.length > 0) {
@@ -6910,13 +6918,18 @@ export class Orchestrator {
             limit: embeddingFetchLimit,
           },
         );
-        const scoped = (
-          await this.boostSearchResults(
-            scopedCandidates,
-            recallNamespaces,
-            retrievalQuery,
-          )
-        ).slice(0, recallResultLimit);
+        const boostedScoped = await this.boostSearchResults(
+          scopedCandidates,
+          recallNamespaces,
+          retrievalQuery,
+        );
+        // MMR runs on the pre-truncation pool so diverse candidates just
+        // below the cutoff can be promoted into the injected set.
+        const scoped = this.diversifyAndLimitRecallResults(
+          "memories",
+          boostedScoped,
+          recallResultLimit,
+        );
         if (scoped.length > 0) {
           if (shouldPersistGraphSnapshot) {
             graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
@@ -7038,13 +7051,18 @@ export class Orchestrator {
           limit: embeddingFetchLimit,
         },
       );
-      const scoped = (
-        await this.boostSearchResults(
-          scopedCandidates,
-          recallNamespaces,
-          retrievalQuery,
-        )
-      ).slice(0, recallResultLimit);
+      const boostedScoped = await this.boostSearchResults(
+        scopedCandidates,
+        recallNamespaces,
+        retrievalQuery,
+      );
+      // MMR runs on the pre-truncation pool so diverse candidates just
+      // below the cutoff can be promoted into the injected set.
+      const scoped = this.diversifyAndLimitRecallResults(
+        "memories",
+        boostedScoped,
+        recallResultLimit,
+      );
       if (scoped.length > 0) {
         if (shouldPersistGraphSnapshot) {
           graphSnapshotFinalResults = this.buildGraphRecallRankedResults(
@@ -7144,16 +7162,21 @@ export class Orchestrator {
                 score: 1.0 - i / Math.max(recentSorted.length, 1),
               }),
             );
-            const recent = (
+            const boostedRecent = (
               await this.boostSearchResults(
                 recentAsResults,
                 recallNamespaces,
                 retrievalQuery,
                 preloadedMap,
               )
-            )
-              .sort((a, b) => b.score - a.score)
-              .slice(0, recallResultLimit);
+            ).sort((a, b) => b.score - a.score);
+            // MMR runs on the pre-truncation pool so diverse candidates just
+            // below the cutoff can be promoted into the injected set.
+            const recent = this.diversifyAndLimitRecallResults(
+              "memories",
+              boostedRecent,
+              recallResultLimit,
+            );
 
             if (recent.length > 0) {
               if (shouldPersistGraphSnapshot) {
@@ -10859,14 +10882,95 @@ export class Orchestrator {
       truncated: boolean;
     };
   }): void {
+    const sectionId = "memories";
     const memoryIds = this.extractMemoryIdsFromResults(options.results);
     this.trackMemoryAccess(memoryIds);
 
     this.appendRecallSection(
       options.sectionBuckets,
-      "memories",
+      sectionId,
       this.formatQmdResults(options.title, options.results),
     );
+  }
+
+  /**
+   * Apply MMR over the pre-truncation recall candidate pool and then slice
+   * the result to `limit`. This is the single place in the pipeline where
+   * MMR runs, and it must be called *before* callers throw away candidates
+   * that would otherwise sit below the final cutoff. Running MMR post-slice
+   * is a no-op in the cases we care about — diverse candidates just below
+   * the cutoff are already gone and can never be promoted.
+   *
+   * Callers must pass the full candidate pool (post-rerank, pre-slice).
+   */
+  private diversifyAndLimitRecallResults(
+    sectionId: string,
+    results: QmdSearchResult[],
+    limit: number,
+  ): QmdSearchResult[] {
+    const safeLimit =
+      typeof limit === "number" && Number.isFinite(limit)
+        ? Math.max(0, Math.floor(limit))
+        : 0;
+    if (!Array.isArray(results) || results.length === 0) return [];
+    // `recallResultLimit === 0` is a true zero limit (e.g. when
+    // `memoriesSectionEnabled` is false) and must return an empty array so
+    // the memories section is genuinely skipped. This mirrors the
+    // `slice(0, 0)` semantics of every call site this helper replaced.
+    if (safeLimit === 0) return [];
+    const diversified = this.applyMmrToQmdResults(sectionId, results);
+    return diversified.slice(0, safeLimit);
+  }
+
+  /**
+   * Apply Maximal Marginal Relevance to a section's ordered candidate list.
+   *
+   * Operates per-section so one redundant cluster cannot dominate a section,
+   * and so one section's MMR pass cannot starve other sections. Returns the
+   * input unchanged when disabled, when there are fewer than 2 candidates, or
+   * when no budget information is available.
+   */
+  private applyMmrToQmdResults(
+    sectionId: string,
+    results: QmdSearchResult[],
+  ): QmdSearchResult[] {
+    if (this.config.recallMmrEnabled === false) return results;
+    if (!Array.isArray(results) || results.length < 2) return results;
+
+    // Config is runtime API (see AGENTS.md §4): preserve `0` as a true zero
+    // limit rather than coercing it to a non-zero value. A configured topN of
+    // 0 means "apply MMR over an empty window" — i.e. skip the reorder and
+    // return the upstream candidates unchanged. This keeps read-time
+    // behavior symmetric with the write-time semantics parseConfig exposes.
+    const configuredTopN = this.config.recallMmrTopN;
+    const topN =
+      typeof configuredTopN === "number" && Number.isFinite(configuredTopN)
+        ? Math.max(0, Math.floor(configuredTopN))
+        : 40;
+    if (topN === 0) return results;
+    const lambda = this.config.recallMmrLambda ?? 0.7;
+
+    // Delegate to the pure helper so candidate keying (path-first, index
+    // suffixed for uniqueness) and the head-of-list diversity metric are
+    // exercised by the same code path that the unit tests cover.
+    const { reordered, diversity } = reorderRecallResultsWithMmr(results, {
+      lambda,
+      topN,
+    });
+
+    try {
+      log.info(
+        `recall_mmr: section=${sectionId} kept=${diversity.kept}/${diversity.considered} ` +
+          `headReorderCount=${diversity.headReorderCount} ` +
+          `avgSimBefore=${diversity.avgPairwiseSimBefore.toFixed(3)} ` +
+          `avgSimAfter=${diversity.avgPairwiseSimAfter.toFixed(3)} ` +
+          `lambda=${lambda.toFixed(2)}`,
+      );
+    } catch {
+      // Metrics must never break recall.
+    }
+
+    return reordered;
   }
 
   private buildLastRecallBudgetSummary(options: {
@@ -11154,7 +11258,15 @@ export class Orchestrator {
       );
     }
 
-    return results.slice(0, options.recallResultLimit);
+    // Apply MMR before final truncation so the cold fallback path mirrors
+    // the diversification policy applied in the hot QMD/embedding/recent
+    // paths. Running MMR post-slice would be unable to promote diverse
+    // candidates sitting just below the cutoff.
+    return this.diversifyAndLimitRecallResults(
+      "memories",
+      results,
+      options.recallResultLimit,
+    );
   }
 
   // ---------------------------------------------------------------------------
