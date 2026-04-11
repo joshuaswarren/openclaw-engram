@@ -806,11 +806,15 @@ test("installCodexMemoryExtension atomic replace happy path — no backup direct
       const content = fs.readFileSync(path.join(second.remnicExtensionDir, "instructions.md"), "utf8");
       assert.equal(content, "# v2 extension\n", "extension content must reflect second install");
 
-      // No .bak-* directories must be left behind.
+      // The backup is kept alive until commit() is called. Call it now to simulate
+      // the successful completion of the caller (e.g. config write).
+      second.commit();
+
+      // No .bak-* directories must be left behind after commit().
       const extRoot = path.dirname(second.remnicExtensionDir);
       const entries = fs.readdirSync(extRoot);
       const bakEntries = entries.filter((e) => e.includes(".bak-"));
-      assert.equal(bakEntries.length, 0, `no .bak-* dirs should remain after successful replace, found: ${bakEntries.join(", ")}`);
+      assert.equal(bakEntries.length, 0, `no .bak-* dirs should remain after commit(), found: ${bakEntries.join(", ")}`);
     },
   );
 });
@@ -1108,5 +1112,90 @@ test(
       "instructions.md must be present after install",
     );
     assert.equal(installResult.filesCopied, 2, "both payload files must be copied");
+  },
+);
+
+// ── PR #394 PRRT_kwDORJXyws56UJlk: rollback after config-write failure must restore prior extension ──
+//
+// Regression test: if installConnector("codex-cli") fails while writing
+// codex-cli.json after installCodexMemoryExtension() has already succeeded,
+// any pre-existing customised extension must be restored — not deleted.
+
+test(
+  "installConnector rollback restores pre-existing extension when config write fails (PRRT_kwDORJXyws56UJlk)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+        CODEX_HOME: sandbox.codexHome,
+      },
+      () => {
+        // Set up a pre-existing extension with a sentinel file to prove it was
+        // written by the user (not by this install invocation).
+        const paths = resolveCodexMemoryExtensionPaths(sandbox.codexHome);
+        fs.mkdirSync(paths.remnicExtensionDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(paths.remnicExtensionDir, "custom-marker.txt"),
+          "user-customised extension — must survive a failed install rollback\n",
+        );
+
+        // Create the connectors directory so installConnector can reach it, but
+        // make the config file itself unwritable by placing a read-only directory
+        // at the path where the .json file would be written.
+        const connectorsDir = path.join(sandbox.xdgConfigHome, "engram", ".engram-connectors", "connectors");
+        fs.mkdirSync(connectorsDir, { recursive: true });
+        const configPath = path.join(connectorsDir, "codex-cli.json");
+
+        // Monkey-patch fs.writeFileSync to throw only when writing the codex-cli
+        // config file — this simulates a disk-full / EPERM condition that happens
+        // AFTER installCodexMemoryExtension() has already completed.
+        const originalWriteFileSync = fs.writeFileSync.bind(fs);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mock = t.mock.method(fs, "writeFileSync", (...args: [any, any, any?]) => {
+          if (String(args[0]) === configPath) {
+            throw new Error("ENOSPC: no space left on device (simulated)");
+          }
+          return originalWriteFileSync(...args);
+        });
+
+        const result = installConnector({
+          connectorId: "codex-cli",
+          config: {
+            installExtension: true,
+            extensionSourceDir: sandbox.syntheticSourceDir,
+          },
+        });
+
+        mock.mock.restore();
+
+        // The install must report an error.
+        assert.equal(
+          result.status,
+          "error",
+          `expected status "error" when config write fails, got: "${result.status}"`,
+        );
+
+        // The pre-existing extension with the sentinel file must still be present.
+        assert.ok(
+          fs.existsSync(paths.remnicExtensionDir),
+          "memories_extensions/remnic must still exist after failed install rollback",
+        );
+        assert.ok(
+          fs.existsSync(path.join(paths.remnicExtensionDir, "custom-marker.txt")),
+          "custom-marker.txt must survive: pre-existing extension must be restored on rollback, not deleted",
+        );
+
+        // The connector config must NOT have been written.
+        assert.equal(
+          fs.existsSync(configPath),
+          false,
+          "codex-cli.json must NOT exist after a failed install",
+        );
+      },
+    );
   },
 );

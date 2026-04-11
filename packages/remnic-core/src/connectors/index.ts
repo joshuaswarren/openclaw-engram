@@ -565,6 +565,9 @@ export function installConnector(options: InstallOptions): InstallResult {
   // install path — substring-matching on "skipped" would misfire whenever
   // the codex home happens to contain the word "skipped".
   let extensionInstalled = false;
+  // Holds the commit/rollback handle returned by installCodexMemoryExtension().
+  // The backup of any prior extension is kept alive until commit() is called.
+  let extensionHandle: { commit(): void; rollback(): void } | null = null;
   if (options.connectorId === "codex-cli") {
     // Finding 1: coerce string "false"/"true" from CLI config parsing to a real
     // boolean before the gate check, then persist the coerced value so it is
@@ -602,6 +605,7 @@ export function installConnector(options: InstallOptions): InstallResult {
         });
         extensionMessage = ` (memory extension: ${extResult.remnicExtensionDir})`;
         extensionInstalled = true;
+        extensionHandle = extResult;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "unknown error";
         return {
@@ -633,17 +637,13 @@ export function installConnector(options: InstallOptions): InstallResult {
   try {
     fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
   } catch (writeErr) {
-    // Config write failed — remove the extension we just installed, if any.
-    // Use the explicit structured flag rather than substring-matching on
-    // extensionMessage (which embeds the install path and could spuriously
-    // contain the word "skipped").
-    if (options.connectorId === "codex-cli" && extensionInstalled) {
+    // Config write failed — roll back the extension to its prior state.
+    // Use extensionHandle.rollback() so that a pre-existing (possibly
+    // customised) extension is restored from the backup kept by
+    // installCodexMemoryExtension(), rather than unconditionally deleted.
+    if (extensionInstalled && extensionHandle !== null) {
       try {
-        const resolvedCodexHome =
-          typeof resolvedConfig.codexHome === "string" ? (resolvedConfig.codexHome as string) : null;
-        if (resolvedCodexHome) {
-          removeCodexMemoryExtension({ codexHome: resolvedCodexHome });
-        }
+        extensionHandle.rollback();
       } catch {
         // Best-effort rollback: log but don't mask the original write error.
         console.warn(
@@ -658,6 +658,11 @@ export function installConnector(options: InstallOptions): InstallResult {
       status: "error",
       message: `Config write failed (extension rolled back) — ${errMsg}`,
     };
+  }
+
+  // Config write succeeded — permanently drop the backup of the prior extension.
+  if (extensionInstalled && extensionHandle !== null) {
+    extensionHandle.commit();
   }
 
   return {
@@ -885,6 +890,17 @@ export interface InstallCodexMemoryExtensionResult extends CodexMemoryExtensionP
   instructionsPath: string;
   /** Number of files copied. */
   filesCopied: number;
+  /**
+   * Commit the install: permanently remove the backup of the prior extension
+   * (if one existed). Call this once the config write has succeeded.
+   */
+  commit(): void;
+  /**
+   * Roll back the install: restore the prior extension if one existed, or
+   * remove the newly-installed directory for a fresh install. Call this when
+   * a subsequent step (e.g. config write) has failed.
+   */
+  rollback(): void;
 }
 
 export interface RemoveCodexMemoryExtensionOptions {
@@ -1152,6 +1168,8 @@ export function installCodexMemoryExtension(
   const tmpDir = path.join(paths.extensionsRoot, tmpName);
 
   let filesCopied = 0;
+  let commitFn: () => void = () => { /* no-op: set below on success */ };
+  let rollbackFn: () => void = () => { /* no-op: set below on success */ };
   try {
     filesCopied = copyDirRecursiveSync(sourceDir, tmpDir);
 
@@ -1176,14 +1194,45 @@ export function installCodexMemoryExtension(
       }
       throw renameErr;
     }
-    // New extension is in place — remove the backup.
-    if (hadExisting) {
-      try {
-        fs.rmSync(backupDir, { recursive: true, force: true });
-      } catch {
-        // swallow — stale backup is harmless
+    // The new extension is in place. We intentionally keep the backup alive
+    // until the caller calls commit(). This gives the caller a chance to roll
+    // back to the prior state if a subsequent operation (e.g. config write) fails.
+    //
+    // commit() — remove the backup (called on success)
+    // rollback() — restore the prior extension from backup, or remove the newly
+    //              installed directory if this was a fresh install
+    commitFn = (): void => {
+      if (hadExisting) {
+        try {
+          fs.rmSync(backupDir, { recursive: true, force: true });
+        } catch {
+          // swallow — stale backup is harmless
+        }
       }
-    }
+    };
+    rollbackFn = (): void => {
+      if (hadExisting) {
+        // Restore the prior extension from backup.
+        try {
+          // Remove the newly-installed dir first so rename can succeed.
+          if (fs.existsSync(paths.remnicExtensionDir)) {
+            fs.rmSync(paths.remnicExtensionDir, { recursive: true, force: true });
+          }
+          fs.renameSync(backupDir, paths.remnicExtensionDir);
+        } catch {
+          // swallow — best-effort restore; backup remains on disk
+        }
+      } else {
+        // Fresh install — just remove the directory we created.
+        try {
+          if (fs.existsSync(paths.remnicExtensionDir)) {
+            fs.rmSync(paths.remnicExtensionDir, { recursive: true, force: true });
+          }
+        } catch {
+          // swallow
+        }
+      }
+    };
   } catch (err) {
     // Best-effort cleanup so we never leave .tmp garbage behind.
     if (fs.existsSync(tmpDir)) {
@@ -1202,6 +1251,8 @@ export function installCodexMemoryExtension(
     ...paths,
     instructionsPath,
     filesCopied,
+    commit: commitFn,
+    rollback: rollbackFn,
   };
 }
 
