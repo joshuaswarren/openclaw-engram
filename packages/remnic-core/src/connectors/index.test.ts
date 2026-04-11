@@ -12,6 +12,7 @@ import {
   removeConnector,
   resolveCodexMemoryExtensionPaths,
 } from "./index.js";
+import { loadTokenStore } from "../tokens.js";
 
 /**
  * Build a fresh tmp sandbox with its own HOME / XDG_CONFIG_HOME / CODEX_HOME
@@ -1194,6 +1195,95 @@ test(
           fs.existsSync(configPath),
           false,
           "codex-cli.json must NOT exist after a failed install",
+        );
+      },
+    );
+  },
+);
+
+// ── PR #400 PRRT_kwDORJXyws56U9U0 round 6: non-token connectors must not write to tokens.json ──
+//
+// Regression test: installing a connector that does NOT require token auth
+// (e.g. "codex-cli", connectionType "mcp") must leave tokens.json with NO
+// entry for that connector. Only connectors with requiresToken:true may write
+// to the token store.
+
+test(
+  "installConnector does NOT write a token entry for connectors that do not require token auth (PRRT_kwDORJXyws56U9U0 r6)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+        CODEX_HOME: sandbox.codexHome,
+      },
+      () => {
+        // codex-cli is an MCP connector with requiresToken: false (default).
+        const result = installConnector({
+          connectorId: "codex-cli",
+          config: { installExtension: false },
+        });
+
+        assert.equal(result.status, "installed", `expected status "installed", got: "${result.status}"`);
+
+        // tokens.json must contain NO entry for codex-cli.
+        const store = loadTokenStore();
+        const codexEntry = store.tokens.find((e) => e.connector === "codex-cli");
+        assert.equal(
+          codexEntry,
+          undefined,
+          "tokens.json must NOT contain an entry for a non-token-auth connector (codex-cli)",
+        );
+
+        // The saved connector.json must also not contain a token field.
+        assert.ok(result.configPath, "configPath should be set");
+        const saved = JSON.parse(fs.readFileSync(result.configPath as string, "utf8")) as Record<string, unknown>;
+        assert.equal(
+          "token" in saved,
+          false,
+          "connector.json must NOT contain a 'token' field",
+        );
+      },
+    );
+  },
+);
+
+test(
+  "installConnector does NOT write a token entry for cursor connector (embedded, no token auth)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+        CODEX_HOME: sandbox.codexHome,
+      },
+      () => {
+        const result = installConnector({ connectorId: "cursor" });
+
+        assert.equal(result.status, "installed", `expected status "installed", got: "${result.status}"`);
+
+        // tokens.json must contain NO entry for cursor.
+        const store = loadTokenStore();
+        const cursorEntry = store.tokens.find((e) => e.connector === "cursor");
+        assert.equal(
+          cursorEntry,
+          undefined,
+          "tokens.json must NOT contain an entry for the cursor connector (embedded transport, no token auth)",
+        );
+
+        // The saved connector.json must also not contain a token field.
+        assert.ok(result.configPath, "configPath should be set");
+        const saved = JSON.parse(fs.readFileSync(result.configPath as string, "utf8")) as Record<string, unknown>;
+        assert.equal(
+          "token" in saved,
+          false,
+          "cursor connector.json must NOT contain a 'token' field",
         );
       },
     );

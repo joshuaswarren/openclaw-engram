@@ -521,24 +521,33 @@ test("sanitizeHermesProfile rejects path-traversing profile values", () => {
   );
 });
 
-test("installConnector writes user config before the generated token (token wins)", () => {
-  // Regression test for the cursor-reported issue: a stray `token` key in
-  // options.config would silently override the daemon-generated token,
-  // producing a mismatch between the JSON config and tokens.json.
+test("installConnector does NOT embed token in resolvedConfig / connector.json (Codex P1 PRRT_kwDORJXyws56U9U0)", () => {
+  // Codex P1 fix: tokens must live exclusively in tokens.json (0o600). Previously
+  // installConnector spread `tokenEntry.token` into resolvedConfig, which was then
+  // serialised to connector.json. That second copy was returned verbatim by
+  // listConnectors() and printed by `remnic connectors list --json`, leaking live
+  // bearer tokens into shell history, CI logs, and telemetry.
+  //
+  // This test verifies the source-level invariant: resolvedConfig must NOT contain
+  // a `token` spread from tokenEntry, and any stray `token` supplied via
+  // options.config must be stripped before being saved to disk.
   const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
-  // The spread order inside resolvedConfig must be: options.config, THEN token.
   const resolvedStart = content.indexOf("const resolvedConfig");
   assert.ok(resolvedStart >= 0, "resolvedConfig must exist in installConnector");
   const resolvedEnd = content.indexOf("};", resolvedStart);
   assert.ok(resolvedEnd > resolvedStart, "resolvedConfig block must close");
   const block = content.slice(resolvedStart, resolvedEnd);
-  const userSpreadIdx = block.indexOf("...options.config");
-  const tokenSpreadIdx = block.indexOf("tokenEntry ? { token: tokenEntry.token }");
-  assert.ok(userSpreadIdx >= 0, "resolvedConfig must spread options.config");
-  assert.ok(tokenSpreadIdx >= 0, "resolvedConfig must overlay tokenEntry.token");
+  // options.config must still be spread (user non-secret config is preserved)
+  assert.ok(block.includes("...safeUserConfig"), "resolvedConfig must spread safeUserConfig");
+  // The token spread must NOT appear in resolvedConfig
   assert.ok(
-    userSpreadIdx < tokenSpreadIdx,
-    "options.config must be spread before tokenEntry so the generated token wins",
+    !block.includes("tokenEntry ? { token: tokenEntry.token }"),
+    "resolvedConfig must NOT contain a token spread from tokenEntry (Codex P1)",
+  );
+  // Caller-supplied token must be stripped before spreading
+  assert.ok(
+    content.includes("_callerToken") || content.includes("token: _callerToken"),
+    "options.config token must be destructured out (stripped) before building resolvedConfig",
   );
 });
 
@@ -1633,36 +1642,44 @@ test("atomic flow: happy path — connector.json and token written only after YA
         assert.equal(result.status, "installed", "Happy path must return installed");
         assert.ok(result.configPath, "Happy path must return a configPath");
 
-        // connector.json must exist and contain the new token.
+        // connector.json must exist and must NOT contain a token field
+        // (Codex P1 PRRT_kwDORJXyws56U9U0 — tokens live only in tokens.json).
         const connJson = JSON.parse(fs.readFileSync(result.configPath!, "utf-8")) as {
-          token: string;
+          token?: string;
           profile: string;
           host: string;
           port: number;
         };
-        assert.ok(connJson.token.startsWith("remnic_hm_"), "connector.json token must have hermes prefix");
+        assert.equal(connJson.token, undefined, "connector.json must NOT contain a token field (Codex P1)");
         assert.equal(connJson.profile, "happy", "connector.json must record the profile");
         assert.equal(connJson.host, "127.0.0.1", "connector.json must record the host");
         assert.equal(connJson.port, 4318, "connector.json must record the port");
 
-        // tokens.json must contain the same token as connector.json.
+        // tokens.json must contain the hermes token.
         const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
         const store = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
           tokens: Array<{ token: string; connector: string }>;
         };
         const entry = store.tokens.find((t) => t.connector === "hermes");
         assert.ok(entry, "tokens.json must have a hermes entry");
-        assert.equal(
-          entry.token,
-          connJson.token,
-          "tokens.json and connector.json must agree on the token value",
-        );
+        assert.ok(entry!.token.startsWith("remnic_hm_"), "tokens.json token must have hermes prefix");
 
-        // config.yaml must also contain the same token.
+        // config.yaml must contain the same token as tokens.json.
         const yaml = fs.readFileSync(path.join(profileDir, "config.yaml"), "utf-8");
         assert.ok(
-          yaml.includes(connJson.token),
-          "config.yaml must contain the same token as connector.json and tokens.json",
+          yaml.includes(entry!.token),
+          "config.yaml must contain the same token as tokens.json",
+        );
+
+        // listConnectors() must NOT expose the token — even if legacy connector.json
+        // somehow had one, the read path must redact it.
+        const listed = mod.listConnectors();
+        const listedHermes = listed.installed.find((c) => c.connectorId === "hermes");
+        assert.ok(listedHermes, "listConnectors must return hermes as installed");
+        assert.equal(
+          (listedHermes!.config as Record<string, unknown>).token,
+          undefined,
+          "listConnectors must NOT expose the token in config (Codex P1)",
         );
 
         // Force reinstall — old token must be replaced (not preserved).
@@ -1673,19 +1690,19 @@ test("atomic flow: happy path — connector.json and token written only after YA
         });
         assert.equal(result2.status, "installed", "Force reinstall must succeed");
         const connJson2 = JSON.parse(fs.readFileSync(result2.configPath!, "utf-8")) as {
-          token: string;
+          token?: string;
         };
-        assert.notEqual(
-          connJson2.token,
-          connJson.token,
-          "Force reinstall must rotate the token (old token must be replaced)",
-        );
-        // Old token must not appear in tokens.json.
+        assert.equal(connJson2.token, undefined, "connector.json must NOT contain token after force-reinstall (Codex P1)");
+        // New token must differ from old token — check via tokens.json.
         const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
           tokens: Array<{ token: string; connector: string }>;
         };
+        const entry2 = store2.tokens.find((t) => t.connector === "hermes");
+        assert.ok(entry2, "tokens.json must still have a hermes entry after force reinstall");
+        assert.notEqual(entry2!.token, entry!.token, "Force reinstall must rotate the token");
+        // Old token must not appear in tokens.json.
         assert.ok(
-          !store2.tokens.find((t) => t.token === connJson.token),
+          !store2.tokens.find((t) => t.token === entry!.token),
           "Old token must be revoked from tokens.json after successful force reinstall",
         );
       });
@@ -2198,27 +2215,32 @@ test("non-Hermes install: config write failure on fresh install revokes rotated 
   // Fix: capture the full token store before generateToken(), then on write
   // failure restore it (saveTokenStore with prior snapshot) so tokens.json has
   // no orphan entry for a fresh install (no prior entry → restored snapshot is
-  // also empty → claude-code entry is absent after rollback).
+  // also empty → replit entry is absent after rollback).
+  //
+  // Note: this test uses `replit` (requiresToken: true) as both seed and
+  // subject. Only connectors with requiresToken: true generate tokens — Codex P1
+  // fix added requiresToken gating so mcp/embedded/cli connectors no longer
+  // produce unneeded bearer credentials.
   const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
 
   await new Promise<void>((resolve, reject) => {
     try {
       withTempHome((tmpHome) => {
-        // Seed another connector (not claude-code) to discover the connectors dir,
-        // then lock the dir before the first claude-code install attempt.
-        // This ensures claude-code has NO prior token (fresh install scenario).
-        const seedOther = mod.installConnector({ connectorId: "cursor", config: {} });
-        assert.equal(seedOther.status, "installed", "Seed install of cursor must succeed");
+        // Seed a requiresToken connector to create the connectors dir and learn
+        // its path, then remove its JSON so the dir exists but has no replit entry.
+        // Using generic-mcp as seed so we can test replit as the fresh-install subject.
+        const seedOther = mod.installConnector({ connectorId: "generic-mcp", config: {} });
+        assert.equal(seedOther.status, "installed", "Seed install of generic-mcp must succeed");
         const connectorsDir = path.dirname(seedOther.configPath!);
 
-        // Remove any seeded cursor connector JSON (we only needed the dir path).
+        // Remove the seeded connector JSON so the dir exists but replit is absent.
         fs.unlinkSync(seedOther.configPath!);
-        // Lock the connectors dir so claude-code.json creation fails.
+        // Lock the connectors dir so replit.json creation fails.
         fs.chmodSync(connectorsDir, 0o555);
 
         let result: ReturnType<typeof mod.installConnector>;
         try {
-          result = mod.installConnector({ connectorId: "claude-code", config: {} });
+          result = mod.installConnector({ connectorId: "replit", config: {} });
         } finally {
           try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
         }
@@ -2232,15 +2254,15 @@ test("non-Hermes install: config write failure on fresh install revokes rotated 
           `Error message must describe the write failure, got: ${result!.message}`,
         );
 
-        // The claude-code token must NOT be in tokens.json. The pre-install snapshot
-        // had no claude-code entry, so restoring it removes the rotated token.
+        // The replit token must NOT be in tokens.json. The pre-install snapshot
+        // had no replit entry, so restoring it removes the rotated token.
         const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
         const storeAfter = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
           tokens: Array<{ token: string; connector: string }>;
         };
         assert.ok(
-          !storeAfter.tokens.find((t) => t.connector === "claude-code"),
-          "tokens.json must NOT contain a claude-code token after failed fresh install (UXJG fix)",
+          !storeAfter.tokens.find((t) => t.connector === "replit"),
+          "tokens.json must NOT contain a replit token after failed fresh install (UXJG fix)",
         );
       });
       resolve();
@@ -2255,21 +2277,24 @@ test("non-Hermes install: config write failure on force-reinstall restores prior
   // the PRIOR token (not the new rotated one, not absent) must be restored in
   // tokens.json. The daemon is still running with the old token, so restoring it
   // keeps authentication working without any disruption visible to the caller.
+  //
+  // Uses `replit` (requiresToken: true) — only connectors flagged requiresToken
+  // generate bearer credentials. Codex P1 added requiresToken gating.
   const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
 
   await new Promise<void>((resolve, reject) => {
     try {
       withTempHome((tmpHome) => {
-        // Step 1: Initial install to establish a prior token.
-        const install1 = mod.installConnector({ connectorId: "claude-code", config: {} });
-        assert.equal(install1.status, "installed", "Initial install must succeed");
+        // Step 1: Initial install of replit to establish a prior token.
+        const install1 = mod.installConnector({ connectorId: "replit", config: {} });
+        assert.equal(install1.status, "installed", "Initial replit install must succeed");
 
         const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
         const store1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
           tokens: Array<{ token: string; connector: string }>;
         };
-        const originalToken = store1.tokens.find((t) => t.connector === "claude-code")?.token;
-        assert.ok(originalToken, "Initial install must write a claude-code token");
+        const originalToken = store1.tokens.find((t) => t.connector === "replit")?.token;
+        assert.ok(originalToken, "Initial install must write a replit token");
 
         // Step 2: Force-reinstall with connectors dir locked — write will fail.
         const connectorsDir = path.dirname(install1.configPath!);
@@ -2278,7 +2303,7 @@ test("non-Hermes install: config write failure on force-reinstall restores prior
 
         let install2: ReturnType<typeof mod.installConnector>;
         try {
-          install2 = mod.installConnector({ connectorId: "claude-code", config: {}, force: true });
+          install2 = mod.installConnector({ connectorId: "replit", config: {}, force: true });
         } finally {
           try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
         }
@@ -2290,10 +2315,10 @@ test("non-Hermes install: config write failure on force-reinstall restores prior
         const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
           tokens: Array<{ token: string; connector: string }>;
         };
-        const restoredEntry = store2.tokens.find((t) => t.connector === "claude-code");
+        const restoredEntry = store2.tokens.find((t) => t.connector === "replit");
         assert.ok(
           restoredEntry,
-          "tokens.json must contain a claude-code entry after failed force-reinstall (UXJG fix)",
+          "tokens.json must contain a replit entry after failed force-reinstall (UXJG fix)",
         );
         assert.equal(
           restoredEntry!.token,
@@ -2506,9 +2531,9 @@ test("non-Hermes replit: force-reinstall config write failure restores prior tok
         assert.ok(t1Entry!.token.startsWith("remnic_rl_"), "T1 must have replit prefix (remnic_rl_)");
         const t1 = t1Entry!.token;
 
-        // connectors/replit.json must contain T1.
+        // connectors/replit.json must NOT contain any token field (Codex P1).
         const connectorJson1 = JSON.parse(fs.readFileSync(install1.configPath!, "utf-8")) as { token?: string };
-        assert.equal(connectorJson1.token, t1, "connectors/replit.json must reference T1");
+        assert.equal(connectorJson1.token, undefined, "connectors/replit.json must NOT contain a token field (Codex P1)");
 
         // Step 2: Lock the connectors dir so the next write fails.
         const connectorsDir = path.dirname(install1.configPath!);

@@ -66,6 +66,15 @@ export interface ConnectorManifest {
   repository?: string;
   /** Tags */
   tags?: string[];
+  /**
+   * Whether this connector requires a bearer token for daemon authentication.
+   * When false (the default), installConnector will NOT generate or persist a
+   * token entry in tokens.json — credentials are never materialized on disk for
+   * connectors that use MCP, embedded, CLI, or SDK transports that don't need
+   * token auth.  Set to true only for HTTP connectors that actually authenticate
+   * requests with a bearer token (e.g. hermes, replit, generic-mcp).
+   */
+  requiresToken?: boolean;
 }
 
 export interface ConnectorCapability {
@@ -383,6 +392,7 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
     homepage: "https://replit.com",
     author: "Replit",
     tags: ["official", "cloud"],
+    requiresToken: true,
   },
   {
     id: "generic-mcp",
@@ -408,6 +418,7 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
     homepage: "https://github.com/joshuaswarren/remnic",
     author: "Remnic",
     tags: ["generic", "mcp"],
+    requiresToken: true,
   },
   {
     id: "hermes",
@@ -433,6 +444,7 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
     homepage: "https://github.com/joshuaswarren/remnic/tree/main/packages/plugin-hermes",
     author: "Remnic",
     tags: ["official", "python", "hermes"],
+    requiresToken: true,
   },
 ];
 
@@ -526,12 +538,18 @@ export function listConnectors(): {
   for (const id of installedIds) {
     const configPath = path.join(connectorsDir, `${id}.json`);
     try {
-      const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      // Codex P1 (PRRT_kwDORJXyws56U9U0): strip any legacy `token` field from
+      // the returned config so that `remnic connectors list --json` never prints
+      // a bearer token — tokens live only in tokens.json. This handles existing
+      // on-disk connector.json files written by older Remnic versions without
+      // rewriting user files.
+      const { token: _redacted, ...config } = raw;
       installed.push({
         connectorId: id,
         config,
         status: "installed",
-        installedAt: config.installedAt as string | undefined,
+        installedAt: raw.installedAt as string | undefined,
       });
     } catch {
       // ignore
@@ -539,6 +557,19 @@ export function listConnectors(): {
   }
 
   return { installed, available };
+}
+
+// ── Get connector token ────────────────────────────────────────────────────
+// Codex P1 (PRRT_kwDORJXyws56U9U0): tokens are stored exclusively in
+// tokens.json. This helper is the canonical way to retrieve the bearer token
+// for a connector — connector.json never contains it.
+
+export function getConnectorToken(connectorId: string): string | undefined {
+  try {
+    return loadTokenStore().tokens.find((t) => t.connector === connectorId)?.token;
+  } catch {
+    return undefined;
+  }
 }
 
 // ── Install connector ───────────────────────────────────────────────────────
@@ -675,27 +706,33 @@ export function installConnector(options: InstallOptions): InstallResult {
   // Generate a per-connector auth token so the daemon can authenticate
   // requests from this connector.
   //
+  // Security gate (PRRT_kwDORJXyws56U9U0 round 6): tokens are ONLY generated
+  // and persisted to tokens.json for connectors that actually require bearer-token
+  // auth (manifest.requiresToken === true). MCP, CLI, embedded, and SDK connectors
+  // never need a token entry on disk — generating one unconditionally materialized
+  // credentials for connectors that have no auth requirement, a security regression.
+  //
   // For hermes (Issue B fix): use buildTokenEntry() to generate a candidate
   // token WITHOUT immediately persisting it to tokens.json. We commit the
   // candidate to the store only AFTER upsertHermesConfig succeeds, so that
   // a failed or skipped config.yaml write never leaves the daemon with a
   // revoked token and no valid replacement written.
   //
-  // For all other connectors: generateToken() is idempotent — it filters
-  // the old entry and writes a fresh one atomically, so force-reinstall
+  // For other connectors that requiresToken: generateToken() is idempotent —
+  // it filters the old entry and writes a fresh one atomically, so force-reinstall
   // produces a new token automatically.
   //
   // Token write errors (e.g. read-only HOME with writable XDG_CONFIG_HOME)
   // are non-fatal: we degrade gracefully and proceed with the connector
   // config write rather than aborting the whole install.
   //
-  // For non-Hermes: snapshot the FULL token store BEFORE generateToken() so
-  // that if the connector JSON write later fails, we can restore the store to
-  // its pre-install state (UXJG fix — non-Hermes atomic rollback).
-  // Using a full-store snapshot (not a single-entry snapshot) ensures that a
-  // partial write of tokens.json during generateToken can be unwound atomically,
-  // covering both fresh-install and force-reinstall cases uniformly.
-  const nonHermesPriorTokenStore = options.connectorId !== "hermes"
+  // For non-Hermes connectors that requiresToken: snapshot the FULL token store
+  // BEFORE generateToken() so that if the connector JSON write later fails, we
+  // can restore the store to its pre-install state (UXJG fix — non-Hermes atomic
+  // rollback). Using a full-store snapshot (not a single-entry snapshot) ensures
+  // that a partial write of tokens.json during generateToken can be unwound
+  // atomically, covering both fresh-install and force-reinstall cases uniformly.
+  const nonHermesPriorTokenStore = (options.connectorId !== "hermes" && manifest.requiresToken)
     ? loadTokenStore()
     : null;
 
@@ -707,7 +744,8 @@ export function installConnector(options: InstallOptions): InstallResult {
     } catch {
       // Non-fatal: fall through with tokenEntry === null.
     }
-  } else {
+  } else if (manifest.requiresToken) {
+    // Only generate and persist a token entry for connectors that need token auth.
     try {
       tokenEntry = generateToken(options.connectorId);
     } catch {
@@ -729,18 +767,27 @@ export function installConnector(options: InstallOptions): InstallResult {
       }
     }
   }
+  // else: connector does not require token auth — tokenEntry stays null and
+  // tokens.json is never touched for this connector.
 
   // Build config from schema defaults + user overrides.
-  // Spread user config FIRST, then overlay the daemon-generated token so that
-  // a stray `token` key in options.config cannot silently override the value
-  // we just wrote to the token store. The connector JSON config and the
-  // daemon's tokens.json must agree on which token authorizes this connector.
-  // For hermes, also include the resolved profile/host/port so that future
+  // Codex P1 (PRRT_kwDORJXyws56U9U0): tokens MUST NOT be written into
+  // connector.json. The authoritative store is tokens.json (0o600). Writing the
+  // token here created a second, unredacted copy that `remnic connectors list
+  // --json` printed verbatim, leaking live bearer tokens into shell history, CI
+  // logs, and telemetry. Callers needing the token for a specific connector
+  // must use getConnectorToken(connectorId) which looks up tokens.json directly.
+  //
+  // For hermes, include the resolved profile/host/port so that future
   // force-reinstalls can read them back even if options.config is not supplied.
+  //
+  // Strip any stray `token` key the caller may have supplied via options.config
+  // so it cannot be persisted to disk even on legacy call paths.
+  const { token: _callerToken, ...safeUserConfig } = (options.config ?? {}) as Record<string, unknown>;
   const resolvedConfig: Record<string, unknown> = {
     connectorId: options.connectorId,
     installedAt: new Date().toISOString(),
-    ...options.config,
+    ...safeUserConfig,
     // For hermes, always overlay the sanitized/coerced resolved values so that
     // the connector JSON always has a numeric port and validated profile/host.
     // This also ensures options.config string values (from --config=port=5555)
@@ -750,7 +797,6 @@ export function installConnector(options: InstallOptions): InstallResult {
       host: hermesResolvedHost,
       port: hermesResolvedPort,
     } : {}),
-    ...(tokenEntry ? { token: tokenEntry.token } : {}),
   };
 
   // ── Hermes atomic install flow ─────────────────────────────────────────────
