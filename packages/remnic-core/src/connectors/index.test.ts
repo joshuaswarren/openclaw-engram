@@ -794,22 +794,32 @@ test("removeConnector with corrupt codex-cli.json does NOT remove extension", as
 
       const removeResult = removeConnector("codex-cli");
 
-      // The config file was present (malformed but present) so "Not installed"
-      // would be wrong — instead we should get a Removed message but with the
-      // extension step skipped.
-      assert.ok(
-        removeResult.message.includes("Removed"),
-        `expected Removed, got: ${removeResult.message}`,
+      // The malformed config must cause removeConnector to abort via the
+      // structured skip API (mirrors tests/codex-memory-extension-install.test.ts).
+      // We rely on the structured fields rather than substring-matching the
+      // human-readable message, which is not a stable contract.
+      assert.equal(
+        removeResult.status,
+        "skipped",
+        `expected status "skipped", got: ${removeResult.status} — ${removeResult.message}`,
       );
-      assert.ok(
-        removeResult.message.includes("parse failed") || removeResult.message.includes("skipped"),
-        `message should indicate extension was skipped due to parse failure, got: ${removeResult.message}`,
+      assert.equal(
+        removeResult.reason,
+        "config-parse-failed",
+        `expected reason "config-parse-failed", got: ${removeResult.reason}`,
       );
 
       // The self-managed extension must NOT have been deleted.
       assert.ok(
         fs.existsSync(paths.remnicExtensionDir),
         "extension must survive when config parsing fails",
+      );
+
+      // The malformed config file must also be preserved so the operator can
+      // inspect it and retry the removal once the config is fixed.
+      assert.ok(
+        fs.existsSync(configPath),
+        "malformed config file must NOT be deleted — operator needs it for inspection/retry",
       );
     },
   );

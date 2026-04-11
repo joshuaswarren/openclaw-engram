@@ -560,6 +560,11 @@ export function installConnector(options: InstallOptions): InstallResult {
   // Codex CLI: also drop the phase-2 memory extension unless the caller
   // explicitly opted out via `config.installExtension: false`.
   let extensionMessage = "";
+  // Explicit structured flag for the config-write rollback gate. This MUST
+  // stay decoupled from `extensionMessage` because that string embeds the
+  // install path — substring-matching on "skipped" would misfire whenever
+  // the codex home happens to contain the word "skipped".
+  let extensionInstalled = false;
   if (options.connectorId === "codex-cli") {
     // Finding 1: coerce string "false"/"true" from CLI config parsing to a real
     // boolean before the gate check, then persist the coerced value so it is
@@ -596,6 +601,7 @@ export function installConnector(options: InstallOptions): InstallResult {
           sourceDir: extensionSourceOverride,
         });
         extensionMessage = ` (memory extension: ${extResult.remnicExtensionDir})`;
+        extensionInstalled = true;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "unknown error";
         return {
@@ -628,7 +634,10 @@ export function installConnector(options: InstallOptions): InstallResult {
     fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
   } catch (writeErr) {
     // Config write failed — remove the extension we just installed, if any.
-    if (options.connectorId === "codex-cli" && extensionMessage.startsWith(" (memory extension:") && !extensionMessage.includes("skipped")) {
+    // Use the explicit structured flag rather than substring-matching on
+    // extensionMessage (which embeds the install path and could spuriously
+    // contain the word "skipped").
+    if (options.connectorId === "codex-cli" && extensionInstalled) {
       try {
         const resolvedCodexHome =
           typeof resolvedConfig.codexHome === "string" ? (resolvedConfig.codexHome as string) : null;
