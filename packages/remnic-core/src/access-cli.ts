@@ -167,8 +167,16 @@ function loadPluginConfig(): Record<string, unknown> {
     readEnvVar("OPENCLAW_CONFIG_PATH") ||
     path.join(resolveHomeDir(), ".openclaw", "openclaw.json");
   const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  // Check new id first, fall back to legacy id for existing configs (#403)
-  return (raw?.plugins?.entries?.[PLUGIN_ID] ?? raw?.plugins?.entries?.[LEGACY_PLUGIN_ID])?.config ?? {};
+  // Resolve via the active memory slot first so that migration configs with
+  // both entries honour whichever id the operator configured (#403).
+  const activeSlot: string | undefined = raw?.plugins?.slots?.memory;
+  const entry =
+    (activeSlot && raw?.plugins?.entries?.[activeSlot] !== undefined
+      ? raw.plugins.entries[activeSlot]
+      : undefined) ??
+    raw?.plugins?.entries?.[PLUGIN_ID] ??
+    raw?.plugins?.entries?.[LEGACY_PLUGIN_ID];
+  return entry?.config ?? {};
 }
 
 function buildRuntime(): Runtime {

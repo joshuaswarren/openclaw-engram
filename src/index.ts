@@ -73,7 +73,13 @@ function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
         : path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
-    // Check new id first, fall back to legacy id for existing configs (#403)
+    // Resolve via the active memory slot first so migration configs that have
+    // both entries honour whichever id the operator has set (#403).
+    const activeSlot: string | undefined = config?.plugins?.slots?.memory;
+    if (activeSlot && config?.plugins?.entries?.[activeSlot] !== undefined) {
+      return config.plugins.entries[activeSlot] as Record<string, unknown>;
+    }
+    // Fall back to canonical id order for configs without a slot declaration.
     return (config?.plugins?.entries?.[PLUGIN_ID] ?? config?.plugins?.entries?.[LEGACY_PLUGIN_ID]) as
       | Record<string, unknown>
       | undefined;
@@ -96,10 +102,16 @@ function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
 function readPluginHooksPolicy(
   apiConfig: unknown,
 ): Record<string, unknown> | undefined {
-  // Try api.config first
-  // Check new id first, fall back to legacy id for existing configs (#403)
-  const fromApi = ((apiConfig as any)?.plugins?.entries?.[PLUGIN_ID] ?? (apiConfig as any)?.plugins?.entries?.[LEGACY_PLUGIN_ID])
-    ?.hooks;
+  // Try api.config first — resolve via active memory slot, then fall back by id.
+  const apiAny = apiConfig as any;
+  const apiSlot: string | undefined = apiAny?.plugins?.slots?.memory;
+  const apiEntry =
+    (apiSlot && apiAny?.plugins?.entries?.[apiSlot] !== undefined
+      ? apiAny.plugins.entries[apiSlot]
+      : undefined) ??
+    apiAny?.plugins?.entries?.[PLUGIN_ID] ??
+    apiAny?.plugins?.entries?.[LEGACY_PLUGIN_ID];
+  const fromApi = apiEntry?.hooks;
   if (fromApi && typeof fromApi === "object") return fromApi;
   // Fall back to file-backed config
   return loadPluginEntryFromFile()?.hooks as
