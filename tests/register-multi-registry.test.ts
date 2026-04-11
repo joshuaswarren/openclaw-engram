@@ -103,11 +103,18 @@ function buildApi(label: string) {
   };
 }
 
+// `register()` writes to both the keyed orchestrator slot
+// (`__openclawEngramOrchestrator::<serviceId>`) AND to an unkeyed mirror
+// (`__openclawEngramOrchestrator`) that cross-plugin observers read.  Tests
+// must save/restore BOTH slots or state leaks across test cases.
+const UNKEYED_ORCH_MIRROR_KEY = "__openclawEngramOrchestrator";
+
 function saveAndResetGlobals() {
   const saved = {
     guard: (globalThis as any)[GUARD_KEY],
     hookApis: (globalThis as any)[HOOK_APIS_KEY],
     orch: (globalThis as any)[ORCH_KEY],
+    unkeyedOrchMirror: (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY],
     accessSvc: (globalThis as any)[ACCESS_SVC_KEY],
     accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
     serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
@@ -117,6 +124,7 @@ function saveAndResetGlobals() {
   delete (globalThis as any)[GUARD_KEY];
   delete (globalThis as any)[HOOK_APIS_KEY];
   delete (globalThis as any)[ORCH_KEY];
+  delete (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY];
   delete (globalThis as any)[ACCESS_SVC_KEY];
   delete (globalThis as any)[ACCESS_HTTP_KEY];
   delete (globalThis as any)[SERVICE_STARTED_KEY];
@@ -167,6 +175,9 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
   if (saved.orch !== undefined) (globalThis as any)[ORCH_KEY] = saved.orch;
   else delete (globalThis as any)[ORCH_KEY];
+
+  if (saved.unkeyedOrchMirror !== undefined) (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY] = saved.unkeyedOrchMirror;
+  else delete (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY];
 
   if (saved.accessSvc !== undefined) (globalThis as any)[ACCESS_SVC_KEY] = saved.accessSvc;
   else delete (globalThis as any)[ACCESS_SVC_KEY];
@@ -746,6 +757,10 @@ test("register() scopes runtime singletons per serviceId when two plugin ids sha
   const LEGACY_SERVICE_STARTED_KEY = `__openclawEngramServiceStarted::${LEGACY_SERVICE_ID}`;
   const LEGACY_INIT_PROMISE_KEY = `__openclawEngramInitPromise::${LEGACY_SERVICE_ID}`;
 
+  // saveAndResetGlobals() saves/resets the canonical (`openclaw-remnic`) slots
+  // and the unkeyed mirror.  We still need to independently save/reset the
+  // legacy (`openclaw-engram`) per-service slots so this test gets a clean
+  // starting state for the legacy plugin id.
   const saved = saveAndResetGlobals();
   const savedLegacy = {
     guard: (globalThis as any)[LEGACY_GUARD_KEY],
@@ -755,7 +770,6 @@ test("register() scopes runtime singletons per serviceId when two plugin ids sha
     accessHttp: (globalThis as any)[LEGACY_ACCESS_HTTP_KEY],
     serviceStarted: (globalThis as any)[LEGACY_SERVICE_STARTED_KEY],
     initPromise: (globalThis as any)[LEGACY_INIT_PROMISE_KEY],
-    unkeyedOrch: (globalThis as any).__openclawEngramOrchestrator,
   };
   delete (globalThis as any)[LEGACY_GUARD_KEY];
   delete (globalThis as any)[LEGACY_HOOK_APIS_KEY];
@@ -764,7 +778,6 @@ test("register() scopes runtime singletons per serviceId when two plugin ids sha
   delete (globalThis as any)[LEGACY_ACCESS_HTTP_KEY];
   delete (globalThis as any)[LEGACY_SERVICE_STARTED_KEY];
   delete (globalThis as any)[LEGACY_INIT_PROMISE_KEY];
-  delete (globalThis as any).__openclawEngramOrchestrator;
 
   const previousDisableMigration = disableRegisterMigrationForTest();
   let canonical: ReturnType<typeof buildApi> | undefined;
@@ -864,9 +877,8 @@ test("register() scopes runtime singletons per serviceId when two plugin ids sha
     else delete (globalThis as any)[LEGACY_SERVICE_STARTED_KEY];
     if (savedLegacy.initPromise !== undefined) (globalThis as any)[LEGACY_INIT_PROMISE_KEY] = savedLegacy.initPromise;
     else delete (globalThis as any)[LEGACY_INIT_PROMISE_KEY];
-    if (savedLegacy.unkeyedOrch !== undefined) (globalThis as any).__openclawEngramOrchestrator = savedLegacy.unkeyedOrch;
-    else delete (globalThis as any).__openclawEngramOrchestrator;
 
+    // restoreGlobals() restores the canonical slots AND the unkeyed mirror.
     restoreGlobals(saved);
   }
 });
