@@ -180,15 +180,32 @@ export function materializeForNamespace(
       ? options.rolloutRetentionDays
       : 30;
 
-  mkdirSync(memoriesDir, { recursive: true });
-
   // ── Sentinel check ─────────────────────────────────────────────────────
+  // We deliberately do NOT `mkdirSync(memoriesDir)` before reading the
+  // sentinel: creating `~/.codex/memories/` for every user (including ones
+  // who never use Codex) would make Remnic's post-consolidation hook leave
+  // empty opt-in directories behind on disk. Instead we only check whether
+  // the sentinel already exists — if the parent dir doesn't exist, the
+  // sentinel can't exist either and we fall straight through to the skip
+  // path without touching the filesystem. The `mkdirSync` for `memoriesDir`
+  // happens later, only once we know we're actually going to write.
   const sentinelPath = path.join(memoriesDir, SENTINEL_FILE);
   const existingSentinel = readSentinel(sentinelPath);
   if (!existingSentinel) {
-    logger.warn(
-      `sentinel ${SENTINEL_FILE} missing in ${memoriesDir}; skipping materialization to preserve hand-edits`,
-    );
+    // Log at `debug` when the entire memories dir doesn't exist — that's
+    // the common "user never opted in" case and should not be noisy.
+    // Keep the `warn` level only when the dir exists but lacks a sentinel,
+    // which is the "user hand-curated layout, don't overwrite" case that
+    // genuinely warrants attention.
+    if (existsSync(memoriesDir)) {
+      logger.warn(
+        `sentinel ${SENTINEL_FILE} missing in ${memoriesDir}; skipping materialization to preserve hand-edits`,
+      );
+    } else {
+      logger.debug?.(
+        `skipping materialization — ${memoriesDir} does not exist (user not opted in)`,
+      );
+    }
     return {
       namespace,
       memoriesDir,
@@ -199,6 +216,13 @@ export function materializeForNamespace(
       contentHash: "",
     };
   }
+
+  // Now that we know the user has opted in (sentinel exists), it's safe to
+  // ensure the memories dir is present. In practice this is almost always a
+  // no-op because the sentinel read above already succeeded, but a defensive
+  // mkdirSync protects against a race where the dir was removed between the
+  // sentinel read and the first write.
+  mkdirSync(memoriesDir, { recursive: true });
 
   // ── Render ─────────────────────────────────────────────────────────────
   const memories = [...options.memories];
@@ -219,23 +243,34 @@ export function materializeForNamespace(
   // Deduplicate on sanitized filename. Two different slugs ("Session 1" and
   // "session!!!1") can sanitize to the same output ("session-1"), which would
   // otherwise make the first entry's tmp file get overwritten and cause the
-  // later rename step to crash with ENOENT. We keep the *last* entry with a
-  // given sanitized name so the most-recent rollout for that slot wins.
+  // later rename step to crash with ENOENT. For each collision slot we keep
+  // the entry with the newest `updatedAt` so an unsorted input (or a caller
+  // that accidentally appends older recaps after newer ones) can't have an
+  // older recap clobber a newer one.
   // We do this at the retained-input level (not just at the written-file
   // level) so MEMORY.md's "rollout_summary_files" section lists each slot
   // exactly once and matches what actually gets written to disk.
   const dedupedRollouts: RolloutSummaryInput[] = [];
   const seenNames = new Map<string, number>();
+  const parseTs = (value: string | undefined): number => {
+    if (!value) return Number.NEGATIVE_INFINITY;
+    const parsed = Date.parse(value);
+    return Number.isFinite(parsed) ? parsed : Number.NEGATIVE_INFINITY;
+  };
   for (const r of retainedRollouts) {
     const name = `${sanitizeSlug(r.slug)}.md`;
     const existingIdx = seenNames.get(name);
     if (existingIdx === undefined) {
       seenNames.set(name, dedupedRollouts.length);
       dedupedRollouts.push(r);
-    } else {
-      // Last-wins: replace the previous entry with this one so the newest
-      // rollout for that filename slot is what MEMORY.md and the rendered
-      // file both reflect.
+      continue;
+    }
+    // Newest-wins: only replace the existing entry if the incoming one has a
+    // strictly newer timestamp. Ties keep the earlier entry (stable for
+    // unsorted inputs) because overwriting on ties would flip rendering output
+    // for benign call-order changes.
+    const existing = dedupedRollouts[existingIdx];
+    if (parseTs(r.updatedAt) > parseTs(existing.updatedAt)) {
       dedupedRollouts[existingIdx] = r;
     }
   }
@@ -245,14 +280,12 @@ export function materializeForNamespace(
     memories,
     rolloutSummaries: dedupedRollouts,
     maxTokens: maxSummaryTokens,
-    now,
   });
 
   const memoryMd = renderMemoryMd({
     namespace,
     memories,
     rolloutSummaries: dedupedRollouts,
-    now,
   });
 
   // Fail fast on schema issues — do not write garbage.
@@ -465,7 +498,12 @@ interface RenderContext {
   namespace: string;
   memories: MemoryFile[];
   rolloutSummaries: RolloutSummaryInput[];
-  now: Date;
+  // Historically this interface exposed a `now: Date` field, but neither
+  // `renderMemoryMd` nor `renderMemorySummary` ever read it (rendered output
+  // is purely a function of `namespace`, `memories`, and `rolloutSummaries`).
+  // The field was flagged as dead weight in PR #392 review and removed.
+  // If a future renderer needs a timestamp, re-add it here and update both
+  // call sites and the schema test.
 }
 
 interface SummaryRenderContext extends RenderContext {

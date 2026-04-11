@@ -542,3 +542,73 @@ test("concurrent materialize runs use isolated staging dirs", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("dedupe keeps the newest rollout for a collision slot regardless of input order", () => {
+  // Regression (PR #392 review thread PRRT_kwDORJXyws56TOVr): the old last-wins
+  // dedupe allowed an unsorted caller to have an older recap overwrite a newer
+  // one when two slugs sanitized to the same filename. Verify newest-by-
+  // `updatedAt` survives no matter which order they arrive in.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "dedupe-newest-ns");
+    // Newer entry appears FIRST in the array. Last-wins would have clobbered
+    // it with the older entry; newest-wins must keep it.
+    const result = materializeForNamespace("dedupe-newest-ns", {
+      memories: [makeMemory({ content: "synthetic dedupe anchor" })],
+      codexHome: root,
+      rolloutSummaries: [
+        {
+          slug: "Session 1",
+          updatedAt: "2026-04-05T12:00:00Z",
+          body: "NEWER synthetic recap — must survive dedupe.",
+        },
+        {
+          slug: "session!!!1",
+          updatedAt: "2026-04-01T00:00:00Z",
+          body: "older synthetic recap — must be dropped.",
+        },
+      ],
+      now: new Date("2026-04-06T00:00:00Z"),
+    });
+
+    assert.equal(result.wrote, true);
+    const rolloutPath = path.join(memoriesDir, "rollout_summaries", "session-1.md");
+    assert.ok(existsSync(rolloutPath), "collided rollout file must exist");
+    const body = readFileSync(rolloutPath, "utf-8");
+    assert.match(body, /NEWER synthetic recap/u, "newest updatedAt must win the slot");
+    assert.doesNotMatch(body, /older synthetic recap/u);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not create <codex_home>/memories/ when the user has not opted in", () => {
+  // Regression (PR #392 review thread PRRT_kwDORJXyws56TOHE): the old
+  // implementation called `mkdirSync(memoriesDir, { recursive: true })` before
+  // the sentinel check, so every Remnic user — including those who never
+  // touch Codex — ended up with an empty `~/.codex/memories/` dir after the
+  // first post-consolidation hook. The fix defers the mkdirSync until after
+  // we've confirmed the sentinel exists.
+  const root = mkdtempSync(path.join(os.tmpdir(), "codex-materialize-optout-"));
+  try {
+    const memoriesDir = path.join(root, "memories");
+    // Intentionally do NOT create `memoriesDir` and do NOT ensureSentinel.
+    assert.equal(existsSync(memoriesDir), false);
+
+    const result = materializeForNamespace("optout-ns", {
+      memories: [makeMemory({ content: "synthetic opt-out payload" })],
+      codexHome: root,
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+
+    assert.equal(result.skippedNoSentinel, true);
+    assert.equal(result.wrote, false);
+    assert.equal(
+      existsSync(memoriesDir),
+      false,
+      "memories/ must not be created for users without a sentinel",
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

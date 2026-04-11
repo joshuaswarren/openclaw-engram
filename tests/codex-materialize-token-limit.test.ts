@@ -63,7 +63,6 @@ test("renderMemorySummary stays under the configured token budget", () => {
     memories,
     rolloutSummaries: [],
     maxTokens: budget,
-    now: new Date("2026-04-02T00:00:00Z"),
   });
 
   assert.ok(
@@ -106,7 +105,6 @@ test("renderMemorySummary honors maxTokens=0 by emitting no summary body", () =>
     memories: [makeMemory("synthetic long enough memory body text", "zero-1")],
     rolloutSummaries: [],
     maxTokens: 0,
-    now: new Date("2026-04-02T00:00:00Z"),
   });
   assert.equal(rendered, "");
 });
@@ -122,7 +120,6 @@ test("renderMemorySummary with default budget stays under Codex's 5000-token cap
     memories,
     rolloutSummaries: [],
     maxTokens: 4500, // matches the config default
-    now: new Date("2026-04-02T00:00:00Z"),
   });
   assert.ok(approximateTokenCount(rendered) < 5000);
 });

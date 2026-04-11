@@ -158,22 +158,19 @@ test("runner skips when reason=session_end and codexMaterializeOnSessionEnd=fals
 test("runner propagates schema errors instead of silently returning null", async () => {
   // Regression (Cursor Bugbot on #392): the old catch-all turned schema
   // validation throws from materializeForNamespace into silent `null`
-  // returns, breaking the JSDoc contract. Verify a rendered MEMORY.md that
-  // fails validation bubbles up to the caller.
+  // returns, breaking the JSDoc contract. Verify a hard I/O error bubbles
+  // up to the caller instead of being swallowed.
   //
-  // We trigger a schema failure by stubbing renderMemoryMd via a namespace
-  // with an obviously-bogus structure: easiest path is to hand runCodexMaterialize
-  // a memories list that causes rendered content to miss required sections.
+  // To hit an actual write-path failure we need:
+  //   - `codexHome/memories/` exists as a real directory (opt-in branch)
+  //   - a valid sentinel is present (idempotent guard doesn't short-circuit)
+  //   - writing to `memoriesDir` fails at rename time
   //
-  // The straightforward failure path is: pass a non-existent codexHome
-  // where we can't create the sentinel → a sentinel-missing path returns
-  // normally. To actually hit a schema throw we pre-populate a sentinel
-  // then supply memories whose rendered MEMORY.md we can break. Since the
-  // renderer is deterministic, the cleanest approach is to drive a known
-  // validator failure by stubbing via monkey-patching — but the simpler
-  // and realistic check is to verify that IF the materializer throws, the
-  // runner throws too (not returns null). We do this by passing a memoryDir
-  // that points to an unwritable path so the writer throws EACCES/ENOENT.
+  // We accomplish the write failure by placing a pre-existing *directory*
+  // at the destination path `memoriesDir/memory_summary.md`. renameSync
+  // cannot replace a directory with a file, so we get EISDIR which the
+  // runner must propagate rather than silently swallow.
+  const fsMod = await import("node:fs");
   const memoryDir = makeTempDir("codex-materialize-runner-throw-memdir-");
   const workspaceDir = makeTempDir("codex-materialize-runner-throw-workspace-");
   const { root: codexHome, memoriesDir } = makeCodexHome();
@@ -191,23 +188,24 @@ test("runner propagates schema errors instead of silently returning null", async
       codexMaterializeMemories: true,
     });
 
-    // Delete the codex memories dir mid-flight via a sentinel path that
-    // does not exist as a directory, so writeFileSync throws. We point
-    // codexHome at a regular file so `path.join(codexHome, "memories")`
-    // becomes an invalid path.
-    const badFilePath = path.join(os.tmpdir(), `codex-materialize-runner-badfile-${Date.now()}`);
-    (await import("node:fs")).writeFileSync(badFilePath, "not a directory");
+    // Block the rename by planting a directory where the renamer wants to
+    // put a file. On POSIX this surfaces as EISDIR; on Windows it shows up
+    // as EPERM/EACCES/EEXIST. Match any of those.
+    fsMod.mkdirSync(path.join(memoriesDir, "memory_summary.md"), { recursive: true });
+    fsMod.writeFileSync(
+      path.join(memoriesDir, "memory_summary.md", "blocker.txt"),
+      "synthetic blocker — forces rename to fail",
+    );
 
     await assert.rejects(
       runCodexMaterialize({
         config,
-        codexHome: badFilePath,
+        codexHome,
         reason: "manual",
         now: new Date("2026-04-02T00:00:00Z"),
       }),
-      /ENOTDIR|EEXIST|not a directory|EACCES|file already exists/iu,
+      /EISDIR|ENOTEMPTY|EEXIST|EPERM|EACCES|is a directory|directory not empty|file already exists/iu,
     );
-    (await import("node:fs")).rmSync(badFilePath, { force: true });
   } finally {
     rmSync(memoryDir, { recursive: true, force: true });
     rmSync(workspaceDir, { recursive: true, force: true });

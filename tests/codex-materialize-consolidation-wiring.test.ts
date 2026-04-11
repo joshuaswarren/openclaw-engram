@@ -99,11 +99,99 @@ test("session-end.sh resolves REMNIC_REPO_ROOT from its own filesystem location"
     /remnic --print-root/u,
     "session-end.sh must not depend on the non-existent `remnic --print-root` flag",
   );
-  // And the resolution must verify the candidate root by checking for
-  // the sentinel script before running it.
+  // Dev fallback path must still verify the candidate root by checking
+  // for the dev script before running it.
   assert.match(
     src,
     /scripts\/codex-materialize\.ts/u,
     "session-end.sh must verify the candidate root contains scripts/codex-materialize.ts",
+  );
+});
+
+test("session-end.sh prefers the packaged materialize.cjs binary for distributed installs", () => {
+  // Regression (PR #392 review thread PRRT_kwDORJXyws56TOVo): the old hook
+  // only knew how to run `scripts/codex-materialize.ts` via tsx, which is
+  // never shipped inside any published package payload. The fix ships a
+  // packaged CJS wrapper at `packages/plugin-codex/bin/materialize.cjs` and
+  // has the hook prefer it before falling back to the dev script.
+  const src = readFileSync(
+    path.join(repoRoot, "packages/plugin-codex/hooks/bin/session-end.sh"),
+    "utf-8",
+  );
+  assert.match(
+    src,
+    /materialize\.cjs/u,
+    "session-end.sh must reference the packaged materialize.cjs binary",
+  );
+  assert.match(
+    src,
+    /REMNIC_CODEX_MATERIALIZE_BIN/u,
+    "session-end.sh must honor a REMNIC_CODEX_MATERIALIZE_BIN env override",
+  );
+  // The packaged bin is preferred: its resolution block must appear before
+  // the dev-script fallback in the file so distributed installs never hit
+  // the tsx shim.
+  const binIdx = src.indexOf("materialize.cjs");
+  const scriptIdx = src.indexOf("scripts/codex-materialize.ts");
+  assert.ok(binIdx >= 0 && scriptIdx >= 0, "both paths must exist");
+  assert.ok(
+    binIdx < scriptIdx,
+    "packaged bin resolution must appear before the dev-script fallback",
+  );
+});
+
+test("packaged materialize.cjs exists and delegates to @remnic/core", () => {
+  const src = readFileSync(
+    path.join(repoRoot, "packages/plugin-codex/bin/materialize.cjs"),
+    "utf-8",
+  );
+  // Must dynamically import @remnic/core (ESM-only).
+  assert.match(
+    src,
+    /import\(["']@remnic\/core["']\)/u,
+    "materialize.cjs must dynamically import @remnic/core",
+  );
+  // Must call runCodexMaterialize and parseConfig (the public contract the
+  // hook depends on).
+  assert.match(
+    src,
+    /runCodexMaterialize/u,
+    "materialize.cjs must invoke runCodexMaterialize",
+  );
+  assert.match(
+    src,
+    /parseConfig/u,
+    "materialize.cjs must invoke parseConfig to build a PluginConfig",
+  );
+});
+
+test("plugin-codex package ships bin/ and depends on @remnic/core", () => {
+  const pkg = JSON.parse(
+    readFileSync(path.join(repoRoot, "packages/plugin-codex/package.json"), "utf-8"),
+  );
+  assert.ok(
+    Array.isArray(pkg.files) && pkg.files.includes("bin"),
+    "plugin-codex package.json must ship the bin/ directory",
+  );
+  assert.ok(
+    pkg.dependencies && pkg.dependencies["@remnic/core"],
+    "plugin-codex package.json must declare a @remnic/core runtime dependency",
+  );
+});
+
+test("@remnic/core re-exports runCodexMaterialize for external consumers", () => {
+  const src = readFileSync(
+    path.join(repoRoot, "packages/remnic-core/src/index.ts"),
+    "utf-8",
+  );
+  assert.match(
+    src,
+    /runCodexMaterialize/u,
+    "@remnic/core index.ts must export runCodexMaterialize so the packaged bin can import it",
+  );
+  assert.match(
+    src,
+    /materializeForNamespace/u,
+    "@remnic/core index.ts must export materializeForNamespace",
   );
 });

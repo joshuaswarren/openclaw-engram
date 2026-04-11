@@ -51,7 +51,6 @@ test("validateMemoryMd accepts rendered output with multiple categories", () => 
         body: "Synthetic recap.",
       },
     ],
-    now: new Date("2026-04-02T00:00:00Z"),
   });
 
   const validation = validateMemoryMd(rendered);
@@ -76,7 +75,6 @@ test("validateMemoryMd accepts the empty-namespace baseline rendering", () => {
     namespace: "empty-ns",
     memories: [],
     rolloutSummaries: [],
-    now: new Date("2026-04-02T00:00:00Z"),
   });
   const validation = validateMemoryMd(rendered);
   assert.equal(validation.valid, true, validation.errors.join("; "));
