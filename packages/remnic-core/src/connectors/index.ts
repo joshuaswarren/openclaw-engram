@@ -720,19 +720,26 @@ export function installConnector(options: InstallOptions): InstallResult {
     } : {}),
     ...(tokenEntry ? { token: tokenEntry.token } : {}),
   };
-  // Write with owner-only permissions because the JSON may embed the
-  // connector bearer token. Matches the 0o600 hardening on
-  // ~/.remnic/tokens.json so the token is never world-readable via this
-  // secondary location.
-  writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
 
-  const notes: string[] = [];
+  // ── Hermes atomic install flow ─────────────────────────────────────────────
+  // The Hermes install sequence must be atomic: connector.json must only be
+  // written if and only if both the YAML write AND the token-store commit
+  // succeed. Partial failures must leave the prior state intact so the daemon
+  // keeps working with the old token.
+  //
+  // Step order (all-or-nothing):
+  //   a. Generate token candidate (buildTokenEntry, no store write yet).
+  //   b. Validate profile (fail-fast).
+  //   c. Write config.yaml via upsertHermesConfig — if skipped (missing dir)
+  //      or throws, abort with status "error". Old token is NOT revoked.
+  //   d. Commit new token to tokens.json — if this throws, rollback the YAML
+  //      write (restore prior content or delete new file) and abort.
+  //   e. Write connector.json only after both (c) and (d) succeed.
+  //   f. Health check — gated on committed === true && tokenEntry != null.
+  //
+  // Non-Hermes connectors: connector.json is written immediately (no YAML
+  // dependency) and the health check is not performed.
 
-  // Hermes-specific: write the remnic: block to config.yaml.
-  // We skip the YAML update when token generation failed: writing an empty token
-  // to config.yaml would overwrite a potentially valid existing token and break
-  // auth silently. The connector config file is still created; the user can run
-  // `remnic token generate hermes` to create the token, then re-run install.
   if (options.connectorId === "hermes") {
     // hermesResolvedProfile/Host/Port were computed above using the correct
     // precedence (saved JSON → explicit options.config → defaults).
@@ -740,96 +747,120 @@ export function installConnector(options: InstallOptions): InstallResult {
     const hermesHost = hermesResolvedHost!;
     const hermesPort = hermesResolvedPort!;
 
-    // Reject path-traversing or otherwise invalid profile values up front.
-    let hermesProfile: string | null = null;
+    // (b) Validate profile name — fail-fast before touching any files.
+    let hermesProfile: string;
     try {
       hermesProfile = sanitizeHermesProfile(rawProfile);
     } catch (err) {
-      notes.push(
-        `Skipped Hermes config.yaml update: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      return {
+        connectorId: options.connectorId,
+        status: "error",
+        message: `Hermes install aborted: ${err instanceof Error ? err.message : String(err)}`,
+      };
     }
 
-    if (hermesProfile !== null) {
-      if (!tokenEntry) {
-        notes.push(
-          "Token store unavailable — skipped Hermes config.yaml update. " +
-            "Run `remnic token generate hermes` then reinstall to complete setup.",
-        );
-      } else {
-        // Fix 1: call upsertHermesConfig BEFORE cleaning up the old profile.
-        // If the new write fails or is skipped (missing dir, invalid config, etc.),
-        // we leave the old profile's config.yaml intact so the user's setup
-        // isn't broken. A "skipped" result means the new profile dir doesn't
-        // exist — the token was not written anywhere, so the old config must
-        // be left in place.
-        //
-        // Issue B fix: commit the token to tokens.json ONLY after the config.yaml
-        // write succeeds. This prevents revoking the existing token when the
-        // new config write fails (which would leave the daemon with no valid token).
-        let newYamlWritten = false;
-        try {
-          const yamlResult = upsertHermesConfig({
-            profile: hermesProfile,
-            host: hermesHost,
-            port: hermesPort,
-            token: tokenEntry.token,
-          });
-          // Only count as "succeeded" if the file was actually written/updated,
-          // not merely skipped due to a missing profile directory.
-          newYamlWritten = yamlResult.updated === true;
-          if (yamlResult.updated) {
-            // YAML write succeeded — now it is safe to rotate the token in
-            // tokens.json (removing the old entry, adding the new one).
-            try {
-              commitTokenEntry(tokenEntry);
-            } catch {
-              // Non-fatal: tokens.json may be on a read-only filesystem.
-              // The config.yaml was written successfully; the user can run
-              // `remnic token generate hermes` to persist the token later.
-            }
-            notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
-          } else if (yamlResult.skipped) {
-            // Profile dir missing — token NOT committed, old token preserved.
-            notes.push(`Hermes config not written: ${yamlResult.reason}`);
-          }
-        } catch (err) {
-          // upsertHermesConfig threw — token NOT committed, old token preserved.
-          notes.push(
-            `Hermes config not written: ${err instanceof Error ? err.message : String(err)}`,
-          );
-        }
+    // Token generation is required for an atomic Hermes install.
+    if (!tokenEntry) {
+      return {
+        connectorId: options.connectorId,
+        status: "error",
+        message:
+          "Hermes install aborted: token store unavailable. " +
+          "Run `remnic token generate hermes` then reinstall to complete setup.",
+      };
+    }
 
-        // Only clean the old profile AFTER the new write confirmed success AND
-        // the profile has actually changed. This prevents leaving both profiles
-        // without a remnic: block when upsertHermesConfig fails or skips.
-        if (newYamlWritten && hermesSavedProfile !== undefined && hermesSavedProfile !== hermesProfile) {
-          try {
-            const oldCleanResult = removeHermesConfig({ profile: hermesSavedProfile });
-            if (oldCleanResult.updated) {
-              notes.push(`Cleaned stale remnic: block from previous profile: ${oldCleanResult.configPath}`);
-            }
-          } catch {
-            // Non-fatal: if we can't clean the old profile, log a note but don't fail.
-            notes.push(`Note: could not clean stale remnic: block from previous profile "${hermesSavedProfile}"`);
-          }
+    // (c) Write config.yaml. If the profile dir does not exist (skipped) or
+    // the write throws, abort WITHOUT committing the token or writing connector.json.
+    let yamlResult: HermesConfigResult;
+    try {
+      yamlResult = upsertHermesConfig({
+        profile: hermesProfile,
+        host: hermesHost,
+        port: hermesPort,
+        token: tokenEntry.token,
+      });
+    } catch (err) {
+      // upsertHermesConfig threw — old token preserved, connector.json unchanged.
+      return {
+        connectorId: options.connectorId,
+        status: "error",
+        message: `Hermes install aborted: config.yaml write failed — ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+
+    if (!yamlResult.updated) {
+      // Skipped (profile dir missing) — abort so connector.json is NOT written
+      // with a token the daemon won't recognize (the profile doesn't exist).
+      // Preserves any prior Hermes profile/connector.json untouched.
+      return {
+        connectorId: options.connectorId,
+        status: "error",
+        message: `Hermes install aborted: ${yamlResult.reason ?? "config.yaml not written"}. ` +
+          `Create the Hermes profile directory first, then reinstall.`,
+      };
+    }
+
+    // (d) Commit token to tokens.json. If this fails, roll back the YAML write
+    // and abort — the old token must remain valid and connector.json must stay
+    // unchanged so the daemon keeps working.
+    let committed = false;
+    try {
+      commitTokenEntry(tokenEntry);
+      committed = true;
+    } catch (commitErr) {
+      // Roll back the YAML write: restore prior content (or delete newly-created file).
+      try {
+        if (yamlResult.priorContent === null) {
+          // File was created new — remove it entirely.
+          fs.unlinkSync(yamlResult.configPath);
+        } else if (typeof yamlResult.priorContent === "string") {
+          // File existed before — restore original content.
+          writeSecretFileSync(yamlResult.configPath, yamlResult.priorContent);
         }
+      } catch {
+        // Best-effort rollback: if restore fails, note the inconsistency below
+        // but still report failure so the user knows to check manually.
+      }
+      return {
+        connectorId: options.connectorId,
+        status: "error",
+        message:
+          `Hermes install aborted: token store commit failed — ` +
+          `${commitErr instanceof Error ? commitErr.message : String(commitErr)}. ` +
+          `config.yaml has been restored to its prior state. ` +
+          `Resolve the tokens.json access issue, then reinstall.`,
+      };
+    }
+
+    // (e) Both YAML write and token commit succeeded — now safe to write connector.json.
+    // This is the point of no return: the daemon already has the new token and the
+    // new config.yaml has been written, so connector.json must reflect the new state.
+    writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
+
+    const notes: string[] = [];
+    notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
+
+    // Clean up the old profile's remnic: block if the profile changed.
+    if (hermesSavedProfile !== undefined && hermesSavedProfile !== hermesProfile) {
+      try {
+        const oldCleanResult = removeHermesConfig({ profile: hermesSavedProfile });
+        if (oldCleanResult.updated) {
+          notes.push(`Cleaned stale remnic: block from previous profile: ${oldCleanResult.configPath}`);
+        }
+      } catch {
+        // Non-fatal: if we can't clean the old profile, log a note but don't fail.
+        notes.push(`Note: could not clean stale remnic: block from previous profile "${hermesSavedProfile}"`);
       }
     }
 
-    // Fix 3: skip the daemon health probe when no token is available.
-    // /engram/v1/health is bearer-protected, so an unauthenticated probe
-    // returns 401 even when the daemon is up, producing a false
-    // "Daemon not reachable" note and an unnecessary retry wait.
-    const healthToken = tokenEntry?.token;
-    if (!tokenEntry) {
-      notes.push("Skipping daemon health probe (no token generated).");
-    } else {
-      // Health-check the daemon (non-fatal).
-      // /engram/v1/health sits behind bearer auth, so we pass the generated
-      // token — without it the probe would always 401 and falsely report
-      // the daemon as unreachable.
-      const daemonOk = checkDaemonHealth(hermesHost, hermesPort, healthToken);
+    // (f) Health check — only when the token was actually committed to the store.
+    // Without commitment, the daemon won't recognise the token → 401 → 6s sleep
+    // → false-negative "Daemon not reachable". committed is always true here
+    // (we returned early on failure above) but the explicit guard is kept for
+    // clarity and future robustness.
+    if (committed && tokenEntry) {
+      const daemonOk = checkDaemonHealth(hermesHost, hermesPort, tokenEntry.token);
       if (daemonOk) {
         notes.push("Daemon health check: OK");
       } else {
@@ -838,14 +869,28 @@ export function installConnector(options: InstallOptions): InstallResult {
         );
       }
     }
+
+    const suffix = notes.length > 0 ? `\n  ${notes.join("\n  ")}` : "";
+    return {
+      connectorId: options.connectorId,
+      status: "installed",
+      configPath,
+      message: `Installed ${manifest.name} v${manifest.version}${suffix}`,
+    };
   }
 
-  const suffix = notes.length > 0 ? `\n  ${notes.join("\n  ")}` : "";
+  // ── Non-Hermes connectors: write connector.json immediately ────────────────
+  // Write with owner-only permissions because the JSON may embed the
+  // connector bearer token. Matches the 0o600 hardening on
+  // ~/.remnic/tokens.json so the token is never world-readable via this
+  // secondary location.
+  writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
+
   return {
     connectorId: options.connectorId,
     status: "installed",
     configPath,
-    message: `Installed ${manifest.name} v${manifest.version}${suffix}`,
+    message: `Installed ${manifest.name} v${manifest.version}`,
   };
 }
 
@@ -919,6 +964,14 @@ interface HermesConfigResult {
   skipped: boolean;
   reason?: string;
   configPath: string;
+  /**
+   * The exact byte-for-byte content of the config.yaml that existed BEFORE
+   * this upsert ran. `null` when the file did not exist (new file was created).
+   * `undefined` when the write was skipped (priorContent is irrelevant).
+   * Used by installConnector to roll back the YAML write if commitTokenEntry
+   * subsequently throws.
+   */
+  priorContent?: string | null;
 }
 
 /**
@@ -1088,7 +1141,8 @@ export function upsertHermesConfig(opts: {
     // Create with just the remnic block. 0o600 because the file now holds
     // a bearer token — matching the permissions on ~/.remnic/tokens.json.
     writeSecretFileSync(cfgPath, block + "\n");
-    return { updated: true, skipped: false, configPath: cfgPath };
+    // priorContent: null signals "file was created new" — rollback means delete.
+    return { updated: true, skipped: false, configPath: cfgPath, priorContent: null };
   }
 
   const raw = fs.readFileSync(cfgPath, "utf8");
@@ -1100,7 +1154,8 @@ export function upsertHermesConfig(opts: {
     // Append the block (preserve existing content)
     const separator = raw.endsWith("\n") ? "\n" : "\n\n";
     writeSecretFileSync(cfgPath, raw + separator + block + "\n");
-    return { updated: true, skipped: false, configPath: cfgPath };
+    // priorContent: raw preserves the original file so it can be restored on rollback.
+    return { updated: true, skipped: false, configPath: cfgPath, priorContent: raw };
   }
 
   // Update the existing block. Strategy: replace the content of the remnic:
@@ -1179,7 +1234,8 @@ export function upsertHermesConfig(opts: {
 
   // Always write exactly one trailing newline, matching the create and append paths.
   writeSecretFileSync(cfgPath, newLines.join("\n") + "\n");
-  return { updated: true, skipped: false, configPath: cfgPath };
+  // priorContent: raw is the original file content for rollback if needed.
+  return { updated: true, skipped: false, configPath: cfgPath, priorContent: raw };
 }
 
 /**
@@ -1281,6 +1337,15 @@ function checkDaemonHealth(host: string, port: number, authToken?: string): bool
     if (!Number.isFinite(safePort) || safePort < 1 || safePort > 65535) {
       return false;
     }
+    // Finding 7 fix: Node's http.get({ host }) expects an unbracketed IPv6
+    // literal (e.g. "::1"), but sanitizeHermesHost permits bracketed form
+    // "[::1]" (required for URL contexts). Strip the brackets here so that
+    // http.get receives the bare address and doesn't fail to connect.
+    // IPv4 and hostname strings are unaffected (no brackets to strip).
+    const bareHost = host.startsWith("[") && host.endsWith("]")
+      ? host.slice(1, -1)
+      : host;
+
     // Data (host, port, token) are passed via env vars, never interpolated
     // into the script string, preventing any code-injection from malformed
     // config values.
@@ -1303,7 +1368,7 @@ function checkDaemonHealth(host: string, port: number, authToken?: string): bool
     ].join("\n");
     const env: NodeJS.ProcessEnv = {
       ...process.env,
-      REMNIC_HEALTH_HOST: host,
+      REMNIC_HEALTH_HOST: bareHost,
       REMNIC_HEALTH_PORT: String(safePort),
     };
     if (authToken) {

@@ -411,22 +411,31 @@ test("force-reinstall produces a new token and removes the old one", () => {
   });
 });
 
-test("installConnector skips upsertHermesConfig when tokenEntry is null (P1 guard)", () => {
-  // When generateToken fails (tokenEntry === null), installConnector must NOT call
-  // upsertHermesConfig to avoid overwriting a valid existing token with an empty string.
+test("installConnector aborts early when tokenEntry is null (P1 guard — atomic flow)", () => {
+  // In the new atomic flow, a null tokenEntry causes an early return with status "error"
+  // BEFORE upsertHermesConfig is called. This is stricter than the old if/else pattern:
+  // upsertHermesConfig is reached only after the tokenEntry null-guard passes.
   const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
-  // Verify the guard: upsertHermesConfig is inside the `if (!tokenEntry) { ... } else { upsertHermesConfig }`
-  // pattern, meaning it's only called when tokenEntry is non-null.
-  const upsertIdx = content.indexOf("upsertHermesConfig({");
-  assert.ok(upsertIdx >= 0, "upsertHermesConfig must be called");
-  // The code before upsertHermesConfig must contain the `else {` guard
-  const before = content.slice(0, upsertIdx);
-  const elseIdx = before.lastIndexOf("} else {");
-  const tokenNullGuardIdx = before.lastIndexOf("if (!tokenEntry)");
-  assert.ok(tokenNullGuardIdx >= 0, "Must have if (!tokenEntry) guard before upsertHermesConfig");
+  // The guard must exist: if (!tokenEntry) { return { ... status: "error" ... } }
   assert.ok(
-    elseIdx > tokenNullGuardIdx,
-    "upsertHermesConfig must be in the else branch of if (!tokenEntry)",
+    content.includes("if (!tokenEntry)"),
+    "Must have if (!tokenEntry) guard before upsertHermesConfig",
+  );
+  // The early-return error message for missing token must be present.
+  assert.ok(
+    content.includes("token store unavailable") || content.includes("Token store unavailable"),
+    "Abort message must mention token store unavailability",
+  );
+  // upsertHermesConfig must only be reached after the tokenEntry guard passes
+  // (the null check returns early, so the call is outside any else branch in the
+  // new atomic flow — the absence of the old if/else is intentional).
+  const upsertIdx = content.indexOf("upsertHermesConfig({");
+  assert.ok(upsertIdx >= 0, "upsertHermesConfig must still be called in the happy path");
+  // Confirm the tokenEntry null-guard appears before upsertHermesConfig in the source.
+  const tokenNullGuardIdx = content.lastIndexOf("if (!tokenEntry)", upsertIdx);
+  assert.ok(
+    tokenNullGuardIdx >= 0,
+    "if (!tokenEntry) guard must appear before the upsertHermesConfig call",
   );
 });
 
@@ -556,7 +565,10 @@ test("checkDaemonHealth forwards the bearer token to the health probe", () => {
     "health probe script must use a Bearer scheme",
   );
   // installConnector must actually pass the generated token in.
+  // In the new atomic flow, the call uses tokenEntry.token directly (no intermediate
+  // healthToken variable — the variable was removed in the atomic refactor).
   assert.ok(
+    /checkDaemonHealth\(hermesHost, hermesPort, tokenEntry\.token\)/.test(content) ||
     /checkDaemonHealth\(hermesHost, hermesPort, healthToken\)/.test(content),
     "installConnector must pass the connector token to checkDaemonHealth",
   );
@@ -1051,15 +1063,22 @@ test("old profile config is preserved when new upsertHermesConfig fails", async 
         assert.ok(beforeContent.includes("remnic:"), "old-profile config.yaml must have remnic: block before reinstall");
 
         // Attempt to force-reinstall onto "new-profile" whose directory does NOT exist.
-        // upsertHermesConfig returns {skipped: true} when the profile dir is absent
-        // (it does not throw). The fix treats "skipped" as a non-success: newYamlWritten
-        // remains false, so the old profile's remnic: block is NOT cleaned up.
+        // In the new atomic flow: upsertHermesConfig returns {skipped: true}, which
+        // causes installConnector to abort with status "error". The old profile's
+        // remnic: block must remain intact — connector.json must NOT be overwritten.
         const install2 = mod.installConnector({
           connectorId: "hermes",
           force: true,
           config: { profile: "new-profile", host: "127.0.0.1", port: 4318 },
         });
-        assert.equal(install2.status, "installed", "Force reinstall onto missing dir must still report installed");
+        // Atomic flow: missing profile dir is a hard abort, not a silent skip.
+        assert.equal(install2.status, "error", "Force reinstall onto missing dir must return error in atomic flow");
+        assert.ok(
+          install2.message.toLowerCase().includes("abort") ||
+          install2.message.toLowerCase().includes("profile") ||
+          install2.message.toLowerCase().includes("not written"),
+          `Error message must explain the abort reason, got: ${install2.message}`,
+        );
 
         // old-profile's config.yaml must still exist and contain the remnic: block.
         assert.ok(fs.existsSync(oldCfgPath), "old-profile config.yaml must still exist after failed new-profile install");
@@ -1170,14 +1189,15 @@ test("token is not rotated when upsertHermesConfig fails (missing profile dir)",
         assert.ok(originalToken.startsWith("remnic_hm_"), "Token must have hermes prefix");
 
         // Force reinstall onto "ghost-profile" whose directory does NOT exist.
-        // upsertHermesConfig will skip (returns {skipped: true}), so the token
-        // must NOT be rotated — the original token must survive in tokens.json.
+        // In the new atomic flow: upsertHermesConfig returns {skipped: true}, which
+        // causes installConnector to abort with status "error" BEFORE committing
+        // the new token — the original token must survive in tokens.json.
         const install2 = mod.installConnector({
           connectorId: "hermes",
           force: true,
           config: { profile: "ghost-profile", host: "127.0.0.1", port: 4318 },
         });
-        assert.equal(install2.status, "installed", "Force reinstall must still return installed");
+        assert.equal(install2.status, "error", "Atomic flow: missing profile dir aborts with error");
 
         // tokens.json must still contain the ORIGINAL token, not a new one.
         const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
@@ -1234,27 +1254,278 @@ test("installConnector returns error result on invalid port (not a throw)", asyn
   });
 });
 
-// Fix 3: installConnector skips health probe when token generation fails
-test("installConnector skips health probe when token generation fails (source-level check)", () => {
-  // We verify the fix at the source level: the checkDaemonHealth call must be
-  // gated behind a truthy tokenEntry check, and the skip note must be present.
-  // A runtime monkey-patch of generateToken is not straightforward because
-  // ESM modules cache at load time, so we assert on the source structure instead.
+// Fix 3 / atomic flow: installConnector aborts before health probe when token generation fails
+test("installConnector aborts before health probe when token generation fails (atomic flow)", () => {
+  // In the new atomic flow, a null tokenEntry causes an early return with status
+  // "error" long before the health probe is reached. We verify at the source level
+  // that:
+  //   1. The early-return error guard for !tokenEntry exists.
+  //   2. checkDaemonHealth is gated by `committed && tokenEntry` (double guard).
+  //   3. There is no path that reaches checkDaemonHealth with a null tokenEntry.
   const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
 
-  // The fix must surface a skip note when no token is available.
+  // The tokenEntry null guard must exist.
   assert.ok(
-    content.includes("Skipping daemon health probe (no token generated)"),
-    "Source must contain the 'Skipping daemon health probe' note emitted when tokenEntry is falsy",
+    content.includes("if (!tokenEntry)"),
+    "Source must contain an early-return guard for null tokenEntry",
   );
 
-  // The health probe call must NOT appear unconditionally — it must be inside
-  // an else branch that is only reached when tokenEntry is truthy.
-  // We detect this by verifying that the skip-note branch and the probe call
-  // are in an if(!tokenEntry)/else structure.  A simple proxy: the phrase
-  // "Skipping daemon health probe" must appear BEFORE "checkDaemonHealth" in
-  // the hermes block (i.e. the if-no-token branch precedes the probe call).
-  const skipIdx = content.indexOf("Skipping daemon health probe (no token generated)");
+  // The committed+tokenEntry double guard must be present on the health probe.
+  assert.ok(
+    content.includes("committed && tokenEntry"),
+    "checkDaemonHealth must be gated by both committed flag and tokenEntry",
+  );
+
+  // checkDaemonHealth must appear AFTER the committed guard (not before it).
+  const committedGuardIdx = content.indexOf("committed && tokenEntry");
   const probeIdx = content.indexOf("checkDaemonHealth(hermesHost");
-  assert.ok(skipIdx < probeIdx, "Skip-note must appear before the checkDaemonHealth call, confirming the if/else gate");
+  assert.ok(
+    committedGuardIdx >= 0 && probeIdx > committedGuardIdx,
+    "checkDaemonHealth must appear after the committed && tokenEntry gate in source order",
+  );
+});
+
+// ── PR #400 atomic flow regression tests ─────────────────────────────────────
+
+// Regression: YAML write skipped → install returns error, old token NOT rotated,
+// connector.json NOT overwritten, no health-check probe fired.
+test("atomic flow: YAML skipped returns error, old token preserved, connector.json unchanged", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+
+        // First install onto an existing profile dir.
+        const stableDir = path.join(tmpHome, ".hermes", "profiles", "stable");
+        fs.mkdirSync(stableDir, { recursive: true });
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "stable", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install1.status, "installed", "Initial install must succeed");
+
+        // Read back the original connector.json and token.
+        const connectorJsonPath = install1.configPath!;
+        const originalJson = fs.readFileSync(connectorJsonPath, "utf-8");
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const store1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const originalToken = store1.tokens.find((t) => t.connector === "hermes")?.token;
+        assert.ok(originalToken, "Original token must be in tokens.json");
+
+        // Force reinstall onto "ghost-profile" whose directory does NOT exist.
+        // This triggers the YAML-skipped abort path.
+        const install2 = mod.installConnector({
+          connectorId: "hermes",
+          force: true,
+          config: { profile: "ghost-profile", host: "127.0.0.1", port: 4318 },
+        });
+
+        // Must return error (not "installed").
+        assert.equal(install2.status, "error", "YAML-skipped install must return status 'error'");
+        assert.ok(!install2.configPath, "Error result must not include a configPath");
+
+        // connector.json must be UNCHANGED (not overwritten with new candidate token).
+        const afterJson = fs.readFileSync(connectorJsonPath, "utf-8");
+        assert.equal(
+          afterJson,
+          originalJson,
+          "connector.json must not be overwritten when YAML is skipped",
+        );
+
+        // The original token must still be in tokens.json (not rotated).
+        const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const token2 = store2.tokens.find((t) => t.connector === "hermes")?.token;
+        assert.equal(
+          token2,
+          originalToken,
+          "Old token must NOT be rotated when YAML write is skipped",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// Regression: YAML writes OK, commitTokenEntry throws → YAML rolled back,
+// old token NOT rotated, install returns failure.
+test("atomic flow: commitTokenEntry failure rolls back YAML and preserves old token", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+
+        // First install to establish a baseline.
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "writable");
+        fs.mkdirSync(profileDir, { recursive: true });
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "writable", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install1.status, "installed", "Initial install must succeed");
+
+        const cfgPath = path.join(profileDir, "config.yaml");
+        const yamlBefore = fs.readFileSync(cfgPath, "utf-8");
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const originalToken = (JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        }).tokens.find((t) => t.connector === "hermes")?.token;
+        assert.ok(originalToken, "Baseline token must be present");
+
+        // Make tokens.json read-only to simulate commitTokenEntry failure.
+        fs.chmodSync(tokensPath, 0o444);
+        try {
+          // Force reinstall — YAML write will succeed, but token commit must fail.
+          const install2 = mod.installConnector({
+            connectorId: "hermes",
+            force: true,
+            config: { profile: "writable", host: "127.0.0.1", port: 4318 },
+          });
+
+          // Must return error.
+          assert.equal(install2.status, "error", "commitTokenEntry failure must return error");
+          assert.ok(
+            install2.message.toLowerCase().includes("abort") ||
+            install2.message.toLowerCase().includes("token") ||
+            install2.message.toLowerCase().includes("commit"),
+            `Error message must explain the commit failure, got: ${install2.message}`,
+          );
+
+          // The YAML must be rolled back to its pre-install content.
+          const yamlAfter = fs.readFileSync(cfgPath, "utf-8");
+          assert.equal(
+            yamlAfter,
+            yamlBefore,
+            "config.yaml must be rolled back to prior content when commitTokenEntry fails",
+          );
+        } finally {
+          // Restore write permission so the temp dir can be cleaned up.
+          try { fs.chmodSync(tokensPath, 0o600); } catch { /* ignore */ }
+        }
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// Regression: IPv6 bracketed host — health check strips brackets before http.get
+test("checkDaemonHealth: strips brackets from IPv6 host before probing (source-level check)", () => {
+  // Finding 7 fix: sanitizeHermesHost permits [::1] (brackets required for URLs),
+  // but Node's http.get({ host }) requires the bare literal "::1". We verify
+  // the strip logic is present in the source so that valid IPv6 daemons don't
+  // get false-negative "Daemon not reachable" reports.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+
+  // The bracket-stripping logic must be present.
+  assert.ok(
+    (content.includes('host.startsWith("[")') && content.includes('host.endsWith("]")')),
+    "checkDaemonHealth must detect and strip IPv6 bracket delimiters",
+  );
+
+  // The slice(1, -1) must be present to remove the brackets.
+  assert.ok(
+    content.includes("host.slice(1, -1)"),
+    "checkDaemonHealth must use slice(1, -1) to strip the brackets",
+  );
+
+  // The unbracketed value must be forwarded to the env (not the original `host`).
+  assert.ok(
+    content.includes("REMNIC_HEALTH_HOST: bareHost"),
+    "checkDaemonHealth must pass the bracket-stripped bareHost to the health probe env",
+  );
+});
+
+// Regression: happy path — old token only revoked after successful commit,
+// connector.json only written after commit.
+test("atomic flow: happy path — connector.json and token written only after YAML+commit succeed", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "happy");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // Install from scratch — all steps must complete in order.
+        const result = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "happy", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(result.status, "installed", "Happy path must return installed");
+        assert.ok(result.configPath, "Happy path must return a configPath");
+
+        // connector.json must exist and contain the new token.
+        const connJson = JSON.parse(fs.readFileSync(result.configPath!, "utf-8")) as {
+          token: string;
+          profile: string;
+          host: string;
+          port: number;
+        };
+        assert.ok(connJson.token.startsWith("remnic_hm_"), "connector.json token must have hermes prefix");
+        assert.equal(connJson.profile, "happy", "connector.json must record the profile");
+        assert.equal(connJson.host, "127.0.0.1", "connector.json must record the host");
+        assert.equal(connJson.port, 4318, "connector.json must record the port");
+
+        // tokens.json must contain the same token as connector.json.
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const store = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const entry = store.tokens.find((t) => t.connector === "hermes");
+        assert.ok(entry, "tokens.json must have a hermes entry");
+        assert.equal(
+          entry.token,
+          connJson.token,
+          "tokens.json and connector.json must agree on the token value",
+        );
+
+        // config.yaml must also contain the same token.
+        const yaml = fs.readFileSync(path.join(profileDir, "config.yaml"), "utf-8");
+        assert.ok(
+          yaml.includes(connJson.token),
+          "config.yaml must contain the same token as connector.json and tokens.json",
+        );
+
+        // Force reinstall — old token must be replaced (not preserved).
+        const result2 = mod.installConnector({
+          connectorId: "hermes",
+          force: true,
+          config: { profile: "happy", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(result2.status, "installed", "Force reinstall must succeed");
+        const connJson2 = JSON.parse(fs.readFileSync(result2.configPath!, "utf-8")) as {
+          token: string;
+        };
+        assert.notEqual(
+          connJson2.token,
+          connJson.token,
+          "Force reinstall must rotate the token (old token must be replaced)",
+        );
+        // Old token must not appear in tokens.json.
+        const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        assert.ok(
+          !store2.tokens.find((t) => t.token === connJson.token),
+          "Old token must be revoked from tokens.json after successful force reinstall",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
 });
