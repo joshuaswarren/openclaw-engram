@@ -68,13 +68,15 @@ function buildUpdatedOpenclawConfig(
   const updatedEntries: Record<string, OpenclawPluginEntry> = { ...entries };
   updatedEntries["openclaw-remnic"] = newEntry;
 
-  // Only switch the slot when there is no legacy entry, or when the operator
-  // confirmed migration — matching the behaviour in cmdOpenclawInstall.
+  // Switch the slot to the canonical id unless the operator declined migration
+  // AND the current slot is already actively pointing at the legacy entry.
   const hasLegacy = "openclaw-engram" in entries;
-  const shouldSwitchSlot = !hasLegacy || migrateLegacy;
-  const updatedSlots = shouldSwitchSlot
-    ? { ...slots, memory: "openclaw-remnic" }
-    : { ...slots };
+  const currentSlot = slots.memory as string | undefined;
+  const slotIsActiveLegacy =
+    hasLegacy && !migrateLegacy && currentSlot === "openclaw-engram";
+  const updatedSlots = slotIsActiveLegacy
+    ? { ...slots }
+    : { ...slots, memory: "openclaw-remnic" };
 
   return {
     ...existingConfig,
@@ -207,6 +209,21 @@ test("slot: preserved when legacy entry exists and migrateLegacy is false", () =
   // But the new entry should still be written
   assert.ok(result.plugins?.entries?.["openclaw-remnic"],
     "openclaw-remnic entry should be written even when migration was declined");
+});
+
+test("slot: updated to openclaw-remnic when migration declined but slot is unset or mismatched", () => {
+  for (const slotValue of [undefined, "other-plugin", "openclaw-remnic"] as const) {
+    const existing: OpenclawConfig = {
+      plugins: {
+        entries: { "openclaw-engram": { config: { memoryDir: "/old/path" } } },
+        slots: slotValue ? { memory: slotValue } : {},
+      },
+    };
+    const result = buildUpdatedOpenclawConfig(existing, "/new/path", false);
+    // Since slot is NOT actively pointing to openclaw-engram, it should be updated
+    assert.equal(result.plugins?.slots?.memory, "openclaw-remnic",
+      `slot should be updated when existing slot is "${slotValue}" even if migration was declined`);
+  }
 });
 
 // ── File I/O tests ───────────────────────────────────────────────────────────

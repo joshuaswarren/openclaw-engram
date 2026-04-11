@@ -209,6 +209,17 @@ function resolveMemoryDir(): string {
   return configMemoryDir;
 }
 
+/**
+ * Like resolveFlag, but rejects the next token if it looks like another flag
+ * (starts with "-"). Prevents `--config --yes` from treating --yes as the
+ * config path. Use this variant only for flags that require a value argument.
+ */
+function resolveFlagStrict(args: string[], flag: string): string | undefined {
+  const idx = args.indexOf(flag);
+  if (idx === -1 || idx + 1 >= args.length) return undefined;
+  const next = args[idx + 1];
+  return next.startsWith("-") ? undefined : next;
+}
 // ── OpenClaw config helpers ───────────────────────────────────────────────────
 
 /**
@@ -1691,15 +1702,18 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   // Keep legacy entry if migrating so rollback is possible — operator can remove
   // the legacy entry after verifying that hooks fire under the new id.
 
-  // Set slot to the canonical plugin id, but only when the operator has
-  // consented to switch (i.e. there is no legacy entry OR they confirmed
-  // migration). If the operator answered "no" to the migration prompt, leave
-  // the slot pointing at the legacy entry so their active hooks keep firing
-  // while they review the new entry before committing to the switch.
-  const shouldSwitchSlot = !hasLegacy || migrateLegacy;
-  const updatedSlots = shouldSwitchSlot
-    ? { ...slots, memory: REMNIC_OPENCLAW_PLUGIN_ID }
-    : { ...slots };
+  // Update the memory slot to the canonical plugin id, UNLESS the operator
+  // declined migration AND the slot is already actively pointing at the legacy
+  // entry — in that case leave it alone so their working hooks keep firing
+  // while they evaluate the new entry.
+  // All other cases (unset, mismatched, already pointing at the new id, no
+  // legacy entry at all) should be updated so the install results in a
+  // working configuration rather than an incomplete one.
+  const slotIsActiveLegacy =
+    hasLegacy && !migrateLegacy && currentSlot === REMNIC_OPENCLAW_LEGACY_PLUGIN_ID;
+  const updatedSlots = slotIsActiveLegacy
+    ? { ...slots }
+    : { ...slots, memory: REMNIC_OPENCLAW_PLUGIN_ID };
 
   const updatedConfig: Record<string, unknown> = {
     ...existingConfig,
@@ -1714,10 +1728,10 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   const changes: string[] = [];
   if (!hasNew) changes.push(`+ Added plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"]`);
   else changes.push(`~ Updated plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"].config.memoryDir`);
-  if (shouldSwitchSlot && currentSlot !== REMNIC_OPENCLAW_PLUGIN_ID) {
+  if (!slotIsActiveLegacy && currentSlot !== REMNIC_OPENCLAW_PLUGIN_ID) {
     changes.push(`~ Set plugins.slots.memory = "${REMNIC_OPENCLAW_PLUGIN_ID}" (was: ${currentSlot ?? "(unset)"})`);
-  } else if (!shouldSwitchSlot) {
-    changes.push(`  Slot left as "${currentSlot ?? "(unset)"}" — re-run with --yes to activate the new entry`);
+  } else if (slotIsActiveLegacy) {
+    changes.push(`  Slot left as "${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID}" — re-run with --yes to activate the new entry`);
   }
   if (!fs.existsSync(memoryDir)) changes.push(`+ Will create memory directory: ${memoryDir}`);
   if (hasLegacy && migrateLegacy) {
@@ -2034,8 +2048,8 @@ Options:
       if (subAction === "install") {
         const yes = rest.includes("--yes") || rest.includes("-y") || rest.includes("--force");
         const dryRun = rest.includes("--dry-run");
-        const memoryDir = resolveFlag(rest, "--memory-dir");
-        const configOverride = resolveFlag(rest, "--config");
+        const memoryDir = resolveFlagStrict(rest, "--memory-dir");
+        const configOverride = resolveFlagStrict(rest, "--config");
         await cmdOpenclawInstall({ yes, dryRun, memoryDir, configPath: configOverride });
       } else {
         console.log(`Usage: remnic openclaw <install>

@@ -157,7 +157,15 @@ test("CLI expands tilde in memoryDir paths", async () => {
 test("CLI preserves slot when operator declines migration", async () => {
   const src = await readCli();
   assert.ok(
-    src.includes("shouldSwitchSlot"),
+    src.includes("slotIsActiveLegacy") || src.includes("shouldSwitchSlot"),
     "CLI must conditionally switch slot based on migration consent",
+  );
+});
+
+test("CLI uses resolveFlagStrict for --memory-dir and --config to reject flag-like values", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("resolveFlagStrict"),
+    "CLI must use resolveFlagStrict for value-bearing flags in openclaw install",
   );
 });
