@@ -2876,6 +2876,36 @@
         "type": "number",
         "default": 20,
         "description": "Maximum results fetched per agent before merge."
+      },
+      "codexMaterializeMemories": {
+        "type": "boolean",
+        "default": true,
+        "description": "Materialize Remnic memories into Codex's native ~/.codex/memories/ layout so Codex's phase-2 read path picks up Remnic content without MCP roundtrips. Respects a .remnic-managed sentinel to honor user hand-edits."
+      },
+      "codexMaterializeNamespace": {
+        "type": "string",
+        "default": "auto",
+        "description": "Namespace to materialize into the Codex memories layout. 'auto' derives the namespace from the connector context."
+      },
+      "codexMaterializeMaxSummaryTokens": {
+        "type": "number",
+        "default": 4500,
+        "description": "Maximum whitespace-tokenized size of the materialized memory_summary.md. Default 4500 leaves headroom under Codex's 5000-token summary budget."
+      },
+      "codexMaterializeRolloutRetentionDays": {
+        "type": "number",
+        "default": 30,
+        "description": "Number of days to retain files under rollout_summaries/ before pruning during materialization."
+      },
+      "codexMaterializeOnConsolidation": {
+        "type": "boolean",
+        "default": true,
+        "description": "Trigger Codex materialization after semantic or causal consolidation completes for a namespace."
+      },
+      "codexMaterializeOnSessionEnd": {
+        "type": "boolean",
+        "default": true,
+        "description": "Trigger Codex materialization from the plugin-codex session-end hook."
       }
     }
   },

@@ -166,6 +166,7 @@ import {
   findSimilarClusters,
   buildConsolidationPrompt,
   parseConsolidationResponse,
+  materializeAfterSemanticConsolidation,
   type SemanticConsolidationResult,
 } from "./semantic-consolidation.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -2154,6 +2155,27 @@ export class Orchestrator {
     log.info(
       `[semantic-consolidation] complete: clusters=${result.clustersFound}, consolidated=${result.memoriesConsolidated}, archived=${result.memoriesArchived}, errors=${result.errors}`,
     );
+
+    // #378: fire the Codex materialize post-hook so `codexMaterializeOnConsolidation`
+    // actually has a runtime effect. The helper silently no-ops when the
+    // feature flag or the per-trigger toggle is off, when the sentinel is
+    // missing, or when nothing has changed since the previous run, so it's
+    // safe to always call here. Wrapped in a try/catch because a failed
+    // materialize must never abort the consolidation result — consolidation
+    // is the load-bearing operation; materialization is an optional mirror.
+    try {
+      await materializeAfterSemanticConsolidation({
+        config: this.config,
+        memoryDir: this.config.memoryDir,
+      });
+    } catch (err) {
+      log.warn(
+        `[semantic-consolidation] Codex materialize post-hook failed (non-fatal): ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
     return result;
   }
 

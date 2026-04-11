@@ -102,4 +102,62 @@ rmdir "/tmp/remnic-lock-${SESSION_ID}.d" 2>/dev/null
 rm -f "/tmp/engram-cursor-${SESSION_ID}" 2>/dev/null
 rmdir "/tmp/engram-lock-${SESSION_ID}.d" 2>/dev/null
 
+# Codex-native memory materialization (#378). The script honors the
+# `codexMaterializeMemories` config flag and the `.remnic-managed` sentinel,
+# so it's safe to run unconditionally here.
+#
+# Entrypoint-resolution order (first hit wins):
+#   1. $REMNIC_CODEX_MATERIALIZE_BIN — explicit override from the environment.
+#      Set this to point at a custom Node wrapper if you need to short-circuit
+#      the search order.
+#   2. The packaged CJS wrapper shipped with @remnic/plugin-codex at
+#      `packages/plugin-codex/bin/materialize.cjs`, resolved relative to this
+#      hook's own filesystem location. This is the preferred path for
+#      published installs — the wrapper imports `@remnic/core` directly and
+#      has zero dependency on the source tree. We resolve the path via
+#      `BASH_SOURCE[0]` + `cd -P` so symlinked checkouts (pnpm hoisted
+#      installs, worktree copies) land on the real file.
+#   3. Dev fallback: `scripts/codex-materialize.ts` at the repo root. Only
+#      present in source checkouts — we use it when the packaged bin isn't
+#      available, so local developers keep working without having to run a
+#      build first. See PR #392 review thread PRRT_kwDORJXyws56TOVo for why
+#      we can't rely on this in distributed installs.
+#   4. If neither yielded a usable path, we log the miss and exit the block
+#      without running the materializer. A verbose log line is strictly
+#      better than a mysterious no-op when `codexMaterializeMemories=true`.
+if [ "${REMNIC_CODEX_MATERIALIZE:-1}" != "0" ]; then
+  HOOK_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || HOOK_DIR=""
+
+  MATERIALIZE_BIN="${REMNIC_CODEX_MATERIALIZE_BIN:-}"
+  if [ -z "$MATERIALIZE_BIN" ] && [ -n "$HOOK_DIR" ]; then
+    # hooks/bin/session-end.sh → ../../bin/materialize.cjs lands at
+    # packages/plugin-codex/bin/materialize.cjs.
+    CANDIDATE_BIN="${HOOK_DIR}/../../bin/materialize.cjs"
+    if [ -f "$CANDIDATE_BIN" ]; then
+      MATERIALIZE_BIN="$(cd -P "$(dirname "$CANDIDATE_BIN")" 2>/dev/null && pwd)/$(basename "$CANDIDATE_BIN")" || MATERIALIZE_BIN=""
+    fi
+  fi
+
+  REMNIC_REPO_ROOT="${REMNIC_REPO_ROOT:-}"
+  if [ -z "$REMNIC_REPO_ROOT" ] && [ -n "$HOOK_DIR" ]; then
+    CANDIDATE_ROOT="$(cd -P "${HOOK_DIR}/../../../.." 2>/dev/null && pwd)" || CANDIDATE_ROOT=""
+    if [ -n "$CANDIDATE_ROOT" ] && [ -f "${CANDIDATE_ROOT}/scripts/codex-materialize.ts" ]; then
+      REMNIC_REPO_ROOT="$CANDIDATE_ROOT"
+    fi
+  fi
+
+  if [ -n "$MATERIALIZE_BIN" ] && [ -f "$MATERIALIZE_BIN" ]; then
+    node "$MATERIALIZE_BIN" --reason session_end >> "$LOG" 2>&1 || \
+      log "codex-materialize session_end failed (packaged bin=${MATERIALIZE_BIN})"
+  elif [ -n "$REMNIC_REPO_ROOT" ] && [ -f "${REMNIC_REPO_ROOT}/scripts/codex-materialize.ts" ]; then
+    (
+      cd "$REMNIC_REPO_ROOT"
+      npx --yes tsx scripts/codex-materialize.ts --reason session_end >> "$LOG" 2>&1 || \
+        log "codex-materialize session_end failed (dev script)"
+    )
+  else
+    log "codex-materialize skipped — could not resolve packaged bin or REMNIC_REPO_ROOT (hook_dir=${HOOK_DIR:-unset})"
+  fi
+fi
+
 exit 0

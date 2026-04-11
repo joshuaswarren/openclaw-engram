@@ -20,8 +20,12 @@
   "private": true,
   "files": [
     ".codex-plugin",
+    "bin",
     "hooks",
     "skills",
     ".mcp.json"
-  ]
+  ],
+  "dependencies": {
+    "@remnic/core": "workspace:*"
+  }
 }
