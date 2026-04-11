@@ -9,7 +9,11 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+
 import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry, loadTokenStore, saveTokenStore } from "../tokens.js";
+import { coerceInstallExtension } from "./coerce.js";
 
 // Native memory artifact materialization for Codex CLI (#378). Surfaced here
 // so downstream callers can `import { materializeForNamespace } from "@remnic/core/connectors"`.
@@ -134,8 +138,10 @@ export interface RemoveResult {
   configPath: string;
   /** Message */
   message: string;
-  /** Status: "removed" on success, "error" if the removal failed partway. */
-  status: "removed" | "error" | "not_found";
+  /** Status: "removed" on success, "error" if the removal failed partway, "not_found" if the connector was not installed, "skipped" if removal was aborted (e.g. malformed config). */
+  status: "removed" | "error" | "not_found" | "skipped";
+  /** Machine-readable skip reason (present when status === "skipped"). */
+  reason?: string;
 }
 
 export interface DoctorResult {
@@ -155,6 +161,13 @@ export interface DoctorCheck {
   /** Detail */
   detail: string;
 }
+
+// ── Helpers (Finding 4) ───────────────────────────────────────────────────
+
+// Re-export coerceInstallExtension so existing import sites
+// (`import { coerceInstallExtension } from "./index.js"`) keep working without
+// change. The binding comes from the top-level import above.
+export { coerceInstallExtension };
 
 // ── Built-in connector definitions ─────────────────────────────────────────
 
@@ -987,12 +1000,85 @@ export function installConnector(options: InstallOptions): InstallResult {
     };
   }
 
-  // ── Non-Hermes connectors: write connector.json immediately ────────────────
+  // ── Non-Hermes connectors: write connector.json ───────────────────────────
   // Write with owner-only permissions because the JSON may embed the
   // connector bearer token. Matches the 0o600 hardening on
   // ~/.remnic/tokens.json so the token is never world-readable via this
   // secondary location.
-  //
+
+  // Codex CLI: also drop the phase-2 memory extension unless the caller
+  // explicitly opted out via `config.installExtension: false`.
+  let extensionMessage = "";
+  // Explicit structured flag for the config-write rollback gate. This MUST
+  // stay decoupled from `extensionMessage` because that string embeds the
+  // install path — substring-matching on "skipped" would misfire whenever
+  // the codex home happens to contain the word "skipped".
+  let extensionInstalled = false;
+  // Holds the commit/rollback handle returned by installCodexMemoryExtension().
+  // The backup of any prior extension is kept alive until commit() is called.
+  let extensionHandle: { commit(): void; rollback(): void } | null = null;
+  if (options.connectorId === "codex-cli") {
+    // Finding 1: coerce string "false"/"true" from CLI config parsing to a real
+    // boolean before the gate check, then persist the coerced value so it is
+    // stored as a boolean in the config file.
+    const coerced = coerceInstallExtension(resolvedConfig.installExtension);
+    if (coerced !== undefined) {
+      resolvedConfig.installExtension = coerced;
+    }
+    const shouldInstall = resolvedConfig.installExtension !== false;
+    // Persist the effective installExtension boolean explicitly so that
+    // removeConnector's provenance check (Finding 3) can match. When the caller
+    // did not pass the key, the default is true — write it so later removal
+    // knows Remnic owned the install.
+    resolvedConfig.installExtension = shouldInstall;
+    // Resolve the Codex home path NOW so we can persist the absolute path
+    // into the saved config. This guarantees removeConnector can target the
+    // exact same directory later even if $CODEX_HOME is unset or changed.
+    const codexHomeOverride =
+      typeof resolvedConfig.codexHome === "string" && resolvedConfig.codexHome.length > 0
+        ? (resolvedConfig.codexHome as string)
+        : null;
+    const resolvedCodexHome = resolveCodexHome(codexHomeOverride);
+    resolvedConfig.codexHome = resolvedCodexHome;
+
+    if (shouldInstall) {
+      try {
+        const extensionSourceOverride =
+          typeof resolvedConfig.extensionSourceDir === "string" &&
+          resolvedConfig.extensionSourceDir.length > 0
+            ? (resolvedConfig.extensionSourceDir as string)
+            : null;
+        const extResult = installCodexMemoryExtension({
+          codexHome: resolvedCodexHome,
+          sourceDir: extensionSourceOverride,
+        });
+        extensionMessage = ` (memory extension: ${extResult.remnicExtensionDir})`;
+        extensionInstalled = true;
+        extensionHandle = extResult;
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : "unknown error";
+        return {
+          connectorId: options.connectorId,
+          status: "error",
+          message: `Memory extension install failed — ${errMsg}`,
+        };
+      }
+    } else {
+      extensionMessage = " (memory extension: skipped via installExtension=false)";
+    }
+  }
+
+  // Finding 5: strip internal/test-only keys that must never be persisted to
+  // the config file. These keys are used at install time only (e.g. to inject
+  // a synthetic extension source dir in tests) and have no meaning on disk.
+  // Denylist — add any future test-only keys here with a comment.
+  const INTERNAL_KEYS_DENYLIST = [
+    "extensionSourceDir", // test-only override for the plugin-codex source path
+  ];
+  for (const key of INTERNAL_KEYS_DENYLIST) {
+    delete resolvedConfig[key];
+  }
+
   // Atomic rollback (UXJG / Codex P1): if the JSON write fails (e.g., permission
   // denied on XDG_CONFIG_HOME), generateToken() above already rotated the token in
   // tokens.json. Roll back via the full-store snapshot captured before generateToken
@@ -1000,14 +1086,34 @@ export function installConnector(options: InstallOptions): InstallResult {
   // lingers without a matching config file. Full-store restore (vs. single-entry
   // restore/revoke) handles partial writes atomically for both fresh-install and
   // force-reinstall paths uniformly.
+  //
+  // Also roll back any codex-cli memory extension if the config write fails so
+  // that no dangling memories_extensions/remnic directory is left with no config
+  // provenance for removeConnector to find and clean up later.
   try {
     writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
   } catch (writeErr) {
+    // Roll back non-hermes token store if needed.
     if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
       try {
         saveTokenStore(nonHermesPriorTokenStore);
       } catch {
         // Best-effort: token rollback failed; caller sees the original write error.
+      }
+    }
+    // Roll back the codex-cli extension if it was installed.
+    // Use extensionHandle.rollback() so that a pre-existing (possibly
+    // customised) extension is restored from the backup kept by
+    // installCodexMemoryExtension(), rather than unconditionally deleted.
+    if (extensionInstalled && extensionHandle !== null) {
+      try {
+        extensionHandle.rollback();
+      } catch {
+        // Best-effort rollback: log but don't mask the original write error.
+        console.warn(
+          "[remnic/connectors] installConnector: config write failed and extension rollback also failed — " +
+            "manual cleanup of memories_extensions/remnic may be required.",
+        );
       }
     }
     return {
@@ -1020,11 +1126,16 @@ export function installConnector(options: InstallOptions): InstallResult {
     };
   }
 
+  // Config write succeeded — permanently drop the backup of the prior extension.
+  if (extensionInstalled && extensionHandle !== null) {
+    extensionHandle.commit();
+  }
+
   return {
     connectorId: options.connectorId,
     status: "installed",
     configPath,
-    message: `Installed ${manifest.name} v${manifest.version}`,
+    message: `Installed ${manifest.name} v${manifest.version}${extensionMessage}`,
   };
 }
 
@@ -1034,11 +1145,45 @@ export function removeConnector(connectorId: string): RemoveResult {
   const configDir = getConnectorsDir();
   const configPath = path.join(configDir, `${connectorId}.json`);
 
+  // For codex-cli, read the saved config BEFORE touching anything so we have
+  // both the persisted codexHome and the installExtension flag available for
+  // later use in extension removal (Findings 1, 3, 4, 5).
+  let codexHomeOverride: string | null = null;
+  let savedInstallExtension: boolean | undefined = undefined;
+  // Finding 1: track whether config parsing succeeded. If parsing throws, we
+  // cannot trust any metadata and must fail closed (skip extension removal).
+  let configParsed = false;
+  if (connectorId === "codex-cli" && fs.existsSync(configPath)) {
+    try {
+      const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      configParsed = true;
+      if (typeof parsed.codexHome === "string" && parsed.codexHome.length > 0) {
+        codexHomeOverride = parsed.codexHome;
+      }
+      // Finding 4: coerce saved installExtension so string "false" still works.
+      const coerced = coerceInstallExtension(parsed.installExtension);
+      if (coerced !== undefined) {
+        savedInstallExtension = coerced;
+      }
+    } catch {
+      // Finding 1: config is malformed — log debug and fail closed.
+      // codexHomeOverride and savedInstallExtension remain unset; configParsed
+      // stays false so extension removal is skipped below.
+      console.debug(
+        "[remnic/connectors] removeConnector: codex-cli.json parse failed — skipping extension removal to avoid touching unverified paths",
+      );
+    }
+  }
+
   if (!fs.existsSync(configPath)) {
     // Best-effort: revoke any orphan token that may have survived a prior partial
     // cleanup (e.g. connector JSON deleted manually or XDG_CONFIG_HOME change).
     // This prevents a stale bearer token from remaining valid in tokens.json while
     // the connector appears "not installed" to the caller.
+    // Config file is missing — we have no evidence that this installation ever
+    // managed the extension directory, so it is unsafe to remove it (the user
+    // may have self-managed it or installed with installExtension=false).
+    // Skip removeCodexMemoryExtension entirely in this recovery path.
     let staleTokenRevoked = false;
     try {
       staleTokenRevoked = revokeToken(connectorId);
@@ -1068,9 +1213,55 @@ export function removeConnector(connectorId: string): RemoveResult {
     }
   }
 
-  // Delete the connector config file FIRST. Token revocation and YAML cleanup
-  // only happen after the file is gone so that a failed unlink (e.g., read-only
-  // directory) does not leave a token-less orphan install on disk.
+  // Finding 4: if the codex-cli config exists but failed to parse, abort the
+  // entire removal. Leave both the config file AND the extension directory
+  // untouched so the operator can inspect/fix the config file and retry.
+  // Unlinking the config here would destroy the only provenance record and make
+  // deterministic retry impossible.
+  if (connectorId === "codex-cli" && fs.existsSync(configPath) && !configParsed) {
+    console.warn(
+      "[remnic/connectors] removeConnector: codex-cli.json is malformed — " +
+        "aborting removal to preserve provenance. Fix or delete " +
+        configPath +
+        " manually and retry.",
+    );
+    return {
+      connectorId,
+      configPath,
+      message: "Removal aborted: codex-cli.json is malformed. Config file left in place for inspection.",
+      status: "skipped",
+      reason: "config-parse-failed",
+    };
+  }
+
+  // Finding 5: remove extension BEFORE deleting the config file. If extension
+  // removal throws (e.g. EPERM/EBUSY), we re-throw WITHOUT deleting the config
+  // so the user can retry — the config still has the persisted codexHome needed
+  // to locate the extension directory.
+  let extensionMessage = "";
+  if (connectorId === "codex-cli") {
+    // Finding 4: skip extension deletion when installExtension was explicitly disabled.
+    if (savedInstallExtension === false) {
+      extensionMessage = " (memory extension: skipped — installExtension=false)";
+    // Finding 3: require EXPLICIT provenance (installExtension===true AND a saved
+    // codexHome) before removing the extension. Legacy configs that pre-date this
+    // feature have no installExtension key, so savedInstallExtension is undefined;
+    // without provenance we cannot be sure Remnic ever owned the directory.
+    } else if (savedInstallExtension !== true || codexHomeOverride === null) {
+      extensionMessage = " (memory extension: skipped — no install provenance in saved config)";
+    } else {
+      const extResult = removeCodexMemoryExtension({ codexHome: codexHomeOverride });
+      extensionMessage = extResult.removed
+        ? ` (memory extension removed: ${extResult.remnicExtensionDir})`
+        : " (no memory extension present)";
+    }
+  }
+
+  // Delete the connector config file AFTER extension removal (Finding 5): if
+  // extension removal throws, we do not reach here and the config is preserved.
+  // Token revocation and YAML cleanup only happen after the file is gone so
+  // that a failed unlink (e.g., read-only directory) does not leave a
+  // token-less orphan install on disk.
   try {
     fs.unlinkSync(configPath);
   } catch (unlinkErr) {
@@ -1120,7 +1311,7 @@ export function removeConnector(connectorId: string): RemoveResult {
     connectorId,
     configPath,
     status: "removed",
-    message: `Removed${suffix}`,
+    message: `Removed${extensionMessage}${suffix}`,
   };
 }
 
@@ -1667,6 +1858,437 @@ export async function doctorConnector(connectorId: string): Promise<DoctorResult
 
   const healthy = checks.every((c) => c.ok);
   return { connectorId, checks, healthy };
+}
+
+// ── Codex memory extension install ────────────────────────────────────────
+
+/**
+ * Name of the Codex memories folder. Matches Codex's
+ * `MEMORIES_SUBDIR = "memories"`.
+ */
+const CODEX_MEMORIES_SUBDIR = "memories";
+
+/**
+ * Name of the Codex memory-extensions folder. Matches Codex's
+ * `EXTENSIONS_SUBDIR = "memories_extensions"`.
+ *
+ * Codex computes the extensions root as a **sibling** of the memories dir via
+ * Rust's `Path::with_file_name("memories_extensions")` — so for the default
+ * Codex home the layout is:
+ *
+ *     ~/.codex/memories/
+ *     ~/.codex/memories_extensions/
+ *
+ * Extension files live **outside** of `memories/`, never inside it.
+ */
+const CODEX_EXTENSIONS_SUBDIR = "memories_extensions";
+
+/** Folder name Remnic installs its extension under. */
+const REMNIC_EXTENSION_DIR_NAME = "remnic";
+
+export interface CodexMemoryExtensionPaths {
+  /** Resolved Codex home directory (e.g. `~/.codex`). */
+  codexHome: string;
+  /** Resolved Codex memories directory (`<codex_home>/memories`). */
+  memoriesDir: string;
+  /** Sibling extensions root (`<codex_home>/memories_extensions`). */
+  extensionsRoot: string;
+  /** The specific Remnic extension directory inside the extensions root. */
+  remnicExtensionDir: string;
+}
+
+export interface InstallCodexMemoryExtensionOptions {
+  /** Optional override for `$CODEX_HOME`. Highest priority. */
+  codexHome?: string | null;
+  /** Optional override for the plugin-codex extension source directory. */
+  sourceDir?: string | null;
+}
+
+export interface InstallCodexMemoryExtensionResult extends CodexMemoryExtensionPaths {
+  /** Absolute path to the installed `instructions.md`. */
+  instructionsPath: string;
+  /** Number of files copied. */
+  filesCopied: number;
+  /**
+   * Commit the install: permanently remove the backup of the prior extension
+   * (if one existed). Call this once the config write has succeeded.
+   */
+  commit(): void;
+  /**
+   * Roll back the install: restore the prior extension if one existed, or
+   * remove the newly-installed directory for a fresh install. Call this when
+   * a subsequent step (e.g. config write) has failed.
+   */
+  rollback(): void;
+}
+
+export interface RemoveCodexMemoryExtensionOptions {
+  codexHome?: string | null;
+}
+
+export interface RemoveCodexMemoryExtensionResult extends CodexMemoryExtensionPaths {
+  /** True if an existing `remnic` extension directory was removed. */
+  removed: boolean;
+}
+
+/**
+ * Resolve the Codex home directory. Precedence:
+ *   1. explicit `override` argument (from config)
+ *   2. `$CODEX_HOME` env var
+ *   3. `~/.codex`
+ */
+export function resolveCodexHome(override?: string | null): string {
+  if (override && typeof override === "string" && override.trim().length > 0) {
+    return path.resolve(override.trim());
+  }
+  const envHome = process.env.CODEX_HOME;
+  if (envHome && envHome.trim().length > 0) {
+    return path.resolve(envHome.trim());
+  }
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
+  // Use path.resolve so the result is always absolute. When both HOME and
+  // USERPROFILE are unset we fall back to the literal "~" sentinel and
+  // path.resolve("~", ".codex") resolves it against cwd — not ideal, but
+  // still an absolute path. A cleaner error can be added later if needed.
+  return path.resolve(home, ".codex");
+}
+
+/**
+ * Compute the Codex memories + memory-extensions layout for a given Codex home.
+ *
+ * The extensions root is computed as a **sibling** of the memories dir by
+ * taking `path.dirname(memoriesDir)` and joining `memories_extensions`. This
+ * mirrors Rust's `with_file_name("memories_extensions")` semantics used by
+ * Codex's `memory_extensions_root()`. Do NOT place the extension inside
+ * `<codex_home>/memories/`.
+ */
+export function resolveCodexMemoryExtensionPaths(
+  codexHomeOverride?: string | null,
+): CodexMemoryExtensionPaths {
+  const codexHome = resolveCodexHome(codexHomeOverride);
+  const memoriesDir = path.join(codexHome, CODEX_MEMORIES_SUBDIR);
+  // Sibling computation: with_file_name(EXTENSIONS_SUBDIR)
+  const extensionsRoot = path.join(path.dirname(memoriesDir), CODEX_EXTENSIONS_SUBDIR);
+  const remnicExtensionDir = path.join(extensionsRoot, REMNIC_EXTENSION_DIR_NAME);
+  return { codexHome, memoriesDir, extensionsRoot, remnicExtensionDir };
+}
+
+/**
+ * Locate the plugin-codex `memories_extensions/remnic/` source directory on
+ * disk. Search order:
+ *   1. explicit `override`
+ *   2. resolve via `@remnic/plugin-codex` package (handles global npm installs)
+ *   3. sibling `node_modules/@remnic/plugin-codex` relative to this module
+ *   4. walk upward from this file's location (monorepo development)
+ *   5. walk upward from `process.cwd()` (monorepo fallback)
+ *
+ * Returns the absolute path or throws a descriptive error listing all paths
+ * searched when none exist.
+ */
+export function locatePluginCodexExtensionSource(override?: string | null): string {
+  if (override && typeof override === "string" && override.trim().length > 0) {
+    const resolved = path.resolve(override.trim());
+    if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
+      return resolved;
+    }
+    throw new Error(`Codex extension source directory not found: ${resolved}`);
+  }
+
+  const EXTENSION_SUBPATH = path.join("memories_extensions", "remnic");
+  const WORKSPACE_RELATIVE_PATH = path.join(
+    "packages",
+    "plugin-codex",
+    "memories_extensions",
+    "remnic",
+  );
+
+  const searched: string[] = [];
+
+  // Primary path: the bundled payload shipped with @remnic/core itself.
+  // tsup copies src/connectors/codex/ → dist/connectors/codex/ (see tsup.config.ts
+  // onSuccess hook). However, tsup bundles all source into dist/ as flat files
+  // (dist/index.js, dist/chunk-*.js), so at runtime import.meta.url points to
+  // dist/index.js or a dist/chunk-*.js — NOT dist/connectors/index.js.
+  // Therefore we probe two sibling-relative candidates:
+  //   1. moduleDir/codex          — matches tsx/ts-node on src/connectors/index.ts
+  //   2. moduleDir/connectors/codex — matches the tsup dist layout where this code
+  //                                   lands in dist/index.js or dist/chunk-*.js
+  try {
+    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+
+    // Candidate 1: adjacent codex/ (tsx/ts-node from src/connectors/)
+    const bundledCandidate = path.join(moduleDir, "codex");
+    searched.push(bundledCandidate);
+    if (fs.existsSync(bundledCandidate) && fs.statSync(bundledCandidate).isDirectory()) {
+      return bundledCandidate;
+    }
+
+    // Candidate 2: dist/connectors/codex/ — the tsup output path.
+    // When this module is bundled into dist/index.js or dist/chunk-*.js,
+    // moduleDir is dist/ and tsup copies the payload to dist/connectors/codex/.
+    const distConnectorsCandidate = path.join(moduleDir, "connectors", "codex");
+    searched.push(distConnectorsCandidate);
+    if (
+      fs.existsSync(distConnectorsCandidate) &&
+      fs.statSync(distConnectorsCandidate).isDirectory()
+    ) {
+      return distConnectorsCandidate;
+    }
+  } catch {
+    // import.meta.url unavailable — not running as ESM, skip bundled path.
+  }
+
+  // Finding 2 — path 1: resolve via `@remnic/plugin-codex` package.json.
+  // This covers global `npm install -g @remnic/remnic-core` or pnpm global installs
+  // where the package lives under the global node_modules tree.
+  try {
+    const requireFromHere = createRequire(import.meta.url);
+    const pluginPkgJsonPath = requireFromHere.resolve("@remnic/plugin-codex/package.json");
+    const pluginPkgRoot = path.dirname(pluginPkgJsonPath);
+    const candidate = path.join(pluginPkgRoot, EXTENSION_SUBPATH);
+    searched.push(candidate);
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      return candidate;
+    }
+  } catch {
+    // @remnic/plugin-codex not installed — fall through to next strategy.
+  }
+
+  // Finding 2 — path 2: sibling node_modules under the module's own directory.
+  // Handles cases like:
+  //   .../node_modules/@remnic/remnic-core/src/connectors/index.js
+  //   .../node_modules/@remnic/plugin-codex/memories_extensions/remnic
+  try {
+    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+    let dir = moduleDir;
+    for (let depth = 0; depth < 8; depth += 1) {
+      const candidate = path.join(
+        dir,
+        "node_modules",
+        "@remnic",
+        "plugin-codex",
+        EXTENSION_SUBPATH,
+      );
+      searched.push(candidate);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        return candidate;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch {
+    // import.meta.url unavailable — not running as ESM.
+  }
+
+  // Finding 2 — path 3 & 4: walk upward from this file's location and from
+  // process.cwd() looking for the monorepo layout (`packages/plugin-codex/…`).
+  const anchors: string[] = [];
+  try {
+    anchors.push(path.dirname(fileURLToPath(import.meta.url)));
+  } catch {
+    // Not running under ESM with import.meta — skip.
+  }
+  anchors.push(process.cwd());
+
+  for (const anchor of anchors) {
+    let dir = anchor;
+    for (let depth = 0; depth < 12; depth += 1) {
+      const candidate = path.join(dir, WORKSPACE_RELATIVE_PATH);
+      searched.push(candidate);
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+        return candidate;
+      }
+      const parent = path.dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  }
+
+  throw new Error(
+    "Could not locate the plugin-codex memories_extensions/remnic source directory.\n" +
+      "Paths searched:\n" +
+      searched.map((p) => `  - ${p}`).join("\n") +
+      "\nInstall @remnic/plugin-codex or pass sourceDir explicitly.",
+  );
+}
+
+/** Recursive synchronous directory copy. */
+function copyDirRecursiveSync(src: string, dest: string): number {
+  let count = 0;
+  fs.mkdirSync(dest, { recursive: true });
+  const entries = fs.readdirSync(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const from = path.join(src, entry.name);
+    const to = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      count += copyDirRecursiveSync(from, to);
+    } else if (entry.isFile()) {
+      fs.copyFileSync(from, to);
+      count += 1;
+    }
+    // Skip symlinks, sockets, etc. — extension content is plain files.
+  }
+  return count;
+}
+
+/**
+ * Install the Remnic memory extension into `<codex_home>/memories_extensions/remnic/`
+ * atomically. The copy is written to a sibling `.remnic.tmp-<pid>-<ts>` directory
+ * and then renamed into place, so a concurrent Codex phase-2 run never sees a
+ * half-written extension.
+ *
+ * This function is **idempotent and scoped**: it only touches the `remnic`
+ * subfolder inside `memories_extensions/`. Adjacent extensions (other
+ * vendors) are never read, written, or removed.
+ */
+export function installCodexMemoryExtension(
+  options: InstallCodexMemoryExtensionOptions = {},
+): InstallCodexMemoryExtensionResult {
+  const paths = resolveCodexMemoryExtensionPaths(options.codexHome ?? null);
+  const sourceDir = locatePluginCodexExtensionSource(options.sourceDir ?? null);
+
+  fs.mkdirSync(paths.extensionsRoot, { recursive: true });
+
+  // Clean any stale tmp from a previous crashed run by scanning the
+  // extensions root for any `.remnic.tmp-*` prefixed entry. We must do this
+  // BEFORE creating the new tmp directory. Per-entry errors are swallowed so
+  // one bad entry doesn't abort cleanup of the rest.
+  //
+  // Finding 2: only remove tmp dirs that are provably stale (older than
+  // STALE_TMP_THRESHOLD_MS). Dirs younger than the threshold belong to a
+  // concurrent install that is still in progress; deleting them would corrupt
+  // the other process's atomic rename.
+  const tmpPrefix = `.${REMNIC_EXTENSION_DIR_NAME}.tmp-`;
+  const STALE_TMP_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+  const now = Date.now();
+  try {
+    const existingEntries = fs.readdirSync(paths.extensionsRoot);
+    for (const entry of existingEntries) {
+      if (!entry.startsWith(tmpPrefix)) continue;
+      const stalePath = path.join(paths.extensionsRoot, entry);
+      try {
+        const stat = fs.statSync(stalePath);
+        const ageMs = now - stat.mtimeMs;
+        if (ageMs < STALE_TMP_THRESHOLD_MS) {
+          // Too recent — leave it alone; another install is likely still running.
+          continue;
+        }
+        fs.rmSync(stalePath, { recursive: true, force: true });
+      } catch {
+        // swallow — one bad entry should not abort the others
+      }
+    }
+  } catch {
+    // extensions root just-created / unreadable — nothing to clean
+  }
+
+  const tmpName = `${tmpPrefix}${process.pid}-${Date.now()}`;
+  const tmpDir = path.join(paths.extensionsRoot, tmpName);
+
+  let filesCopied = 0;
+  let commitFn: () => void = () => { /* no-op: set below on success */ };
+  let rollbackFn: () => void = () => { /* no-op: set below on success */ };
+  try {
+    filesCopied = copyDirRecursiveSync(sourceDir, tmpDir);
+
+    // Atomic replace: rename old remnic/ to a timestamped backup, then rename
+    // the tmp dir into place.  If the second rename fails, restore from backup
+    // so the old extension is never permanently lost.
+    const backupDir = `${paths.remnicExtensionDir}.bak-${Date.now()}`;
+    const hadExisting = fs.existsSync(paths.remnicExtensionDir);
+    if (hadExisting) {
+      fs.renameSync(paths.remnicExtensionDir, backupDir);
+    }
+    try {
+      fs.renameSync(tmpDir, paths.remnicExtensionDir);
+    } catch (renameErr) {
+      // New rename failed — restore backup so the old extension survives.
+      if (hadExisting) {
+        try {
+          fs.renameSync(backupDir, paths.remnicExtensionDir);
+        } catch {
+          // swallow — backup restore best-effort
+        }
+      }
+      throw renameErr;
+    }
+    // The new extension is in place. We intentionally keep the backup alive
+    // until the caller calls commit(). This gives the caller a chance to roll
+    // back to the prior state if a subsequent operation (e.g. config write) fails.
+    //
+    // commit() — remove the backup (called on success)
+    // rollback() — restore the prior extension from backup, or remove the newly
+    //              installed directory if this was a fresh install
+    commitFn = (): void => {
+      if (hadExisting) {
+        try {
+          fs.rmSync(backupDir, { recursive: true, force: true });
+        } catch {
+          // swallow — stale backup is harmless
+        }
+      }
+    };
+    rollbackFn = (): void => {
+      if (hadExisting) {
+        // Restore the prior extension from backup.
+        try {
+          // Remove the newly-installed dir first so rename can succeed.
+          if (fs.existsSync(paths.remnicExtensionDir)) {
+            fs.rmSync(paths.remnicExtensionDir, { recursive: true, force: true });
+          }
+          fs.renameSync(backupDir, paths.remnicExtensionDir);
+        } catch {
+          // swallow — best-effort restore; backup remains on disk
+        }
+      } else {
+        // Fresh install — just remove the directory we created.
+        try {
+          if (fs.existsSync(paths.remnicExtensionDir)) {
+            fs.rmSync(paths.remnicExtensionDir, { recursive: true, force: true });
+          }
+        } catch {
+          // swallow
+        }
+      }
+    };
+  } catch (err) {
+    // Best-effort cleanup so we never leave .tmp garbage behind.
+    if (fs.existsSync(tmpDir)) {
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        // swallow
+      }
+    }
+    throw err;
+  }
+
+  const instructionsPath = path.join(paths.remnicExtensionDir, "instructions.md");
+
+  return {
+    ...paths,
+    instructionsPath,
+    filesCopied,
+    commit: commitFn,
+    rollback: rollbackFn,
+  };
+}
+
+/**
+ * Remove the Remnic memory extension. Only touches
+ * `<codex_home>/memories_extensions/remnic/` — never adjacent extensions.
+ */
+export function removeCodexMemoryExtension(
+  options: RemoveCodexMemoryExtensionOptions = {},
+): RemoveCodexMemoryExtensionResult {
+  const paths = resolveCodexMemoryExtensionPaths(options.codexHome ?? null);
+  let removed = false;
+  if (fs.existsSync(paths.remnicExtensionDir)) {
+    fs.rmSync(paths.remnicExtensionDir, { recursive: true, force: true });
+    removed = true;
+  }
+  return { ...paths, removed };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

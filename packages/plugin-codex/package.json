@@ -23,6 +23,7 @@
     "bin",
     "hooks",
     "skills",
+    "memories_extensions",
     ".mcp.json"
   ],
   "dependencies": {

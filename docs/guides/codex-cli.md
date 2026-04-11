@@ -31,6 +31,38 @@ Codex is stateless by default. Every session starts from zero — it doesn't kno
 - A bearer token for authentication
 - `python3` and `curl` available in your PATH
 
+## Quickest setup: `remnic connectors install codex-cli`
+
+If you just want Remnic wired into Codex with sensible defaults, run:
+
+```bash
+remnic connectors install codex-cli
+```
+
+This writes a connector config, drops the Remnic **memory extension**
+(`memories_extensions/remnic/instructions.md`) as a sibling of
+`<codex_home>/memories/`, and runs a health check. Codex's phase-2
+consolidation sub-agent auto-discovers the extension the next time it
+runs — no further wiring needed.
+
+To opt out of the memory extension (for users self-managing the Codex
+memories_extensions folder):
+
+```bash
+remnic connectors install codex-cli --config installExtension=false
+```
+
+To target a non-default Codex home (for example an integration-test home
+or a shared multi-user install):
+
+```bash
+CODEX_HOME=/srv/codex remnic connectors install codex-cli
+# or
+remnic connectors install codex-cli --config codexHome=/srv/codex
+```
+
+The rest of this guide covers manual setup for more advanced cases.
+
 ## Setup
 
 ### 1. Generate and set the token

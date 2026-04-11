@@ -17,6 +17,9 @@ test("Phase C shim package keeps a workspace-linked source manifest", async () =
   assert.equal(bin["engram-access"], "./bin/engram-access.js");
   assert.equal(exportsMap["."].import, "./dist/index.js");
   assert.equal(exportsMap["./access-cli"].import, "./dist/access-cli.js");
+  // workspace:^ is intentional for local monorepo linking.
+  // pnpm publish (see release-and-publish.yml) rewrites this to the real
+  // version at pack time, so published packages never contain workspace:^.
   assert.equal(dependencies["@remnic/plugin-openclaw"], "workspace:^");
   assert.equal(dependencies["@remnic/core"], "workspace:^");
 });

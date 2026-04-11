@@ -28,9 +28,7 @@
     "check-types": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
-  "dependencies": {
-    "@remnic/core": "workspace:^"
-  },
+  "dependencies": {},
   "peerDependencies": {
     "openclaw": ">=2026.4.8"
   },
