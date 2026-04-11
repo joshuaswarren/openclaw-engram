@@ -8655,6 +8655,11 @@ export class Orchestrator {
       // rejection (future refactors, misbehaving custom backends, etc.)
       // can never block the persist loop — a failure in the dedup path
       // must always default to "not a duplicate".
+      // Track a pending semantic-skip decision (populated inside the block
+      // below). The actual drop happens AFTER contradiction detection so that
+      // a high-similarity update/correction is linked as a superseding
+      // contradiction rather than silently dropped.
+      let pendingSemanticSkip: (SemanticDedupDecision & { action: "skip" }) | null = null;
       if (this.config.semanticDedupEnabled) {
         let semanticDecision: SemanticDedupDecision;
         try {
@@ -8684,19 +8689,7 @@ export class Orchestrator {
           };
         }
         if (semanticDecision.action === "skip") {
-          log.debug(
-            `dedup: skipping semantic near-duplicate fact "${fact.content
-              .slice(0, 60)
-              .replace(/\s+/g, " ")}…" score=${semanticDecision.topScore.toFixed(
-              3,
-            )} neighbor=${semanticDecision.topId}`,
-          );
-          dedupedCount++;
-          // Do NOT add fact.content to contentHashIndex here. No memory was
-          // persisted for this fact, so registering a synthetic hash would
-          // permanently suppress exact-copy writes once the neighbor memory is
-          // archived or deleted (the hash would linger with no backing record).
-          continue;
+          pendingSemanticSkip = semanticDecision;
         }
       }
 
@@ -8918,6 +8911,26 @@ export class Orchestrator {
             );
           }
         }
+      }
+
+      // Apply the deferred semantic-skip now that contradiction detection has
+      // run. If a contradiction was found (supersedes is set), the candidate
+      // is a superseding update and must be written — do not skip it. Only
+      // drop it when there is no detected contradiction (true near-duplicate).
+      if (pendingSemanticSkip && !supersedes) {
+        log.debug(
+          `dedup: skipping semantic near-duplicate fact "${fact.content
+            .slice(0, 60)
+            .replace(/\s+/g, " ")}…" score=${pendingSemanticSkip.topScore.toFixed(
+            3,
+          )} neighbor=${pendingSemanticSkip.topId}`,
+        );
+        dedupedCount++;
+        // Do NOT add fact.content to contentHashIndex here. No memory was
+        // persisted for this fact, so registering a synthetic hash would
+        // permanently suppress exact-copy writes once the neighbor memory is
+        // archived or deleted (the hash would linger with no backing record).
+        continue;
       }
 
       // Suggest links for this memory (Phase 3A)

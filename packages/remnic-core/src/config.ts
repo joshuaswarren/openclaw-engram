@@ -1279,12 +1279,16 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 0.92,
     // Zero is a valid "disable candidate lookup" signal and must be preserved.
     // Only negative or non-finite values fall back to the default of 5.
-    semanticDedupCandidates:
-      typeof cfg.semanticDedupCandidates === "number" &&
-      Number.isFinite(cfg.semanticDedupCandidates) &&
-      cfg.semanticDedupCandidates >= 0
-        ? Math.floor(cfg.semanticDedupCandidates)
-        : 5,
+    // Fractional values in (0, 1) floor to 0, which would silently disable
+    // semantic dedup despite a clearly non-zero operator intent — clamp to 1.
+    semanticDedupCandidates: (() => {
+      const raw = cfg.semanticDedupCandidates;
+      if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return 5;
+      const n = Math.floor(raw);
+      // Positive fractional input (e.g. 0.5) should mean "at least 1 candidate",
+      // not "disabled". Only explicit 0 is the operator's disable signal.
+      return raw > 0 && n === 0 ? 1 : n;
+    })(),
     factArchivalEnabled: cfg.factArchivalEnabled === true,
     factArchivalAgeDays:
       typeof cfg.factArchivalAgeDays === "number" ? cfg.factArchivalAgeDays : 90,

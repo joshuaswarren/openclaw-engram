@@ -48,7 +48,11 @@ export interface SemanticDedupOptions {
 export type SemanticDedupDecision =
   | {
       action: "keep";
-      reason: "disabled" | "backend_unavailable" | "no_near_duplicate";
+      reason:
+        | "disabled"
+        | "backend_unavailable"
+        | "no_candidates"
+        | "no_near_duplicate";
       topScore?: number;
       topId?: string;
     }
@@ -68,10 +72,13 @@ export type SemanticDedupDecision =
  *
  * Contract:
  *   - When `options.enabled` is false → always keep, reason="disabled".
- *   - When the lookup returns 0 hits → keep, reason="backend_unavailable" when
- *     the backend signaled "off" (empty array). We can't distinguish
- *     "genuinely empty index" from "no backend" here, so we collapse both to
- *     the same "keep" outcome.
+ *   - When the lookup throws (provider down / network error) → keep,
+ *     reason="backend_unavailable". Fail-open: a lookup failure must not block
+ *     writes.
+ *   - When the lookup succeeds but returns 0 hits (empty index or no
+ *     neighbors above the score floor) → keep, reason="no_candidates".
+ *     This is distinct from backend_unavailable so telemetry dashboards can
+ *     correctly distinguish "provider is down" from "index is empty".
  *   - When the top hit's score ≥ threshold → skip with reason="near_duplicate".
  *   - Otherwise → keep with reason="no_near_duplicate".
  */
@@ -101,7 +108,11 @@ export async function decideSemanticDedup(
     return { action: "keep", reason: "backend_unavailable" };
   }
   if (!Array.isArray(hits) || hits.length === 0) {
-    return { action: "keep", reason: "backend_unavailable" };
+    // Provider responded (no throw) but returned no hits: the embedding index
+    // is empty or contains no neighbors above the score floor. Use a distinct
+    // reason so callers and telemetry can differentiate this from a genuine
+    // backend failure.
+    return { action: "keep", reason: "no_candidates" };
   }
 
   // Defensive: callers ought to return sorted, but don't trust it.

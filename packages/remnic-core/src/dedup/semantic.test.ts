@@ -38,14 +38,15 @@ test("semantic dedup: returns keep/disabled when enabled flag is false", async (
   assert.equal(decision.reason, "disabled");
 });
 
-test("semantic dedup: keeps content when lookup returns no hits (fail-open)", async () => {
+test("semantic dedup: keeps content when lookup returns no hits (empty index → no_candidates)", async () => {
   const decision = await decideSemanticDedup(
     "some novel statement",
     makeLookup([]),
     DEFAULT_OPTS,
   );
   assert.equal(decision.action, "keep");
-  assert.equal(decision.reason, "backend_unavailable");
+  // Provider is available but returned no hits: empty index, not backend failure.
+  assert.equal(decision.reason, "no_candidates");
 });
 
 test("semantic dedup: keeps content when top score is below threshold", async () => {
@@ -483,6 +484,97 @@ test("regression #399 P1: semantic dedup lookup is scoped to target namespace", 
   } finally {
     restoreFetch();
     await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+// ── Finding 3: empty index vs backend unavailable ─────────────────────────────
+
+test("finding 3: empty lookup result returns no_candidates, not backend_unavailable", async () => {
+  // Provider is reachable (no throw) but the index has no entries.
+  const decision = await decideSemanticDedup(
+    "brand new fact never seen before",
+    makeLookup([]),
+    DEFAULT_OPTS,
+  );
+  assert.equal(decision.action, "keep");
+  assert.equal(
+    decision.reason,
+    "no_candidates",
+    "empty index must yield no_candidates, not backend_unavailable",
+  );
+});
+
+test("finding 3: lookup throw returns backend_unavailable", async () => {
+  const decision = await decideSemanticDedup(
+    "some fact",
+    async () => {
+      throw new Error("connection refused");
+    },
+    DEFAULT_OPTS,
+  );
+  assert.equal(decision.action, "keep");
+  assert.equal(
+    decision.reason,
+    "backend_unavailable",
+    "provider error must yield backend_unavailable",
+  );
+});
+
+// ── Finding 2: fractional semanticDedupCandidates clamped to 1 ───────────────
+
+test("finding 2: parseConfig semanticDedupCandidates=0.5 clamps to 1 (not 0)", () => {
+  const config = parseConfig({ semanticDedupCandidates: 0.5 });
+  assert.equal(
+    config.semanticDedupCandidates,
+    1,
+    "fractional positive value must clamp to 1, not floor to 0",
+  );
+});
+
+test("finding 2: parseConfig semanticDedupCandidates=0.99 clamps to 1", () => {
+  const config = parseConfig({ semanticDedupCandidates: 0.99 });
+  assert.equal(config.semanticDedupCandidates, 1);
+});
+
+test("finding 2: parseConfig semanticDedupCandidates=0 preserved (explicit disable)", () => {
+  const config = parseConfig({ semanticDedupCandidates: 0 });
+  assert.equal(config.semanticDedupCandidates, 0);
+});
+
+test("finding 2: parseConfig semanticDedupCandidates=1.5 floors to 1 (not clamped)", () => {
+  // Value > 1 but fractional: floor(1.5) = 1, raw > 0, so clamp is not needed.
+  const config = parseConfig({ semanticDedupCandidates: 1.5 });
+  assert.equal(config.semanticDedupCandidates, 1);
+});
+
+// ── Finding 1: semantic-skip candidate that is also a contradiction ───────────
+//
+// The orchestrator fix (deferred skip) cannot be exercised as a pure unit test
+// here because it lives in the orchestrator's write loop. The pure semantic.ts
+// layer is unchanged in behaviour: it still returns action="skip" for a
+// high-similarity hit. The integration guarantee is:
+//   • decideSemanticDedup returns skip  (confirmed below — precondition)
+//   • orchestrator runs contradiction detection before applying the skip
+//   • if contradiction found → write proceeds (supersede path)
+//   • if no contradiction → skip is applied (existing behaviour)
+//
+// We verify the precondition that the pure function still returns "skip" for
+// high-similarity, so the orchestrator has the correct input to branch on.
+
+test("finding 1: precondition — decideSemanticDedup still returns skip for high-similarity hit", async () => {
+  const decision = await decideSemanticDedup(
+    "the operator never wants dark mode enabled",
+    makeLookup([{ id: "pref-001", score: 0.95 }]),
+    DEFAULT_OPTS,
+  );
+  assert.equal(
+    decision.action,
+    "skip",
+    "high-similarity hit must still produce skip so orchestrator can branch on it",
+  );
+  if (decision.action === "skip") {
+    assert.equal(decision.reason, "near_duplicate");
+    assert.equal(decision.topId, "pref-001");
   }
 });
 
