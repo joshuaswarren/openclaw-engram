@@ -1561,6 +1561,23 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.parallelMaxResultsPerAgent === "number"
         ? Math.max(0, Math.floor(cfg.parallelMaxResultsPerAgent))
         : 20,
+
+    // Codex CLI — native memory materialization (#378)
+    codexMaterializeMemories: cfg.codexMaterializeMemories !== false,
+    codexMaterializeNamespace:
+      typeof cfg.codexMaterializeNamespace === "string" && cfg.codexMaterializeNamespace.trim().length > 0
+        ? cfg.codexMaterializeNamespace.trim()
+        : "auto",
+    codexMaterializeMaxSummaryTokens:
+      typeof cfg.codexMaterializeMaxSummaryTokens === "number"
+        ? Math.max(0, Math.floor(cfg.codexMaterializeMaxSummaryTokens))
+        : 4500,
+    codexMaterializeRolloutRetentionDays:
+      typeof cfg.codexMaterializeRolloutRetentionDays === "number"
+        ? Math.max(0, Math.floor(cfg.codexMaterializeRolloutRetentionDays))
+        : 30,
+    codexMaterializeOnConsolidation: cfg.codexMaterializeOnConsolidation !== false,
+    codexMaterializeOnSessionEnd: cfg.codexMaterializeOnSessionEnd !== false,
   };
 }
 

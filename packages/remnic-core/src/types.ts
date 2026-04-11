@@ -719,6 +719,20 @@ export interface PluginConfig {
   parallelAgentWeights: { direct: number; contextual: number; temporal: number };
   /** Max results fetched per agent before merge. */
   parallelMaxResultsPerAgent: number;
+
+  // Codex CLI — native memory materialization (#378)
+  /** Materialize Remnic memories into Codex's expected ~/.codex/memories/ layout. Default true. */
+  codexMaterializeMemories: boolean;
+  /** Namespace to materialize; "auto" derives from the connector context. Default "auto". */
+  codexMaterializeNamespace: string;
+  /** Max whitespace-tokenized size of memory_summary.md. Default 4500. */
+  codexMaterializeMaxSummaryTokens: number;
+  /** Max age in days for rollout_summaries/*.md before pruning. Default 30. */
+  codexMaterializeRolloutRetentionDays: number;
+  /** Run materialization after semantic/causal consolidation completes. Default true. */
+  codexMaterializeOnConsolidation: boolean;
+  /** Run materialization at Codex session-end hook. Default true. */
+  codexMaterializeOnSessionEnd: boolean;
 }
 
 export interface BootstrapOptions {

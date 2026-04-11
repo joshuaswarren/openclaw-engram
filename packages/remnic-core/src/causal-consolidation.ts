@@ -18,9 +18,11 @@ import { readChainIndex, resolveChainsDir, type CausalChainIndex, type CausalEdg
 import { listJsonFiles, readJsonFile } from "./json-store.js";
 import { isRecord } from "./store-contract.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
-import type { GatewayConfig } from "./types.js";
+import type { GatewayConfig, MemoryFile, PluginConfig } from "./types.js";
 import path from "node:path";
 import { log } from "./logger.js";
+import { runCodexMaterialize } from "./connectors/codex-materialize-runner.js";
+import type { MaterializeResult, RolloutSummaryInput } from "./connectors/codex-materialize.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -326,6 +328,47 @@ export async function synthesizeCausalPreferencesViaLlm(options: {
     return lines.join("\n");
   } catch (error) {
     log.warn(`[cmc] preference synthesis failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+/**
+ * Optional post-consolidation hook — materializes Codex-native memory artifacts
+ * after a causal consolidation run. Guarded by `codexMaterializeMemories` and
+ * `codexMaterializeOnConsolidation`. Returns `null` when disabled or when the
+ * sentinel is missing (honors user hand-edits).
+ *
+ * Split from the orchestrator-owned flow so #378 avoids touching
+ * orchestrator.ts while Wave 1 edits are in flight.
+ */
+export async function materializeAfterCausalConsolidation(options: {
+  config: PluginConfig;
+  namespace?: string;
+  memories?: MemoryFile[];
+  memoryDir?: string;
+  codexHome?: string;
+  rolloutSummaries?: RolloutSummaryInput[];
+  now?: Date;
+}): Promise<MaterializeResult | null> {
+  if (!options.config.codexMaterializeMemories) return null;
+  if (!options.config.codexMaterializeOnConsolidation) return null;
+  try {
+    return await runCodexMaterialize({
+      config: options.config,
+      namespace: options.namespace,
+      memories: options.memories,
+      memoryDir: options.memoryDir,
+      codexHome: options.codexHome,
+      rolloutSummaries: options.rolloutSummaries,
+      now: options.now,
+      reason: "consolidation",
+    });
+  } catch (error) {
+    log.warn(
+      `[cmc] Codex materialize post-hook failed (non-fatal): ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
     return null;
   }
 }

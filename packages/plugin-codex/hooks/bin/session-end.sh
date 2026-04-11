@@ -102,4 +102,21 @@ rmdir "/tmp/remnic-lock-${SESSION_ID}.d" 2>/dev/null
 rm -f "/tmp/engram-cursor-${SESSION_ID}" 2>/dev/null
 rmdir "/tmp/engram-lock-${SESSION_ID}.d" 2>/dev/null
 
+# Codex-native memory materialization (#378). The script honors the
+# `codexMaterializeMemories` config flag and the `.remnic-managed` sentinel,
+# so it's safe to run unconditionally here.
+if [ "${REMNIC_CODEX_MATERIALIZE:-1}" != "0" ]; then
+  REMNIC_REPO_ROOT="${REMNIC_REPO_ROOT:-}"
+  if [ -z "$REMNIC_REPO_ROOT" ] && command -v remnic >/dev/null 2>&1; then
+    REMNIC_REPO_ROOT="$(remnic --print-root 2>/dev/null || true)"
+  fi
+  if [ -n "$REMNIC_REPO_ROOT" ] && [ -f "${REMNIC_REPO_ROOT}/scripts/codex-materialize.ts" ]; then
+    (
+      cd "$REMNIC_REPO_ROOT"
+      npx --yes tsx scripts/codex-materialize.ts --reason session_end >> "$LOG" 2>&1 || \
+        log "codex-materialize session_end failed"
+    )
+  fi
+fi
+
 exit 0
