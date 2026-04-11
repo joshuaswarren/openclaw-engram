@@ -936,7 +936,6 @@ export class StorageManager {
       const factHashIndex = await this.getFactHashIndex();
       const existing = await this.readAllMemories();
       let legacyRecovered = 0;
-      let legacySkipped = 0;
       for (const memory of existing) {
         if (memory.frontmatter.category !== "fact") continue;
         if (inferMemoryStatus(memory.frontmatter, memory.path) !== "active") continue;
@@ -975,9 +974,9 @@ export class StorageManager {
         factHashIndex.add(canonicalContent);
         legacyRecovered++;
       }
-      if (legacyRecovered > 0 || legacySkipped > 0) {
+      if (legacyRecovered > 0) {
         log.info(
-          `ensureFactHashIndexAuthoritative: recovered ${legacyRecovered} legacy fact hash(es) via content stripping; ${legacySkipped} skipped (all-placeholder template)`,
+          `ensureFactHashIndexAuthoritative: recovered ${legacyRecovered} legacy fact hash(es) via content stripping`,
         );
       }
       await factHashIndex.save();

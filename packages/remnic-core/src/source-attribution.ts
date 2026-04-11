@@ -320,11 +320,13 @@ function templateMatcher(template: string): RegExp | null {
     return null;
   }
 
-  // Identifier token: one or more word chars, dots, or dashes. Intentionally
-  // excludes whitespace, slashes, colons, and most punctuation so that
-  // URL-like fragments (`http://host:80`) cannot masquerade as a citation
-  // and prose-like tokens cannot span placeholder boundaries.
-  const idToken = "[\\w.-]+";
+  // Identifier token: one or more word chars, dots, dashes, or colons.
+  // Colons are included to allow timestamp values like "10:30" or session
+  // keys like "agent:planner:main" inside compact placeholder-bounded
+  // templates.  URL-like fragments (`http://host:80`) are still rejected
+  // because the lead anchor requires whitespace or a bracket immediately
+  // before the first id-token group (`http` is preceded by `/`).
+  const idToken = "[\\w.:-]+";
   const body =
     idToken +
     middleLiterals.map((lit) => escapeRegExp(lit) + idToken).join("");
