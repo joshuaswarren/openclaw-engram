@@ -1037,18 +1037,15 @@ test("UUI2: batch backend-unavailable flag short-circuits embedding lookups afte
 // batchBackendUnavailable flag never flipped and every fact in a batch paid a
 // full timeout roundtrip (N × timeout instead of 1 × timeout).
 //
-// The round 9 fix makes embed() throw EmbeddingTimeoutError on the lookup
-// path when AbortSignal fires. search() propagates it to semanticDedupLookup,
-// which lets it reach decideSemanticDedup's catch block →
-// reason="backend_unavailable". The per-batch flag then short-circuits
-// subsequent lookups.
+// Round 9 made embed() throw EmbeddingTimeoutError on the lookup path when
+// AbortSignal fires. Round 10 (Findings Ui1J + Ui1L) scopes that throw:
+//   • search() WITHOUT throwOnTimeout catches EmbeddingTimeoutError and returns
+//     [] — this is the recall-path contract so a slow backend doesn't abort recall.
+//   • search() WITH throwOnTimeout:true re-throws — this is the dedup-path
+//     contract so decideSemanticDedup's catch block can return
+//     reason="backend_unavailable" and activate the per-batch short-circuit.
 //
-// This test specifically covers the TIMEOUT code path (distinct from the
-// generic "backend down" UUI2 case above) and validates:
-//   1. EmbeddingFallback.search() throws EmbeddingTimeoutError on a timed-out fetch.
-//   2. That throw flows through to decideSemanticDedup → backend_unavailable.
-//   3. A simulated N=5 batch uses the flag to call fetch at most once.
-//   4. All 5 facts are kept (fail-open still works).
+// These tests cover the TIMEOUT code path and validate all four combinations:
 
 /**
  * Replace global fetch with a stub that always throws a DOMException AbortError,
@@ -1082,37 +1079,75 @@ function stubTimeoutFetch(): { restore: () => void; callCount: () => number } {
   };
 }
 
-test("semantic dedup timeout: EmbeddingFallback.search() throws EmbeddingTimeoutError on lookup-path timeout", async () => {
-  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-timeout-unit-"));
+// Round 10 regression tests (Findings Ui1J + Ui1L):
+//   search() without throwOnTimeout must return [] on timeout (recall-path contract).
+//   search() with throwOnTimeout:true must throw EmbeddingTimeoutError (dedup-path contract).
+// Previously search() always propagated EmbeddingTimeoutError, which would
+// abort recall entirely when the embedding backend was slow.
+
+test("round 10 Ui1J+Ui1L: search() without throwOnTimeout returns [] on timeout (recall-path fail-open)", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-timeout-recall-"));
   const { restore, callCount } = stubTimeoutFetch();
+  process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS = "1";
   try {
     // Seed a non-empty index so search() actually attempts an embed call.
     await seedEmbeddingIndex(memoryDir, {
       "mem-t-001": { vector: [1, 0, 0, 0], path: "facts/t-001.md" },
     });
-
     const config = parseConfig({
       memoryDir,
       embeddingFallbackEnabled: true,
       embeddingFallbackProvider: "openai",
       openaiApiKey: "test-key",
-      // Use a very short timeout so the stubbed error fires even if the
-      // stub doesn't honour the signal eagerly.
     });
-    // Override the lookup timeout to near-zero so the stub's TimeoutError
-    // scenario is realistic.
-    process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS = "1";
     const fallback = new EmbeddingFallback(config);
 
+    // Call WITHOUT throwOnTimeout — simulates the recall path.
+    let threw = false;
+    let result: Array<{ id: string; score: number; path: string }> = [];
+    try {
+      result = await fallback.search("synthetic query for timeout test", 5);
+    } catch (_err) {
+      threw = true;
+    }
+
+    assert.ok(!threw, "search() must NOT throw when throwOnTimeout is omitted (recall-path fail-open)");
+    assert.deepEqual(result, [], "search() must return [] on timeout when throwOnTimeout is false");
+    assert.ok(callCount() >= 1, "fetch must have been called at least once");
+  } finally {
+    delete process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS;
+    restore();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("round 10 Ui1J+Ui1L: search() with throwOnTimeout:true throws EmbeddingTimeoutError (dedup-path contract)", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-timeout-dedup-"));
+  const { restore, callCount } = stubTimeoutFetch();
+  process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS = "1";
+  try {
+    // Seed a non-empty index so search() actually attempts an embed call.
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-t-001": { vector: [1, 0, 0, 0], path: "facts/t-001.md" },
+    });
+    const config = parseConfig({
+      memoryDir,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      openaiApiKey: "test-key",
+    });
+    const fallback = new EmbeddingFallback(config);
+
+    // Call WITH throwOnTimeout:true — simulates the semanticDedupLookup path.
     let threw: unknown;
     try {
-      await fallback.search("synthetic query for timeout test", 5);
+      await fallback.search("synthetic query for timeout test", 5, { throwOnTimeout: true });
     } catch (err) {
       threw = err;
     }
 
     assert.ok(threw instanceof EmbeddingTimeoutError,
-      `search() must throw EmbeddingTimeoutError on lookup timeout; got ${threw}`);
+      `search() must throw EmbeddingTimeoutError when throwOnTimeout=true; got ${threw}`);
     assert.ok(callCount() >= 1, "fetch must have been called at least once");
   } finally {
     delete process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS;
@@ -1124,9 +1159,15 @@ test("semantic dedup timeout: EmbeddingFallback.search() throws EmbeddingTimeout
 test("semantic dedup timeout: batch short-circuits after first timeout", async () => {
   // This test mirrors UUI2 but uses the REAL EmbeddingFallback with a
   // timed-out fetch stub, exercising the full propagation path:
-  //   AbortError → EmbeddingTimeoutError (from embed) → thrown from search()
-  //   → caught by decideSemanticDedup → reason="backend_unavailable"
-  //   → batchBackendUnavailable flag flips → subsequent facts skip fetch.
+  //   AbortError → EmbeddingTimeoutError (from embed) → re-thrown from search()
+  //   (because throwOnTimeout:true) → caught by decideSemanticDedup →
+  //   reason="backend_unavailable" → batchBackendUnavailable flag flips →
+  //   subsequent facts skip fetch.
+  //
+  // The lookup uses throwOnTimeout:true to mirror semanticDedupLookup's actual
+  // call (Round 10 fix, Ui1J+Ui1L). Without the flag, search() would return []
+  // and decideSemanticDedup would classify as no_candidates, never flipping
+  // batchBackendUnavailable.
 
   const memoryDir = await mkdtemp(join(tmpdir(), "remnic-timeout-batch-"));
   const { restore, callCount } = stubTimeoutFetch();
@@ -1148,9 +1189,10 @@ test("semantic dedup timeout: batch short-circuits after first timeout", async (
     });
     const fallback = new EmbeddingFallback(config);
 
-    // Build a lookup that uses the real fallback (will throw EmbeddingTimeoutError).
+    // Build a lookup that uses the real fallback with throwOnTimeout:true,
+    // mirroring how semanticDedupLookup actually calls search() after Round 10.
     const realLookup: SemanticDedupLookup = async (content, limit) =>
-      fallback.search(content, limit).then((hits) =>
+      fallback.search(content, limit, { throwOnTimeout: true }).then((hits) =>
         hits.map((h) => ({ id: h.id, score: h.score, path: h.path })),
       );
 

@@ -11185,9 +11185,12 @@ export class Orchestrator {
       throw new Error("semantic dedup: embedding backend unavailable");
     }
     // search() may throw — let it propagate so decideSemanticDedup catches it
-    // and returns reason="backend_unavailable".
+    // and returns reason="backend_unavailable". Pass throwOnTimeout:true so
+    // EmbeddingTimeoutError is re-thrown here (Round 10 fix, Ui1J+Ui1L: the
+    // recall-path caller searchEmbeddingFallback does NOT pass this flag,
+    // keeping its fail-open [] contract on timeout).
     const scope = this.semanticDedupScopeFor(targetStorage);
-    const hits = await this.embeddingFallback.search(content, limit, scope);
+    const hits = await this.embeddingFallback.search(content, limit, { ...scope, throwOnTimeout: true });
     if (!Array.isArray(hits) || hits.length === 0) return [];
     return hits.map((hit) => ({
       id: hit.id,

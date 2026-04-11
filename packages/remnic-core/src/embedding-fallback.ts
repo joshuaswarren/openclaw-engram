@@ -37,6 +37,13 @@ const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
  * classified the result as no_candidates instead of backend_unavailable, so
  * the per-batch batchBackendUnavailable short-circuit never activated and
  * batches of N facts each paid a full timeout roundtrip.
+ *
+ * Round 10 fix (Findings Ui1J + Ui1L): search() now only re-throws this error
+ * when the caller explicitly passes `{ throwOnTimeout: true }`. Without that
+ * flag search() catches it and returns [] instead, preserving fail-open
+ * semantics for recall-path callers (searchEmbeddingFallback) that have no
+ * try/catch. Only the semantic-dedup path (semanticDedupLookup) passes the
+ * flag so it can still reach decideSemanticDedup's backend_unavailable branch.
  */
 export class EmbeddingTimeoutError extends Error {
   override readonly name = "EmbeddingTimeoutError" as const;
@@ -148,6 +155,21 @@ export class EmbeddingFallback {
     options: {
       pathPrefix?: string;
       pathExcludePrefixes?: readonly string[];
+      /**
+       * When true, an `EmbeddingTimeoutError` from the embedding backend is
+       * re-thrown to the caller. Use this on the semantic-dedup path so
+       * `decideSemanticDedup`'s catch block can classify the result as
+       * `reason="backend_unavailable"` and activate the per-batch
+       * short-circuit.
+       *
+       * When false (the default), a timeout is caught here and search()
+       * returns [] instead — preserving fail-open semantics for the recall
+       * path (`searchEmbeddingFallback`) which has no surrounding try/catch.
+       * Without this gate a timed-out embedding request on the recall path
+       * would propagate as an unhandled rejection and abort recall entirely.
+       * (Round 10 fix, Findings Ui1J + Ui1L.)
+       */
+      throwOnTimeout?: boolean;
     } = {},
   ): Promise<Array<{ id: string; score: number; path: string }>> {
     const provider = await this.resolveProvider();
@@ -157,7 +179,21 @@ export class EmbeddingFallback {
     const ids = Object.keys(index.entries);
     if (ids.length === 0) return [];
 
-    const queryVector = await this.embed(query, provider, { mode: "lookup" });
+    let queryVector: number[] | null;
+    try {
+      queryVector = await this.embed(query, provider, { mode: "lookup" });
+    } catch (err) {
+      if (err instanceof EmbeddingTimeoutError) {
+        if (options.throwOnTimeout) {
+          throw err;
+        }
+        // Fail-open: recall-path callers get an empty result rather than an
+        // unhandled rejection that would abort recall entirely.
+        log.debug("embedding fallback search: timeout on lookup, returning [] (throwOnTimeout=false)");
+        return [];
+      }
+      throw err;
+    }
     if (!queryVector) return [];
 
     const includePrefix = normalizePathPrefix(options.pathPrefix);
