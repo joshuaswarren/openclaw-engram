@@ -122,12 +122,69 @@ export function hasCitation(text: string): boolean {
 }
 
 /**
+ * Escape a string for use as a regex literal.
+ */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Build a regex that matches a citation produced by the given template.
+ *
+ * The approach: extract the literal prefix of the template (everything before
+ * the first `{placeholder}`) and the literal suffix (everything after the last
+ * `{placeholder}`), then match `prefix + <anything non-newline> + suffix`.
+ * This is robust for any bracket-delimited format like `[Source: ...]`,
+ * `[src:...]`, `(prov: ...)`, etc.
+ *
+ * Returns `null` when the template has no placeholders and therefore produces
+ * a fully-literal citation string (handled by the prefix-equality fast path in
+ * {@link hasCitationForTemplate}).
+ */
+function templateMatcher(template: string): RegExp | null {
+  // Split around all {placeholder} tokens.
+  const parts = template.split(/\{[^}]+\}/);
+  if (parts.length <= 1) return null;
+  // We only need the prefix and suffix to anchor the search.
+  const prefix = escapeRegExp(parts[0] ?? "");
+  const suffix = escapeRegExp(parts[parts.length - 1] ?? "");
+  const middle = "[^\\n]*?";
+  const pattern = prefix + middle + suffix;
+  return new RegExp(pattern, "i");
+}
+
+/**
+ * Returns true if `text` already carries a citation produced by `template`
+ * **or** by the default `[Source: ...]` format (for facts that were tagged
+ * before a config change).
+ *
+ * Use this instead of {@link hasCitation} whenever the caller has access to
+ * the configured `inlineSourceAttributionFormat`.
+ */
+export function hasCitationForTemplate(text: string, template: string): boolean {
+  if (typeof text !== "string" || text.length === 0) return false;
+  // Always accept the default format as a fallback so facts tagged before a
+  // configuration change are not double-tagged on reprocessing.
+  if (hasCitation(text)) return true;
+  // If the configured template matches the default, we're done.
+  if (template === DEFAULT_CITATION_FORMAT) return false;
+  // Build a matcher for the custom template and test the content.
+  const matcher = templateMatcher(template);
+  if (!matcher) {
+    // Template has no placeholders — it is a fixed string. Use inclusion check.
+    return text.includes(template);
+  }
+  return matcher.test(text);
+}
+
+/**
  * Attach an inline citation to fact text.
  *
- * If the text already has a citation, it is returned unchanged — existing
- * provenance is respected and never overwritten. Otherwise the citation is
- * appended to the trimmed text with a single space separator, which keeps
- * the marker visually adjacent to the fact body.
+ * If the text already has a citation — either the default `[Source: ...]`
+ * marker or one produced by the configured template — it is returned unchanged.
+ * Existing provenance is respected and never overwritten. Otherwise the
+ * citation is appended to the trimmed text with a single space separator,
+ * which keeps the marker visually adjacent to the fact body.
  */
 export function attachCitation(
   text: string,
@@ -135,7 +192,7 @@ export function attachCitation(
   template: string = DEFAULT_CITATION_FORMAT,
 ): string {
   if (typeof text !== "string") return text as unknown as string;
-  if (hasCitation(text)) return text;
+  if (hasCitationForTemplate(text, template)) return text;
   const trimmedEnd = text.replace(/\s+$/u, "");
   if (trimmedEnd.length === 0) return text;
   const citation = formatCitation(ctx, template);

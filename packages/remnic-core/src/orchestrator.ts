@@ -20,7 +20,7 @@ import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   attachCitation,
-  hasCitation as hasSourceCitation,
+  hasCitationForTemplate,
   type CitationContext,
 } from "./source-attribution.js";
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
@@ -8320,7 +8320,12 @@ export class Orchestrator {
     const applyInlineCitation = (content: string): string => {
       if (!citationEnabled) return content;
       if (typeof content !== "string" || content.length === 0) return content;
-      if (hasSourceCitation(content)) return content;
+      // Use template-aware detection so facts that already carry a custom
+      // citation marker (e.g. from a re-processed or relayed extraction) are
+      // treated as already-tagged and are not given a second citation tail.
+      // The default [Source: ...] pattern is always included as a fallback for
+      // facts that were tagged before a configuration change.
+      if (hasCitationForTemplate(content, citationTemplate)) return content;
       return attachCitation(content, citationContext, citationTemplate);
     };
     const persistedIds: string[] = [];
@@ -8427,15 +8432,22 @@ export class Orchestrator {
         const sharedStorage = await this.storageRouter.storageFor(
           this.config.sharedNamespace,
         );
+        // Compute the cited content once so the dedup hash and the written
+        // content are always identical. Previously the dedup check used raw
+        // `options.content` while the write used `applyInlineCitation(...)`,
+        // meaning the hash stored after the first write (of cited text) would
+        // never match a subsequent dedup check (of raw text), allowing the
+        // same fact to be promoted repeatedly.
+        const citedContent = applyInlineCitation(options.content);
         if (
           options.category === "fact" &&
-          (await sharedStorage.hasFactContentHash(options.content))
+          (await sharedStorage.hasFactContentHash(citedContent))
         ) {
           return;
         }
         const promotedId = await sharedStorage.writeMemory(
           options.category as any,
-          applyInlineCitation(options.content),
+          citedContent,
           {
             confidence: options.confidence,
             tags: [...options.tags, "shared-promotion"],

@@ -8,6 +8,7 @@ import {
   deriveSessionId,
   formatCitation,
   hasCitation,
+  hasCitationForTemplate,
   parseAllCitations,
   parseCitation,
   stripCitation,
@@ -188,4 +189,53 @@ test("parseConfig falls back to default format when override is empty", () => {
     cfg.inlineSourceAttributionFormat,
     "[Source: agent={agent}, session={sessionId}, ts={ts}]",
   );
+});
+
+// ── Finding 1 regression: custom citation template dedup detection ────────────
+
+test("hasCitationForTemplate detects default [Source:...] marker regardless of template", () => {
+  const text = "Fact body. [Source: agent=planner, session=main, ts=2026-04-10T00:00:00Z]";
+  // Default template
+  assert.equal(hasCitationForTemplate(text, DEFAULT_CITATION_FORMAT), true);
+  // Custom template — should still detect the default marker as a fallback
+  assert.equal(hasCitationForTemplate(text, "[src:{agent}/{sessionId}@{date}]"), true);
+});
+
+test("hasCitationForTemplate detects a custom-format citation", () => {
+  const customTemplate = "[src:{agent}/{sessionId}@{date}]";
+  const text = "Fact body. [src:planner/main@2026-04-10]";
+  assert.equal(hasCitationForTemplate(text, customTemplate), true);
+  // Should not falsely match plain text
+  assert.equal(hasCitationForTemplate("Fact body.", customTemplate), false);
+});
+
+test("hasCitationForTemplate returns false for empty / non-string inputs", () => {
+  assert.equal(hasCitationForTemplate("", DEFAULT_CITATION_FORMAT), false);
+  assert.equal(hasCitationForTemplate("no citation here", DEFAULT_CITATION_FORMAT), false);
+});
+
+test("attachCitation with custom template is a no-op when text already carries that custom marker (Finding 1)", () => {
+  const customTemplate = "[src:{agent}/{sessionId}@{date}]";
+  const ctx = { agent: "planner", session: "agent:planner:main", ts: "2026-04-10T14:25:07Z" };
+  // Pre-tag the fact with a custom citation
+  const priorCitation = "[src:other/alpha@2026-01-01]";
+  const text = `Existing fact. ${priorCitation}`;
+  const result = attachCitation(text, ctx, customTemplate);
+  // Must be unchanged — no second citation appended
+  assert.equal(result, text);
+  // Confirm only one citation marker is present
+  const markerCount = (result.match(/\[src:/g) ?? []).length;
+  assert.equal(markerCount, 1);
+});
+
+test("attachCitation with custom template tags untagged text exactly once (Finding 1 positive path)", () => {
+  const customTemplate = "[src:{agent}/{sessionId}@{date}]";
+  const ctx = { agent: "scout", session: "agent:scout:beta", ts: "2026-04-11T00:00:00Z" };
+  const text = "The service uses Redis for caching.";
+  const result = attachCitation(text, ctx, customTemplate);
+  // Should end with one custom citation
+  assert.ok(result.includes("[src:scout/beta@2026-04-11]"), `expected custom citation in: ${result}`);
+  // Applying again must be idempotent
+  const again = attachCitation(result, ctx, customTemplate);
+  assert.equal(again, result);
 });
