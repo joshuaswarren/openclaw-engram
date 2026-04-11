@@ -892,6 +892,20 @@ export class EngramAccessService {
       }
     }
 
+    // Reject unsupported format values explicitly.  Programmatic callers that
+    // bypass CLI/MCP pre-validation (which already use validateBriefingFormat)
+    // could otherwise send a typo like "jsno" and silently receive a response
+    // in the default format, masking the client bug and breaking format-dependent
+    // automation.  Only undefined / absent format falls through to the default.
+    const SUPPORTED_FORMATS = ["markdown", "json"] as const;
+    if (
+      typeof request.format === "string" &&
+      !(SUPPORTED_FORMATS as readonly string[]).includes(request.format)
+    ) {
+      throw new EngramAccessInputError(
+        `unsupported briefing format: "${request.format}". Accepted: ${SUPPORTED_FORMATS.join(", ")}.`,
+      );
+    }
     const format: "markdown" | "json" = request.format === "json"
       ? "json"
       : request.format === "markdown"

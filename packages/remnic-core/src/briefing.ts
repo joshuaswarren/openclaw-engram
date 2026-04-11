@@ -561,14 +561,49 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
   const startIsFloating = !isoHasTimezone(start);
 
   if (startIsFloating) {
-    // Verify the value is at least parseable before accepting it.
-    const probe = new Date(start);
-    if (!Number.isFinite(probe.getTime())) {
+    // Validate the start timestamp with the same rigour applied to end:
+    //   1. Shape check — must match the ISO-8601 date or datetime pattern.
+    //   2. Real-date check — round-trip through UTC to reject impossible dates
+    //      like "2026-02-30" that JavaScript silently auto-corrects.
+    //   3. Time-component check — reject out-of-range hours/minutes/seconds
+    //      (e.g. "2026-04-11T25:99:00") that JavaScript rolls over to a
+    //      different day, which would cause the event to be matched against
+    //      unrelated calendar dates.
+    // If start fails any check we skip the event entirely — there is no usable
+    // start date to fall back on.
+    const startShapeOk =
+      typeof start === "string" &&
+      /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?$/.test(start);
+    if (!startShapeOk) {
       log.debug(`briefing: skipping calendar event with invalid start value: ${JSON.stringify(start)}`);
       return false;
     }
+    const startDateStr = start.slice(0, 10);
+    const startDateProbe = new Date(startDateStr + "T00:00:00Z");
+    if (
+      Number.isNaN(startDateProbe.getTime()) ||
+      startDateProbe.toISOString().slice(0, 10) !== startDateStr
+    ) {
+      log.warn(
+        `briefing: skipping calendar event "${event.title}" with impossible start date ${JSON.stringify(startDateStr)}`,
+      );
+      return false;
+    }
+    const startRawTime = start.indexOf("T") !== -1 ? start.slice(start.indexOf("T") + 1) : "";
+    if (startRawTime !== "") {
+      const startTimeParts = startRawTime.split(":").map(Number);
+      const shh = startTimeParts[0] ?? 0;
+      const smm = startTimeParts[1] ?? 0;
+      const sss = Math.floor(startTimeParts[2] ?? 0);
+      if (shh > 23 || smm > 59 || sss > 59) {
+        log.warn(
+          `briefing: skipping calendar event "${event.title}" with out-of-range start time ${JSON.stringify(startRawTime)}`,
+        );
+        return false;
+      }
+    }
 
-    const startDate = start.slice(0, 10);
+    const startDate = startDateStr;
     const end = event.end;
 
     // Point event (no end) — simple date prefix comparison.

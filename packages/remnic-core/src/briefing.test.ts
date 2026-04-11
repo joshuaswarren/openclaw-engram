@@ -1303,3 +1303,87 @@ test("eventFallsOnDate: floating event with bad hour '2026-04-11T25:00:00' is tr
     "bad-hour end event must NOT bleed into the JS-autocorrected next day",
   );
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 12 PRRT_kwDORJXyws56U_7O: Validate floating START timestamp before
+// date-slice comparisons (symmetric with end validation added in earlier rounds)
+// ──────────────────────────────────────────────────────────────────────────
+// JavaScript normalizes impossible dates silently: new Date("2026-02-30T10:00")
+// returns a valid Date object pointing to 2026-03-02, so the old
+// "isFinite(probe.getTime())" guard allowed malformed starts through.
+// With an end present the bad start date slice was then used in lexicographic
+// overlap logic, placing the event on unrelated real days.
+
+test("eventFallsOnDate: floating event with impossible start date '2026-02-30T10:00:00' is skipped", () => {
+  // February 30 is not a real date; JavaScript auto-corrects to 2026-03-02.
+  // The old guard (isFinite check) did not catch this.
+  // After the fix the event must be silently skipped (returns false for all dates).
+  const event = makeCalendarEventWithEnd("2026-02-30T10:00:00", "2026-02-30T11:00:00");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-02-28"),
+    false,
+    "impossible-start event must NOT appear on surrounding real days",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-03-02"),
+    false,
+    "impossible-start event must NOT appear on the JS-autocorrected date",
+  );
+});
+
+test("eventFallsOnDate: floating event with impossible start date '2026-99-99T00:00:00' is skipped", () => {
+  // Month 99 / day 99 passes the shape regex but is not a real date.
+  const event = makeCalendarEvent("2026-99-99T00:00:00");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    false,
+    "impossible start month/day must result in event being skipped",
+  );
+});
+
+test("eventFallsOnDate: floating event with impossible start month '2026-13-01T10:00:00' is skipped", () => {
+  // Month 13 passes the shape regex but is not a real month.
+  const event = makeCalendarEvent("2026-13-01T10:00:00");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    false,
+    "impossible start month must result in event being skipped",
+  );
+  // JS auto-corrects 2026-13-01 to 2027-01-01 — also excluded.
+  assert.equal(
+    eventFallsOnDate(event, "2027-01-01"),
+    false,
+    "impossible start month must NOT appear on JS-autocorrected date",
+  );
+});
+
+test("eventFallsOnDate: floating event with out-of-range start hour '2026-04-11T25:00:00' is skipped", () => {
+  // Hour 25 passes the shape regex and date round-trip, but is not a valid time.
+  // Without the time-range check this would bleed into 2026-04-12.
+  const event = makeCalendarEvent("2026-04-11T25:00:00");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    false,
+    "out-of-range start hour must result in event being skipped",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-12"),
+    false,
+    "out-of-range start hour must NOT appear on the JS-autocorrected date",
+  );
+});
+
+test("eventFallsOnDate: floating event with out-of-range start time '2026-04-11T10:99:00' is skipped", () => {
+  // Minute 99 passes the shape regex but is an invalid time component.
+  const event = makeCalendarEventWithEnd("2026-04-11T10:99:00", "2026-04-11T11:00:00");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    false,
+    "out-of-range start minute must result in event being skipped",
+  );
+});

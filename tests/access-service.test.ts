@@ -2429,3 +2429,61 @@ test("briefing() allows access when namespace is readable by the caller principa
   });
   assert.equal(result.namespace, "restricted-ns");
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// PRRT_kwDORJXyws56U_7P: Reject unsupported briefing formats in access service
+// ──────────────────────────────────────────────────────────────────────────
+// Direct / programmatic callers bypass CLI and MCP pre-validation layers.
+// Passing an unknown format must raise EngramAccessInputError rather than
+// silently falling back to the configured default format.
+
+test("briefing() rejects unsupported format 'jsno' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ format: "jsno" as never }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /unsupported briefing format/.test(err.message) &&
+      err.message.includes("jsno"),
+  );
+});
+
+test("briefing() rejects unsupported format 'xml' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ format: "xml" as never }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /unsupported briefing format/.test(err.message),
+  );
+});
+
+test("briefing() rejects unsupported format 'text' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ format: "text" as never }),
+    (err: unknown) => err instanceof EngramAccessInputError,
+  );
+});
+
+test("briefing() accepts valid format 'markdown' without error", async () => {
+  const service = createBriefingService();
+  const result = await service.briefing({ format: "markdown" });
+  assert.equal(result.format, "markdown", "valid markdown format must be accepted");
+});
+
+test("briefing() accepts valid format 'json' without error", async () => {
+  const service = createBriefingService();
+  const result = await service.briefing({ format: "json" });
+  assert.equal(result.format, "json", "valid json format must be accepted");
+});
+
+test("briefing() accepts absent format (undefined) without error and uses default", async () => {
+  const service = createBriefingService();
+  // No format supplied — should use config.briefing.defaultFormat ("markdown").
+  const result = await service.briefing({});
+  assert.ok(
+    result.format === "markdown" || result.format === "json",
+    "absent format must resolve to the configured default",
+  );
+});
