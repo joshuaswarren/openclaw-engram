@@ -102,29 +102,27 @@ export async function runCodexMaterialize(
     }
   }
 
-  try {
-    const result = materializeForNamespace(namespace, {
-      memories,
-      codexHome: options.codexHome,
-      maxSummaryTokens: cfg.codexMaterializeMaxSummaryTokens,
-      rolloutRetentionDays: cfg.codexMaterializeRolloutRetentionDays,
-      rolloutSummaries: options.rolloutSummaries,
-      now: options.now,
-    });
-    if (options.reason) {
-      log.debug(
-        `[codex-materialize] ran reason=${options.reason} wrote=${result.wrote} files=${result.filesWritten.length}`,
-      );
-    }
-    return result;
-  } catch (error) {
-    log.warn(
-      `[codex-materialize] run failed (non-fatal): ${
-        error instanceof Error ? error.message : String(error)
-      }`,
+  // Intentionally NOT catching here: per the JSDoc contract above,
+  // schema-validation and I/O errors from `materializeForNamespace` must
+  // surface to callers so they can exit non-zero (CLI) or log + recover
+  // (consolidation post-hook, which has its own narrower try/catch).
+  // Catching everything would make a broken MEMORY.md render look like a
+  // successful skip, and invisible failures are strictly worse than loud
+  // ones for a feature that writes to `~/.codex/memories`.
+  const result = materializeForNamespace(namespace, {
+    memories,
+    codexHome: options.codexHome,
+    maxSummaryTokens: cfg.codexMaterializeMaxSummaryTokens,
+    rolloutRetentionDays: cfg.codexMaterializeRolloutRetentionDays,
+    rolloutSummaries: options.rolloutSummaries,
+    now: options.now,
+  });
+  if (options.reason) {
+    log.debug(
+      `[codex-materialize] ran reason=${options.reason} wrote=${result.wrote} files=${result.filesWritten.length}`,
     );
-    return null;
   }
+  return result;
 }
 
 /**

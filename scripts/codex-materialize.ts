@@ -66,13 +66,51 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
+/**
+ * Resolve a plugin config block from an OpenClaw-shaped config file.
+ *
+ * OpenClaw stores Remnic settings under
+ * `plugins.entries["openclaw-engram"].config`; the legacy Remnic/Engram layouts
+ * kept them at the top level. We accept both so we can run uniformly in
+ * standard OpenClaw installs AND in developer sandboxes.
+ */
+function unwrapOpenClawEntry(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const entry = (obj.plugins as Record<string, unknown> | undefined)?.entries as
+    | Record<string, unknown>
+    | undefined;
+  const pluginConfig = (entry?.["openclaw-engram"] as Record<string, unknown> | undefined)
+    ?.config;
+  if (pluginConfig && typeof pluginConfig === "object") {
+    return pluginConfig as Record<string, unknown>;
+  }
+  // Legacy / developer config layout — the top-level object IS the plugin config.
+  return obj;
+}
+
 function loadRawConfig(): Record<string, unknown> {
   // Try the common config locations without importing bootstrap.ts (which
   // pulls in the full orchestrator). A missing config is fine — parseConfig
   // produces sane defaults.
+  //
+  // Order of precedence:
+  //   1. `REMNIC_CONFIG` env var (developer escape hatch)
+  //   2. `OPENCLAW_ENGRAM_CONFIG_PATH` / `OPENCLAW_CONFIG_PATH` — the same
+  //      env vars the Remnic plugin reads at runtime
+  //   3. `~/.openclaw/openclaw.json` — standard OpenClaw install location
+  //   4. Legacy `~/.config/remnic/config.json`, `~/.config/engram/config.json`,
+  //      `~/.remnic/config.json`
+  //
+  // For (3) and (2) we unwrap `plugins.entries["openclaw-engram"].config`.
   const home = process.env.HOME ?? "";
+  const openclawConfigPath =
+    process.env.OPENCLAW_ENGRAM_CONFIG_PATH ??
+    process.env.OPENCLAW_CONFIG_PATH ??
+    path.join(home, ".openclaw", "openclaw.json");
   const candidates = [
     process.env.REMNIC_CONFIG,
+    openclawConfigPath,
     path.join(home, ".config", "remnic", "config.json"),
     path.join(home, ".config", "engram", "config.json"),
     path.join(home, ".remnic", "config.json"),
@@ -82,7 +120,8 @@ function loadRawConfig(): Record<string, unknown> {
     if (!fs.existsSync(candidate)) continue;
     try {
       const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
-      if (raw && typeof raw === "object") return raw as Record<string, unknown>;
+      const unwrapped = unwrapOpenClawEntry(raw);
+      if (unwrapped) return unwrapped;
     } catch {
       // fall through to next candidate
     }

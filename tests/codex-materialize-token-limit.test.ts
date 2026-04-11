@@ -72,6 +72,45 @@ test("renderMemorySummary stays under the configured token budget", () => {
   );
 });
 
+test("truncateToTokenBudget reserves enough headroom for the truncation marker", () => {
+  // Regression (Cursor Bugbot on #392): the line-preserving path used to
+  // reserve only 1 token for a ~4-token marker, forcing the hard-cut
+  // fallback that flattens the entire output. Verify the line-preserving
+  // path actually preserves line structure when the budget is tight but
+  // comfortable.
+  const text = [
+    "# header",
+    "line one with filler",
+    "line two with filler",
+    "line three with filler",
+    "line four with filler",
+    "line five with filler",
+  ].join("\n");
+  const result = truncateToTokenBudget(text, 10);
+  // Stays under budget — the marker's token cost is accounted for.
+  assert.ok(
+    approximateTokenCount(result) <= 10,
+    `token count ${approximateTokenCount(result)} exceeds budget 10`,
+  );
+  // Line structure preserved (the result still contains a newline) — if
+  // the old hard-cut fallback ran we'd see no newlines at all.
+  assert.match(result, /\n/u);
+});
+
+test("renderMemorySummary honors maxTokens=0 by emitting no summary body", () => {
+  // Regression (Codex on #392): maxTokens=0 used to be silently reset to the
+  // 4500-token default. A zero-token budget must actually produce an empty
+  // body.
+  const rendered = renderMemorySummary({
+    namespace: "zero-budget-ns",
+    memories: [makeMemory("synthetic long enough memory body text", "zero-1")],
+    rolloutSummaries: [],
+    maxTokens: 0,
+    now: new Date("2026-04-02T00:00:00Z"),
+  });
+  assert.equal(rendered, "");
+});
+
 test("renderMemorySummary with default budget stays under Codex's 5000-token cap", () => {
   const memories: MemoryFile[] = [];
   for (let i = 0; i < 50; i++) {

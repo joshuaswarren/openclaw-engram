@@ -155,6 +155,66 @@ test("runner skips when reason=session_end and codexMaterializeOnSessionEnd=fals
   }
 });
 
+test("runner propagates schema errors instead of silently returning null", async () => {
+  // Regression (Cursor Bugbot on #392): the old catch-all turned schema
+  // validation throws from materializeForNamespace into silent `null`
+  // returns, breaking the JSDoc contract. Verify a rendered MEMORY.md that
+  // fails validation bubbles up to the caller.
+  //
+  // We trigger a schema failure by stubbing renderMemoryMd via a namespace
+  // with an obviously-bogus structure: easiest path is to hand runCodexMaterialize
+  // a memories list that causes rendered content to miss required sections.
+  //
+  // The straightforward failure path is: pass a non-existent codexHome
+  // where we can't create the sentinel → a sentinel-missing path returns
+  // normally. To actually hit a schema throw we pre-populate a sentinel
+  // then supply memories whose rendered MEMORY.md we can break. Since the
+  // renderer is deterministic, the cleanest approach is to drive a known
+  // validator failure by stubbing via monkey-patching — but the simpler
+  // and realistic check is to verify that IF the materializer throws, the
+  // runner throws too (not returns null). We do this by passing a memoryDir
+  // that points to an unwritable path so the writer throws EACCES/ENOENT.
+  const memoryDir = makeTempDir("codex-materialize-runner-throw-memdir-");
+  const workspaceDir = makeTempDir("codex-materialize-runner-throw-workspace-");
+  const { root: codexHome, memoriesDir } = makeCodexHome();
+
+  try {
+    const storage = new StorageManager(memoryDir);
+    await storage.writeMemory("fact", "synthetic throw propagation memory.", { source: "runner-test" });
+    ensureSentinel(memoriesDir, "default", new Date("2026-04-02T00:00:00Z"));
+
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      codexMaterializeMemories: true,
+    });
+
+    // Delete the codex memories dir mid-flight via a sentinel path that
+    // does not exist as a directory, so writeFileSync throws. We point
+    // codexHome at a regular file so `path.join(codexHome, "memories")`
+    // becomes an invalid path.
+    const badFilePath = path.join(os.tmpdir(), `codex-materialize-runner-badfile-${Date.now()}`);
+    (await import("node:fs")).writeFileSync(badFilePath, "not a directory");
+
+    await assert.rejects(
+      runCodexMaterialize({
+        config,
+        codexHome: badFilePath,
+        reason: "manual",
+        now: new Date("2026-04-02T00:00:00Z"),
+      }),
+      /ENOTDIR|EEXIST|not a directory|EACCES|file already exists/iu,
+    );
+    (await import("node:fs")).rmSync(badFilePath, { force: true });
+  } finally {
+    rmSync(memoryDir, { recursive: true, force: true });
+    rmSync(workspaceDir, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
 test("runner still runs on session_end when codexMaterializeOnSessionEnd=true (default)", async () => {
   const memoryDir = makeTempDir("codex-materialize-runner-sessend-on-memdir-");
   const workspaceDir = makeTempDir("codex-materialize-runner-sessend-on-workspace-");

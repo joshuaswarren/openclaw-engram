@@ -167,8 +167,11 @@ export function materializeForNamespace(
   const codexHome = resolveCodexHome(options.codexHome);
   const memoriesDir = path.join(codexHome, "memories");
   const now = options.now ?? new Date();
+  // Honor `0` as "no summary budget" — parseConfig already clamps to non-
+  // negative integers, so any provided number is meaningful. Only fall back
+  // to the default when the caller did not provide the option at all.
   const maxSummaryTokens =
-    typeof options.maxSummaryTokens === "number" && options.maxSummaryTokens > 0
+    typeof options.maxSummaryTokens === "number" && options.maxSummaryTokens >= 0
       ? options.maxSummaryTokens
       : 4500;
   const rolloutRetentionDays =
@@ -198,6 +201,10 @@ export function materializeForNamespace(
 
   // ── Render ─────────────────────────────────────────────────────────────
   const memories = [...options.memories];
+  // Track whether the caller actually supplied a rollout set. `undefined`
+  // means "don't touch rollout_summaries/"; an empty array is still
+  // authoritative and means "we own this dir and it should be empty".
+  const rolloutsSupplied = options.rolloutSummaries !== undefined;
   const rolloutSummaries = options.rolloutSummaries ?? [];
 
   const memorySummary = renderMemorySummary({
@@ -248,16 +255,34 @@ export function materializeForNamespace(
   });
 
   if (existingSentinel.content_hash === hash) {
-    logger.debug?.(`no-op materialization for namespace=${namespace} (hash unchanged)`);
-    return {
-      namespace,
-      memoriesDir,
-      wrote: false,
-      skippedNoSentinel: false,
-      skippedIdempotent: true,
-      filesWritten: [],
-      contentHash: hash,
-    };
+    // Idempotence early-return is only safe when the managed files we would
+    // have written are still on disk. If a user or external process deleted
+    // `MEMORY.md` / `memory_summary.md` / `raw_memories.md` (or any retained
+    // rollout file) while the sentinel's hash stayed the same, we must fall
+    // through and rewrite — otherwise Codex would be stuck with missing
+    // artifacts until a memory-content change happens to flip the hash.
+    const requiredFiles = [
+      path.join(memoriesDir, "memory_summary.md"),
+      path.join(memoriesDir, "MEMORY.md"),
+      path.join(memoriesDir, "raw_memories.md"),
+      ...rolloutFiles.map((r) => path.join(memoriesDir, ROLLOUT_SUBDIR, r.name)),
+    ];
+    const allPresent = requiredFiles.every((f) => existsSync(f));
+    if (allPresent) {
+      logger.debug?.(`no-op materialization for namespace=${namespace} (hash unchanged)`);
+      return {
+        namespace,
+        memoriesDir,
+        wrote: false,
+        skippedNoSentinel: false,
+        skippedIdempotent: true,
+        filesWritten: [],
+        contentHash: hash,
+      };
+    }
+    logger.debug?.(
+      `hash unchanged for namespace=${namespace} but managed file missing — forcing rewrite`,
+    );
   }
 
   // ── Atomic writes ──────────────────────────────────────────────────────
@@ -297,21 +322,28 @@ export function materializeForNamespace(
 
   const destRolloutsDir = path.join(memoriesDir, ROLLOUT_SUBDIR);
   mkdirSync(destRolloutsDir, { recursive: true });
-  // Clear any rollout files we previously owned but that are no longer in the set.
-  const retainedRolloutNames = new Set(rolloutFiles.map((r) => r.name));
-  try {
-    for (const entry of readdirSync(destRolloutsDir, { withFileTypes: true })) {
-      if (!entry.isFile()) continue;
-      if (!entry.name.endsWith(".md")) continue;
-      if (retainedRolloutNames.has(entry.name)) continue;
-      try {
-        unlinkSync(path.join(destRolloutsDir, entry.name));
-      } catch {
-        // ignore
+  // Only garbage-collect rollout files when the caller actually supplied a
+  // `rolloutSummaries` array — otherwise we'd wipe legitimately
+  // user/Codex-created recap files on every session-end run, since those
+  // calls typically omit the rollout set entirely. When rollouts were
+  // supplied (even as an empty array — meaning "we own this dir and it
+  // should be empty"), we clear the stale files we previously owned.
+  if (rolloutsSupplied) {
+    const retainedRolloutNames = new Set(rolloutFiles.map((r) => r.name));
+    try {
+      for (const entry of readdirSync(destRolloutsDir, { withFileTypes: true })) {
+        if (!entry.isFile()) continue;
+        if (!entry.name.endsWith(".md")) continue;
+        if (retainedRolloutNames.has(entry.name)) continue;
+        try {
+          unlinkSync(path.join(destRolloutsDir, entry.name));
+        } catch {
+          // ignore
+        }
       }
+    } catch {
+      // ignore — directory may not exist yet
     }
-  } catch {
-    // ignore — directory may not exist yet
   }
 
   for (const rollout of rolloutFiles) {
@@ -759,17 +791,30 @@ export function truncateToTokenBudget(text: string, maxTokens: number): string {
   if (maxTokens <= 0) return "";
   if (approximateTokenCount(text) <= maxTokens) return text;
 
+  // Reserve headroom for the truncation marker so the line-preserving path
+  // can actually fit the marker without flipping to the hard-cut fallback.
+  // Both markers are counted with the same whitespace heuristic the budget
+  // check uses, so the arithmetic stays consistent.
+  const lineMarker = "_[truncated for summary budget]_";
+  const tailMarker = "[truncated]";
+  const lineMarkerTokens = approximateTokenCount(lineMarker);
+  const tailMarkerTokens = approximateTokenCount(tailMarker);
+
   const lines = text.split(/\r?\n/u);
-  while (lines.length > 0 && approximateTokenCount(lines.join("\n")) > maxTokens - 1) {
+  const lineBudget = Math.max(0, maxTokens - lineMarkerTokens);
+  while (lines.length > 0 && approximateTokenCount(lines.join("\n")) > lineBudget) {
     lines.pop();
   }
-  lines.push("_[truncated for summary budget]_");
+  lines.push(lineMarker);
   let result = lines.join("\n");
 
-  // If a single huge line still blows the budget, hard-cut tokens.
+  // If a single huge line still blows the budget, hard-cut tokens. Reserve
+  // space for the tail marker's own token count so the final string stays
+  // within maxTokens rather than sneaking over by a few tokens.
   if (approximateTokenCount(result) > maxTokens) {
     const tokens = result.split(/\s+/u);
-    result = `${tokens.slice(0, Math.max(0, maxTokens - 1)).join(" ")} [truncated]`;
+    const keep = Math.max(0, maxTokens - tailMarkerTokens);
+    result = keep > 0 ? `${tokens.slice(0, keep).join(" ")} ${tailMarker}` : tailMarker;
   }
   return result;
 }

@@ -110,6 +110,95 @@ test("skips materialization when sentinel file is missing", () => {
   }
 });
 
+test("idempotent guard forces rewrite when a managed file is missing", () => {
+  // Regression (Codex on #392): the sentinel hash check used to skip even
+  // when MEMORY.md / memory_summary.md / raw_memories.md had been deleted.
+  // Verify a missing file flips the short-circuit back to a rewrite.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "idem-missing-ns");
+    const memories = [makeMemory({ id: "idem-missing-1", content: "synthetic idempotence payload" })];
+
+    const first = materializeForNamespace("idem-missing-ns", {
+      memories,
+      codexHome: root,
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+    assert.equal(first.wrote, true);
+
+    // Simulate external deletion of a managed file.
+    rmSync(path.join(memoriesDir, "MEMORY.md"));
+    assert.equal(existsSync(path.join(memoriesDir, "MEMORY.md")), false);
+
+    const second = materializeForNamespace("idem-missing-ns", {
+      memories,
+      codexHome: root,
+      now: new Date("2026-04-03T00:00:00Z"),
+    });
+    assert.equal(second.wrote, true);
+    assert.equal(second.skippedIdempotent, false);
+    assert.ok(existsSync(path.join(memoriesDir, "MEMORY.md")));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rollout_summaries/ is untouched when caller omits rolloutSummaries", () => {
+  // Regression (Codex on #392): passing no rolloutSummaries used to wipe
+  // every .md in rollout_summaries/ on the next run. Seed a user-created
+  // recap file, materialize without rollouts, and assert the file survives.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "rollout-preserve-ns");
+    mkdirSync(path.join(memoriesDir, "rollout_summaries"), { recursive: true });
+    const userRecapPath = path.join(memoriesDir, "rollout_summaries", "user-notes.md");
+    writeFileSync(userRecapPath, "# synthetic user notes — must not be wiped\n");
+
+    materializeForNamespace("rollout-preserve-ns", {
+      memories: [makeMemory({ content: "synthetic preserve payload" })],
+      codexHome: root,
+      now: new Date("2026-04-02T00:00:00Z"),
+      // NOTE: rolloutSummaries intentionally omitted.
+    });
+
+    assert.ok(existsSync(userRecapPath), "user-authored rollout file must survive");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rollout_summaries/ GC still runs when caller supplies an empty rolloutSummaries", () => {
+  // Symmetry: passing an explicit empty array IS authoritative — it means
+  // "we own this dir and it should be empty". Stale owned files should
+  // disappear on the next run.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "rollout-gc-ns");
+    // First run with a rollout that will later become stale.
+    materializeForNamespace("rollout-gc-ns", {
+      memories: [makeMemory({ content: "synthetic gc payload round 1" })],
+      codexHome: root,
+      rolloutSummaries: [
+        { slug: "stale-session", updatedAt: "2026-04-01T00:00:00Z", body: "stale synthetic recap." },
+      ],
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+    const stalePath = path.join(memoriesDir, "rollout_summaries", "stale-session.md");
+    assert.ok(existsSync(stalePath));
+
+    // Second run: empty authoritative set → stale file must be removed.
+    materializeForNamespace("rollout-gc-ns", {
+      memories: [makeMemory({ content: "synthetic gc payload round 2 (different content)" })],
+      codexHome: root,
+      rolloutSummaries: [],
+      now: new Date("2026-04-03T00:00:00Z"),
+    });
+    assert.equal(existsSync(stalePath), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("idempotent no-op when nothing changed since last run", () => {
   const { root, memoriesDir } = makeTempCodexHome();
   try {
