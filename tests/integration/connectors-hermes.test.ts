@@ -291,21 +291,45 @@ test("removeHermesConfig strips remnic: block and preserves rest of file", () =>
   });
 });
 
-test("removeHermesConfig is a no-op when remnic: block is already absent", () => {
-  withTempHome((tmpHome) => {
-    const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
-    fs.mkdirSync(profileDir, { recursive: true });
-    const cfgPath = path.join(profileDir, "config.yaml");
+test("removeHermesConfig is a no-op when remnic: block is already absent", async () => {
+  // Import the real implementation so this test actually exercises the
+  // early-return path in removeHermesConfig instead of asserting a
+  // tautology (the original cursor-flagged bug: the test wrote a file,
+  // read it back twice, and asserted equality without ever calling the
+  // function under test).
+  const mod = await import(
+    "../../packages/remnic-core/src/connectors/index.ts"
+  );
 
-    const initial = "plugins:\n  - some_plugin\n";
-    fs.writeFileSync(cfgPath, initial);
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+        const cfgPath = path.join(profileDir, "config.yaml");
 
-    const raw = fs.readFileSync(cfgPath, "utf-8");
-    assert.ok(!/^remnic:/m.test(raw), "No remnic: block in initial file");
+        const initial = "plugins:\n  - some_plugin\n";
+        fs.writeFileSync(cfgPath, initial);
 
-    // File unchanged
-    const after = fs.readFileSync(cfgPath, "utf-8");
-    assert.equal(after, initial, "File must be unchanged when no remnic: block present");
+        const result = mod.removeHermesConfig({ profile: "default" });
+
+        assert.equal(result.updated, false, "removeHermesConfig must not update");
+        assert.equal(result.skipped, true, "removeHermesConfig must report skipped");
+        assert.match(
+          result.reason ?? "",
+          /No remnic: block found/,
+          "skip reason should indicate missing block",
+        );
+
+        // And the file content should be exactly what we wrote — the function
+        // must not rewrite or truncate the file when there is nothing to remove.
+        const after = fs.readFileSync(cfgPath, "utf-8");
+        assert.equal(after, initial, "File must be unchanged when no remnic: block present");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
   });
 });
 
