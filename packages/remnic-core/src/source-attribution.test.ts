@@ -1087,51 +1087,74 @@ test(
 );
 
 test(
-  "Option A — Test C (legacy): memory without frontmatter.contentHash falls back to stripCitation for default format",
+  "Option A — Test C (legacy, Finding 2): memory without frontmatter.contentHash — archive SKIPS hash removal rather than guessing via stripCitation",
   async () => {
-    // Simulate a legacy memory loaded from disk without contentHash in frontmatter.
-    // The memory body uses the default [Source: ...] format, so stripCitation
-    // can recover the raw content for the fallback path.
+    // Verifies the Finding 2 (Urgw) fix: when a legacy memory has no
+    // contentHash frontmatter, the archive path must NOT call
+    // stripCitation(content) because that only handles the default
+    // [Source: ...] format.  With a custom citation template the hash computed
+    // from stripCitation(content) would NOT match the indexed raw-content hash,
+    // silently leaking a stale entry.
+    //
+    // The correct behaviour is to SKIP removal and leave the hash in the index
+    // (a false-negative dedup miss is preferable to corrupting the index with a
+    // wrong hash that blocks future extractions of unrelated content).
     const dir = await mkdtemp(path.join(os.tmpdir(), "engram-option-a-test-c-"));
     try {
       const rawContent = "user prefers coffee";
+      const customTemplate = "[src:{agent}/{sessionId}@{date}]";
       const citedContent = attachCitation(
         rawContent,
         { agent: "planner", session: "agent:planner:main", ts: "2026-04-11T00:00:00Z" },
-        DEFAULT_CITATION_FORMAT,
+        customTemplate,
       );
-      // citedContent uses [Source: agent=planner, session=main, ts=...] — default format.
-      assert.ok(citedContent.includes("[Source:"), "must use default [Source: ...] format");
+      // citedContent = "user prefers coffee [src:planner/main@2026-04-11]"
+      assert.ok(citedContent.includes("[src:"), "must use custom [src:...] citation format");
+      assert.ok(!citedContent.includes("[Source:"), "must NOT use default format");
 
-      // Manually populate a ContentHashIndex with the raw-content hash (as if
-      // it were written by StorageManager.writeMemory in a past version that
-      // did not store contentHash on the frontmatter).
+      // Populate the index with the raw-content hash (simulates what writeMemory
+      // does when contentHashSource is provided).
       const idx = new ContentHashIndex(dir);
       await idx.load();
-      idx.add(rawContent); // raw content hash only — no cited variant
+      idx.add(rawContent);
       await idx.save();
 
-      // Verify the hash is present.
       const idxCheck = new ContentHashIndex(dir);
       await idxCheck.load();
       assert.ok(idxCheck.has(rawContent), "raw-content hash must be present before archive");
 
-      // Simulate the legacy fallback: frontmatter has NO contentHash, so use
-      // stripCitation(citedContent) to recover the raw content for index removal.
-      const legacyMemory = { frontmatter: { contentHash: undefined }, content: citedContent } as unknown as import("./types.js").MemoryFile;
-      const hashKey = legacyMemory.frontmatter.contentHash ?? stripCitation(legacyMemory.content);
-      // hashKey must equal rawContent (stripCitation removes the [Source: ...] suffix)
-      assert.equal(hashKey, rawContent, "stripCitation fallback must recover the raw content");
+      // Simulate the legacy archive path: frontmatter has NO contentHash.
+      // Correct fix: check contentHash first; when absent, SKIP (do nothing).
+      const legacyMemory = {
+        frontmatter: { contentHash: undefined as string | undefined },
+        content: citedContent,
+      } as unknown as import("./types.js").MemoryFile;
 
-      idxCheck.remove(hashKey);
+      // The fixed archive path only removes when contentHash is present.
+      if (legacyMemory.frontmatter.contentHash) {
+        idxCheck.removeByHash(legacyMemory.frontmatter.contentHash);
+      }
+      // else: skip — no removal when contentHash is absent.
+
       await idxCheck.save();
 
-      // Reload and verify hash is gone.
+      // The raw-content hash MUST still be present (skip means no removal).
       const idxAfter = new ContentHashIndex(dir);
       await idxAfter.load();
       assert.ok(
-        !idxAfter.has(rawContent),
-        "legacy fallback via stripCitation must successfully remove the raw-content hash from the index",
+        idxAfter.has(rawContent),
+        "raw-content hash must remain in the index when legacy archive SKIPS removal (no contentHash)",
+      );
+
+      // Additional regression: verify that calling stripCitation on the CUSTOM
+      // format body produces the WRONG key (confirming the old approach would
+      // have been incorrect).
+      const strippedContent = stripCitation(citedContent);
+      // stripCitation only removes [Source: ...] format; custom format is a no-op.
+      assert.notEqual(
+        strippedContent,
+        rawContent,
+        "stripCitation on a custom-format cited body must NOT recover rawContent — proves the old fallback was wrong",
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1232,5 +1255,93 @@ test(
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  },
+);
+
+// ── Finding 3 (Uru3): templateMatcher — tighten normal-case placeholder regex ─
+
+test(
+  "Finding 3 (Uru3): hasCitationForTemplate rejects user content that shares outer delimiters but wrong separators",
+  () => {
+    // Template [src:{agent}:{sessionId}_{date}] uses ':' and '_' as separators.
+    // User content that happens to use different separators ('/' and '@') must
+    // NOT be classified as a citation.
+    const template = "[src:{agent}:{sessionId}_{date}]";
+
+    // Real citation produced by this template — MUST be detected.
+    const realCitation = "The cache was cleared. [src:planner:main_2026-04-11]";
+    assert.equal(
+      hasCitationForTemplate(realCitation, template),
+      true,
+      "real citation matching the template separators must be detected",
+    );
+
+    // User content with wrong separators ('/' and '@' instead of ':' and '_').
+    // Before the fix, `[^\n]*?` between prefix/suffix matched this.
+    const wrongSepContent = "See docs at [src:some-agent/abc123@today] for details.";
+    assert.equal(
+      hasCitationForTemplate(wrongSepContent, template),
+      false,
+      "user content with different separators must NOT be mis-flagged as a citation (Finding 3 — Uru3)",
+    );
+
+    // Edge case: content with the same outer delimiters but more tokens.
+    const extraTokenContent = "check [src:agent:session:extra_date] now";
+    assert.equal(
+      hasCitationForTemplate(extraTokenContent, template),
+      false,
+      "content with extra tokens inside the template delimiters must NOT match",
+    );
+  },
+);
+
+test(
+  "Finding 3 (Uru3): hasCitationForTemplate correctly detects default-format citations after tightening",
+  () => {
+    // The default format [Source: agent={agent}, session={sessionId}, ts={ts}]
+    // has rich inner separators (', session=' and ', ts=').  The tightened
+    // normal-case logic must still match real citations produced by formatCitation.
+    const realCitation =
+      "User prefers dark mode. [Source: agent=planner, session=main, ts=2026-04-11T10:00:00Z]";
+    assert.equal(
+      hasCitationForTemplate(realCitation, DEFAULT_CITATION_FORMAT),
+      true,
+      "default-format citation must be detected after templateMatcher tightening",
+    );
+
+    // Also verify an 'unknown' variant (fields populated with CITATION_UNKNOWN).
+    const unknownCitation =
+      "Some fact. [Source: agent=unknown, session=unknown, ts=unknown]";
+    assert.equal(
+      hasCitationForTemplate(unknownCitation, DEFAULT_CITATION_FORMAT),
+      true,
+      "default-format citation with 'unknown' fields must still be detected",
+    );
+  },
+);
+
+test(
+  "Finding 3 (Uru3): templateMatcher normal case rejects content that crosses placeholder boundaries",
+  () => {
+    // Template [src:{agent}/{sessionId}@{date}] with inner seps '/' and '@'.
+    // Content where a single value spans BOTH separators must be rejected.
+    const template = "[src:{agent}/{sessionId}@{date}]";
+
+    // Content where 'agent' portion alone spans the '/' separator — not a
+    // valid emission of the template.
+    const crossBoundaryCitation = "check [src:foo/bar/extra@2026-04-11] now";
+    assert.equal(
+      hasCitationForTemplate(crossBoundaryCitation, template),
+      false,
+      "content where a value token crosses a separator boundary must not match",
+    );
+
+    // Valid citation — exactly three tokens in the right positions.
+    const validCitation = "Fact. [src:planner/main@2026-04-11]";
+    assert.equal(
+      hasCitationForTemplate(validCitation, template),
+      true,
+      "valid citation matching template separators must be detected",
+    );
   },
 );

@@ -130,17 +130,17 @@ test("rebuild from disk: fact with frontmatter.contentHash is found via rawBody 
   }
 });
 
-test("rebuild from disk: legacy fact without frontmatter.contentHash is rebuilt via stripCitation fallback", async () => {
-  // Simulate a legacy memory file that has NO contentHash frontmatter field
-  // but whose content body carries a citation annotation.  The rebuild path
-  // must fall back to stripCitation(content) so the raw fact body remains
-  // discoverable.
+test("rebuild from disk: fact written without contentHashSource uses body hash via frontmatter.contentHash", async () => {
+  // NOTE: StorageManager.writeMemory always sets contentHash in frontmatter
+  // (using the body as the hash source when no contentHashSource is given).
+  // This test verifies that the rebuild path correctly reads frontmatter.contentHash
+  // in this scenario (the "legacy" path in the else-branch is not entered).
   const dir = await mkdtemp(path.join(os.tmpdir(), "engram-fact-hash-legacy-rebuild-"));
   try {
-    const rawBody = "Legacy fact written before frontmatter.contentHash was introduced.";
+    const rawBody = "Fact written without explicit contentHashSource.";
 
     const storage = new StorageManager(dir);
-    // Write without contentHashSource so no contentHash is stored on frontmatter.
+    // Write without contentHashSource — writeMemory sets contentHash = hash(sanitized body).
     await storage.writeMemory("fact", rawBody, { source: "test" });
 
     // Delete state files to force rebuild.
@@ -153,9 +153,85 @@ test("rebuild from disk: legacy fact without frontmatter.contentHash is rebuilt 
     assert.equal(
       await storage2.hasFactContentHash(rawBody),
       true,
-      "legacy fact body should be found after rebuild via stripCitation fallback",
+      "fact body must be found after rebuild — frontmatter.contentHash is always set by writeMemory",
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test(
+  "rebuild from disk (Finding 1 — Uhol): truly legacy fact with NO contentHash in frontmatter is SKIPPED rather than guessed",
+  async () => {
+    // Simulate a memory file written before contentHash was added to the
+    // frontmatter schema.  The file is crafted manually without contentHash
+    // so that the rebuild path hits the else-branch.
+    //
+    // The correct behaviour (Finding 1 fix): when contentHash is absent, log a
+    // warning and SKIP — do NOT call stripCitation(content) because that only
+    // handles the default [Source: ...] format and would produce the wrong hash
+    // for memories annotated with a custom citation template.
+    //
+    // Observable: hasFactContentHash(rawBody) returns FALSE after rebuild
+    // (the fact is not in the rebuilt index).  This is a false-negative miss,
+    // which is preferable to indexing a wrong hash.
+    const dir = await mkdtemp(path.join(os.tmpdir(), "engram-fact-hash-truly-legacy-"));
+    try {
+      const rawBody = "Truly legacy fact with a custom citation";
+      const customTemplate = "[src:{agent}/{sessionId}@{date}]";
+      const citedBody =
+        rawBody + " [src:planner/main@2026-04-11]";
+
+      // Manually craft a fact file WITHOUT contentHash in the frontmatter.
+      const factsDir = path.join(dir, "facts", "2026-04-11");
+      await mkdir(factsDir, { recursive: true });
+      const legacyFrontmatter = [
+        "---",
+        "id: legacy-fact-001",
+        "category: fact",
+        "created: 2026-04-11T00:00:00.000Z",
+        "updated: 2026-04-11T00:00:00.000Z",
+        "source: extraction",
+        "confidence: 0.85",
+        "confidenceTier: high",
+        'tags: []',
+        // NOTE: NO contentHash line — this is the legacy case.
+        "---",
+      ].join("\n");
+      await writeFile(
+        path.join(factsDir, "legacy-fact-001.md"),
+        legacyFrontmatter + "\n\n" + citedBody + "\n",
+        "utf-8",
+      );
+
+      // Ensure no pre-existing state files so the rebuild runs.
+      const stateDir = path.join(dir, "state");
+      await mkdir(stateDir, { recursive: true });
+      await unlink(path.join(stateDir, "fact-hashes.txt")).catch(() => {});
+      await unlink(path.join(stateDir, "fact-hashes.ready")).catch(() => {});
+
+      const storage = new StorageManager(dir);
+
+      // The rebuild must SKIP this memory (no contentHash) rather than indexing
+      // a wrong hash via stripCitation.  hasFactContentHash returns false.
+      assert.equal(
+        await storage.hasFactContentHash(rawBody),
+        false,
+        "truly legacy fact without contentHash must be SKIPPED during rebuild — hash not added to index (Finding 1 — Uhol)",
+      );
+
+      // Also confirm that the wrong hash (from the old stripCitation approach)
+      // is NOT in the index.  stripCitation is a no-op for the custom format,
+      // so it would have indexed citedBody — which must NOT match rawBody.
+      assert.equal(
+        await storage.hasFactContentHash(citedBody),
+        false,
+        "cited body must also not be in the index after rebuild skip",
+      );
+
+      void customTemplate; // suppress unused-variable warning
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);

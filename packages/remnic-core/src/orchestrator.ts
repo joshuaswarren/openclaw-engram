@@ -20,9 +20,11 @@ import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   attachCitation,
-  stripCitation,
   type CitationContext,
 } from "./source-attribution.js";
+// stripCitation removed: legacy archive fallback replaced by skip-with-warning
+// strategy (Finding 2 — Urgw).  See archive paths in semantic-consolidation
+// and fact-archival.
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
 import type {
   SearchBackend,
@@ -2116,12 +2118,10 @@ export class Orchestrator {
           });
           if (archiveResult) {
             // Remove from content-hash index.
-            // Prefer the raw-content hash stored on the frontmatter at write
+            // Use the raw-content hash stored on the frontmatter at write
             // time (contentHash) — it is format-agnostic and survives any
-            // citation template. Fall back to stripCitation(memory.content)
-            // only for legacy memories written before contentHash was added to
-            // frontmatter (those use the default [Source: ...] format only, so
-            // stripCitation is still a safe fallback for them).
+            // citation template.  Legacy memories without contentHash are
+            // skipped (see Finding 2 — Urgw).
             if (this.contentHashIndex) {
               if (m.frontmatter.contentHash) {
                 // Modern memory: frontmatter.contentHash is already a SHA-256
@@ -2129,9 +2129,14 @@ export class Orchestrator {
                 this.contentHashIndex.removeByHash(m.frontmatter.contentHash);
               } else {
                 // Legacy memory written before contentHash was stored on the
-                // frontmatter.  These use the default [Source: ...] format so
-                // stripCitation can recover the raw content for hashing.
-                this.contentHashIndex.remove(stripCitation(m.content));
+                // frontmatter.  stripCitation() only removes the default
+                // [Source: ...] pattern; with a custom citation template it
+                // would produce the wrong hash and silently leak a stale entry.
+                // Skip removal instead — the hash will simply be absent from
+                // the index (Finding 2 — Urgw).
+                log.warn(
+                  `[semantic-consolidation] skipping hash removal for legacy memory ${m.frontmatter.id ?? "(unknown)"} — no contentHash in frontmatter`,
+                );
               }
             }
             await this.embeddingFallback.removeFromIndex(m.frontmatter.id);
@@ -10387,10 +10392,7 @@ export class Orchestrator {
         // Remove from content-hash index since it's no longer in hot search.
         // Prefer the raw-content hash stored on the frontmatter at write
         // time (contentHash) — it is format-agnostic and survives any
-        // citation template. Fall back to stripCitation(memory.content)
-        // only for legacy memories written before contentHash was added to
-        // frontmatter (those use the default [Source: ...] format only, so
-        // stripCitation is still a safe fallback for them).
+        // citation template.
         if (this.contentHashIndex) {
           if (memory.frontmatter.contentHash) {
             // Modern memory: frontmatter.contentHash is already a SHA-256
@@ -10398,9 +10400,14 @@ export class Orchestrator {
             this.contentHashIndex.removeByHash(memory.frontmatter.contentHash);
           } else {
             // Legacy memory written before contentHash was stored on the
-            // frontmatter.  These use the default [Source: ...] format so
-            // stripCitation can recover the raw content for hashing.
-            this.contentHashIndex.remove(stripCitation(memory.content));
+            // frontmatter.  stripCitation() only removes the default
+            // [Source: ...] pattern; with a custom citation template it
+            // would produce the wrong hash and silently leak a stale entry.
+            // Skip removal — the hash will simply be absent from the index
+            // (Finding 2 — Urgw).
+            log.warn(
+              `[fact-archival] skipping hash removal for legacy memory ${memory.frontmatter.id ?? "(unknown)"} — no contentHash in frontmatter`,
+            );
           }
         }
         await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);

@@ -147,6 +147,41 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * Escape a single character for use INSIDE a character class `[...]`.
+ * Special chars inside character classes: `]`, `\`, `^`, `-`.
+ */
+function escapeRegExpCharClass(ch: string): string {
+  if (ch === "]") return "\\]";
+  if (ch === "\\") return "\\\\";
+  if (ch === "^") return "\\^";
+  if (ch === "-") return "\\-";
+  // Other regex meta chars are NOT special inside [...] but escaping them is safe.
+  return escapeRegExp(ch);
+}
+
+/**
+ * Build a per-placeholder token pattern that excludes newlines, whitespace,
+ * and any punctuation characters used as inner separators in the template.
+ *
+ * This prevents a placeholder span from consuming separator bytes and
+ * matching strings that cross separator boundaries in user-supplied content.
+ *
+ * @param nonWordSepChars - Set of non-word (non-alphanumeric, non-`_`) chars
+ *   extracted from the inner separator literals of the template.
+ */
+function buildTokenPattern(nonWordSepChars: Set<string>): string {
+  // Always exclude newlines and whitespace.
+  const base = "\\n\\s";
+  if (nonWordSepChars.size === 0) {
+    // No inner separator punctuation — the placeholder spans the full space
+    // between prefix and suffix. Fall back to a generous no-newline match.
+    return `[^\\n]+?`;
+  }
+  const escaped = [...nonWordSepChars].map(escapeRegExpCharClass).join("");
+  return `[^${base}${escaped}]+?`;
+}
+
 /** Regex that matches a `{placeholder}` token inside a template string. */
 const PLACEHOLDER_REGEX = /\{[a-zA-Z_][\w]*\}/g;
 
@@ -156,9 +191,15 @@ const PLACEHOLDER_REGEX = /\{[a-zA-Z_][\w]*\}/g;
  * The approach depends on the shape of the template:
  *
  *  - **Normal case (non-empty literal prefix or suffix).** Anchor the match
- *    with `escaped prefix + [^\n]*? + escaped suffix`. A template like
- *    `[src:{agent}/{sessionId}@{date}]` collapses to `\[src:[^\n]*?\]` which
- *    is robust: it requires the full literal frame the template defines.
+ *    on the outer literal frame and reconstruct the interior as
+ *    `token + sep + token + ...`, where each per-placeholder token excludes
+ *    the non-word separator characters used between placeholders. A template
+ *    like `[src:{agent}/{sessionId}@{date}]` emits
+ *    `\[src:[^\n\s/@]+?\/[^\n\s/@]+?@[^\n\s/@]+?\]` so that `[src:foo/bar]`
+ *    is NOT matched (wrong separator count) and user content like
+ *    `[src:some-agent/abc123@today]` is accepted only when the separator
+ *    layout is correct (same template separators) — preventing false positives
+ *    where arbitrary user text inside the same outer delimiters is mis-flagged.
  *
  *  - **Placeholder-bounded with whitespace separator.** Both prefix and
  *    suffix are empty and the separator literal(s) between placeholders
@@ -206,10 +247,39 @@ function templateMatcher(template: string): RegExp | null {
   const suffix = parts[parts.length - 1] ?? "";
 
   // Normal case: at least one literal frame on the outside.
+  // Tighten the per-placeholder token so it cannot consume separator
+  // characters and match strings that cross separator boundaries
+  // (Finding 3 — Uru3).
   if (prefix.length > 0 || suffix.length > 0) {
     const escapedPrefix = escapeRegExp(prefix);
     const escapedSuffix = escapeRegExp(suffix);
-    const middle = "[^\\n]*?";
+
+    // Inner parts: literal separators that sit between adjacent placeholders.
+    // For `[src:{agent}/{sessionId}@{date}]`, parts = ["[src:", "/", "@", "]"]
+    // so innerParts = ["/", "@"].
+    const innerParts = parts.slice(1, -1);
+
+    // Collect only the non-word (punctuation/symbol) characters from each
+    // inner separator so alphabetic separator text (unlikely but valid) does
+    // not exclude letters from the per-placeholder token pattern.
+    const nonWordSepChars = new Set<string>();
+    for (const sep of innerParts) {
+      for (const ch of sep) {
+        if (!/\w/.test(ch)) {
+          nonWordSepChars.add(ch);
+        }
+      }
+    }
+
+    const tokenPattern = buildTokenPattern(nonWordSepChars);
+
+    // Reconstruct the interior: token (separator token)* ...
+    const middle =
+      innerParts.length === 0
+        ? tokenPattern
+        : tokenPattern +
+          innerParts.map((sep) => escapeRegExp(sep) + tokenPattern).join("");
+
     const pattern = escapedPrefix + middle + escapedSuffix;
     return new RegExp(pattern, "i");
   }

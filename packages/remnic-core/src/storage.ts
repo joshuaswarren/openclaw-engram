@@ -71,7 +71,8 @@ import {
   serializeContinuityIncident,
   upsertContinuityLoopInMarkdown,
 } from "./identity-continuity.js";
-import { stripCitation } from "./source-attribution.js";
+// stripCitation import removed: legacy rebuild fallback was replaced by a
+// skip-with-warning strategy (Finding 1 — Uhol).  See ensureFactHashIndexAuthoritative.
 
 const ARTIFACT_SEARCH_STOPWORDS = new Set([
   "a",
@@ -930,13 +931,21 @@ export class StorageManager {
         // Prefer the pre-computed raw-content hash stored in frontmatter
         // (written since round 8 of issue #369). This hash was derived from
         // the content BEFORE citation annotation, so it matches what
-        // hasFactContentHash(rawFact) would compute.  Fall back to hashing
-        // stripCitation(content) for legacy memories written before the
-        // contentHash frontmatter field was introduced.
+        // hasFactContentHash(rawFact) would compute.
+        //
+        // SKIP legacy memories that have no contentHash frontmatter (written
+        // before this field was introduced) instead of guessing via
+        // stripCitation().  stripCitation() only removes the default
+        // `[Source: ...]` pattern; if a custom citation template was in use at
+        // write time it will produce the wrong hash — worse than a miss
+        // (Finding 1 — Uhol).  Callers that rely on authoritative dedup for
+        // truly ancient memories should re-extract those facts.
         if (memory.frontmatter.contentHash) {
           factHashIndex.addByHash(memory.frontmatter.contentHash);
         } else {
-          factHashIndex.add(stripCitation(memory.content));
+          log.warn(
+            `ensureFactHashIndexAuthoritative: skipping legacy fact ${memory.frontmatter.id ?? "(unknown)"} — no contentHash in frontmatter; re-extract to rebuild dedup index`,
+          );
         }
       }
       await factHashIndex.save();
