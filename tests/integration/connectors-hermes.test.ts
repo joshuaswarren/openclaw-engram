@@ -105,15 +105,32 @@ test("tokens.ts defines remnic_hm_ prefix for hermes", () => {
 /**
  * Creates a temp HOME dir so we don't pollute real state.
  * Sets up the HOME env var override used by tokens.ts and connectors/index.ts.
+ *
+ * Also clears XDG_CONFIG_HOME for the duration of the test. getConnectorsDir()
+ * prefers XDG_CONFIG_HOME over HOME/.config when computing the connectors dir,
+ * so a CI runner that sets XDG_CONFIG_HOME (e.g. GitHub Actions Ubuntu images
+ * default it to /home/runner/.config) would cause installConnector to read
+ * from the real XDG path while tests write fixtures under tmpHome/.config.
+ * The mismatch silently falls through to defaults (e.g. port 4318) and makes
+ * per-test state-leak tests flaky or outright broken on CI.
+ * Unsetting XDG_CONFIG_HOME forces getConnectorsDir() back onto HOME/.config,
+ * which the test has redirected to tmpHome.
  */
 function withTempHome(fn: (tmpHome: string) => void): void {
   const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "remnic-hermes-test-"));
   const originalHome = process.env.HOME;
+  const originalXdg = process.env.XDG_CONFIG_HOME;
   try {
     process.env.HOME = tmpHome;
+    delete process.env.XDG_CONFIG_HOME;
     fn(tmpHome);
   } finally {
     process.env.HOME = originalHome;
+    if (originalXdg === undefined) {
+      delete process.env.XDG_CONFIG_HOME;
+    } else {
+      process.env.XDG_CONFIG_HOME = originalXdg;
+    }
     try { fs.rmSync(tmpHome, { recursive: true }); } catch { /* ignore */ }
   }
 }
@@ -694,6 +711,10 @@ test("force reinstall preserves previously saved profile/host/port when no overr
   await new Promise<void>((resolve, reject) => {
     try {
       withTempHome((tmpHome) => {
+        // Ensure clean slate so a leftover hermes connector from a concurrently
+        // running test doesn't cause the first install to return already_installed.
+        mod.removeConnector("hermes");
+
         // Set up a Hermes profile dir for "research" at a non-default host/port
         const profileDir = path.join(tmpHome, ".hermes", "profiles", "research");
         fs.mkdirSync(profileDir, { recursive: true });
