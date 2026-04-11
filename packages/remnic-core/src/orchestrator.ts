@@ -8470,15 +8470,28 @@ export class Orchestrator {
             options.structuredAttributes &&
             Object.keys(options.structuredAttributes).length > 0
           ) {
+            // PR #402 round-7 (Fix #2 / Codex P1 PRRT_kwDORJXyws56VALC):
+            // Track whether matchingFact lookup completed before the try block
+            // so the catch block can distinguish an early-lookup failure (where
+            // we don't know if a duplicate exists) from a post-lookup supersession
+            // failure (where we confirmed a duplicate and must skip the write).
+            let hashDedupMatchingFact: MemoryFile | undefined;
+            let hashDedupLookupComplete = false;
             try {
-              const normalizedIncoming = ContentHashIndex.normalizeContent(options.content);
+              // PR #402 round-7 (Fix #2 / Codex P1 PRRT_kwDORJXyws56VALC):
+              // Use the same enriched payload (dedupContent) that was passed to
+              // hasFactContentHash for the normalizedIncoming comparison.
+              // Previously, normalizedIncoming was derived from options.content
+              // (raw), while hasFactContentHash received dedupContent (enriched
+              // with "[Attributes: ...]").  If two active shared facts share the
+              // same base text but differ in structuredAttributes, the raw-content
+              // comparison can select the wrong candidate — running supersession
+              // against the wrong newMemoryId and then returning without writing,
+              // leaving the conflicting fact active.  Comparing with the enriched
+              // hash ensures the candidate selected is the one that actually
+              // matches the incoming enriched payload.
+              const normalizedIncoming = ContentHashIndex.normalizeContent(dedupContent);
               const allShared = await sharedStorage.readAllMemories();
-              // Strip the appended `[Attributes: ...]` enrichment suffix before
-              // comparing so that the normalized base content matches the incoming
-              // raw content.  The suffix was appended by writeMemory when
-              // structuredAttributes were present; we strip it here to recover the
-              // raw body so that normalizeContent comparison is stable regardless
-              // of which enrichment the stored fact carries.
               // PR #402 round-12 (Finding Uybg): restrict hash-dedup matching to
               // the SAME entity.  Content-hash equality alone can collide across
               // entities when two entities share identical fact text.  Using an
@@ -8487,7 +8500,7 @@ export class Orchestrator {
               // `supersededBy` links.  Only consider facts whose normalized
               // `entityRef` matches the incoming entity.
               const incomingEntityNorm = normalizeSupersessionKey(options.entityRef);
-              const matchingFact = allShared.find((m) => {
+              hashDedupMatchingFact = allShared.find((m) => {
                 if (m.frontmatter.category !== "fact") return false;
                 if ((m.frontmatter.status ?? "active") !== "active") return false;
                 // Same-entity guard: skip if entity doesn't match.
@@ -8498,10 +8511,14 @@ export class Orchestrator {
                   );
                   return false;
                 }
-                const rawBody = (m.content ?? "").replace(/\n\[Attributes:[^\]]*\]\s*$/, "").trimEnd();
-                return ContentHashIndex.normalizeContent(rawBody) === normalizedIncoming;
+                // PR #402 round-7 (Fix #2): compare stored fact's full body
+                // (including any appended "[Attributes: ...]" suffix) against the
+                // enriched normalizedIncoming so the candidate selected is the one
+                // whose hash actually matched in hasFactContentHash.
+                return ContentHashIndex.normalizeContent(m.content ?? "") === normalizedIncoming;
               });
-              if (matchingFact) {
+              hashDedupLookupComplete = true;
+              if (hashDedupMatchingFact) {
                 // Finding UvU1 (PR #402 round-11): anchor supersession to the
                 // CURRENT wall-clock time, not the existing fact's persisted
                 // `created`.  The matching fact may be an old shared copy whose
@@ -8518,7 +8535,7 @@ export class Orchestrator {
                 // conflicting candidates.
                 await applyTemporalSupersession({
                   storage: sharedStorage,
-                  newMemoryId: matchingFact.frontmatter.id,
+                  newMemoryId: hashDedupMatchingFact.frontmatter.id,
                   entityRef: options.entityRef,
                   structuredAttributes: options.structuredAttributes,
                   createdAt: new Date().toISOString(),
@@ -8541,13 +8558,26 @@ export class Orchestrator {
               log.warn(
                 `persistExtraction: shared-namespace supersession on hash-dedup path failed open for ${options.sourceMemoryId}: ${hashDedupSupersessionErr}`,
               );
-              // PR #402 round-6 (Fix #1 / cursor Medium PRRT_kwDORJXyws56U7Qa):
-              // A matching shared fact was found (matchingFact is set) — even if
-              // supersession threw, we must NOT fall through to writeMemory.
-              // Falling through would create a duplicate shared entry for content
-              // that is already present.  Fail open by skipping the write; the
-              // existing fact remains active and no duplicate is created.
-              return;
+              // PR #402 round-7 (Fix #1 / cursor Medium PRRT_kwDORJXyws56U_ig):
+              // Only skip the write if we CONFIRMED a matching active shared fact
+              // before the error occurred (hashDedupLookupComplete is true AND
+              // hashDedupMatchingFact is set).  If the error was thrown before
+              // matchingFact was resolved — e.g. readAllMemories() threw — we
+              // cannot assume a duplicate exists, and unconditionally returning
+              // would permanently lose the shared promotion.  Fall through to the
+              // write path so the fact is not silently dropped.
+              if (hashDedupLookupComplete && hashDedupMatchingFact) {
+                // A matching active shared fact was confirmed — skip the write to
+                // avoid duplicating content that is already present.  The existing
+                // fact remains active and the supersession failure is logged above.
+                return;
+              }
+              // Lookup did not complete or no candidate was found — we cannot
+              // confirm a duplicate.  Fall through to the write + post-write
+              // supersession path so the shared promotion is not lost.
+              log.debug(
+                `persistExtraction: hash-dedup catch: lookup incomplete or no candidate found for ${options.sourceMemoryId}; falling through to write`,
+              );
             }
           } else {
             // temporalSupersessionEnabled is off or no entity/attributes — keep
