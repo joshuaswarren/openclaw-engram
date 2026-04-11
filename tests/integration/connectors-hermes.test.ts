@@ -544,3 +544,142 @@ test("checkDaemonHealth forwards the bearer token to the health probe", () => {
     "installConnector must pass the connector token to checkDaemonHealth",
   );
 });
+
+// ── Finding 1 regression: secret files are written with 0o600 permissions ───
+
+test("upsertHermesConfig writes config.yaml with 0o600 permissions (new file)", async () => {
+  // Import the real implementation so this test exercises the actual write path.
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+        const cfgPath = path.join(profileDir, "config.yaml");
+
+        // Use a synthetic token that passes the alphanumeric guard in the source.
+        const FAKE_TOKEN = "remnic_hm_SYNTHETICPERMTEST";
+        mod.upsertHermesConfig({
+          profile: "default",
+          host: "127.0.0.1",
+          port: 4318,
+          token: FAKE_TOKEN,
+        });
+
+        assert.ok(fs.existsSync(cfgPath), "config.yaml must be created");
+        const stats = fs.statSync(cfgPath);
+        assert.equal(
+          stats.mode & 0o777,
+          0o600,
+          "config.yaml must be written with owner-only (0o600) permissions",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("removeHermesConfig preserves 0o600 permissions after stripping remnic: block", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+        const cfgPath = path.join(profileDir, "config.yaml");
+
+        // Simulate a file that was previously written with 0o600 (it held a token).
+        const FAKE_TOKEN = "remnic_hm_SYNTHETICREMOVETEST";
+        const initial = [
+          "plugins:",
+          "  - remnic_hermes",
+          "",
+          "remnic:",
+          '  host: "127.0.0.1"',
+          "  port: 4318",
+          `  token: "${FAKE_TOKEN}"`,
+          "",
+        ].join("\n");
+        fs.writeFileSync(cfgPath, initial, { mode: 0o600 });
+        fs.chmodSync(cfgPath, 0o600);
+
+        const result = mod.removeHermesConfig({ profile: "default" });
+        assert.equal(result.updated, true, "removeHermesConfig must report updated");
+
+        const stats = fs.statSync(cfgPath);
+        assert.equal(
+          stats.mode & 0o777,
+          0o600,
+          "config.yaml must retain 0o600 permissions after removeHermesConfig",
+        );
+        const after = fs.readFileSync(cfgPath, "utf-8");
+        assert.ok(!after.includes("remnic:"), "remnic: block must be stripped");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// ── Finding 3 regression: upsertHermesConfig rejects YAML-breaking host values ──
+
+test("upsertHermesConfig throws on YAML-injection host (newline)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        assert.throws(
+          () =>
+            mod.upsertHermesConfig({
+              profile: "default",
+              host: "foo\nbar: evil",
+              port: 4318,
+              token: "remnic_hm_SYNTHETICINJECTIONTEST",
+            }),
+          /Invalid Hermes host/,
+          "upsertHermesConfig must throw on a host containing a newline",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("upsertHermesConfig throws on YAML-injection host (colon + space)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        assert.throws(
+          () =>
+            mod.upsertHermesConfig({
+              profile: "default",
+              host: 'foo" \n  session_key: "evil',
+              port: 4318,
+              token: "remnic_hm_SYNTHETICINJECTION2",
+            }),
+          /Invalid Hermes host/,
+          "upsertHermesConfig must throw on a host containing quotes and newlines",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});

@@ -1030,7 +1030,11 @@ export function removeHermesConfig(opts: { profile: string }): HermesConfigResul
     newLines.pop();
   }
 
-  fs.writeFileSync(cfgPath, newLines.length > 0 ? newLines.join("\n") + "\n" : "");
+  // Use writeSecretFileSync to keep the file at 0o600 even after the token
+  // has been removed. The file previously held a bearer token (so it was
+  // written with 0o600 originally); preserving that mode prevents a window
+  // where a rewrite with default umask temporarily widens permissions.
+  writeSecretFileSync(cfgPath, newLines.length > 0 ? newLines.join("\n") + "\n" : "");
   return { updated: true, skipped: false, configPath: cfgPath };
 }
 
