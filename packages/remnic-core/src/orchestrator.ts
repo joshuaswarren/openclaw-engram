@@ -7097,20 +7097,36 @@ export class Orchestrator {
         const memories =
           await this.readAllMemoriesForNamespaces(recallNamespaces);
         if (memories.length > 0) {
-          // Filter out non-active memories.  When temporalSupersessionIncludeInRecall
-          // is true, also include superseded memories so audit/history mode works
-          // consistently with the boostSearchResults path (PR #402 Finding 2 fix).
+          // Filter out non-active memories.  Delegate to
+          // shouldFilterSupersededFromRecall for superseded-status logic so
+          // that the recent-scan path and the boostSearchResults (QMD) path
+          // have identical semantics:
+          //   • temporalSupersessionEnabled=false  → never filter superseded
+          //     (mirrors QMD path; user disabled the feature, so old marks
+          //     are ignored and all memories surface)
+          //   • temporalSupersessionIncludeInRecall=true → never filter (audit mode)
+          //   • enabled=true + includeInRecall=false → filter superseded
+          // Previously the recent-scan path checked `enabled && includeInRecall`
+          // directly, which disagreed with the QMD path when enabled=false
+          // (memories were still filtered, contrary to the kill-switch intent).
+          // Using the shared gate fixes both Finding 2 and Finding 3 from
+          // PR #402 (round 6).
+          const supersessionOptions = {
+            enabled: this.config.temporalSupersessionEnabled,
+            includeInRecall: this.config.temporalSupersessionIncludeInRecall,
+          };
           const activeMemories = memories.filter(
             (m) => {
               if (isArtifactMemoryPath(m.path)) return false;
               const status = m.frontmatter.status;
               if (!status || status === "active") return true;
-              if (
-                status === "superseded" &&
-                this.config.temporalSupersessionEnabled &&
-                this.config.temporalSupersessionIncludeInRecall
-              )
-                return true;
+              if (status === "superseded") {
+                // Include superseded memory only if the canonical gate says
+                // NOT to filter it (kill switch off or audit mode on).
+                return !shouldFilterSupersededFromRecall(m.frontmatter, supersessionOptions);
+              }
+              // Other non-active statuses (archived, retired, etc.) are
+              // excluded from the recent-scan path by default.
               return false;
             },
           );

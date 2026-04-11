@@ -826,6 +826,174 @@ test("applyTemporalSupersession: CAS re-read skips candidate already superseded 
   }
 });
 
+// ─── Regression: round-6 Finding 1 — defer processedIds.add until readable ──
+
+test("applyTemporalSupersession: hot→cold migration race — cold copy is processed when hot read fails", async () => {
+  // Scenario: a logical memory with id X exists in BOTH hot and cold lists
+  // (this can happen during a tier migration).  The hot entry is listed first
+  // in allCandidates.  When readMemoryByPath throws/returns null for the hot
+  // path (the file has already moved), the id must NOT be added to processedIds
+  // yet — the cold copy (same frontmatter.id) must still get a chance to be
+  // evaluated and superseded.
+  //
+  // We simulate this by writing two physical files with the same frontmatter.id,
+  // injecting them as hot/cold via a monkey-patched readAllMemories, and making
+  // the first readMemoryByPath call return null (as-if the hot file vanished).
+  const { storage, cleanup } = await makeStorage("engram-temporal-hot-cold-");
+  try {
+    // Write the "cold" fact (this is the one that should actually be superseded).
+    const oldCityId = await writeFact(
+      storage,
+      "entity lives in Austin — cold copy",
+      TEST_ENTITY,
+      { city: "Austin" },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const newCityId = await writeFact(
+      storage,
+      "entity moved to NYC",
+      TEST_ENTITY,
+      { city: "NYC" },
+    );
+
+    // Load the real on-disk records so we can get real paths and frontmatter.
+    storage.invalidateAllMemoriesCacheForDir();
+    const realMemories = await storage.readAllMemories();
+    const coldEntry = realMemories.find((m) => m.frontmatter.id === oldCityId);
+    const newEntry = realMemories.find((m) => m.frontmatter.id === newCityId);
+    assert.ok(coldEntry, "cold entry must exist on disk");
+    assert.ok(newEntry, "new entry must exist on disk");
+
+    // Construct a fake "hot" entry that shares the same frontmatter.id as the
+    // cold entry but has a different (non-existent) path — simulating a file
+    // that was present in the in-memory snapshot but has since been migrated.
+    const fakeHotPath = coldEntry.path.replace(/\.md$/, "-hot-vanished.md");
+    const hotEntry = {
+      path: fakeHotPath,
+      frontmatter: { ...coldEntry.frontmatter },
+      content: coldEntry.content,
+    };
+
+    // Inject the stale snapshot: hot entry first, then cold entry.  Both share
+    // the same frontmatter.id.  Only the cold entry's path actually exists.
+    const staleSnapshot = [hotEntry, coldEntry, newEntry];
+    const originalReadAll = storage.readAllMemories.bind(storage);
+    (storage as unknown as { readAllMemories: () => Promise<unknown> }).readAllMemories =
+      async () => staleSnapshot;
+
+    try {
+      const result = await applyTemporalSupersession({
+        storage,
+        newMemoryId: newCityId,
+        entityRef: TEST_ENTITY,
+        structuredAttributes: { city: "NYC" },
+        createdAt: new Date().toISOString(),
+        enabled: true,
+      });
+
+      // The cold copy (real path) must have been superseded.  If the bug were
+      // present, processedIds would be marked after the hot read fails and the
+      // cold copy would be skipped, leaving result.supersededIds empty.
+      assert.deepEqual(
+        result.supersededIds,
+        [oldCityId],
+        "cold copy must be superseded even when hot read fails (Finding 1 regression)",
+      );
+    } finally {
+      (storage as unknown as { readAllMemories: typeof originalReadAll }).readAllMemories =
+        originalReadAll;
+    }
+
+    // Verify the cold entry on disk is marked superseded.
+    const coldFm = await readFrontmatterById(storage, oldCityId);
+    assert.equal(coldFm?.status, "superseded", "cold entry must be marked superseded");
+    assert.equal(coldFm?.supersededBy, newCityId, "cold entry must link to new fact");
+  } finally {
+    await cleanup();
+  }
+});
+
+// ─── Regression: round-6 Findings 2+3 — kill switch in recent-scan prefilter ─
+
+test("shouldFilterSupersededFromRecall: kill switch off (enabled=false) never filters superseded", () => {
+  // Regression for Finding 2+3: when temporalSupersessionEnabled=false, the
+  // recent-scan prefilter must NOT exclude superseded memories.  This mirrors
+  // the boostSearchResults (QMD) path, which also returns false when disabled.
+  //
+  // The recent-scan filter previously checked `enabled && includeInRecall`
+  // directly, so a superseded memory was silently excluded even when the
+  // feature was disabled — inconsistent with the QMD path and contrary to the
+  // kill-switch intent.
+
+  const supersededFm: MemoryFrontmatter = {
+    id: "fact-kill-switch",
+    category: "fact",
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+    source: "test",
+    confidence: 0.9,
+    confidenceTier: "explicit",
+    tags: [],
+    status: "superseded",
+  };
+
+  // Kill switch off: feature disabled. Superseded memories must NOT be filtered.
+  assert.equal(
+    shouldFilterSupersededFromRecall(supersededFm, { enabled: false, includeInRecall: false }),
+    false,
+    "kill switch off: shouldFilterSupersededFromRecall must return false (don't filter)",
+  );
+
+  // Kill switch off + includeInRecall=true: still no filtering.
+  assert.equal(
+    shouldFilterSupersededFromRecall(supersededFm, { enabled: false, includeInRecall: true }),
+    false,
+    "kill switch off + includeInRecall=true: must not filter",
+  );
+
+  // Sanity: when enabled + !includeInRecall, superseded IS filtered.
+  assert.equal(
+    shouldFilterSupersededFromRecall(supersededFm, { enabled: true, includeInRecall: false }),
+    true,
+    "enabled + !includeInRecall: must filter superseded",
+  );
+
+  // Simulate the recent-scan prefilter logic using shouldFilterSupersededFromRecall
+  // as the canonical gate (the fix).  A mix of active and superseded memories
+  // with the kill switch off must yield all memories (nothing filtered).
+  const activeFm: MemoryFrontmatter = { ...supersededFm, id: "fact-active", status: "active" };
+  const memories = [activeFm, supersededFm];
+
+  const filteredWithKillSwitchOff = memories.filter((m) => {
+    const status = m.status ?? "active";
+    if (status === "active" || !status) return true;
+    if (status === "superseded") {
+      return !shouldFilterSupersededFromRecall(m, { enabled: false, includeInRecall: false });
+    }
+    return false;
+  });
+  assert.deepEqual(
+    filteredWithKillSwitchOff.map((m) => m.id),
+    ["fact-active", "fact-kill-switch"],
+    "kill switch off: superseded memories must survive the prefilter",
+  );
+
+  // With kill switch ON + !includeInRecall, superseded must be removed.
+  const filteredWithKillSwitchOn = memories.filter((m) => {
+    const status = m.status ?? "active";
+    if (status === "active" || !status) return true;
+    if (status === "superseded") {
+      return !shouldFilterSupersededFromRecall(m, { enabled: true, includeInRecall: false });
+    }
+    return false;
+  });
+  assert.deepEqual(
+    filteredWithKillSwitchOn.map((m) => m.id),
+    ["fact-active"],
+    "kill switch on + !includeInRecall: superseded must be removed from prefilter",
+  );
+});
+
 // ─── Regression: Finding B — shared normalizeSupersessionKey helper ───────────
 
 test("normalizeSupersessionKey: trims, lowercases, collapses whitespace to hyphens", () => {

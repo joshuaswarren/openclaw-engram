@@ -233,7 +233,14 @@ export async function applyTemporalSupersession(args: {
     if (memory.frontmatter.id === args.newMemoryId) continue;
     const dedupeKey = memory.frontmatter.id ?? memory.path;
     if (processedIds.has(dedupeKey)) continue;
-    processedIds.add(dedupeKey);
+    // NOTE: do NOT call processedIds.add(dedupeKey) here.  We defer marking
+    // the id as processed until AFTER the CAS re-read succeeds.  If we mark
+    // it here and the re-read fails (e.g. the hot entry has already been
+    // migrated to cold storage), the same logical id that appears later in
+    // the cold tier scan would be silently skipped, leaving a stale cold
+    // fact unsuperseded.  Deferring ensures that a failed primary-tier read
+    // grants the alternate tier a chance to process the same id (PR #402
+    // round-6 Finding 1 fix).
 
     const decision = shouldSupersedeExisting({
       candidate: memory.frontmatter,
@@ -242,7 +249,12 @@ export async function applyTemporalSupersession(args: {
       newCreatedAt: persistedCreatedAt,
       newMemoryId: args.newMemoryId,
     });
-    if (!decision) continue;
+    if (!decision) {
+      // No supersession decision — safe to mark as processed now so the
+      // alternate tier doesn't re-evaluate an identical non-matching entry.
+      processedIds.add(dedupeKey);
+      continue;
+    }
 
     try {
       // CAS-style re-read immediately before the write.  `readAllMemories()`
@@ -256,13 +268,21 @@ export async function applyTemporalSupersession(args: {
       //   3. only then issue the write
       // If the re-read shows a newer concurrent writer beat us to it, skip.
       // This CAS pattern applies equally to hot and cold tier candidates.
+      // Mark as processed AFTER confirming the candidate is readable so that
+      // a migration-race read failure on the hot entry does not silently
+      // prevent the cold entry from being evaluated (Finding 1, round 6).
       const fresh = await args.storage.readMemoryByPath(memory.path);
       if (!fresh) {
         log.debug(
-          `[engram] temporal supersession skipped candidate ${memory.frontmatter.id}: no longer readable at ${memory.path}`,
+          `[engram] temporal supersession skipped candidate ${memory.frontmatter.id}: no longer readable at ${memory.path} — leaving id available for alternate tier`,
         );
+        // Do NOT add to processedIds — allow the cold-tier copy to be
+        // evaluated in the next iteration of the same scan.
         continue;
       }
+      // Candidate is readable — mark the id as processed now to prevent the
+      // alternate tier from double-writing.
+      processedIds.add(dedupeKey);
       const freshStatus = fresh.frontmatter.status ?? "active";
       if (freshStatus !== "active" || fresh.frontmatter.supersededBy) {
         log.debug(
