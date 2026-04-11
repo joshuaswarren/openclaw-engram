@@ -68,7 +68,13 @@ function buildUpdatedOpenclawConfig(
   const updatedEntries: Record<string, OpenclawPluginEntry> = { ...entries };
   updatedEntries["openclaw-remnic"] = newEntry;
 
-  const updatedSlots = { ...slots, memory: "openclaw-remnic" };
+  // Only switch the slot when there is no legacy entry, or when the operator
+  // confirmed migration — matching the behaviour in cmdOpenclawInstall.
+  const hasLegacy = "openclaw-engram" in entries;
+  const shouldSwitchSlot = !hasLegacy || migrateLegacy;
+  const updatedSlots = shouldSwitchSlot
+    ? { ...slots, memory: "openclaw-remnic" }
+    : { ...slots };
 
   return {
     ...existingConfig,
@@ -173,7 +179,7 @@ test("collision: updates existing openclaw-remnic entry memoryDir", () => {
   assert.equal(result.plugins!.entries!["openclaw-remnic"].config?.debug, true);
 });
 
-test("slot: always set to openclaw-remnic regardless of existing slot", () => {
+test("slot: always set to openclaw-remnic when no legacy entry", () => {
   for (const existingSlot of [undefined, "openclaw-engram", "other-plugin"]) {
     const existing: OpenclawConfig = {
       plugins: {
@@ -183,8 +189,24 @@ test("slot: always set to openclaw-remnic regardless of existing slot", () => {
     };
     const result = buildUpdatedOpenclawConfig(existing, "/mem", false);
     assert.equal(result.plugins?.slots?.memory, "openclaw-remnic",
-      `slot should be openclaw-remnic regardless of existing slot "${existingSlot}"`);
+      `slot should be openclaw-remnic when no legacy entry (existing slot was "${existingSlot}")`);
   }
+});
+
+test("slot: preserved when legacy entry exists and migrateLegacy is false", () => {
+  const existing: OpenclawConfig = {
+    plugins: {
+      entries: { "openclaw-engram": { config: { memoryDir: "/old/path" } } },
+      slots: { memory: "openclaw-engram" },
+    },
+  };
+  const result = buildUpdatedOpenclawConfig(existing, "/new/path", false);
+  // Operator declined migration — slot must not be switched
+  assert.equal(result.plugins?.slots?.memory, "openclaw-engram",
+    "slot should stay openclaw-engram when operator declined migration");
+  // But the new entry should still be written
+  assert.ok(result.plugins?.entries?.["openclaw-remnic"],
+    "openclaw-remnic entry should be written even when migration was declined");
 });
 
 // ── File I/O tests ───────────────────────────────────────────────────────────

@@ -145,3 +145,19 @@ test("CLI validates plugins.entries shape before using in operator", async () =>
     "CLI must validate plugins.entries shape before property access",
   );
 });
+
+test("CLI expands tilde in memoryDir paths", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("expandTilde"),
+    "CLI must expand tilde (~) in memoryDir paths before path.resolve",
+  );
+});
+
+test("CLI preserves slot when operator declines migration", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("shouldSwitchSlot"),
+    "CLI must conditionally switch slot based on migration consent",
+  );
+});

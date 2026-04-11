@@ -123,6 +123,14 @@ function resolveHomeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? "~";
 }
 
+/** Expand a leading `~` or `$HOME` to the real home directory. */
+function expandTilde(p: string): string {
+  if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
+    return resolveHomeDir() + p.slice(1);
+  }
+  return p;
+}
+
 const PID_DIR = path.join(resolveHomeDir(), ".remnic");
 const LEGACY_PID_DIR = path.join(resolveHomeDir(), ".engram");
 const PID_FILE = path.join(PID_DIR, "server.pid");
@@ -1655,8 +1663,10 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
     (existingNewEntryConfig.memoryDir as string | undefined) ||
     (migrateLegacy ? (legacyConfigToMerge.memoryDir as string | undefined) : undefined);
   const memoryDir = opts.memoryDir
-    ? path.resolve(opts.memoryDir)
-    : existingMemoryDir || fallbackMemoryDir;
+    ? path.resolve(expandTilde(opts.memoryDir))
+    : existingMemoryDir
+      ? path.resolve(expandTilde(existingMemoryDir))
+      : fallbackMemoryDir;
 
   console.log(`Memory dir:      ${memoryDir}`);
 
@@ -1675,10 +1685,15 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   // Keep legacy entry if migrating so rollback is possible — operator can remove
   // the legacy entry after verifying that hooks fire under the new id.
 
-  // Set slot to the canonical plugin id. This must match the `id` field in the
-  // plugin package's openclaw.plugin.json. If you are running the pre-#405 package
-  // (id: "openclaw-engram"), upgrade to @remnic/plugin-openclaw first.
-  const updatedSlots = { ...slots, memory: REMNIC_OPENCLAW_PLUGIN_ID };
+  // Set slot to the canonical plugin id, but only when the operator has
+  // consented to switch (i.e. there is no legacy entry OR they confirmed
+  // migration). If the operator answered "no" to the migration prompt, leave
+  // the slot pointing at the legacy entry so their active hooks keep firing
+  // while they review the new entry before committing to the switch.
+  const shouldSwitchSlot = !hasLegacy || migrateLegacy;
+  const updatedSlots = shouldSwitchSlot
+    ? { ...slots, memory: REMNIC_OPENCLAW_PLUGIN_ID }
+    : { ...slots };
 
   const updatedConfig: Record<string, unknown> = {
     ...existingConfig,
@@ -1693,8 +1708,10 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   const changes: string[] = [];
   if (!hasNew) changes.push(`+ Added plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"]`);
   else changes.push(`~ Updated plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"].config.memoryDir`);
-  if (currentSlot !== REMNIC_OPENCLAW_PLUGIN_ID) {
+  if (shouldSwitchSlot && currentSlot !== REMNIC_OPENCLAW_PLUGIN_ID) {
     changes.push(`~ Set plugins.slots.memory = "${REMNIC_OPENCLAW_PLUGIN_ID}" (was: ${currentSlot ?? "(unset)"})`);
+  } else if (!shouldSwitchSlot) {
+    changes.push(`  Slot left as "${currentSlot ?? "(unset)"}" — re-run with --yes to activate the new entry`);
   }
   if (!fs.existsSync(memoryDir)) changes.push(`+ Will create memory directory: ${memoryDir}`);
   if (hasLegacy && migrateLegacy) {
