@@ -675,6 +675,47 @@ test("installCodexMemoryExtension restores backup when final rename fails", asyn
   );
 });
 
+// ── PR #394 Bug 1: extension install failure must surface status:"error" (not "installed")
+
+test("installConnector surfaces status:error when memory extension install throws", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      // Pass a non-existent sourceDir so installCodexMemoryExtension will throw.
+      const result = installConnector({
+        connectorId: "codex-cli",
+        config: {
+          installExtension: true,
+          extensionSourceDir: path.join(sandbox.root, "does-not-exist"),
+        },
+      });
+
+      assert.equal(
+        result.status,
+        "error",
+        `expected status "error" when extension install fails, got: ${result.status}`,
+      );
+      assert.ok(
+        result.message.toLowerCase().includes("failed") || result.message.toLowerCase().includes("error"),
+        `message should mention failure, got: ${result.message}`,
+      );
+      // configPath must NOT be set — the config file should not have been written
+      assert.equal(
+        result.configPath,
+        undefined,
+        "configPath must not be set when install fails",
+      );
+    },
+  );
+});
+
 // ── PR #394 Finding 2: happy-path atomic replace regression test
 
 test("installCodexMemoryExtension atomic replace happy path — no backup directory left behind", async (t) => {

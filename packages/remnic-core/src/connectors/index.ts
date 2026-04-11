@@ -595,8 +595,12 @@ export function installConnector(options: InstallOptions): InstallResult {
         });
         extensionMessage = ` (memory extension: ${extResult.remnicExtensionDir})`;
       } catch (err) {
-        extensionMessage =
-          ` (memory extension: FAILED — ${err instanceof Error ? err.message : "unknown error"})`;
+        const errMsg = err instanceof Error ? err.message : "unknown error";
+        return {
+          connectorId: options.connectorId,
+          status: "error",
+          message: `Memory extension install failed — ${errMsg}`,
+        };
       }
     } else {
       extensionMessage = " (memory extension: skipped via installExtension=false)";

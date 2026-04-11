@@ -1593,7 +1593,17 @@ export function parseConfig(raw: unknown): PluginConfig {
         cfg.codex && typeof cfg.codex === "object" && !Array.isArray(cfg.codex)
           ? (cfg.codex as Record<string, unknown>)
           : {};
-      const installExtension = raw.installExtension !== false;
+      // Coerce string "false"/"0"/"no" → false and "true"/"1"/"yes" → true so
+      // that CLI inputs like --config installExtension=false are handled correctly.
+      // Missing / undefined defaults to true.
+      let installExtension = true;
+      if (typeof raw.installExtension === "boolean") {
+        installExtension = raw.installExtension;
+      } else if (typeof raw.installExtension === "string") {
+        const v = raw.installExtension.trim().toLowerCase();
+        if (["false", "0", "no", "off"].includes(v)) installExtension = false;
+        else if (["true", "1", "yes", "on"].includes(v)) installExtension = true;
+      }
       const codexHome =
         typeof raw.codexHome === "string" && raw.codexHome.trim().length > 0
           ? raw.codexHome.trim()
