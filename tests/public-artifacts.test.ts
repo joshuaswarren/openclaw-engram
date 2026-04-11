@@ -324,6 +324,30 @@ test("follows symlinks within memoryDir boundary", async () => {
   }
 });
 
+test("rejects top-level symlinked public dirs redirecting to private dirs", async () => {
+  const dir = await createTempMemoryDir();
+  try {
+    // Create private state directory with data
+    const stateDir = path.join(dir, "state");
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(path.join(stateDir, "cache.md"), "private state data");
+
+    // Replace the facts directory with a symlink to state
+    await symlink(stateDir, path.join(dir, "facts"), "dir");
+
+    const artifacts = await listRemnicPublicArtifacts({
+      memoryDir: dir,
+      workspaceDir: "/tmp/workspace",
+      agentIds: AGENT_IDS,
+    });
+
+    // Should NOT expose state files via the facts symlink redirect
+    assert.equal(artifacts.length, 0, "symlinked top-level dir redirecting to private path must not expose files");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("blocks symlinks from public dirs into private memory paths", async () => {
   const dir = await createTempMemoryDir();
   try {

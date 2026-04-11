@@ -183,8 +183,23 @@ export async function listRemnicPublicArtifacts(params: {
     const dirPath = path.join(memoryDir, spec.dir);
     if (!(await pathExists(dirPath))) continue;
 
-    // Block symlink traversal: verify the directory resolves within memoryDir
+    // Block symlink traversal: verify the directory resolves within memoryDir.
+    // Also reject top-level symlinks that redirect an allowlisted directory
+    // name to a different directory (e.g., facts -> state), which would
+    // expose private files as public artifacts under the wrong kind.
     if (!(await isContainedWithin(dirPath, memoryDir))) continue;
+    try {
+      const resolvedDir = await realpath(dirPath);
+      const expectedParent = await realpath(memoryDir);
+      const resolvedName = path.basename(resolvedDir);
+      // If the resolved directory name doesn't match the expected name,
+      // this is a symlink redirect (e.g., facts -> state). Reject it.
+      if (resolvedName !== spec.dir) continue;
+      // Also verify the resolved dir's parent is memoryDir (not a nested path)
+      if (path.dirname(resolvedDir) !== expectedParent) continue;
+    } catch {
+      continue;
+    }
 
     // Use the specific public directory as the containment boundary (not
     // memoryDir), so symlinks within e.g. facts/ cannot escape into private

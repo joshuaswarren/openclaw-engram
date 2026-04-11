@@ -425,7 +425,15 @@ const pluginDefinition = {
           async (
             event: Record<string, unknown>,
             ctx: Record<string, unknown>,
-          ) => recallHookHandler("before_agent_start", event, ctx),
+          ) => {
+            const result = await recallHookHandler("before_agent_start", event, ctx);
+            // Also populate cache for capability promptBuilder fallback
+            if (needsCacheFallback && result?.prependSystemContext) {
+              const sessionKey = (ctx?.sessionKey as string) ?? "default";
+              cachedMemoryBySession.set(sessionKey, [result.prependSystemContext as string]);
+            }
+            return result;
+          },
         );
       }
     }
