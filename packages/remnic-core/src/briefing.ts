@@ -471,9 +471,11 @@ function zonedFormatToMs(formatter: Intl.DateTimeFormat, date: Date): number | n
   const mm = get("minute");
   const ss = get("second");
   if (!y || !mo || !d || !hh || !mm || !ss) return null;
-  // `Intl.DateTimeFormat` returns "24" for midnight in some runtimes — clamp.
-  const hour = Number(hh) === 24 ? 0 : Number(hh);
-  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), hour, Number(mm), Number(ss));
+  // `Intl.DateTimeFormat` returns "24" for midnight in some runtimes.
+  // Pass the raw hour value directly — Date.UTC natively rolls hour 24 to
+  // 00:00:00 on the *next* day.  Clamping to 0 here would leave the date
+  // unchanged, producing a 24-hour offset error in icsWallclockToUtc.
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss));
   return Number.isFinite(ms) ? ms : null;
 }
 

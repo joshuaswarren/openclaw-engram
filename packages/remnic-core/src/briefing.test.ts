@@ -574,3 +574,90 @@ test("parseIcsEvents: unfolded ICS (no folds) is parsed unchanged", () => {
   assert.equal(events.length, 1);
   assert.equal(events[0]!.title, "Simple one-line title");
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// Regression — Bug (round 6): zonedFormatToMs must not clamp hour 24 to 0.
+//
+// Some Intl.DateTimeFormat implementations return "24" when the probed
+// instant displays as midnight (00:00) in the target zone.  The old code
+// clamped this to 0 without incrementing the day, producing a wallclock-
+// as-UTC value that was 24 hours behind the true value.  That corrupted the
+// offset calculation in icsWallclockToUtc and placed TZID-bearing ICS events
+// on the wrong calendar day.
+//
+// The fix: pass Number(hh) directly to Date.UTC, which natively rolls
+// hour=24 to 00:00:00 of the next day.
+//
+// Test strategy: exercise icsWallclockToUtc (private) via parseIcsEvents with
+// a TZID-bearing event at exactly midnight local time in a UTC-offset zone.
+// UTC+05:30 (Asia/Kolkata, no DST) is a reliable probe: midnight local is
+// 18:30 the previous UTC day, so the UTC date is always one day behind the
+// local date.  This forces icsWallclockToUtc to perform a non-trivial offset
+// calculation through zonedFormatToMs.  A 24-hour clamp error in
+// zonedFormatToMs would skew the offset by ±86400000 ms, landing the event
+// on the wrong UTC day.
+// ──────────────────────────────────────────────────────────────────────────
+
+test("parseIcsEvents: TZID midnight event (UTC+5:30) lands on correct UTC day", () => {
+  // DTSTART;TZID=Asia/Kolkata:20260412T000000 = 2026-04-11T18:30:00Z
+  // Expected UTC date: 2026-04-11.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:test-tzid-midnight-kolkata@synthetic",
+    "DTSTART;TZID=Asia/Kolkata:20260412T000000",
+    "DTEND;TZID=Asia/Kolkata:20260412T010000",
+    "SUMMARY:Midnight Kolkata event",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const events = parseIcsEvents(ics);
+  assert.equal(events.length, 1, "should parse one event");
+  const ev = events[0]!;
+  // The start must be a UTC-aware ISO string (has Z or offset suffix).
+  assert.ok(
+    ev.start.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(ev.start),
+    `start "${ev.start}" must be UTC-aware (has Z or offset)`,
+  );
+  // Midnight Asia/Kolkata (+05:30) = 18:30 UTC the *previous* calendar day.
+  // So 2026-04-12T00:00:00+05:30 → 2026-04-11T18:30:00Z.
+  // The UTC date must be 2026-04-11, NOT 2026-04-12.
+  const utcDate = new Date(ev.start).toISOString().slice(0, 10);
+  assert.equal(
+    utcDate,
+    "2026-04-11",
+    `midnight Kolkata (UTC+5:30) must land on 2026-04-11 UTC, got "${utcDate}" from start="${ev.start}"`,
+  );
+});
+
+test("parseIcsEvents: TZID midnight event (UTC-5) lands on correct UTC day", () => {
+  // DTSTART;TZID=America/New_York:20260411T000000 in April = EDT (UTC-4).
+  // 2026-04-11T00:00:00 EDT = 2026-04-11T04:00:00Z.
+  // The UTC date must remain 2026-04-11.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:test-tzid-midnight-nyc@synthetic",
+    "DTSTART;TZID=America/New_York:20260411T000000",
+    "DTEND;TZID=America/New_York:20260411T010000",
+    "SUMMARY:Midnight New York event",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const events = parseIcsEvents(ics);
+  assert.equal(events.length, 1, "should parse one event");
+  const ev = events[0]!;
+  assert.ok(
+    ev.start.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(ev.start),
+    `start "${ev.start}" must be UTC-aware`,
+  );
+  // Midnight EDT (UTC-4): 2026-04-11T00:00:00-04:00 = 2026-04-11T04:00:00Z.
+  const utcDate = new Date(ev.start).toISOString().slice(0, 10);
+  assert.equal(
+    utcDate,
+    "2026-04-11",
+    `midnight New York (EDT=UTC-4) must land on 2026-04-11 UTC, got "${utcDate}" from start="${ev.start}"`,
+  );
+});
