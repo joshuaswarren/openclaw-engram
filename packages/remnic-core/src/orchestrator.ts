@@ -10836,7 +10836,17 @@ export class Orchestrator {
     if (this.config.recallMmrEnabled === false) return results;
     if (!Array.isArray(results) || results.length < 2) return results;
 
-    const topN = Math.max(1, Math.floor(this.config.recallMmrTopN ?? 40));
+    // Config is runtime API (see AGENTS.md §4): preserve `0` as a true zero
+    // limit rather than coercing it to a non-zero value. A configured topN of
+    // 0 means "apply MMR over an empty window" — i.e. skip the reorder and
+    // return the upstream candidates unchanged. This keeps read-time
+    // behavior symmetric with the write-time semantics parseConfig exposes.
+    const configuredTopN = this.config.recallMmrTopN;
+    const topN =
+      typeof configuredTopN === "number" && Number.isFinite(configuredTopN)
+        ? Math.max(0, Math.floor(configuredTopN))
+        : 40;
+    if (topN === 0) return results;
     const lambda = this.config.recallMmrLambda ?? 0.7;
 
     // Delegate to the pure helper so candidate keying (path-first, index

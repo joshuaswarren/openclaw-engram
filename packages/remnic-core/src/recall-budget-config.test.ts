@@ -76,3 +76,12 @@ test("parseConfig clamps MMR lambda into [0, 1]", () => {
   const tooHigh = parseConfig({ recallMmrLambda: 1.7 });
   assert.equal(tooHigh.recallMmrLambda, 1);
 });
+
+test("parseConfig preserves recallMmrTopN=0 as a true zero limit", () => {
+  // AGENTS.md §4 ("Config is runtime API"): `0` limits are compatibility
+  // guarantees. The write-time representation of `recallMmrTopN=0` must be
+  // preserved, and the read-time behavior in applyMmrToQmdResults must
+  // honor the zero limit by skipping MMR entirely (see orchestrator.ts).
+  const config = parseConfig({ recallMmrTopN: 0 });
+  assert.equal(config.recallMmrTopN, 0);
+});

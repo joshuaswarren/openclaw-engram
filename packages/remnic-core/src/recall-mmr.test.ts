@@ -420,6 +420,27 @@ test(
 );
 
 test(
+  "reorderRecallResultsWithMmr with topN=0 is a full no-op preserving input order",
+  () => {
+    // AGENTS.md §4: never coerce zero limits to non-zero. A topN of 0 means
+    // "apply MMR over an empty window" — no candidate gets dropped and the
+    // original order is preserved.
+    const results: MmrRecallResult[] = [
+      { docid: "a", path: "p/a", snippet: "one", score: 0.9 },
+      { docid: "b", path: "p/b", snippet: "two", score: 0.8 },
+      { docid: "c", path: "p/c", snippet: "three", score: 0.7 },
+    ];
+    const { reordered } = reorderRecallResultsWithMmr(results, { topN: 0 });
+    assert.equal(reordered.length, results.length);
+    assert.deepEqual(
+      reordered.map((r) => r.docid),
+      ["a", "b", "c"],
+      "topN=0 should be a no-op and preserve input order",
+    );
+  },
+);
+
+test(
   "reorderRecallResultsWithMmr diversity report defaults to head-of-list sample",
   () => {
     // Integration check for the orchestration helper: even with
