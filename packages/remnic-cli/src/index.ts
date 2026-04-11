@@ -225,6 +225,15 @@ const DEFAULT_OPENCLAW_CONFIG_PATHS_FOR_DOCTOR = [
 
 function resolveOpenclawConfigPath(cliPath?: string): string {
   if (cliPath) return path.resolve(cliPath);
+
+  // Env-var paths are always honoured regardless of whether the file exists yet
+  // (a first-time install needs to create the file at the configured location).
+  // Only fall through to existence-probing when no env var is set.
+  const envPath =
+    process.env.OPENCLAW_CONFIG_PATH || process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  if (envPath) return path.resolve(envPath);
+
+  // No env var: return the first existing default path, or the canonical default.
   for (const candidate of DEFAULT_OPENCLAW_CONFIG_PATHS_FOR_DOCTOR) {
     if (fs.existsSync(candidate)) return candidate;
   }
