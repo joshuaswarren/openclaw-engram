@@ -1259,6 +1259,16 @@
         "default": true,
         "description": "Automatically supersede contradicted memories"
       },
+      "temporalSupersessionEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Mark older facts superseded when a new fact writes a conflicting value for the same entityRef + structuredAttribute key (issue #375)"
+      },
+      "temporalSupersessionIncludeInRecall": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, include temporally-superseded facts in recall results (for audit/history). Default: exclude."
+      },
       "memoryLinkingEnabled": {
         "type": "boolean",
         "default": false,
@@ -3169,6 +3179,15 @@
     "contradictionAutoResolve": {
       "label": "Auto-Resolve Contradictions",
       "help": "Automatically supersede old memories when contradiction is confirmed"
+    },
+    "temporalSupersessionEnabled": {
+      "label": "Temporal Supersession",
+      "help": "Mark older facts superseded when a newer fact writes a conflicting value for the same entityRef + structured attribute (issue #375)"
+    },
+    "temporalSupersessionIncludeInRecall": {
+      "label": "Include Superseded Facts In Recall",
+      "advanced": true,
+      "help": "If enabled, superseded facts still surface in recall (audit/history mode)."
     },
     "memoryLinkingEnabled": {
       "label": "Memory Linking",

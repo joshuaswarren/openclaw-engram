@@ -696,6 +696,10 @@ export function parseConfig(raw: unknown): PluginConfig {
     contradictionMinConfidence:
       typeof cfg.contradictionMinConfidence === "number" ? cfg.contradictionMinConfidence : 0.9,
     contradictionAutoResolve: cfg.contradictionAutoResolve !== false,
+    // Temporal Supersession (issue #375)
+    temporalSupersessionEnabled: cfg.temporalSupersessionEnabled !== false, // On by default
+    temporalSupersessionIncludeInRecall:
+      cfg.temporalSupersessionIncludeInRecall === true, // Off by default
     // Memory Linking (Phase 3A)
     memoryLinkingEnabled: cfg.memoryLinkingEnabled === true, // Off by default initially
     // Conversation Threading (Phase 3B)

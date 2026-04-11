@@ -213,6 +213,19 @@ export interface PluginConfig {
   contradictionSimilarityThreshold: number;
   contradictionMinConfidence: number;
   contradictionAutoResolve: boolean;
+  // Temporal Supersession (issue #375)
+  /**
+   * When enabled, writes that carry `structuredAttributes` mark any older
+   * fact with the same `entityRef + attribute_name` supersession key and a
+   * conflicting value as `status: "superseded"`.
+   */
+  temporalSupersessionEnabled: boolean;
+  /**
+   * When enabled, superseded memories are still returned by recall (useful
+   * for audit/history queries).  Default: false — superseded memories are
+   * filtered out.
+   */
+  temporalSupersessionIncludeInRecall: boolean;
   // Memory Linking (Phase 3A)
   memoryLinkingEnabled: boolean;
   // Conversation Threading (Phase 3B)

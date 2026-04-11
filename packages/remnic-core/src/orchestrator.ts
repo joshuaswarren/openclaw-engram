@@ -52,6 +52,10 @@ import {
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
+import {
+  applyTemporalSupersession,
+  shouldFilterSupersededFromRecall,
+} from "./temporal-supersession.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import {
@@ -8898,6 +8902,25 @@ export class Orchestrator {
           `routing applied for memory ${memoryId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
         );
       }
+      // Temporal supersession (issue #375): when the new fact has structured
+      // attributes, retire any older fact with the same entity + attribute
+      // key that has a conflicting value.
+      try {
+        const supersessionEntityRef =
+          typeof (fact as any).entityRef === "string"
+            ? ((fact as any).entityRef as string)
+            : undefined;
+        await applyTemporalSupersession({
+          storage: targetStorage,
+          newMemoryId: memoryId,
+          entityRef: supersessionEntityRef,
+          structuredAttributes: fact.structuredAttributes,
+          createdAt: new Date().toISOString(),
+          enabled: this.config.temporalSupersessionEnabled,
+        });
+      } catch (err) {
+        log.warn(`temporal-supersession: unexpected error: ${err}`);
+      }
       trackBehaviorSignals(
         targetStorage,
         buildBehaviorSignalsForMemory({
@@ -11440,6 +11463,19 @@ export class Orchestrator {
             lifecyclePolicyEnabled: this.config.lifecyclePolicyEnabled,
             lifecycleFilterStaleEnabled:
               this.config.lifecycleFilterStaleEnabled,
+          })
+        ) {
+          lifecycleFilteredCount += 1;
+          continue;
+        }
+
+        // Temporal supersession filter (issue #375): drop memories that a
+        // newer fact has retired, unless the caller opted in to history.
+        if (
+          options?.allowLifecycleFiltered !== true &&
+          shouldFilterSupersededFromRecall(memory.frontmatter, {
+            enabled: this.config.temporalSupersessionEnabled,
+            includeInRecall: this.config.temporalSupersessionIncludeInRecall,
           })
         ) {
           lifecycleFilteredCount += 1;
