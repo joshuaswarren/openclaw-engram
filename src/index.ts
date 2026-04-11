@@ -387,10 +387,14 @@ const pluginDefinition = {
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
 
-        // Build the structured line array first so both the gateway return
-        // value and the capability cache fallback share an identical format.
+        // Build the structured line array for the capability cache fallback.
+        // The flat `prependSystemContext` string uses the original template
+        // literal form (no trailing newline) to preserve the exact prompt
+        // format expected by the gateway. `memoryLines` is an internal return
+        // field consumed by the wrapping closure and MUST be stripped before
+        // the hook result is passed back to the gateway.
         const memoryLines = buildMemoryContextLines(trimmed);
-        const memoryContextPrompt = memoryLines.join("\n");
+        const memoryContextPrompt = `## Memory Context (Remnic)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
 
         log.debug(
           `${hookLabel}: returning system prompt with ${trimmed.length} chars`,
@@ -448,6 +452,13 @@ const pluginDefinition = {
             if (needsCacheFallback && result?.memoryLines) {
               cachedMemoryBySession.set(sessionKey, result.memoryLines);
             }
+            // Strip the internal `memoryLines` field before returning to the
+            // gateway — it's a closure-private carrier for cache population
+            // and is not part of the hook contract.
+            if (result && "memoryLines" in result) {
+              const { memoryLines: _ml, ...gatewayResult } = result;
+              return gatewayResult;
+            }
             return result;
           },
         );
@@ -471,6 +482,13 @@ const pluginDefinition = {
             // same structured line format as the registerMemoryPromptSection path.
             if (needsCacheFallback && result?.memoryLines) {
               cachedMemoryBySession.set(sessionKey, result.memoryLines);
+            }
+            // Strip the internal `memoryLines` field before returning to the
+            // gateway — it's a closure-private carrier for cache population
+            // and is not part of the hook contract.
+            if (result && "memoryLines" in result) {
+              const { memoryLines: _ml, ...gatewayResult } = result;
+              return gatewayResult;
             }
             return result;
           },
