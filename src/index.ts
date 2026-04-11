@@ -606,10 +606,12 @@ const pluginDefinition = {
         },
       };
       (api as any).registerMemoryCapability(memoryCapability);
-      log.info(
-        `registered memory capability with publicArtifacts provider and promptBuilder` +
-        (memoryPromptBuilder ? " (from registerMemoryPromptSection)" : " (capability-only fallback)"),
-      );
+      const builderDesc = !promptInjectionAllowed
+        ? " (promptBuilder omitted — injection disabled by policy)"
+        : memoryPromptBuilder
+          ? " and promptBuilder (from registerMemoryPromptSection)"
+          : " and promptBuilder (capability-only fallback)";
+      log.info(`registered memory capability with publicArtifacts provider${builderDesc}`);
     }
 
     // ========================================================================
