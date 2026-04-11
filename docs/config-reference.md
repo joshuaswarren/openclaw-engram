@@ -795,11 +795,32 @@ See [compounding.md](compounding.md).
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `factDeduplicationEnabled` | `true` | Content-hash deduplication |
+| `semanticDedupEnabled` | `true` | Write-time semantic similarity guard (issue #373) — embeds each candidate fact, queries the top-K nearest neighbors, and skips the write when cosine similarity ≥ `semanticDedupThreshold`. Fails open when the embedding backend is unavailable. |
+| `semanticDedupThreshold` | `0.92` | Cosine similarity threshold in `[0, 1]` above which a candidate fact is treated as a near-duplicate and skipped. |
+| `semanticDedupCandidates` | `5` | Number of nearest-neighbor candidates to compare against during the write-time semantic dedup check. |
 | `factArchivalEnabled` | `false` | Archive old, low-value facts |
 | `factArchivalAgeDays` | `90` | Minimum age to archive |
 | `factArchivalMaxImportance` | `0.3` | Maximum importance to archive |
 | `factArchivalMaxAccessCount` | `2` | Maximum access count to archive |
 | `factArchivalProtectedCategories` | `["commitment","preference","decision","principle"]` | Never archived |
+
+### Write-time semantic dedup (issue #373)
+
+Exact content-hash dedup catches identical text but lets paraphrases through.
+The semantic guard runs in `orchestrator.persistExtraction()` after the hash
+miss and before any storage work:
+
+1. Embed the candidate fact via the existing embedding-fallback pipeline.
+2. Query the top `semanticDedupCandidates` (default 5) nearest neighbors.
+3. If the best cosine similarity is ≥ `semanticDedupThreshold` (default 0.92),
+   drop the candidate, bump the existing `dedupedCount` metric, and log a
+   debug line naming the colliding neighbor id and score.
+4. On any lookup error or missing backend, the guard fails open so writes
+   are never blocked by an embedding outage.
+
+The guard shares its decision function with the CLI `remnic dedup` tooling
+via `packages/remnic-core/src/dedup/semantic.ts`, so there is a single source
+of truth for similarity logic across read-time and write-time code paths.
 
 ## v8.2 Graph Recall Activation
 
@@ -1257,6 +1278,9 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `compoundingSynthesisTimeoutMs` | `15000` | `15000` |
 | `compoundingInjectEnabled` | `true` | `true` |
 | `factDeduplicationEnabled` | `true` | `true` |
+| `semanticDedupEnabled` | `true` | `true` (issue #373 — write-time semantic guard) |
+| `semanticDedupThreshold` | `0.92` | `0.92` (tighten to `0.95` for high-precision corpora, loosen to `0.88` for noisy transcripts) |
+| `semanticDedupCandidates` | `5` | `5` |
 | `factArchivalEnabled` | `false` | `false` unless you have validated archive policy on your corpus |
 | `factArchivalAgeDays` | `90` | `90` |
 | `factArchivalMaxImportance` | `0.3` | `0.3` |
