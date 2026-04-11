@@ -80,6 +80,8 @@ import {
   type BenchConfig,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
+export { hasFlag, resolveFlag } from "./cli-args.js";
+import { hasFlag, resolveFlag } from "./cli-args.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -193,16 +195,6 @@ function resolveMemoryDir(): string {
   }
 
   return configMemoryDir;
-}
-
-export function resolveFlag(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : undefined;
-}
-
-/** Returns true if `flag` appears anywhere in `args`, regardless of whether it has a trailing value. */
-export function hasFlag(args: string[], flag: string): boolean {
-  return args.indexOf(flag) !== -1;
 }
 
 function parseConnectorConfig(args: string[]): Record<string, unknown> {
@@ -348,6 +340,11 @@ async function cmdBriefing(rest: string[]): Promise<void> {
 
   if (hasFlag(rest, "--since") && sinceFlag === undefined) {
     console.error("Missing value for --since. Accepted: yesterday, today, NNh, NNd, NNw.");
+    process.exit(1);
+  }
+
+  if (hasFlag(rest, "--format") && formatFlag === undefined) {
+    console.error("Missing value for --format. Accepted: markdown, json.");
     process.exit(1);
   }
 

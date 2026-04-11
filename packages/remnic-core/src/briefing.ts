@@ -315,7 +315,7 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
   // causes ECMAScript to parse it as local time, which then round-trips
   // through UTC via `toISOString()` and can shift the calendar date.
   // For floating times we compare the date portion directly.
-  const hasTimezone = /Z$|[+-]\d{2}:\d{2}$/.test(start);
+  const hasTimezone = /(Z|[+-]\d{2}:?\d{2})$/.test(start);
   if (!hasTimezone) {
     // Verify the value is at least parseable before accepting it.
     const probe = new Date(start);
@@ -521,10 +521,12 @@ export function filterMemoriesByWindow(memories: MemoryFile[], window: ParsedBri
   const fromMs = window.from.getTime();
   const toMs = window.to.getTime();
   return memories.filter((m) => {
-    // Exclude non-active memories (superseded, archived, etc.) so that
+    // Exclude only explicitly retired statuses (superseded, archived) so that
     // commitments overridden within the window don't appear as open.
+    // pending_review memories are awaiting human review — not invalidated —
+    // and must be included so reviewers see them in the briefing.
     const status = m.frontmatter.status;
-    if (status !== undefined && status !== "active") return false;
+    if (status === "superseded" || status === "archived") return false;
     const ts = memoryTimestamp(m);
     return ts >= fromMs && ts < toMs;
   });

@@ -253,6 +253,33 @@ test("filterMemoriesByWindow: active and undefined-status memories within window
 });
 
 // ──────────────────────────────────────────────────────────────────────────
+// Finding A (#396): pending_review memories must be included in briefings
+// ──────────────────────────────────────────────────────────────────────────
+
+test("filterMemoriesByWindow: pending_review memory within window is included", () => {
+  const window = makeWindow("2026-04-10T00:00:00.000Z", "2026-04-11T00:00:00.000Z");
+  const pendingReview = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "pending_review");
+  const result = filterMemoriesByWindow([pendingReview], window);
+  assert.equal(result.length, 1, "pending_review memory must be included in briefing");
+  assert.equal(result[0]!.frontmatter.status, "pending_review");
+});
+
+test("filterMemoriesByWindow: archived memory is excluded but pending_review is included together", () => {
+  const window = makeWindow("2026-04-10T00:00:00.000Z", "2026-04-11T00:00:00.000Z");
+  const archived = makeMemoryWithStatus("2026-04-10T09:00:00.000Z", "archived");
+  const superseded = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "superseded");
+  const pendingReview = makeMemoryWithStatus("2026-04-10T11:00:00.000Z", "pending_review");
+  const active = makeMemoryWithStatus("2026-04-10T12:00:00.000Z", "active");
+
+  const result = filterMemoriesByWindow([archived, superseded, pendingReview, active], window);
+  assert.equal(result.length, 2, "only archived and superseded should be excluded");
+  assert.ok(result.some((m) => m.frontmatter.status === "pending_review"), "pending_review must be present");
+  assert.ok(result.some((m) => m.frontmatter.status === "active"), "active must be present");
+  assert.ok(!result.some((m) => m.frontmatter.status === "archived"), "archived must not be present");
+  assert.ok(!result.some((m) => m.frontmatter.status === "superseded"), "superseded must not be present");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
 // Finding 7 (#396): --format flag must reject invalid values
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -275,6 +302,38 @@ test("validateBriefingFormat: returns error string for invalid values like 'jsno
   const err = validateBriefingFormat("jsno");
   assert.ok(typeof err === "string" && err.length > 0, "typo should produce an error message");
   assert.match(err, /jsno/, "error should include the invalid value");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding C (#396): compact timezone offsets (±HHMM) must be treated as
+// offset-aware (not floating) so events land on the correct UTC date.
+// ──────────────────────────────────────────────────────────────────────────
+
+test("eventFallsOnDate: compact negative offset (-0200) is treated as offset-aware", () => {
+  // 2026-04-10T23:30:00-0200 = 2026-04-11T01:30:00Z — must match 2026-04-11, not 2026-04-10
+  const event = makeCalendarEvent("2026-04-10T23:30:00-0200");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true, "compact -0200 should land on 2026-04-11 UTC");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), false, "must not match the local date slice");
+});
+
+test("eventFallsOnDate: compact positive offset (+0530) is treated as offset-aware", () => {
+  // 2026-04-11T04:00:00+0530 = 2026-04-10T22:30:00Z — must match 2026-04-10, not 2026-04-11
+  const event = makeCalendarEvent("2026-04-11T04:00:00+0530");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true, "compact +0530 should land on 2026-04-10 UTC");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), false, "must not match the local date slice");
+});
+
+test("eventFallsOnDate: compact +0000 is treated as offset-aware (same as Z)", () => {
+  // 2026-04-11T12:00:00+0000 = 2026-04-11T12:00:00Z
+  const event = makeCalendarEvent("2026-04-11T12:00:00+0000");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true, "compact +0000 must match 2026-04-11");
+});
+
+test("eventFallsOnDate: floating string without any offset suffix is still treated as floating", () => {
+  // 2026-04-10T23:30:00 has no offset — floating, compares date portion directly
+  const event = makeCalendarEvent("2026-04-10T23:30:00");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true, "floating time must match its calendar day");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), false, "floating time must not shift to next day");
 });
 
 test("validateBriefingFormat: rejects empty string as invalid", () => {

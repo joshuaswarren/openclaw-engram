@@ -15,11 +15,12 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 
-// Dynamically import the CLI helpers. We do this to avoid triggering the
-// main() side-effect at module load time.
+// Dynamically import the CLI helpers from the standalone helper file so that
+// this test does not trigger @remnic/core/dist resolution (which may not be
+// built in CI when running root-level tsx --test).
 async function loadCliHelpers() {
   const mod = (await import(
-    path.join(ROOT, "packages/remnic-cli/src/index.ts")
+    path.join(ROOT, "packages/remnic-cli/src/cli-args.ts")
   )) as { hasFlag: (args: string[], flag: string) => boolean; resolveFlag: (args: string[], flag: string) => string | undefined };
   return { hasFlag: mod.hasFlag, resolveFlag: mod.resolveFlag };
 }
@@ -97,4 +98,40 @@ test("guard condition does not trigger when --since has a valid value", async ()
   const args = ["briefing", "--since", "yesterday"];
   const shouldError = hasFlag(args, "--since") && resolveFlag(args, "--since") === undefined;
   assert.equal(shouldError, false, "--since with a value must not trigger the error guard");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding B (#396) — --format guard mirrors --since guard behaviour
+// ──────────────────────────────────────────────────────────────────────────
+
+test("guard condition triggers when --format is present but has no value", async () => {
+  const { hasFlag, resolveFlag } = await loadCliHelpers();
+  const args = ["briefing", "--format"];
+  const shouldError = hasFlag(args, "--format") && resolveFlag(args, "--format") === undefined;
+  assert.equal(
+    shouldError,
+    true,
+    "--format without a value must be treated as an input error, not silently fall back to default",
+  );
+});
+
+test("guard condition does not trigger when --format is absent", async () => {
+  const { hasFlag, resolveFlag } = await loadCliHelpers();
+  const args = ["briefing"];
+  const shouldError = hasFlag(args, "--format") && resolveFlag(args, "--format") === undefined;
+  assert.equal(shouldError, false, "absent --format must not trigger the error guard");
+});
+
+test("guard condition does not trigger when --format has a valid value", async () => {
+  const { hasFlag, resolveFlag } = await loadCliHelpers();
+  const args = ["briefing", "--format", "json"];
+  const shouldError = hasFlag(args, "--format") && resolveFlag(args, "--format") === undefined;
+  assert.equal(shouldError, false, "--format with a value must not trigger the error guard");
+});
+
+test("guard condition does not trigger when --format has value 'markdown'", async () => {
+  const { hasFlag, resolveFlag } = await loadCliHelpers();
+  const args = ["briefing", "--format", "markdown"];
+  const shouldError = hasFlag(args, "--format") && resolveFlag(args, "--format") === undefined;
+  assert.equal(shouldError, false, "--format markdown must not trigger the error guard");
 });
