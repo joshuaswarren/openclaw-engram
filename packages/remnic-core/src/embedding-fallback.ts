@@ -27,10 +27,11 @@ type EmbeddingIndexFile = {
 const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
 
 /**
- * Thrown by `EmbeddingFallback.search()` (via `embed()`) when an HTTP fetch
- * on the lookup path exceeds its deadline. Callers that need to distinguish a
- * timeout from a generic network error can `instanceof`-check against this
- * class; callers that just need fail-open semantics can catch any error.
+ * Thrown by `EmbeddingFallback.search()` (via `embed()`) when the embedding
+ * backend is effectively unavailable on the lookup path — either because the
+ * HTTP fetch exceeded its deadline OR because the endpoint returned a non-2xx
+ * status code. Callers that need to distinguish a backend outage from "no
+ * candidates" can `instanceof`-check against this class.
  *
  * Round 9 fix (Finding UZqB): previously a timeout returned null from embed(),
  * which caused search() to return [] silently. decideSemanticDedup then
@@ -44,6 +45,15 @@ const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
  * semantics for recall-path callers (searchEmbeddingFallback) that have no
  * try/catch. Only the semantic-dedup path (semanticDedupLookup) passes the
  * flag so it can still reach decideSemanticDedup's backend_unavailable branch.
+ *
+ * Round 11 fix (Finding Ur_J): `embed()` now also throws this error from the
+ * lookup path when the HTTP response is non-2xx (e.g. 429, 500, 503). Without
+ * this, repeated 5xx outages would each return null → [] → no_candidates and
+ * subsequent facts in the same batch would all pay full roundtrips instead of
+ * tripping the per-batch backend_unavailable short-circuit.
+ *
+ * The class name is kept for backward compatibility — `EmbeddingTimeoutError`
+ * now signals "lookup backend unavailable" rather than strictly "timed out".
  */
 export class EmbeddingTimeoutError extends Error {
   override readonly name = "EmbeddingTimeoutError" as const;
@@ -329,6 +339,20 @@ export class EmbeddingFallback {
       });
       if (!res.ok) {
         log.debug(`embedding fallback request failed: ${provider.type} ${res.status}`);
+        // Round 11 fix (Finding Ur_J): on the LOOKUP path, a non-2xx response
+        // means the embedding backend is effectively unavailable. Throw the
+        // tagged error so search() (when called with throwOnTimeout) propagates
+        // to decideSemanticDedup's backend_unavailable branch, activating the
+        // per-batch short-circuit. Without this, repeated 429/5xx responses
+        // would silently return [] for every fact in the batch.
+        //
+        // On the INDEX path a non-2xx is non-fatal (the memory is already
+        // persisted; index update can be skipped) — return null there.
+        if (mode === "lookup") {
+          throw new EmbeddingTimeoutError(
+            `embedding backend returned ${res.status} (${provider.type})`,
+          );
+        }
         return null;
       }
       const payload = (await res.json()) as any;
@@ -336,6 +360,12 @@ export class EmbeddingFallback {
       if (!Array.isArray(vector)) return null;
       return vector.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n));
     } catch (err) {
+      // Round 11 (Finding Ur_J): the !res.ok branch above throws
+      // EmbeddingTimeoutError directly. Re-throw it here so the catch does
+      // not swallow our own intentional signal back into a null return.
+      if (err instanceof EmbeddingTimeoutError) {
+        throw err;
+      }
       // AbortSignal.timeout throws a DOMException with name "TimeoutError";
       // surface at warn level so operators can distinguish slow backends from
       // generic errors.

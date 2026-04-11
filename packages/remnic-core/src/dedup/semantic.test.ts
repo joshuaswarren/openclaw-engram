@@ -1079,6 +1079,26 @@ function stubTimeoutFetch(): { restore: () => void; callCount: () => number } {
   };
 }
 
+// Round 11 helper (Finding Ur_J): simulate a degraded embedding backend that
+// returns a non-2xx HTTP status (e.g. 503 Service Unavailable) instead of
+// timing out. The fetch resolves successfully but with `ok=false`.
+function stubNon200Fetch(status: number): { restore: () => void; callCount: () => number } {
+  const original = globalThis.fetch;
+  let count = 0;
+  (globalThis as any).fetch = async (_url: any, _init: any) => {
+    count++;
+    return new Response(JSON.stringify({ error: { message: "service unavailable" } }), {
+      status,
+      statusText: "Service Unavailable",
+      headers: { "content-type": "application/json" },
+    });
+  };
+  return {
+    restore: () => { (globalThis as any).fetch = original; },
+    callCount: () => count,
+  };
+}
+
 // Round 10 regression tests (Findings Ui1J + Ui1L):
 //   search() without throwOnTimeout must return [] on timeout (recall-path contract).
 //   search() with throwOnTimeout:true must throw EmbeddingTimeoutError (dedup-path contract).
@@ -1151,6 +1171,79 @@ test("round 10 Ui1J+Ui1L: search() with throwOnTimeout:true throws EmbeddingTime
     assert.ok(callCount() >= 1, "fetch must have been called at least once");
   } finally {
     delete process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS;
+    restore();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+// Round 11 regression test (Finding Ur_J):
+//   When the embedding backend returns a non-2xx HTTP status on the lookup
+//   path, embed() previously returned null → search() yielded [] → caller
+//   classified the result as "no_candidates" instead of "backend_unavailable".
+//   In a degraded backend (repeated 429/5xx), every fact in a batch would pay
+//   a full HTTP roundtrip instead of tripping the per-batch short-circuit.
+//
+// Round 11 fix: embed() now throws EmbeddingTimeoutError on lookup-path !res.ok
+// (the same path used for genuine timeouts), so search() with throwOnTimeout
+// propagates to decideSemanticDedup's backend_unavailable branch.
+test("round 11 Ur_J: search() with throwOnTimeout throws EmbeddingTimeoutError on non-2xx response", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-non200-dedup-"));
+  const { restore, callCount } = stubNon200Fetch(503);
+  try {
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-u-001": { vector: [1, 0, 0, 0], path: "facts/u-001.md" },
+    });
+    const config = parseConfig({
+      memoryDir,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      openaiApiKey: "test-key",
+    });
+    const fallback = new EmbeddingFallback(config);
+
+    let threw: unknown;
+    try {
+      await fallback.search("synthetic query for non-2xx test", 5, { throwOnTimeout: true });
+    } catch (err) {
+      threw = err;
+    }
+
+    assert.ok(threw instanceof EmbeddingTimeoutError,
+      `search() must throw EmbeddingTimeoutError on non-2xx when throwOnTimeout=true; got ${threw}`);
+    assert.ok(callCount() >= 1, "fetch must have been called at least once");
+  } finally {
+    restore();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("round 11 Ur_J: search() without throwOnTimeout returns [] on non-2xx response (recall-path fail-open)", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-non200-recall-"));
+  const { restore, callCount } = stubNon200Fetch(503);
+  try {
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-u-001": { vector: [1, 0, 0, 0], path: "facts/u-001.md" },
+    });
+    const config = parseConfig({
+      memoryDir,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      openaiApiKey: "test-key",
+    });
+    const fallback = new EmbeddingFallback(config);
+
+    let threw = false;
+    let result: Array<{ id: string; score: number; path: string }> = [];
+    try {
+      result = await fallback.search("synthetic query for non-2xx test", 5);
+    } catch (_err) {
+      threw = true;
+    }
+
+    assert.ok(!threw, "search() must NOT throw on non-2xx when throwOnTimeout is omitted (recall-path fail-open)");
+    assert.deepEqual(result, [], "search() must return [] on non-2xx when throwOnTimeout is false");
+    assert.ok(callCount() >= 1, "fetch must have been called at least once");
+  } finally {
     restore();
     await rm(memoryDir, { recursive: true, force: true });
   }
