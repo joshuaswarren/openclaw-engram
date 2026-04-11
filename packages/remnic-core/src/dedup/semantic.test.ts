@@ -221,3 +221,15 @@ test("parseConfig: NaN semanticDedupCandidates falls back to default 5", () => {
   const nan = parseConfig({ semanticDedupCandidates: Number.NaN });
   assert.equal(nan.semanticDedupCandidates, 5);
 });
+
+test("parseConfig: NaN semanticDedupThreshold falls back to default 0.92", () => {
+  const nan = parseConfig({ semanticDedupThreshold: Number.NaN });
+  assert.equal(nan.semanticDedupThreshold, 0.92);
+});
+
+test("parseConfig: Infinity semanticDedupThreshold falls back to default 0.92", () => {
+  const pos = parseConfig({ semanticDedupThreshold: Number.POSITIVE_INFINITY });
+  const neg = parseConfig({ semanticDedupThreshold: Number.NEGATIVE_INFINITY });
+  assert.equal(pos.semanticDedupThreshold, 0.92);
+  assert.equal(neg.semanticDedupThreshold, 0.92);
+});

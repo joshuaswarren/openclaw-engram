@@ -1269,8 +1269,12 @@ export function parseConfig(raw: unknown): PluginConfig {
     factDeduplicationEnabled: cfg.factDeduplicationEnabled !== false,
     // Issue #373 — write-time semantic similarity guard
     semanticDedupEnabled: cfg.semanticDedupEnabled !== false,
+    // Guard against NaN / Infinity — Number.isFinite rejects both and falls
+    // back to the documented default so the semantic dedup guard cannot be
+    // silently disabled by a malformed config value.
     semanticDedupThreshold:
-      typeof cfg.semanticDedupThreshold === "number"
+      typeof cfg.semanticDedupThreshold === "number" &&
+      Number.isFinite(cfg.semanticDedupThreshold)
         ? Math.min(1, Math.max(0, cfg.semanticDedupThreshold))
         : 0.92,
     // Zero is a valid "disable candidate lookup" signal and must be preserved.
