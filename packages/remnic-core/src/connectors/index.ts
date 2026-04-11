@@ -165,10 +165,10 @@ export interface DoctorCheck {
 
 // ── Helpers (Finding 4) ───────────────────────────────────────────────────
 
-// Re-export coerceInstallExtension from the shared coerce module so existing
-// import sites (`import { coerceInstallExtension } from "./index.js"`) keep
-// working without change.
-export { coerceInstallExtension } from "./coerce.js";
+// Re-export coerceInstallExtension so existing import sites
+// (`import { coerceInstallExtension } from "./index.js"`) keep working without
+// change. The binding comes from the top-level import above.
+export { coerceInstallExtension };
 
 // ── Built-in connector definitions ─────────────────────────────────────────
 
