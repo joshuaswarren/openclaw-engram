@@ -24,19 +24,31 @@ Add to your Hermes `config.yaml`:
 plugins:
   - remnic_hermes
 
-engram:
+remnic:
   host: "127.0.0.1"
   port: 4318
-  token: ""  # auto-loaded from ~/.engram/tokens.json
+  token: ""  # auto-loaded from ~/.remnic/tokens.json
 ```
 
-The Hermes-side config block is still named `engram:` today for compatibility.
-Install and connector management are Remnic-branded; the plugin config surface
-will stay legacy until the Hermes compatibility window closes.
+A legacy `engram:` block is still accepted during the Engram → Remnic compat
+window. The plugin reads `remnic:` first and falls back to `engram:` if the
+new key is absent, so existing configs keep working without edits.
 
 ## How It Works
 
-- **`pre_llm_call`** — Recalls relevant memories before each LLM call and injects them into the system prompt
+- **`pre_llm_call`** — Recalls relevant memories before each LLM call and injects them into the system prompt as a `<remnic-memory>` block
 - **`sync_turn`** — Observes each conversation turn for future recall
 - **`extract_memories`** — Performs deep extraction at session end
-- **Explicit tools** — `engram_recall`, `engram_store`, `engram_search` registered as Hermes tools
+- **Explicit tools** — `remnic_recall`, `remnic_store`, `remnic_search` registered as Hermes tools (legacy `engram_*` aliases remain available during the compat window)
+
+## Python API
+
+```python
+from remnic_hermes import RemnicMemoryProvider, RemnicClient, RemnicHermesConfig
+```
+
+The legacy names `EngramMemoryProvider`, `EngramClient`, and `EngramHermesConfig` are kept as aliases for backward compatibility and will be removed in a future major release.
+
+## License
+
+MIT
