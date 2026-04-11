@@ -383,9 +383,7 @@ async function cmdBriefing(rest: string[]): Promise<void> {
       const filename = briefingFilename(new Date(), format);
       const filePath = path.join(saveDir, filename);
       fs.writeFileSync(filePath, payload + (payload.endsWith("\n") ? "" : "\n"));
-      if (format !== "json") {
-        console.error(`Saved briefing: ${filePath}`);
-      }
+      console.error(`Saved briefing: ${filePath}`);
     } catch (err) {
       console.error(`Failed to save briefing: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);

@@ -31,7 +31,6 @@ import type {
   CalendarSource,
   EntityFile,
   MemoryFile,
-  PluginConfig,
 } from "./types.js";
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -279,9 +278,10 @@ function normalizeIcsDate(value: string): string {
   return value;
 }
 
-function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean {
+/** @internal — exported for testing only. */
+export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean {
   const target = dateIso.slice(0, 10);
-  const startDay = event.start.slice(0, 10);
+  const startDay = new Date(event.start).toISOString().slice(0, 10);
   return startDay === target;
 }
 
@@ -465,12 +465,13 @@ function memoryTimestamp(memory: MemoryFile): number {
   return Number.isFinite(t) ? t : 0;
 }
 
-function filterMemoriesByWindow(memories: MemoryFile[], window: ParsedBriefingWindow): MemoryFile[] {
+/** @internal — exported for testing only. */
+export function filterMemoriesByWindow(memories: MemoryFile[], window: ParsedBriefingWindow): MemoryFile[] {
   const fromMs = window.from.getTime();
   const toMs = window.to.getTime();
   return memories.filter((m) => {
     const ts = memoryTimestamp(m);
-    return ts >= fromMs && ts <= toMs;
+    return ts >= fromMs && ts < toMs;
   });
 }
 
@@ -519,7 +520,8 @@ function describeReason(memory: MemoryFile): string {
   return "recent activity";
 }
 
-function buildRecentEntities(
+/** @internal — exported for testing only. */
+export function buildRecentEntities(
   entities: EntityFile[],
   window: ParsedBriefingWindow,
   focus: BriefingFocus | null,
@@ -529,8 +531,9 @@ function buildRecentEntities(
   const now = window.to;
   for (const entity of entities) {
     if (focus && !focusMatchesEntity(entity, focus)) continue;
+    const toMs = window.to.getTime();
     const updatedMs = entity.updated ? Date.parse(entity.updated) : 0;
-    if (!Number.isFinite(updatedMs) || updatedMs < fromMs) continue;
+    if (!Number.isFinite(updatedMs) || updatedMs < fromMs || updatedMs >= toMs) continue;
     const score = StorageManager.scoreEntity(entity, now);
     scored.push({
       name: entity.name,
@@ -800,48 +803,3 @@ export function briefingFilename(date: Date, format: "markdown" | "json" = "mark
   return format === "json" ? `${day}.json` : `${day}.md`;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// MCP tool integration
-// ──────────────────────────────────────────────────────────────────────────
-
-/** Input shape for the `remnic_briefing` MCP tool. */
-export interface BriefingToolInput {
-  since?: string;
-  focus?: string;
-  namespace?: string;
-  format?: "markdown" | "json";
-  maxFollowups?: number;
-}
-
-/**
- * Execute the `remnic_briefing` MCP tool given parsed args.
- *
- * The `runner` callback lets hosts wire their own storage/config lookup
- * (the OpenClaw plugin passes through the orchestrator's storage).
- */
-export async function runBriefingTool(
-  args: BriefingToolInput,
-  runner: (call: {
-    window: ParsedBriefingWindow;
-    focus: BriefingFocus | null;
-    maxFollowups: number;
-    format: "markdown" | "json";
-    namespace?: string;
-  }) => Promise<BriefingResult>,
-  defaults: Pick<PluginConfig["briefing"], "defaultWindow" | "defaultFormat" | "maxFollowups">,
-): Promise<{ result: BriefingResult; payload: string }> {
-  const windowToken = typeof args.since === "string" && args.since.trim().length > 0
-    ? args.since.trim()
-    : defaults.defaultWindow;
-  const window = parseBriefingWindow(windowToken) ?? defaultWindow(new Date());
-  const focus = parseBriefingFocus(args.focus);
-  const format: "markdown" | "json" = args.format === "json"
-    ? "json"
-    : args.format === "markdown"
-      ? "markdown"
-      : defaults.defaultFormat;
-  const maxFollowups = clampFollowups(args.maxFollowups ?? defaults.maxFollowups);
-  const result = await runner({ window, focus, maxFollowups, format, namespace: args.namespace });
-  const payload = format === "json" ? JSON.stringify(result.json, null, 2) : result.markdown;
-  return { result, payload };
-}
