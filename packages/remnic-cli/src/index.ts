@@ -415,7 +415,10 @@ async function cmdBriefing(rest: string[]): Promise<void> {
     try {
       const saveDir = resolveBriefingSaveDir(config.briefing.saveDir);
       fs.mkdirSync(saveDir, { recursive: true });
-      const filename = briefingFilename(new Date(), format);
+      // Use the window's end time (not wall-clock) so the filename is stable
+      // regardless of when the command runs — a briefing covering --since 3d
+      // gets the same name whether run just before or after UTC midnight.
+      const filename = briefingFilename(new Date(result.window.to), format);
       const filePath = path.join(saveDir, filename);
       fs.writeFileSync(filePath, payload + (payload.endsWith("\n") ? "" : "\n"));
       console.error(`Saved briefing: ${filePath}`);

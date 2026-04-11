@@ -13,8 +13,10 @@ import {
   parseIcsEvents,
   parseBriefingWindow,
   validateBriefingFormat,
+  focusMatchesMemory,
+  BRIEFING_FOLLOWUP_DEFAULT_MODEL,
 } from "./briefing.js";
-import type { MemoryFile, EntityFile, CalendarEvent } from "./types.js";
+import type { MemoryFile, EntityFile, CalendarEvent, BriefingFocus } from "./types.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers — synthetic fixtures
@@ -659,5 +661,134 @@ test("parseIcsEvents: TZID midnight event (UTC-5) lands on correct UTC day", () 
     utcDate,
     "2026-04-11",
     `midnight New York (EDT=UTC-4) must land on 2026-04-11 UTC, got "${utcDate}" from start="${ev.start}"`,
+  );
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 7 Finding 1 (UNBW): BRIEFING_FOLLOWUP_DEFAULT_MODEL constant must be
+// exported and must be the same model string used by the extraction engine.
+// ──────────────────────────────────────────────────────────────────────────
+
+test("BRIEFING_FOLLOWUP_DEFAULT_MODEL is exported and matches canonical extraction model", () => {
+  // The constant must be a non-empty string.
+  assert.ok(
+    typeof BRIEFING_FOLLOWUP_DEFAULT_MODEL === "string" && BRIEFING_FOLLOWUP_DEFAULT_MODEL.length > 0,
+    "BRIEFING_FOLLOWUP_DEFAULT_MODEL must be a non-empty string",
+  );
+  // Must match the same model family the extraction engine defaults to ("gpt-5.2").
+  assert.equal(
+    BRIEFING_FOLLOWUP_DEFAULT_MODEL,
+    "gpt-5.2",
+    "default model must align with the extraction engine default in config.ts",
+  );
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 7 Finding 3 (UQZW): Midnight fractional end-times must be treated as
+// day-exclusive, i.e. "2026-04-11T00:00:00.000" must NOT appear on 2026-04-11.
+// ──────────────────────────────────────────────────────────────────────────
+
+test("eventFallsOnDate: floating end '2026-04-11T00:00:00.000' (fractional midnight) is day-exclusive", () => {
+  // A cross-day floating event ending at exactly midnight WITH a fractional
+  // suffix (.000) was previously treated as "after midnight" by the lexicographic
+  // `endTime > "00:00:00"` check (because ".000" makes the string longer).
+  // The correct result is: the end day must be excluded (half-open [start, end)).
+  const event: CalendarEvent = {
+    id: "evt-fractional-midnight",
+    title: "Overnight synthetic event",
+    start: "2026-04-10T22:00:00",
+    end: "2026-04-11T00:00:00.000",
+  };
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-10"),
+    true,
+    "event must appear on the start day",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    false,
+    "end time '00:00:00.000' is midnight — end day must be excluded under [start, end) semantics",
+  );
+});
+
+test("eventFallsOnDate: floating end '2026-04-11T00:00:00.001' (just after midnight) includes end day", () => {
+  // One millisecond past midnight — the event is still running at the start of
+  // 2026-04-11 and should therefore be included on that day.
+  const event: CalendarEvent = {
+    id: "evt-just-after-midnight",
+    title: "Just-past-midnight synthetic event",
+    start: "2026-04-10T22:00:00",
+    end: "2026-04-11T00:00:00.001",
+  };
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true,
+    "end time '00:00:00.001' is just past midnight — end day must be included");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true, "must appear on start day too");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 7 Finding 4 (UQZa): Focus tokens must be normalised to slug form
+// before matching entityRef so `person:Jane Doe` matches entityRef
+// `"person-jane-doe"`.
+// ──────────────────────────────────────────────────────────────────────────
+
+function makeMemoryWithEntityRef(entityRef: string, content = "synthetic"): MemoryFile {
+  return {
+    path: "/synthetic/entity-ref-mem.md",
+    frontmatter: {
+      id: "test-slug-mem",
+      category: "fact",
+      created: "2026-04-10T10:00:00.000Z",
+      updated: "2026-04-10T10:00:00.000Z",
+      source: "test",
+      confidence: 0.9,
+      confidenceTier: "explicit",
+      tags: [],
+      entityRef,
+    },
+    content,
+  };
+}
+
+test("focusMatchesMemory: person:Jane Doe matches entityRef 'person-jane-doe' via slug", () => {
+  // entityRef is stored as a slug; the raw focus value "Jane Doe" would never
+  // appear in the entityRef string.  The fix derives the slug form
+  // "person-jane-doe" and matches it against the entityRef.
+  const memory = makeMemoryWithEntityRef("person-jane-doe");
+  const focus: BriefingFocus = { type: "person", value: "Jane Doe" };
+  assert.equal(
+    focusMatchesMemory(memory, focus),
+    true,
+    "person:Jane Doe must match entityRef 'person-jane-doe' after slug normalization",
+  );
+});
+
+test("focusMatchesMemory: project:My Project matches entityRef 'project-my-project' via slug", () => {
+  const memory = makeMemoryWithEntityRef("project-my-project");
+  const focus: BriefingFocus = { type: "project", value: "My Project" };
+  assert.equal(
+    focusMatchesMemory(memory, focus),
+    true,
+    "project focus slug must match stored entityRef",
+  );
+});
+
+test("focusMatchesMemory: slug match does not produce false positives for unrelated entityRef", () => {
+  const memory = makeMemoryWithEntityRef("person-john-smith");
+  const focus: BriefingFocus = { type: "person", value: "Jane Doe" };
+  assert.equal(
+    focusMatchesMemory(memory, focus),
+    false,
+    "person-jane-doe slug must not match person-john-smith entityRef",
+  );
+});
+
+test("focusMatchesMemory: raw content match still works alongside slug fix", () => {
+  // The existing raw-substring path must remain intact.
+  const memory = makeMemoryWithEntityRef("", "Jane Doe signed the contract.");
+  const focus: BriefingFocus = { type: "person", value: "Jane Doe" };
+  assert.equal(
+    focusMatchesMemory(memory, focus),
+    true,
+    "raw content match must still work after adding slug logic",
   );
 });

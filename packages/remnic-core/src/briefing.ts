@@ -39,6 +39,12 @@ import type {
 
 /** Allowed values for the briefing format flag/field. */
 export const BRIEFING_FORMAT_ALLOWED = ["markdown", "json"] as const;
+
+/**
+ * Default model used for the Responses API follow-up generation call.
+ * Mirrors the extraction engine default in config.ts — keep in sync.
+ */
+export const BRIEFING_FOLLOWUP_DEFAULT_MODEL = "gpt-5.2";
 export type BriefingFormatValue = typeof BRIEFING_FORMAT_ALLOWED[number];
 
 /**
@@ -160,20 +166,51 @@ export function parseBriefingFocus(token: string | undefined): BriefingFocus | n
 }
 
 /**
+ * Derive the slugged form of a typed focus value that mirrors how entityRefs
+ * are constructed (lowercased, non-alphanumeric runs → hyphens, prefixed with
+ * the focus type).  Example: `person:Jane Doe` → `"person-jane-doe"`.
+ *
+ * This lets `focusMatchesMemory` match against `entityRef` even when the
+ * focus value was supplied with spaces/capitals that the slug normalised away.
+ */
+function focusToEntityRefSlug(focus: BriefingFocus): string {
+  const sluggedValue = focus.value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  return `${focus.type}-${sluggedValue}`;
+}
+
+/**
  * Decide whether a memory/entity matches the given focus filter.
  * Purely deterministic — no LLM, case-insensitive substring match across
  * the most useful surfaces.
+ *
+ * For `entityRef` matching we also check the slugged form of the typed focus
+ * (e.g. `person:Jane Doe` → `"person-jane-doe"`) because entityRefs are stored
+ * in normalised slug form and a raw substring match on `"Jane Doe"` would never
+ * hit `"person-jane-doe"`.
  */
 export function focusMatchesMemory(memory: MemoryFile, focus: BriefingFocus): boolean {
   const needle = focus.value.toLowerCase();
-  const haystack = [
+  const entityRef = (memory.frontmatter.entityRef ?? "").toLowerCase();
+
+  // Raw substring match across content and tags (preserves existing behaviour).
+  const rawHaystack = [
     memory.content,
-    memory.frontmatter.entityRef ?? "",
+    entityRef,
     ...(memory.frontmatter.tags ?? []),
   ]
     .join(" ")
     .toLowerCase();
-  return haystack.includes(needle);
+  if (rawHaystack.includes(needle)) return true;
+
+  // Slug match: check whether the entityRef contains the slugged focus value.
+  // This catches typed focus tokens like `person:Jane Doe` whose slug form
+  // `"person-jane-doe"` matches an entityRef but the raw value never would.
+  const slug = focusToEntityRefSlug(focus);
+  return entityRef.includes(slug);
 }
 
 export function focusMatchesEntity(entity: EntityFile, focus: BriefingFocus): boolean {
@@ -550,8 +587,13 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
     // the boundary and the end day is excluded. Within-day spans always
     // have a non-zero end time and so correctly include their own date.
     const endDate = end.slice(0, 10);
-    const endTime = end.slice(11); // "HH:MM:SS"
-    const endActiveOnEndDay = endTime > "00:00:00";
+    const endTime = end.slice(11); // "HH:MM:SS" or "HH:MM:SS.mmm"
+    // Treat any end time that is exactly midnight (including fractional-second
+    // values like "00:00:00.000") as day-exclusive per [start, end) semantics.
+    // A bare `>` string comparison incorrectly treats "00:00:00.000" as > "00:00:00"
+    // because the fractional suffix makes the string lexicographically longer.
+    const endAtExactMidnight = /^00:00:00(\.0+)?$/.test(endTime);
+    const endActiveOnEndDay = !endAtExactMidnight;
     if (endActiveOnEndDay) {
       return startDate <= target && target <= endDate;
     }
@@ -690,7 +732,7 @@ export async function buildBriefing(options: BuildBriefingOptions): Promise<Brie
     try {
       const generator = options.followupGenerator ?? buildOpenAiFollowupGenerator({
         apiKey: options.openaiApiKey!,
-        model: options.model ?? "gpt-5.2",
+        model: options.model ?? BRIEFING_FOLLOWUP_DEFAULT_MODEL,
       });
       const generated = await generator({
         sections: sectionsBase,
