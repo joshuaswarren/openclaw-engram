@@ -385,6 +385,17 @@ test("publicArtifacts.listArtifacts derives agentIds from api.runtime.agent.id",
     const { default: plugin } = await import("../src/index.js");
 
     const api = buildNewSdkApi("capability-runtime-agent-test");
+    // Capture info log output so we can assert SDK detection reports the new
+    // memoryCapability flag.
+    const infoLogs: string[] = [];
+    api.logger = {
+      debug: () => {},
+      info: (...args: unknown[]) => {
+        infoLogs.push(args.map((a) => String(a)).join(" "));
+      },
+      warn: () => {},
+      error: () => {},
+    } as any;
     // Simulate a new SDK runtime that supplies an agent id out-of-band.
     api.runtime = {
       version: "2026.4.9",
@@ -395,6 +406,14 @@ test("publicArtifacts.listArtifacts derives agentIds from api.runtime.agent.id",
     };
 
     plugin.register(api as any);
+
+    // SDK detection log must include the memoryCapability flag so diagnosing
+    // capability-only runtimes doesn't require guessing the detection result.
+    const detectionLog = infoLogs.find((msg) => msg.includes("SDK detection:"));
+    assert.ok(
+      detectionLog && /memoryCapability=true/.test(detectionLog),
+      `SDK detection log must report memoryCapability=true, got: ${detectionLog ?? "<missing>"}`,
+    );
 
     // Capability must have been registered
     assert.ok(

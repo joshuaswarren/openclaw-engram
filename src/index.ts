@@ -188,7 +188,7 @@ const pluginDefinition = {
     // Detect SDK capabilities for dual-path hook registration.
     sdkCaps = detectSdkCapabilities(api as unknown as Record<string, unknown>);
     log.info(
-      `SDK detection: version=${sdkCaps.sdkVersion}, beforePromptBuild=${sdkCaps.hasBeforePromptBuild}, memoryPromptSection=${sdkCaps.hasRegisterMemoryPromptSection}, typedHooks=${sdkCaps.hasTypedHooks}`,
+      `SDK detection: version=${sdkCaps.sdkVersion}, beforePromptBuild=${sdkCaps.hasBeforePromptBuild}, memoryPromptSection=${sdkCaps.hasRegisterMemoryPromptSection}, memoryCapability=${sdkCaps.hasRegisterMemoryCapability}, typedHooks=${sdkCaps.hasTypedHooks}`,
     );
 
     // Skip heavy initialization in setup-only mode (new SDK channel setup flows)
