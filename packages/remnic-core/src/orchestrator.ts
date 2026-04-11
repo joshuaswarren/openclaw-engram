@@ -8731,6 +8731,13 @@ export class Orchestrator {
       // "skip" (the deferred guard was bypassed by the chunking `continue`).
       let supersedes: string | undefined;
       let links: MemoryLink[] = [];
+      // True when contradiction detection ran and confirmed a contradiction,
+      // regardless of whether auto-resolve is enabled. Used by the
+      // semantic-skip guard so that contradictory updates are never silently
+      // dropped — even when `contradictionAutoResolve=false` (in which case
+      // `supersedes` is intentionally left unset to avoid retiring the old
+      // memory without user confirmation).
+      let contradictionDetected = false;
 
       if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
         const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
@@ -8740,7 +8747,16 @@ export class Orchestrator {
           targetNamespace,
         );
         if (contradiction) {
-          supersedes = contradiction.supersededId;
+          contradictionDetected = true;
+          // When auto-resolve is enabled the existing memory has already been
+          // marked superseded; set `supersedes` so the new write carries the
+          // relationship. When auto-resolve is disabled we still record the
+          // contradiction link (so the memory is annotated for manual review)
+          // but do NOT set `supersedes` on the new write — the old memory
+          // remains active until a human resolves it.
+          if (this.config.contradictionAutoResolve) {
+            supersedes = contradiction.supersededId;
+          }
           links.push({
             targetId: contradiction.supersededId,
             linkType: "contradicts",
@@ -8749,7 +8765,10 @@ export class Orchestrator {
           });
           // Deindex the superseded memory so stale paths don't remain in
           // index_time.json / index_tags.json after the incremental update.
+          // Only applicable when auto-resolve is on and the old memory is
+          // actually being retired; skip when manual review is required.
           if (
+            this.config.contradictionAutoResolve &&
             this.config.queryAwareIndexingEnabled &&
             contradiction.supersededPath
           ) {
@@ -8764,12 +8783,19 @@ export class Orchestrator {
       }
 
       // Apply the deferred semantic-skip now that contradiction detection has
-      // run. If a contradiction was found (supersedes is set), the candidate
-      // is a superseding update and must be written — do not skip it. Only
-      // drop it when there is no detected contradiction (true near-duplicate).
-      // This check intentionally runs BEFORE the chunking branch so that a
-      // fact flagged as a semantic near-duplicate cannot be persisted (with its
-      // hash registered) simply because it was long enough to trigger chunking.
+      // run. If a contradiction was found (contradictionDetected is true), the
+      // candidate is a contradictory update and must be written — do not skip
+      // it. Only drop it when there is no detected contradiction (true
+      // near-duplicate). This check intentionally runs BEFORE the chunking
+      // branch so that a fact flagged as a semantic near-duplicate cannot be
+      // persisted (with its hash registered) simply because it was long enough
+      // to trigger chunking.
+      //
+      // NOTE: We use `contradictionDetected` rather than `!!supersedes` here
+      // so that facts are preserved even when `contradictionAutoResolve=false`.
+      // When auto-resolve is disabled `supersedes` is intentionally unset, but
+      // the write must still proceed so the user can manually reconcile the
+      // two memories later.
       //
       // UUI1: correction category writes are NEVER suppressed by the semantic
       // skip fallback, regardless of whether supersedes is set. When contradiction
@@ -8778,7 +8804,7 @@ export class Orchestrator {
       // dropped, leaving a stale fact active. writeCategory (not fact.category)
       // is used because routing rules may have overridden the raw category.
       const isCorrection = writeCategory === "correction";
-      if (pendingSemanticSkip && !supersedes && !isCorrection) {
+      if (pendingSemanticSkip && !contradictionDetected && !isCorrection) {
         log.debug(
           `dedup: skipping semantic near-duplicate fact "${fact.content
             .slice(0, 60)
@@ -11901,30 +11927,43 @@ export class Orchestrator {
         verification.isContradiction &&
         verification.confidence >= this.config.contradictionMinConfidence
       ) {
-        // Auto-resolve if enabled
-        if (this.config.contradictionAutoResolve) {
-          // The new memory supersedes the old one (unless LLM said first is newer)
-          if (verification.whichIsNewer !== "first") {
-            await resultStorage.supersedeMemory(
-              existingMemory.frontmatter.id,
-              "pending-new", // Will be updated after the new memory is written
-              verification.reasoning,
-            );
-
-            return {
-              supersededId: existingMemory.frontmatter.id,
-              confidence: verification.confidence,
-              reason: verification.reasoning,
-              supersededPath: existingMemory.path,
-              supersededCreated: existingMemory.frontmatter.created,
-              supersededTags: existingMemory.frontmatter.tags ?? [],
-            };
-          }
+        // When the LLM says the existing memory is newer (whichIsNewer ===
+        // "first") the incoming fact is the stale one in both resolve modes —
+        // log and continue so the caller never marks contradictionDetected and
+        // the semantic-skip gate can discard the outdated write normally.
+        if (verification.whichIsNewer === "first") {
+          log.info(
+            `detected contradiction (confidence: ${verification.confidence}): ${existingMemory.frontmatter.id} vs new memory — existing is newer, incoming fact is stale`,
+          );
+          continue;
         }
 
+        // The new fact is newer than the existing one. When auto-resolve is
+        // enabled, immediately retire the old memory. When disabled, leave the
+        // old memory active for manual review.
+        if (this.config.contradictionAutoResolve) {
+          await resultStorage.supersedeMemory(
+            existingMemory.frontmatter.id,
+            "pending-new", // Will be updated after the new memory is written
+            verification.reasoning,
+          );
+        }
+
+        // Return the contradiction info regardless of auto-resolve setting.
+        // The caller uses this to set `contradictionDetected=true` which
+        // prevents the semantic-skip guard from silently dropping a
+        // legitimately contradictory update (the regression this fixes).
         log.info(
-          `detected contradiction (confidence: ${verification.confidence}): ${existingMemory.frontmatter.id} vs new memory`,
+          `detected contradiction (confidence: ${verification.confidence}): ${existingMemory.frontmatter.id} vs new memory${this.config.contradictionAutoResolve ? " (auto-resolved)" : " (queued for manual review)"}`,
         );
+        return {
+          supersededId: existingMemory.frontmatter.id,
+          confidence: verification.confidence,
+          reason: verification.reasoning,
+          supersededPath: existingMemory.path,
+          supersededCreated: existingMemory.frontmatter.created,
+          supersededTags: existingMemory.frontmatter.tags ?? [],
+        };
       }
     }
 
