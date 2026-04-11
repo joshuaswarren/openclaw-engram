@@ -150,10 +150,24 @@ class RemnicMemoryProvider:
 
     # Legacy schemas — same handlers, engram_* tool names. Kept so existing
     # Hermes configs that reference engram_recall / engram_store / engram_search
-    # continue to resolve. Remove once the compat window closes.
-    legacy_recall_schema = {**recall_schema, "name": "engram_recall"}
-    legacy_store_schema = {**store_schema, "name": "engram_store"}
-    legacy_search_schema = {**search_schema, "name": "engram_search"}
+    # continue to resolve. Descriptions keep the Engram brand so the tool name
+    # and description agree when LLMs surface the legacy names. Remove once
+    # the compat window closes.
+    legacy_recall_schema = {
+        **recall_schema,
+        "name": "engram_recall",
+        "description": "Recall memories from Engram matching a natural language query",
+    }
+    legacy_store_schema = {
+        **store_schema,
+        "name": "engram_store",
+        "description": "Store a memory in Engram for future recall",
+    }
+    legacy_search_schema = {
+        **search_schema,
+        "name": "engram_search",
+        "description": "Full-text search across all Engram memories",
+    }
 
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
         """Tool handler for remnic_recall / engram_recall."""
