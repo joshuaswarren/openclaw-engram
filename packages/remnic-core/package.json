@@ -25,6 +25,7 @@
   "scripts": {
     "build": "tsup",
     "check-types": "tsc --noEmit",
+    "test": "tsx --test 'src/**/*.test.ts'",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

@@ -4,13 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 
-import { StorageManager } from "../src/storage.ts";
+import { StorageManager } from "./storage.js";
 import {
   attachCitation,
   hasCitation,
   parseCitation,
   stripCitation,
-} from "../packages/remnic-core/src/source-attribution.ts";
+} from "./source-attribution.js";
 
 /**
  * Issue #369 — Inline source attribution round-trip.

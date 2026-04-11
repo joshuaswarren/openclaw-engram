@@ -8325,16 +8325,24 @@ export class Orchestrator {
     // see zero behavioral change.
     const citationEnabled = this.config.inlineSourceAttributionEnabled === true;
     const citationTemplate = this.config.inlineSourceAttributionFormat;
-    const citationContext: CitationContext = citationEnabled
+    // The stable fields (agent, session) are computed once; `ts` is intentionally
+    // omitted here and added fresh per invocation so each fact in a large batch
+    // gets its own insertion timestamp rather than sharing a single batch-start time.
+    const citationContextBase: Omit<CitationContext, "ts"> = citationEnabled
       ? {
           agent: sourceContext?.principal,
           session: sourceContext?.sessionKey,
-          ts: new Date().toISOString(),
         }
       : {};
     const applyInlineCitation = (content: string): string => {
       if (!citationEnabled) return content;
       if (typeof content !== "string" || content.length === 0) return content;
+      // Build a fresh CitationContext per call so `ts` reflects the actual
+      // insertion time of each individual fact rather than the batch-start time.
+      const citationContext: CitationContext = {
+        ...citationContextBase,
+        ts: new Date().toISOString(),
+      };
       // `attachCitation` already calls `hasCitationForTemplate` internally and
       // is a no-op when the content already carries a citation (default or
       // custom template).  The outer check was redundant and has been removed

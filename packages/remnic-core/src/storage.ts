@@ -71,6 +71,7 @@ import {
   serializeContinuityIncident,
   upsertContinuityLoopInMarkdown,
 } from "./identity-continuity.js";
+import { stripCitation } from "./source-attribution.js";
 
 const ARTIFACT_SEARCH_STOPWORDS = new Set([
   "a",
@@ -584,6 +585,19 @@ export class ContentHashIndex {
     }
   }
 
+  /**
+   * Add a pre-computed SHA-256 hash directly to the index without re-hashing.
+   * Use this when the caller already holds the stored hash
+   * (e.g. `memory.frontmatter.contentHash`) so that the index records the raw
+   * content hash rather than re-hashing the citation-annotated body.
+   */
+  addByHash(hash: string): void {
+    if (!this.hashes.has(hash)) {
+      this.hashes.add(hash);
+      this.dirty = true;
+    }
+  }
+
   /** Normalize content and compute SHA-256 hash. */
   static normalizeContent(content: string): string {
     return content
@@ -913,7 +927,17 @@ export class StorageManager {
       for (const memory of existing) {
         if (memory.frontmatter.category !== "fact") continue;
         if (inferMemoryStatus(memory.frontmatter, memory.path) !== "active") continue;
-        factHashIndex.add(memory.content);
+        // Prefer the pre-computed raw-content hash stored in frontmatter
+        // (written since round 8 of issue #369). This hash was derived from
+        // the content BEFORE citation annotation, so it matches what
+        // hasFactContentHash(rawFact) would compute.  Fall back to hashing
+        // stripCitation(content) for legacy memories written before the
+        // contentHash frontmatter field was introduced.
+        if (memory.frontmatter.contentHash) {
+          factHashIndex.addByHash(memory.frontmatter.contentHash);
+        } else {
+          factHashIndex.add(stripCitation(memory.content));
+        }
       }
       await factHashIndex.save();
       await mkdir(path.dirname(this.factHashIndexReadyPath), { recursive: true });

@@ -4,14 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 
-import { parseConfig } from "../src/config.js";
-import { Orchestrator } from "../src/orchestrator.js";
+import { parseConfig } from "./config.js";
+import { Orchestrator } from "./orchestrator.js";
 import {
   hasCitation,
   parseCitation,
   stripCitation,
-} from "../packages/remnic-core/src/source-attribution.ts";
-import type { ExtractionResult } from "../src/types.js";
+} from "./source-attribution.js";
+import type { ExtractionResult } from "./types.js";
 
 /**
  * Issue #369 — Orchestrator-level source attribution end-to-end.
