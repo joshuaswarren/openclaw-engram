@@ -17,8 +17,10 @@ test("Phase C shim package keeps a workspace-linked source manifest", async () =
   assert.equal(bin["engram-access"], "./bin/engram-access.js");
   assert.equal(exportsMap["."].import, "./dist/index.js");
   assert.equal(exportsMap["./access-cli"].import, "./dist/access-cli.js");
-  assert.equal(dependencies["@remnic/plugin-openclaw"], "workspace:^");
-  assert.equal(dependencies["@remnic/core"], "workspace:^");
+  // These must be real semver ranges — NOT workspace: protocol — so that
+  // published packages install correctly without pnpm workspace resolution.
+  assert.equal(dependencies["@remnic/plugin-openclaw"], "^1.0.0");
+  assert.equal(dependencies["@remnic/core"], "^1.0.0");
 });
 
 test("Phase C shim package includes the rename postinstall banner script", async () => {
