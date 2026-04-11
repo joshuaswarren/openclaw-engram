@@ -8465,6 +8465,11 @@ export class Orchestrator {
             intentActionType: options.intentActionType,
             intentEntityTypes: options.intentEntityTypes,
             memoryKind: options.memoryKind,
+            // Index the RAW content hash so hasFactContentHash(rawContent)
+            // returns true on subsequent extractions. Without this, the index
+            // would record the hash of citedContent (which changes every call
+            // due to an updated timestamp), causing duplicate promotions.
+            contentHashSource: rawContent,
           },
         );
         trackPersistedId(sharedStorage, promotedId, {

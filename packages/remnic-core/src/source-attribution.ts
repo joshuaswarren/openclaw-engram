@@ -104,12 +104,15 @@ export function formatCitation(
   const date = ts && ts !== CITATION_UNKNOWN ? ts.slice(0, 10) : CITATION_UNKNOWN;
   const sessionForTemplate = session.trim().length > 0 ? session : CITATION_UNKNOWN;
 
+  // Use replacer-function form so values containing `$` special sequences
+  // (e.g. `$&`, `$1`, `$``, `$'`) are treated as literal strings and are
+  // never interpreted as replacement-pattern meta-characters by the JS engine.
   return template
-    .replace(/\{agent\}/g, agent)
-    .replace(/\{session\}/g, sessionForTemplate)
-    .replace(/\{sessionId\}/g, sessionId)
-    .replace(/\{ts\}/g, ts)
-    .replace(/\{date\}/g, date);
+    .replace(/\{agent\}/g, () => agent)
+    .replace(/\{session\}/g, () => sessionForTemplate)
+    .replace(/\{sessionId\}/g, () => sessionId)
+    .replace(/\{ts\}/g, () => ts)
+    .replace(/\{date\}/g, () => date);
 }
 
 /**

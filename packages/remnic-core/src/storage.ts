@@ -1016,6 +1016,18 @@ export class StorageManager {
       memoryKind?: MemoryFrontmatter["memoryKind"];
       expiresAt?: string;
       structuredAttributes?: Record<string, string>;
+      /**
+       * When provided, this string is used as the source for the fact-content
+       * dedup hash index instead of the persisted body (`content`).
+       *
+       * Use this when the persisted body differs from the canonical fact text
+       * — for example when `content` is a citation-annotated variant of a raw
+       * fact. Passing the raw fact as `contentHashSource` ensures that
+       * `hasFactContentHash(rawFact)` returns `true` after the write, so
+       * subsequent extractions of the same logical fact are correctly deduped
+       * even when their citation timestamp differs.
+       */
+      contentHashSource?: string;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -1097,7 +1109,16 @@ export class StorageManager {
     if (category === "fact") {
       try {
         const factHashIndex = await this.getFactHashIndex();
-        factHashIndex.add(sanitized.text);
+        // When the caller provides a separate contentHashSource (e.g. the raw
+        // fact text before citation annotation), index THAT string so that
+        // hasFactContentHash(rawFact) returns true on subsequent extractions.
+        // Otherwise fall back to the sanitized persisted body as before.
+        if (options.contentHashSource !== undefined && options.contentHashSource.length > 0) {
+          const hashSourceSanitized = sanitizeMemoryContent(options.contentHashSource);
+          factHashIndex.add(hashSourceSanitized.text);
+        } else {
+          factHashIndex.add(sanitized.text);
+        }
         await factHashIndex.save();
       } catch (err) {
         log.warn(`storage.writeMemory completed but failed to update fact hash index: ${err}`);

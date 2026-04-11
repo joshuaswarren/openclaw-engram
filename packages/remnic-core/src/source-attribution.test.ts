@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { parseConfig } from "./config.js";
+import { ContentHashIndex, StorageManager } from "./storage.js";
 import {
   DEFAULT_CITATION_FORMAT,
   attachCitation,
@@ -277,6 +281,51 @@ test("hasCitationForTemplate: placeholder-bounded template does not falsely tag 
 
 // ── Finding 1 dedup regression: same raw content, different timestamps ─────────
 
+// ── Finding A regression: $ special patterns in replacement strings ───────────
+
+test("formatCitation: agent value containing $& is not expanded by replace", () => {
+  // $& is the JS replacement special pattern that inserts the matched substring.
+  // With the replacer-function form it must be treated as a literal string.
+  const out = formatCitation(
+    { agent: "agent-with-$&-literal", session: "sess:abc", ts: "2026-04-11T00:00:00Z" },
+  );
+  assert.ok(
+    out.includes("agent-with-$&-literal"),
+    `expected literal $& in output, got: ${out}`,
+  );
+  // Verify the placeholder was not expanded to the matched regex text either.
+  assert.ok(!out.includes("{agent}"), "placeholder must be replaced");
+});
+
+test("formatCitation: session value containing $` (backtick) is not corrupted", () => {
+  // $` inserts the string before the match. Must be literal here.
+  const session = "sess:$`backtick";
+  const out = formatCitation(
+    { agent: "planner", session, ts: "2026-04-11T00:00:00Z" },
+  );
+  // The full session key doesn't appear in the default template (sessionId is used),
+  // so test via a custom template that includes {session}.
+  const tmpl = "[S: agent={agent}, session={session}, ts={ts}]";
+  const out2 = formatCitation({ agent: "planner", session, ts: "2026-04-11T00:00:00Z" }, tmpl);
+  assert.ok(
+    out2.includes("sess:$`backtick"),
+    `expected literal session with $\` in output, got: ${out2}`,
+  );
+});
+
+test("formatCitation: agent value $1$2 stays literal (not resolved to empty groups)", () => {
+  // $1 / $2 are capturing-group back-references in replace(). They must not be
+  // resolved when the replacer-function form is used (the regex has no groups anyway,
+  // but with a string replacement they still produce empty strings on some engines).
+  const out = formatCitation(
+    { agent: "$1$2", session: "sess:main", ts: "2026-04-11T00:00:00Z" },
+  );
+  assert.ok(
+    out.includes("$1$2"),
+    `expected literal $1$2 in output, got: ${out}`,
+  );
+});
+
 test("attachCitation is idempotent across different timestamps for the same raw content (Finding 1 dedup)", () => {
   // Simulates the dedup scenario: the same raw fact content is presented twice
   // to applyInlineCitation with different "now" values (different timestamps).
@@ -302,4 +351,111 @@ test("attachCitation is idempotent across different timestamps for the same raw 
 
   // The raw content itself should NOT be seen as already-cited.
   assert.equal(hasCitationForTemplate(rawContent, template), false);
+});
+
+// ── Finding B regression: shared-store dedup indexes raw content hash ─────────
+
+test("ContentHashIndex.add indexes raw content; has() returns true for the same raw string", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-hash-idx-"));
+  try {
+    const idx = new ContentHashIndex(dir);
+    await idx.load();
+    const rawContent = "The database uses PostgreSQL for persistent storage.";
+    idx.add(rawContent);
+    assert.ok(idx.has(rawContent), "has() must return true for a string just added");
+    // Simulate what would happen if we indexed the cited variant instead
+    const citedContent = `${rawContent} [Source: agent=planner, session=main, ts=2026-04-11T10:00:00Z]`;
+    assert.ok(!idx.has(citedContent), "has() must return false for the cited variant when only raw was added");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("StorageManager.writeMemory with contentHashSource registers raw-content hash (Finding B)", async () => {
+  // This test verifies that writing with contentHashSource=rawContent persists the
+  // RAW content hash to the on-disk fact-hashes.txt index. A new StorageManager
+  // instance (simulating a subsequent extraction session) should find the raw fact
+  // via hasFactContentHash(rawContent) because the persisted hash index carries the
+  // raw hash — not the cited hash. Without the fix, only the cited hash would be
+  // persisted, and cross-session dedup of the same raw fact would fail.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-shared-dedup-"));
+  try {
+    const rawContent = "The service caches reads with Redis for low-latency access.";
+    const citedContent = `${rawContent} [Source: agent=planner, session=main, ts=2026-04-11T10:00:00Z]`;
+
+    // Session 1: write the cited variant, register the RAW content hash for dedup.
+    {
+      const storage1 = new StorageManager(dir);
+      await storage1.writeMemory("fact", citedContent, {
+        source: "extraction",
+        contentHashSource: rawContent,
+      });
+      // Same-session: raw content hash must be present in the in-memory index.
+      const foundByRaw = await storage1.hasFactContentHash(rawContent);
+      assert.ok(foundByRaw, "hasFactContentHash(rawContent) must be true in the same session");
+    }
+
+    // Session 2: new StorageManager instance simulating a subsequent extraction run.
+    // The fact-hashes.txt on disk should contain the raw content hash so that
+    // hasFactContentHash(rawContent) returns true without seeing the raw fact body.
+    {
+      const storage2 = new StorageManager(dir);
+      // A different timestamp would produce a different citedContent, so the
+      // cross-session dedup must rely on the persisted rawContent hash.
+      const foundByRawCrossSession = await storage2.hasFactContentHash(rawContent);
+      assert.ok(
+        foundByRawCrossSession,
+        "hasFactContentHash(rawContent) must be true in a new session via persisted hash index",
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("StorageManager.writeMemory contentHashSource prevents duplicate promotion cross-session (Finding B dedup regression)", async () => {
+  // Simulates two extraction sessions with the same raw fact but different timestamps.
+  // Session 1 promotes the fact (cited1). Session 2 (new StorageManager) checks
+  // hasFactContentHash(rawFact) — it must return true so the promotion is skipped.
+  //
+  // Without the fix: session 1 would persist the citedContent hash. Session 2
+  // backfills from disk (adds citedContent hash), but hasFactContentHash(rawFact)
+  // would only match if rawFact hash was also persisted — which it was not.
+  // With the fix: session 1 persists the rawFact hash via contentHashSource.
+  // Session 2 loads it from fact-hashes.txt and hasFactContentHash(rawFact) is true.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "engram-dedup-regression-"));
+  try {
+    const rawFact = "PostgreSQL is used for durable persistent storage of user profiles.";
+    const cited1 = `${rawFact} [Source: agent=planner, session=main, ts=2026-04-11T10:00:00Z]`;
+
+    // Session 1: first promotion — write cited body but index raw hash.
+    {
+      const storage1 = new StorageManager(dir);
+      await storage1.writeMemory("fact", cited1, {
+        source: "extraction-shared-promotion",
+        tags: ["shared-promotion"],
+        contentHashSource: rawFact,
+      });
+      // Confirm same-session dedup gate works.
+      assert.ok(
+        await storage1.hasFactContentHash(rawFact),
+        "Session 1: hasFactContentHash(rawFact) must be true after first promotion",
+      );
+    }
+
+    // Session 2: new StorageManager (fresh process, no in-memory state).
+    // The on-disk fact-hashes.txt must carry rawFact hash so dedup blocks re-promotion.
+    {
+      const storage2 = new StorageManager(dir);
+      // Second extraction produces cited2 with a later timestamp. Before writing,
+      // the caller checks hasFactContentHash(rawFact) — must return true to skip.
+      const wouldDeduplicate = await storage2.hasFactContentHash(rawFact);
+      assert.ok(
+        wouldDeduplicate,
+        "Session 2: hasFactContentHash(rawFact) must return true to prevent re-promotion",
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
