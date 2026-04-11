@@ -11450,6 +11450,7 @@ export class Orchestrator {
     }
 
     let lifecycleFilteredCount = 0;
+    let temporalSupersededFilteredCount = 0;
     const boosted: QmdSearchResult[] = [];
     const recencyWeight = this.effectiveRecencyWeight();
     for (const r of results) {
@@ -11471,14 +11472,17 @@ export class Orchestrator {
 
         // Temporal supersession filter (issue #375): drop memories that a
         // newer fact has retired, unless the caller opted in to history.
+        // NOTE: This check is intentionally independent of allowLifecycleFiltered
+        // (Finding A fix) — cold fallback sets allowLifecycleFiltered=true to
+        // include archived/retired candidates, but superseded memories must
+        // still be filtered unless temporalSupersessionIncludeInRecall is set.
         if (
-          options?.allowLifecycleFiltered !== true &&
           shouldFilterSupersededFromRecall(memory.frontmatter, {
             enabled: this.config.temporalSupersessionEnabled,
             includeInRecall: this.config.temporalSupersessionIncludeInRecall,
           })
         ) {
-          lifecycleFilteredCount += 1;
+          temporalSupersededFilteredCount += 1;
           continue;
         }
 
@@ -11602,6 +11606,11 @@ export class Orchestrator {
     if (lifecycleFilteredCount > 0) {
       log.debug(
         `lifecycle retrieval filter removed ${lifecycleFilteredCount} stale/archived candidates`,
+      );
+    }
+    if (temporalSupersededFilteredCount > 0) {
+      log.debug(
+        `temporal supersession filter removed ${temporalSupersededFilteredCount} superseded candidates`,
       );
     }
 

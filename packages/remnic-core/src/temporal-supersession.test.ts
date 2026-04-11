@@ -9,6 +9,7 @@ import {
   applyTemporalSupersession,
   computeSupersessionKey,
   lookupAttributeByNormalizedKey,
+  normalizeSupersessionKey,
   shouldFilterSupersededFromRecall,
   shouldSupersedeExisting,
   supersessionKeysForFact,
@@ -651,4 +652,183 @@ test("applyTemporalSupersession: stale extraction (new write has T0, existing ha
   } finally {
     await cleanup();
   }
+});
+
+// ─── Regression: Finding B — shared normalizeSupersessionKey helper ───────────
+
+test("normalizeSupersessionKey: trims, lowercases, collapses whitespace to hyphens", () => {
+  assert.equal(normalizeSupersessionKey("  Job Title  "), "job-title");
+  assert.equal(normalizeSupersessionKey("job   title"), "job-title");
+  assert.equal(normalizeSupersessionKey("job title"), "job-title");
+  assert.equal(normalizeSupersessionKey("job-title"), "job-title");
+  assert.equal(normalizeSupersessionKey("JOB TITLE"), "job-title");
+  assert.equal(normalizeSupersessionKey("city"), "city");
+});
+
+test("computeSupersessionKey and lookupAttributeByNormalizedKey agree on 'job title' vs 'job-title'", () => {
+  // computeSupersessionKey normalizes "job title" to "job-title"
+  const key = computeSupersessionKey("user-1", "job title");
+  assert.equal(key, "user-1::job-title");
+
+  // lookupAttributeByNormalizedKey should find it whether stored as "job title" or "job-title"
+  const storedAsSpaced = { "job title": "Engineer" };
+  assert.equal(lookupAttributeByNormalizedKey(storedAsSpaced, "job-title"), "Engineer",
+    "lookup with hyphenated key should find spaced stored key");
+  assert.equal(lookupAttributeByNormalizedKey(storedAsSpaced, "job title"), "Engineer",
+    "lookup with spaced key should find spaced stored key");
+
+  const storedAsHyphen = { "job-title": "Engineer" };
+  assert.equal(lookupAttributeByNormalizedKey(storedAsHyphen, "job title"), "Engineer",
+    "lookup with spaced key should find hyphenated stored key");
+  assert.equal(lookupAttributeByNormalizedKey(storedAsHyphen, "job-title"), "Engineer",
+    "lookup with hyphenated key should find hyphenated stored key");
+});
+
+test("lookupAttributeByNormalizedKey: multiple internal spaces collapse to single hyphen", () => {
+  const attrs = { "job   title": "Engineer" };
+  assert.equal(lookupAttributeByNormalizedKey(attrs, "job title"), "Engineer",
+    "'job   title' stored key should be found by 'job title' lookup");
+  assert.equal(lookupAttributeByNormalizedKey(attrs, "job-title"), "Engineer",
+    "'job   title' stored key should be found by 'job-title' lookup");
+  assert.equal(lookupAttributeByNormalizedKey(attrs, "JOB TITLE"), "Engineer",
+    "mixed-case 'JOB TITLE' lookup should find 'job   title' stored key");
+});
+
+test("shouldSupersedeExisting: 'job title' and 'job-title' resolve to the same supersession key", () => {
+  // Old memory has "job title" (with space) as stored key.
+  const candidateWithSpace: MemoryFrontmatter = {
+    id: "fact-job-space",
+    category: "fact",
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+    source: "test",
+    confidence: 0.9,
+    confidenceTier: "explicit",
+    tags: [],
+    entityRef: TEST_ENTITY,
+    structuredAttributes: { "job title": "Engineer" },
+    status: "active",
+  };
+
+  // New fact uses hyphenated form "job-title".
+  const decisionHyphen = shouldSupersedeExisting({
+    candidate: candidateWithSpace,
+    newEntityRef: TEST_ENTITY,
+    newAttributes: { "job-title": "Senior Engineer" },
+    newCreatedAt: "2026-02-01T00:00:00.000Z",
+    newMemoryId: "fact-job-new-1",
+  });
+  assert.ok(decisionHyphen, "'job title' stored key should be superseded by 'job-title' new fact");
+  assert.deepEqual(decisionHyphen?.matchedKeys, [`${TEST_ENTITY}::job-title`]);
+
+  // Old memory has "job-title" (hyphenated) as stored key.
+  const candidateWithHyphen: MemoryFrontmatter = {
+    ...candidateWithSpace,
+    id: "fact-job-hyphen",
+    structuredAttributes: { "job-title": "Engineer" },
+  };
+
+  // New fact uses spaced form "job title".
+  const decisionSpace = shouldSupersedeExisting({
+    candidate: candidateWithHyphen,
+    newEntityRef: TEST_ENTITY,
+    newAttributes: { "job title": "Senior Engineer" },
+    newCreatedAt: "2026-02-01T00:00:00.000Z",
+    newMemoryId: "fact-job-new-2",
+  });
+  assert.ok(decisionSpace, "'job-title' stored key should be superseded by 'job title' new fact");
+  assert.deepEqual(decisionSpace?.matchedKeys, [`${TEST_ENTITY}::job-title`]);
+});
+
+test("shouldSupersedeExisting: 'job   title' (multi-space) resolves same as 'job title'", () => {
+  const candidateMultiSpace: MemoryFrontmatter = {
+    id: "fact-job-multispace",
+    category: "fact",
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+    source: "test",
+    confidence: 0.9,
+    confidenceTier: "explicit",
+    tags: [],
+    entityRef: TEST_ENTITY,
+    structuredAttributes: { "job   title": "Engineer" },
+    status: "active",
+  };
+
+  const decision = shouldSupersedeExisting({
+    candidate: candidateMultiSpace,
+    newEntityRef: TEST_ENTITY,
+    newAttributes: { "job title": "Senior Engineer" },
+    newCreatedAt: "2026-02-01T00:00:00.000Z",
+    newMemoryId: "fact-job-new-3",
+  });
+  assert.ok(decision, "'job   title' (multi-space) should supersede on 'job title' new fact");
+});
+
+test("shouldSupersedeExisting: 'Job Title' (mixed-case) resolves same as 'job title'", () => {
+  const candidateMixedCase: MemoryFrontmatter = {
+    id: "fact-job-mixedcase",
+    category: "fact",
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+    source: "test",
+    confidence: 0.9,
+    confidenceTier: "explicit",
+    tags: [],
+    entityRef: TEST_ENTITY,
+    structuredAttributes: { "Job Title": "Engineer" },
+    status: "active",
+  };
+
+  const decision = shouldSupersedeExisting({
+    candidate: candidateMixedCase,
+    newEntityRef: TEST_ENTITY,
+    newAttributes: { "job title": "Senior Engineer" },
+    newCreatedAt: "2026-02-01T00:00:00.000Z",
+    newMemoryId: "fact-job-new-4",
+  });
+  assert.ok(decision, "'Job Title' (mixed-case) should supersede on 'job title' new fact");
+  assert.deepEqual(decision?.matchedKeys, [`${TEST_ENTITY}::job-title`]);
+});
+
+// ─── Regression: Finding C — shouldFilterSupersededFromRecall is independent ──
+
+test("shouldFilterSupersededFromRecall: filters superseded regardless of lifecycle policy", () => {
+  // Finding A / C regression: supersession filter must apply independently of
+  // any lifecycle flag.  If temporalSupersessionIncludeInRecall is false, a
+  // superseded memory should always be filtered, even when the caller would
+  // otherwise allow lifecycle-filtered (archived/retired) candidates.
+  const supersededFm: MemoryFrontmatter = {
+    id: "fact-superseded",
+    category: "fact",
+    created: "2026-01-01T00:00:00.000Z",
+    updated: "2026-01-01T00:00:00.000Z",
+    source: "test",
+    confidence: 0.9,
+    confidenceTier: "explicit",
+    tags: [],
+    status: "superseded",
+  };
+
+  // With supersession enabled and includeInRecall=false, always filter.
+  assert.equal(
+    shouldFilterSupersededFromRecall(supersededFm, { enabled: true, includeInRecall: false }),
+    true,
+    "superseded memory must be filtered when includeInRecall=false",
+  );
+
+  // includeInRecall=true opts in to superseded history — do not filter.
+  assert.equal(
+    shouldFilterSupersededFromRecall(supersededFm, { enabled: true, includeInRecall: true }),
+    false,
+    "superseded memory must NOT be filtered when includeInRecall=true",
+  );
+
+  // A retired/archived memory (non-superseded) is not touched by this filter.
+  const retiredFm: MemoryFrontmatter = { ...supersededFm, id: "fact-retired", status: "retired" };
+  assert.equal(
+    shouldFilterSupersededFromRecall(retiredFm, { enabled: true, includeInRecall: false }),
+    false,
+    "retired (non-superseded) memory must not be filtered by supersession filter",
+  );
 });

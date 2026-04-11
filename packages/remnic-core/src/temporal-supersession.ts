@@ -17,6 +17,21 @@ import type { StorageManager } from "./storage.js";
 import { log } from "./logger.js";
 
 /**
+ * Shared normalization for supersession key components.
+ *
+ * Trims surrounding whitespace, lowercases, then collapses any run of
+ * internal whitespace to a single hyphen.  Both `computeSupersessionKey`
+ * and `lookupAttributeByNormalizedKey` must use this so that keys produced
+ * at write time and keys used at lookup time are identical regardless of
+ * how the LLM encoded whitespace or casing (Finding B fix).
+ *
+ * Exported so external tests can verify the canonical form.
+ */
+export function normalizeSupersessionKey(raw: string): string {
+  return raw.trim().toLowerCase().replace(/\s+/g, "-");
+}
+
+/**
  * Stable supersession key for an (entityRef, attributeName) pair.
  *
  * The algorithm is:
@@ -32,8 +47,8 @@ export function computeSupersessionKey(
 ): string | null {
   if (!entityRef || typeof entityRef !== "string") return null;
   if (!attributeName || typeof attributeName !== "string") return null;
-  const entity = entityRef.trim().toLowerCase().replace(/\s+/g, "-");
-  const attr = attributeName.trim().toLowerCase().replace(/\s+/g, "-");
+  const entity = normalizeSupersessionKey(entityRef);
+  const attr = normalizeSupersessionKey(attributeName);
   if (entity.length === 0 || attr.length === 0) return null;
   return `${entity}::${attr}`;
 }
@@ -58,10 +73,11 @@ export function supersessionKeysForFact(spec: {
 
 /**
  * Look up a structured-attribute value by a raw key, normalizing both sides
- * with trim + toLowerCase before comparing.  This ensures that keys written
- * by the LLM with mixed case or surrounding whitespace (e.g. `"City"`,
- * `" city "`) are matched against normalized keys produced by
- * `computeSupersessionKey` (which always lowercases + trims).
+ * with `normalizeSupersessionKey` before comparing.  This ensures that keys
+ * written by the LLM with mixed case, surrounding whitespace, or internal
+ * whitespace (e.g. `"City"`, `" city "`, `"job   title"`, `"job-title"`)
+ * are all matched against normalized keys produced by `computeSupersessionKey`
+ * (Finding B fix — uses the same helper so both sides are identical).
  *
  * The storage format is NOT changed — we only normalize at lookup time.
  */
@@ -69,9 +85,9 @@ export function lookupAttributeByNormalizedKey(
   attributes: Record<string, unknown>,
   rawKey: string,
 ): unknown {
-  const normalizedTarget = rawKey.trim().toLowerCase();
+  const normalizedTarget = normalizeSupersessionKey(rawKey);
   for (const [k, v] of Object.entries(attributes)) {
-    if (k.trim().toLowerCase() === normalizedTarget) return v;
+    if (normalizeSupersessionKey(k) === normalizedTarget) return v;
   }
   return undefined;
 }
