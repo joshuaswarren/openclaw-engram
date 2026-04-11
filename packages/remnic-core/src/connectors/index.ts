@@ -512,26 +512,31 @@ export function installConnector(options: InstallOptions): InstallResult {
     installedAt: new Date().toISOString(),
     ...options.config,
   };
-  fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
 
   // Codex CLI: also drop the phase-2 memory extension unless the caller
   // explicitly opted out via `config.installExtension: false`.
   let extensionMessage = "";
   if (options.connectorId === "codex-cli") {
     const shouldInstall = resolvedConfig.installExtension !== false;
+    // Resolve the Codex home path NOW so we can persist the absolute path
+    // into the saved config. This guarantees removeConnector can target the
+    // exact same directory later even if $CODEX_HOME is unset or changed.
+    const codexHomeOverride =
+      typeof resolvedConfig.codexHome === "string" && resolvedConfig.codexHome.length > 0
+        ? (resolvedConfig.codexHome as string)
+        : null;
+    const resolvedCodexHome = resolveCodexHome(codexHomeOverride);
+    resolvedConfig.codexHome = resolvedCodexHome;
+
     if (shouldInstall) {
       try {
-        const codexHomeOverride =
-          typeof resolvedConfig.codexHome === "string" && resolvedConfig.codexHome.length > 0
-            ? (resolvedConfig.codexHome as string)
-            : null;
         const extensionSourceOverride =
           typeof resolvedConfig.extensionSourceDir === "string" &&
           resolvedConfig.extensionSourceDir.length > 0
             ? (resolvedConfig.extensionSourceDir as string)
             : null;
         const extResult = installCodexMemoryExtension({
-          codexHome: codexHomeOverride,
+          codexHome: resolvedCodexHome,
           sourceDir: extensionSourceOverride,
         });
         extensionMessage = ` (memory extension: ${extResult.remnicExtensionDir})`;
@@ -543,6 +548,8 @@ export function installConnector(options: InstallOptions): InstallResult {
       extensionMessage = " (memory extension: skipped via installExtension=false)";
     }
   }
+
+  fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
 
   return {
     connectorId: options.connectorId,
@@ -863,13 +870,28 @@ export function installCodexMemoryExtension(
 
   fs.mkdirSync(paths.extensionsRoot, { recursive: true });
 
-  const tmpName = `.${REMNIC_EXTENSION_DIR_NAME}.tmp-${process.pid}-${Date.now()}`;
-  const tmpDir = path.join(paths.extensionsRoot, tmpName);
-
-  // Clean any stale tmp from a previous crashed run.
-  if (fs.existsSync(tmpDir)) {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  // Clean any stale tmp from a previous crashed run by scanning the
+  // extensions root for any `.remnic.tmp-*` prefixed entry. We must do this
+  // BEFORE creating the new tmp directory. Per-entry errors are swallowed so
+  // one bad entry doesn't abort cleanup of the rest.
+  const tmpPrefix = `.${REMNIC_EXTENSION_DIR_NAME}.tmp-`;
+  try {
+    const existingEntries = fs.readdirSync(paths.extensionsRoot);
+    for (const entry of existingEntries) {
+      if (!entry.startsWith(tmpPrefix)) continue;
+      const stalePath = path.join(paths.extensionsRoot, entry);
+      try {
+        fs.rmSync(stalePath, { recursive: true, force: true });
+      } catch {
+        // swallow — one bad entry should not abort the others
+      }
+    }
+  } catch {
+    // extensions root just-created / unreadable — nothing to clean
   }
+
+  const tmpName = `${tmpPrefix}${process.pid}-${Date.now()}`;
+  const tmpDir = path.join(paths.extensionsRoot, tmpName);
 
   let filesCopied = 0;
   try {
