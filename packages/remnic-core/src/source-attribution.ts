@@ -243,20 +243,37 @@ function templateMatcher(template: string): RegExp | null {
   }
 
   // Separator is compact (no whitespace): `formatCitation` emits a token like
-  // `planner:main` without surrounding delimiters, so the bracket strategy
-  // cannot detect already-emitted citations. Use whitespace/boundary
-  // lookarounds instead. The lookaheads/lookbehinds accept either a bracket
-  // (so `[planner:main]` also matches) or a whitespace boundary (so
-  // standalone `planner:main` in prose matches), while rejecting tokens
-  // embedded inside URLs or other non-whitespace contexts.
+  // `planner:main` without surrounding delimiters. The challenge is that the
+  // same token shape also matches ordinary hyphenated or slashed prose words
+  // (e.g. `long-term`, `docs/setup`), causing `hasCitationForTemplate` to
+  // return true on uncited fact bodies and silently suppress citation injection
+  // from `attachCitation`.
+  //
+  // Fix (Finding 1): tighten the trail anchor so a bare compact token is only
+  // accepted when it sits at the very end of the string (possibly followed by
+  // optional trailing whitespace or a newline). Since `attachCitation` always
+  // appends the citation at the trimmed end of the fact body, a real citation
+  // token will always appear at the tail. Prose like `"long-term solution"`
+  // has `long-term` in the middle of the string (followed by ` solution`), so
+  // the end-of-string anchor rejects it — no false positive, no silent drop.
+  //
+  // The lead anchor still accepts either a bracket opener or a whitespace
+  // boundary (or start of string), so `"Fact. planner:main"` and standalone
+  // `"planner:main"` are both detected after the first attachment pass.
+  //
+  // Bracket-wrapped form (e.g. `[planner:main]`) is also accepted via the
+  // opener/closer pair — bracket still takes precedence over end-of-string.
   //
   // Example — why `http://host:80` does NOT match:
   //   Trying to match `host:80`: the char before `h` is `/` (non-whitespace,
-  //   non-bracket), so both `(?<=[\[\(\<])` and `(?<!\S)` fail ⟹ no match.
+  //   non-bracket), so `(?<=[\[\(\<])` and `(?<!\S)` both fail ⟹ no match.
   //   Trying to match `http:...`: after `http:` the next chars are `//` which
   //   are not `[\w.-]+`, so the second id-token group fails ⟹ no match.
   const leadAnchor = "(?:(?<=[\\[\\(\\<])|(?<!\\S))";
-  const trailAnchor = "(?:(?=[\\]\\)\\>])|(?!\\S))";
+  // Trail: either a bracket closer (for `[token]` shape) or end-of-string
+  // optionally preceded by whitespace. The `(?!\S)` is deliberately removed
+  // so that a compact token in the MIDDLE of a sentence does not match.
+  const trailAnchor = "(?:(?=[\\]\\)\\>])|(?=\\s*$))";
   return new RegExp(leadAnchor + body + trailAnchor, "i");
 }
 
@@ -395,11 +412,46 @@ export function parseAllCitations(text: string): ParsedCitation[] {
  * Callers that want the raw fact body (for dedup hashing, display, or
  * comparison) should use this helper instead of hand-rolled regexes so the
  * whole codebase agrees on the citation syntax.
+ *
+ * Finding 2 fix: when the input contains no citation marker, the input is
+ * returned byte-for-byte unchanged. When a citation IS removed, whitespace
+ * normalization is applied only at each join seam (the single space between
+ * the preceding text and where the citation was), rather than across the
+ * entire string. This preserves markdown hard-break spacing, aligned text,
+ * and code-like snippets in fact bodies that happen to carry a citation.
+ *
+ * Implementation: each citation match is replaced by its "seam fix" — the
+ * content before the match has its trailing whitespace trimmed and then a
+ * single space is appended if any text remains, collapsing only the gap
+ * left by the removed marker. Whitespace elsewhere in the body is untouched.
  */
 export function stripCitation(text: string): string {
   if (typeof text !== "string" || text.length === 0) return text;
-  const cleaned = text.replace(defaultCitationMatcher(), "");
-  // Collapse whitespace left behind by the stripped marker and trim tail
-  // whitespace so round-trip attach → strip is idempotent.
-  return cleaned.replace(/[ \t]{2,}/g, " ").replace(/[ \t]+(\n|$)/g, "$1").trimEnd();
+  // Early exit: no citation marker present — return the input unchanged so
+  // that callers never lose formatting fidelity on uncited strings.
+  if (!hasCitation(text)) return text;
+
+  // Walk through all citations and slice them out one by one so that we can
+  // normalise ONLY the whitespace at each seam rather than the entire string.
+  const matcher = defaultCitationMatcher();
+  let result = "";
+  let lastIndex = 0;
+
+  let match: RegExpExecArray | null;
+  while ((match = matcher.exec(text)) !== null) {
+    // Text before this citation. Trim trailing spaces/tabs at the seam only.
+    const before = text.slice(lastIndex, match.index).replace(/[ \t]+$/, "");
+    result += before;
+    lastIndex = match.index + match[0].length;
+  }
+
+  // Append any trailing text after the last citation. Trim leading
+  // spaces/tabs and trailing whitespace at the join seam.
+  const after = text.slice(lastIndex).replace(/^[ \t]+/, "");
+  if (after.length > 0) {
+    if (result.length > 0) result += " ";
+    result += after;
+  }
+
+  return result.trimEnd();
 }

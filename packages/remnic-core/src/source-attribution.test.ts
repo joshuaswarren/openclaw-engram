@@ -598,16 +598,23 @@ test("hasCitationForTemplate: '{agent}:{sessionId}' detects standalone compact t
   );
 });
 
-test("hasCitationForTemplate: '{agent}:{sessionId}' detects token embedded in prose", () => {
+test("hasCitationForTemplate: '{agent}:{sessionId}' detects token at end of string", () => {
+  // Finding 1 fix: compact tokens are only accepted when they appear at the
+  // very end of the string (or inside brackets). Since `attachCitation` always
+  // appends the citation at the trimmed tail of the fact body, a real emitted
+  // citation will always satisfy this condition.
   assert.equal(
     hasCitationForTemplate("Fact body. planner:main", "{agent}:{sessionId}"),
     true,
-    "compact citation after prose must be detected",
+    "compact citation at end of string must be detected",
   );
+  // A compact token embedded in the MIDDLE of prose is no longer accepted.
+  // This is the deliberate tightening that prevents false positives on prose
+  // like "long-term" or "host:port" embedded in a fact body.
   assert.equal(
     hasCitationForTemplate("The service planner:main is done.", "{agent}:{sessionId}"),
-    true,
-    "compact citation surrounded by prose must be detected",
+    false,
+    "compact citation surrounded by prose must NOT be classified as a citation (Finding 1 fix)",
   );
 });
 
@@ -677,10 +684,116 @@ test("hasCitationForTemplate: '{agent}-{sessionId}' dash separator — compact t
   // Hyphen-separated compact tokens should also work.
   const template = "{agent}-{sessionId}";
   assert.equal(hasCitationForTemplate("planner-main", template), true);
-  // The space before 'planner' in 'Fact. planner-main' qualifies as a
-  // whitespace boundary (the period is not immediately adjacent to 'planner').
+  // A citation appended at end of prose (by attachCitation) is at the tail.
   assert.equal(hasCitationForTemplate("Fact. planner-main", template), true);
-  assert.equal(hasCitationForTemplate("Fact planner-main rest", template), true);
+  // Finding 1 fix: a compact token in the MIDDLE of prose must not match,
+  // because `attachCitation` always appends at the end. This is what prevents
+  // hyphenated English words like "long-term" from being falsely detected.
+  assert.equal(hasCitationForTemplate("Fact planner-main rest", template), false);
   // Plain text with no separator must return false.
   assert.equal(hasCitationForTemplate("no separator here", template), false);
+});
+
+// ── PR #401 P2 findings: Finding 1 (PRRT_kwDORJXyws56UH4M) + Finding 2 (PRRT_kwDORJXyws56UH4O) ──
+
+// Finding 1: compact-template false positives on prose
+test("hasCitationForTemplate (Finding 1): hyphenated prose 'long-term' must not match {agent}-{sessionId}", () => {
+  // Core regression: 'long-term' looks like `[\w.-]+-[\w.-]+` but is ordinary
+  // English prose. The tightened trail anchor (end-of-string or bracket only)
+  // rejects it because 'long-term' is followed by ' solution', not end-of-string.
+  assert.equal(
+    hasCitationForTemplate("long-term solution", "{agent}-{sessionId}"),
+    false,
+    "'long-term' embedded in prose must not be classified as a citation",
+  );
+  // A real citation appended by attachCitation WOULD be at end of string.
+  assert.equal(
+    hasCitationForTemplate("This is a long-term solution. planner-main", "{agent}-{sessionId}"),
+    true,
+    "citation token at end of fact body (after prose containing hyphen) must be detected",
+  );
+});
+
+test("hasCitationForTemplate (Finding 1): slashed path 'docs/setup' in prose must not match {agent}/{sessionId}", () => {
+  // Regression for slash separator: 'docs/setup' appears in the middle of a
+  // sentence, not at the end, so the end-of-string anchor rejects it.
+  assert.equal(
+    hasCitationForTemplate("see the docs/setup guide for details", "{agent}/{sessionId}"),
+    false,
+    "'docs/setup' inside a sentence must not be classified as a citation",
+  );
+});
+
+test("hasCitationForTemplate (Finding 1): bracket-wrapped compact template is accepted", () => {
+  // Bracket-wrapped form (e.g. from a caller that wraps citations) should
+  // still be detected regardless of position in the string.
+  assert.equal(
+    hasCitationForTemplate("[agent-abc123] some trailing text", "{agent}-{sessionId}"),
+    true,
+    "bracket-wrapped compact token must be recognised as a citation",
+  );
+  assert.equal(
+    hasCitationForTemplate("Fact body. [agent-abc123]", "{agent}-{sessionId}"),
+    true,
+    "bracket-wrapped compact token at end of fact must be recognised",
+  );
+});
+
+// Finding 2: stripCitation must be a no-op on uncited input
+test("stripCitation (Finding 2): returns uncited input byte-for-byte unchanged", () => {
+  // Core regression: the old implementation normalised all repeated whitespace
+  // even when no citation was present. This broke markdown hard-break spacing,
+  // aligned text, and code-like snippets in fact bodies.
+  const withDoubleSpaces = "plain prose with  double  spaces";
+  assert.equal(
+    stripCitation(withDoubleSpaces),
+    withDoubleSpaces,
+    "double spaces must be preserved when no citation is present",
+  );
+
+  // Tab characters in uncited text must also survive unchanged.
+  const withTabs = "col1\t\tcol2\t\tcol3";
+  assert.equal(
+    stripCitation(withTabs),
+    withTabs,
+    "tab characters must be preserved when no citation is present",
+  );
+
+  // Markdown hard-break: two trailing spaces before a newline.
+  const hardBreak = "line one  \nline two";
+  assert.equal(
+    stripCitation(hardBreak),
+    hardBreak,
+    "markdown hard-break (two trailing spaces before newline) must be preserved",
+  );
+});
+
+test("stripCitation (Finding 2): removes citation and normalises only the join seam", () => {
+  // Positive case: a citation IS present, so stripping should work as before.
+  const cited = "The service uses Redis. [Source: agent=planner, session=main, ts=2026-04-10T00:00:00Z]";
+  const stripped = stripCitation(cited);
+  assert.equal(stripped, "The service uses Redis.");
+
+  // Whitespace BEFORE the citation (at the seam) is collapsed, but whitespace
+  // elsewhere in the body is not touched.
+  const citedWithInternalSpaces =
+    "col1  col2 [Source: agent=a, session=s, ts=2026-04-10T00:00:00Z]";
+  const strippedWithInternalSpaces = stripCitation(citedWithInternalSpaces);
+  // The double space inside the fact body must be preserved; only trailing
+  // whitespace at the seam is normalised.
+  assert.ok(
+    strippedWithInternalSpaces.includes("col1  col2"),
+    `internal double space must be preserved, got: ${JSON.stringify(strippedWithInternalSpaces)}`,
+  );
+});
+
+test("stripCitation (Finding 2): attach → strip round-trip with uncited double-space body", () => {
+  // Verifies that a fact body containing double spaces survives attach + strip
+  // without the double spaces being collapsed.
+  const body = "col one  col two  col three";
+  const ctx = { agent: "a", session: "s:1", ts: "2026-04-11T00:00:00Z" };
+  const attached = attachCitation(body, ctx);
+  assert.ok(hasCitation(attached), "citation must be present after attach");
+  const stripped = stripCitation(attached);
+  assert.equal(stripped, body, "strip must restore original body including double spaces");
 });
