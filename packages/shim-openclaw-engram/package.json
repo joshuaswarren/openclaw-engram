@@ -38,8 +38,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@remnic/core": "^1.0.0",
-    "@remnic/plugin-openclaw": "^1.0.0"
+    "@remnic/core": "workspace:^",
+    "@remnic/plugin-openclaw": "workspace:^"
   },
   "peerDependencies": {
     "openclaw": ">=2026.4.8"

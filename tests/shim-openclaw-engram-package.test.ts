@@ -17,10 +17,11 @@ test("Phase C shim package keeps a workspace-linked source manifest", async () =
   assert.equal(bin["engram-access"], "./bin/engram-access.js");
   assert.equal(exportsMap["."].import, "./dist/index.js");
   assert.equal(exportsMap["./access-cli"].import, "./dist/access-cli.js");
-  // These must be real semver ranges — NOT workspace: protocol — so that
-  // published packages install correctly without pnpm workspace resolution.
-  assert.equal(dependencies["@remnic/plugin-openclaw"], "^1.0.0");
-  assert.equal(dependencies["@remnic/core"], "^1.0.0");
+  // workspace:^ is intentional for local monorepo linking.
+  // pnpm publish (see release-and-publish.yml) rewrites this to the real
+  // version at pack time, so published packages never contain workspace:^.
+  assert.equal(dependencies["@remnic/plugin-openclaw"], "workspace:^");
+  assert.equal(dependencies["@remnic/core"], "workspace:^");
 });
 
 test("Phase C shim package includes the rename postinstall banner script", async () => {
