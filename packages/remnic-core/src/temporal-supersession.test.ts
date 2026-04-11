@@ -654,6 +654,105 @@ test("applyTemporalSupersession: stale extraction (new write has T0, existing ha
   }
 });
 
+test("applyTemporalSupersession: CAS re-read skips candidate already superseded by concurrent writer", async () => {
+  // Simulates two writers racing: writer A reads the memory snapshot, decides
+  // to supersede candidate X, but before A actually patches X, writer B beats
+  // A to it and marks X superseded with B's id.  A must notice on re-read and
+  // skip the write so it does not clobber B's supersededBy link.
+  //
+  // We emulate the race by intercepting `readAllMemories` so that it returns
+  // a stale "active" snapshot, then mutate disk with the concurrent writer's
+  // patch.  applyTemporalSupersession's CAS re-read via readMemoryByPath()
+  // will see the real disk state and must skip the write.
+  const { storage, cleanup } = await makeStorage("engram-temporal-cas-");
+  try {
+    const oldCity = await writeFact(
+      storage,
+      "entity lives in Austin",
+      TEST_ENTITY,
+      { city: "Austin" },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const newCityA = await writeFact(
+      storage,
+      "entity moved to NYC",
+      TEST_ENTITY,
+      { city: "NYC" },
+    );
+
+    // Capture the snapshot writer A "sees" — both memories active.
+    storage.invalidateAllMemoriesCacheForDir();
+    const snapshot = await storage.readAllMemories();
+    const staleSnapshot = snapshot.map((m) => ({
+      path: m.path,
+      frontmatter: { ...m.frontmatter },
+      content: m.content,
+    }));
+    const oldFromSnapshot = staleSnapshot.find((m) => m.frontmatter.id === oldCity);
+    assert.ok(oldFromSnapshot, "old memory must exist in snapshot");
+    // Sanity: writer A's snapshot sees oldCity as active.
+    assert.equal(oldFromSnapshot!.frontmatter.status ?? "active", "active");
+
+    // Writer B beats A: mark oldCity superseded on disk with a different
+    // supersededBy id.  This happens between writer A's snapshot read and
+    // writer A's frontmatter patch.
+    const concurrentWriterId = "fact-concurrent-writer";
+    const concurrentSupersededAt = new Date().toISOString();
+    const oldMemOnDisk = snapshot.find((m) => m.frontmatter.id === oldCity);
+    assert.ok(oldMemOnDisk);
+    await storage.writeMemoryFrontmatter(oldMemOnDisk!, {
+      status: "superseded",
+      supersededBy: concurrentWriterId,
+      supersededAt: concurrentSupersededAt,
+      updated: concurrentSupersededAt,
+    });
+
+    // Monkey-patch `readAllMemories` so writer A gets the stale snapshot.
+    // `shouldSupersedeExisting` will then return a decision (it thinks the
+    // candidate is still active) and the CAS re-read in
+    // applyTemporalSupersession must notice disk says superseded and skip.
+    const originalReadAll = storage.readAllMemories.bind(storage);
+    (storage as unknown as { readAllMemories: () => Promise<unknown> }).readAllMemories =
+      async () => staleSnapshot;
+
+    try {
+      const result = await applyTemporalSupersession({
+        storage,
+        newMemoryId: newCityA,
+        entityRef: TEST_ENTITY,
+        structuredAttributes: { city: "NYC" },
+        createdAt: new Date().toISOString(),
+        enabled: true,
+      });
+
+      assert.deepEqual(
+        result.supersededIds,
+        [],
+        "CAS check should skip candidate already superseded by concurrent writer",
+      );
+    } finally {
+      (storage as unknown as { readAllMemories: typeof originalReadAll }).readAllMemories =
+        originalReadAll;
+    }
+
+    // Verify the concurrent writer's supersededBy link was preserved.
+    const oldFm = await readFrontmatterById(storage, oldCity);
+    assert.equal(oldFm?.status, "superseded");
+    assert.equal(
+      oldFm?.supersededBy,
+      concurrentWriterId,
+      "concurrent writer's supersededBy link must be preserved, not overwritten",
+    );
+    assert.equal(
+      oldFm?.supersededAt,
+      concurrentSupersededAt,
+      "concurrent writer's supersededAt must be preserved",
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
 // ─── Regression: Finding B — shared normalizeSupersessionKey helper ───────────
 
 test("normalizeSupersessionKey: trims, lowercases, collapses whitespace to hyphens", () => {
@@ -824,11 +923,11 @@ test("shouldFilterSupersededFromRecall: filters superseded regardless of lifecyc
     "superseded memory must NOT be filtered when includeInRecall=true",
   );
 
-  // A retired/archived memory (non-superseded) is not touched by this filter.
-  const retiredFm: MemoryFrontmatter = { ...supersededFm, id: "fact-retired", status: "retired" };
+  // An archived memory (non-superseded) is not touched by this filter.
+  const archivedFm: MemoryFrontmatter = { ...supersededFm, id: "fact-archived", status: "archived" };
   assert.equal(
-    shouldFilterSupersededFromRecall(retiredFm, { enabled: true, includeInRecall: false }),
+    shouldFilterSupersededFromRecall(archivedFm, { enabled: true, includeInRecall: false }),
     false,
-    "retired (non-superseded) memory must not be filtered by supersession filter",
+    "archived (non-superseded) memory must not be filtered by supersession filter",
   );
 });

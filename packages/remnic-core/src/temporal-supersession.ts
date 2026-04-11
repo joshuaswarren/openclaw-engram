@@ -120,8 +120,11 @@ export function shouldSupersedeExisting(args: {
   if (!candidate.entityRef) return null;
   if (!candidate.structuredAttributes) return null;
 
-  const candidateEntityNorm = candidate.entityRef.trim().toLowerCase().replace(/\s+/g, "-");
-  const newEntityNorm = newEntityRef.trim().toLowerCase().replace(/\s+/g, "-");
+  // Reuse the shared `normalizeSupersessionKey` helper so this comparison
+  // cannot drift from the canonical form used to build supersession keys
+  // elsewhere in this file.
+  const candidateEntityNorm = normalizeSupersessionKey(candidate.entityRef);
+  const newEntityNorm = normalizeSupersessionKey(newEntityRef);
   if (candidateEntityNorm !== newEntityNorm) return null;
 
   // Must be older than the new fact — equal timestamps are ignored to avoid
@@ -214,8 +217,33 @@ export async function applyTemporalSupersession(args: {
     if (!decision) continue;
 
     try {
+      // CAS-style re-read immediately before the write.  `readAllMemories()`
+      // is a snapshot — with concurrent writers, another run may have already
+      // superseded this candidate since we loaded it.  If we blindly trust the
+      // snapshot we can clobber a newer `supersededBy` link with a stale one.
+      //
+      // File storage offers no true locking, so the best we can do is:
+      //   1. re-read the exact file we're about to mutate
+      //   2. verify status is still "active" and no `supersededBy` is set
+      //   3. only then issue the write
+      // If the re-read shows a newer concurrent writer beat us to it, skip.
+      const fresh = await args.storage.readMemoryByPath(memory.path);
+      if (!fresh) {
+        log.debug(
+          `[engram] temporal supersession skipped candidate ${memory.frontmatter.id}: no longer readable at ${memory.path}`,
+        );
+        continue;
+      }
+      const freshStatus = fresh.frontmatter.status ?? "active";
+      if (freshStatus !== "active" || fresh.frontmatter.supersededBy) {
+        log.debug(
+          `[engram] temporal supersession skipped candidate ${memory.frontmatter.id}: already superseded by concurrent writer`,
+        );
+        continue;
+      }
+
       const wrote = await args.storage.writeMemoryFrontmatter(
-        memory,
+        fresh,
         {
           status: "superseded",
           supersededBy: args.newMemoryId,
