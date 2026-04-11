@@ -426,6 +426,12 @@ const pluginDefinition = {
       // the hook for backward compat, but also populate cachedMemoryBySession so
       // the capability's promptBuilder can return recall context for runtimes
       // that treat the capability as the authoritative source.
+      //
+      // NOTE: needsCacheFallback only applies to the before_prompt_build path.
+      // `sdkCaps.hasRegisterMemoryCapability` implies `sdkCaps.hasBeforePromptBuild`
+      // (see hasNewHookSystem in sdk-compat.ts), so the legacy before_agent_start
+      // branch can never observe a capability-enabled runtime and therefore
+      // does not populate the cache.
       const needsCacheFallback =
         promptInjectionAllowed &&
         sdkCaps.hasRegisterMemoryCapability &&
@@ -463,26 +469,16 @@ const pluginDefinition = {
           },
         );
       } else {
-        // Legacy SDK path — literal string for compat checker detection
+        // Legacy SDK path — literal string for compat checker detection.
+        // Capability-only runtimes cannot reach this branch (they land on
+        // before_prompt_build above), so cache fallback logic is omitted here.
         api.on(
           "before_agent_start",
           async (
             event: Record<string, unknown>,
             ctx: Record<string, unknown>,
           ) => {
-            const sessionKey = (ctx?.sessionKey as string) ?? "default";
-            // Reset the cache at the start of every turn so a recall miss
-            // can never serve stale memory from a prior turn through the
-            // capability promptBuilder fallback.
-            if (needsCacheFallback) {
-              cachedMemoryBySession.set(sessionKey, null);
-            }
             const result = await recallHookHandler("before_agent_start", event, ctx);
-            // Populate cache for capability promptBuilder fallback using the
-            // same structured line format as the registerMemoryPromptSection path.
-            if (needsCacheFallback && result?.memoryLines) {
-              cachedMemoryBySession.set(sessionKey, result.memoryLines);
-            }
             // Strip the internal `memoryLines` field before returning to the
             // gateway — it's a closure-private carrier for cache population
             // and is not part of the hook contract.
