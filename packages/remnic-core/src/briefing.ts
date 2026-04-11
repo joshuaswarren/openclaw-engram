@@ -587,6 +587,24 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
       return startDate === target;
     }
 
+    // UhLh: Reject impossible calendar dates that pass the regex (e.g. "2026-99-99").
+    // The regex only validates the *shape* of the string — it accepts month 99 and
+    // day 99.  We must additionally verify the date is real by constructing a UTC
+    // Date and checking that the ISO round-trip matches the input prefix.  If the
+    // date is impossible, Date will auto-correct it (e.g. "2026-01-99" becomes some
+    // later date), so the round-trip will differ.  Fall back to single-day semantics.
+    const endDate = end.slice(0, 10);
+    const endDateProbe = new Date(endDate + "T00:00:00Z");
+    if (
+      Number.isNaN(endDateProbe.getTime()) ||
+      endDateProbe.toISOString().slice(0, 10) !== endDate
+    ) {
+      log.warn(
+        `briefing: event "${event.title}" has impossible end date ${JSON.stringify(endDate)}; treating as single-day event at ${startDate}`,
+      );
+      return startDate === target;
+    }
+
     // Span event: include if [start, end) overlaps the target calendar day.
     //
     // We can't use pure YYYY-MM-DD lexicographic comparison because a
@@ -602,16 +620,24 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
     // it; if the end time is exactly midnight, the event ends precisely at
     // the boundary and the end day is excluded. Within-day spans always
     // have a non-zero end time and so correctly include their own date.
-    const endDate = end.slice(0, 10);
-    const endTime = end.slice(11); // "HH:MM", "HH:MM:SS", or "HH:MM:SS.mmm"
-    // Treat any end time that is exactly midnight as day-exclusive per [start, end) semantics.
+    //
+    // UhLg: A date-only end value (no "T" separator) produces an empty
+    // endTime string.  The regex above does not match empty string, so
+    // endAtExactMidnight would be false and the event would incorrectly
+    // appear on the end date.  Date-only end values carry [start, end)
+    // semantics (the end date is exclusive), so we treat them as midnight.
+    const endTime = end.slice(11); // "HH:MM", "HH:MM:SS", "HH:MM:SS.mmm", or "" (date-only)
+    // Treat any end time that is exactly midnight — or absent (date-only) — as
+    // day-exclusive per [start, end) semantics.
     // Cases covered:
+    //   ""                    — date-only end (UhLg fix: exclusive like midnight)
     //   "00:00"               — HH:MM form (valid floating-time ISO value, no seconds)
     //   "00:00:00"            — HH:MM:SS form
     //   "00:00:00.000..."     — with fractional seconds (any number of trailing zeros)
     // A bare `>` string comparison incorrectly treats "00:00:00.000" as > "00:00:00"
     // because the fractional suffix makes the string lexicographically longer.
-    const endAtExactMidnight = /^00(:00){1,2}(\.0+)?$/.test(endTime);
+    const endIsDateOnly = endTime === "";
+    const endAtExactMidnight = endIsDateOnly || /^00(:00){1,2}(\.0+)?$/.test(endTime);
     const endActiveOnEndDay = !endAtExactMidnight;
     if (endActiveOnEndDay) {
       return startDate <= target && target <= endDate;

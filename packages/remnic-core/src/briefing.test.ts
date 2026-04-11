@@ -1080,3 +1080,105 @@ test("eventFallsOnDate: floating event with empty-string end is treated as singl
     "empty-end event must NOT bleed into the next day",
   );
 });
+
+// Round 10 Finding UhLg: Date-only floating end values must enforce [start, end) semantics
+// ──────────────────────────────────────────────────────────────────────────
+
+test("eventFallsOnDate: floating all-day event with date-only end excludes end date ([start, end))", () => {
+  // A JSON calendar feed emits date-only start/end (no time component).
+  // e.g. start: "2026-04-10", end: "2026-04-11" should render only on 2026-04-10.
+  // Before UhLg fix: endTime was "" which did not match the midnight regex, so
+  // endActiveOnEndDay was true and the event incorrectly appeared on 2026-04-11.
+  const event = makeCalendarEventWithEnd("2026-04-10", "2026-04-11");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-10"),
+    true,
+    "date-only all-day event must appear on its start date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    false,
+    "date-only end must be exclusive — event must NOT appear on end date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-09"),
+    false,
+    "date-only all-day event must NOT appear before its start date",
+  );
+});
+
+test("eventFallsOnDate: floating multi-day all-day event with date-only end spans [start, end)", () => {
+  // A two-day all-day event: start "2026-04-10", end "2026-04-12"
+  // Should appear on 2026-04-10 and 2026-04-11, but NOT on 2026-04-12.
+  const event = makeCalendarEventWithEnd("2026-04-10", "2026-04-12");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-09"),
+    false,
+    "must not appear before start",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-10"),
+    true,
+    "must appear on start date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "must appear on intermediate day",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-12"),
+    false,
+    "date-only end must be exclusive — must NOT appear on end date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-13"),
+    false,
+    "must not appear after end",
+  );
+});
+
+// Round 10 Finding UhLh: Impossible end dates (passing regex but not real) must fall back
+// ──────────────────────────────────────────────────────────────────────────
+
+test("eventFallsOnDate: floating event with impossible end date '2026-99-99' is treated as single-day", () => {
+  // The regex /^\d{4}-\d{2}-\d{2}.../ accepts month 99 and day 99.
+  // Without real-date validation, JavaScript auto-corrects "2026-99-99" to a
+  // future date and the event appears on many unrelated days.
+  const event = makeCalendarEventWithEnd("2026-04-11T09:00", "2026-99-99");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "impossible-end event must still appear on its start date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-12"),
+    false,
+    "impossible-end event must NOT bleed into subsequent days",
+  );
+  // Verify it does not appear on the auto-corrected future date either.
+  assert.equal(
+    eventFallsOnDate(event, "2035-03-09"),
+    false,
+    "impossible-end event must NOT appear on the JavaScript-autocorrected date",
+  );
+});
+
+test("eventFallsOnDate: floating event with impossible end date '2026-01-99' is treated as single-day", () => {
+  // "2026-01-99" passes the regex but is impossible; Date auto-corrects to "2026-04-09".
+  const event = makeCalendarEventWithEnd("2026-01-10T09:00", "2026-01-99");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-01-10"),
+    true,
+    "impossible-end event must appear on its start date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-09"),
+    false,
+    "impossible-end event must NOT appear on the JS-autocorrected date",
+  );
+});
