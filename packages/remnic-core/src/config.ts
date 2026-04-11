@@ -993,6 +993,22 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.extractionMaxQuestionsPerRun === "number" ? cfg.extractionMaxQuestionsPerRun : 3,
     extractionMaxProfileUpdatesPerRun:
       typeof cfg.extractionMaxProfileUpdatesPerRun === "number" ? cfg.extractionMaxProfileUpdatesPerRun : 4,
+    // Importance write-gate for trivial extracted content (issue #372).
+    // Default "low" drops only "trivial" facts (greetings, single-word replies,
+    // heartbeat pings); set to "normal" or higher to make the gate stricter.
+    extractionMinImportanceLevel: ((): PluginConfig["extractionMinImportanceLevel"] => {
+      const raw = cfg.extractionMinImportanceLevel;
+      if (
+        raw === "trivial" ||
+        raw === "low" ||
+        raw === "normal" ||
+        raw === "high" ||
+        raw === "critical"
+      ) {
+        return raw;
+      }
+      return "low";
+    })(),
     consolidationRequireNonZeroExtraction: cfg.consolidationRequireNonZeroExtraction !== false,
     consolidationMinIntervalMs:
       typeof cfg.consolidationMinIntervalMs === "number" ? cfg.consolidationMinIntervalMs : 10 * 60_000,
@@ -1187,6 +1203,15 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? Math.max(0, Math.floor(cfg.recallEnrichmentDeadlineMs))
         : 25_000,
     recallPipeline: recallPipelineConfig.pipeline,
+    recallMmrEnabled: cfg.recallMmrEnabled !== false,
+    recallMmrLambda:
+      typeof cfg.recallMmrLambda === "number" && Number.isFinite(cfg.recallMmrLambda)
+        ? Math.min(1, Math.max(0, cfg.recallMmrLambda))
+        : 0.7,
+    recallMmrTopN:
+      typeof cfg.recallMmrTopN === "number" && Number.isFinite(cfg.recallMmrTopN)
+        ? Math.max(0, Math.floor(cfg.recallMmrTopN))
+        : 40,
     qmdRecallCacheTtlMs:
       typeof cfg.qmdRecallCacheTtlMs === "number" ? Math.max(0, Math.floor(cfg.qmdRecallCacheTtlMs)) : 60_000,
     qmdRecallCacheStaleTtlMs:
@@ -1563,6 +1588,23 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 20,
 
     briefing: parseBriefingConfig(cfg.briefing),
+
+    // Codex CLI — native memory materialization (#378)
+    codexMaterializeMemories: cfg.codexMaterializeMemories !== false,
+    codexMaterializeNamespace:
+      typeof cfg.codexMaterializeNamespace === "string" && cfg.codexMaterializeNamespace.trim().length > 0
+        ? cfg.codexMaterializeNamespace.trim()
+        : "auto",
+    codexMaterializeMaxSummaryTokens:
+      typeof cfg.codexMaterializeMaxSummaryTokens === "number"
+        ? Math.max(0, Math.floor(cfg.codexMaterializeMaxSummaryTokens))
+        : 4500,
+    codexMaterializeRolloutRetentionDays:
+      typeof cfg.codexMaterializeRolloutRetentionDays === "number"
+        ? Math.max(0, Math.floor(cfg.codexMaterializeRolloutRetentionDays))
+        : 30,
+    codexMaterializeOnConsolidation: cfg.codexMaterializeOnConsolidation !== false,
+    codexMaterializeOnSessionEnd: cfg.codexMaterializeOnSessionEnd !== false,
   };
 }
 

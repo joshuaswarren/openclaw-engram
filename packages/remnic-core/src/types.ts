@@ -388,6 +388,14 @@ export interface PluginConfig {
   extractionMaxEntitiesPerRun: number;
   extractionMaxQuestionsPerRun: number;
   extractionMaxProfileUpdatesPerRun: number;
+  /**
+   * Minimum importance level required to persist an extracted fact. Facts
+   * whose locally-scored level falls below this threshold are dropped before
+   * write and counted toward the `importance_gated` metric. Defaults to
+   * "low" so trivial content (greetings, single-word replies, filler) is
+   * silently dropped while everything else still passes.
+   */
+  extractionMinImportanceLevel: ImportanceLevel;
   consolidationRequireNonZeroExtraction: boolean;
   consolidationMinIntervalMs: number;
   // QMD maintenance (debounced singleflight)
@@ -527,6 +535,12 @@ export interface PluginConfig {
   recallCoreDeadlineMs: number;
   recallEnrichmentDeadlineMs: number;
   recallPipeline: RecallSectionConfig[];
+  /** Apply Maximal Marginal Relevance to the final recall selection per-section. */
+  recallMmrEnabled: boolean;
+  /** MMR λ parameter. 1.0 = pure relevance, 0.0 = pure diversity. Default 0.7. */
+  recallMmrLambda: number;
+  /** MMR is applied over the top N candidates per section. Default 40. */
+  recallMmrTopN: number;
   qmdRecallCacheTtlMs: number;
   qmdRecallCacheStaleTtlMs: number;
   qmdRecallCacheMaxEntries: number;
@@ -723,6 +737,20 @@ export interface PluginConfig {
   // Daily Context Briefing (Issue #370)
   /** Briefing configuration knobs — see BriefingConfig for field docs. */
   briefing: BriefingConfig;
+
+  // Codex CLI — native memory materialization (#378)
+  /** Materialize Remnic memories into Codex's expected ~/.codex/memories/ layout. Default true. */
+  codexMaterializeMemories: boolean;
+  /** Namespace to materialize; "auto" derives from the connector context. Default "auto". */
+  codexMaterializeNamespace: string;
+  /** Max whitespace-tokenized size of memory_summary.md. Default 4500. */
+  codexMaterializeMaxSummaryTokens: number;
+  /** Max age in days for rollout_summaries/*.md before pruning. Default 30. */
+  codexMaterializeRolloutRetentionDays: number;
+  /** Run materialization after semantic/causal consolidation completes. Default true. */
+  codexMaterializeOnConsolidation: boolean;
+  /** Run materialization at Codex session-end hook. Default true. */
+  codexMaterializeOnSessionEnd: boolean;
 }
 
 /** Runtime configuration for the daily context briefing feature. */

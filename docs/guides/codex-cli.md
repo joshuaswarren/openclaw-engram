@@ -274,3 +274,25 @@ After setup, start a new Codex session and check:
 
 **Slow session start:**
 - The hook has a 15-second timeout. If the Remnic server is slow to respond, increase the `timeout` value in `hooks.json` or reduce `topK` in the recall query.
+
+## Native memory materialization
+
+Codex's phase-2 consolidation reads canonical files under `<codex_home>/memories/`
+(`memory_summary.md`, `MEMORY.md`, `raw_memories.md`, `rollout_summaries/*.md`).
+Remnic can mirror hot memories into this exact layout so the always-loaded
+`memory_summary.md` is populated with Remnic content — giving Codex a quick
+cross-session pass without any MCP roundtrips.
+
+Materialization is **opt-in via a sentinel file** (`<codex_home>/memories/.remnic-managed`):
+if the sentinel is missing, Remnic will skip the directory and log a warning,
+so hand-edited layouts are never clobbered. Writes are atomic (temp dir +
+rename), and idempotent no-ops happen whenever the content hash is unchanged.
+
+Triggers (all configurable):
+
+- After semantic or causal consolidation completes (`codexMaterializeOnConsolidation`)
+- At Codex session end via the `session-end.sh` hook (`codexMaterializeOnSessionEnd`)
+- Manually: `tsx scripts/codex-materialize.ts --reason manual`
+
+See [plugins/codex.md — Native memory materialization](../plugins/codex.md#native-memory-materialization)
+for the full list of config knobs and the opt-out procedure.

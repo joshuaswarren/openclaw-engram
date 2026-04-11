@@ -1515,6 +1515,12 @@
         "default": 40,
         "description": "Minimum combined user/assistant characters required before extraction runs."
       },
+      "extractionMinImportanceLevel": {
+        "type": "string",
+        "enum": ["trivial", "low", "normal", "high", "critical"],
+        "default": "low",
+        "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
+      },
       "extractionMinUserTurns": {
         "type": "number",
         "default": 1,

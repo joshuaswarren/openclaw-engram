@@ -1,19 +1,19 @@
-"""Engram MemoryProvider protocol implementation for Hermes Agent."""
+"""Remnic MemoryProvider protocol implementation for Hermes Agent."""
 
 from __future__ import annotations
 
 import uuid
 from typing import Any
 
-from remnic_hermes.client import EngramClient
-from remnic_hermes.config import EngramHermesConfig
+from remnic_hermes.client import RemnicClient
+from remnic_hermes.config import RemnicHermesConfig
 
 
-class EngramMemoryProvider:
-    """MemoryProvider that delegates to the EMO daemon via HTTP.
+class RemnicMemoryProvider:
+    """MemoryProvider that delegates to the Remnic daemon via HTTP.
 
     Lifecycle:
-      - initialize()        → connect to EMO, verify health
+      - initialize()        → connect to Remnic, verify health
       - pre_llm_call()      → recall relevant memories, inject into system prompt
       - sync_turn()         → observe the latest conversation turn
       - extract_memories()  → structured extraction at session end
@@ -21,16 +21,16 @@ class EngramMemoryProvider:
     """
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
-        cfg = EngramHermesConfig.from_hermes_config(config or {})
+        cfg = RemnicHermesConfig.from_hermes_config(config or {})
         self._host = cfg.host
         self._port = cfg.port
         self._token = cfg.token
         self._session_key = cfg.session_key or f"hermes-{uuid.uuid4().hex[:12]}"
-        self._client: EngramClient | None = None
+        self._client: RemnicClient | None = None
 
     async def initialize(self, config: dict[str, Any] | None = None) -> None:
-        """Connect to EMO daemon and verify health."""
-        self._client = EngramClient(
+        """Connect to Remnic daemon and verify health."""
+        self._client = RemnicClient(
             host=self._host,
             port=self._port,
             token=self._token,
@@ -66,7 +66,7 @@ class EngramMemoryProvider:
             context = result.get("context", "")
             count = result.get("count", 0)
             if context and count > 0:
-                return f"<engram-memory count=\"{count}\">\n{context}\n</engram-memory>"
+                return f"<remnic-memory count=\"{count}\">\n{context}\n</remnic-memory>"
         except Exception:
             pass
 
@@ -113,8 +113,8 @@ class EngramMemoryProvider:
     # -- Explicit tool schemas for Hermes tool registration --
 
     recall_schema = {
-        "name": "engram_recall",
-        "description": "Recall memories from Engram matching a natural language query",
+        "name": "remnic_recall",
+        "description": "Recall memories from Remnic matching a natural language query",
         "parameters": {
             "type": "object",
             "properties": {
@@ -125,8 +125,8 @@ class EngramMemoryProvider:
     }
 
     store_schema = {
-        "name": "engram_store",
-        "description": "Store a memory in Engram for future recall",
+        "name": "remnic_store",
+        "description": "Store a memory in Remnic for future recall",
         "parameters": {
             "type": "object",
             "properties": {
@@ -137,8 +137,8 @@ class EngramMemoryProvider:
     }
 
     search_schema = {
-        "name": "engram_search",
-        "description": "Full-text search across all Engram memories",
+        "name": "remnic_search",
+        "description": "Full-text search across all Remnic memories",
         "parameters": {
             "type": "object",
             "properties": {
@@ -148,20 +148,45 @@ class EngramMemoryProvider:
         },
     }
 
+    # Legacy schemas — same handlers, engram_* tool names. Kept so existing
+    # Hermes configs that reference engram_recall / engram_store / engram_search
+    # continue to resolve. Descriptions keep the Engram brand so the tool name
+    # and description agree when LLMs surface the legacy names. Remove once
+    # the compat window closes.
+    legacy_recall_schema = {
+        **recall_schema,
+        "name": "engram_recall",
+        "description": "Recall memories from Engram matching a natural language query",
+    }
+    legacy_store_schema = {
+        **store_schema,
+        "name": "engram_store",
+        "description": "Store a memory in Engram for future recall",
+    }
+    legacy_search_schema = {
+        **search_schema,
+        "name": "engram_search",
+        "description": "Full-text search across all Engram memories",
+    }
+
     async def recall(self, query: str, **kwargs: Any) -> dict[str, Any]:
-        """Tool handler for engram_recall."""
+        """Tool handler for remnic_recall / engram_recall."""
         if not self._client:
-            return {"error": "Not connected to Engram"}
+            return {"error": "Not connected to Remnic"}
         return await self._client.recall(query=query, session_key=self._session_key)
 
     async def store(self, content: str, **kwargs: Any) -> dict[str, Any]:
-        """Tool handler for engram_store."""
+        """Tool handler for remnic_store / engram_store."""
         if not self._client:
-            return {"error": "Not connected to Engram"}
+            return {"error": "Not connected to Remnic"}
         return await self._client.store(content=content)
 
     async def search(self, query: str, **kwargs: Any) -> dict[str, Any]:
-        """Tool handler for engram_search."""
+        """Tool handler for remnic_search / engram_search."""
         if not self._client:
-            return {"error": "Not connected to Engram"}
+            return {"error": "Not connected to Remnic"}
         return await self._client.search(query=query)
+
+
+# Legacy class alias — import path compat for pre-rename consumers.
+EngramMemoryProvider = RemnicMemoryProvider

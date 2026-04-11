@@ -14,6 +14,7 @@ test("legacy api (no new fields) → all capabilities false, sdkVersion 'legacy'
 
   assert.equal(caps.hasBeforePromptBuild, false);
   assert.equal(caps.hasRegisterMemoryPromptSection, false);
+  assert.equal(caps.hasRegisterMemoryCapability, false);
   assert.equal(caps.hasDefinePluginEntry, false);
   assert.equal(caps.hasRuntimeNamespace, false);
   assert.equal(caps.hasRegistrationMode, false);
@@ -160,4 +161,82 @@ test("registrationMode 'setup-runtime' is passed through correctly", () => {
 
   assert.equal(caps.registrationMode, "setup-runtime");
   assert.equal(caps.hasRegistrationMode, true);
+});
+
+test("registerMemoryCapability detection when present", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryCapability: () => {},
+    runtime: { version: "2026.4.9" },
+    registrationMode: "full",
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRegisterMemoryCapability, true);
+  assert.equal(caps.hasDefinePluginEntry, true);
+});
+
+test("registerMemoryCapability absent on legacy SDK", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryPromptSection: () => {},
+    runtime: { version: "2026.3.22" },
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRegisterMemoryCapability, false);
+  assert.equal(caps.hasRegisterMemoryPromptSection, true);
+});
+
+test("registerMemoryCapability alone implies isNewSdk", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryCapability: () => {},
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRegisterMemoryCapability, true);
+  assert.equal(caps.hasDefinePluginEntry, true, "registerMemoryCapability should imply isNewSdk");
+});
+
+test("registerMemoryCapability without registerMemoryPromptSection still routes to new hook system", () => {
+  // New SDK (>=2026.4.5) exposes registerMemoryCapability but drops the
+  // deprecated registerMemoryPromptSection. hasNewHookSystem must still be
+  // true so index.ts registers before_prompt_build instead of the legacy
+  // before_agent_start hook. Otherwise cachedMemoryBySession never gets
+  // populated on the new SDK and memory injection silently breaks.
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryCapability: () => {},
+    runtime: { version: "2026.4.9" },
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRegisterMemoryCapability, true);
+  assert.equal(caps.hasRegisterMemoryPromptSection, false);
+  assert.equal(caps.hasRegistrationMode, false);
+  assert.equal(
+    caps.hasBeforePromptBuild,
+    true,
+    "registerMemoryCapability alone must enable before_prompt_build hook",
+  );
+  assert.equal(caps.hasTypedHooks, true);
+});
+
+test("registerMemoryCapability with registrationMode still enables new hook system", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryCapability: () => {},
+    runtime: { version: "2026.4.9" },
+    registrationMode: "full",
+  };
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasBeforePromptBuild, true);
+  assert.equal(caps.hasRegisterMemoryCapability, true);
 });

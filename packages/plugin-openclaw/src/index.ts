@@ -24,3 +24,10 @@ export {
   type BridgeMode,
   type BridgeConfig,
 } from "./bridge.js";
+
+// Public artifacts for memory-wiki bridge mode
+export {
+  listRemnicPublicArtifacts,
+  type RemnicPublicArtifact,
+  type PublicArtifactContentType,
+} from "./public-artifacts.js";

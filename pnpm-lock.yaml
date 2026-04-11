@@ -88,7 +88,11 @@ importers:
 
   packages/plugin-claude-code: {}
 
-  packages/plugin-codex: {}
+  packages/plugin-codex:
+    dependencies:
+      '@remnic/core':
+        specifier: workspace:*
+        version: link:../remnic-core
 
   packages/plugin-openclaw:
     dependencies:

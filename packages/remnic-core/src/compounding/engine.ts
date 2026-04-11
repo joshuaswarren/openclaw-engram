@@ -498,7 +498,7 @@ export class CompoundingEngine {
       : [];
     if (this.config.cmcConsolidationEnabled) {
       try {
-        const { deriveCausalPromotionCandidates } = await import("../causal-consolidation.js");
+        const { deriveCausalPromotionCandidates, materializeAfterCausalConsolidation } = await import("../causal-consolidation.js");
         const causalCandidates = await deriveCausalPromotionCandidates({
           memoryDir: this.config.memoryDir,
           causalTrajectoryStoreDir: this.config.causalTrajectoryStoreDir,
@@ -512,6 +512,25 @@ export class CompoundingEngine {
         });
         if (causalCandidates.length > 0) {
           promotionCandidates = [...promotionCandidates, ...causalCandidates];
+        }
+        // #378: fire the Codex materialize post-hook so
+        // `codexMaterializeOnConsolidation` actually has a runtime effect
+        // when the causal consolidation path runs. The helper silently no-ops
+        // when the feature flag or the per-trigger toggle is off, when the
+        // sentinel is missing, or when nothing has changed since the previous
+        // run. Wrapped in its own try/catch so a failed materialize never
+        // aborts weekly synthesis.
+        try {
+          await materializeAfterCausalConsolidation({
+            config: this.config,
+            memoryDir: this.config.memoryDir,
+          });
+        } catch (materializeError) {
+          log.warn(
+            `[cmc] Codex materialize post-hook failed (non-fatal): ${
+              materializeError instanceof Error ? materializeError.message : String(materializeError)
+            }`,
+          );
         }
       } catch (error) {
         log.warn(`[cmc] causal consolidation in synthesizeWeekly failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);

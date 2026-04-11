@@ -293,6 +293,27 @@ export {
 } from "./tokens.js";
 
 // ---------------------------------------------------------------------------
+// Codex materializer (#378)
+// ---------------------------------------------------------------------------
+
+export {
+  runCodexMaterialize,
+  runPostConsolidationMaterialize,
+  type RunMaterializeOptions,
+  type PostConsolidationMaterializeOptions,
+} from "./connectors/codex-materialize-runner.js";
+export {
+  materializeForNamespace,
+  ensureSentinel,
+  describeMemoriesDir,
+  SENTINEL_FILE,
+  MATERIALIZE_VERSION,
+  type MaterializeOptions,
+  type MaterializeResult,
+  type RolloutSummaryInput,
+} from "./connectors/codex-materialize.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
