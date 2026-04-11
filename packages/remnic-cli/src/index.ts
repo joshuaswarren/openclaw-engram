@@ -348,6 +348,16 @@ async function cmdBriefing(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
+  // Guard --focus the same way: if the flag is present but has no trailing
+  // value (or the next token is another flag like `--save`), reject it rather
+  // than silently consuming the next flag as the focus filter.
+  if (hasFlag(rest, "--focus") && (focusFlag === undefined || focusFlag.startsWith("--"))) {
+    console.error(
+      "Missing value for --focus. Expected: project:<id>, topic:<name>, or person:<id>.",
+    );
+    process.exit(1);
+  }
+
   const token = sinceFlag ?? config.briefing.defaultWindow;
   const window = parseBriefingWindow(token);
   if (!window) {
@@ -357,7 +367,19 @@ async function cmdBriefing(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const focus = parseBriefingFocus(focusFlag);
+  // Validate --focus: only treat undefined / empty strings as "no filter".
+  // Anything else that parses to null (e.g. "project:", "topic:") is malformed
+  // and must be rejected so a templating miss never silently broadens the
+  // briefing from a targeted view to all memories. Mirrors the access-service
+  // rejection in packages/remnic-core/src/access-service.ts.
+  const rawFocus = typeof focusFlag === "string" ? focusFlag.trim() : "";
+  const focus = rawFocus.length > 0 ? parseBriefingFocus(rawFocus) : null;
+  if (rawFocus.length > 0 && !focus) {
+    console.error(
+      `Invalid --focus value: expected project:<id>, topic:<name>, or person:<id>, got: ${focusFlag}`,
+    );
+    process.exit(1);
+  }
   const formatError = validateBriefingFormat(formatFlag);
   if (formatError) {
     console.error(formatError);
