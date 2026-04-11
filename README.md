@@ -113,10 +113,16 @@ Once the Remnic daemon is running, connect any supported agent:
 
 ```bash
 remnic connectors install claude-code   # Claude Code (hooks + MCP)
-remnic connectors install codex-cli     # Codex CLI (hooks + MCP)
+remnic connectors install codex-cli     # Codex CLI (hooks + MCP + memory extension)
 remnic connectors install replit        # Replit (MCP only)
 pip install remnic-hermes               # Hermes Agent (Python MemoryProvider)
 ```
+
+For Codex CLI, installation also drops a phase-2 memory extension at
+`<codex_home>/memories_extensions/remnic/instructions.md` so Codex's
+consolidation sub-agent auto-discovers Remnic. Opt out with
+`--config installExtension=false` if you prefer to manage Codex extensions
+yourself.
 
 Each connector generates a unique auth token, installs the appropriate plugin/hooks, and verifies the connection. All agents share the same memory store — tell one agent your preference, and every agent remembers it.
 

@@ -95,10 +95,6 @@ importers:
         version: link:../remnic-core
 
   packages/plugin-openclaw:
-    dependencies:
-      '@remnic/core':
-        specifier: workspace:^
-        version: link:../remnic-core
     devDependencies:
       tsup:
         specifier: ^8.5.1

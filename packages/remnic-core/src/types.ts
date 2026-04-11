@@ -568,6 +568,19 @@ export interface PluginConfig {
   // v6.0 Fact deduplication & archival
   /** Enable content-hash deduplication to prevent storing semantically identical facts. */
   factDeduplicationEnabled: boolean;
+  /**
+   * Issue #373 — Write-time semantic similarity guard. When enabled (default),
+   * the orchestrator embeds each candidate fact and queries the existing
+   * embedding index for its top-K nearest neighbors. If the best cosine
+   * similarity is at or above `semanticDedupThreshold`, the fact is dropped
+   * as a near-duplicate. Fails open (keeps the fact) if the embedding backend
+   * is unavailable.
+   */
+  semanticDedupEnabled: boolean;
+  /** Cosine similarity threshold in [0, 1] above which a candidate fact is skipped. */
+  semanticDedupThreshold: number;
+  /** Number of nearest-neighbor candidates to consider during semantic dedup. */
+  semanticDedupCandidates: number;
   /** Enable automatic archival of old, low-importance, rarely-accessed facts. */
   factArchivalEnabled: boolean;
   /** Minimum age in days before a fact is eligible for archival. */
@@ -749,6 +762,9 @@ export interface PluginConfig {
   /** Max results fetched per agent before merge. */
   parallelMaxResultsPerAgent: number;
 
+  // Codex CLI connector settings (install-time)
+  codex: CodexConnectorConfig;
+
   // Codex CLI — native memory materialization (#378)
   /** Materialize Remnic memories into Codex's expected ~/.codex/memories/ layout. Default true. */
   codexMaterializeMemories: boolean;
@@ -762,6 +778,27 @@ export interface PluginConfig {
   codexMaterializeOnConsolidation: boolean;
   /** Run materialization at Codex session-end hook. Default true. */
   codexMaterializeOnSessionEnd: boolean;
+}
+
+/**
+ * Settings for the Codex CLI connector. These are consumed by
+ * `remnic connectors install codex-cli` to decide where the phase-2 memory
+ * extension is dropped and whether to install it at all.
+ */
+export interface CodexConnectorConfig {
+  /**
+   * Whether to install the Remnic memory extension into
+   * `<codex_home>/memories_extensions/remnic/` when the `codex-cli`
+   * connector is installed. Default `true`. Set to `false` for users who
+   * self-manage the Codex memory extensions folder.
+   */
+  installExtension: boolean;
+  /**
+   * Optional override for the Codex home directory. When `null`, the
+   * connector reads `$CODEX_HOME` and falls back to `~/.codex`. Setting
+   * this is useful for integration tests and non-default installs.
+   */
+  codexHome: string | null;
 }
 
 export interface BootstrapOptions {

@@ -2276,6 +2276,24 @@
         "default": true,
         "description": "Enable content-hash deduplication to prevent storing semantically identical facts."
       },
+      "semanticDedupEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Issue #373 — enable write-time semantic similarity guard that skips near-duplicate facts by comparing embeddings to existing memories. Fails open when the embedding backend is unavailable."
+      },
+      "semanticDedupThreshold": {
+        "type": "number",
+        "default": 0.92,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Cosine similarity threshold in [0, 1]. Candidate facts whose nearest neighbor scores at or above this value are treated as duplicates and skipped."
+      },
+      "semanticDedupCandidates": {
+        "type": "number",
+        "default": 5,
+        "minimum": 0,
+        "description": "Number of nearest-neighbor candidates to inspect during the write-time semantic dedup check. Set to 0 to disable the embedding lookup entirely (equivalent to semanticDedupEnabled=false)."
+      },
       "factArchivalEnabled": {
         "type": "boolean",
         "default": false,
@@ -2904,6 +2922,26 @@
         "type": "number",
         "default": 20,
         "description": "Maximum results fetched per agent before merge."
+      },
+      "codex": {
+        "type": "object",
+        "description": "Codex CLI connector settings (install-time).",
+        "additionalProperties": false,
+        "properties": {
+          "installExtension": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true, `remnic connectors install codex-cli` also drops memories_extensions/remnic/instructions.md into the Codex home so the phase-2 consolidation sub-agent auto-discovers Remnic."
+          },
+          "codexHome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Override for the Codex home directory. When null, uses $CODEX_HOME or ~/.codex."
+          }
+        }
       },
       "codexMaterializeMemories": {
         "type": "boolean",
@@ -3630,6 +3668,20 @@
     "factDeduplicationEnabled": {
       "label": "Fact Deduplication",
       "help": "Prevent storing semantically identical facts using content hashing"
+    },
+    "semanticDedupEnabled": {
+      "label": "Semantic Dedup (write-time)",
+      "help": "Skip near-duplicate facts at write time by comparing embeddings to existing memories (issue #373)."
+    },
+    "semanticDedupThreshold": {
+      "label": "Semantic Dedup Threshold",
+      "advanced": true,
+      "placeholder": "0.92"
+    },
+    "semanticDedupCandidates": {
+      "label": "Semantic Dedup Candidates",
+      "advanced": true,
+      "placeholder": "5"
     },
     "factArchivalEnabled": {
       "label": "Fact Archival",
