@@ -595,9 +595,32 @@ export function installConnector(options: InstallOptions): InstallResult {
     if (fs.existsSync(configPath)) {
       try {
         const prev = JSON.parse(fs.readFileSync(configPath, "utf8"));
-        if (typeof prev?.profile === "string") hermesSavedProfile = prev.profile;
-        if (typeof prev?.host === "string") hermesSavedHost = prev.host;
-        if (typeof prev?.port === "number") hermesSavedPort = prev.port;
+        // Fix 2: coerce saved values through sanitizers so that CLI-written
+        // string ports ("5555") are accepted just like number ports (5555).
+        // Pass each through its sanitizer and fall back to undefined on error
+        // so a corrupt saved value doesn't prevent install from defaulting.
+        if (prev?.profile != null) {
+          try {
+            hermesSavedProfile = sanitizeHermesProfile(String(prev.profile));
+          } catch {
+            // Invalid saved profile — fall through to default
+          }
+        }
+        if (prev?.host != null) {
+          try {
+            hermesSavedHost = sanitizeHermesHost(String(prev.host));
+          } catch {
+            // Invalid saved host — fall through to default
+          }
+        }
+        if (prev?.port != null) {
+          try {
+            const coercedPort = Number(String(prev.port));
+            hermesSavedPort = sanitizeHermesPort(coercedPort);
+          } catch {
+            // Invalid saved port — fall through to default
+          }
+        }
       } catch {
         // Could not read existing config — fall through to defaults
       }
@@ -611,7 +634,9 @@ export function installConnector(options: InstallOptions): InstallResult {
       hermesSavedHost ??
       "127.0.0.1";
     hermesResolvedPort =
-      (options.config?.port as number | undefined) ??
+      (options.config?.port !== undefined
+        ? sanitizeHermesPort(Number(String(options.config.port)))
+        : undefined) ??
       hermesSavedPort ??
       4318;
   }
@@ -626,12 +651,16 @@ export function installConnector(options: InstallOptions): InstallResult {
   const resolvedConfig: Record<string, unknown> = {
     connectorId: options.connectorId,
     installedAt: new Date().toISOString(),
+    ...options.config,
+    // For hermes, always overlay the sanitized/coerced resolved values so that
+    // the connector JSON always has a numeric port and validated profile/host.
+    // This also ensures options.config string values (from --config=port=5555)
+    // are replaced with their sanitized numeric equivalents (Fix 2 root cause).
     ...(hermesResolvedProfile !== undefined ? {
       profile: hermesResolvedProfile,
       host: hermesResolvedHost,
       port: hermesResolvedPort,
     } : {}),
-    ...options.config,
     ...(tokenEntry ? { token: tokenEntry.token } : {}),
   };
   // Write with owner-only permissions because the JSON may embed the
@@ -665,28 +694,19 @@ export function installConnector(options: InstallOptions): InstallResult {
     }
 
     if (hermesProfile !== null) {
-      // If the saved profile differs from the new target profile, clean the old
-      // profile's config.yaml first so a revoked token block is not left behind.
-      // This can happen when the user explicitly passes a different --config profile=
-      // on reinstall. On no-args force reinstall hermesSavedProfile === hermesProfile,
-      // so this is a no-op in the common case.
-      if (hermesSavedProfile !== undefined && hermesSavedProfile !== hermesProfile) {
-        try {
-          const oldCleanResult = removeHermesConfig({ profile: hermesSavedProfile });
-          if (oldCleanResult.updated) {
-            notes.push(`Cleaned stale remnic: block from previous profile: ${oldCleanResult.configPath}`);
-          }
-        } catch {
-          // Non-fatal: if we can't clean the old profile, proceed anyway.
-        }
-      }
-
       if (!tokenEntry) {
         notes.push(
           "Token store unavailable — skipped Hermes config.yaml update. " +
             "Run `remnic token generate hermes` then reinstall to complete setup.",
         );
       } else {
+        // Fix 1: call upsertHermesConfig BEFORE cleaning up the old profile.
+        // If the new write fails or is skipped (missing dir, invalid config, etc.),
+        // we leave the old profile's config.yaml intact so the user's setup
+        // isn't broken. A "skipped" result means the new profile dir doesn't
+        // exist — the token was not written anywhere, so the old config must
+        // be left in place.
+        let newYamlWritten = false;
         try {
           const yamlResult = upsertHermesConfig({
             profile: hermesProfile,
@@ -694,6 +714,9 @@ export function installConnector(options: InstallOptions): InstallResult {
             port: hermesPort,
             token: tokenEntry.token,
           });
+          // Only count as "succeeded" if the file was actually written/updated,
+          // not merely skipped due to a missing profile directory.
+          newYamlWritten = yamlResult.updated === true;
           if (yamlResult.updated) {
             notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
           } else if (yamlResult.skipped) {
@@ -704,21 +727,44 @@ export function installConnector(options: InstallOptions): InstallResult {
             `Hermes config not written: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
+
+        // Only clean the old profile AFTER the new write confirmed success AND
+        // the profile has actually changed. This prevents leaving both profiles
+        // without a remnic: block when upsertHermesConfig fails or skips.
+        if (newYamlWritten && hermesSavedProfile !== undefined && hermesSavedProfile !== hermesProfile) {
+          try {
+            const oldCleanResult = removeHermesConfig({ profile: hermesSavedProfile });
+            if (oldCleanResult.updated) {
+              notes.push(`Cleaned stale remnic: block from previous profile: ${oldCleanResult.configPath}`);
+            }
+          } catch {
+            // Non-fatal: if we can't clean the old profile, log a note but don't fail.
+            notes.push(`Note: could not clean stale remnic: block from previous profile "${hermesSavedProfile}"`);
+          }
+        }
       }
     }
 
-    // Health-check the daemon (non-fatal, independent of token availability).
-    // /engram/v1/health sits behind bearer auth, so we pass the generated
-    // token when we have one — otherwise the probe would always 401 and
-    // falsely report the daemon as unreachable.
+    // Fix 3: skip the daemon health probe when no token is available.
+    // /engram/v1/health is bearer-protected, so an unauthenticated probe
+    // returns 401 even when the daemon is up, producing a false
+    // "Daemon not reachable" note and an unnecessary retry wait.
     const healthToken = tokenEntry?.token;
-    const daemonOk = checkDaemonHealth(hermesHost, hermesPort, healthToken);
-    if (daemonOk) {
-      notes.push("Daemon health check: OK");
+    if (!tokenEntry) {
+      notes.push("Skipping daemon health probe (no token generated).");
     } else {
-      notes.push(
-        `Daemon not reachable at ${hermesHost}:${hermesPort} — start with: remnic daemon start`,
-      );
+      // Health-check the daemon (non-fatal).
+      // /engram/v1/health sits behind bearer auth, so we pass the generated
+      // token — without it the probe would always 401 and falsely report
+      // the daemon as unreachable.
+      const daemonOk = checkDaemonHealth(hermesHost, hermesPort, healthToken);
+      if (daemonOk) {
+        notes.push("Daemon health check: OK");
+      } else {
+        notes.push(
+          `Daemon not reachable at ${hermesHost}:${hermesPort} — start with: remnic daemon start`,
+        );
+      }
     }
   }
 

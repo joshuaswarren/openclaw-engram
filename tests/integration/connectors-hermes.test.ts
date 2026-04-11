@@ -995,3 +995,139 @@ test("sanitizeHermesPort rejects NaN and Infinity (runtime)", async () => {
     }
   });
 });
+
+// ── Round 4 regressions ───────────────────────────────────────────────────
+
+// Fix 1: old profile config must be preserved when the new upsertHermesConfig fails
+test("old profile config is preserved when new upsertHermesConfig fails", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Set up the old profile dir and do an initial install on "old-profile".
+        const oldProfileDir = path.join(tmpHome, ".hermes", "profiles", "old-profile");
+        fs.mkdirSync(oldProfileDir, { recursive: true });
+
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "old-profile", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install1.status, "installed", "First install must succeed");
+
+        // Confirm old-profile's config.yaml has a remnic: block.
+        const oldCfgPath = path.join(oldProfileDir, "config.yaml");
+        assert.ok(fs.existsSync(oldCfgPath), "old-profile config.yaml must exist after first install");
+        const beforeContent = fs.readFileSync(oldCfgPath, "utf-8");
+        assert.ok(beforeContent.includes("remnic:"), "old-profile config.yaml must have remnic: block before reinstall");
+
+        // Attempt to force-reinstall onto "new-profile" whose directory does NOT exist.
+        // upsertHermesConfig returns {skipped: true} when the profile dir is absent
+        // (it does not throw). The fix treats "skipped" as a non-success: newYamlWritten
+        // remains false, so the old profile's remnic: block is NOT cleaned up.
+        const install2 = mod.installConnector({
+          connectorId: "hermes",
+          force: true,
+          config: { profile: "new-profile", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install2.status, "installed", "Force reinstall onto missing dir must still report installed");
+
+        // old-profile's config.yaml must still exist and contain the remnic: block.
+        assert.ok(fs.existsSync(oldCfgPath), "old-profile config.yaml must still exist after failed new-profile install");
+        const afterContent = fs.readFileSync(oldCfgPath, "utf-8");
+        assert.ok(afterContent.includes("remnic:"), "old-profile config.yaml remnic: block must be preserved when new install targeted a missing profile dir");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// Fix 2: persisted string port is coerced on force reinstall
+test("persisted string port is coerced on force reinstall", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Set up the hermes profile dir so upsertHermesConfig can write.
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "research");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // Manually write a connector JSON with port as a STRING — this simulates
+        // what the CLI produces when the user passes --config=port=5555.
+        // getConnectorsDir() resolves to ~/.config/engram/.engram-connectors/connectors
+        // (since XDG_CONFIG_HOME is not set in tests, HOME is used).
+        const connectorsDir = path.join(tmpHome, ".config", "engram", ".engram-connectors", "connectors");
+        fs.mkdirSync(connectorsDir, { recursive: true });
+        const connectorJsonPath = path.join(connectorsDir, "hermes.json");
+        const savedConfig = {
+          connectorId: "hermes",
+          installedAt: new Date().toISOString(),
+          profile: "research",
+          host: "10.0.0.5",
+          port: "5555", // STRING — the bug scenario
+        };
+        fs.writeFileSync(connectorJsonPath, JSON.stringify(savedConfig, null, 2), { mode: 0o600 });
+
+        // Force reinstall with no config overrides — must inherit and coerce the saved port.
+        const install = mod.installConnector({
+          connectorId: "hermes",
+          force: true,
+        });
+        assert.equal(install.status, "installed", "Force reinstall must succeed");
+        assert.ok(install.configPath, "Force reinstall must return a configPath");
+
+        // The connector JSON must now have port as a NUMBER (5555), not the string "5555".
+        const written = JSON.parse(fs.readFileSync(install.configPath!, "utf-8"));
+        assert.equal(typeof written.port, "number", "Written port must be a number, not a string");
+        assert.equal(written.port, 5555, "Written port must be 5555, not the default 4318");
+        assert.equal(written.profile, "research", "Written profile must be research");
+        assert.equal(written.host, "10.0.0.5", "Written host must be 10.0.0.5");
+
+        // The research profile config.yaml must also reference port 5555, not 4318.
+        const yamlContent = fs.readFileSync(
+          path.join(profileDir, "config.yaml"),
+          "utf-8",
+        );
+        assert.ok(
+          yamlContent.includes("port: 5555"),
+          "research config.yaml must use port 5555, not the default 4318",
+        );
+        assert.ok(
+          !yamlContent.includes("port: 4318"),
+          "research config.yaml must NOT revert to the default port 4318",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// Fix 3: installConnector skips health probe when token generation fails
+test("installConnector skips health probe when token generation fails (source-level check)", () => {
+  // We verify the fix at the source level: the checkDaemonHealth call must be
+  // gated behind a truthy tokenEntry check, and the skip note must be present.
+  // A runtime monkey-patch of generateToken is not straightforward because
+  // ESM modules cache at load time, so we assert on the source structure instead.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+
+  // The fix must surface a skip note when no token is available.
+  assert.ok(
+    content.includes("Skipping daemon health probe (no token generated)"),
+    "Source must contain the 'Skipping daemon health probe' note emitted when tokenEntry is falsy",
+  );
+
+  // The health probe call must NOT appear unconditionally — it must be inside
+  // an else branch that is only reached when tokenEntry is truthy.
+  // We detect this by verifying that the skip-note branch and the probe call
+  // are in an if(!tokenEntry)/else structure.  A simple proxy: the phrase
+  // "Skipping daemon health probe" must appear BEFORE "checkDaemonHealth" in
+  // the hermes block (i.e. the if-no-token branch precedes the probe call).
+  const skipIdx = content.indexOf("Skipping daemon health probe (no token generated)");
+  const probeIdx = content.indexOf("checkDaemonHealth(hermesHost");
+  assert.ok(skipIdx < probeIdx, "Skip-note must appear before the checkDaemonHealth call, confirming the if/else gate");
+});
