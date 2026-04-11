@@ -106,7 +106,8 @@ type CommandName =
   | "connectors"
   | "space"
   | "benchmark"
-  | "briefing";
+  | "briefing"
+  | "openclaw";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
@@ -200,6 +201,30 @@ function resolveMemoryDir(): string {
   return configMemoryDir;
 }
 
+// ── OpenClaw config helpers ───────────────────────────────────────────────────
+
+const DEFAULT_OPENCLAW_CONFIG_PATHS_FOR_DOCTOR = [
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH,
+  process.env.OPENCLAW_CONFIG_PATH,
+  path.join(resolveHomeDir(), ".openclaw", "openclaw.json"),
+].filter(Boolean) as string[];
+
+function resolveOpenclawConfigPath(cliPath?: string): string {
+  if (cliPath) return path.resolve(cliPath);
+  for (const candidate of DEFAULT_OPENCLAW_CONFIG_PATHS_FOR_DOCTOR) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return path.join(resolveHomeDir(), ".openclaw", "openclaw.json");
+}
+
+function readOpenclawConfig(configPath: string): Record<string, unknown> {
+  if (!fs.existsSync(configPath)) return {};
+  try {
+    return JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
 // ── Commands ─────────────────────────────────────────────────────────────────
 
 function cmdInit(): void {
@@ -433,7 +458,7 @@ async function cmdBriefing(rest: string[]): Promise<void> {
 }
 
 function cmdDoctor(): void {
-  const checks: Array<{ name: string; ok: boolean; detail: string }> = [];
+  const checks: Array<{ name: string; ok: boolean; warn?: boolean; detail: string; remediation?: string }> = [];
 
   const nodeVersion = process.version;
   const nodeMajor = parseInt(nodeVersion.slice(1).split(".")[0], 10);
@@ -469,9 +494,125 @@ function cmdDoctor(): void {
     detail: svcState.running ? `running${svcState.pid ? ` (pid ${svcState.pid})` : ""}` : "stopped",
   });
 
+  // ── OpenClaw config checks ──────────────────────────────────────────────────
+  const openclawConfigPath = resolveOpenclawConfigPath();
+  const openclawConfigExists = fs.existsSync(openclawConfigPath);
+  let openclawConfig: Record<string, unknown> = {};
+  let openclawConfigValid = false;
+
+  if (openclawConfigExists) {
+    try {
+      openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, "utf-8")) as Record<string, unknown>;
+      openclawConfigValid = true;
+    } catch {
+      openclawConfigValid = false;
+    }
+  }
+
+  checks.push({
+    name: "OpenClaw config file",
+    ok: openclawConfigExists && openclawConfigValid,
+    warn: openclawConfigExists && !openclawConfigValid,
+    detail: openclawConfigExists
+      ? openclawConfigValid
+        ? openclawConfigPath
+        : `${openclawConfigPath} (invalid JSON)`
+      : `${openclawConfigPath} (not found)`,
+    remediation: openclawConfigExists && !openclawConfigValid
+      ? "Fix the JSON syntax in your OpenClaw config file."
+      : !openclawConfigExists
+      ? "Run `remnic openclaw install` to create the OpenClaw config with the Remnic entry."
+      : undefined,
+  });
+
+  if (openclawConfigValid) {
+    const plugins = (openclawConfig.plugins ?? {}) as Record<string, unknown>;
+    const entries = plugins.entries && typeof plugins.entries === "object"
+      ? plugins.entries as Record<string, unknown>
+      : null;
+    const slots = plugins.slots && typeof plugins.slots === "object"
+      ? plugins.slots as Record<string, unknown>
+      : null;
+
+    checks.push({
+      name: "OpenClaw plugins.entries",
+      ok: !!entries,
+      detail: entries ? "present" : "missing",
+      remediation: !entries
+        ? "Run `remnic openclaw install` to add the Remnic plugin entry."
+        : undefined,
+    });
+
+    if (entries) {
+      const hasNew = "openclaw-remnic" in entries;
+      const hasLegacy = "openclaw-engram" in entries;
+      checks.push({
+        name: "OpenClaw plugin entry",
+        ok: hasNew,
+        warn: !hasNew && hasLegacy,
+        detail: hasNew
+          ? "openclaw-remnic entry found"
+          : hasLegacy
+          ? "only legacy openclaw-engram entry found (upgrade recommended)"
+          : "no Remnic entry found",
+        remediation: !hasNew && hasLegacy
+          ? "Run `remnic openclaw install` to migrate from the legacy openclaw-engram to openclaw-remnic."
+          : !hasNew
+          ? "Run `remnic openclaw install` to add the Remnic plugin entry."
+          : undefined,
+      });
+
+      const slotValue = slots?.memory as string | undefined;
+      const validEntryIds = Object.keys(entries);
+      const slotMissing = !slotValue;
+      const slotMismatch = !slotMissing && !validEntryIds.includes(slotValue);
+
+      checks.push({
+        name: "OpenClaw plugins.slots.memory",
+        ok: !slotMissing && !slotMismatch && slotValue === "openclaw-remnic",
+        warn: !slotMissing && !slotMismatch && slotValue !== "openclaw-remnic",
+        detail: slotMissing
+          ? "(unset)"
+          : slotMismatch
+          ? `"${slotValue}" (not found in entries: ${validEntryIds.join(", ")})`
+          : `"${slotValue}"`,
+        remediation: slotMissing
+          ? "Run `remnic openclaw install` to set plugins.slots.memory = \"openclaw-remnic\". Without this, hooks never fire."
+          : slotMismatch
+          ? `plugins.slots.memory = "${slotValue}" but no matching entry exists. Run \`remnic openclaw install\` to fix.`
+          : slotValue !== "openclaw-remnic"
+          ? `Slot points to "${slotValue}" instead of "openclaw-remnic". Run \`remnic openclaw install\` to update.`
+          : undefined,
+      });
+
+      // Check memoryDir exists on disk
+      const entryToCheck = (entries["openclaw-remnic"] ?? entries["openclaw-engram"]) as Record<string, unknown> | undefined;
+      const entryConfig = entryToCheck?.config && typeof entryToCheck.config === "object"
+        ? entryToCheck.config as Record<string, unknown>
+        : null;
+      const configuredMemoryDir = entryConfig?.memoryDir as string | undefined;
+      if (configuredMemoryDir) {
+        const resolvedMemDir = configuredMemoryDir.replace(/^~/, resolveHomeDir());
+        const memDirExists = fs.existsSync(resolvedMemDir);
+        checks.push({
+          name: "OpenClaw memoryDir",
+          ok: memDirExists,
+          warn: !memDirExists,
+          detail: memDirExists ? resolvedMemDir : `${resolvedMemDir} (not found)`,
+          remediation: !memDirExists
+            ? `Run \`remnic openclaw install --memory-dir "${resolvedMemDir}"\` to create the directory.`
+            : undefined,
+        });
+      }
+    }
+  }
+
   for (const check of checks) {
-    const icon = check.ok ? "✓" : "✗";
+    const icon = check.ok ? "✓" : check.warn ? "⚠" : "✗";
     console.log(`  ${icon} ${check.name}: ${check.detail}`);
+    if (!check.ok && check.remediation) {
+      console.log(`      → ${check.remediation}`);
+    }
   }
 }
 
@@ -1375,6 +1516,157 @@ function cmdTokenRevoke(connector: string): void {
   }
 }
 
+// ── OpenClaw install command ──────────────────────────────────────────────────
+
+interface OpenclawInstallOptions {
+  yes: boolean;
+  dryRun: boolean;
+  memoryDir?: string;
+  configPath?: string;
+}
+
+async function promptYesNo(question: string, defaultYes = true): Promise<boolean> {
+  // In non-interactive environments, default to yes
+  if (!process.stdin.isTTY) return defaultYes;
+  process.stdout.write(question + " ");
+  return new Promise((resolve) => {
+    let buf = "";
+    const onData = (chunk: Buffer) => {
+      buf += chunk.toString();
+      const nl = buf.indexOf("\n");
+      if (nl >= 0) {
+        process.stdin.removeListener("data", onData);
+        process.stdin.pause();
+        const answer = buf.slice(0, nl).trim().toLowerCase();
+        if (answer === "" || answer === "y" || answer === "yes") {
+          resolve(defaultYes || answer !== "");
+        } else if (answer === "n" || answer === "no") {
+          resolve(false);
+        } else {
+          resolve(defaultYes);
+        }
+      }
+    };
+    process.stdin.resume();
+    process.stdin.on("data", onData);
+  });
+}
+
+async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
+  const configPath = resolveOpenclawConfigPath(opts.configPath);
+  const defaultMemoryDir = path.join(resolveHomeDir(), ".openclaw", "workspace", "memory", "local");
+  const memoryDir = opts.memoryDir
+    ? path.resolve(opts.memoryDir)
+    : defaultMemoryDir;
+
+  console.log(`OpenClaw config: ${configPath}`);
+  console.log(`Memory dir:      ${memoryDir}`);
+
+  const existingConfig = readOpenclawConfig(configPath);
+  const plugins = (existingConfig.plugins ?? {}) as Record<string, unknown>;
+  const entries = (plugins.entries ?? {}) as Record<string, unknown>;
+  const slots = (plugins.slots ?? {}) as Record<string, unknown>;
+
+  // Check for legacy entry
+  const hasLegacy = "openclaw-engram" in entries;
+  const hasNew = "openclaw-remnic" in entries;
+  const currentSlot = slots.memory as string | undefined;
+
+  let migrateLegacy = false;
+  if (hasLegacy && !opts.yes) {
+    migrateLegacy = await promptYesNo(
+      "Found legacy 'openclaw-engram' entry. Migrate to 'openclaw-remnic'? [Y/n]",
+      true,
+    );
+  } else if (hasLegacy) {
+    migrateLegacy = true;
+  }
+
+  // Build the new config
+  const legacyEntry = entries["openclaw-engram"] as Record<string, unknown> | undefined;
+  const existingNewEntry = entries["openclaw-remnic"] as Record<string, unknown> | undefined;
+
+  const newEntry: Record<string, unknown> = {
+    config: {
+      ...(legacyEntry?.config && typeof legacyEntry.config === "object" ? legacyEntry.config : {}),
+      ...(existingNewEntry?.config && typeof existingNewEntry.config === "object" ? existingNewEntry.config : {}),
+      memoryDir,
+    },
+  };
+
+  const updatedEntries: Record<string, unknown> = { ...entries };
+  updatedEntries["openclaw-remnic"] = newEntry;
+
+  // Keep legacy entry if migrating so rollback is possible
+  if (hasLegacy && migrateLegacy && !hasNew) {
+    // Keep the legacy entry but don't delete it — operator can remove after verifying
+  }
+
+  const updatedSlots = { ...slots, memory: "openclaw-remnic" };
+
+  const updatedConfig: Record<string, unknown> = {
+    ...existingConfig,
+    plugins: {
+      ...plugins,
+      entries: updatedEntries,
+      slots: updatedSlots,
+    },
+  };
+
+  // What will change
+  const changes: string[] = [];
+  if (!hasNew) changes.push("+ Added plugins.entries[\"openclaw-remnic\"]");
+  else changes.push("~ Updated plugins.entries[\"openclaw-remnic\"].config.memoryDir");
+  if (currentSlot !== "openclaw-remnic") {
+    changes.push(`~ Set plugins.slots.memory = "openclaw-remnic" (was: ${currentSlot ?? "(unset)"})`);
+  }
+  if (!fs.existsSync(memoryDir)) changes.push(`+ Will create memory directory: ${memoryDir}`);
+  if (hasLegacy && migrateLegacy) {
+    changes.push("~ Legacy 'openclaw-engram' entry retained (safe to remove after verifying hooks fire)");
+  }
+
+  if (opts.dryRun) {
+    console.log("\n--- DRY RUN — no changes written ---");
+    for (const c of changes) console.log("  " + c);
+    console.log("\nResulting config diff:");
+    console.log(JSON.stringify(updatedConfig.plugins, null, 2));
+    return;
+  }
+
+  // Create memory dir
+  if (!fs.existsSync(memoryDir)) {
+    fs.mkdirSync(memoryDir, { recursive: true });
+    console.log(`Created memory directory: ${memoryDir}`);
+  }
+
+  // Write config
+  const configDir = path.dirname(configPath);
+  if (!fs.existsSync(configDir)) {
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+  fs.writeFileSync(configPath, JSON.stringify(updatedConfig, null, 2) + "\n");
+
+  console.log("\nDone! Summary of changes:");
+  for (const c of changes) console.log("  " + c);
+
+  if (hasLegacy && migrateLegacy) {
+    console.log(
+      "\nNote: The legacy 'openclaw-engram' entry has been kept alongside 'openclaw-remnic'.",
+    );
+    console.log(
+      "Once you verify that [remnic] gateway_start fired appears in your gateway log,",
+    );
+    console.log("you can safely remove the 'openclaw-engram' entry from openclaw.json.");
+  }
+
+  console.log("\nNext steps:");
+  console.log("  1. Restart the OpenClaw gateway:");
+  console.log("       launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway");
+  console.log("  2. Start a conversation — check your gateway log for:");
+  console.log("       [remnic] gateway_start fired — Remnic memory plugin is active");
+  console.log("  3. Run `remnic doctor` to verify the full configuration.");
+}
+
 // ── CLI entry ────────────────────────────────────────────────────────────────
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -1638,6 +1930,31 @@ Options:
       break;
     }
 
+    case "openclaw": {
+      const subAction = rest[0] ?? "help";
+      if (subAction === "install") {
+        const yes = rest.includes("--yes") || rest.includes("-y") || rest.includes("--force");
+        const dryRun = rest.includes("--dry-run");
+        const memoryDir = resolveFlag(rest, "--memory-dir");
+        const configOverride = resolveFlag(rest, "--config");
+        await cmdOpenclawInstall({ yes, dryRun, memoryDir, configPath: configOverride });
+      } else {
+        console.log(`Usage: remnic openclaw <install>
+
+  install    Configure OpenClaw to use Remnic as the memory plugin.
+
+             Sets plugins.entries["openclaw-remnic"] and plugins.slots.memory
+             in ~/.openclaw/openclaw.json (or $OPENCLAW_CONFIG_PATH).
+
+Options:
+  --yes / -y / --force    Skip interactive prompts, assume Y
+  --dry-run               Print resulting config diff without writing
+  --memory-dir <path>     Override default memory dir (~/.openclaw/workspace/memory/local)
+  --config <path>         Override OpenClaw config path`);
+      }
+      break;
+    }
+
     default:
       console.log(`
 remnic — Remnic memory CLI
@@ -1650,6 +1967,11 @@ Usage:
 
   remnic doctor                Run diagnostics
   remnic config                Show current config
+  remnic openclaw install      Configure OpenClaw to use Remnic memory (sets slot + entry)
+    --yes / -y / --force       Skip prompts
+    --dry-run                  Preview changes without writing
+    --memory-dir <path>        Custom memory directory
+    --config <path>            Custom OpenClaw config path
   remnic daemon <start|stop|restart|install|uninstall|status>  Manage background server
   remnic token <generate|list|revoke> [connector-id]  Manage auth tokens
   remnic tree <generate|watch|validate>  Generate context tree

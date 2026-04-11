@@ -24,6 +24,9 @@
           }
         }
       }
+    },
+    "slots": {
+      "memory": "openclaw-remnic"
     }
   }
 }
