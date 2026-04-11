@@ -110,11 +110,14 @@ function readPluginHooksPolicy(
   apiConfig: unknown,
 ): Record<string, unknown> | undefined {
   // Try api.config first — resolve via active memory slot, then fall back by id.
+  // Guard: only trust the slot when it points to a known Remnic plugin id so
+  // mixed-plugin installs don't apply another plugin's hooks policy to Remnic.
   const apiAny = apiConfig as any;
   const apiSlot: string | undefined = apiAny?.plugins?.slots?.memory;
+  const isRemnicSlot = apiSlot === PLUGIN_ID || apiSlot === LEGACY_PLUGIN_ID;
   const apiEntry =
-    (apiSlot && apiAny?.plugins?.entries?.[apiSlot] !== undefined
-      ? apiAny.plugins.entries[apiSlot]
+    (isRemnicSlot && apiAny?.plugins?.entries?.[apiSlot!] !== undefined
+      ? apiAny.plugins.entries[apiSlot!]
       : undefined) ??
     apiAny?.plugins?.entries?.[PLUGIN_ID] ??
     apiAny?.plugins?.entries?.[LEGACY_PLUGIN_ID];

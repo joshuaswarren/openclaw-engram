@@ -87,16 +87,23 @@ function unwrapOpenClawEntry(raw) {
     ? plugins.entries
     : undefined;
   if (entry) {
-    // Honour the operator's configured memory slot first.
-    const activeId =
+    // Honour the operator's configured memory slot first, but only when it
+    // points to a known Remnic plugin id so mixed-plugin installs don't
+    // accidentally unwrap a different plugin's config into Remnic.
+    const rawSlot =
       plugins.slots && typeof plugins.slots === "object"
         ? plugins.slots.memory
+        : undefined;
+    const KNOWN_IDS = ["openclaw-remnic", "openclaw-engram"];
+    const activeId =
+      typeof rawSlot === "string" && KNOWN_IDS.includes(rawSlot)
+        ? rawSlot
         : undefined;
     const candidateIds = [
       activeId,
       "openclaw-remnic",
       "openclaw-engram",
-    ].filter((id) => typeof id === "string" && id.length > 0);
+    ].filter((id) => typeof id === "string" && id !== undefined && id.length > 0);
     for (const id of candidateIds) {
       const pluginConfig = entry[id] && entry[id].config;
       if (pluginConfig && typeof pluginConfig === "object") {
