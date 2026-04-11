@@ -246,24 +246,32 @@ test("attachCitation with custom template tags untagged text exactly once (Findi
 
 // ── Finding 2 regression: placeholder-bounded template matcher ─────────────────
 
-test("hasCitationForTemplate with placeholder-bounded template does not match arbitrary text", () => {
+test("hasCitationForTemplate with placeholder-bounded template requires bracket-wrapped match", () => {
   // Template starts AND ends with a placeholder — prefix and suffix are both "".
-  // The middle literal is ": " which must be the anchor.
+  // The new strategy requires the match to be wrapped in a bracket/paren/angle
+  // pair, so ordinary prose that merely contains the middle literal must NOT
+  // be classified as a citation.
   const template = "{source}: {content}";
-  // Text that contains ": " should match (it contains the middle literal).
-  assert.equal(hasCitationForTemplate("planner: The service uses Redis", template), true);
+  // Bracket-wrapped form that a real citation would use: matches.
+  assert.equal(hasCitationForTemplate("Fact body. [planner: some-note]", template), true);
+  // Prose containing a ": " separator must NOT match — no bracket wrapping.
+  assert.equal(hasCitationForTemplate("planner: The service uses Redis", template), false);
   // Random text without the middle literal must NOT match.
   assert.equal(hasCitationForTemplate("random text without separator", template), false);
   assert.equal(hasCitationForTemplate("no separator here at all", template), false);
 });
 
-test("hasCitationForTemplate with fully placeholder-only template returns false (null matcher fallback)", () => {
+test("hasCitationForTemplate with fully placeholder-only template returns false (cannot anchor)", () => {
   // Template has no literal segments at all — templateMatcher returns null.
-  // The null-matcher path falls back to text.includes(template) which will be
-  // false for any real text (the template contains raw placeholder syntax).
+  // All-placeholder templates cannot be reliably detected without sentinel
+  // markers; hasCitationForTemplate returns false for this shape.
   const template = "{source}{content}";
   assert.equal(hasCitationForTemplate("anything goes here", template), false);
-  assert.equal(hasCitationForTemplate("{source}{content}", template), true);
+  // Even a text that literally contains the raw template syntax is not
+  // recognised — the function deliberately refuses to fall back to a naive
+  // text.includes check, because that check would never match a rendered
+  // citation body anyway (placeholders have been substituted).
+  assert.equal(hasCitationForTemplate("{source}{content}", template), false);
 });
 
 test("hasCitationForTemplate preserves normal behaviour for well-formed templates (Finding 2 non-regression)", () => {
@@ -487,4 +495,82 @@ test("StorageManager.writeMemory contentHashSource prevents duplicate promotion 
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+// ── PR #401 review findings: stricter template matcher + single-pass format ───
+
+test("hasCitationForTemplate: '{agent} {sessionId}' rejects plain two-word prose", () => {
+  // Regression: the previous reconstruction used `[\w.-]+ [\w.-]+` with soft
+  // whitespace/start anchors, so `"The service responded"` matched — two
+  // English words separated by a space. The bracket-delimited anchor in the
+  // new strategy rejects prose unambiguously.
+  const template = "{agent} {sessionId}";
+  assert.equal(
+    hasCitationForTemplate("The service responded", template),
+    false,
+    "two-word English prose must never be classified as a citation",
+  );
+});
+
+test("hasCitationForTemplate: '{agent} {sessionId}' accepts a bracket-wrapped token", () => {
+  // Positive case — the exact shape that attachCitation would emit when the
+  // fact body already ends with a bracketed citation token.
+  const template = "{agent} {sessionId}";
+  assert.equal(
+    hasCitationForTemplate("[backend-agent session-abc123]", template),
+    true,
+    "bracket-wrapped identifier pair must be recognised as a citation",
+  );
+});
+
+test("hasCitationForTemplate: '{agent}{sessionId}' all-placeholder template returns false", () => {
+  // Regression for PR #401: the previous implementation fell through to
+  // text.includes(template), which compared the substituted citation against
+  // the raw placeholder syntax — always false — causing attachCitation to
+  // append a fresh citation on every reprocessing pass. The new behaviour
+  // explicitly returns false for all-placeholder templates and documents the
+  // limitation so callers cannot rely on (unreliable) dedup for this shape.
+  const template = "{agent}{sessionId}";
+  assert.equal(
+    hasCitationForTemplate("alphaomega", template),
+    false,
+    "no sentinel / no literal — must return false",
+  );
+});
+
+test("formatCitation: substituted values containing placeholder syntax are not re-interpreted", () => {
+  // Regression for PR #401 (low-severity): the previous implementation chained
+  // `.replace(/\{agent\}/g, ...)`, `.replace(/\{ts\}/g, ...)` etc. If the agent
+  // value was literally `"{ts}"`, step 1 substituted `{agent}` with the string
+  // `{ts}`, and the later {ts} pass replaced THAT into the actual timestamp —
+  // producing the timestamp in the agent slot.
+  //
+  // The single-pass implementation scans the template once and each matched
+  // `{name}` token is replaced by exactly one lookup, so substituted values
+  // are terminal and cannot re-trigger replacement.
+  const out = formatCitation(
+    { agent: "{ts}", sessionId: "s1", ts: "T" },
+    "{agent}:{sessionId}:{ts}",
+  );
+  assert.equal(
+    out,
+    "{ts}:s1:T",
+    "agent slot must carry the literal string '{ts}', not the timestamp",
+  );
+});
+
+test("formatCitation: single-pass substitution handles nested placeholder syntax in session value", () => {
+  // Complementary case for session / sessionId values that look like
+  // placeholders. Every slot must be filled from its own lookup, never from a
+  // prior substitution.
+  const out = formatCitation(
+    { agent: "a1", session: "sess:{date}", ts: "2026-04-11T00:00:00Z" },
+    "[S: agent={agent}, session={session}, date={date}]",
+  );
+  // The `{date}` inside the session value must remain literal; the `{date}`
+  // placeholder at the end of the template must resolve to 2026-04-11.
+  assert.equal(
+    out,
+    "[S: agent=a1, session=sess:{date}, date=2026-04-11]",
+  );
 });

@@ -92,6 +92,12 @@ export function deriveSessionId(session: string | undefined): string | undefined
  *
  * Missing context fields fall back to {@link CITATION_UNKNOWN} — the caller
  * should always get a non-empty, parseable tag.
+ *
+ * Uses a single-pass substitution so that values which themselves contain
+ * placeholder syntax (e.g. an agent literally named `"{ts}"`) cannot be
+ * re-interpreted by subsequent replacement steps. Each placeholder slot
+ * receives exactly one lookup and the substituted value is treated as
+ * terminal text, not template source.
  */
 export function formatCitation(
   ctx: CitationContext,
@@ -104,15 +110,25 @@ export function formatCitation(
   const date = ts && ts !== CITATION_UNKNOWN ? ts.slice(0, 10) : CITATION_UNKNOWN;
   const sessionForTemplate = session.trim().length > 0 ? session : CITATION_UNKNOWN;
 
-  // Use replacer-function form so values containing `$` special sequences
-  // (e.g. `$&`, `$1`, `$``, `$'`) are treated as literal strings and are
-  // never interpreted as replacement-pattern meta-characters by the JS engine.
-  return template
-    .replace(/\{agent\}/g, () => agent)
-    .replace(/\{session\}/g, () => sessionForTemplate)
-    .replace(/\{sessionId\}/g, () => sessionId)
-    .replace(/\{ts\}/g, () => ts)
-    .replace(/\{date\}/g, () => date);
+  // Map from recognised placeholder names to their resolved value. Unknown
+  // placeholder names are left intact (returning the original `{name}`).
+  const values: Record<string, string> = {
+    agent,
+    session: sessionForTemplate,
+    sessionId,
+    ts,
+    date,
+  };
+
+  // Single-pass scan: replace every recognised `{name}` in one sweep so that
+  // substituted values cannot themselves be treated as template source on a
+  // subsequent pass. The replacer-function form also guarantees that `$` /
+  // `$&` / `$1` sequences inside values are emitted literally.
+  return template.replace(/\{([a-zA-Z_][\w]*)\}/g, (match, name: string) => {
+    return Object.prototype.hasOwnProperty.call(values, name)
+      ? values[name]!
+      : match;
+  });
 }
 
 /**
@@ -131,83 +147,97 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** Regex that matches a `{placeholder}` token inside a template string. */
+const PLACEHOLDER_REGEX = /\{[a-zA-Z_][\w]*\}/g;
+
 /**
  * Build a regex that matches a citation produced by the given template.
  *
- * The approach: extract the literal prefix of the template (everything before
- * the first `{placeholder}`) and the literal suffix (everything after the last
- * `{placeholder}`), then match `prefix + <anything non-newline> + suffix`.
- * This is robust for any bracket-delimited format like `[Source: ...]`,
- * `[src:...]`, `(prov: ...)`, etc.
+ * The approach depends on the shape of the template:
  *
- * Edge-case — placeholder-bounded templates (e.g. `"{source}: {content}"` or
- * `"{agent}:{sessionId}"`): when both the prefix and suffix are empty strings
- * the naive `"" + [^\n]*? + ""` regex matches ANY non-empty string, and even
- * anchoring on the first non-empty middle literal alone is too loose — a
- * template like `"{agent}:{sessionId}"` collapses to just `":"`, which fires
- * on incidental colons in plain text (e.g. `"URL uses http://host:80"`).
+ *  - **Normal case (non-empty literal prefix or suffix).** Anchor the match
+ *    with `escaped prefix + [^\n]*? + escaped suffix`. A template like
+ *    `[src:{agent}/{sessionId}@{date}]` collapses to `\[src:[^\n]*?\]` which
+ *    is robust: it requires the full literal frame the template defines.
  *
- * The stricter placeholder-bounded strategy:
+ *  - **Placeholder-bounded case (both prefix and suffix empty).** The naive
+ *    prefix/suffix approach degenerates to `[^\n]*?`, matching anything. And
+ *    anchoring on just the middle literal (e.g. `":"` for `{agent}:{sessionId}`)
+ *    false-positives on ordinary prose. The prior attempt — requiring each
+ *    placeholder slot to be `[\w.-]+` with whitespace/bracket boundaries — was
+ *    still too permissive: `[\w.-]+ [\w.-]+` happily fires on two English
+ *    words like `"The service"`, and adjacent punctuation/word-boundary
+ *    context cannot reliably distinguish citations from prose.
  *
- *  1. Reconstruct the full template shape by joining every inter-placeholder
- *     literal segment, requiring each placeholder slot to look like an
- *     identifier token (`[\w.-]+`) so that random prose cannot slip through.
- *  2. Anchor the overall match so the first identifier token is preceded by
- *     whitespace, a bracket/paren/angle opener, or the start of the string,
- *     and the final identifier token is followed by whitespace, a closer,
- *     common punctuation, or end of string.  This rejects embedded matches
- *     like `host:80` inside `http://host:80` without over-rejecting real
- *     citations like `[backend-agent:abc123]`.
- *  3. If the template has no internal literal at all (e.g. `"{source}{content}"`)
- *     return `null` so the caller falls back to a safer inclusion check.
+ *    The new strategy requires a **hard bracket/paren/angle delimiter** on
+ *    both sides of the reconstructed match. Every well-formed citation
+ *    template in the wild wraps its content in some bracket pair (see issue
+ *    #369 format), and prose almost never places `[...]` / `(...)` / `<...>`
+ *    around a two-word phrase. This yields the cleanest false-positive
+ *    rejection for common prose like `"The service"` or `"http://host:80"`
+ *    while still accepting realistic inline citations such as
+ *    `"[backend-agent session-abc123]"` or `"[backend-agent:abc123]"`.
+ *
+ *    Each placeholder slot is a non-empty `[\w.-]+` identifier token so that
+ *    whitespace and URL slashes cannot bleed across placeholder boundaries.
+ *
+ *  - **All-placeholder case (no literals between placeholders either).** No
+ *    reliable regex can be built — a template like `{agent}{sessionId}`
+ *    contains no anchor characters. Returns `null`; {@link
+ *    hasCitationForTemplate} treats this as "cannot detect" and returns
+ *    false, falling back on explicit sentinel/format detection only for the
+ *    default `[Source: ...]` shape.
  *
  * Returns `null` when the template has no placeholders (fully-literal
- * citation, handled by the prefix-equality fast path in
- * {@link hasCitationForTemplate}) **or** when the template is entirely
- * placeholder-bounded with no internal literals.
+ * citation, handled by the string-equality fast path in {@link
+ * hasCitationForTemplate}) **or** when the template is entirely placeholder-
+ * only with no literal content whatsoever.
  */
 function templateMatcher(template: string): RegExp | null {
   // Split around all {placeholder} tokens.
-  const parts = template.split(/\{[^}]+\}/);
+  const parts = template.split(PLACEHOLDER_REGEX);
   if (parts.length <= 1) return null;
 
   const prefix = parts[0] ?? "";
   const suffix = parts[parts.length - 1] ?? "";
 
-  // When both the prefix and suffix are blank the naive anchoring regex would
-  // match any string.  Build a stricter reconstruction of the template shape
-  // where each placeholder slot is a word-ish identifier token and the whole
-  // match is bracketed by clean boundaries.
-  if (prefix.trim().length === 0 && suffix.trim().length === 0) {
-    const middleLiterals = parts.slice(1, -1);
-    const hasNonEmptyMiddle = middleLiterals.some((p) => p.length > 0);
-    if (!hasNonEmptyMiddle) {
-      // Entirely placeholder-bounded with no internal literal — cannot build a
-      // reliable matcher.  Signal the caller to use a fallback strategy.
-      return null;
-    }
-    // Identifier token: one or more word chars, dots, or dashes.  Intentionally
-    // excludes `/`, `:`, whitespace and most punctuation so that URL-like
-    // fragments (`http://host:80`) cannot masquerade as a citation.
-    const idToken = "[\\w.-]+";
-    // Reconstruct: idToken + literal_1 + idToken + literal_2 + ... + idToken
-    const body =
-      idToken +
-      middleLiterals.map((lit) => escapeRegExp(lit) + idToken).join("");
-    // Leading boundary: start-of-string, whitespace, or a bracket/paren/angle
-    // opener.  Trailing boundary (lookahead so it does not consume): the
-    // complementary closers plus common sentence punctuation or end-of-string.
-    const leading = "(?:^|[\\s\\[\\(\\<])";
-    const trailing = "(?=[\\s\\]\\)\\>,.;]|$)";
-    return new RegExp(leading + body + trailing, "i");
+  // Normal case: at least one literal frame on the outside.
+  if (prefix.length > 0 || suffix.length > 0) {
+    const escapedPrefix = escapeRegExp(prefix);
+    const escapedSuffix = escapeRegExp(suffix);
+    const middle = "[^\\n]*?";
+    const pattern = escapedPrefix + middle + escapedSuffix;
+    return new RegExp(pattern, "i");
   }
 
-  // Normal case: anchor with prefix + wildcard + suffix.
-  const escapedPrefix = escapeRegExp(prefix);
-  const escapedSuffix = escapeRegExp(suffix);
-  const middle = "[^\\n]*?";
-  const pattern = escapedPrefix + middle + escapedSuffix;
-  return new RegExp(pattern, "i");
+  // Placeholder-bounded case: prefix and suffix are both empty. We require a
+  // hard bracket-style delimiter on each side of the reconstructed match, so
+  // that normal prose (even prose containing the middle literal) cannot be
+  // classified as a citation.
+  const middleLiterals = parts.slice(1, -1);
+  const hasNonEmptyMiddle = middleLiterals.some((p) => p.length > 0);
+  if (!hasNonEmptyMiddle) {
+    // All-placeholder template with no literal content. Impossible to anchor
+    // reliably without sentinel markers; signal the caller.
+    return null;
+  }
+
+  // Identifier token: one or more word chars, dots, or dashes. Intentionally
+  // excludes whitespace, slashes, colons, and most punctuation so that
+  // URL-like fragments (`http://host:80`) cannot masquerade as a citation
+  // and prose-like tokens cannot span placeholder boundaries.
+  const idToken = "[\\w.-]+";
+  const body =
+    idToken +
+    middleLiterals.map((lit) => escapeRegExp(lit) + idToken).join("");
+  // Require an opening bracket/paren/angle immediately before the body and a
+  // closing one immediately after. Using a lookahead for the closer lets
+  // parseAllCitations-style consumers extract just the bracketed content if
+  // they want to, but here we only use .test() so a consuming group would
+  // also be fine.
+  const opener = "[\\[\\(\\<]";
+  const closer = "[\\]\\)\\>]";
+  return new RegExp(opener + body + closer, "i");
 }
 
 /**
@@ -217,6 +247,14 @@ function templateMatcher(template: string): RegExp | null {
  *
  * Use this instead of {@link hasCitation} whenever the caller has access to
  * the configured `inlineSourceAttributionFormat`.
+ *
+ * All-placeholder templates such as `{agent}{sessionId}` have no literal
+ * content to anchor on and therefore cannot be reliably detected without
+ * dedicated sentinel markers. In that case the function returns `false` —
+ * callers that need idempotent dedup for such templates should either adopt
+ * a template with literal delimiters (recommended) or rely on the default
+ * `[Source: ...]` marker detection which is always available via
+ * {@link hasCitation}.
  */
 export function hasCitationForTemplate(text: string, template: string): boolean {
   if (typeof text !== "string" || text.length === 0) return false;
@@ -225,11 +263,21 @@ export function hasCitationForTemplate(text: string, template: string): boolean 
   if (hasCitation(text)) return true;
   // If the configured template matches the default, we're done.
   if (template === DEFAULT_CITATION_FORMAT) return false;
-  // Build a matcher for the custom template and test the content.
+
+  // Fully-literal template (no placeholders): exact inclusion check.
+  if (!PLACEHOLDER_REGEX.test(template)) {
+    // Reset lastIndex because PLACEHOLDER_REGEX is declared with /g.
+    PLACEHOLDER_REGEX.lastIndex = 0;
+    return text.includes(template);
+  }
+  // Reset lastIndex after the .test() probe above.
+  PLACEHOLDER_REGEX.lastIndex = 0;
+
   const matcher = templateMatcher(template);
   if (!matcher) {
-    // Template has no placeholders — it is a fixed string. Use inclusion check.
-    return text.includes(template);
+    // All-placeholder template: cannot build a reliable matcher. See the
+    // docstring — callers should not rely on dedup for this shape.
+    return false;
   }
   return matcher.test(text);
 }
