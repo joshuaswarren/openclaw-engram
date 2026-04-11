@@ -72,6 +72,10 @@ import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
+import {
+  decideSemanticDedup,
+  type SemanticDedupHit,
+} from "./dedup/semantic.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import { parseQmdExplain } from "./qmd.js";
 import {
@@ -8577,6 +8581,38 @@ export class Orchestrator {
         continue;
       }
 
+      // Issue #373 — write-time semantic similarity guard. Hook runs after
+      // the exact content-hash miss and before any storage work so that
+      // paraphrased near-duplicates never reach writeMemory() in the first
+      // place. Fails open when the embedding backend is unavailable.
+      if (this.config.semanticDedupEnabled) {
+        const semanticDecision = await decideSemanticDedup(
+          fact.content,
+          (content, limit) => this.semanticDedupLookup(content, limit),
+          {
+            enabled: true,
+            threshold: this.config.semanticDedupThreshold,
+            candidates: this.config.semanticDedupCandidates,
+          },
+        );
+        if (semanticDecision.action === "skip") {
+          log.debug(
+            `dedup: skipping semantic near-duplicate fact "${fact.content
+              .slice(0, 60)
+              .replace(/\s+/g, " ")}…" score=${semanticDecision.topScore.toFixed(
+              3,
+            )} neighbor=${semanticDecision.topId}`,
+          );
+          dedupedCount++;
+          // Still record the content hash so a later exact-copy attempt
+          // short-circuits on the cheaper hash path without re-embedding.
+          if (this.contentHashIndex) {
+            this.contentHashIndex.add(fact.content);
+          }
+          continue;
+        }
+      }
+
       // Score importance using local heuristics (Phase 1B)
       let writeCategory = fact.category;
       let targetStorage = storage;
@@ -11016,6 +11052,36 @@ export class Orchestrator {
       }
     }
     return [...used];
+  }
+
+  /**
+   * Issue #373 — nearest-neighbor lookup for the write-time semantic dedup
+   * guard. Returns the top-K embedding hits against the currently indexed
+   * memories, or an empty array when the embedding backend is unavailable.
+   * Intentionally does NOT throw; `decideSemanticDedup` treats both "empty"
+   * and "error" outcomes as fail-open (keep the candidate).
+   */
+  private async semanticDedupLookup(
+    content: string,
+    limit: number,
+  ): Promise<SemanticDedupHit[]> {
+    if (!this.config.embeddingFallbackEnabled) return [];
+    try {
+      if (!(await this.embeddingFallback.isAvailable())) {
+        log.debug("semantic dedup: embedding backend unavailable, skipping");
+        return [];
+      }
+      const hits = await this.embeddingFallback.search(content, limit);
+      if (!Array.isArray(hits) || hits.length === 0) return [];
+      return hits.map((hit) => ({
+        id: hit.id,
+        score: hit.score,
+        path: hit.path,
+      }));
+    } catch (err) {
+      log.debug(`semantic dedup: lookup failed (${err}), failing open`);
+      return [];
+    }
   }
 
   private async searchEmbeddingFallback(

@@ -1267,6 +1267,16 @@ export function parseConfig(raw: unknown): PluginConfig {
 
     // v6.0 Fact deduplication & archival
     factDeduplicationEnabled: cfg.factDeduplicationEnabled !== false,
+    // Issue #373 — write-time semantic similarity guard
+    semanticDedupEnabled: cfg.semanticDedupEnabled !== false,
+    semanticDedupThreshold:
+      typeof cfg.semanticDedupThreshold === "number"
+        ? Math.min(1, Math.max(0, cfg.semanticDedupThreshold))
+        : 0.92,
+    semanticDedupCandidates:
+      typeof cfg.semanticDedupCandidates === "number"
+        ? Math.max(1, Math.floor(cfg.semanticDedupCandidates))
+        : 5,
     factArchivalEnabled: cfg.factArchivalEnabled === true,
     factArchivalAgeDays:
       typeof cfg.factArchivalAgeDays === "number" ? cfg.factArchivalAgeDays : 90,
