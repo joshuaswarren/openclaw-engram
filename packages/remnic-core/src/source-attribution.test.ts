@@ -797,3 +797,112 @@ test("stripCitation (Finding 2): attach → strip round-trip with uncited double
   const stripped = stripCitation(attached);
   assert.equal(stripped, body, "strip must restore original body including double spaces");
 });
+
+// ── P2 finding UM3U regression: hash-index key consistent across write and archive ──
+
+test(
+  "UM3U: ContentHashIndex.remove via stripCitation(citedContent) removes the raw-content hash (inlineSourceAttributionEnabled=true)",
+  async () => {
+    // Scenario:
+    //   1. inlineSourceAttributionEnabled=true — facts are stored as
+    //      "raw content [Source: agent=X, session=Y, ts=Z]" on disk.
+    //   2. At write time, contentHashSource=rawContent is passed so the
+    //      dedup index stores hash(rawContent), not hash(citedContent).
+    //   3. At archive/consolidation time the code previously called
+    //      contentHashIndex.remove(memory.content) where memory.content is
+    //      the post-citation string — hash(citedContent) ≠ hash(rawContent),
+    //      so the remove silently failed and left a stale entry.
+    //   4. The fix: call contentHashIndex.remove(stripCitation(memory.content))
+    //      which recovers the raw text and produces the matching hash.
+    //
+    // This test exercises the fix at the ContentHashIndex level (unit) rather
+    // than through the full orchestrator, keeping it fast and dependency-free.
+    const dir = await mkdtemp(path.join(os.tmpdir(), "engram-um3u-"));
+    try {
+      const rawContent = "user prefers dark mode in all applications";
+      const citedContent =
+        `${rawContent} [Source: agent=planner, session=chat, ts=2026-04-11T10:00:00Z]`;
+
+      // Simulate write-time: index the RAW content (as contentHashSource does).
+      const idx = new ContentHashIndex(dir);
+      await idx.load();
+      idx.add(rawContent);
+      await idx.save();
+
+      // Verify the raw hash is present.
+      assert.ok(idx.has(rawContent), "raw content hash must be present after add");
+      // The cited variant must NOT collide with the raw hash (validates the premise).
+      assert.ok(!idx.has(citedContent), "cited content must hash differently from raw");
+
+      // Simulate the BROKEN archive path: remove using the cited content directly.
+      // This must leave the raw hash intact (demonstrating the bug).
+      const idxBroken = new ContentHashIndex(dir);
+      await idxBroken.load();
+      idxBroken.remove(citedContent); // broken: hash mismatch, no-op
+      assert.ok(
+        idxBroken.has(rawContent),
+        "broken path: stale hash must remain because citedContent hash does not match",
+      );
+
+      // Simulate the FIXED archive path: strip citation before calling remove.
+      // stripCitation(citedContent) === rawContent (same hash), so remove succeeds.
+      const idxFixed = new ContentHashIndex(dir);
+      await idxFixed.load();
+      idxFixed.remove(stripCitation(citedContent)); // fixed: hash matches
+      assert.ok(
+        !idxFixed.has(rawContent),
+        "fixed path: raw content hash must be removed after stripCitation → remove",
+      );
+
+      // Verify the index is now empty (no stale entries remain).
+      assert.equal(idxFixed.size, 0, "hash index must be empty after correct removal");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "UM3U: re-extraction of same raw fact is NOT false-deduped after correct archive removal",
+  async () => {
+    // After a fact is archived with the FIXED remove path (stripCitation before
+    // remove), the hash index no longer contains the raw-content hash.  A
+    // subsequent extraction of the same underlying raw fact must therefore pass
+    // the dedup gate (has() returns false) and be allowed to be re-written.
+    //
+    // Without the fix: remove(citedContent) is a no-op → has(rawContent) stays
+    // true → new extraction is incorrectly blocked as a duplicate.
+    // With the fix: remove(stripCitation(citedContent)) succeeds → has(rawContent)
+    // returns false → re-extraction can proceed.
+    const dir = await mkdtemp(path.join(os.tmpdir(), "engram-um3u-reextract-"));
+    try {
+      const rawContent = "user likes coffee in the morning";
+      const citedContent =
+        `${rawContent} [Source: agent=scout, session=chat, ts=2026-04-11T09:00:00Z]`;
+
+      // Write phase: add raw hash to index.
+      const writeIdx = new ContentHashIndex(dir);
+      await writeIdx.load();
+      writeIdx.add(rawContent);
+      await writeIdx.save();
+
+      // Archive phase (FIXED): use stripCitation before remove.
+      const archiveIdx = new ContentHashIndex(dir);
+      await archiveIdx.load();
+      archiveIdx.remove(stripCitation(citedContent));
+      await archiveIdx.save();
+
+      // Re-extraction phase: load a fresh index (new session / process).
+      const reextractIdx = new ContentHashIndex(dir);
+      await reextractIdx.load();
+
+      // The re-extracted raw fact must NOT be blocked as a duplicate.
+      assert.ok(
+        !reextractIdx.has(rawContent),
+        "after correct archive removal, re-extraction of the same raw fact must not be false-deduped",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);

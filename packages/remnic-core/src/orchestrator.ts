@@ -20,6 +20,7 @@ import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   attachCitation,
+  stripCitation,
   type CitationContext,
 } from "./source-attribution.js";
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
@@ -2114,9 +2115,15 @@ export class Orchestrator {
             relatedMemoryIds: [canonicalId],
           });
           if (archiveResult) {
-            // Remove from content-hash index
+            // Remove from content-hash index.
+            // Strip any inline citation suffix before hashing so the key
+            // matches the raw-content hash recorded at write time
+            // (contentHashSource = fact.content, pre-citation).  Without
+            // stripCitation, inlineSourceAttributionEnabled=true causes a
+            // hash mismatch here and leaves stale entries that later
+            // false-dedup re-extractions of the same underlying fact.
             if (this.contentHashIndex) {
-              this.contentHashIndex.remove(m.content);
+              this.contentHashIndex.remove(stripCitation(m.content));
             }
             await this.embeddingFallback.removeFromIndex(m.frontmatter.id);
             if (
@@ -10360,9 +10367,15 @@ export class Orchestrator {
       // All criteria met — archive
       const result = await this.storage.archiveMemory(memory);
       if (result) {
-        // Remove from content-hash index since it's no longer in hot search
+        // Remove from content-hash index since it's no longer in hot search.
+        // Strip any inline citation suffix before hashing so the key matches
+        // the raw-content hash recorded at write time (contentHashSource =
+        // fact.content, pre-citation).  Without stripCitation,
+        // inlineSourceAttributionEnabled=true causes a hash mismatch here and
+        // leaves stale entries that later false-dedup re-extractions of the
+        // same underlying fact.
         if (this.contentHashIndex) {
-          this.contentHashIndex.remove(memory.content);
+          this.contentHashIndex.remove(stripCitation(memory.content));
         }
         await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);
         if (
