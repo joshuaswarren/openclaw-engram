@@ -639,7 +639,7 @@ function cmdDoctor(): void {
         : null;
       const configuredMemoryDir = entryConfig?.memoryDir as string | undefined;
       if (configuredMemoryDir) {
-        const resolvedMemDir = configuredMemoryDir.replace(/^~/, resolveHomeDir());
+        const resolvedMemDir = path.resolve(expandTilde(configuredMemoryDir));
         const memDirExists = fs.existsSync(resolvedMemDir);
         checks.push({
           name: "OpenClaw memoryDir",
