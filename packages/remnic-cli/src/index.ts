@@ -248,9 +248,10 @@ function resolveOpenclawConfigPath(cliPath?: string): string {
   // Env-var paths are always honoured regardless of whether the file exists yet
   // (a first-time install needs to create the file at the configured location).
   // Only fall through to existence-probing when no env var is set.
+  // Apply expandTilde so values like ~/openclaw.json work correctly.
   const envPath =
     process.env.OPENCLAW_CONFIG_PATH || process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
-  if (envPath) return path.resolve(envPath);
+  if (envPath) return path.resolve(expandTilde(envPath));
 
   // No env var: return the first existing default path, or the canonical default.
   for (const candidate of DEFAULT_OPENCLAW_CONFIG_PATHS_FOR_DOCTOR) {
@@ -1708,10 +1709,21 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
 
   console.log(`Memory dir:      ${memoryDir}`);
 
-  // Preserve all top-level entry fields (e.g. hooks, enabled) from the
-  // existing openclaw-remnic entry so reinstalls don't silently drop runtime
-  // policy. Only the config sub-object is updated.
+  // Preserve top-level entry fields (e.g. hooks, enabled) during both
+  // reinstalls and migration:
+  // - Spread legacy entry first so any legacy policy fields are carried over
+  //   when migrating (migrateLegacy=true), but exclude legacy's config since
+  //   that is merged separately with the explicit memoryDir taking precedence.
+  // - Spread the existing new entry on top so its policy takes precedence.
+  // - Finally, overwrite config with the merged result.
+  const legacyNonConfigFields: Record<string, unknown> = {};
+  if (migrateLegacy && legacyEntry) {
+    for (const [k, v] of Object.entries(legacyEntry)) {
+      if (k !== "config") legacyNonConfigFields[k] = v;
+    }
+  }
   const newEntry: Record<string, unknown> = {
+    ...legacyNonConfigFields,
     ...(existingNewEntry ?? {}),
     config: {
       ...legacyConfigToMerge,
@@ -1771,8 +1783,17 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
     return;
   }
 
-  // Create memory dir
-  if (!fs.existsSync(memoryDir)) {
+  // Create memory dir — fail fast if the path exists but is a file
+  if (fs.existsSync(memoryDir)) {
+    const st = fs.statSync(memoryDir);
+    if (!st.isDirectory()) {
+      throw new Error(
+        `Cannot use ${memoryDir} as the memory directory — a file already exists at that path.\n` +
+        `Remove it first and re-run, or choose a different path with --memory-dir.`,
+      );
+    }
+    // Directory already exists, nothing to do.
+  } else {
     fs.mkdirSync(memoryDir, { recursive: true });
     console.log(`Created memory directory: ${memoryDir}`);
   }
