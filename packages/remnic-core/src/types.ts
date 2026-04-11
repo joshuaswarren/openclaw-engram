@@ -849,6 +849,14 @@ export interface BriefingSections {
   todayCalendar?: CalendarEvent[];
 }
 
+/** A calendar source failure recorded when a CalendarSource throws during briefing generation. */
+export interface BriefingCalendarSourceError {
+  /** Human-readable description of the source (e.g. file path or source name). */
+  source: string;
+  /** Stringified error message from the failed source. */
+  error: string;
+}
+
 /** Result returned by `buildBriefing`. */
 export interface BriefingResult {
   markdown: string;
@@ -858,6 +866,12 @@ export interface BriefingResult {
   followupsUnavailableReason?: string;
   /** Effective lookback window (ISO date range) used for this briefing. */
   window: { from: string; to: string };
+  /**
+   * Calendar sources that failed during this briefing run.
+   * Only present (non-empty) when at least one source threw.
+   * Allows callers to distinguish "no events today" from "source unavailable".
+   */
+  calendarSourceErrors?: BriefingCalendarSourceError[];
 }
 
 /**

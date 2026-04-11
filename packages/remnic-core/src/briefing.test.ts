@@ -1387,3 +1387,138 @@ test("eventFallsOnDate: floating event with out-of-range start time '2026-04-11T
     "out-of-range start minute must result in event being skipped",
   );
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 8 P2 Finding 2 (briefing.ts:254): Surface calendar source failures
+// ──────────────────────────────────────────────────────────────────────────
+
+test("buildBriefing: failing calendar source populates calendarSourceErrors in result", async () => {
+  const throwingCalendar: CalendarSource = {
+    eventsForDate: async (_dateIso: string) => {
+      throw new Error("synthetic permission denied");
+    },
+  };
+
+  const result = await buildBriefing({
+    storage: makeEmptyStorage(),
+    allowLlm: false,
+    calendarSource: throwingCalendar,
+    now: new Date("2026-04-11T10:00:00.000Z"),
+  });
+
+  assert.ok(
+    Array.isArray(result.calendarSourceErrors) && result.calendarSourceErrors.length > 0,
+    "calendarSourceErrors must be non-empty when a calendar source throws",
+  );
+  assert.ok(
+    result.calendarSourceErrors![0]!.error.includes("synthetic permission denied"),
+    "calendarSourceErrors[0].error must contain the original error message",
+  );
+  assert.ok(
+    typeof result.calendarSourceErrors![0]!.source === "string",
+    "calendarSourceErrors[0].source must be a string",
+  );
+});
+
+test("buildBriefing: healthy calendar source produces no calendarSourceErrors", async () => {
+  const healthyCalendar: CalendarSource = {
+    eventsForDate: async (_dateIso: string) => [],
+  };
+
+  const result = await buildBriefing({
+    storage: makeEmptyStorage(),
+    allowLlm: false,
+    calendarSource: healthyCalendar,
+    now: new Date("2026-04-11T10:00:00.000Z"),
+  });
+
+  assert.ok(
+    !result.calendarSourceErrors || result.calendarSourceErrors.length === 0,
+    "calendarSourceErrors must be absent or empty when the calendar source succeeds",
+  );
+});
+
+test("buildBriefing: no calendar source configured produces no calendarSourceErrors", async () => {
+  const result = await buildBriefing({
+    storage: makeEmptyStorage(),
+    allowLlm: false,
+    now: new Date("2026-04-11T10:00:00.000Z"),
+  });
+
+  assert.ok(
+    !result.calendarSourceErrors || result.calendarSourceErrors.length === 0,
+    "calendarSourceErrors must be absent when no calendarSource is configured",
+  );
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 8 P2 Finding 3 (briefing.ts:988): Stable sort for equal-timestamp threads
+// ──────────────────────────────────────────────────────────────────────────
+
+test("buildActiveThreads: threads with identical updatedAt are sorted deterministically by id", () => {
+  // All three memories have exactly the same updatedAt but different entity thread keys.
+  // Running buildActiveThreads twice on different input orderings must produce
+  // the same output ordering, thanks to the id tiebreaker.
+  const ts = "2026-04-10T12:00:00.000Z";
+
+  function makeEntityMemory(id: string, entityRef: string): MemoryFile {
+    return {
+      path: `/synthetic/${id}.md`,
+      frontmatter: {
+        id,
+        category: "fact",
+        created: ts,
+        updated: ts,
+        source: "test",
+        confidence: 0.9,
+        confidenceTier: "explicit",
+        tags: [],
+        entityRef,
+      },
+      content: `Content for ${id}`,
+    };
+  }
+
+  const memA = makeEntityMemory("mem-alpha", "alpha");
+  const memB = makeEntityMemory("mem-beta", "beta");
+  const memC = makeEntityMemory("mem-gamma", "gamma");
+
+  const resultForward = buildActiveThreads([memA, memB, memC]);
+  const resultReverse = buildActiveThreads([memC, memB, memA]);
+
+  assert.equal(resultForward.length, 3, "should produce 3 threads");
+  assert.deepEqual(
+    resultForward.map((t) => t.id),
+    resultReverse.map((t) => t.id),
+    "order must be identical regardless of input order when timestamps are equal",
+  );
+});
+
+test("buildActiveThreads: primary sort by updatedAt overrides id tiebreaker", () => {
+  // "beta" sorts after "alpha" lexicographically (tiebreaker would place alpha first).
+  // But beta has a later updatedAt, so beta must appear first in the output.
+  function makeEntityMemory2(id: string, entityRef: string, updated: string): MemoryFile {
+    return {
+      path: `/synthetic/${id}.md`,
+      frontmatter: {
+        id,
+        category: "fact",
+        created: updated,
+        updated,
+        source: "test",
+        confidence: 0.9,
+        confidenceTier: "explicit",
+        tags: [],
+        entityRef,
+      },
+      content: `Content for ${id}`,
+    };
+  }
+
+  const olderAlpha = makeEntityMemory2("mem-alpha", "alpha", "2026-04-10T08:00:00.000Z");
+  const newerBeta = makeEntityMemory2("mem-beta", "beta", "2026-04-10T12:00:00.000Z");
+
+  const threads = buildActiveThreads([olderAlpha, newerBeta]);
+  assert.equal(threads[0]!.id, "entity:beta", "newer timestamp must rank first, overriding id tiebreaker");
+  assert.equal(threads[1]!.id, "entity:alpha");
+});

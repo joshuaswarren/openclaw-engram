@@ -669,13 +669,24 @@ export class EngramAccessService {
 
   private resolveReadableNamespace(namespace: string | undefined, principal?: string): string {
     const resolved = this.resolveNamespace(namespace);
-    // Only enforce the ACL when a principal is actually supplied (i.e. the
-    // caller is authenticated).  Unauthenticated MCP callers (principal ===
-    // undefined) must continue to reach the default namespace without error;
-    // the `canReadNamespace` helper already gates on `namespacesEnabled` and
-    // returns true for the default/shared namespaces, so authenticated callers
-    // with unknown principals are still protected.
-    if (principal && !canReadNamespace(principal, resolved, this.orchestrator.config)) {
+    const namespacesEnabled = this.orchestrator.config.namespacesEnabled;
+
+    if (!namespacesEnabled) {
+      // Namespaces are disabled globally — no ACL needed for any caller.
+      return resolved;
+    }
+
+    // Namespaces are enabled.  An absent principal means the caller is
+    // unauthenticated.  Unauthenticated callers must NOT be allowed to read
+    // arbitrary namespaces: that would bypass all readPrincipals policies.
+    if (!principal) {
+      throw new EngramAccessInputError(
+        "authentication required: namespaces are enabled and no principal was supplied",
+      );
+    }
+
+    // Authenticated caller — enforce the namespace ACL as normal.
+    if (!canReadNamespace(principal, resolved, this.orchestrator.config)) {
       throw new EngramAccessInputError(`namespace is not readable: ${resolved}`);
     }
     return resolved;

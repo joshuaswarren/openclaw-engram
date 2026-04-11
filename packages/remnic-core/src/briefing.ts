@@ -21,6 +21,7 @@ import { log } from "./logger.js";
 import { StorageManager } from "./storage.js";
 import type {
   BriefingActiveThread,
+  BriefingCalendarSourceError,
   BriefingFocus,
   BriefingFollowup,
   BriefingOpenCommitment,
@@ -817,16 +818,19 @@ export async function buildBriefing(options: BuildBriefingOptions): Promise<Brie
   const recentEntities = buildRecentEntities(allEntities, window, focus);
   const openCommitments = buildOpenCommitments(focusedMemories);
 
-  const todayCalendar = options.calendarSource
+  const calendarLoadResult = options.calendarSource
     ? await loadTodayCalendar(options.calendarSource, now)
     : undefined;
+
+  const calendarSourceErrors: BriefingCalendarSourceError[] =
+    calendarLoadResult?.error ? [calendarLoadResult.error] : [];
 
   const sectionsBase: BriefingSections = {
     activeThreads,
     recentEntities,
     openCommitments,
     suggestedFollowups: [],
-    todayCalendar,
+    todayCalendar: calendarLoadResult?.events,
   };
 
   let followups: BriefingFollowup[] = [];
@@ -889,15 +893,22 @@ export async function buildBriefing(options: BuildBriefingOptions): Promise<Brie
     namespace: options.namespace ?? null,
     sections,
     followupsUnavailableReason: followupsUnavailableReason ?? null,
+    calendarSourceErrors: calendarSourceErrors.length > 0 ? calendarSourceErrors : null,
   };
 
-  return {
+  const result: BriefingResult = {
     markdown,
     json,
     sections,
     followupsUnavailableReason,
     window: windowIso,
   };
+
+  if (calendarSourceErrors.length > 0) {
+    result.calendarSourceErrors = calendarSourceErrors;
+  }
+
+  return result;
 }
 
 function clampFollowups(value: number | undefined): number {
@@ -985,7 +996,14 @@ export function buildActiveThreads(memories: MemoryFile[]): BriefingActiveThread
     }
   }
   return Array.from(buckets.values())
-    .sort((a, b) => (a.updatedAt > b.updatedAt ? -1 : 1))
+    .sort((a, b) => {
+      if (a.updatedAt > b.updatedAt) return -1;
+      if (a.updatedAt < b.updatedAt) return 1;
+      // Tiebreaker: lexicographic order by id ensures a deterministic, stable
+      // result when multiple threads share the same updatedAt timestamp (e.g.
+      // after a batch extraction run).
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    })
     .slice(0, MAX_ACTIVE_THREADS);
 }
 
@@ -1072,24 +1090,32 @@ function buildOpenCommitments(memories: MemoryFile[]): BriefingOpenCommitment[] 
     .slice(0, MAX_OPEN_COMMITMENTS);
 }
 
+interface CalendarLoadResult {
+  events: CalendarEvent[] | undefined;
+  error: BriefingCalendarSourceError | undefined;
+}
+
 async function loadTodayCalendar(
   source: CalendarSource,
   now: Date,
-): Promise<CalendarEvent[] | undefined> {
+): Promise<CalendarLoadResult> {
+  const sourceLabel = (source as { filePath?: string }).filePath ?? "calendar";
   try {
     const dateIso = now.toISOString().slice(0, 10);
     const events = await source.eventsForDate(dateIso);
     // Return the events array (possibly empty for a legitimately empty calendar).
     // An empty array is distinct from `undefined`: empty means "source responded
     // with no events today"; undefined means "source failed".
-    return events;
+    return { events, error: undefined };
   } catch (err) {
-    log.warn(`briefing: calendar source error: ${err}`);
-    // Return undefined (not []) to signal an error so callers can distinguish
-    // "no events today" from "the calendar source threw".  The rendering guard
-    // uses `todayCalendar !== undefined` — returning undefined suppresses the
-    // "Today's calendar" section entirely on failure.
-    return undefined;
+    const message = err instanceof Error ? err.message : String(err);
+    log.warn(`briefing: calendar source error (${sourceLabel}): ${message}`);
+    // Return undefined events (not []) to signal an error so callers can
+    // distinguish "no events today" from "the calendar source threw".
+    return {
+      events: undefined,
+      error: { source: sourceLabel, error: message },
+    };
   }
 }
 
