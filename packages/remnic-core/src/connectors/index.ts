@@ -880,14 +880,24 @@ function sanitizeHermesHost(host: string): string {
 }
 
 /**
- * Validate a Hermes port value. Accepts integers in [1, 65535].
+ * Validate a Hermes port value. Accepts positive integers in [1, 65535].
+ *
+ * Rejects non-integer numeric strings (e.g. "4318.9") rather than silently
+ * truncating them — a fractional port is almost certainly a typo and writing
+ * the truncated value to config.yaml would be misleading.
  */
 function sanitizeHermesPort(port: number | string): number {
-  const n = Math.trunc(Number(port));
-  if (!Number.isFinite(n) || n < 1 || n > 65535) {
+  const numeric = Number(port);
+  // Reject NaN, Infinity, -Infinity, and any non-integer (e.g. 4318.9)
+  if (!Number.isInteger(numeric)) {
+    throw new Error(
+      `Invalid Hermes port "${port}": must be a positive integer`,
+    );
+  }
+  if (numeric < 1 || numeric > 65535) {
     throw new Error(`Invalid Hermes port: ${JSON.stringify(port)} — must be an integer in [1, 65535]`);
   }
-  return n;
+  return numeric;
 }
 
 /**
@@ -1117,6 +1127,15 @@ export function removeHermesConfig(opts: { profile: string }): HermesConfigResul
 // ── Daemon health check (synchronous, non-fatal) ────────────────────────────
 
 /**
+ * Probe exit-code contract (used by checkDaemonHealth):
+ *   0 — HTTP 200 (healthy)
+ *   2 — HTTP 401 (token cache miss: retry after TTL)
+ *   1 — any other HTTP status or network error
+ */
+const HEALTH_EXIT_OK = 0;
+const HEALTH_EXIT_UNAUTHORIZED = 2;
+
+/**
  * Ping /engram/v1/health synchronously.
  * Returns true if the daemon responds with HTTP 200, false otherwise.
  * Uses child_process.spawnSync to run a one-liner Node script so that the
@@ -1130,6 +1149,11 @@ export function removeHermesConfig(opts: { profile: string }): HermesConfigResul
  * so the caller must pass the connector token (or the configured server
  * token) or the probe will always return 401 and report the daemon as
  * unreachable even when it is running.
+ *
+ * 401 handling: the daemon caches valid tokens with a 5-second TTL
+ * (getAllValidTokensCached). A freshly-rotated token may not appear in the
+ * cache for up to 5 s after rotation. We tolerate a single 401 by sleeping
+ * one cache TTL (6000 ms = 5 s TTL + 1 s buffer) and retrying exactly once.
  */
 function checkDaemonHealth(host: string, port: number, authToken?: string): boolean {
   try {
@@ -1142,6 +1166,7 @@ function checkDaemonHealth(host: string, port: number, authToken?: string): bool
     // Data (host, port, token) are passed via env vars, never interpolated
     // into the script string, preventing any code-injection from malformed
     // config values.
+    // Exit codes: 0 = 200 OK, 2 = 401 Unauthorized, 1 = other error.
     const script = [
       "const http = require('http');",
       "const headers = {};",
@@ -1154,7 +1179,7 @@ function checkDaemonHealth(host: string, port: number, authToken?: string): bool
       "  path: '/engram/v1/health',",
       "  headers,",
       "  timeout: 3000,",
-      "}, (res) => { process.exit(res.statusCode === 200 ? 0 : 1); });",
+      "}, (res) => { process.exit(res.statusCode === 200 ? 0 : res.statusCode === 401 ? 2 : 1); });",
       "req.on('error', () => process.exit(1));",
       "req.on('timeout', () => { req.destroy(); process.exit(1); });",
     ].join("\n");
@@ -1166,11 +1191,29 @@ function checkDaemonHealth(host: string, port: number, authToken?: string): bool
     if (authToken) {
       env.REMNIC_HEALTH_TOKEN = authToken;
     }
-    const result = spawnSync(process.execPath, ["-e", script], {
-      timeout: 4000,
-      env,
-    });
-    return result.status === 0;
+    const spawnOpts = { timeout: 4000, env };
+    const result = spawnSync(process.execPath, ["-e", script], spawnOpts);
+
+    if (result.status === HEALTH_EXIT_OK) {
+      return true;
+    }
+
+    if (result.status === HEALTH_EXIT_UNAUTHORIZED) {
+      // The daemon's token cache (5 s TTL) has not yet picked up the freshly
+      // rotated token. Sleep one TTL + buffer and retry exactly once.
+      console.error(
+        "[remnic/connectors] health probe got 401 — retrying after token cache TTL...",
+      );
+      // Synchronous sleep via spawnSync (avoids making the caller async).
+      spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 6000)"], {
+        timeout: 7000,
+        env: {},
+      });
+      const retry = spawnSync(process.execPath, ["-e", script], spawnOpts);
+      return retry.status === HEALTH_EXIT_OK;
+    }
+
+    return false;
   } catch {
     return false;
   }

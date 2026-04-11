@@ -837,3 +837,161 @@ test("upsertHermesConfig in-place update: file ending with \\n gets exactly one 
     }
   });
 });
+
+// ── Finding C regression: health probe 401 retry ──────────────────────────
+
+test("checkDaemonHealth: source uses exit code 2 for 401 to distinguish from other errors", () => {
+  // Source-level check: the probe script must exit with a distinct code for 401
+  // so checkDaemonHealth can detect a token-cache miss and retry vs. a real failure.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+  // The script must differentiate 401 (exit 2) from other non-200 statuses (exit 1).
+  assert.ok(
+    content.includes("res.statusCode === 401 ? 2 : 1"),
+    "health probe script must exit(2) on 401 and exit(1) on other errors",
+  );
+  // The wrapper must recognise exit code 2 as a retriable 401.
+  assert.ok(
+    content.includes("HEALTH_EXIT_UNAUTHORIZED"),
+    "checkDaemonHealth must define HEALTH_EXIT_UNAUTHORIZED constant",
+  );
+  // The retry log message must be present so operators can diagnose the delay.
+  assert.ok(
+    content.includes("health probe got 401 — retrying after token cache TTL"),
+    "checkDaemonHealth must log a clear retry message on 401",
+  );
+});
+
+test("checkDaemonHealth: retries exactly once on 401 (source structure check)", () => {
+  // Verify the retry-once structure exists in the source without running a live server.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+  // There must be a single retry call after the 401 branch.
+  const retryIdx = content.indexOf("const retry = spawnSync");
+  assert.ok(retryIdx >= 0, "checkDaemonHealth must perform exactly one retry");
+  // The retry must check HEALTH_EXIT_OK (0) to decide success.
+  const afterRetry = content.slice(retryIdx, retryIdx + 200);
+  assert.ok(
+    afterRetry.includes("HEALTH_EXIT_OK"),
+    "retry result must be compared against HEALTH_EXIT_OK",
+  );
+  // There must be only ONE retry invocation (not two).
+  const secondRetryIdx = content.indexOf("const retry = spawnSync", retryIdx + 1);
+  assert.equal(
+    secondRetryIdx,
+    -1,
+    "checkDaemonHealth must have exactly one retry call, not two",
+  );
+});
+
+// ── Finding D regression: sanitizeHermesPort rejects non-integers ─────────
+
+test("sanitizeHermesPort source rejects non-integer ports (Finding D)", () => {
+  // Source-level check: the function must use Number.isInteger, not Math.trunc,
+  // so that fractional port values like 4318.9 are rejected rather than silently
+  // truncated to 4318.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+  assert.ok(
+    content.includes("Number.isInteger(numeric)"),
+    "sanitizeHermesPort must check Number.isInteger before accepting the value",
+  );
+  // The error message must clearly indicate the port must be a positive integer.
+  assert.ok(
+    content.includes("must be a positive integer"),
+    "sanitizeHermesPort must throw with a clear 'must be a positive integer' message",
+  );
+});
+
+test("sanitizeHermesPort rejects fractional port 4318.9 (runtime)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // 4318.9 must be rejected — NOT truncated to 4318
+        assert.throws(
+          () =>
+            mod.upsertHermesConfig({
+              profile: "default",
+              host: "127.0.0.1",
+              port: 4318.9,
+              token: "remnic_hm_SYNTHETICPORTTEST",
+            }),
+          /must be a positive integer/,
+          "upsertHermesConfig must throw on fractional port 4318.9",
+        );
+
+        // Integer port must still work
+        assert.doesNotThrow(
+          () =>
+            mod.upsertHermesConfig({
+              profile: "default",
+              host: "127.0.0.1",
+              port: 4318,
+              token: "remnic_hm_SYNTHETICPORTTEST",
+            }),
+          "upsertHermesConfig must not throw on integer port 4318",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("sanitizeHermesPort rejects NaN and Infinity (runtime)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // NaN: Number("abc") === NaN, Number.isInteger(NaN) === false
+        assert.throws(
+          () =>
+            mod.upsertHermesConfig({
+              profile: "default",
+              host: "127.0.0.1",
+              port: NaN,
+              token: "remnic_hm_SYNTHETICNANTEST",
+            }),
+          /must be a positive integer/,
+          "upsertHermesConfig must throw on NaN port",
+        );
+
+        // Infinity: Number.isInteger(Infinity) === false
+        assert.throws(
+          () =>
+            mod.upsertHermesConfig({
+              profile: "default",
+              host: "127.0.0.1",
+              port: Infinity,
+              token: "remnic_hm_SYNTHETICINFTEST",
+            }),
+          /must be a positive integer/,
+          "upsertHermesConfig must throw on Infinity port",
+        );
+
+        // Negative: Number.isInteger(-1) === true but range check fails
+        assert.throws(
+          () =>
+            mod.upsertHermesConfig({
+              profile: "default",
+              host: "127.0.0.1",
+              port: -1,
+              token: "remnic_hm_SYNTHETICNEGTEST",
+            }),
+          /Invalid Hermes port/,
+          "upsertHermesConfig must throw on negative port",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
