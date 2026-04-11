@@ -10,6 +10,32 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
+// Native memory artifact materialization for Codex CLI (#378). Surfaced here
+// so downstream callers can `import { materializeForNamespace } from "@remnic/core/connectors"`.
+export {
+  materializeForNamespace,
+  ensureSentinel,
+  describeMemoriesDir,
+  renderMemorySummary,
+  renderMemoryMd,
+  renderRawMemories,
+  renderRolloutSummary,
+  validateMemoryMd,
+  approximateTokenCount,
+  truncateToTokenBudget,
+  MATERIALIZE_VERSION,
+  SENTINEL_FILE,
+  TMP_DIR,
+  type MaterializeOptions,
+  type MaterializeResult,
+  type RolloutSummaryInput,
+  type MemoryMdValidation,
+} from "./codex-materialize.js";
+export {
+  runCodexMaterialize,
+  type RunMaterializeOptions,
+} from "./codex-materialize-runner.js";
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export interface ConnectorManifest {

@@ -1515,6 +1515,12 @@
         "default": 40,
         "description": "Minimum combined user/assistant characters required before extraction runs."
       },
+      "extractionMinImportanceLevel": {
+        "type": "string",
+        "enum": ["trivial", "low", "normal", "high", "critical"],
+        "default": "low",
+        "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
+      },
       "extractionMinUserTurns": {
         "type": "number",
         "default": 1,
@@ -2634,6 +2640,24 @@
         "default": 25000,
         "description": "Default deadline in ms recorded for enrichment recall sections."
       },
+      "recallMmrEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Apply Maximal Marginal Relevance to the final recall selection per-section so one redundant cluster cannot dominate the injected context."
+      },
+      "recallMmrLambda": {
+        "type": "number",
+        "default": 0.7,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "MMR lambda parameter. 1.0 = pure relevance, 0.0 = pure diversity. Default 0.7 tilts toward relevance with meaningful diversity."
+      },
+      "recallMmrTopN": {
+        "type": "number",
+        "default": 40,
+        "minimum": 0,
+        "description": "Number of top candidates per section to run MMR over. Candidates past this remain in original order."
+      },
       "recallPipeline": {
         "type": "array",
         "description": "Ordered recall sections with per-section budgets and feature knobs.",
@@ -2890,6 +2914,36 @@
             "description": "Override for the Codex home directory. When null, uses $CODEX_HOME or ~/.codex."
           }
         }
+      },
+      "codexMaterializeMemories": {
+        "type": "boolean",
+        "default": true,
+        "description": "Materialize Remnic memories into Codex's native ~/.codex/memories/ layout so Codex's phase-2 read path picks up Remnic content without MCP roundtrips. Respects a .remnic-managed sentinel to honor user hand-edits."
+      },
+      "codexMaterializeNamespace": {
+        "type": "string",
+        "default": "auto",
+        "description": "Namespace to materialize into the Codex memories layout. 'auto' derives the namespace from the connector context."
+      },
+      "codexMaterializeMaxSummaryTokens": {
+        "type": "number",
+        "default": 4500,
+        "description": "Maximum whitespace-tokenized size of the materialized memory_summary.md. Default 4500 leaves headroom under Codex's 5000-token summary budget."
+      },
+      "codexMaterializeRolloutRetentionDays": {
+        "type": "number",
+        "default": 30,
+        "description": "Number of days to retain files under rollout_summaries/ before pruning during materialization."
+      },
+      "codexMaterializeOnConsolidation": {
+        "type": "boolean",
+        "default": true,
+        "description": "Trigger Codex materialization after semantic or causal consolidation completes for a namespace."
+      },
+      "codexMaterializeOnSessionEnd": {
+        "type": "boolean",
+        "default": true,
+        "description": "Trigger Codex materialization from the plugin-codex session-end hook."
       }
     }
   },
@@ -3794,6 +3848,23 @@
       "label": "Recall Pipeline",
       "advanced": true,
       "help": "Ordered section configuration for recall assembly and per-section limits"
+    },
+    "recallMmrEnabled": {
+      "label": "Recall MMR (Diversity)",
+      "advanced": true,
+      "help": "Apply Maximal Marginal Relevance per-section so duplicate clusters cannot dominate the recall budget"
+    },
+    "recallMmrLambda": {
+      "label": "MMR Lambda",
+      "advanced": true,
+      "placeholder": "0.7",
+      "help": "1.0 = pure relevance, 0.0 = pure diversity. Default 0.7."
+    },
+    "recallMmrTopN": {
+      "label": "MMR Top-N",
+      "advanced": true,
+      "placeholder": "40",
+      "help": "Number of top candidates per section over which MMR is applied"
     }
   }
 }

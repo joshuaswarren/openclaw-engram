@@ -1,19 +1,21 @@
-"""Tests for the EngramClient HTTP methods."""
+"""Tests for the RemnicClient HTTP methods."""
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
-from remnic_hermes.client import EngramClient
+from remnic_hermes import EngramClient
+from remnic_hermes.client import RemnicClient
 
 
 @pytest.fixture
 def client():
     """Create a client with test config."""
-    return EngramClient(host="127.0.0.1", port=4318, token="test-token", client_id="hermes")
+    return RemnicClient(host="127.0.0.1", port=4318, token="test-token", client_id="hermes")
 
 
 class TestClientInit:
     def test_base_url(self, client):
+        # HTTP path still uses the legacy /engram/v1 prefix during the compat window.
         assert client.base_url == "http://127.0.0.1:4318/engram/v1"
 
     def test_token_set(self, client):
@@ -30,3 +32,9 @@ class TestClientClose:
         client._http.aclose = AsyncMock()
         await client.close()
         client._http.aclose.assert_awaited_once()
+
+
+class TestLegacyAlias:
+    def test_engram_client_is_alias(self):
+        """The legacy EngramClient name resolves to RemnicClient."""
+        assert EngramClient is RemnicClient

@@ -1,6 +1,6 @@
 name: remnic
-version: 0.1.0
-description: Universal memory for AI agents — MemoryProvider integration for Hermes
+version: 1.0.0
+description: Universal memory for AI agents — Remnic MemoryProvider integration for Hermes
 author: Joshua Warren
 homepage: https://github.com/joshuaswarren/remnic
 entry: remnic_hermes

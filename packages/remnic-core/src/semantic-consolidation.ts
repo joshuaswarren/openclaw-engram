@@ -6,9 +6,10 @@
  * Reduces memory store bloat while preserving all unique information.
  */
 
-import { log } from "./logger.js";
-import type { MemoryFile } from "./types.js";
+import type { MemoryFile, PluginConfig } from "./types.js";
 import { normalizeRecallTokens, countRecallTokenOverlap } from "./recall-tokenization.js";
+import { runPostConsolidationMaterialize } from "./connectors/codex-materialize-runner.js";
+import type { MaterializeResult, RolloutSummaryInput } from "./connectors/codex-materialize.js";
 
 export interface ConsolidationCluster {
   category: string;
@@ -138,4 +139,27 @@ Write ONLY the consolidated memory content (no metadata, no explanation, no prea
  */
 export function parseConsolidationResponse(response: string): string {
   return response.trim();
+}
+
+/**
+ * Optional post-consolidation hook — materializes the namespace into Codex's
+ * native memory layout when the consolidation run finishes. Kept here (rather
+ * than in orchestrator.ts) so #378 doesn't conflict with Wave 1 edits.
+ *
+ * Safe to call regardless of config state: honors `codexMaterializeMemories`
+ * and `codexMaterializeOnConsolidation` and silently becomes a no-op when
+ * either is disabled.
+ */
+export async function materializeAfterSemanticConsolidation(options: {
+  config: PluginConfig;
+  namespace?: string;
+  memories?: MemoryFile[];
+  memoryDir?: string;
+  codexHome?: string;
+  rolloutSummaries?: RolloutSummaryInput[];
+  now?: Date;
+}): Promise<MaterializeResult | null> {
+  // Delegates to the shared post-consolidation helper so semantic and causal
+  // flows stay in lock-step — any guard/logging change happens in one place.
+  return runPostConsolidationMaterialize("[semantic-consolidation]", options);
 }

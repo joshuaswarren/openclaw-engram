@@ -1515,6 +1515,12 @@
         "default": 40,
         "description": "Minimum combined user/assistant characters required before extraction runs."
       },
+      "extractionMinImportanceLevel": {
+        "type": "string",
+        "enum": ["trivial", "low", "normal", "high", "critical"],
+        "default": "low",
+        "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
+      },
       "extractionMinUserTurns": {
         "type": "number",
         "default": 1,
@@ -2633,6 +2639,24 @@
         "type": "number",
         "default": 25000,
         "description": "Default deadline in ms recorded for enrichment recall sections."
+      },
+      "recallMmrEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Apply Maximal Marginal Relevance to the final recall selection per-section so one redundant cluster cannot dominate the injected context."
+      },
+      "recallMmrLambda": {
+        "type": "number",
+        "default": 0.7,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "MMR lambda parameter. 1.0 = pure relevance, 0.0 = pure diversity. Default 0.7 tilts toward relevance with meaningful diversity."
+      },
+      "recallMmrTopN": {
+        "type": "number",
+        "default": 40,
+        "minimum": 0,
+        "description": "Number of top candidates per section to run MMR over. Candidates past this remain in original order."
       },
       "recallPipeline": {
         "type": "array",
@@ -3774,6 +3798,23 @@
       "label": "Recall Pipeline",
       "advanced": true,
       "help": "Ordered section configuration for recall assembly and per-section limits"
+    },
+    "recallMmrEnabled": {
+      "label": "Recall MMR (Diversity)",
+      "advanced": true,
+      "help": "Apply Maximal Marginal Relevance per-section so duplicate clusters cannot dominate the recall budget"
+    },
+    "recallMmrLambda": {
+      "label": "MMR Lambda",
+      "advanced": true,
+      "placeholder": "0.7",
+      "help": "1.0 = pure relevance, 0.0 = pure diversity. Default 0.7."
+    },
+    "recallMmrTopN": {
+      "label": "MMR Top-N",
+      "advanced": true,
+      "placeholder": "40",
+      "help": "Number of top candidates per section over which MMR is applied"
     }
   }
 }

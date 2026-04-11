@@ -120,6 +120,64 @@ grep codex_hooks ~/.codex/config.toml
 # Should show: codex_hooks = true
 ```
 
+## Native memory materialization
+
+Codex CLI's phase-2 consolidation reads memories directly from files under
+`<codex_home>/memories/` — `memory_summary.md` (always-loaded),
+`MEMORY.md` (searchable handbook, task-group schema), `raw_memories.md`, and
+per-session `rollout_summaries/*.md`. Remnic can mirror its hot memories into
+this exact layout so Codex's native read path picks up Remnic content with
+zero MCP calls.
+
+### How it works
+
+1. **Opt-in sentinel.** Remnic will only write into a memories directory that
+   already contains a `.remnic-managed` sentinel file. If the sentinel is
+   missing, the materializer **skips with a warning and never touches the
+   directory** — this preserves any hand-edits the user has made. Use
+   `remnic connectors install codex-cli` (or drop a `.remnic-managed` file
+   yourself) to opt in.
+2. **Atomic writes.** Every file is rendered under `<codex_home>/memories/.remnic-tmp/`
+   first and then `rename()`-ed into place, so Codex never observes a
+   half-written file.
+3. **Schema validation.** `MEMORY.md` is validated against Codex's task-group
+   schema before it is written. Invalid output throws — the materializer
+   refuses to leave garbage on disk.
+4. **Idempotent no-ops.** The sentinel stores a content hash of the last
+   render. If the next run produces identical content, the materializer
+   short-circuits with zero writes.
+5. **Token budget.** `memory_summary.md` is capped at
+   `codexMaterializeMaxSummaryTokens` whitespace tokens (default `4500`),
+   leaving headroom under Codex's 5000-token summary limit.
+
+### Triggers
+
+| Trigger | Config flag | Notes |
+|---|---|---|
+| Semantic / causal consolidation complete | `codexMaterializeOnConsolidation` (default `true`) | Runs immediately after a consolidation pass finishes. |
+| Codex `Stop` / session-end hook | `codexMaterializeOnSessionEnd` (default `true`) | `session-end.sh` shells out to `scripts/codex-materialize.ts`. |
+| Manual | — | `tsx scripts/codex-materialize.ts --reason manual` |
+
+### Configuration
+
+Every knob is exposed via plugin config so users have maximum control:
+
+| Key | Default | Description |
+|---|---|---|
+| `codexMaterializeMemories` | `true` | Master switch — set `false` to disable all materialization. |
+| `codexMaterializeNamespace` | `"auto"` | Namespace to materialize. `"auto"` derives it from the connector context. |
+| `codexMaterializeMaxSummaryTokens` | `4500` | Whitespace-tokenized cap for `memory_summary.md`. |
+| `codexMaterializeRolloutRetentionDays` | `30` | Prune rollout summaries older than this window. |
+| `codexMaterializeOnConsolidation` | `true` | Run after semantic/causal consolidation completes. |
+| `codexMaterializeOnSessionEnd` | `true` | Run from the plugin-codex session-end hook. |
+
+### Opting out
+
+Set `codexMaterializeMemories = false` in your Remnic plugin config. The
+materializer becomes a no-op immediately. Alternatively, delete the
+`.remnic-managed` sentinel — Remnic will start warning and will not touch the
+directory again until the sentinel is restored.
+
 ## Uninstall
 
 ```bash
