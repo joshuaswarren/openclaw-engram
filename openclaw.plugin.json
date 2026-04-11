@@ -2895,6 +2895,26 @@
         "default": 20,
         "description": "Maximum results fetched per agent before merge."
       },
+      "codex": {
+        "type": "object",
+        "description": "Codex CLI connector settings (install-time).",
+        "additionalProperties": false,
+        "properties": {
+          "installExtension": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true, `remnic connectors install codex-cli` also drops memories_extensions/remnic/instructions.md into the Codex home so the phase-2 consolidation sub-agent auto-discovers Remnic."
+          },
+          "codexHome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Override for the Codex home directory. When null, uses $CODEX_HOME or ~/.codex."
+          }
+        }
+      },
       "codexMaterializeMemories": {
         "type": "boolean",
         "default": true,
