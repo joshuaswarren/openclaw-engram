@@ -7,6 +7,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
+import { generateToken, revokeToken } from "../tokens.js";
 
 // Native memory artifact materialization for Codex CLI (#378). Surfaced here
 // so downstream callers can `import { materializeForNamespace } from "@remnic/core/connectors"`.
@@ -391,6 +394,31 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
     author: "Remnic",
     tags: ["generic", "mcp"],
   },
+  {
+    id: "hermes",
+    name: "Hermes Agent",
+    version: "1.0.0",
+    description: "Hermes Agent MemoryProvider — automatic recall/observe on every turn via Python plugin protocol",
+    capabilities: {
+      observe: true,
+      recall: true,
+      store: true,
+      search: true,
+      entities: false,
+      realtimeSync: true,
+      batch: false,
+      maxBudgetChars: 32000,
+      connectionType: "http",
+    },
+    configSchema: {
+      host: "Remnic daemon host (default: 127.0.0.1)",
+      port: "Remnic daemon port (default: 4318)",
+      profile: "Hermes profile name (default: default)",
+    },
+    homepage: "https://github.com/joshuaswarren/remnic/tree/main/packages/plugin-hermes",
+    author: "Remnic",
+    tags: ["official", "python", "hermes"],
+  },
 ];
 
 // ── Registry management ───────────────────────────────────────────────────
@@ -531,19 +559,60 @@ export function installConnector(options: InstallOptions): InstallResult {
 
   const configPath = path.join(configDir, `${options.connectorId}.json`);
 
+  // Generate a per-connector auth token so the daemon can authenticate
+  // requests from this connector. generateToken() is idempotent — it filters
+  // the old entry and writes a fresh one, so force-reinstall produces a new
+  // token automatically. We do this for every connector because:
+  //   a) token gen is always safe and idempotent
+  //   b) several connectors (replit, hermes) need it to avoid 401s
+  //   c) any connector that doesn't use token auth simply ignores the entry
+  const tokenEntry = generateToken(options.connectorId);
+
   // Build config from schema defaults + user overrides
   const resolvedConfig: Record<string, unknown> = {
     connectorId: options.connectorId,
     installedAt: new Date().toISOString(),
+    token: tokenEntry.token,
     ...options.config,
   };
   fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
 
+  const notes: string[] = [];
+
+  // Hermes-specific: write the remnic: block to config.yaml
+  if (options.connectorId === "hermes") {
+    const profile = (options.config?.profile as string | undefined) ?? "default";
+    const host = (options.config?.host as string | undefined) ?? "127.0.0.1";
+    const port = (options.config?.port as number | undefined) ?? 4318;
+    const yamlResult = upsertHermesConfig({
+      profile,
+      host,
+      port,
+      token: tokenEntry.token,
+    });
+    if (yamlResult.updated) {
+      notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
+    } else if (yamlResult.skipped) {
+      notes.push(`Hermes config not written: ${yamlResult.reason}`);
+    }
+
+    // Health-check the daemon (non-fatal)
+    const daemonOk = checkDaemonHealth(host, port);
+    if (daemonOk) {
+      notes.push("Daemon health check: OK");
+    } else {
+      notes.push(
+        `Daemon not reachable at ${host}:${port} — start with: remnic daemon start`,
+      );
+    }
+  }
+
+  const suffix = notes.length > 0 ? `\n  ${notes.join("\n  ")}` : "";
   return {
     connectorId: options.connectorId,
     status: "installed",
     configPath,
-    message: `Installed ${manifest.name} v${manifest.version}`,
+    message: `Installed ${manifest.name} v${manifest.version}${suffix}`,
   };
 }
 
@@ -561,12 +630,254 @@ export function removeConnector(connectorId: string): RemoveResult {
     };
   }
 
+  // Read connector config before deleting it (needed for hermes profile lookup)
+  let storedProfile = "default";
+  if (connectorId === "hermes") {
+    try {
+      const stored = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      if (typeof stored?.profile === "string") storedProfile = stored.profile;
+    } catch {
+      // use default profile
+    }
+  }
+
+  // Revoke the auth token for this connector so the daemon stops accepting it.
+  revokeToken(connectorId);
+
   fs.unlinkSync(configPath);
+
+  const notes: string[] = [];
+
+  // Hermes-specific: strip the remnic: block from config.yaml
+  if (connectorId === "hermes") {
+    const yamlResult = removeHermesConfig({ profile: storedProfile });
+    if (yamlResult.updated) {
+      notes.push(`Removed remnic: block from Hermes config: ${yamlResult.configPath}`);
+    } else if (yamlResult.skipped) {
+      notes.push(`Hermes config cleanup skipped: ${yamlResult.reason}`);
+    }
+  }
+
+  const suffix = notes.length > 0 ? `\n  ${notes.join("\n  ")}` : "";
   return {
     connectorId,
     configPath,
-    message: "Removed",
+    message: `Removed${suffix}`,
   };
+}
+
+// ── Hermes config.yaml helpers ─────────────────────────────────────────────────
+
+interface HermesConfigResult {
+  updated: boolean;
+  skipped: boolean;
+  reason?: string;
+  configPath: string;
+}
+
+function hermesConfigPath(profile: string): string {
+  return path.join(os.homedir(), ".hermes", "profiles", profile, "config.yaml");
+}
+
+/**
+ * Upsert the `remnic:` block in a Hermes profile config.yaml.
+ *
+ * Rules:
+ * - If the profile directory does not exist, skip with a warning (we do not
+ *   create arbitrary Hermes state).
+ * - If config.yaml does not exist, create it with only the remnic: block.
+ * - If config.yaml exists and already contains a `remnic:` block, update the
+ *   host/port/token lines in-place (line-based, preserves comments elsewhere).
+ * - If config.yaml exists with no `remnic:` block, append one.
+ * - Idempotent on repeated calls.
+ */
+export function upsertHermesConfig(opts: {
+  profile: string;
+  host: string;
+  port: number;
+  token: string;
+}): HermesConfigResult {
+  const cfgPath = hermesConfigPath(opts.profile);
+  const profileDir = path.dirname(cfgPath);
+
+  if (!fs.existsSync(profileDir)) {
+    return {
+      updated: false,
+      skipped: true,
+      reason: `Hermes profile directory not found: ${profileDir}`,
+      configPath: cfgPath,
+    };
+  }
+
+  const block = [
+    "remnic:",
+    `  host: "${opts.host}"`,
+    `  port: ${opts.port}`,
+    `  token: "${opts.token}"`,
+  ].join("\n");
+
+  if (!fs.existsSync(cfgPath)) {
+    // Create with just the remnic block
+    fs.writeFileSync(cfgPath, block + "\n");
+    return { updated: true, skipped: false, configPath: cfgPath };
+  }
+
+  const raw = fs.readFileSync(cfgPath, "utf8");
+
+  // Check whether there's an existing remnic: block
+  const hasRemnicBlock = /^remnic:/m.test(raw);
+
+  if (!hasRemnicBlock) {
+    // Append the block (preserve existing content)
+    const separator = raw.endsWith("\n") ? "\n" : "\n\n";
+    fs.writeFileSync(cfgPath, raw + separator + block + "\n");
+    return { updated: true, skipped: false, configPath: cfgPath };
+  }
+
+  // Update the existing block. Strategy: replace the content of the remnic:
+  // section by matching from `^remnic:` to the next top-level key or end-of-file.
+  // We rewrite only the host/port/token sub-keys inside the block; other keys
+  // under remnic: (e.g. session_key, timeout) are preserved.
+  const lines = raw.split("\n");
+  const newLines: string[] = [];
+  let inRemnicBlock = false;
+  let blockWritten = false;
+
+  // Track which sub-keys we've emitted
+  const written = { host: false, port: false, token: false };
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    if (/^remnic:/.test(line)) {
+      inRemnicBlock = true;
+      newLines.push(line);
+      continue;
+    }
+
+    if (inRemnicBlock) {
+      // A line that starts with a non-space character and is not empty signals
+      // the start of the next top-level YAML key — we've left the remnic block.
+      if (line.length > 0 && !/^\s/.test(line)) {
+        // Emit any un-written keys before closing the block
+        if (!written.host) newLines.push(`  host: "${opts.host}"`);
+        if (!written.port) newLines.push(`  port: ${opts.port}`);
+        if (!written.token) newLines.push(`  token: "${opts.token}"`);
+        blockWritten = true;
+        inRemnicBlock = false;
+        newLines.push(line);
+        continue;
+      }
+
+      // Replace host/port/token lines; preserve other sub-keys
+      if (/^\s+host:/.test(line)) {
+        newLines.push(`  host: "${opts.host}"`);
+        written.host = true;
+      } else if (/^\s+port:/.test(line)) {
+        newLines.push(`  port: ${opts.port}`);
+        written.port = true;
+      } else if (/^\s+token:/.test(line)) {
+        newLines.push(`  token: "${opts.token}"`);
+        written.token = true;
+      } else {
+        newLines.push(line);
+      }
+      continue;
+    }
+
+    newLines.push(line);
+  }
+
+  if (inRemnicBlock && !blockWritten) {
+    // File ended while still inside the remnic block
+    if (!written.host) newLines.push(`  host: "${opts.host}"`);
+    if (!written.port) newLines.push(`  port: ${opts.port}`);
+    if (!written.token) newLines.push(`  token: "${opts.token}"`);
+  }
+
+  fs.writeFileSync(cfgPath, newLines.join("\n"));
+  return { updated: true, skipped: false, configPath: cfgPath };
+}
+
+/**
+ * Remove the `remnic:` block from a Hermes profile config.yaml.
+ * Idempotent — if the block is absent, returns skipped.
+ */
+export function removeHermesConfig(opts: { profile: string }): HermesConfigResult {
+  const cfgPath = hermesConfigPath(opts.profile);
+
+  if (!fs.existsSync(cfgPath)) {
+    return {
+      updated: false,
+      skipped: true,
+      reason: "Hermes config.yaml not found",
+      configPath: cfgPath,
+    };
+  }
+
+  const raw = fs.readFileSync(cfgPath, "utf8");
+  if (!/^remnic:/m.test(raw)) {
+    return {
+      updated: false,
+      skipped: true,
+      reason: "No remnic: block found in config.yaml",
+      configPath: cfgPath,
+    };
+  }
+
+  // Strip the remnic: block and its indented children
+  const lines = raw.split("\n");
+  const newLines: string[] = [];
+  let inRemnicBlock = false;
+
+  for (const line of lines) {
+    if (/^remnic:/.test(line)) {
+      inRemnicBlock = true;
+      continue;
+    }
+    if (inRemnicBlock) {
+      if (line.length > 0 && !/^\s/.test(line)) {
+        inRemnicBlock = false;
+        newLines.push(line);
+      }
+      // else: still in the block — skip the line
+      continue;
+    }
+    newLines.push(line);
+  }
+
+  // Trim trailing blank lines left behind after the block removal
+  while (newLines.length > 0 && newLines[newLines.length - 1]?.trim() === "") {
+    newLines.pop();
+  }
+
+  fs.writeFileSync(cfgPath, newLines.length > 0 ? newLines.join("\n") + "\n" : "");
+  return { updated: true, skipped: false, configPath: cfgPath };
+}
+
+// ── Daemon health check (synchronous, non-fatal) ────────────────────────────
+
+/**
+ * Ping /engram/v1/health synchronously.
+ * Returns true if the daemon responds with HTTP 200, false otherwise.
+ * Uses child_process.spawnSync to run a one-liner Node script so that the
+ * existing synchronous installConnector() flow does not need to become async.
+ */
+function checkDaemonHealth(host: string, port: number): boolean {
+  try {
+    const script = [
+      "const http = require('http');",
+      `const req = http.get({host:${JSON.stringify(host)},port:${port},path:'/engram/v1/health',timeout:3000}, (res) => {`,
+      "  process.exit(res.statusCode === 200 ? 0 : 1);",
+      "});",
+      "req.on('error', () => process.exit(1));",
+      "req.on('timeout', () => { req.destroy(); process.exit(1); });",
+    ].join("\n");
+    const result = spawnSync(process.execPath, ["-e", script], { timeout: 4000 });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
 }
 
 // ── Doctor ────────────────────────────────────────────────────────────────────
