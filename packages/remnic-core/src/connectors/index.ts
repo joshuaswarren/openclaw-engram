@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { generateToken, revokeToken } from "../tokens.js";
+import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry } from "../tokens.js";
 
 // Native memory artifact materialization for Codex CLI (#378). Surfaced here
 // so downstream callers can `import { materializeForNamespace } from "@remnic/core/connectors"`.
@@ -559,31 +559,16 @@ export function installConnector(options: InstallOptions): InstallResult {
 
   const configPath = path.join(configDir, `${options.connectorId}.json`);
 
-  // Generate a per-connector auth token so the daemon can authenticate
-  // requests from this connector. generateToken() is idempotent — it filters
-  // the old entry and writes a fresh one, so force-reinstall produces a new
-  // token automatically. We do this for every connector because:
-  //   a) token gen is always safe and idempotent
-  //   b) several connectors (replit, hermes) need it to avoid 401s
-  //   c) any connector that doesn't use token auth simply ignores the entry
-  //
-  // Token write errors (e.g. read-only HOME with writable XDG_CONFIG_HOME)
-  // are non-fatal: we degrade gracefully and proceed with the connector
-  // config write rather than aborting the whole install.
-  let tokenEntry: ReturnType<typeof generateToken> | null = null;
-  try {
-    tokenEntry = generateToken(options.connectorId);
-  } catch {
-    // Non-fatal: token store unavailable. Connector config will still be
-    // written; user can run `remnic token generate <id>` to create the token.
-  }
-
   // For the hermes connector, resolve profile/host/port with the following
   // precedence: saved-connector-JSON → explicit options.config → defaults.
   // Reading happens BEFORE we overwrite the connector JSON so that a
   // force-reinstall without re-supplied --config options preserves the
   // previously configured values and writes the new token to the correct
   // Hermes profile rather than resetting to "default"/127.0.0.1/4318.
+  //
+  // Issue C fix: sanitizer calls during options resolution are wrapped in
+  // try-catch so that invalid user-supplied values (e.g. --config port=abc)
+  // return a clean failed InstallResult instead of throwing.
   let hermesSavedProfile: string | undefined;
   let hermesSavedHost: string | undefined;
   let hermesSavedPort: number | undefined;
@@ -633,12 +618,84 @@ export function installConnector(options: InstallOptions): InstallResult {
       (options.config?.host as string | undefined) ??
       hermesSavedHost ??
       "127.0.0.1";
-    hermesResolvedPort =
-      (options.config?.port !== undefined
-        ? sanitizeHermesPort(Number(String(options.config.port)))
-        : undefined) ??
-      hermesSavedPort ??
-      4318;
+
+    // Issue C: wrap sanitizeHermesPort (and profile/host) in try-catch so
+    // that invalid user-supplied values return a clean error result.
+    if (options.config?.port !== undefined) {
+      try {
+        hermesResolvedPort = sanitizeHermesPort(Number(String(options.config.port)));
+      } catch (err) {
+        return {
+          connectorId: options.connectorId,
+          status: "error",
+          message: `Invalid Hermes config: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+    if (hermesResolvedPort === undefined) {
+      hermesResolvedPort = hermesSavedPort ?? 4318;
+    }
+
+    // Also validate user-supplied profile and host up-front (Issue C coverage).
+    if (options.config?.profile !== undefined) {
+      try {
+        hermesResolvedProfile = sanitizeHermesProfile(String(options.config.profile));
+      } catch (err) {
+        return {
+          connectorId: options.connectorId,
+          status: "error",
+          message: `Invalid Hermes config: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+    if (options.config?.host !== undefined) {
+      try {
+        hermesResolvedHost = sanitizeHermesHost(String(options.config.host));
+      } catch (err) {
+        return {
+          connectorId: options.connectorId,
+          status: "error",
+          message: `Invalid Hermes config: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    }
+    // Apply saved/default fallbacks for profile and host (already set above if
+    // options.config provided them; fall through to saved/default if not).
+    hermesResolvedProfile ??= hermesSavedProfile ?? "default";
+    hermesResolvedHost ??= hermesSavedHost ?? "127.0.0.1";
+  }
+
+  // Generate a per-connector auth token so the daemon can authenticate
+  // requests from this connector.
+  //
+  // For hermes (Issue B fix): use buildTokenEntry() to generate a candidate
+  // token WITHOUT immediately persisting it to tokens.json. We commit the
+  // candidate to the store only AFTER upsertHermesConfig succeeds, so that
+  // a failed or skipped config.yaml write never leaves the daemon with a
+  // revoked token and no valid replacement written.
+  //
+  // For all other connectors: generateToken() is idempotent — it filters
+  // the old entry and writes a fresh one atomically, so force-reinstall
+  // produces a new token automatically.
+  //
+  // Token write errors (e.g. read-only HOME with writable XDG_CONFIG_HOME)
+  // are non-fatal: we degrade gracefully and proceed with the connector
+  // config write rather than aborting the whole install.
+  let tokenEntry: ReturnType<typeof generateToken> | null = null;
+  if (options.connectorId === "hermes") {
+    // Build a candidate token; do NOT save yet (Issue B).
+    try {
+      tokenEntry = buildTokenEntry(options.connectorId);
+    } catch {
+      // Non-fatal: fall through with tokenEntry === null.
+    }
+  } else {
+    try {
+      tokenEntry = generateToken(options.connectorId);
+    } catch {
+      // Non-fatal: token store unavailable. Connector config will still be
+      // written; user can run `remnic token generate <id>` to create the token.
+    }
   }
 
   // Build config from schema defaults + user overrides.
@@ -706,6 +763,10 @@ export function installConnector(options: InstallOptions): InstallResult {
         // isn't broken. A "skipped" result means the new profile dir doesn't
         // exist — the token was not written anywhere, so the old config must
         // be left in place.
+        //
+        // Issue B fix: commit the token to tokens.json ONLY after the config.yaml
+        // write succeeds. This prevents revoking the existing token when the
+        // new config write fails (which would leave the daemon with no valid token).
         let newYamlWritten = false;
         try {
           const yamlResult = upsertHermesConfig({
@@ -718,11 +779,22 @@ export function installConnector(options: InstallOptions): InstallResult {
           // not merely skipped due to a missing profile directory.
           newYamlWritten = yamlResult.updated === true;
           if (yamlResult.updated) {
+            // YAML write succeeded — now it is safe to rotate the token in
+            // tokens.json (removing the old entry, adding the new one).
+            try {
+              commitTokenEntry(tokenEntry);
+            } catch {
+              // Non-fatal: tokens.json may be on a read-only filesystem.
+              // The config.yaml was written successfully; the user can run
+              // `remnic token generate hermes` to persist the token later.
+            }
             notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
           } else if (yamlResult.skipped) {
+            // Profile dir missing — token NOT committed, old token preserved.
             notes.push(`Hermes config not written: ${yamlResult.reason}`);
           }
         } catch (err) {
+          // upsertHermesConfig threw — token NOT committed, old token preserved.
           notes.push(
             `Hermes config not written: ${err instanceof Error ? err.message : String(err)}`,
           );

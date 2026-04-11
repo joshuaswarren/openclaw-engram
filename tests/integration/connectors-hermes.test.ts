@@ -1005,6 +1005,14 @@ test("old profile config is preserved when new upsertHermesConfig fails", async 
   await new Promise<void>((resolve, reject) => {
     try {
       withTempHome((tmpHome) => {
+        // Issue A fix: remove any leftover hermes connector state that may have
+        // been written to whatever HOME directory is current (either this temp dir
+        // or a stale HOME from a concurrently running test that clobbered
+        // process.env.HOME). This ensures the first installConnector call below
+        // always sees a clean slate and returns "installed" rather than
+        // "already_installed".
+        mod.removeConnector("hermes");
+
         // Set up the old profile dir and do an initial install on "old-profile".
         const oldProfileDir = path.join(tmpHome, ".hermes", "profiles", "old-profile");
         fs.mkdirSync(oldProfileDir, { recursive: true });
@@ -1098,6 +1106,104 @@ test("persisted string port is coerced on force reinstall", async () => {
         assert.ok(
           !yamlContent.includes("port: 4318"),
           "research config.yaml must NOT revert to the default port 4318",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// ── Round 5 regressions ───────────────────────────────────────────────────
+
+// Issue B regression: token must NOT be rotated when upsertHermesConfig fails
+test("token is not rotated when upsertHermesConfig fails (missing profile dir)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Ensure clean state first.
+        mod.removeConnector("hermes");
+
+        // Initial install onto an existing profile dir so the first token is
+        // written both to tokens.json and to the profile's config.yaml.
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "stable");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "stable", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install1.status, "installed", "Initial install must succeed");
+
+        // Read back the token that was written during the first install.
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const store1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const entry1 = store1.tokens.find((t) => t.connector === "hermes");
+        assert.ok(entry1, "tokens.json must have a hermes entry after initial install");
+        const originalToken = entry1.token;
+        assert.ok(originalToken.startsWith("remnic_hm_"), "Token must have hermes prefix");
+
+        // Force reinstall onto "ghost-profile" whose directory does NOT exist.
+        // upsertHermesConfig will skip (returns {skipped: true}), so the token
+        // must NOT be rotated — the original token must survive in tokens.json.
+        const install2 = mod.installConnector({
+          connectorId: "hermes",
+          force: true,
+          config: { profile: "ghost-profile", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install2.status, "installed", "Force reinstall must still return installed");
+
+        // tokens.json must still contain the ORIGINAL token, not a new one.
+        const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const entry2 = store2.tokens.find((t) => t.connector === "hermes");
+        assert.ok(entry2, "tokens.json must still have a hermes entry after failed reinstall");
+        assert.equal(
+          entry2.token,
+          originalToken,
+          "Token must NOT be rotated when upsertHermesConfig skips due to missing profile dir",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// Issue C regression: invalid port must return a failed InstallResult, not throw
+test("installConnector returns error result on invalid port (not a throw)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((_tmpHome) => {
+        // Ensure clean state.
+        mod.removeConnector("hermes");
+
+        // Call installConnector with a port that will fail sanitizeHermesPort.
+        // "abc" is not a valid integer — the sanitizer must throw internally but
+        // installConnector must catch it and return a structured error result.
+        let result: ReturnType<typeof mod.installConnector> | undefined;
+        assert.doesNotThrow(() => {
+          result = mod.installConnector({
+            connectorId: "hermes",
+            config: { host: "127.0.0.1", port: "abc" },
+          });
+        }, "installConnector must NOT throw on invalid port — it must return an error result");
+
+        assert.ok(result !== undefined, "installConnector must return a result");
+        assert.equal(result!.status, "error", "Status must be 'error' for invalid port");
+        assert.ok(
+          result!.message.toLowerCase().includes("port") ||
+          result!.message.toLowerCase().includes("invalid"),
+          `Error message must mention the port validation issue, got: ${result!.message}`,
         );
       });
       resolve();

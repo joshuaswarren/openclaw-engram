@@ -96,6 +96,34 @@ export function saveTokenStore(store: TokenStore, tokensPath?: string): void {
   try { fs.chmodSync(p, 0o600); } catch { /* ignore on platforms without chmod */ }
 }
 
+/**
+ * Build a TokenEntry candidate WITHOUT saving it to the store.
+ * Callers use this when they need to defer the save until after a
+ * dependent write (e.g. Hermes config.yaml) succeeds — see
+ * commitTokenEntry() to persist the candidate.
+ */
+export function buildTokenEntry(connector: string): TokenEntry {
+  const prefix = TOKEN_PREFIXES[connector] ?? "remnic_xx_";
+  const token = prefix + randomBytes(24).toString("hex");
+  return {
+    token,
+    connector,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Persist a pre-built TokenEntry into the store, replacing any existing
+ * entry for the same connector. Used together with buildTokenEntry() when
+ * the caller wants to defer the save until after a dependent write succeeds.
+ */
+export function commitTokenEntry(entry: TokenEntry, tokensPath?: string): void {
+  const store = loadTokenStore(tokensPath);
+  store.tokens = store.tokens.filter((t) => t.connector !== entry.connector);
+  store.tokens.push(entry);
+  saveTokenStore(store, tokensPath);
+}
+
 export function generateToken(connector: string, tokensPath?: string): TokenEntry {
   const store = loadTokenStore(tokensPath);
 
