@@ -27,7 +27,8 @@ type EmbeddingIndexFile = {
 const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
 
 /**
- * Maximum time to wait for an embedding HTTP request before giving up.
+ * Maximum time to wait for an embedding HTTP request on the LOOKUP/query
+ * path before giving up.
  *
  * The write-time semantic dedup guard in orchestrator.persistExtraction()
  * blocks each candidate fact on an embedding lookup. If the embedding
@@ -40,11 +41,26 @@ const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
  * Tests can override via REMNIC_EMBEDDING_FETCH_TIMEOUT_MS so they don't
  * have to wait the full default on hung-fetch assertions.
  *
- * Related: joshuaswarren/remnic#373, PR #399 P1 review.
+ * Related: joshuaswarren/remnic#373, PR #399 P1/P2 review.
  */
-const DEFAULT_EMBEDDING_FETCH_TIMEOUT_MS = 5000;
+const DEFAULT_EMBEDDING_LOOKUP_TIMEOUT_MS = 5000;
 
-function resolveEmbeddingFetchTimeoutMs(): number {
+/**
+ * Maximum time to wait for an embedding HTTP request on the INDEX path.
+ *
+ * Indexing runs asynchronously after a memory has already been persisted
+ * to disk. It does not block extraction or writes — it only updates the
+ * embedding index used by later semantic dedup lookups. A slow local
+ * CPU-backed embedding model can legitimately take tens of seconds per
+ * call, so applying the short lookup timeout here silently dropped index
+ * updates and caused later dedup lookups to miss recently persisted
+ * memories. Use a much larger budget on this path.
+ *
+ * Tests can override via REMNIC_EMBEDDING_INDEX_TIMEOUT_MS.
+ */
+const DEFAULT_EMBEDDING_INDEX_TIMEOUT_MS = 120_000;
+
+function resolveEmbeddingLookupTimeoutMs(): number {
   const raw = process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS;
   if (raw) {
     const parsed = Number(raw);
@@ -52,8 +68,29 @@ function resolveEmbeddingFetchTimeoutMs(): number {
       return Math.floor(parsed);
     }
   }
-  return DEFAULT_EMBEDDING_FETCH_TIMEOUT_MS;
+  return DEFAULT_EMBEDDING_LOOKUP_TIMEOUT_MS;
 }
+
+function resolveEmbeddingIndexTimeoutMs(): number {
+  const raw = process.env.REMNIC_EMBEDDING_INDEX_TIMEOUT_MS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed);
+    }
+  }
+  return DEFAULT_EMBEDDING_INDEX_TIMEOUT_MS;
+}
+
+/**
+ * Options for the low-level embed() call.
+ *
+ * `mode` selects the timeout profile:
+ *   - "lookup" (default): bounded by the short lookup budget; fails open fast.
+ *   - "index": bounded by a much longer budget so slow backends can still
+ *     index newly persisted memories.
+ */
+export type EmbedMode = "lookup" | "index";
 
 export class EmbeddingFallback {
   private readonly indexPath: string;
@@ -67,9 +104,32 @@ export class EmbeddingFallback {
     return (await this.resolveProvider()) !== null;
   }
 
+  /**
+   * Nearest-neighbor search against the embedding index.
+   *
+   * @param query         The query string to embed and search for.
+   * @param limit         Max number of hits to return.
+   * @param options       Optional filters.
+   *   - `pathPrefix`   Restrict candidates to entries whose indexed `path`
+   *                    starts with this prefix (relative to `memoryDir`).
+   *                    Used by the semantic dedup guard to scope lookups
+   *                    to the target namespace so a high-similarity hit
+   *                    from a different namespace can't suppress a write
+   *                    in the target namespace. Default: no filter.
+   *   - `pathExcludePrefixes`
+   *                    Exclude any entry whose indexed `path` starts with
+   *                    any of these prefixes. Used for the default
+   *                    namespace case: when the default namespace lives at
+   *                    `memoryDir` root (legacy layout) we still want to
+   *                    exclude `namespaces/<other>/…` entries.
+   */
   async search(
     query: string,
     limit: number,
+    options: {
+      pathPrefix?: string;
+      pathExcludePrefixes?: readonly string[];
+    } = {},
   ): Promise<Array<{ id: string; score: number; path: string }>> {
     const provider = await this.resolveProvider();
     if (!provider) return [];
@@ -78,8 +138,13 @@ export class EmbeddingFallback {
     const ids = Object.keys(index.entries);
     if (ids.length === 0) return [];
 
-    const queryVector = await this.embed(query, provider);
+    const queryVector = await this.embed(query, provider, { mode: "lookup" });
     if (!queryVector) return [];
+
+    const includePrefix = normalizePathPrefix(options.pathPrefix);
+    const excludePrefixes = (options.pathExcludePrefixes ?? [])
+      .map((p) => normalizePathPrefix(p))
+      .filter((p): p is string => typeof p === "string");
 
     const scored = ids
       .map((id) => {
@@ -90,7 +155,17 @@ export class EmbeddingFallback {
           score: cosineSimilarity(queryVector, entry.vector),
         };
       })
-      .filter((r) => Number.isFinite(r.score))
+      .filter((r) => {
+        if (!Number.isFinite(r.score)) return false;
+        const normalized = normalizeEntryPath(r.path);
+        if (includePrefix !== undefined && !normalized.startsWith(includePrefix)) {
+          return false;
+        }
+        for (const excl of excludePrefixes) {
+          if (normalized.startsWith(excl)) return false;
+        }
+        return true;
+      })
       .sort((a, b) => b.score - a.score)
       .slice(0, Math.max(1, limit));
 
@@ -100,7 +175,13 @@ export class EmbeddingFallback {
   async indexFile(memoryId: string, content: string, filePath: string): Promise<void> {
     const provider = await this.resolveProvider();
     if (!provider) return;
-    const vector = await this.embed(content, provider);
+    // Indexing is not on the write-critical path: a newly persisted memory
+    // has already been written to disk by the time we reach this call. Use
+    // the long "index" timeout so slow local embedding backends can still
+    // add the entry to the index. Previously this used the short lookup
+    // budget and silently dropped updates, leaving later dedup lookups
+    // blind to the memory. Related: PR #399 P2.
+    const vector = await this.embed(content, provider, { mode: "index" });
     if (!vector) return;
 
     const index = await this.loadIndex(provider);
@@ -164,10 +245,22 @@ export class EmbeddingFallback {
     return null;
   }
 
-  private async embed(input: string, provider: ProviderConfig): Promise<number[] | null> {
+  private async embed(
+    input: string,
+    provider: ProviderConfig,
+    options: { mode?: EmbedMode } = {},
+  ): Promise<number[] | null> {
     // Bound the fetch so a hung embedding endpoint cannot stall callers.
-    // See DEFAULT_EMBEDDING_FETCH_TIMEOUT_MS docblock for context.
-    const timeoutMs = resolveEmbeddingFetchTimeoutMs();
+    // The lookup path uses a short budget (see DEFAULT_EMBEDDING_LOOKUP_TIMEOUT_MS
+    // docblock) so semantic dedup fails open fast. The index path uses a
+    // much longer budget because slow local backends (CPU embedding models)
+    // otherwise drop index updates and blind later dedup lookups. See
+    // DEFAULT_EMBEDDING_INDEX_TIMEOUT_MS docblock and PR #399 P2 review.
+    const mode: EmbedMode = options.mode ?? "lookup";
+    const timeoutMs =
+      mode === "index"
+        ? resolveEmbeddingIndexTimeoutMs()
+        : resolveEmbeddingLookupTimeoutMs();
     try {
       const res = await fetch(provider.endpoint, {
         method: "POST",
@@ -196,7 +289,7 @@ export class EmbeddingFallback {
         (err.name === "TimeoutError" || err.name === "AbortError");
       if (isTimeout) {
         log.warn(
-          `embedding fallback fetch timed out after ${timeoutMs}ms (${provider.type}); failing open`,
+          `embedding fallback fetch timed out after ${timeoutMs}ms (${provider.type}, mode=${mode}); failing open`,
         );
       } else {
         log.debug(`embedding fallback error: ${err}`);
@@ -246,6 +339,33 @@ function toMemoryRelativePath(memoryDir: string, filePath: string): string {
   if (!path.isAbsolute(filePath)) return filePath;
   const rel = path.relative(memoryDir, filePath);
   return rel.startsWith("..") ? filePath : rel;
+}
+
+/**
+ * Normalize an index entry path to forward-slashes for stable prefix
+ * comparison. Entries are stored as `path.relative(memoryDir, …)` output,
+ * which on Windows uses back-slashes. Normalize both sides so prefix
+ * matching is OS-independent.
+ */
+function normalizeEntryPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+/**
+ * Normalize a caller-supplied path prefix:
+ *   - Return `undefined` for nullish/empty input (no filter).
+ *   - Replace back-slashes with forward-slashes.
+ *   - Strip a leading `./`.
+ *   - Ensure a trailing `/` so `"namespaces/a"` doesn't accidentally match
+ *     `"namespaces/another/…"`.
+ */
+function normalizePathPrefix(prefix: string | undefined): string | undefined {
+  if (prefix === undefined || prefix === null) return undefined;
+  let p = String(prefix).replace(/\\/g, "/");
+  if (p.startsWith("./")) p = p.slice(2);
+  if (p.length === 0) return undefined;
+  if (!p.endsWith("/")) p = `${p}/`;
+  return p;
 }
 
 function cosineSimilarity(a: number[], b: number[]): number {

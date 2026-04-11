@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
 import { parseConfig } from "../config.js";
+import { EmbeddingFallback } from "../embedding-fallback.js";
 import { ContentHashIndex } from "../storage.js";
 import {
   decideSemanticDedup,
@@ -352,5 +353,170 @@ test("regression #399: after neighbor archive, re-write of skipped content is al
     assert.equal(index.size, 1);
   } finally {
     await rm(stateDir, { recursive: true, force: true });
+  }
+});
+
+// ── Regression: PR #399 P1 — cross-namespace dedup must not suppress writes ──
+//
+// When namespaces are enabled and two namespaces contain near-duplicate
+// content, a write in namespace A must NOT be skipped because the top
+// embedding hit lives in namespace B. The fix scopes the semantic dedup
+// lookup to the target namespace's path prefix.
+
+async function seedEmbeddingIndex(
+  memoryDir: string,
+  entries: Record<string, { vector: number[]; path: string }>,
+): Promise<void> {
+  const stateDir = join(memoryDir, "state");
+  await mkdir(stateDir, { recursive: true });
+  const indexFile = {
+    version: 1 as const,
+    provider: "openai" as const,
+    model: "text-embedding-3-small",
+    entries,
+  };
+  await writeFile(
+    join(stateDir, "embeddings.json"),
+    JSON.stringify(indexFile),
+    "utf-8",
+  );
+}
+
+/**
+ * Replace global fetch with a stub that returns a fixed embedding vector.
+ * Returns a restore function the test should call in its `finally` block.
+ */
+function stubEmbedFetch(vector: number[]): () => void {
+  const original = globalThis.fetch;
+  (globalThis as any).fetch = async (_url: any, _init: any) => {
+    return new Response(
+      JSON.stringify({ data: [{ embedding: vector }] }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+  return () => {
+    (globalThis as any).fetch = original;
+  };
+}
+
+test("regression #399 P1: semantic dedup lookup is scoped to target namespace", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-ns-dedup-"));
+  // Use a unit vector for stability: cosine similarity with itself is ~1.
+  const vec = [1, 0, 0, 0];
+  const restoreFetch = stubEmbedFetch(vec);
+  try {
+    // Seed an index with two near-identical entries in two namespaces.
+    // Paths mirror what `toMemoryRelativePath` would produce.
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-a-001": {
+        vector: vec,
+        path: "namespaces/alpha/facts/a-001.md",
+      },
+      "mem-b-001": {
+        vector: vec,
+        path: "namespaces/beta/facts/b-001.md",
+      },
+    });
+
+    const config = parseConfig({
+      memoryDir,
+      namespacesEnabled: true,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      // Non-empty key so the provider resolves. The stubbed fetch never
+      // validates the header.
+      openaiApiKey: "test-key",
+    });
+    const fallback = new EmbeddingFallback(config);
+
+    // Unscoped lookup: both namespaces match. Confirms the baseline index
+    // and the stubbed fetch plumbing work.
+    const unscoped = await fallback.search("the user prefers tabs", 5);
+    assert.equal(unscoped.length, 2, "unscoped lookup returns both entries");
+
+    // Scoped to namespace alpha: only the alpha entry should appear, so
+    // a fact being written into alpha cannot be semantically deduped
+    // against the beta neighbor.
+    const alphaHits = await fallback.search(
+      "the user prefers tabs",
+      5,
+      { pathPrefix: "namespaces/alpha/" },
+    );
+    assert.equal(alphaHits.length, 1, "alpha-scoped lookup returns one hit");
+    assert.equal(alphaHits[0]?.id, "mem-a-001");
+
+    // Symmetric check for beta.
+    const betaHits = await fallback.search(
+      "the user prefers tabs",
+      5,
+      { pathPrefix: "namespaces/beta/" },
+    );
+    assert.equal(betaHits.length, 1, "beta-scoped lookup returns one hit");
+    assert.equal(betaHits[0]?.id, "mem-b-001");
+
+    // End-to-end: feed the scoped lookup into decideSemanticDedup for a
+    // hypothetical fact destined for a THIRD namespace with no entries.
+    // The lookup must return zero candidates, and the decision must be
+    // "keep" — NOT "skip" — even though alpha/beta both contain
+    // high-similarity memories. Without the P1 fix, the unfiltered index
+    // would have surfaced either alpha or beta and the fact would be
+    // dropped.
+    const decision = await decideSemanticDedup(
+      "the user prefers tabs",
+      (content, limit) =>
+        fallback
+          .search(content, limit, { pathPrefix: "namespaces/gamma/" })
+          .then((hits) =>
+            hits.map((hit) => ({
+              id: hit.id,
+              score: hit.score,
+              path: hit.path,
+            })),
+          ),
+      DEFAULT_OPTS,
+    );
+    assert.equal(
+      decision.action,
+      "keep",
+      "cross-namespace dedup must not skip writes in a fresh namespace",
+    );
+  } finally {
+    restoreFetch();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("regression #399 P1: default namespace at root excludes namespaces/* entries", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-ns-dedup-default-"));
+  const vec = [1, 0, 0, 0];
+  const restoreFetch = stubEmbedFetch(vec);
+  try {
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-default-001": { vector: vec, path: "facts/default-001.md" },
+      "mem-alpha-001": { vector: vec, path: "namespaces/alpha/facts/a-001.md" },
+    });
+
+    const config = parseConfig({
+      memoryDir,
+      namespacesEnabled: true,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      openaiApiKey: "test-key",
+    });
+    const fallback = new EmbeddingFallback(config);
+
+    // The orchestrator's scope helper passes `pathExcludePrefixes:
+    // ["namespaces/"]` when targeting the default namespace at legacy
+    // root. Simulate that filter directly.
+    const defaultHits = await fallback.search(
+      "content",
+      5,
+      { pathExcludePrefixes: ["namespaces/"] },
+    );
+    assert.equal(defaultHits.length, 1);
+    assert.equal(defaultHits[0]?.id, "mem-default-001");
+  } finally {
+    restoreFetch();
+    await rm(memoryDir, { recursive: true, force: true });
   }
 });

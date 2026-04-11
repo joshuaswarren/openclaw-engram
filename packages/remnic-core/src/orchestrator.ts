@@ -8658,9 +8658,16 @@ export class Orchestrator {
       if (this.config.semanticDedupEnabled) {
         let semanticDecision: SemanticDedupDecision;
         try {
+          // Pass the resolved target storage so the lookup scopes the
+          // embedding index to the target namespace (PR #399 P1 fix).
+          // Without this, a high-similarity hit in a different namespace
+          // would cause the fact to be dropped here — cross-namespace
+          // write suppression / data loss.
+          const lookupStorage = targetStorage;
           semanticDecision = await decideSemanticDedup(
             fact.content,
-            (content, limit) => this.semanticDedupLookup(content, limit),
+            (content, limit) =>
+              this.semanticDedupLookup(content, limit, lookupStorage),
             {
               enabled: true,
               threshold: this.config.semanticDedupThreshold,
@@ -11084,10 +11091,19 @@ export class Orchestrator {
    * memories, or an empty array when the embedding backend is unavailable.
    * Intentionally does NOT throw; `decideSemanticDedup` treats both "empty"
    * and "error" outcomes as fail-open (keep the candidate).
+   *
+   * PR #399 P1 fix: when namespaces are enabled the lookup must be scoped
+   * to the SAME namespace as the fact being written. Otherwise a
+   * high-similarity memory from another namespace can suppress a write in
+   * the target namespace — cross-tenant data loss. Callers pass the target
+   * storage so we can translate its root directory into the correct index
+   * path prefix (and, for the legacy default-namespace layout at
+   * `memoryDir` root, an exclusion list for `namespaces/*`).
    */
   private async semanticDedupLookup(
     content: string,
     limit: number,
+    targetStorage: StorageManager,
   ): Promise<SemanticDedupHit[]> {
     if (!this.config.embeddingFallbackEnabled) return [];
     try {
@@ -11095,7 +11111,8 @@ export class Orchestrator {
         log.debug("semantic dedup: embedding backend unavailable, skipping");
         return [];
       }
-      const hits = await this.embeddingFallback.search(content, limit);
+      const scope = this.semanticDedupScopeFor(targetStorage);
+      const hits = await this.embeddingFallback.search(content, limit, scope);
       if (!Array.isArray(hits) || hits.length === 0) return [];
       return hits.map((hit) => ({
         id: hit.id,
@@ -11106,6 +11123,47 @@ export class Orchestrator {
       log.debug(`semantic dedup: lookup failed (${err}), failing open`);
       return [];
     }
+  }
+
+  /**
+   * Resolve the namespace-scoped filter to pass into
+   * `EmbeddingFallback.search()` for semantic dedup. Returns an empty
+   * object (no filter) when namespaces are disabled, preserving the
+   * pre-PR #399 behavior for single-tenant installs.
+   *
+   * Index entries are stored as paths relative to `config.memoryDir`, so:
+   *   - A non-default namespace `ns` lives under `namespaces/<ns>/…` and
+   *     we include exactly that prefix.
+   *   - The default namespace may live at `memoryDir` root (legacy) or at
+   *     `memoryDir/namespaces/<default>/…` (migrated). When it lives at
+   *     root we include everything but EXCLUDE all `namespaces/…` entries
+   *     so facts from non-default namespaces can't cross-match.
+   */
+  private semanticDedupScopeFor(targetStorage: StorageManager): {
+    pathPrefix?: string;
+    pathExcludePrefixes?: readonly string[];
+  } {
+    if (!this.config.namespacesEnabled) return {};
+    const memoryDir = path.resolve(this.config.memoryDir);
+    const storageDir = path.resolve(targetStorage.dir);
+    if (storageDir === memoryDir) {
+      // Default namespace at legacy root. Include everything that isn't
+      // under `namespaces/*` (those belong to other namespaces).
+      return { pathExcludePrefixes: ["namespaces/"] };
+    }
+    let rel = path.relative(memoryDir, storageDir);
+    if (!rel || rel.startsWith("..")) {
+      // targetStorage lives outside memoryDir — extremely unusual (custom
+      // routing). Fall back to no scoping rather than silently dropping
+      // every candidate.
+      log.debug(
+        `semantic dedup: target storage dir ${storageDir} is outside memoryDir ${memoryDir}, skipping namespace scope`,
+      );
+      return {};
+    }
+    rel = rel.replace(/\\/g, "/");
+    if (!rel.endsWith("/")) rel = `${rel}/`;
+    return { pathPrefix: rel };
   }
 
   private async searchEmbeddingFallback(
