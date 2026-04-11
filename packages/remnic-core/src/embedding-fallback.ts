@@ -27,6 +27,25 @@ type EmbeddingIndexFile = {
 const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
 
 /**
+ * Thrown by `EmbeddingFallback.search()` (via `embed()`) when an HTTP fetch
+ * on the lookup path exceeds its deadline. Callers that need to distinguish a
+ * timeout from a generic network error can `instanceof`-check against this
+ * class; callers that just need fail-open semantics can catch any error.
+ *
+ * Round 9 fix (Finding UZqB): previously a timeout returned null from embed(),
+ * which caused search() to return [] silently. decideSemanticDedup then
+ * classified the result as no_candidates instead of backend_unavailable, so
+ * the per-batch batchBackendUnavailable short-circuit never activated and
+ * batches of N facts each paid a full timeout roundtrip.
+ */
+export class EmbeddingTimeoutError extends Error {
+  override readonly name = "EmbeddingTimeoutError" as const;
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+/**
  * Maximum time to wait for an embedding HTTP request on the LOOKUP/query
  * path before giving up.
  *
@@ -282,15 +301,32 @@ export class EmbeddingFallback {
       return vector.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n));
     } catch (err) {
       // AbortSignal.timeout throws a DOMException with name "TimeoutError";
-      // callers fail open regardless, but surface the timeout at warn level
-      // so operators can distinguish slow backends from generic errors.
+      // surface at warn level so operators can distinguish slow backends from
+      // generic errors.
       const isTimeout =
         err instanceof Error &&
         (err.name === "TimeoutError" || err.name === "AbortError");
       if (isTimeout) {
         log.warn(
-          `embedding fallback fetch timed out after ${timeoutMs}ms (${provider.type}, mode=${mode}); failing open`,
+          `embedding fallback fetch timed out after ${timeoutMs}ms (${provider.type}, mode=${mode})`,
         );
+        // Round 9 fix (Finding UZqB): on the LOOKUP path a timeout means the
+        // embedding backend is effectively unavailable — re-throw so that
+        // search() propagates the error to semanticDedupLookup, which lets it
+        // reach decideSemanticDedup's catch block and return
+        // reason="backend_unavailable". Without this, search() would silently
+        // return [] and the per-batch batchBackendUnavailable flag would never
+        // flip, causing subsequent facts in the same batch to each pay a full
+        // timeout roundtrip (N × timeout instead of 1 × timeout).
+        //
+        // On the INDEX path a timeout is not fatal (the memory is already
+        // persisted; index update can be skipped) — return null there so
+        // indexFile() stays non-blocking.
+        if (mode === "lookup") {
+          throw new EmbeddingTimeoutError(
+            `embedding backend timed out after ${timeoutMs}ms (${provider.type})`,
+          );
+        }
       } else {
         log.debug(`embedding fallback error: ${err}`);
       }

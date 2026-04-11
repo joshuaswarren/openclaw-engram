@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { parseConfig } from "../config.js";
 import { chunkContent, type ChunkingConfig } from "../chunking.js";
-import { EmbeddingFallback } from "../embedding-fallback.js";
+import { EmbeddingFallback, EmbeddingTimeoutError } from "../embedding-fallback.js";
 import { ContentHashIndex, StorageManager } from "../storage.js";
 import {
   decideSemanticDedup,
@@ -1026,5 +1026,189 @@ test("UUI2: batch backend-unavailable flag short-circuits embedding lookups afte
       "backend_unavailable",
       "every decision must carry reason=backend_unavailable",
     );
+  }
+});
+
+// ── Round 9 / Finding UZqB: embedding timeout propagates as backend_unavailable ─
+//
+// Previously a timed-out embedding fetch returned null from embed(), which
+// caused search() to return [] silently. decideSemanticDedup classified that
+// result as no_candidates instead of backend_unavailable, so the per-batch
+// batchBackendUnavailable flag never flipped and every fact in a batch paid a
+// full timeout roundtrip (N × timeout instead of 1 × timeout).
+//
+// The round 9 fix makes embed() throw EmbeddingTimeoutError on the lookup
+// path when AbortSignal fires. search() propagates it to semanticDedupLookup,
+// which lets it reach decideSemanticDedup's catch block →
+// reason="backend_unavailable". The per-batch flag then short-circuits
+// subsequent lookups.
+//
+// This test specifically covers the TIMEOUT code path (distinct from the
+// generic "backend down" UUI2 case above) and validates:
+//   1. EmbeddingFallback.search() throws EmbeddingTimeoutError on a timed-out fetch.
+//   2. That throw flows through to decideSemanticDedup → backend_unavailable.
+//   3. A simulated N=5 batch uses the flag to call fetch at most once.
+//   4. All 5 facts are kept (fail-open still works).
+
+/**
+ * Replace global fetch with a stub that always throws a DOMException AbortError,
+ * simulating an AbortSignal.timeout() firing. Returns a restore function and a
+ * call counter so tests can assert how many times fetch was attempted.
+ */
+function stubTimeoutFetch(): { restore: () => void; callCount: () => number } {
+  const original = globalThis.fetch;
+  let count = 0;
+  (globalThis as any).fetch = async (_url: any, init: any) => {
+    count++;
+    // AbortSignal.timeout() raises a DOMException with name "TimeoutError".
+    // Simulate that: throw a DOMException if available, or a plain Error with
+    // the correct name so the isTimeout branch in embed() triggers.
+    const signal: AbortSignal | undefined = init?.signal;
+    if (signal?.aborted) {
+      const err = signal.reason instanceof Error
+        ? signal.reason
+        : Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+      throw err;
+    }
+    // Signal not yet aborted — throw as TimeoutError anyway to simulate a
+    // backend that always takes longer than the deadline.
+    const timeout = new Error("The operation timed out");
+    (timeout as any).name = "TimeoutError";
+    throw timeout;
+  };
+  return {
+    restore: () => { (globalThis as any).fetch = original; },
+    callCount: () => count,
+  };
+}
+
+test("semantic dedup timeout: EmbeddingFallback.search() throws EmbeddingTimeoutError on lookup-path timeout", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-timeout-unit-"));
+  const { restore, callCount } = stubTimeoutFetch();
+  try {
+    // Seed a non-empty index so search() actually attempts an embed call.
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-t-001": { vector: [1, 0, 0, 0], path: "facts/t-001.md" },
+    });
+
+    const config = parseConfig({
+      memoryDir,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      openaiApiKey: "test-key",
+      // Use a very short timeout so the stubbed error fires even if the
+      // stub doesn't honour the signal eagerly.
+    });
+    // Override the lookup timeout to near-zero so the stub's TimeoutError
+    // scenario is realistic.
+    process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS = "1";
+    const fallback = new EmbeddingFallback(config);
+
+    let threw: unknown;
+    try {
+      await fallback.search("synthetic query for timeout test", 5);
+    } catch (err) {
+      threw = err;
+    }
+
+    assert.ok(threw instanceof EmbeddingTimeoutError,
+      `search() must throw EmbeddingTimeoutError on lookup timeout; got ${threw}`);
+    assert.ok(callCount() >= 1, "fetch must have been called at least once");
+  } finally {
+    delete process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS;
+    restore();
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("semantic dedup timeout: batch short-circuits after first timeout", async () => {
+  // This test mirrors UUI2 but uses the REAL EmbeddingFallback with a
+  // timed-out fetch stub, exercising the full propagation path:
+  //   AbortError → EmbeddingTimeoutError (from embed) → thrown from search()
+  //   → caught by decideSemanticDedup → reason="backend_unavailable"
+  //   → batchBackendUnavailable flag flips → subsequent facts skip fetch.
+
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-timeout-batch-"));
+  const { restore, callCount } = stubTimeoutFetch();
+  process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS = "1";
+
+  try {
+    // Seed a non-empty index so search() proceeds past the early-return guard
+    // (ids.length === 0) and actually calls embed().
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-t-001": { vector: [1, 0, 0, 0], path: "facts/t-001.md" },
+      "mem-t-002": { vector: [0, 1, 0, 0], path: "facts/t-002.md" },
+    });
+
+    const config = parseConfig({
+      memoryDir,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      openaiApiKey: "test-key",
+    });
+    const fallback = new EmbeddingFallback(config);
+
+    // Build a lookup that uses the real fallback (will throw EmbeddingTimeoutError).
+    const realLookup: SemanticDedupLookup = async (content, limit) =>
+      fallback.search(content, limit).then((hits) =>
+        hits.map((h) => ({ id: h.id, score: h.score, path: h.path })),
+      );
+
+    // Simulate the orchestrator's per-batch short-circuit for N=5 facts.
+    const N = 5;
+    let batchBackendUnavailable = false;
+    const decisions: SemanticDedupDecision[] = [];
+
+    for (let i = 0; i < N; i++) {
+      let semanticDecision: SemanticDedupDecision;
+      if (batchBackendUnavailable) {
+        // Short-circuit: skip the lookup, directly mark as backend_unavailable.
+        semanticDecision = { action: "keep", reason: "backend_unavailable" };
+      } else {
+        semanticDecision = await decideSemanticDedup(
+          `synthetic fact about preference number ${i}`,
+          realLookup,
+          DEFAULT_OPTS,
+        );
+        if (semanticDecision.reason === "backend_unavailable") {
+          batchBackendUnavailable = true;
+        }
+      }
+      decisions.push(semanticDecision);
+    }
+
+    // Fetch must have been called at most 1 time (only for the first fact's
+    // embed attempt). Facts 2-5 must have short-circuited via the flag.
+    assert.ok(
+      callCount() <= 1,
+      `fetch must be called ≤1 time for the lookup phase; called ${callCount()} time(s)`,
+    );
+
+    // All 5 facts must be kept (fail-open behaviour preserved even on timeout).
+    assert.equal(decisions.length, N, "all N facts must produce a decision");
+    for (const decision of decisions) {
+      assert.equal(
+        decision.action,
+        "keep",
+        "every fact must be kept (fail-open) when embedding times out",
+      );
+      assert.equal(
+        decision.reason,
+        "backend_unavailable",
+        "timeout must propagate as backend_unavailable, not no_candidates",
+      );
+    }
+
+    // Explicitly verify the flag did flip (not just all the facts) — ensures
+    // the first decision triggered the short-circuit path.
+    assert.equal(
+      batchBackendUnavailable,
+      true,
+      "batchBackendUnavailable flag must have been set by the first timeout",
+    );
+  } finally {
+    delete process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS;
+    restore();
+    await rm(memoryDir, { recursive: true, force: true });
   }
 });
