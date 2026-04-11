@@ -1446,6 +1446,172 @@ test("checkDaemonHealth: strips brackets from IPv6 host before probing (source-l
   );
 });
 
+// ── PR #400 round 6: sanitizeHermesHost host:port and IPv6 regression tests ──
+
+test("sanitizeHermesHost rejects host:port form (127.0.0.1:4318)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        let result: ReturnType<typeof mod.installConnector> | undefined;
+        assert.doesNotThrow(() => {
+          result = mod.installConnector({
+            connectorId: "hermes",
+            config: { host: "127.0.0.1:4318", port: 4318 },
+          });
+        }, "installConnector must NOT throw on invalid host — it must return an error result");
+
+        assert.ok(result !== undefined, "installConnector must return a result");
+        assert.equal(result!.status, "error", "host:port form must return status error");
+        assert.ok(
+          result!.message.toLowerCase().includes("port") ||
+          result!.message.toLowerCase().includes("host"),
+          `Error message must mention the invalid host, got: ${result!.message}`,
+        );
+
+        // config.yaml must NOT have been written
+        const cfgPath = path.join(profileDir, "config.yaml");
+        assert.ok(!fs.existsSync(cfgPath), "config.yaml must not be written when host is rejected");
+
+        // tokens.json must NOT have been minted
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        if (fs.existsSync(tokensPath)) {
+          const store = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+            tokens: Array<{ connector: string }>;
+          };
+          const hermesEntry = store.tokens.find((t) => t.connector === "hermes");
+          assert.ok(!hermesEntry, "No hermes token must be minted when install is rejected due to bad host");
+        }
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("sanitizeHermesHost accepts bracketed IPv6 [::1]", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        const result = mod.installConnector({
+          connectorId: "hermes",
+          config: { host: "[::1]", port: 4318 },
+        });
+        assert.equal(result.status, "installed", "Bracketed IPv6 [::1] must be accepted");
+
+        // config.yaml must record the bracketed form
+        const cfgPath = path.join(profileDir, "config.yaml");
+        assert.ok(fs.existsSync(cfgPath), "config.yaml must be written for [::1]");
+        const yaml = fs.readFileSync(cfgPath, "utf-8");
+        assert.ok(yaml.includes("[::1]"), "config.yaml must store the bracketed IPv6 host unchanged");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("sanitizeHermesHost accepts bracketed IPv6 [2001:db8::1]", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        const result = mod.installConnector({
+          connectorId: "hermes",
+          config: { host: "[2001:db8::1]", port: 4318 },
+        });
+        assert.equal(result.status, "installed", "Bracketed IPv6 [2001:db8::1] must be accepted");
+
+        const cfgPath = path.join(profileDir, "config.yaml");
+        assert.ok(fs.existsSync(cfgPath), "config.yaml must be written for [2001:db8::1]");
+        const yaml = fs.readFileSync(cfgPath, "utf-8");
+        assert.ok(yaml.includes("[2001:db8::1]"), "config.yaml must store the bracketed IPv6 host unchanged");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("sanitizeHermesHost rejects unbalanced bracket [::1 (no closing bracket)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((_tmpHome) => {
+        mod.removeConnector("hermes");
+
+        let result: ReturnType<typeof mod.installConnector> | undefined;
+        assert.doesNotThrow(() => {
+          result = mod.installConnector({
+            connectorId: "hermes",
+            config: { host: "[::1", port: 4318 },
+          });
+        }, "installConnector must NOT throw on unbalanced bracket host");
+
+        assert.ok(result !== undefined, "installConnector must return a result");
+        assert.equal(result!.status, "error", "Unbalanced bracket must return status error");
+        assert.ok(
+          result!.message.toLowerCase().includes("bracket") ||
+          result!.message.toLowerCase().includes("host") ||
+          result!.message.toLowerCase().includes("invalid"),
+          `Error message must mention the invalid host, got: ${result!.message}`,
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("sanitizeHermesHost accepts plain DNS hostname localhost", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        const result = mod.installConnector({
+          connectorId: "hermes",
+          config: { host: "localhost", port: 4318 },
+        });
+        assert.equal(result.status, "installed", "Plain DNS hostname 'localhost' must be accepted");
+
+        const cfgPath = path.join(profileDir, "config.yaml");
+        assert.ok(fs.existsSync(cfgPath), "config.yaml must be written for localhost");
+        const yaml = fs.readFileSync(cfgPath, "utf-8");
+        assert.ok(yaml.includes("localhost"), "config.yaml must record 'localhost' as host");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
 // Regression: happy path — old token only revoked after successful commit,
 // connector.json only written after commit.
 test("atomic flow: happy path — connector.json and token written only after YAML+commit succeed", async () => {

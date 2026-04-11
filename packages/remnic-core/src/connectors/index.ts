@@ -659,10 +659,6 @@ export function installConnector(options: InstallOptions): InstallResult {
         };
       }
     }
-    // Apply saved/default fallbacks for profile and host (already set above if
-    // options.config provided them; fall through to saved/default if not).
-    hermesResolvedProfile ??= hermesSavedProfile ?? "default";
-    hermesResolvedHost ??= hermesSavedHost ?? "127.0.0.1";
   }
 
   // Generate a per-connector auth token so the daemon can authenticate
@@ -1027,9 +1023,20 @@ function hermesConfigPath(profile: string): string {
  * would emit additional YAML keys into the `remnic:` block and silently
  * override Hermes settings.
  *
- * We accept IPv4, IPv6, and RFC-952/RFC-1123 hostnames — the same
- * character classes any real DNS/listen address would use. Anything with
- * whitespace, quotes, or line breaks is rejected.
+ * Accepted forms:
+ *   - Plain IPv4: 127.0.0.1, 10.0.0.5
+ *   - Plain DNS hostname: localhost, foo.example.com
+ *   - Bracketed IPv6 literal: [::1], [2001:db8::1]
+ *
+ * Rejected forms:
+ *   - host:port combos: 127.0.0.1:4318 (colons not allowed outside brackets)
+ *   - Unbalanced brackets: [::1
+ *   - Any whitespace, quotes, or control characters
+ *
+ * Hermes builds its base URL as `http://{host}:{port}`, so supplying a
+ * host that already embeds a port (e.g. "127.0.0.1:4318") would produce
+ * the double-port URL "http://127.0.0.1:4318:4318/..." and fail at runtime
+ * even though install reports success.  We reject that form here.
  */
 function sanitizeHermesHost(host: string): string {
   if (typeof host !== "string" || host.length === 0) {
@@ -1038,11 +1045,35 @@ function sanitizeHermesHost(host: string): string {
   if (host.length > 253) {
     throw new Error(`Hermes host too long (max 253 chars): ${JSON.stringify(host.slice(0, 32))}…`);
   }
-  // Allowed chars: hostname letters/digits/dot/hyphen, plus colon and
-  // square brackets for IPv6 literals. No whitespace, no quotes, no
-  // control characters — those are the values that could break out of
-  // the YAML scalar.
-  if (!/^[A-Za-z0-9._\-:[\]]+$/.test(host)) {
+
+  // Bracketed IPv6 literal: must start with "[", end with "]", and contain
+  // only hex digits and colons inside the brackets.
+  if (host.startsWith("[")) {
+    if (!host.endsWith("]")) {
+      throw new Error(
+        `Invalid Hermes host: ${JSON.stringify(host)} — unbalanced brackets in IPv6 literal`,
+      );
+    }
+    const inner = host.slice(1, -1);
+    if (inner.length === 0 || !/^[0-9A-Fa-f:]+$/.test(inner)) {
+      throw new Error(
+        `Invalid Hermes host: ${JSON.stringify(host)} — bracketed IPv6 literal must contain only hex digits and colons`,
+      );
+    }
+    return host;
+  }
+
+  // Unbracketed value: colons are not allowed (would indicate an embedded port
+  // or an unbracketed IPv6 address, both of which must be rejected here).
+  if (host.includes(":")) {
+    throw new Error(
+      `Invalid Hermes host: ${JSON.stringify(host)} — host must not include a port; supply the port separately with --config port=<n>`,
+    );
+  }
+
+  // Plain IPv4 or DNS hostname: allow letters, digits, dots, and hyphens only.
+  // No whitespace, quotes, or control characters.
+  if (!/^[A-Za-z0-9._\-]+$/.test(host)) {
     throw new Error(
       `Invalid Hermes host: ${JSON.stringify(host)} — must be a plain hostname or IP literal`,
     );
