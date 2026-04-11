@@ -25,6 +25,31 @@ class TestProviderLifecycle:
             instance.health.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_initialize_forwards_timeout(self):
+        """initialize() must pass the configured timeout to RemnicClient."""
+        provider = RemnicMemoryProvider(
+            {"host": "127.0.0.1", "port": 4318, "token": "test-token", "timeout": 60.0}
+        )
+        with patch("remnic_hermes.provider.RemnicClient") as MockClient:
+            instance = MockClient.return_value
+            instance.health = AsyncMock()
+            await provider.initialize()
+            _, kwargs = MockClient.call_args
+            assert kwargs.get("timeout") == 60.0, (
+                "timeout from config must be forwarded to RemnicClient"
+            )
+
+    @pytest.mark.asyncio
+    async def test_initialize_uses_default_timeout(self, provider):
+        """initialize() passes the default timeout (30.0) when not configured."""
+        with patch("remnic_hermes.provider.RemnicClient") as MockClient:
+            instance = MockClient.return_value
+            instance.health = AsyncMock()
+            await provider.initialize()
+            _, kwargs = MockClient.call_args
+            assert kwargs.get("timeout") == 30.0
+
+    @pytest.mark.asyncio
     async def test_shutdown_closes_client(self, provider):
         """shutdown() should close the HTTP client."""
         with patch("remnic_hermes.provider.RemnicClient") as MockClient:

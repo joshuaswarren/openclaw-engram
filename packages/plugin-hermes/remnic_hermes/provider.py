@@ -25,6 +25,7 @@ class RemnicMemoryProvider:
         self._host = cfg.host
         self._port = cfg.port
         self._token = cfg.token
+        self._timeout = cfg.timeout
         self._session_key = cfg.session_key or f"hermes-{uuid.uuid4().hex[:12]}"
         self._client: RemnicClient | None = None
 
@@ -35,6 +36,7 @@ class RemnicMemoryProvider:
             port=self._port,
             token=self._token,
             client_id="hermes",
+            timeout=self._timeout,
         )
         try:
             await self._client.health()

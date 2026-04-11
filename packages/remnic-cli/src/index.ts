@@ -82,6 +82,9 @@ import {
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
 export { hasFlag, resolveFlag } from "./cli-args.js";
 import { hasFlag, resolveFlag } from "./cli-args.js";
+import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
+
+export { parseConnectorConfig, stripConfigArgv };
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -195,17 +198,6 @@ function resolveMemoryDir(): string {
   }
 
   return configMemoryDir;
-}
-
-function parseConnectorConfig(args: string[]): Record<string, unknown> {
-  const config: Record<string, unknown> = {};
-  for (const arg of args) {
-    if (arg.startsWith("--config=")) {
-      const [key, value] = arg.slice("--config=".length).split("=");
-      if (key && value) config[key] = value;
-    }
-  }
-  return config;
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -657,8 +649,14 @@ function cmdDedup(json: boolean): void {
 // ── M5 connectors command ────────────────────────────────────────────────────
 
 async function cmdConnectors(action: string, rest: string[], json: boolean): Promise<void> {
-  // For install/remove/doctor, the connector ID is the second non-flag arg after the action
-  const nonFlagArgs = rest.filter((a) => !a.startsWith("--"));
+  // For install/remove/doctor, the connector ID is the first non-flag positional
+  // arg. We must strip the value tokens consumed by split-form `--config key=value`
+  // flags BEFORE filtering for non-flags, otherwise `installExtension=false`
+  // (the value of `--config installExtension=false`) would be mistaken for the
+  // connector ID when the user writes:
+  //   remnic connectors install --config installExtension=false codex-cli
+  const strippedRest = stripConfigArgv(rest);
+  const nonFlagArgs = strippedRest.filter((a) => !a.startsWith("--"));
   const connectorId = nonFlagArgs[0];
 
   if (action === "list") {
@@ -686,7 +684,13 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     if (result.configPath) console.log(`  Config: ${result.configPath}`);
     if (result.status === "already_installed") console.log("Use --force to reinstall.");
     if (result.status === "config_required") console.log("Set config with --config <key>=<value>");
-    if (result.status === "error") console.error(`Error: ${result.message}`);
+    if (result.status === "error") {
+      // installConnector now returns `status: "error"` instead of throwing on
+      // filesystem failures (e.g. EISDIR/EPERM writing <connector>.json). Without
+      // a non-zero exit the shell sees success and scripts silently move on.
+      console.error(`Error: ${result.message}`);
+      process.exit(1);
+    }
   } else if (action === "remove") {
     if (!connectorId) {
       console.error("Usage: remnic connectors remove <id>");
@@ -694,6 +698,16 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     }
     const result = removeConnector(connectorId);
     console.log(result.message);
+    if (result.status === "skipped" && result.reason === "config-parse-failed") {
+      // A malformed codex-cli.json means we could not verify or complete removal.
+      // This is not a benign no-op — the connector may still be partially installed.
+      // Exit non-zero so automation does not treat a failed removal as success.
+      console.error(
+        `Error: removal skipped because the connector config could not be parsed. ` +
+          `Fix or delete the config file at ${result.configPath} manually and retry.`,
+      );
+      process.exit(1);
+    }
   } else if (action === "doctor") {
     if (!connectorId) {
       console.error("Usage: remnic connectors doctor <id>");

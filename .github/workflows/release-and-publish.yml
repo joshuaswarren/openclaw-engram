@@ -344,7 +344,10 @@ jobs:
       - name: Publish workspace packages to npm
         run: |
           # Publish in dependency order: core first, then packages that depend on it.
-          # Uses npm (not pnpm) because trusted publishing requires npm's OIDC support.
+          # Uses pnpm (not npm) so that workspace: protocol strings are rewritten to
+          # real version numbers at pack time. npm publish does not perform this
+          # rewriting, which causes "workspace:^" to appear verbatim in the published
+          # package metadata (see issue #403).
           PUBLISH_ORDER=(
             packages/remnic-core
             packages/remnic-server
@@ -371,7 +374,7 @@ jobs:
               continue
             fi
             echo "Publishing ${pkg_name}@${pkg_version} from ${pkg_dir}..."
-            (cd "$pkg_dir" && npm publish --access public --provenance)
+            (cd "$pkg_dir" && pnpm publish --access public --provenance --no-git-checks)
           done
 
       - name: Push release commits to main

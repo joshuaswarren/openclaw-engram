@@ -2909,6 +2909,26 @@
         },
         "description": "Daily Context Briefing (#370). Knobs: enabled, defaultWindow ('yesterday', '3d', '1w', '24h', ...), defaultFormat (markdown|json), maxFollowups (0-10), calendarSource (path to ICS/JSON file, null = off), saveByDefault, saveDir (null = $REMNIC_HOME/briefings/), llmFollowups (disable to skip Responses API calls)."
       },
+      "codex": {
+        "type": "object",
+        "description": "Codex CLI connector settings (install-time).",
+        "additionalProperties": false,
+        "properties": {
+          "installExtension": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true, `remnic connectors install codex-cli` also drops memories_extensions/remnic/instructions.md into the Codex home so the phase-2 consolidation sub-agent auto-discovers Remnic."
+          },
+          "codexHome": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null,
+            "description": "Override for the Codex home directory. When null, uses $CODEX_HOME or ~/.codex."
+          }
+        }
+      },
       "codexMaterializeMemories": {
         "type": "boolean",
         "default": true,

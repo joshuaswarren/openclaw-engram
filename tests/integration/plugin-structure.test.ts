@@ -41,11 +41,19 @@ test("plugin-claude-code hook scripts are executable", () => {
   }
 });
 
-test("plugin-claude-code has skills", () => {
+test("plugin-claude-code has skills in folder layout", () => {
   const skillsDir = path.join(PACKAGES, "plugin-claude-code", "skills");
-  const required = ["remember.md", "recall.md", "search.md", "entities.md", "status.md"];
-  for (const skill of required) {
-    assert.ok(fs.existsSync(path.join(skillsDir, skill)), `skill ${skill} must exist`);
+  const required = [
+    "remnic-memory-workflow",
+    "remnic-recall",
+    "remnic-remember",
+    "remnic-search",
+    "remnic-entities",
+    "remnic-status",
+  ];
+  for (const slug of required) {
+    const skillFile = path.join(skillsDir, slug, "SKILL.md");
+    assert.ok(fs.existsSync(skillFile), `skill ${slug}/SKILL.md must exist`);
   }
 });
 
