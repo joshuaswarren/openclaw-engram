@@ -2783,3 +2783,98 @@ test("codex-cli: token is rolled back when installCodexMemoryExtension throws (C
     }
   });
 });
+
+// ── Round 5 regressions ───────────────────────────────────────────────────
+
+// Fix 1 (PRRT_kwDORJXyws56U0ye): Cursor flagged triple-sanitization of
+// hermesResolvedProfile. The fix makes the initial assignment use only
+// saved/default values; user-supplied profile is validated exactly once
+// in the sanitization block below it (single point of validation).
+test("round-5 fix 1: hermesResolvedProfile initial assignment does not include raw user-supplied value (single validation path)", () => {
+  // Source-level check: the initial hermesResolvedProfile assignment must NOT
+  // include options.config?.profile — that value must only flow in via the
+  // downstream sanitizeHermesProfile call.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+
+  // Find the initial hermesResolvedProfile = ... assignment.
+  const assignIdx = content.indexOf("hermesResolvedProfile =");
+  assert.ok(assignIdx >= 0, "hermesResolvedProfile assignment must exist");
+
+  // Capture just the assignment line (up to the next semicolon-ish boundary).
+  // Slice enough to cover a multi-line assignment but not the whole sanitization block.
+  const assignSlice = content.slice(assignIdx, assignIdx + 300);
+
+  // The initial assignment must NOT include options.config?.profile.
+  // If it does, the user-supplied value would bypass sanitization on this path.
+  assert.ok(
+    !assignSlice.includes("options.config?.profile"),
+    "Initial hermesResolvedProfile assignment must NOT include options.config?.profile " +
+      "— user-supplied profile must only enter via the sanitizeHermesProfile block",
+  );
+
+  // The sanitization block (single point of validation) must still be present.
+  assert.ok(
+    content.includes("sanitizeHermesProfile(String(options.config.profile))"),
+    "Single-point sanitization of user-supplied profile must exist",
+  );
+});
+
+// Fix 2 (PRRT_kwDORJXyws56U12T): When installCodexMemoryExtension throws and
+// the token rollback also fails, the error message must NOT claim success.
+// Conversely, when rollback succeeds, the existing "Token has been rolled back"
+// wording must still be present.
+test("round-5 fix 2 (source): extension-install error message is gated on rollback success", () => {
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+
+  // The rollback tracking variables must be present.
+  assert.ok(
+    content.includes("extensionErrTokenRolledBack"),
+    "Source must track extension-error token rollback outcome (extensionErrTokenRolledBack)",
+  );
+
+  // The message must be conditional — there must be a ternary or if/else that
+  // selects between rollback-success and rollback-failure wording.
+  assert.ok(
+    content.includes("extensionErrTokenRolledBack\n          ? \"Token has been rolled back.\"") ||
+    content.includes('extensionErrTokenRolledBack\n          ? "Token has been rolled back."') ||
+    content.includes("extensionErrTokenRolledBack ?"),
+    "Extension install error path must conditionally report rollback outcome",
+  );
+
+  // The rollback-failure branch must warn about orphaned token state.
+  assert.ok(
+    content.includes("Token rollback FAILED"),
+    "Extension install error path must warn about rollback failure explicitly",
+  );
+});
+
+// Fix 3 (PRRT_kwDORJXyws56U12U): When the config JSON write fails and the
+// token rollback also fails, the error message must NOT claim success.
+test("round-5 fix 3 (source): config-write error message is gated on rollback success", () => {
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+
+  // The rollback tracking variables must be present.
+  assert.ok(
+    content.includes("configWriteTokenRolledBack"),
+    "Source must track config-write token rollback outcome (configWriteTokenRolledBack)",
+  );
+
+  // The message must be conditional — there must be a ternary that selects
+  // between rollback-success and rollback-failure wording.
+  assert.ok(
+    content.includes("configWriteTokenRolledBack\n      ? \"Token has been rolled back.\"") ||
+    content.includes('configWriteTokenRolledBack\n      ? "Token has been rolled back."') ||
+    content.includes("configWriteTokenRolledBack ?"),
+    "Config write error path must conditionally report rollback outcome",
+  );
+
+  // The rollback-failure branch must warn about orphaned token state.
+  // The same "Token rollback FAILED" string serves both fixes 2 and 3.
+  const firstIdx = content.indexOf("Token rollback FAILED");
+  const secondIdx = content.indexOf("Token rollback FAILED", firstIdx + 1);
+  assert.ok(
+    secondIdx >= 0,
+    "Both extension-install and config-write error paths must warn about rollback failure " +
+      "(\"Token rollback FAILED\" must appear twice in source)",
+  );
+});

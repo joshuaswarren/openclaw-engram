@@ -625,14 +625,10 @@ export function installConnector(options: InstallOptions): InstallResult {
         // Could not read existing config — fall through to defaults
       }
     }
-    hermesResolvedProfile =
-      (options.config?.profile as string | undefined) ??
-      hermesSavedProfile ??
-      "default";
-    hermesResolvedHost =
-      (options.config?.host as string | undefined) ??
-      hermesSavedHost ??
-      "127.0.0.1";
+    // Use saved/default values here; user-supplied profile/host are validated
+    // and applied in the sanitization block below (single point of validation).
+    hermesResolvedProfile = hermesSavedProfile ?? "default";
+    hermesResolvedHost = hermesSavedHost ?? "127.0.0.1";
 
     // Issue C: wrap sanitizeHermesPort (and profile/host) in try-catch so
     // that invalid user-supplied values return a clean error result.
@@ -1076,17 +1072,25 @@ export function installConnector(options: InstallOptions): InstallResult {
         // connector.json was written — roll back the token store to the
         // pre-install snapshot so tokens.json and the absent connector.json
         // stay consistent (no orphaned/active token without a matching config).
+        let extensionErrTokenRolledBack = true;
+        let extensionErrTokenRollbackMsg = "";
         if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
           try {
             saveTokenStore(nonHermesPriorTokenStore);
-          } catch {
-            // Best-effort: rollback failed; caller sees the original install error.
+          } catch (tokenRestoreErr) {
+            extensionErrTokenRolledBack = false;
+            extensionErrTokenRollbackMsg =
+              tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr);
           }
         }
+        const tokenRollbackSuffix = extensionErrTokenRolledBack
+          ? "Token has been rolled back."
+          : `Token rollback FAILED (${extensionErrTokenRollbackMsg}) — tokens.json may contain an orphaned entry. ` +
+            `Manually inspect ~/.remnic/tokens.json and reinstall.`;
         return {
           connectorId: options.connectorId,
           status: "error",
-          message: `Memory extension install failed — ${errMsg}. Token has been rolled back. Resolve the issue, then reinstall.`,
+          message: `Memory extension install failed — ${errMsg}. ${tokenRollbackSuffix} Resolve the issue, then reinstall.`,
         };
       }
     } else {
@@ -1119,12 +1123,18 @@ export function installConnector(options: InstallOptions): InstallResult {
   try {
     writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
   } catch (writeErr) {
-    // Roll back non-hermes token store if needed.
+    // Roll back non-hermes token store if needed. Track success so we can
+    // report accurately — unconditionally claiming rollback succeeded when it
+    // silently failed would leave operators unable to diagnose inconsistent state.
+    let configWriteTokenRolledBack = true;
+    let configWriteTokenRollbackMsg = "";
     if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
       try {
         saveTokenStore(nonHermesPriorTokenStore);
-      } catch {
-        // Best-effort: token rollback failed; caller sees the original write error.
+      } catch (tokenRestoreErr) {
+        configWriteTokenRolledBack = false;
+        configWriteTokenRollbackMsg =
+          tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr);
       }
     }
     // Roll back the codex-cli extension if it was installed.
@@ -1142,13 +1152,17 @@ export function installConnector(options: InstallOptions): InstallResult {
         );
       }
     }
+    const configWriteTokenSuffix = configWriteTokenRolledBack
+      ? "Token has been rolled back."
+      : `Token rollback FAILED (${configWriteTokenRollbackMsg}) — tokens.json may contain an orphaned entry. ` +
+        `Manually inspect ~/.remnic/tokens.json and reinstall.`;
     return {
       connectorId: options.connectorId,
       status: "error",
       message:
         `${manifest.name} install aborted: connector config write failed — ` +
         `${writeErr instanceof Error ? writeErr.message : String(writeErr)}. ` +
-        `Token has been rolled back. Resolve the write permission issue, then reinstall.`,
+        `${configWriteTokenSuffix} Resolve the write permission issue, then reinstall.`,
     };
   }
 
