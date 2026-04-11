@@ -101,16 +101,23 @@ function loadRawConfig(resolveEntry) {
     if (!fs.existsSync(candidate)) continue;
     try {
       const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
+      if (!raw || typeof raw !== "object") continue;
+      // Try the structured OpenClaw config layout first (plugins.entries).
       // resolveEntry returns the full plugin entry (including .config).
-      // Fall back to the raw object for legacy / developer config layouts
-      // where the top-level object IS the config.
       const entry = resolveEntry(raw);
       if (entry && typeof entry === "object") {
         return entry.config && typeof entry.config === "object"
           ? entry.config
           : entry;
       }
-      // No recognised entry in this file; try the next candidate.
+      // Legacy / developer config layout: the top-level object IS the config.
+      // Honour it as long as it has no `plugins` subtree (so we don't
+      // accidentally treat a complete OpenClaw config with an unknown plugin
+      // slot as a flat Remnic config).
+      if (!raw.plugins) {
+        return raw;
+      }
+      // OpenClaw config but no Remnic entry found — skip to next candidate.
     } catch (_err) {
       // fall through to next candidate
     }

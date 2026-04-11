@@ -61,7 +61,7 @@ const ENGRAM_MIGRATION_PROMISE = "__openclawEngramMigrationPromise";
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
 // Shared helper: read and parse the full plugin entry from openclaw.json.
-function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
+function loadPluginEntryFromFile(pluginId?: string): Record<string, unknown> | undefined {
   try {
     const explicitConfigPath =
       readEnvVar("OPENCLAW_ENGRAM_CONFIG_PATH") ||
@@ -73,17 +73,19 @@ function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
         : path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
-    // Delegate slot → PLUGIN_ID → LEGACY_PLUGIN_ID resolution to the shared
-    // helper so all config loaders stay in sync (#403).
-    return resolveRemnicPluginEntry(config);
+    // Delegate slot → preferredId → PLUGIN_ID → LEGACY_PLUGIN_ID resolution to
+    // the shared helper so all config loaders stay in sync (#403).
+    // Pass the active plugin id so shim installs (id="openclaw-engram") prefer
+    // their own entry when no slots.memory override is present.
+    return resolveRemnicPluginEntry(config, pluginId);
   } catch (err) {
     log.warn(`Failed to load config from file: ${err}`);
     return undefined;
   }
 }
 
-function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
-  return loadPluginEntryFromFile()?.config as
+function loadPluginConfigFromFile(pluginId?: string): Record<string, unknown> | undefined {
+  return loadPluginEntryFromFile(pluginId)?.config as
     | Record<string, unknown>
     | undefined;
 }
@@ -94,14 +96,15 @@ function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
  */
 function readPluginHooksPolicy(
   apiConfig: unknown,
+  pluginId?: string,
 ): Record<string, unknown> | undefined {
-  // Try api.config first — delegate slot → PLUGIN_ID → LEGACY_PLUGIN_ID
+  // Try api.config first — delegate slot → preferredId → PLUGIN_ID → LEGACY_PLUGIN_ID
   // resolution to the shared helper so all config loaders stay in sync (#403).
-  const apiEntry = resolveRemnicPluginEntry(apiConfig);
+  const apiEntry = resolveRemnicPluginEntry(apiConfig, pluginId);
   const fromApi = apiEntry?.["hooks"] as Record<string, unknown> | undefined;
   if (fromApi && typeof fromApi === "object") return fromApi;
   // Fall back to file-backed config
-  return loadPluginEntryFromFile()?.hooks as
+  return loadPluginEntryFromFile(pluginId)?.["hooks"] as
     | Record<string, unknown>
     | undefined;
 }
@@ -205,8 +208,9 @@ const pluginDefinition = {
       return;
     }
 
-    // Workaround: Load config from file since gateway may not pass it
-    const fileConfig = loadPluginConfigFromFile();
+    // Workaround: Load config from file since gateway may not pass it.
+    // Pass serviceId so shim installs prefer their own entry (#403).
+    const fileConfig = loadPluginConfigFromFile(serviceId);
     const cfg = parseConfig({
       ...api.pluginConfig,
       ...fileConfig, // Merge file config as workaround
@@ -295,7 +299,7 @@ const pluginDefinition = {
     // NOT section builders, so we must check the policy ourselves.
     // Read from both api.config and file-backed config for installs where
     // the gateway doesn't pass the full config object.
-    const hooksPolicy = readPluginHooksPolicy(api.config);
+    const hooksPolicy = readPluginHooksPolicy(api.config, serviceId);
     const promptInjectionAllowed = hooksPolicy?.allowPromptInjection !== false;
 
     // True when the section builder will be registered (capability + policy).

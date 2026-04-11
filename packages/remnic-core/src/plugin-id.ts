@@ -18,8 +18,10 @@ const REMNIC_PLUGIN_IDS: ReadonlySet<string> = new Set([PLUGIN_ID, LEGACY_PLUGIN
  *   1. `plugins.slots.memory` — but **only** when it resolves to a known
  *      Remnic plugin id; foreign slots are ignored so mixed-plugin installs
  *      do not accidentally apply another plugin's config to Remnic.
- *   2. `plugins.entries["openclaw-remnic"]`
- *   3. `plugins.entries["openclaw-engram"]` (legacy backward-compat)
+ *   2. `preferredId` — the caller's own plugin id (e.g. `"openclaw-engram"` for
+ *      the shim package); only consulted when no active slot overrides the choice.
+ *   3. `plugins.entries["openclaw-remnic"]`
+ *   4. `plugins.entries["openclaw-engram"]` (legacy backward-compat)
  *
  * Returns `undefined` when no Remnic entry is found.
  *
@@ -27,9 +29,16 @@ const REMNIC_PLUGIN_IDS: ReadonlySet<string> = new Set([PLUGIN_ID, LEGACY_PLUGIN
  * loadPluginConfig in access-cli.ts, loadCliPluginConfig in operator-toolkit.ts,
  * and unwrapOpenClawEntry in materialize.cjs) delegate here so fallback order
  * and guard logic are defined in exactly one place.
+ *
+ * @param raw - The raw OpenClaw config object.
+ * @param preferredId - The calling plugin's own id.  When present and no
+ *   `plugins.slots.memory` slot is set, this id is tried before the hardcoded
+ *   `PLUGIN_ID`/`LEGACY_PLUGIN_ID` fallbacks.  Ignored if it is not a known
+ *   Remnic plugin id (safety guard against unexpected values).
  */
 export function resolveRemnicPluginEntry(
   raw: unknown,
+  preferredId?: string,
 ): Record<string, unknown> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, unknown>;
@@ -52,7 +61,16 @@ export function resolveRemnicPluginEntry(
       ? rawSlot
       : undefined;
 
-  const candidateIds = [activeId, PLUGIN_ID, LEGACY_PLUGIN_ID].filter(
+  // When no slot is set, honour the caller's own plugin id so shim installs
+  // (id="openclaw-engram") prefer their own entry over the canonical one.
+  const ownId =
+    !activeId &&
+    typeof preferredId === "string" &&
+    REMNIC_PLUGIN_IDS.has(preferredId)
+      ? preferredId
+      : undefined;
+
+  const candidateIds = [activeId, ownId, PLUGIN_ID, LEGACY_PLUGIN_ID].filter(
     (id): id is string => typeof id === "string",
   );
 
