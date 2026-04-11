@@ -1645,7 +1645,18 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   console.log(`OpenClaw config: ${configPath}`);
 
   const existingConfig = readOpenclawConfig(configPath);
-  const plugins = (existingConfig.plugins ?? {}) as Record<string, unknown>;
+
+  // Validate that plugins (if present) is a plain object, not a string, array,
+  // or other non-object. This prevents the install from silently corrupting a
+  // config where plugins has been set to a scalar or array value.
+  const rawPlugins = existingConfig.plugins;
+  if (rawPlugins !== undefined && (typeof rawPlugins !== "object" || rawPlugins === null || Array.isArray(rawPlugins))) {
+    throw new Error(
+      `OpenClaw config at ${configPath} has an invalid plugins field (expected an object, got ${Array.isArray(rawPlugins) ? "array" : typeof rawPlugins}). ` +
+      `Fix the file manually and re-run.`,
+    );
+  }
+  const plugins = (rawPlugins ?? {}) as Record<string, unknown>;
 
   // Validate plugins.entries before using the `in` operator — a malformed but
   // parse-valid config (e.g. "entries": 1) must produce a clear error rather
@@ -1778,8 +1789,19 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   if (opts.dryRun) {
     console.log("\n--- DRY RUN — no changes written ---");
     for (const c of changes) console.log("  " + c);
-    console.log("\nResulting config diff:");
-    console.log(JSON.stringify(updatedConfig.plugins, null, 2));
+    // Print a structural summary without dumping full config values —
+    // config objects can contain API keys and other credentials.
+    const dryRunPlugins = updatedConfig.plugins as Record<string, unknown>;
+    const dryRunEntries = dryRunPlugins.entries as Record<string, unknown> | undefined;
+    const entrySummary = dryRunEntries
+      ? Object.keys(dryRunEntries).map((k) => {
+          const cfg = (dryRunEntries[k] as Record<string, unknown>)?.config as Record<string, unknown> | undefined;
+          return `  ${k}: { config: { memoryDir: ${cfg?.memoryDir ?? "(unset)"}, ... } }`;
+        }).join("\n")
+      : "  (none)";
+    console.log("\nResulting plugins.entries:");
+    console.log(entrySummary);
+    console.log(`\nResulting plugins.slots.memory: ${(dryRunPlugins.slots as Record<string, unknown>)?.memory ?? "(unset)"}`);
     return;
   }
 
