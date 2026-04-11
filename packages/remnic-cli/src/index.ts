@@ -1593,17 +1593,24 @@ async function promptYesNo(question: string, defaultYes = true): Promise<boolean
 
 async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   const configPath = resolveOpenclawConfigPath(opts.configPath);
-  const defaultMemoryDir = path.join(resolveHomeDir(), ".openclaw", "workspace", "memory", "local");
-  const memoryDir = opts.memoryDir
-    ? path.resolve(opts.memoryDir)
-    : defaultMemoryDir;
+  const fallbackMemoryDir = path.join(resolveHomeDir(), ".openclaw", "workspace", "memory", "local");
 
   console.log(`OpenClaw config: ${configPath}`);
-  console.log(`Memory dir:      ${memoryDir}`);
 
   const existingConfig = readOpenclawConfig(configPath);
   const plugins = (existingConfig.plugins ?? {}) as Record<string, unknown>;
-  const entries = (plugins.entries ?? {}) as Record<string, unknown>;
+
+  // Validate plugins.entries before using the `in` operator — a malformed but
+  // parse-valid config (e.g. "entries": 1) must produce a clear error rather
+  // than a cryptic TypeError.
+  const rawEntries = plugins.entries;
+  if (rawEntries !== undefined && (typeof rawEntries !== "object" || rawEntries === null || Array.isArray(rawEntries))) {
+    throw new Error(
+      `OpenClaw config at ${configPath} has an invalid plugins.entries field (expected an object, got ${Array.isArray(rawEntries) ? "array" : typeof rawEntries}). ` +
+      `Fix the file manually and re-run.`,
+    );
+  }
+  const entries = (rawEntries ?? {}) as Record<string, unknown>;
   const slots = (plugins.slots ?? {}) as Record<string, unknown>;
 
   // Check for legacy entry. REMNIC_OPENCLAW_PLUGIN_ID is the canonical (post-#405) id.
@@ -1635,10 +1642,28 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
       ? (legacyEntry.config as Record<string, unknown>)
       : {};
 
+  const existingNewEntryConfig =
+    existingNewEntry?.config && typeof existingNewEntry.config === "object"
+      ? (existingNewEntry.config as Record<string, unknown>)
+      : {};
+
+  // Determine the final memoryDir. Operator-provided --memory-dir always wins.
+  // On reinstall (no --memory-dir flag), preserve the currently configured value
+  // so running `remnic openclaw install` as a repair doesn't silently relocate
+  // the memory namespace. Fall back to the default only when no prior value exists.
+  const existingMemoryDir =
+    (existingNewEntryConfig.memoryDir as string | undefined) ||
+    (migrateLegacy ? (legacyConfigToMerge.memoryDir as string | undefined) : undefined);
+  const memoryDir = opts.memoryDir
+    ? path.resolve(opts.memoryDir)
+    : existingMemoryDir || fallbackMemoryDir;
+
+  console.log(`Memory dir:      ${memoryDir}`);
+
   const newEntry: Record<string, unknown> = {
     config: {
       ...legacyConfigToMerge,
-      ...(existingNewEntry?.config && typeof existingNewEntry.config === "object" ? existingNewEntry.config : {}),
+      ...existingNewEntryConfig,
       memoryDir,
     },
   };

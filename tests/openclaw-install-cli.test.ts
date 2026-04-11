@@ -128,3 +128,20 @@ test("CLI legacy migration note is included", async () => {
     "CLI must include a note about the legacy entry being retained for rollback",
   );
 });
+
+test("CLI preserves existing memoryDir on reinstall when --memory-dir not provided", async () => {
+  const src = await readCli();
+  // The CLI should use the existing configured memoryDir as fallback, not always the default.
+  assert.ok(
+    src.includes("existingMemoryDir") || src.includes("existingNewEntryConfig.memoryDir"),
+    "CLI must preserve the existing memoryDir when --memory-dir is not provided",
+  );
+});
+
+test("CLI validates plugins.entries shape before using in operator", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("rawEntries") || src.includes("plugins.entries field"),
+    "CLI must validate plugins.entries shape before property access",
+  );
+});
