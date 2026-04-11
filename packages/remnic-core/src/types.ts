@@ -719,6 +719,30 @@ export interface PluginConfig {
   parallelAgentWeights: { direct: number; contextual: number; temporal: number };
   /** Max results fetched per agent before merge. */
   parallelMaxResultsPerAgent: number;
+
+  // Codex CLI connector settings (install-time)
+  codex: CodexConnectorConfig;
+}
+
+/**
+ * Settings for the Codex CLI connector. These are consumed by
+ * `remnic connectors install codex-cli` to decide where the phase-2 memory
+ * extension is dropped and whether to install it at all.
+ */
+export interface CodexConnectorConfig {
+  /**
+   * Whether to install the Remnic memory extension into
+   * `<codex_home>/memories_extensions/remnic/` when the `codex-cli`
+   * connector is installed. Default `true`. Set to `false` for users who
+   * self-manage the Codex memory extensions folder.
+   */
+  installExtension: boolean;
+  /**
+   * Optional override for the Codex home directory. When `null`, the
+   * connector reads `$CODEX_HOME` and falls back to `~/.codex`. Setting
+   * this is useful for integration tests and non-default installs.
+   */
+  codexHome: string | null;
 }
 
 export interface BootstrapOptions {

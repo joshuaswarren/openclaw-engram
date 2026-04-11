@@ -1561,6 +1561,20 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.parallelMaxResultsPerAgent === "number"
         ? Math.max(0, Math.floor(cfg.parallelMaxResultsPerAgent))
         : 20,
+
+    // Codex CLI connector settings (install-time)
+    codex: (() => {
+      const raw =
+        cfg.codex && typeof cfg.codex === "object" && !Array.isArray(cfg.codex)
+          ? (cfg.codex as Record<string, unknown>)
+          : {};
+      const installExtension = raw.installExtension !== false;
+      const codexHome =
+        typeof raw.codexHome === "string" && raw.codexHome.trim().length > 0
+          ? raw.codexHome.trim()
+          : null;
+      return { installExtension, codexHome };
+    })(),
   };
 }
 
