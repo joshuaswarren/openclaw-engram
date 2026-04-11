@@ -203,6 +203,18 @@ function resolveMemoryDir(): string {
 
 // ── OpenClaw config helpers ───────────────────────────────────────────────────
 
+/**
+ * The canonical plugin id used in plugins.entries and plugins.slots.memory.
+ * Must match the `id` field in openclaw.plugin.json (and the shim for legacy).
+ * PR #405 renames the plugin from "openclaw-engram" → "openclaw-remnic"; this
+ * constant reflects the post-rename id so that `remnic openclaw install`
+ * configures the new package (@remnic/plugin-openclaw) by default.
+ * If you are still running the legacy "openclaw-engram" package, the slot will
+ * not match until you upgrade — use `remnic doctor` to diagnose.
+ */
+const REMNIC_OPENCLAW_PLUGIN_ID = "openclaw-remnic";
+const REMNIC_OPENCLAW_LEGACY_PLUGIN_ID = "openclaw-engram";
+
 const DEFAULT_OPENCLAW_CONFIG_PATHS_FOR_DOCTOR = [
   process.env.OPENCLAW_ENGRAM_CONFIG_PATH,
   process.env.OPENCLAW_CONFIG_PATH,
@@ -219,11 +231,22 @@ function resolveOpenclawConfigPath(cliPath?: string): string {
 
 function readOpenclawConfig(configPath: string): Record<string, unknown> {
   if (!fs.existsSync(configPath)) return {};
+  const raw = fs.readFileSync(configPath, "utf-8");
+  let parsed: unknown;
   try {
-    return JSON.parse(fs.readFileSync(configPath, "utf-8")) as Record<string, unknown>;
-  } catch {
-    return {};
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(
+      `OpenClaw config at ${configPath} contains invalid JSON — refusing to overwrite.\n` +
+      `Fix the file manually, then re-run.\nParse error: ${(err as Error).message}`,
+    );
   }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      `OpenClaw config at ${configPath} is not a JSON object (got ${Array.isArray(parsed) ? "array" : typeof parsed}) — refusing to overwrite.`,
+    );
+  }
+  return parsed as Record<string, unknown>;
 }
 // ── Commands ─────────────────────────────────────────────────────────────────
 
@@ -544,19 +567,19 @@ function cmdDoctor(): void {
     });
 
     if (entries) {
-      const hasNew = "openclaw-remnic" in entries;
-      const hasLegacy = "openclaw-engram" in entries;
+      const hasNew = REMNIC_OPENCLAW_PLUGIN_ID in entries;
+      const hasLegacy = REMNIC_OPENCLAW_LEGACY_PLUGIN_ID in entries;
       checks.push({
         name: "OpenClaw plugin entry",
         ok: hasNew,
         warn: !hasNew && hasLegacy,
         detail: hasNew
-          ? "openclaw-remnic entry found"
+          ? `${REMNIC_OPENCLAW_PLUGIN_ID} entry found`
           : hasLegacy
-          ? "only legacy openclaw-engram entry found (upgrade recommended)"
+          ? `only legacy ${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID} entry found (upgrade recommended)`
           : "no Remnic entry found",
         remediation: !hasNew && hasLegacy
-          ? "Run `remnic openclaw install` to migrate from the legacy openclaw-engram to openclaw-remnic."
+          ? `Run \`remnic openclaw install\` to migrate from the legacy ${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID} to ${REMNIC_OPENCLAW_PLUGIN_ID}.`
           : !hasNew
           ? "Run `remnic openclaw install` to add the Remnic plugin entry."
           : undefined,
@@ -567,26 +590,31 @@ function cmdDoctor(): void {
       const slotMissing = !slotValue;
       const slotMismatch = !slotMissing && !validEntryIds.includes(slotValue);
 
+      // Slot is healthy if it references any present entry id.
+      // Legacy REMNIC_OPENCLAW_LEGACY_PLUGIN_ID is functional; REMNIC_OPENCLAW_PLUGIN_ID is preferred.
+      const slotMatchesEntry = !slotMissing && !slotMismatch;
+      const slotIsLegacy = slotMatchesEntry && slotValue === REMNIC_OPENCLAW_LEGACY_PLUGIN_ID;
+      const slotIsPreferred = slotMatchesEntry && slotValue === REMNIC_OPENCLAW_PLUGIN_ID;
       checks.push({
         name: "OpenClaw plugins.slots.memory",
-        ok: !slotMissing && !slotMismatch && slotValue === "openclaw-remnic",
-        warn: !slotMissing && !slotMismatch && slotValue !== "openclaw-remnic",
+        ok: slotIsPreferred,
+        warn: slotIsLegacy,
         detail: slotMissing
           ? "(unset)"
           : slotMismatch
           ? `"${slotValue}" (not found in entries: ${validEntryIds.join(", ")})`
           : `"${slotValue}"`,
         remediation: slotMissing
-          ? "Run `remnic openclaw install` to set plugins.slots.memory = \"openclaw-remnic\". Without this, hooks never fire."
+          ? `Run \`remnic openclaw install\` to set plugins.slots.memory = "${REMNIC_OPENCLAW_PLUGIN_ID}". Without this, hooks never fire.`
           : slotMismatch
           ? `plugins.slots.memory = "${slotValue}" but no matching entry exists. Run \`remnic openclaw install\` to fix.`
-          : slotValue !== "openclaw-remnic"
-          ? `Slot points to "${slotValue}" instead of "openclaw-remnic". Run \`remnic openclaw install\` to update.`
+          : slotIsLegacy
+          ? `Slot is set to the legacy id "${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID}". Run \`remnic openclaw install\` to migrate to "${REMNIC_OPENCLAW_PLUGIN_ID}" (optional — hooks fire with either id while the legacy entry is present).`
           : undefined,
       });
 
       // Check memoryDir exists on disk
-      const entryToCheck = (entries["openclaw-remnic"] ?? entries["openclaw-engram"]) as Record<string, unknown> | undefined;
+      const entryToCheck = (entries[REMNIC_OPENCLAW_PLUGIN_ID] ?? entries[REMNIC_OPENCLAW_LEGACY_PLUGIN_ID]) as Record<string, unknown> | undefined;
       const entryConfig = entryToCheck?.config && typeof entryToCheck.config === "object"
         ? entryToCheck.config as Record<string, unknown>
         : null;
@@ -1567,24 +1595,27 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   const entries = (plugins.entries ?? {}) as Record<string, unknown>;
   const slots = (plugins.slots ?? {}) as Record<string, unknown>;
 
-  // Check for legacy entry
-  const hasLegacy = "openclaw-engram" in entries;
-  const hasNew = "openclaw-remnic" in entries;
+  // Check for legacy entry. REMNIC_OPENCLAW_PLUGIN_ID is the canonical (post-#405) id.
+  // REMNIC_OPENCLAW_LEGACY_PLUGIN_ID is the pre-#405 id retained for rollback/migration.
+  const hasLegacy = REMNIC_OPENCLAW_LEGACY_PLUGIN_ID in entries;
+  const hasNew = REMNIC_OPENCLAW_PLUGIN_ID in entries;
   const currentSlot = slots.memory as string | undefined;
 
   let migrateLegacy = false;
   if (hasLegacy && !opts.yes) {
     migrateLegacy = await promptYesNo(
-      "Found legacy 'openclaw-engram' entry. Migrate to 'openclaw-remnic'? [Y/n]",
+      `Found legacy '${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID}' entry. Migrate to '${REMNIC_OPENCLAW_PLUGIN_ID}'? [Y/n]`,
       true,
     );
   } else if (hasLegacy) {
     migrateLegacy = true;
   }
 
-  // Build the new config
-  const legacyEntry = entries["openclaw-engram"] as Record<string, unknown> | undefined;
-  const existingNewEntry = entries["openclaw-remnic"] as Record<string, unknown> | undefined;
+  // Build the new config. Merge any legacy config values so operators don't
+  // lose settings like custom models, then let the new entry and explicit
+  // memoryDir take precedence.
+  const legacyEntry = entries[REMNIC_OPENCLAW_LEGACY_PLUGIN_ID] as Record<string, unknown> | undefined;
+  const existingNewEntry = entries[REMNIC_OPENCLAW_PLUGIN_ID] as Record<string, unknown> | undefined;
 
   const newEntry: Record<string, unknown> = {
     config: {
@@ -1595,14 +1626,16 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   };
 
   const updatedEntries: Record<string, unknown> = { ...entries };
-  updatedEntries["openclaw-remnic"] = newEntry;
+  // Write the entry under the canonical plugin id. The slot below must match this id.
+  updatedEntries[REMNIC_OPENCLAW_PLUGIN_ID] = newEntry;
 
-  // Keep legacy entry if migrating so rollback is possible
-  if (hasLegacy && migrateLegacy && !hasNew) {
-    // Keep the legacy entry but don't delete it — operator can remove after verifying
-  }
+  // Keep legacy entry if migrating so rollback is possible — operator can remove
+  // the legacy entry after verifying that hooks fire under the new id.
 
-  const updatedSlots = { ...slots, memory: "openclaw-remnic" };
+  // Set slot to the canonical plugin id. This must match the `id` field in the
+  // plugin package's openclaw.plugin.json. If you are running the pre-#405 package
+  // (id: "openclaw-engram"), upgrade to @remnic/plugin-openclaw first.
+  const updatedSlots = { ...slots, memory: REMNIC_OPENCLAW_PLUGIN_ID };
 
   const updatedConfig: Record<string, unknown> = {
     ...existingConfig,
@@ -1615,14 +1648,14 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
 
   // What will change
   const changes: string[] = [];
-  if (!hasNew) changes.push("+ Added plugins.entries[\"openclaw-remnic\"]");
-  else changes.push("~ Updated plugins.entries[\"openclaw-remnic\"].config.memoryDir");
-  if (currentSlot !== "openclaw-remnic") {
-    changes.push(`~ Set plugins.slots.memory = "openclaw-remnic" (was: ${currentSlot ?? "(unset)"})`);
+  if (!hasNew) changes.push(`+ Added plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"]`);
+  else changes.push(`~ Updated plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"].config.memoryDir`);
+  if (currentSlot !== REMNIC_OPENCLAW_PLUGIN_ID) {
+    changes.push(`~ Set plugins.slots.memory = "${REMNIC_OPENCLAW_PLUGIN_ID}" (was: ${currentSlot ?? "(unset)"})`);
   }
   if (!fs.existsSync(memoryDir)) changes.push(`+ Will create memory directory: ${memoryDir}`);
   if (hasLegacy && migrateLegacy) {
-    changes.push("~ Legacy 'openclaw-engram' entry retained (safe to remove after verifying hooks fire)");
+    changes.push(`~ Legacy '${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID}' entry retained (safe to remove after verifying hooks fire)`);
   }
 
   if (opts.dryRun) {
@@ -1651,12 +1684,12 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
 
   if (hasLegacy && migrateLegacy) {
     console.log(
-      "\nNote: The legacy 'openclaw-engram' entry has been kept alongside 'openclaw-remnic'.",
+      `\nNote: The legacy '${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID}' entry has been kept alongside '${REMNIC_OPENCLAW_PLUGIN_ID}'.`,
     );
     console.log(
       "Once you verify that [remnic] gateway_start fired appears in your gateway log,",
     );
-    console.log("you can safely remove the 'openclaw-engram' entry from openclaw.json.");
+    console.log(`you can safely remove the '${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID}' entry from openclaw.json.`);
   }
 
   console.log("\nNext steps:");
@@ -1943,7 +1976,7 @@ Options:
 
   install    Configure OpenClaw to use Remnic as the memory plugin.
 
-             Sets plugins.entries["openclaw-remnic"] and plugins.slots.memory
+             Sets plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"] and plugins.slots.memory
              in ~/.openclaw/openclaw.json (or $OPENCLAW_CONFIG_PATH).
 
 Options:

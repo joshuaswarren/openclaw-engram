@@ -80,9 +80,12 @@ test("CLI detects legacy openclaw-engram entry", async () => {
 test("CLI writes openclaw-remnic entry and memory slot", async () => {
   const src = await readCli();
   assert.ok(src.includes('"openclaw-remnic"'), "CLI must write openclaw-remnic entry");
+  // The slot assignment may use a constant (REMNIC_OPENCLAW_PLUGIN_ID) or a literal.
   assert.ok(
-    src.includes('memory: "openclaw-remnic"') || src.includes("memory: \"openclaw-remnic\""),
-    "CLI must set memory slot to openclaw-remnic",
+    src.includes('memory: "openclaw-remnic"') ||
+    src.includes("memory: \"openclaw-remnic\"") ||
+    src.includes("memory: REMNIC_OPENCLAW_PLUGIN_ID"),
+    "CLI must set memory slot to openclaw-remnic (literal or via REMNIC_OPENCLAW_PLUGIN_ID constant)",
   );
 });
 
