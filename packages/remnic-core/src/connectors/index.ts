@@ -987,14 +987,23 @@ export function installConnector(options: InstallOptions): InstallResult {
       let yamlRollbackMsg = "config.yaml restored";
       try {
         if (yamlResult.priorContent === null) {
-          // File was created new — delete it.
+          // File was created new — delete it.  Track whether the unlink actually
+          // succeeded so we report honestly rather than claiming removal when it
+          // silently failed inside the inner catch.
+          let unlinkSucceeded = false;
+          let unlinkErr: unknown;
           try {
             fs.unlinkSync(yamlResult.configPath);
-          } catch {
-            // If the new file was also created inside a hermesDir we created,
-            // best-effort: leave note. The directory is harmless without a file.
+            unlinkSucceeded = true;
+          } catch (err) {
+            unlinkErr = err;
           }
-          yamlRollbackMsg = "config.yaml removed (was newly created)";
+          if (unlinkSucceeded) {
+            yamlRollbackMsg = "config.yaml removed (was newly created)";
+          } else {
+            const unlinkMsg = unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr);
+            yamlRollbackMsg = `config.yaml rollback failed: could not remove newly-created file — ${unlinkMsg}`;
+          }
         } else if (typeof yamlResult.priorContent === "string") {
           writeSecretFileSync(yamlResult.configPath, yamlResult.priorContent);
           yamlRollbackMsg = "config.yaml restored to prior content";

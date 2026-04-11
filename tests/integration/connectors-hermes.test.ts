@@ -2771,11 +2771,10 @@ test("codex-cli: token is rolled back when installCodexMemoryExtension throws (C
           /Memory extension install failed/,
           "Error message must mention memory extension install failure",
         );
-        assert.match(
-          result.message,
-          /Token has been rolled back/,
-          "Error message must indicate the token has been rolled back",
-        );
+        // Note: codex-cli has no requiresToken, so the "Token has been rolled back"
+        // suffix is NOT expected here — commit d2e863b made that suffix conditional
+        // on manifest.requiresToken === true.  The true regression guard is the
+        // byte-for-byte tokens.json snapshot comparison below.
 
         // tokens.json must match the pre-install snapshot byte-for-byte.
         // The codex-cli token that generateToken rotated in must no longer be present.
@@ -2902,4 +2901,96 @@ test("round-5 fix 3 (source): config-write error message is gated on rollback su
     "Both extension-install and config-write error paths must warn about rollback failure " +
       "(\"Token rollback FAILED\" must appear twice in source)",
   );
+});
+
+// ── Round-19 regressions ──────────────────────────────────────────────────
+
+// Fix (PRRT_kwDORJXyws56VKlA): The connector-config write failure rollback
+// previously reported "config.yaml removed (was newly created)" even when
+// fs.unlinkSync threw, because the error was swallowed silently by a bare
+// catch {}.  The fix tracks unlink outcome and reports honestly.
+test("round-19 fix (source): YAML new-file rollback tracks unlink outcome before setting message (PRRT_kwDORJXyws56VKlA)", () => {
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+
+  // The source must declare a variable that tracks whether unlinkSync succeeded,
+  // so the yamlRollbackMsg is set conditionally rather than unconditionally.
+  assert.ok(
+    content.includes("unlinkSucceeded"),
+    "Source must track unlinkSync outcome via 'unlinkSucceeded' before setting yamlRollbackMsg",
+  );
+
+  // The honest failure message for when unlink throws must be present.
+  assert.ok(
+    content.includes("config.yaml rollback failed: could not remove newly-created file"),
+    "Source must report honestly when unlinkSync fails for a newly-created config.yaml",
+  );
+
+  // The success message must still be present (guarded by the flag).
+  assert.ok(
+    content.includes("config.yaml removed (was newly created)"),
+    "Source must still report successful removal when unlinkSync succeeds",
+  );
+});
+
+// Integration-level: verify that when connector-config write fails and
+// config.yaml was newly created (priorContent === null), the error message
+// reports "config.yaml removed (was newly created)" — i.e. the success path
+// produces an honest message (not a false negative).
+test("round-19 fix (integration): config-write failure with new config.yaml reports honest removal message (PRRT_kwDORJXyws56VKlA)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Ensure the Hermes profile directory exists (so config.yaml does not
+        // pre-exist — priorContent will be null on the YAML upsert).
+        const hermesProfileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(hermesProfileDir, { recursive: true });
+        // Do NOT create config.yaml — it must be absent so priorContent === null.
+        const configYamlPath = path.join(hermesProfileDir, "config.yaml");
+        assert.ok(!fs.existsSync(configYamlPath), "config.yaml must not exist before install");
+
+        // Make the connectors directory unwritable so the connector.json write fails,
+        // which triggers the rollback path.
+        const connectorsDir = path.join(
+          tmpHome, ".config", "engram", ".engram-connectors", "connectors",
+        );
+        fs.mkdirSync(connectorsDir, { recursive: true });
+        fs.chmodSync(connectorsDir, 0o500); // read+execute only (no write)
+
+        let result: ReturnType<typeof mod.installConnector>;
+        try {
+          result = mod.installConnector({ connectorId: "hermes", config: {} });
+        } finally {
+          // Restore permissions so withTempHome cleanup can remove the dir.
+          try { fs.chmodSync(connectorsDir, 0o700); } catch { /* ignore */ }
+        }
+
+        // The install must return an error (not throw) — permission denied on write.
+        assert.equal(
+          result!.status,
+          "error",
+          "installConnector must return status 'error' when connector.json write fails",
+        );
+
+        // The rollback message must honestly report that config.yaml was removed
+        // (the unlink succeeded because the file was created in the profile dir
+        // which is still writable).
+        assert.match(
+          result!.message,
+          /config\.yaml removed \(was newly created\)/,
+          "Error message must report config.yaml was successfully removed during rollback",
+        );
+
+        // config.yaml must NOT be left behind after the rollback.
+        assert.ok(
+          !fs.existsSync(configYamlPath),
+          "config.yaml must have been cleaned up by the rollback",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
 });
