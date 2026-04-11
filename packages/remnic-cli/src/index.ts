@@ -544,8 +544,14 @@ function cmdDoctor(): void {
 
   if (openclawConfigExists) {
     try {
-      openclawConfig = JSON.parse(fs.readFileSync(openclawConfigPath, "utf-8")) as Record<string, unknown>;
-      openclawConfigValid = true;
+      const parsed: unknown = JSON.parse(fs.readFileSync(openclawConfigPath, "utf-8"));
+      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        openclawConfig = parsed as Record<string, unknown>;
+        openclawConfigValid = true;
+      } else {
+        // Valid JSON but not an object (e.g. null, array, string) — treat as invalid
+        openclawConfigValid = false;
+      }
     } catch {
       openclawConfigValid = false;
     }
