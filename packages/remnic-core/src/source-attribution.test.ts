@@ -1373,3 +1373,53 @@ test(
     );
   },
 );
+
+// ── Separator-in-placeholder-value regression (round-5 review thread) ─────────
+
+test("hasCitationForTemplate: placeholder value containing inner separator char is detected (colon in ts)", () => {
+  // Template `[src:{agent}:{ts}]` uses `:` as the separator between {agent}
+  // and {ts}.  When the `{ts}` value itself contains `:` (ISO-8601 timestamp),
+  // the old single shared tokenPattern `[^\n\s:]+?` incorrectly rejects the
+  // citation, causing attachCitation to append a duplicate on reprocessing.
+  //
+  // The fix builds per-placeholder patterns: only the FIRST token (before the
+  // `:` separator) must exclude `:`.  The LAST token is terminated by the
+  // suffix `]` anchor, so it does not need to exclude `:`.
+  const template = "[src:{agent}:{ts}]";
+  const citedText = "Fact body. [src:planner:2026-04-10T14:25:07Z]";
+  assert.equal(
+    hasCitationForTemplate(citedText, template),
+    true,
+    "citation containing a colon in the ts value must be detected",
+  );
+  // attachCitation must be idempotent: no second citation appended.
+  const ctx = { agent: "planner", session: "agent:planner:main", ts: "2026-04-11T00:00:00Z" };
+  const again = attachCitation(citedText, ctx, template);
+  assert.equal(again, citedText, "attachCitation must not append a duplicate when citation is already present");
+});
+
+test("hasCitationForTemplate: colon-separated template still rejects text with wrong structure", () => {
+  // The relaxed last-token pattern must not cause false positives — the prefix
+  // and suffix anchors (`[src:` and `]`) should still filter out arbitrary text.
+  const template = "[src:{agent}:{ts}]";
+  assert.equal(hasCitationForTemplate("plain text without citation", template), false);
+  assert.equal(hasCitationForTemplate("no bracket prefix here planner:2026", template), false);
+});
+
+test("hasCitationForTemplate: multi-separator template detects citation when intermediate value contains sep char", () => {
+  // Template `[src:{agent}:{sessionId}:{ts}]` — three placeholders, two `:` separators.
+  // The {sessionId} value `scout:alpha` contains `:` which is the separator between
+  // placeholder 0 and 1.  Per-placeholder patterns must only exclude `:` from
+  // the token that immediately precedes each separator.  The last token ({ts})
+  // must not be restricted by `:` at all.
+  const template = "[src:{agent}:{sessionId}:{ts}]";
+  const citation = "[src:planner:scout:alpha:2026-04-10T14:25:07Z]";
+  // This is ambiguous by design — the matcher allows it because idempotency is
+  // more important than strict inter-placeholder boundary enforcement when values
+  // contain the separator.
+  assert.equal(
+    hasCitationForTemplate(citation, template),
+    true,
+    "multi-colon citation where intermediate value contains the separator should be detected",
+  );
+});

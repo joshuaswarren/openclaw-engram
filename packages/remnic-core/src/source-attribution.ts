@@ -192,14 +192,20 @@ const PLACEHOLDER_REGEX = /\{[a-zA-Z_][\w]*\}/g;
  *
  *  - **Normal case (non-empty literal prefix or suffix).** Anchor the match
  *    on the outer literal frame and reconstruct the interior as
- *    `token + sep + token + ...`, where each per-placeholder token excludes
- *    the non-word separator characters used between placeholders. A template
- *    like `[src:{agent}/{sessionId}@{date}]` emits
- *    `\[src:[^\n\s/@]+?\/[^\n\s/@]+?@[^\n\s/@]+?\]` so that `[src:foo/bar]`
- *    is NOT matched (wrong separator count) and user content like
- *    `[src:some-agent/abc123@today]` is accepted only when the separator
- *    layout is correct (same template separators) — preventing false positives
- *    where arbitrary user text inside the same outer delimiters is mis-flagged.
+ *    `interToken + sep + interToken + sep + ... + sep + lastToken`.
+ *    All **intermediate** per-placeholder tokens exclude the combined set of
+ *    non-word separator characters used between any two adjacent placeholders,
+ *    preventing a value from consuming a separator and crossing placeholder
+ *    boundaries.  The **last** token is only required to avoid newlines because
+ *    it is terminated by the literal suffix anchor — this lets placeholder
+ *    values that legitimately contain a separator character be recognised (e.g.
+ *    an ISO-8601 timestamp `2026-04-10T14:25:07Z` in `[src:{agent}:{ts}]`
+ *    where `:` is the inter-placeholder separator).  A template like
+ *    `[src:{agent}/{sessionId}@{date}]` emits
+ *    `\[src:[^\n\s/@]+?\/[^\n\s/@]+?@[^\n]+?\]` so that `[src:foo/bar]`
+ *    is NOT matched (wrong separator count), `[src:foo/bar/extra@2026]`
+ *    is NOT matched (intermediate token crosses a `/` boundary), and
+ *    `[src:planner/main@2026-04-10]` IS matched correctly.
  *
  *  - **Placeholder-bounded with whitespace separator.** Both prefix and
  *    suffix are empty and the separator literal(s) between placeholders
@@ -271,14 +277,35 @@ function templateMatcher(template: string): RegExp | null {
       }
     }
 
-    const tokenPattern = buildTokenPattern(nonWordSepChars);
+    // All intermediate tokens (every placeholder except the last) use the
+    // combined exclusion so they cannot cross placeholder boundaries.
+    //
+    // The LAST token is different: it is terminated by the literal suffix anchor
+    // (e.g. `\]`), so it does not need to exclude inner-separator characters.
+    // Dropping that restriction lets placeholder values that legitimately contain
+    // a separator character (e.g. an ISO-8601 timestamp `2026-04-10T14:25:07Z`
+    // in template `[src:{agent}:{ts}]`) be recognised correctly instead of
+    // producing false-negative misses that trigger duplicate citation injection.
+    //
+    // Only the LAST token is relaxed.  Intermediate tokens keep the combined
+    // exclusion so that cross-boundary false positives are still rejected
+    // (e.g. `[src:foo/bar/extra@2026-04-11]` for `[src:{a}/{b}@{c}]`).
+    const interToken = buildTokenPattern(nonWordSepChars);
+    // Last token: terminated by suffix anchor — exclude only newlines.
+    const lastToken = buildTokenPattern(new Set<string>());
 
-    // Reconstruct the interior: token (separator token)* ...
+    // Reconstruct the interior: interToken sep interToken sep ... sep lastToken
+    // (or just lastToken when there are no inner separators at all).
     const middle =
       innerParts.length === 0
-        ? tokenPattern
-        : tokenPattern +
-          innerParts.map((sep) => escapeRegExp(sep) + tokenPattern).join("");
+        ? lastToken
+        : interToken +
+          innerParts
+            .slice(0, -1)
+            .map((sep) => escapeRegExp(sep) + interToken)
+            .join("") +
+          escapeRegExp(innerParts[innerParts.length - 1]!) +
+          lastToken;
 
     const pattern = escapedPrefix + middle + escapedSuffix;
     return new RegExp(pattern, "i");
