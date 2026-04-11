@@ -430,7 +430,14 @@ const pluginDefinition = {
       }
     }
 
-    if (!useMemoryPromptSection) {
+    // Memory recall injection through hook handlers is only legal when the
+    // operator policy allows prompt injection. When
+    // `hooks.allowPromptInjection=false`, the capability registration below
+    // already omits `promptBuilder`, so we also MUST NOT register the recall
+    // hook here: otherwise `recallHookHandler` would still return
+    // `prependSystemContext`, silently bypassing the policy on capability-only
+    // SDKs (and on legacy SDKs too).
+    if (!useMemoryPromptSection && promptInjectionAllowed) {
       // When registerMemoryCapability is available but registerMemoryPromptSection
       // is not (capability-only SDK), we need a hybrid approach: continue using
       // the hook for backward compat, but also populate cachedMemoryBySession so
@@ -443,7 +450,6 @@ const pluginDefinition = {
       // branch can never observe a capability-enabled runtime and therefore
       // does not populate the cache.
       const needsCacheFallback =
-        promptInjectionAllowed &&
         sdkCaps.hasRegisterMemoryCapability &&
         typeof (api as any).registerMemoryCapability === "function";
 

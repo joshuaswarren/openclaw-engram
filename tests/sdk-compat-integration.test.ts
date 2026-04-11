@@ -481,6 +481,66 @@ test("publicArtifacts.listArtifacts derives agentIds from api.runtime.agent.id",
   }
 });
 
+test("capability-only SDK with allowPromptInjection=false skips recall hook registration", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  const fixture = await makeMemoryFixture();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    // Capability-only new SDK: registerMemoryCapability present,
+    // registerMemoryPromptSection absent.
+    const api = buildNewSdkApi("capability-only-policy-off");
+    api.pluginConfig = { memoryDir: fixture.memoryDir, workspaceDir: fixture.workspaceDir };
+    delete api.registerMemoryPromptSection;
+    api.registerMemoryCapability = (spec: any) => {
+      api._registeredMemoryCapability = spec;
+    };
+    // Policy disables prompt injection — the plugin must NOT register the
+    // recall hook (before_prompt_build for new SDK / before_agent_start for
+    // legacy) because the hook handler would otherwise still emit
+    // `prependSystemContext` and silently bypass the policy.
+    api.config = {
+      plugins: {
+        entries: {
+          "openclaw-engram": { hooks: { allowPromptInjection: false } },
+        },
+      },
+    };
+
+    plugin.register(api as any);
+
+    assert.ok(
+      !api._registeredHooks.includes("before_prompt_build"),
+      "before_prompt_build must NOT be registered when allowPromptInjection=false on capability-only SDK",
+    );
+    assert.ok(
+      !api._registeredHooks.includes("before_agent_start"),
+      "before_agent_start must NOT be registered when allowPromptInjection=false",
+    );
+    // The capability is still registered, but without a promptBuilder — the
+    // capability's existing policy gate already enforces that.
+    assert.ok(
+      api._registeredMemoryCapability,
+      "registerMemoryCapability should still have been called — publicArtifacts is policy-independent",
+    );
+    const cap = api._registeredMemoryCapability;
+    assert.ok(
+      cap.promptBuilder === undefined,
+      "capability.promptBuilder must be omitted when allowPromptInjection=false",
+    );
+    assert.ok(
+      cap.publicArtifacts,
+      "publicArtifacts must still be registered — policy only gates prompt injection",
+    );
+  } finally {
+    await fixture.cleanup();
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
 test("publicArtifacts.listArtifacts falls back to default agent id when runtime agent is absent", async () => {
   resetGlobals();
   const previousDisableMigration = disableRegisterMigrationForTest();
