@@ -228,6 +228,39 @@ test("idempotent no-op when nothing changed since last run", () => {
   }
 });
 
+test("rolloutRetentionDays=0 prunes every rollout with a past updatedAt", () => {
+  // Regression (Cursor Bugbot on #392): retentionDays=0 used to short-
+  // circuit to "return all" instead of "retain for 0 days". The only
+  // all-pass escape hatch is a negative value.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "retention-ns");
+    const result = materializeForNamespace("retention-ns", {
+      memories: [makeMemory({ content: "synthetic retention payload" })],
+      codexHome: root,
+      rolloutRetentionDays: 0,
+      rolloutSummaries: [
+        {
+          slug: "past-session",
+          updatedAt: "2026-04-01T00:00:00Z",
+          body: "past synthetic recap.",
+        },
+      ],
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+    assert.equal(result.wrote, true);
+    // No rollout files should have been written — retention=0 prunes it.
+    const rolloutWritten = result.filesWritten.filter((f) => f.includes("rollout_summaries"));
+    assert.equal(rolloutWritten.length, 0);
+    assert.equal(
+      existsSync(path.join(memoriesDir, "rollout_summaries", "past-session.md")),
+      false,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("renders rollout_summaries/*.md and respects retention days", () => {
   const { root, memoriesDir } = makeTempCodexHome();
   try {

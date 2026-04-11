@@ -752,7 +752,13 @@ function pruneRollouts(
   retentionDays: number,
   now: Date,
 ): RolloutSummaryInput[] {
-  if (retentionDays <= 0) return rollouts;
+  // Negative retention → "infinite retention" escape hatch. `parseConfig`
+  // clamps the knob to >= 0, so in practice only callers passing a negative
+  // value intentionally get the all-pass behavior.
+  if (retentionDays < 0) return rollouts;
+  // retentionDays === 0 → cutoff is exactly `now`, which prunes every
+  // rollout whose `updatedAt` is in the past (i.e. all of them in practice).
+  // This matches the documented semantics of "retain for 0 days".
   const cutoffMs = now.getTime() - retentionDays * 24 * 60 * 60 * 1000;
   return rollouts.filter((r) => {
     if (!r.updatedAt) return true;
