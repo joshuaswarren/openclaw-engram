@@ -571,6 +571,22 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
     // Point event (no end) — simple date prefix comparison.
     if (!end) return startDate === target;
 
+    // Validate that end is a recognisable ISO-8601 date/datetime string before
+    // slicing it for lexicographic comparison.  A malformed end (e.g. a JSON
+    // feed emitting "end": "invalid") would otherwise produce a non-date prefix
+    // from `end.slice(0, 10)` and cause the event to appear on unrelated days.
+    // Fallback: treat the event as a single-day event starting on startDate.
+    const endIsValid =
+      typeof end === "string" &&
+      /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?)?$/.test(end);
+    if (!endIsValid) {
+      log.warn(
+        `briefing: event "${event.title}" has malformed end timestamp ${JSON.stringify(end)}; treating as single-day event at ${startDate}`,
+      );
+      // Render the event but only on its start date.
+      return startDate === target;
+    }
+
     // Span event: include if [start, end) overlaps the target calendar day.
     //
     // We can't use pure YYYY-MM-DD lexicographic comparison because a

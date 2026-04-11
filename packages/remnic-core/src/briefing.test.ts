@@ -1022,3 +1022,61 @@ test("buildBriefing: empty calendar (no events) still renders Today's calendar s
     "markdown must include 'Today's calendar' section even when there are no events",
   );
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 9 Finding UZTO: Validate floating-event end timestamps before range checks
+// ──────────────────────────────────────────────────────────────────────────
+
+test("eventFallsOnDate: floating event with malformed end only appears on its start date", () => {
+  // A JSON calendar feed emits end: "invalid" for a floating-time event.
+  // Without validation, end.slice(0, 10) produces "invalid   " and lexicographic
+  // comparison treats the event as active on every day after start.
+  const event = makeCalendarEventWithEnd("2026-04-11T09:00", "invalid");
+
+  // Must appear on its start date (event is rendered, not dropped).
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "malformed-end event must still appear on its start date",
+  );
+
+  // Must NOT bleed into subsequent days.
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-12"),
+    false,
+    "malformed-end event must NOT appear on the day after start",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-13"),
+    false,
+    "malformed-end event must NOT appear two days after start",
+  );
+
+  // Must not appear before start either.
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-10"),
+    false,
+    "malformed-end event must NOT appear before its start date",
+  );
+});
+
+test("eventFallsOnDate: floating event with empty-string end is treated as single-day", () => {
+  // Edge case: end is present but is an empty string (structurally invalid).
+  const event: CalendarEvent = {
+    id: "evt-synthetic-empty-end",
+    title: "Empty End Event",
+    start: "2026-04-11T10:00",
+    end: "",
+  };
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "empty-end event must appear on its start date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-12"),
+    false,
+    "empty-end event must NOT bleed into the next day",
+  );
+});
