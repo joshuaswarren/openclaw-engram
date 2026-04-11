@@ -7097,11 +7097,22 @@ export class Orchestrator {
         const memories =
           await this.readAllMemoriesForNamespaces(recallNamespaces);
         if (memories.length > 0) {
-          // Filter out non-active memories
+          // Filter out non-active memories.  When temporalSupersessionIncludeInRecall
+          // is true, also include superseded memories so audit/history mode works
+          // consistently with the boostSearchResults path (PR #402 Finding 2 fix).
           const activeMemories = memories.filter(
-            (m) =>
-              (!m.frontmatter.status || m.frontmatter.status === "active") &&
-              !isArtifactMemoryPath(m.path),
+            (m) => {
+              if (isArtifactMemoryPath(m.path)) return false;
+              const status = m.frontmatter.status;
+              if (!status || status === "active") return true;
+              if (
+                status === "superseded" &&
+                this.config.temporalSupersessionEnabled &&
+                this.config.temporalSupersessionIncludeInRecall
+              )
+                return true;
+              return false;
+            },
           );
           // Convert all active memories to QmdSearchResult with recency-based
           // baseline score, then pass through boostSearchResults so temporal/tag
@@ -8384,6 +8395,7 @@ export class Orchestrator {
       confidence: number;
       tags: string[];
       entityRef?: string;
+      structuredAttributes?: Record<string, string>;
       sourceMemoryId: string;
       importance?: ReturnType<typeof scoreImportance>;
       intentGoal?: string;
@@ -8417,6 +8429,7 @@ export class Orchestrator {
             confidence: options.confidence,
             tags: [...options.tags, "shared-promotion"],
             entityRef: options.entityRef,
+            structuredAttributes: options.structuredAttributes,
             source: `${options.source}-shared-promotion`,
             importance: options.importance,
             lineage: [options.sourceMemoryId],
@@ -8427,6 +8440,33 @@ export class Orchestrator {
             memoryKind: options.memoryKind,
           },
         );
+        // PR #402 Finding 3 fix: run temporal supersession against the shared
+        // namespace after the promoted write lands so stale shared-namespace
+        // copies of the same entity attribute are retired.  Without this,
+        // source-namespace supersession leaves the shared copy active and
+        // shared recall continues returning the stale state.  Reuses the same
+        // applyTemporalSupersession helper — no logic duplication.
+        if (
+          this.config.temporalSupersessionEnabled &&
+          options.entityRef &&
+          options.structuredAttributes &&
+          Object.keys(options.structuredAttributes).length > 0
+        ) {
+          try {
+            await applyTemporalSupersession({
+              storage: sharedStorage,
+              newMemoryId: promotedId,
+              entityRef: options.entityRef,
+              structuredAttributes: options.structuredAttributes,
+              createdAt: new Date().toISOString(),
+              enabled: true,
+            });
+          } catch (sharedSupersessionErr) {
+            log.warn(
+              `persistExtraction: shared-namespace temporal supersession failed open for promoted ${promotedId}: ${sharedSupersessionErr}`,
+            );
+          }
+        }
         trackPersistedId(sharedStorage, promotedId, {
           includeReturnedIds: false,
         });
@@ -8731,6 +8771,7 @@ export class Orchestrator {
             confidence: fact.confidence,
             tags: fact.tags,
             entityRef: fact.entityRef,
+            structuredAttributes: fact.structuredAttributes,
             sourceMemoryId: parentId,
             importance,
             intentGoal: inferredIntent?.goal,
@@ -8950,6 +8991,7 @@ export class Orchestrator {
           typeof (fact as any).entityRef === "string"
             ? (fact as any).entityRef
             : undefined,
+        structuredAttributes: fact.structuredAttributes,
         sourceMemoryId: memoryId,
         importance,
         intentGoal: inferredIntent?.goal,

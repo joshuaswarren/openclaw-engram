@@ -215,10 +215,13 @@ export async function applyTemporalSupersession(args: {
 
   // Process hot then cold.  Hot-then-cold ordering is safer because hot
   // writes are more frequent and the CAS re-read guards against double-writes.
-  // A Set<string> of already-processed paths ensures that a memory visible in
-  // both tiers (shouldn't happen, but possible during a migration race) is
-  // processed at most once.
-  const processedPaths = new Set<string>();
+  // A Set<string> of already-processed ids ensures that a memory visible in
+  // both tiers (same logical memory with different filesystem paths during a
+  // migration race) is processed at most once.  Keying on `frontmatter.id`
+  // is correct because the same logical memory has the same id regardless of
+  // which tier's directory it currently lives in (PR #402 Finding 1 fix).
+  // Fall back to path-based keying when id is absent (defensive).
+  const processedIds = new Set<string>();
 
   // Combine hot and cold memories into a single scan.  New memory itself is
   // excluded inline.  We do NOT skip cold scan when hot produced zero
@@ -228,8 +231,9 @@ export async function applyTemporalSupersession(args: {
 
   for (const memory of allCandidates) {
     if (memory.frontmatter.id === args.newMemoryId) continue;
-    if (processedPaths.has(memory.path)) continue;
-    processedPaths.add(memory.path);
+    const dedupeKey = memory.frontmatter.id ?? memory.path;
+    if (processedIds.has(dedupeKey)) continue;
+    processedIds.add(dedupeKey);
 
     const decision = shouldSupersedeExisting({
       candidate: memory.frontmatter,
