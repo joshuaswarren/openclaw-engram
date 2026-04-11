@@ -8703,6 +8703,69 @@ export class Orchestrator {
           ? "extraction-proactive"
           : "extraction";
 
+      // Check for contradictions before writing (Phase 2B).
+      // NOTE: This block was moved above the chunking branch so that the
+      // pendingSemanticSkip guard (below) can also protect the chunking path.
+      // Previously, contradiction detection only ran on the non-chunked path,
+      // meaning chunked facts could be persisted even when semanticDecision was
+      // "skip" (the deferred guard was bypassed by the chunking `continue`).
+      let supersedes: string | undefined;
+      let links: MemoryLink[] = [];
+
+      if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
+        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
+        const contradiction = await this.checkForContradiction(
+          fact.content,
+          writeCategory,
+          targetNamespace,
+        );
+        if (contradiction) {
+          supersedes = contradiction.supersededId;
+          links.push({
+            targetId: contradiction.supersededId,
+            linkType: "contradicts",
+            strength: contradiction.confidence,
+            reason: contradiction.reason,
+          });
+          // Deindex the superseded memory so stale paths don't remain in
+          // index_time.json / index_tags.json after the incremental update.
+          if (
+            this.config.queryAwareIndexingEnabled &&
+            contradiction.supersededPath
+          ) {
+            deindexMemory(
+              this.config.memoryDir,
+              contradiction.supersededPath,
+              contradiction.supersededCreated,
+              contradiction.supersededTags,
+            );
+          }
+        }
+      }
+
+      // Apply the deferred semantic-skip now that contradiction detection has
+      // run. If a contradiction was found (supersedes is set), the candidate
+      // is a superseding update and must be written — do not skip it. Only
+      // drop it when there is no detected contradiction (true near-duplicate).
+      // This check intentionally runs BEFORE the chunking branch so that a
+      // fact flagged as a semantic near-duplicate cannot be persisted (with its
+      // hash registered) simply because it was long enough to trigger chunking.
+      if (pendingSemanticSkip && !supersedes) {
+        log.debug(
+          `dedup: skipping semantic near-duplicate fact "${fact.content
+            .slice(0, 60)
+            .replace(/\s+/g, " ")}…" score=${pendingSemanticSkip.topScore.toFixed(
+            3,
+          )} neighbor=${pendingSemanticSkip.topId}`,
+        );
+        dedupedCount++;
+        // Do NOT add fact.content to contentHashIndex here. No memory was
+        // persisted for this fact, so registering a synthetic hash would
+        // permanently suppress exact-copy writes once the neighbor memory is
+        // archived or deleted (the hash would linger with no backing record).
+        continue;
+      }
+
       // Check if chunking is enabled and content should be chunked
       if (this.config.chunkingEnabled) {
         const chunkResult = chunkContent(fact.content, chunkingConfig);
@@ -8876,61 +8939,6 @@ export class Orchestrator {
           );
           continue; // Skip the normal write below
         }
-      }
-
-      // Check for contradictions before writing (Phase 2B)
-      let supersedes: string | undefined;
-      let links: MemoryLink[] = [];
-
-      if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
-        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
-        const contradiction = await this.checkForContradiction(
-          fact.content,
-          writeCategory,
-          targetNamespace,
-        );
-        if (contradiction) {
-          supersedes = contradiction.supersededId;
-          links.push({
-            targetId: contradiction.supersededId,
-            linkType: "contradicts",
-            strength: contradiction.confidence,
-            reason: contradiction.reason,
-          });
-          // Deindex the superseded memory so stale paths don't remain in
-          // index_time.json / index_tags.json after the incremental update.
-          if (
-            this.config.queryAwareIndexingEnabled &&
-            contradiction.supersededPath
-          ) {
-            deindexMemory(
-              this.config.memoryDir,
-              contradiction.supersededPath,
-              contradiction.supersededCreated,
-              contradiction.supersededTags,
-            );
-          }
-        }
-      }
-
-      // Apply the deferred semantic-skip now that contradiction detection has
-      // run. If a contradiction was found (supersedes is set), the candidate
-      // is a superseding update and must be written — do not skip it. Only
-      // drop it when there is no detected contradiction (true near-duplicate).
-      if (pendingSemanticSkip && !supersedes) {
-        log.debug(
-          `dedup: skipping semantic near-duplicate fact "${fact.content
-            .slice(0, 60)
-            .replace(/\s+/g, " ")}…" score=${pendingSemanticSkip.topScore.toFixed(
-            3,
-          )} neighbor=${pendingSemanticSkip.topId}`,
-        );
-        dedupedCount++;
-        // Do NOT add fact.content to contentHashIndex here. No memory was
-        // persisted for this fact, so registering a synthetic hash would
-        // permanently suppress exact-copy writes once the neighbor memory is
-        // archived or deleted (the hash would linger with no backing record).
-        continue;
       }
 
       // Suggest links for this memory (Phase 3A)
