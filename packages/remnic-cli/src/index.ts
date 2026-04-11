@@ -215,9 +215,11 @@ function resolveMemoryDir(): string {
 const REMNIC_OPENCLAW_PLUGIN_ID = "openclaw-remnic";
 const REMNIC_OPENCLAW_LEGACY_PLUGIN_ID = "openclaw-engram";
 
+// Primary env var takes precedence; legacy env var is checked as fallback.
+// This matches the priority convention in readCompatEnv() (primary > legacy > default).
 const DEFAULT_OPENCLAW_CONFIG_PATHS_FOR_DOCTOR = [
-  process.env.OPENCLAW_ENGRAM_CONFIG_PATH,
   process.env.OPENCLAW_CONFIG_PATH,
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH,
   path.join(resolveHomeDir(), ".openclaw", "openclaw.json"),
 ].filter(Boolean) as string[];
 
@@ -1611,15 +1613,22 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
     migrateLegacy = true;
   }
 
-  // Build the new config. Merge any legacy config values so operators don't
-  // lose settings like custom models, then let the new entry and explicit
-  // memoryDir take precedence.
+  // Build the new config.
+  // When migrating (migrateLegacy=true): merge legacy config values so operators
+  // don't lose settings like custom models, then let the existing new-entry config
+  // and the explicit memoryDir take precedence.
+  // When NOT migrating: only carry forward the existing openclaw-remnic config (if any).
   const legacyEntry = entries[REMNIC_OPENCLAW_LEGACY_PLUGIN_ID] as Record<string, unknown> | undefined;
   const existingNewEntry = entries[REMNIC_OPENCLAW_PLUGIN_ID] as Record<string, unknown> | undefined;
 
+  const legacyConfigToMerge =
+    migrateLegacy && legacyEntry?.config && typeof legacyEntry.config === "object"
+      ? (legacyEntry.config as Record<string, unknown>)
+      : {};
+
   const newEntry: Record<string, unknown> = {
     config: {
-      ...(legacyEntry?.config && typeof legacyEntry.config === "object" ? legacyEntry.config : {}),
+      ...legacyConfigToMerge,
       ...(existingNewEntry?.config && typeof existingNewEntry.config === "object" ? existingNewEntry.config : {}),
       memoryDir,
     },
