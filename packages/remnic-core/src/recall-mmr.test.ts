@@ -518,6 +518,178 @@ test(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Regression: Unicode-aware Jaccard tokenization for multilingual snippets
+// (ChatGPT Codex P2 review comment on PR #391)
+// ---------------------------------------------------------------------------
+
+test(
+  "normalizeTokens preserves non-ASCII scripts for multilingual Jaccard",
+  () => {
+    // Cyrillic: two near-identical snippets must share tokens, not collapse
+    // to an empty set like the old [^a-z0-9]+ tokenizer did.
+    const ruA = normalizeTokens("Привет, мир! Это тест.");
+    const ruB = normalizeTokens("Привет мир это тест");
+    assert.ok(ruA.size > 0, "Cyrillic snippet should produce non-empty tokens");
+    let ruOverlap = 0;
+    for (const t of ruA) if (ruB.has(t)) ruOverlap += 1;
+    assert.ok(
+      ruOverlap >= 3,
+      `Cyrillic near-duplicates should share most tokens, overlap=${ruOverlap}`,
+    );
+
+    // Greek: same near-duplicate invariant.
+    const grA = normalizeTokens("Καλημέρα κόσμε");
+    const grB = normalizeTokens("καλημέρα κόσμε!");
+    assert.ok(grA.size > 0);
+    let grOverlap = 0;
+    for (const t of grA) if (grB.has(t)) grOverlap += 1;
+    assert.ok(
+      grOverlap >= 2,
+      `Greek near-duplicates should share tokens, overlap=${grOverlap}`,
+    );
+
+    // CJK (Chinese): no whitespace word breaks, so tokens are per-character.
+    // Two snippets that share most characters must produce overlapping token
+    // sets, not the empty set the old tokenizer returned.
+    const zhA = normalizeTokens("用户喜欢深色模式");
+    const zhB = normalizeTokens("用户偏好深色模式");
+    assert.ok(zhA.size > 0, "CJK snippet should produce non-empty tokens");
+    let zhOverlap = 0;
+    for (const t of zhA) if (zhB.has(t)) zhOverlap += 1;
+    assert.ok(
+      zhOverlap >= 5,
+      `Chinese near-duplicates should share most chars, overlap=${zhOverlap}`,
+    );
+  },
+);
+
+test(
+  "reorderRecallResultsWithMmr detects non-ASCII near-duplicates and diversifies",
+  () => {
+    // Without Unicode-aware tokenization, the Jaccard fallback returned 0 for
+    // all non-Latin snippets and MMR degenerated to plain relevance ordering.
+    // After the fix the duplicate Cyrillic cluster must give up at least one
+    // head-of-list slot to the diverse candidate.
+    const results: MmrRecallResult[] = [
+      { docid: "ru1", path: "p/ru1", snippet: "Пользователь предпочитает тёмный режим в терминале", score: 0.99 },
+      { docid: "ru2", path: "p/ru2", snippet: "Пользователь предпочитает тёмный режим в терминалах", score: 0.98 },
+      { docid: "ru3", path: "p/ru3", snippet: "Пользователь любит тёмный режим в терминале", score: 0.97 },
+      { docid: "ru4", path: "p/ru4", snippet: "Пользователь предпочитает тёмную тему в терминале", score: 0.96 },
+      { docid: "dv1", path: "p/dv1", snippet: "Ракетное топливо на основе жидкого кислорода", score: 0.9 },
+    ];
+    const { reordered, diversity } = reorderRecallResultsWithMmr(results, {
+      lambda: 0.3,
+      diversitySampleSize: 4,
+    });
+    const headIds = reordered.slice(0, 4).map((r) => r.docid);
+    assert.ok(
+      headIds.includes("dv1"),
+      `diverse Cyrillic candidate should be promoted into head: ${headIds.join(",")}`,
+    );
+    assert.ok(
+      diversity.headReorderCount > 0,
+      `headReorderCount should be > 0 after MMR promoted a diverse candidate, got ${diversity.headReorderCount}`,
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Regression: min-max normalization used to defeat MMR for tight score
+// clusters. After the fix, scores that already live in [0, 1] pass through
+// untouched so the (1 - lambda) * maxSim penalty can actually outweigh a
+// 0.01 relevance gap.
+// (Cursor Bugbot Medium review comment on PR #391)
+// ---------------------------------------------------------------------------
+
+test(
+  "applyMmrToCandidates diversifies tight reranker score clusters",
+  () => {
+    // Three near-duplicates tightly clustered in [0.93, 0.95], plus one
+    // genuinely diverse candidate slightly below at 0.92. The old min-max
+    // normalization would scale the diverse candidate's relevance to 0.0 and
+    // it could never beat any duplicate; after the fix it must be promoted.
+    const candidates: MmrCandidate[] = [
+      { id: "dup1", content: "alpha content", score: 0.95, embedding: [1, 0.001, 0] },
+      { id: "dup2", content: "alpha content near", score: 0.94, embedding: [1, 0.002, 0] },
+      { id: "dup3", content: "alpha content close", score: 0.93, embedding: [1, 0.003, 0] },
+      { id: "div", content: "completely orthogonal", score: 0.92, embedding: [0, 1, 0] },
+    ];
+    const reordered = applyMmrToCandidates({
+      candidates,
+      lambda: 0.7,
+      budget: 2,
+    });
+    const ids = reordered.map((c) => c.id);
+    assert.equal(reordered.length, 2);
+    assert.ok(
+      ids.includes("div"),
+      `tight-cluster MMR should promote diverse candidate into top-2: ${ids.join(",")}`,
+    );
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Regression: diversity metric must emit an actionable signal even in
+// reorder-only mode. `kept/considered` alone is unactionable when MMR never
+// drops candidates; the new `headReorderCount` field makes the metric useful.
+// (Cursor Bugbot Low-severity review comment on PR #391)
+// ---------------------------------------------------------------------------
+
+test(
+  "summarizeMmrDiversity emits headReorderCount > 0 when MMR reorders the head",
+  () => {
+    // Near-dup cluster up front plus diverse candidates behind — MMR with
+    // low lambda must swap at least one head-of-list slot, producing a
+    // positive headReorderCount signal.
+    const candidates: MmrCandidate[] = [
+      { id: "a1", content: "dup alpha one", score: 0.99, embedding: [1, 0, 0] },
+      { id: "a2", content: "dup alpha two", score: 0.98, embedding: [1, 0.001, 0] },
+      { id: "a3", content: "dup alpha three", score: 0.97, embedding: [1, 0.002, 0] },
+      { id: "b1", content: "diverse beta", score: 0.8, embedding: [0, 1, 0] },
+      { id: "b2", content: "diverse gamma", score: 0.75, embedding: [0, 0, 1] },
+    ];
+    const reordered = applyMmrToCandidates({
+      candidates,
+      lambda: 0.3,
+      budget: candidates.length,
+    });
+    const report = summarizeMmrDiversity(candidates, reordered, 3);
+    assert.equal(report.considered, candidates.length);
+    assert.equal(report.kept, reordered.length);
+    assert.ok(
+      report.headReorderCount > 0,
+      `headReorderCount should be > 0 after MMR swapped head slots, got ${report.headReorderCount}`,
+    );
+  },
+);
+
+test(
+  "summarizeMmrDiversity headReorderCount is 0 for an identity reorder",
+  () => {
+    // If MMR leaves the head untouched (e.g. all candidates are already
+    // maximally diverse), headReorderCount should be exactly 0 so callers
+    // can distinguish "no head change" from "head was reshuffled".
+    const candidates: MmrCandidate[] = [
+      { id: "x", content: "one", score: 0.9, embedding: [1, 0, 0] },
+      { id: "y", content: "two", score: 0.8, embedding: [0, 1, 0] },
+      { id: "z", content: "three", score: 0.7, embedding: [0, 0, 1] },
+    ];
+    const reordered = applyMmrToCandidates({
+      candidates,
+      lambda: 0.7,
+      budget: candidates.length,
+    });
+    // Sanity: MMR should not reshuffle a perfectly diverse pool.
+    assert.deepEqual(
+      reordered.map((c) => c.id),
+      ["x", "y", "z"],
+    );
+    const report = summarizeMmrDiversity(candidates, reordered);
+    assert.equal(report.headReorderCount, 0);
+  },
+);
+
 test(
   "reorderRecallResultsWithMmr diversity report defaults to head-of-list sample",
   () => {

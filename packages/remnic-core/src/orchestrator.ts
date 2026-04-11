@@ -10907,6 +10907,7 @@ export class Orchestrator {
     try {
       log.info(
         `recall_mmr: section=${sectionId} kept=${diversity.kept}/${diversity.considered} ` +
+          `headReorderCount=${diversity.headReorderCount} ` +
           `avgSimBefore=${diversity.avgPairwiseSimBefore.toFixed(3)} ` +
           `avgSimAfter=${diversity.avgPairwiseSimAfter.toFixed(3)} ` +
           `lambda=${lambda.toFixed(2)}`,

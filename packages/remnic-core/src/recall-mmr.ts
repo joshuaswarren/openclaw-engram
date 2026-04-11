@@ -49,10 +49,28 @@ export interface ApplyMmrOptions<C extends MmrCandidate> {
 }
 
 export interface MmrDiversityReport {
-  /** Number of candidates considered after sample-size clamping. */
+  /**
+   * Total number of candidates MMR considered (the full input pool, pre-MMR).
+   * Previously this mirrored `kept` and was therefore uninformative; it now
+   * reflects the true pool size so `kept/considered` logs carry signal even
+   * though MMR is reorder-only.
+   */
   considered: number;
-  /** Number of candidates kept after MMR. */
+  /**
+   * Number of candidates present in the MMR output. With the current
+   * orchestrator pipeline MMR is reorder-only (no drops), so this is the
+   * same as `considered`. It's still reported separately so a future
+   * drop-mode MMR can distinguish them without another schema change.
+   */
   kept: number;
+  /**
+   * Head-of-list positions whose candidate identity changed between the
+   * pre-MMR and post-MMR slices. This is the *actionable* diversity signal:
+   * it tells the caller how many of the top `sampleSize` results MMR
+   * promoted or demoted. Zero means MMR had no head-of-list effect; a value
+   * greater than zero means at least one diverse candidate was swapped in.
+   */
+  headReorderCount: number;
   /** Average pairwise similarity of the head-of-list input slice (pre-MMR). */
   avgPairwiseSimBefore: number;
   /** Average pairwise similarity of the head-of-list MMR output slice. */
@@ -187,9 +205,18 @@ export function summarizeMmrDiversity<C extends MmrCandidate>(
   const n = clampPositiveInt(sampleSize, DEFAULT_DIVERSITY_SAMPLE_SIZE);
   const beforeSlice = before.slice(0, n);
   const afterSlice = after.slice(0, n);
+  // Count how many head-of-list positions MMR actually changed. A zero value
+  // means MMR left the head untouched; a positive value is the actionable
+  // "MMR promoted N diverse candidates" signal the previous metric lacked.
+  let headReorderCount = 0;
+  const compareLength = Math.min(beforeSlice.length, afterSlice.length);
+  for (let i = 0; i < compareLength; i += 1) {
+    if (beforeSlice[i]!.id !== afterSlice[i]!.id) headReorderCount += 1;
+  }
   return {
-    considered: beforeSlice.length,
-    kept: afterSlice.length,
+    considered: before.length,
+    kept: after.length,
+    headReorderCount,
     avgPairwiseSimBefore: averagePairwiseSimilarity(beforeSlice),
     avgPairwiseSimAfter: averagePairwiseSimilarity(afterSlice),
   };
@@ -283,13 +310,55 @@ function cosineSimilarity(
 
 export function normalizeTokens(text: string): Set<string> {
   if (!text) return new Set();
-  // Lowercase, strip punctuation to spaces, collapse runs, split.
+  // Unicode-aware normalization. We lowercase and replace any character that
+  // is NOT a Unicode letter or number with a space, then split on whitespace.
+  // This preserves non-Latin scripts (Cyrillic, Greek, Hebrew, Arabic, etc.)
+  // so the Jaccard fallback still detects near-duplicates in multilingual
+  // snippets. Without this fix, `[^a-z0-9]+` strips all non-ASCII and two
+  // identical Chinese/Japanese/Cyrillic snippets both collapse to the empty
+  // set, returning similarity 0 and letting duplicates dominate recall.
   const cleaned = text
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim();
-  if (cleaned.length === 0) return new Set();
-  return new Set(cleaned.split(/\s+/));
+  if (cleaned.length === 0) {
+    // CJK fallback: scripts like Chinese/Japanese/Korean do not use word
+    // breaks, so after the Unicode strip the above split-on-whitespace yields
+    // one big token. The Latin-style split is a bad match for these scripts;
+    // use per-codepoint character tokens instead, which approximates a
+    // unigram shingle and is accurate enough for near-duplicate detection.
+    const chars = new Set<string>();
+    for (const ch of text.toLowerCase()) {
+      if (/\s/.test(ch)) continue;
+      chars.add(ch);
+    }
+    return chars;
+  }
+  const tokens = new Set<string>();
+  for (const token of cleaned.split(/\s+/)) {
+    if (!token) continue;
+    // A single "token" that is actually a run of CJK codepoints (no spaces in
+    // the source) should still be split into per-character tokens so the
+    // Jaccard overlap works. Latin/Cyrillic/etc. keep their word-level tokens.
+    if (token.length >= 2 && hasUnsegmentableScript(token)) {
+      for (const ch of token) tokens.add(ch);
+    } else {
+      tokens.add(token);
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Returns true when `token` contains at least one codepoint in a script that
+ * does not use whitespace for word segmentation (CJK Unified Ideographs,
+ * Hiragana, Katakana, Hangul). These are tokenized per-character so Jaccard
+ * similarity can still detect near-duplicate snippets.
+ */
+function hasUnsegmentableScript(token: string): boolean {
+  return /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(
+    token,
+  );
 }
 
 function jaccardSimilarity(a: string, b: string): number {
@@ -310,21 +379,55 @@ function normalizeFinite(value: number): number {
 
 function normalizeVector(values: number[]): number[] {
   if (values.length === 0) return values;
+  // Intentionally *not* min-max normalized. Min-max maps the lowest score to
+  // 0 and the highest to 1, which amplifies tiny relevance gaps (e.g. a tight
+  // reranker cluster like [0.93, 0.94, 0.95]) into the full [0, 1] range.
+  // That lets a near-duplicate at the top permanently beat a diverse
+  // candidate at the bottom because `lambda * 0 - (1 - lambda) * 0 = 0` is
+  // always worse than `lambda * 1 - (1 - lambda) * maxSim` for any
+  // maxSim < lambda / (1 - lambda). MMR is supposed to escape exactly that
+  // scenario; min-max defeats it.
+  //
+  // Instead we preserve the relative score gaps by scaling only if the
+  // scores leave the MMR-friendly `[0, 1]` range. Negative or out-of-range
+  // scores are clamped to `[0, 1]` by dividing by the max absolute value; if
+  // everything is already inside `[0, 1]`, we pass through untouched so
+  // tight clusters stay tight and MMR can promote a diverse candidate from
+  // the bottom of the cluster.
+  let max = 0;
   let min = Number.POSITIVE_INFINITY;
-  let max = Number.NEGATIVE_INFINITY;
   for (const v of values) {
+    if (!Number.isFinite(v)) continue;
+    const a = Math.abs(v);
+    if (a > max) max = a;
     if (v < min) min = v;
-    if (v > max) max = v;
   }
-  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+  if (!Number.isFinite(min)) {
     return values.map(() => 0);
   }
-  if (max === min) {
-    // All scores equal — give everyone 1 so diversity fully drives selection.
+  if (max === 0) {
+    // All scores are zero — give everyone 1 so diversity fully drives
+    // selection (otherwise every candidate has `lambda * 0 = 0` and the
+    // first-found wins trivially, hiding any diversity benefit).
     return values.map(() => 1);
   }
-  const span = max - min;
-  return values.map((v) => (v - min) / span);
+  // If scores already live in [0, 1], pass them through so tight clusters
+  // (e.g. [0.93, 0.94, 0.95]) stay tight and the (1 - lambda) * maxSim term
+  // can actually outweigh a 0.01 relevance gap, which is the whole point of
+  // MMR. Otherwise divide by `max` to bring the top score to 1 while
+  // preserving *relative* gaps (e.g. [100, 200, 300] -> [0.33, 0.67, 1.0]).
+  if (min >= 0 && max <= 1) {
+    return values.map((v) =>
+      Number.isFinite(v) ? (v < 0 ? 0 : v > 1 ? 1 : v) : 0,
+    );
+  }
+  return values.map((v) => {
+    if (!Number.isFinite(v)) return 0;
+    const scaled = v / max;
+    if (scaled < 0) return 0;
+    if (scaled > 1) return 1;
+    return scaled;
+  });
 }
 
 function averagePairwiseSimilarity<C extends MmrCandidate>(
@@ -403,6 +506,7 @@ export function reorderRecallResultsWithMmr<R extends MmrRecallResult>(
   const emptyReport: MmrDiversityReport = {
     considered: 0,
     kept: 0,
+    headReorderCount: 0,
     avgPairwiseSimBefore: 0,
     avgPairwiseSimAfter: 0,
   };
