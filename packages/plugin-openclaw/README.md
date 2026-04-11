@@ -38,12 +38,77 @@ launchctl kickstart -k gui/501/ai.openclaw.gateway
 This plugin hooks into the OpenClaw gateway lifecycle:
 
 - **`gateway_start`** -- initializes the Remnic memory engine
-- **`before_agent_start`** -- injects relevant memories into the agent's context
+- **`before_agent_start`** / **`before_prompt_build`** -- injects relevant memories into the agent's context
 - **`agent_end`** -- buffers the conversation turn for extraction
+- **`before_compaction`** / **`after_compaction`** -- saves checkpoints and triggers session reset on context compaction
+- **`session_start`** / **`session_end`** -- session lifecycle tracking
+- **`before_tool_call`** / **`after_tool_call`** -- tool usage observation for analytics
+- **`llm_output`** -- LLM token usage tracking
+- **`subagent_spawning`** / **`subagent_ended`** -- subagent lifecycle observation
 - **Tools** -- registers `memory_search`, `memory_stats`, and other agent tools
 - **Commands** -- provides CLI commands for memory management
 
 All memory processing uses [`@remnic/core`](https://www.npmjs.com/package/@remnic/core). Data stays on your local filesystem as plain markdown files.
+
+## Supported OpenClaw Memory Features
+
+Remnic supports the following OpenClaw memory integration points:
+
+### Memory Prompt Injection
+
+| Feature | Status | Since |
+|---------|--------|-------|
+| `before_agent_start` hook (legacy) | Supported | 2025.x |
+| `before_prompt_build` hook (new SDK) | Supported | 2026.3.22 |
+| `registerMemoryPromptSection()` (structured builder) | Supported | 2026.3.22 |
+| `registerMemoryCapability()` (unified capability) | Supported | 2026.4.5 |
+
+### Public Artifacts (memory-wiki bridge)
+
+| Feature | Status | Since |
+|---------|--------|-------|
+| `publicArtifacts.listArtifacts()` | Supported | 2026.4.5 |
+
+When `registerMemoryCapability` is available, Remnic registers a `publicArtifacts` provider that exposes wiki-safe memory files:
+
+- **facts/** -- extracted knowledge (dated subdirectories)
+- **entities/** -- entity knowledge graph
+- **corrections/** -- fact corrections
+- **artifacts/** -- structured artifacts
+- **profile.md** -- agent identity summary
+
+Private runtime state (state/, questions/, transcripts/, archive/, buffers) is never exposed.
+
+With this feature, `openclaw wiki status` reports Remnic artifacts, and `memory-wiki` bridge mode can discover and ingest them.
+
+### Session Lifecycle
+
+| Feature | Status | Since |
+|---------|--------|-------|
+| `session_start` / `session_end` hooks | Supported | 2026.3.22 |
+| `before_compaction` / `after_compaction` hooks | Supported | 2026.3.22 |
+| `api.resetSession()` (compaction reset) | Supported | 2026.3.22 |
+| Checkpoint saves before compaction | Supported | 2026.3.22 |
+
+### Observation Hooks
+
+| Feature | Status | Since |
+|---------|--------|-------|
+| `before_tool_call` / `after_tool_call` | Supported | 2026.3.22 |
+| `llm_output` (token tracking) | Supported | 2026.3.22 |
+| `subagent_spawning` / `subagent_ended` | Supported | 2026.3.22 |
+
+### Dreaming
+
+OpenClaw's dreaming feature (background memory consolidation) is handled by OpenClaw's built-in `memory-core` extension. Remnic implements its own consolidation pipeline (extraction, deduplication, graph maintenance, hourly summaries) that runs independently of OpenClaw's dreaming system. The two systems are complementary -- Remnic's consolidation handles the heavy memory extraction, while OpenClaw's dreaming (if enabled alongside Remnic) can further organize knowledge.
+
+### Bridge Mode
+
+| Feature | Status |
+|---------|--------|
+| Embedded mode (in-process EMO + HTTP :4318) | Supported |
+| Delegate mode (connects to running daemon) | Supported |
+| Auto-detection (daemon running = delegate) | Supported |
 
 ## Standalone usage
 
