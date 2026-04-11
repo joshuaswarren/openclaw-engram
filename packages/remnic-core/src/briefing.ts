@@ -587,12 +587,15 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
     // the boundary and the end day is excluded. Within-day spans always
     // have a non-zero end time and so correctly include their own date.
     const endDate = end.slice(0, 10);
-    const endTime = end.slice(11); // "HH:MM:SS" or "HH:MM:SS.mmm"
-    // Treat any end time that is exactly midnight (including fractional-second
-    // values like "00:00:00.000") as day-exclusive per [start, end) semantics.
+    const endTime = end.slice(11); // "HH:MM", "HH:MM:SS", or "HH:MM:SS.mmm"
+    // Treat any end time that is exactly midnight as day-exclusive per [start, end) semantics.
+    // Cases covered:
+    //   "00:00"               — HH:MM form (valid floating-time ISO value, no seconds)
+    //   "00:00:00"            — HH:MM:SS form
+    //   "00:00:00.000..."     — with fractional seconds (any number of trailing zeros)
     // A bare `>` string comparison incorrectly treats "00:00:00.000" as > "00:00:00"
     // because the fractional suffix makes the string lexicographically longer.
-    const endAtExactMidnight = /^00:00:00(\.0+)?$/.test(endTime);
+    const endAtExactMidnight = /^00(:00){1,2}(\.0+)?$/.test(endTime);
     const endActiveOnEndDay = !endAtExactMidnight;
     if (endActiveOnEndDay) {
       return startDate <= target && target <= endDate;
@@ -741,7 +744,19 @@ export async function buildBriefing(options: BuildBriefingOptions): Promise<Brie
       });
       followups = generated.slice(0, maxFollowups);
     } catch (err) {
-      followupsUnavailableReason = `LLM follow-ups failed: ${stringifyError(err)}`;
+      const errMsg = stringifyError(err);
+      const modelName = options.model ?? BRIEFING_FOLLOWUP_DEFAULT_MODEL;
+      // Detect "model not found / invalid" errors from the Responses API and
+      // produce a user-friendly message that surfaces the problematic identifier.
+      if (
+        /model/i.test(errMsg) &&
+        (/not found/i.test(errMsg) || /does not exist/i.test(errMsg) || /invalid/i.test(errMsg))
+      ) {
+        followupsUnavailableReason =
+          `configured follow-up model '${modelName}' is not available in the Responses API`;
+      } else {
+        followupsUnavailableReason = `LLM follow-ups failed: ${errMsg}`;
+      }
       log.warn(`briefing: ${followupsUnavailableReason}`);
     }
   }
@@ -845,7 +860,8 @@ export function filterMemoriesByWindow(memories: MemoryFile[], window: ParsedBri
   });
 }
 
-function buildActiveThreads(memories: MemoryFile[]): BriefingActiveThread[] {
+/** @internal — exported for testing only. */
+export function buildActiveThreads(memories: MemoryFile[]): BriefingActiveThread[] {
   const buckets = new Map<string, BriefingActiveThread>();
   for (const memory of memories) {
     const threadKey = extractThreadKey(memory);
@@ -856,7 +872,9 @@ function buildActiveThreads(memories: MemoryFile[]): BriefingActiveThread[] {
         id: threadKey,
         title: summarizeContentTitle(memory),
         updatedAt,
-        reason: existing ? existing.reason : describeReason(memory),
+        // Always derive reason from the newest memory so the description
+        // reflects the most-recent activity type, not the first memory seen.
+        reason: describeReason(memory),
       });
     }
   }
@@ -955,10 +973,17 @@ async function loadTodayCalendar(
   try {
     const dateIso = now.toISOString().slice(0, 10);
     const events = await source.eventsForDate(dateIso);
-    return events.length > 0 ? events : [];
+    // Return the events array (possibly empty for a legitimately empty calendar).
+    // An empty array is distinct from `undefined`: empty means "source responded
+    // with no events today"; undefined means "source failed".
+    return events;
   } catch (err) {
     log.warn(`briefing: calendar source error: ${err}`);
-    return [];
+    // Return undefined (not []) to signal an error so callers can distinguish
+    // "no events today" from "the calendar source threw".  The rendering guard
+    // uses `todayCalendar !== undefined` — returning undefined suppresses the
+    // "Today's calendar" section entirely on failure.
+    return undefined;
   }
 }
 

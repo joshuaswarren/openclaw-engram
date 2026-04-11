@@ -14,9 +14,18 @@ import {
   parseBriefingWindow,
   validateBriefingFormat,
   focusMatchesMemory,
+  buildActiveThreads,
+  buildBriefing,
   BRIEFING_FOLLOWUP_DEFAULT_MODEL,
 } from "./briefing.js";
-import type { MemoryFile, EntityFile, CalendarEvent, BriefingFocus } from "./types.js";
+import type {
+  MemoryFile,
+  EntityFile,
+  CalendarEvent,
+  BriefingFocus,
+  CalendarSource,
+} from "./types.js";
+import type { StorageManager } from "./storage.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Helpers — synthetic fixtures
@@ -790,5 +799,226 @@ test("focusMatchesMemory: raw content match still works alongside slug fix", () 
     focusMatchesMemory(memory, focus),
     true,
     "raw content match must still work after adding slug logic",
+  );
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 8 Finding UQZW+UXE5: Midnight end-time HH:MM form must be excluded
+// ──────────────────────────────────────────────────────────────────────────
+
+test("eventFallsOnDate: floating end '2026-04-11T00:00' (HH:MM, no seconds) is day-exclusive", () => {
+  // ISO floating-time values with no seconds component (e.g. "2026-04-11T00:00")
+  // are valid and must be treated as exact midnight — the end day must be excluded
+  // under half-open [start, end) semantics.
+  const event: CalendarEvent = {
+    id: "evt-hhmm-midnight",
+    title: "Overnight event HH:MM end",
+    start: "2026-04-10T22:00:00",
+    end: "2026-04-11T00:00",
+  };
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-10"),
+    true,
+    "event must appear on start day",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    false,
+    "end time '00:00' (HH:MM midnight) must be treated as day-exclusive",
+  );
+});
+
+test("eventFallsOnDate: floating end '2026-04-11T01:00' (HH:MM, non-midnight) includes end day", () => {
+  // Non-midnight HH:MM end-time: the event is still running on the end day.
+  const event: CalendarEvent = {
+    id: "evt-hhmm-non-midnight",
+    title: "Cross-day event non-midnight HH:MM end",
+    start: "2026-04-10T22:00:00",
+    end: "2026-04-11T01:00",
+  };
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true, "non-midnight HH:MM end must include end day");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true, "must appear on start day too");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 8 Finding UNBW: Model-not-found errors must produce user-friendly message
+// ──────────────────────────────────────────────────────────────────────────
+
+// Minimal StorageManager stub that returns empty arrays (no memories/entities).
+function makeEmptyStorage(): StorageManager {
+  return {
+    readAllMemories: async () => [],
+    readAllEntityFiles: async () => [],
+  } as unknown as StorageManager;
+}
+
+test("buildBriefing: model-not-found 400 error produces user-friendly followupsUnavailableReason", async () => {
+  // Inject a mock generator that throws an error resembling a Responses API
+  // 400 "model does not exist" response.
+  const result = await buildBriefing({
+    storage: makeEmptyStorage(),
+    allowLlm: true,
+    openaiApiKey: "sk-synthetic-key",
+    followupGenerator: async () => {
+      throw new Error("The model 'gpt-5.2' does not exist");
+    },
+    now: new Date("2026-04-11T10:00:00.000Z"),
+  });
+
+  assert.ok(
+    typeof result.followupsUnavailableReason === "string",
+    "followupsUnavailableReason must be set on model error",
+  );
+  assert.ok(
+    result.followupsUnavailableReason!.includes("model"),
+    `reason must mention 'model': got "${result.followupsUnavailableReason}"`,
+  );
+  assert.ok(
+    result.followupsUnavailableReason!.includes("not available"),
+    `reason must include 'not available': got "${result.followupsUnavailableReason}"`,
+  );
+});
+
+test("buildBriefing: model 'not found' phrasing also produces user-friendly message", async () => {
+  const result = await buildBriefing({
+    storage: makeEmptyStorage(),
+    allowLlm: true,
+    openaiApiKey: "sk-synthetic-key",
+    followupGenerator: async () => {
+      throw new Error("model not found: gpt-5.2");
+    },
+    now: new Date("2026-04-11T10:00:00.000Z"),
+  });
+
+  assert.ok(result.followupsUnavailableReason!.includes("not available"),
+    `'not found' phrasing must trigger friendly message: got "${result.followupsUnavailableReason}"`);
+});
+
+test("buildBriefing: unrelated LLM errors still produce generic message (no false positive)", async () => {
+  const result = await buildBriefing({
+    storage: makeEmptyStorage(),
+    allowLlm: true,
+    openaiApiKey: "sk-synthetic-key",
+    followupGenerator: async () => {
+      throw new Error("network timeout");
+    },
+    now: new Date("2026-04-11T10:00:00.000Z"),
+  });
+
+  assert.ok(
+    result.followupsUnavailableReason!.includes("LLM follow-ups failed"),
+    `unrelated errors must use generic message: got "${result.followupsUnavailableReason}"`,
+  );
+  assert.ok(
+    !result.followupsUnavailableReason!.includes("not available"),
+    "unrelated errors must NOT produce model-not-available message",
+  );
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 8 Finding UXE4: buildActiveThreads must recompute reason from newer memory
+// ──────────────────────────────────────────────────────────────────────────
+
+function makeMemoryWithCategory(
+  id: string,
+  category: "fact" | "commitment" | "decision" | "correction",
+  updated: string,
+  entityRef?: string,
+): MemoryFile {
+  return {
+    path: `/synthetic/${id}.md`,
+    frontmatter: {
+      id,
+      category,
+      created: updated,
+      updated,
+      source: "test",
+      confidence: 0.9,
+      confidenceTier: "explicit",
+      tags: entityRef ? [] : ["topic:synthetic-thread"],
+      entityRef,
+    },
+    content: `Content for ${id}`,
+  };
+}
+
+test("buildActiveThreads: reason is updated when a newer memory replaces an older one", () => {
+  // Both memories share the same thread key (same entityRef → same bucket).
+  // The first is a 'fact' (reason="recent activity"), the newer is a 'decision'
+  // (reason="recent decision").  The resulting thread must reflect the newer reason.
+  const olderFact = makeMemoryWithCategory("mem-old", "fact", "2026-04-10T08:00:00.000Z", "topic-alpha");
+  const newerDecision = makeMemoryWithCategory("mem-new", "decision", "2026-04-10T12:00:00.000Z", "topic-alpha");
+
+  const threads = buildActiveThreads([olderFact, newerDecision]);
+
+  assert.equal(threads.length, 1, "both memories share a thread key — expect one thread");
+  assert.equal(
+    threads[0]!.reason,
+    "recent decision",
+    "reason must reflect the newer memory's category, not the older one",
+  );
+});
+
+test("buildActiveThreads: reason of first (only) memory is preserved correctly", () => {
+  const commitment = makeMemoryWithCategory("mem-commit", "commitment", "2026-04-10T09:00:00.000Z", "topic-beta");
+  const threads = buildActiveThreads([commitment]);
+  assert.equal(threads[0]!.reason, "open commitment");
+});
+
+test("buildActiveThreads: older memory processed first does not win reason when newer arrives", () => {
+  // Process older memory first in the array — the newer one that arrives second
+  // should update both updatedAt AND reason.
+  const olderCorrection = makeMemoryWithCategory(
+    "mem-correction", "correction", "2026-04-09T10:00:00.000Z", "topic-gamma",
+  );
+  const newerFact = makeMemoryWithCategory(
+    "mem-fact", "fact", "2026-04-10T14:00:00.000Z", "topic-gamma",
+  );
+
+  const threads = buildActiveThreads([olderCorrection, newerFact]);
+  assert.equal(threads[0]!.reason, "recent activity", "newer memory is a fact → 'recent activity'");
+  assert.equal(threads[0]!.updatedAt, "2026-04-10T14:00:00.000Z");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Round 8 Finding UXJH: Failing calendar source must suppress calendar section
+// ──────────────────────────────────────────────────────────────────────────
+
+test("buildBriefing: failing calendar source suppresses Today's calendar section in markdown", async () => {
+  const throwingCalendar: CalendarSource = {
+    eventsForDate: async (_dateIso: string) => {
+      throw new Error("synthetic calendar fetch failure");
+    },
+  };
+
+  const result = await buildBriefing({
+    storage: makeEmptyStorage(),
+    allowLlm: false,
+    calendarSource: throwingCalendar,
+    now: new Date("2026-04-11T10:00:00.000Z"),
+  });
+
+  assert.ok(
+    !result.markdown.includes("Today's calendar"),
+    "markdown must NOT include 'Today's calendar' when the calendar source throws",
+  );
+});
+
+test("buildBriefing: empty calendar (no events) still renders Today's calendar section", async () => {
+  const emptyCalendar: CalendarSource = {
+    eventsForDate: async (_dateIso: string) => [],
+  };
+
+  const result = await buildBriefing({
+    storage: makeEmptyStorage(),
+    allowLlm: false,
+    calendarSource: emptyCalendar,
+    now: new Date("2026-04-11T10:00:00.000Z"),
+  });
+
+  // Empty calendar = source responded with [] — section should appear with "no events" placeholder.
+  assert.ok(
+    result.markdown.includes("Today's calendar"),
+    "markdown must include 'Today's calendar' section even when there are no events",
   );
 });
