@@ -169,10 +169,13 @@ function loadPluginConfig(): Record<string, unknown> {
   const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
   // Resolve via the active memory slot first so that migration configs with
   // both entries honour whichever id the operator configured (#403).
+  // Guard: only trust the slot when it points to a known Remnic plugin id so
+  // mixed-plugin installs don't apply another plugin's config to Remnic.
   const activeSlot: string | undefined = raw?.plugins?.slots?.memory;
+  const isRemnicSlot = activeSlot === PLUGIN_ID || activeSlot === LEGACY_PLUGIN_ID;
   const entry =
-    (activeSlot && raw?.plugins?.entries?.[activeSlot] !== undefined
-      ? raw.plugins.entries[activeSlot]
+    (isRemnicSlot && raw?.plugins?.entries?.[activeSlot!] !== undefined
+      ? raw.plugins.entries[activeSlot!]
       : undefined) ??
     raw?.plugins?.entries?.[PLUGIN_ID] ??
     raw?.plugins?.entries?.[LEGACY_PLUGIN_ID];

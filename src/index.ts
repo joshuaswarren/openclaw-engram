@@ -75,12 +75,17 @@ function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
     const config = JSON.parse(content);
     // Resolve via the active memory slot first so migration configs that have
     // both entries honour whichever id the operator has set (#403).
+    // Guard: only trust the slot when it points to a known Remnic plugin id so
+    // mixed-plugin installs with a different memory plugin in slots.memory don't
+    // accidentally apply that plugin's config to Remnic (#403).
     // Use ternary-plus-?? to match the same pattern in access-cli.ts and
     // operator-toolkit.ts so all entry-point loaders agree on the selection.
     const activeSlot: string | undefined = config?.plugins?.slots?.memory;
+    const isRemnicSlot =
+      activeSlot === PLUGIN_ID || activeSlot === LEGACY_PLUGIN_ID;
     return (
-      (activeSlot && config?.plugins?.entries?.[activeSlot] !== undefined
-        ? config.plugins.entries[activeSlot]
+      (isRemnicSlot && config?.plugins?.entries?.[activeSlot!] !== undefined
+        ? config.plugins.entries[activeSlot!]
         : undefined) ??
       config?.plugins?.entries?.[PLUGIN_ID] ??
       config?.plugins?.entries?.[LEGACY_PLUGIN_ID]

@@ -382,6 +382,8 @@ async function loadCliPluginConfig(configPath?: string): Promise<OperatorConfigL
     // both entries honour whichever id the operator configured (#403).
     // Mirror the pattern in access-cli.ts / loadPluginEntryFromFile /
     // readPluginHooksPolicy so every entry point agrees on the selection.
+    // Guard: only trust the slot when it points to a known Remnic plugin id so
+    // mixed-plugin installs don't apply another plugin's config to Remnic.
     const slotsNode =
       pluginsNode && typeof pluginsNode.slots === "object"
         ? (pluginsNode.slots as Record<string, unknown>)
@@ -390,9 +392,10 @@ async function loadCliPluginConfig(configPath?: string): Promise<OperatorConfigL
       slotsNode && typeof slotsNode.memory === "string"
         ? (slotsNode.memory as string)
         : undefined;
+    const isRemnicSlot = activeSlot === PLUGIN_ID || activeSlot === LEGACY_PLUGIN_ID;
     const config = entries
-      ? ((activeSlot && entries[activeSlot] !== undefined
-          ? entries[activeSlot]
+      ? ((isRemnicSlot && entries[activeSlot!] !== undefined
+          ? entries[activeSlot!]
           : undefined) ??
         entries[PLUGIN_ID] ??
         entries[LEGACY_PLUGIN_ID])
