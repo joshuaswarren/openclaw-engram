@@ -584,6 +584,35 @@ export class ContentHashIndex {
 }
 
 // ---------------------------------------------------------------------------
+// Attribute normalization helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a structured-attributes map into a stable, canonical string fragment
+ * suitable for appending to enriched memory content before hashing.
+ *
+ * Normalization rules:
+ *   - Keys are trimmed and lowercased (values are trimmed but preserve case)
+ *   - Key-value pairs are sorted alphabetically by normalized key
+ *   - Pairs are joined with "; " and rendered as "key: value"
+ *
+ * Using this helper at BOTH the write path (enrichedContent) and the
+ * dedup-lookup path (dedupContent) guarantees identical output regardless of
+ * the insertion order or casing used by the caller.
+ *
+ * @example
+ *   normalizeAttributePairs({ foo: "bar", BAZ: "qux" })
+ *   // → "baz: qux; foo: bar"
+ */
+export function normalizeAttributePairs(pairs: Record<string, string>): string {
+  return Object.entries(pairs)
+    .map(([k, v]) => [k.trim().toLowerCase(), v.trim()] as [string, string])
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("; ");
+}
+
+// ---------------------------------------------------------------------------
 // Entity file parsing / serialization (Knowledge Graph v7.0)
 // ---------------------------------------------------------------------------
 
@@ -1089,13 +1118,14 @@ export class StorageManager {
       structuredAttributes: options.structuredAttributes,
     };
 
-    // Append structured attributes as searchable suffix so QMD indexes them
+    // Append structured attributes as searchable suffix so QMD indexes them.
+    // normalizeAttributePairs sorts and lowercases keys so the enriched content
+    // is stable regardless of the insertion order or key casing supplied by the
+    // caller — this must stay in sync with the dedupContent built in the
+    // orchestrator's hash-dedup path.
     let enrichedContent = content;
     if (options.structuredAttributes && Object.keys(options.structuredAttributes).length > 0) {
-      const attrLines = Object.entries(options.structuredAttributes)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join("; ");
-      enrichedContent = `${content}\n[Attributes: ${attrLines}]`;
+      enrichedContent = `${content}\n[Attributes: ${normalizeAttributePairs(options.structuredAttributes)}]`;
     }
 
     const sanitized = sanitizeMemoryContent(enrichedContent);
@@ -2236,7 +2266,7 @@ export class StorageManager {
     // If the target file lives in cold/, bump the cold-version sentinel so
     // other processes detect the change on their next readAllColdMemories()
     // call (Finding UvUy fix).
-    if (memory.path.includes(`${path.sep}cold${path.sep}`) || memory.path.endsWith(`${path.sep}cold`)) {
+    if (memory.path.includes(`${path.sep}cold${path.sep}`)) {
       this.invalidateColdMemoriesCache();
     }
     await this.appendGeneratedMemoryLifecycleEventFailOpen(

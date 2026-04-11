@@ -33,7 +33,9 @@ import {
   StorageManager,
   ContentHashIndex,
   normalizeEntityName,
+  normalizeAttributePairs,
 } from "./storage.js";
+import { sanitizeMemoryContent } from "./sanitize.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
 import { TranscriptManager } from "./transcript.js";
@@ -8441,14 +8443,25 @@ export class Orchestrator {
         // receive the same enriched body or the check is against a different hash
         // and dedup fails to fire (letting duplicates through) or fires when it
         // shouldn't (collapsing memories with different enrichments).
+        // Fix #1 (P2 PRRT_kwDORJXyws56VHZc): use normalizeAttributePairs so
+        // key order and casing are canonical — identical to the enrichment
+        // applied by storage.writeMemory — preventing spurious hash misses
+        // when attribute maps arrive with different insertion orders or casing.
+        //
+        // Fix #4 (Low PRRT_kwDORJXyws56VHth): sanitize the base content before
+        // building dedupContent.  writeMemory runs sanitizeMemoryContent on the
+        // enriched body before hashing; if sanitization redacts the content to
+        // REDACTED_PLACEHOLDER the stored hash is for the redacted form, not the
+        // raw form.  Computing dedupContent from sanitized.text here ensures the
+        // hash lookup and the normalizedIncoming comparison both use the same
+        // content that writeMemory will actually store.
+        const sanitizedBase = sanitizeMemoryContent(options.content);
         const dedupContent =
           options.category === "fact" &&
           options.structuredAttributes &&
           Object.keys(options.structuredAttributes).length > 0
-            ? `${options.content}\n[Attributes: ${Object.entries(options.structuredAttributes)
-                .map(([k, v]) => `${k}: ${v}`)
-                .join("; ")}]`
-            : options.content;
+            ? `${sanitizedBase.text}\n[Attributes: ${normalizeAttributePairs(options.structuredAttributes)}]`
+            : sanitizedBase.text;
         if (
           options.category === "fact" &&
           (await sharedStorage.hasFactContentHash(dedupContent))
@@ -8478,18 +8491,13 @@ export class Orchestrator {
             let hashDedupMatchingFact: MemoryFile | undefined;
             let hashDedupLookupComplete = false;
             try {
-              // PR #402 round-7 (Fix #2 / Codex P1 PRRT_kwDORJXyws56VALC):
-              // Use the same enriched payload (dedupContent) that was passed to
-              // hasFactContentHash for the normalizedIncoming comparison.
-              // Previously, normalizedIncoming was derived from options.content
-              // (raw), while hasFactContentHash received dedupContent (enriched
-              // with "[Attributes: ...]").  If two active shared facts share the
-              // same base text but differ in structuredAttributes, the raw-content
-              // comparison can select the wrong candidate — running supersession
-              // against the wrong newMemoryId and then returning without writing,
-              // leaving the conflicting fact active.  Comparing with the enriched
-              // hash ensures the candidate selected is the one that actually
-              // matches the incoming enriched payload.
+              // Fix #2 (P2 PRRT_kwDORJXyws56VHZf): dedupContent is now built
+              // from sanitizedBase.text (see fix #4 above), so normalizedIncoming
+              // uses the same sanitized+normalized content that writeMemory hashes
+              // and that hasFactContentHash just matched.  Previously this used the
+              // raw options.content, which diverged from the stored hash when
+              // sanitization redacted the content, causing the candidate lookup to
+              // return undefined and leaving stale facts active.
               const normalizedIncoming = ContentHashIndex.normalizeContent(dedupContent);
               const allShared = await sharedStorage.readAllMemories();
               // PR #402 round-12 (Finding Uybg): restrict hash-dedup matching to
