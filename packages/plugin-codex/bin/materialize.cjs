@@ -73,21 +73,36 @@ function parseArgs(argv) {
  * legacy-Remnic-shaped raw config object.
  *
  * OpenClaw stores Remnic settings under
- * `plugins.entries["openclaw-engram"].config`; the legacy Remnic/Engram
- * layouts kept them at the top level.
+ * `plugins.entries["<id>"].config` where <id> is determined by:
+ *   1. `plugins.slots.memory` (the operator-configured active entry)
+ *   2. "openclaw-remnic" (the canonical id after the 1/2 rename PR)
+ *   3. "openclaw-engram" (the legacy id, kept for backward compat)
+ *
+ * The legacy Remnic/Engram layouts kept settings at the top level.
  */
 function unwrapOpenClawEntry(raw) {
   if (!raw || typeof raw !== "object") return null;
-  const entry =
-    raw.plugins && typeof raw.plugins === "object"
-      ? raw.plugins.entries
-      : undefined;
-  const pluginConfig =
-    entry && typeof entry === "object" && entry["openclaw-engram"]
-      ? entry["openclaw-engram"].config
-      : undefined;
-  if (pluginConfig && typeof pluginConfig === "object") {
-    return pluginConfig;
+  const plugins = raw.plugins && typeof raw.plugins === "object" ? raw.plugins : undefined;
+  const entry = plugins && plugins.entries && typeof plugins.entries === "object"
+    ? plugins.entries
+    : undefined;
+  if (entry) {
+    // Honour the operator's configured memory slot first.
+    const activeId =
+      plugins.slots && typeof plugins.slots === "object"
+        ? plugins.slots.memory
+        : undefined;
+    const candidateIds = [
+      activeId,
+      "openclaw-remnic",
+      "openclaw-engram",
+    ].filter((id) => typeof id === "string" && id.length > 0);
+    for (const id of candidateIds) {
+      const pluginConfig = entry[id] && entry[id].config;
+      if (pluginConfig && typeof pluginConfig === "object") {
+        return pluginConfig;
+      }
+    }
   }
   // Legacy / developer config layout — the top-level object IS the config.
   return raw;
