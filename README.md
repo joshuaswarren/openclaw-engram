@@ -173,6 +173,29 @@ Start a conversation — Remnic begins learning immediately.
 
 > **Note:** This shows only the minimal config. Remnic has 60+ configuration options for search backends, capture modes, memory OS features, and more. See the [full config reference](docs/config-reference.md) for every setting.
 
+### Extraction importance gate
+
+Remnic scores every extracted fact locally (see `src/importance.ts`) and uses that score as a write gate. Facts whose level falls below `extractionMinImportanceLevel` are dropped before they ever hit disk, so turn-level chatter like `"hi"`, `"k"`, or heartbeat pings never become fact memories.
+
+Default: `"low"` — only `"trivial"` content is dropped. Raise to `"normal"` or higher for a stricter gate.
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-engram": {
+        "config": {
+          // Allowed values: "trivial" | "low" | "normal" | "high" | "critical"
+          "extractionMinImportanceLevel": "normal"
+        }
+      }
+    }
+  }
+}
+```
+
+Category boosts still apply before the gate, so corrections, principles, preferences, and commitments stay above `"normal"` even when their raw text would otherwise score low. Every gated fact increments the `importance_gated` counter (grep `metric:importance_gated` in `~/.openclaw/logs/gateway.log`) and the final extraction log line reports the gated count.
+
 ### Verify installation
 
 ```bash

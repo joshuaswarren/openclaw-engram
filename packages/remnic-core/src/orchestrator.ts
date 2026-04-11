@@ -17,7 +17,7 @@ import { migrateFromEngram } from "./migrate/from-engram.js";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
-import { scoreImportance } from "./importance.js";
+import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
 import type {
   SearchBackend,
@@ -8273,6 +8273,10 @@ export class Orchestrator {
       persistedIdsByStorage.set(key, { storage: targetStorage, ids: [id] });
     };
     let dedupedCount = 0;
+    // Counter for facts skipped by the importance write-gate (issue #372).
+    // Emitted via the `importance_gated` metric below and rolled into the
+    // final `persisted:` log line so operators can tune the threshold.
+    let importanceGatedCount = 0;
     const behaviorSignalsByStorage = new Map<
       string,
       { storage: StorageManager; events: BehaviorSignalEvent[] }
@@ -8558,6 +8562,32 @@ export class Orchestrator {
         writeCategory,
         fact.tags,
       );
+
+      // Importance write-gate (issue #372). Drop facts whose locally-scored
+      // level falls below the configured minimum before any storage work.
+      // scoreImportance() already applies category boosts (e.g. corrections
+      // +0.15) before deriving the level, so a correction at raw ~0.35
+      // still lands at "normal" and passes the default gate. Without this
+      // gate, trivial turn-level chatter ("hi", "k", heartbeat pings) gets
+      // persisted as a fact memory and dilutes the store.
+      if (
+        !isAboveImportanceThreshold(
+          importance.level,
+          this.config.extractionMinImportanceLevel,
+        )
+      ) {
+        importanceGatedCount++;
+        const snippet = fact.content.slice(0, 60).replace(/\s+/g, " ").trim();
+        log.debug(`extraction: skip trivial "${snippet}"`);
+        // Log-based counter (no dedicated metric bus in remnic-core yet).
+        // Operators can grep for `metric:importance_gated` in gateway.log
+        // to tune extractionMinImportanceLevel.
+        log.debug(
+          `metric:importance_gated level=${importance.level} threshold=${this.config.extractionMinImportanceLevel} category=${writeCategory} count=${importanceGatedCount}`,
+        );
+        continue;
+      }
+
       const inferredIntent = this.config.intentRoutingEnabled
         ? inferIntentFromText(
             `${writeCategory} ${fact.tags.join(" ")} ${fact.content}`,
@@ -9026,8 +9056,10 @@ export class Orchestrator {
     }
 
     const dedupSuffix = dedupedCount > 0 ? ` (${dedupedCount} deduped)` : "";
+    const gatedSuffix =
+      importanceGatedCount > 0 ? ` (${importanceGatedCount} gated)` : "";
     log.info(
-      `persisted: ${facts.length - dedupedCount} facts${dedupSuffix}, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
+      `persisted: ${facts.length - dedupedCount - importanceGatedCount} facts${dedupSuffix}${gatedSuffix}, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
     );
 
     // Update temporal + tag indexes (v8.1) — fire-and-forget, fail-open

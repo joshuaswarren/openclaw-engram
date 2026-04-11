@@ -388,6 +388,14 @@ export interface PluginConfig {
   extractionMaxEntitiesPerRun: number;
   extractionMaxQuestionsPerRun: number;
   extractionMaxProfileUpdatesPerRun: number;
+  /**
+   * Minimum importance level required to persist an extracted fact. Facts
+   * whose locally-scored level falls below this threshold are dropped before
+   * write and counted toward the `importance_gated` metric. Defaults to
+   * "low" so trivial content (greetings, single-word replies, filler) is
+   * silently dropped while everything else still passes.
+   */
+  extractionMinImportanceLevel: ImportanceLevel;
   consolidationRequireNonZeroExtraction: boolean;
   consolidationMinIntervalMs: number;
   // QMD maintenance (debounced singleflight)

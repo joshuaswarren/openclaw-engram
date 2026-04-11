@@ -292,3 +292,35 @@ export function importanceLevel(score: number): ImportanceLevel {
   if (score >= 0.2) return "low";
   return "trivial";
 }
+
+// ---------------------------------------------------------------------------
+// Importance threshold helper (issue #372)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ordering for importance levels used by the extraction write gate.
+ * Higher indices mean more important.
+ */
+const IMPORTANCE_LEVEL_RANK: Record<ImportanceLevel, number> = {
+  trivial: 0,
+  low: 1,
+  normal: 2,
+  high: 3,
+  critical: 4,
+};
+
+/**
+ * Return true if `candidate` meets or exceeds `threshold`. Used by the
+ * extraction write gate in orchestrator.persistExtraction() to drop trivial
+ * content before it is written to the memory store.
+ *
+ * Note: callers should pass the ALREADY-BOOSTED level returned by
+ * scoreImportance(), because category boosts (e.g. corrections) are applied
+ * inside scoreImportance() before the level is derived.
+ */
+export function isAboveImportanceThreshold(
+  candidate: ImportanceLevel,
+  threshold: ImportanceLevel,
+): boolean {
+  return IMPORTANCE_LEVEL_RANK[candidate] >= IMPORTANCE_LEVEL_RANK[threshold];
+}
