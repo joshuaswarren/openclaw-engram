@@ -970,18 +970,34 @@ export function locatePluginCodexExtensionSource(override?: string | null): stri
   const searched: string[] = [];
 
   // Primary path: the bundled payload shipped with @remnic/core itself.
-  // The `codex/` subdirectory lives alongside this source file and is
-  // included in the package `files` field so it ships with the npm artifact.
-  // This ensures installCodexMemoryExtension works even when @remnic/plugin-codex
-  // is not installed (e.g. a user installs only @remnic/core + remnic-cli).
+  // tsup copies src/connectors/codex/ → dist/connectors/codex/ (see tsup.config.ts
+  // onSuccess hook). However, tsup bundles all source into dist/ as flat files
+  // (dist/index.js, dist/chunk-*.js), so at runtime import.meta.url points to
+  // dist/index.js or a dist/chunk-*.js — NOT dist/connectors/index.js.
+  // Therefore we probe two sibling-relative candidates:
+  //   1. moduleDir/codex          — matches tsx/ts-node on src/connectors/index.ts
+  //   2. moduleDir/connectors/codex — matches the tsup dist layout where this code
+  //                                   lands in dist/index.js or dist/chunk-*.js
   try {
     const moduleDir = path.dirname(fileURLToPath(import.meta.url));
-    // When compiled: dist/connectors/index.js → dist/connectors/codex/
-    // When run via tsx/ts-node on src: src/connectors/codex/
+
+    // Candidate 1: adjacent codex/ (tsx/ts-node from src/connectors/)
     const bundledCandidate = path.join(moduleDir, "codex");
     searched.push(bundledCandidate);
     if (fs.existsSync(bundledCandidate) && fs.statSync(bundledCandidate).isDirectory()) {
       return bundledCandidate;
+    }
+
+    // Candidate 2: dist/connectors/codex/ — the tsup output path.
+    // When this module is bundled into dist/index.js or dist/chunk-*.js,
+    // moduleDir is dist/ and tsup copies the payload to dist/connectors/codex/.
+    const distConnectorsCandidate = path.join(moduleDir, "connectors", "codex");
+    searched.push(distConnectorsCandidate);
+    if (
+      fs.existsSync(distConnectorsCandidate) &&
+      fs.statSync(distConnectorsCandidate).isDirectory()
+    ) {
+      return distConnectorsCandidate;
     }
   } catch {
     // import.meta.url unavailable — not running as ESM, skip bundled path.

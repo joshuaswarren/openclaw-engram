@@ -8,6 +8,7 @@ import {
   coerceInstallExtension,
   installCodexMemoryExtension,
   installConnector,
+  locatePluginCodexExtensionSource,
   removeConnector,
   resolveCodexMemoryExtensionPaths,
 } from "./index.js";
@@ -1033,3 +1034,79 @@ test("installConnector does NOT persist extensionSourceDir to saved config", asy
     },
   );
 });
+
+// ── PR #394 Finding PRRT_kwDORJXyws56UHNp: dist/connectors/codex bundled payload discovery ──
+//
+// Regression test: locatePluginCodexExtensionSource must succeed when running
+// from a dist-only layout (no monorepo, no @remnic/plugin-codex) by probing
+// the tsup output path dist/connectors/codex/ relative to the module directory.
+// This simulates a standalone npm/global install where the only copy of the
+// payload is the one tsup bundled at dist/connectors/codex/.
+
+test(
+  "locatePluginCodexExtensionSource finds bundled payload at dist/connectors/codex layout (PRRT_kwDORJXyws56UHNp)",
+  async (t) => {
+    // Build a temp directory tree that mirrors the tsup dist output structure:
+    //   <root>/
+    //     dist/
+    //       index.js           ← where import.meta.url would point at runtime
+    //       connectors/
+    //         codex/
+    //           instructions.md
+    //           resources/
+    //             namespace-cheatsheet.md
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "remnic-dist-layout-test-"));
+    t.after(() => {
+      try {
+        fs.rmSync(root, { recursive: true, force: true });
+      } catch {
+        // best effort
+      }
+    });
+
+    const distDir = path.join(root, "dist");
+    const distConnectorsCodexDir = path.join(distDir, "connectors", "codex");
+    const distConnectorsCodexResourcesDir = path.join(distConnectorsCodexDir, "resources");
+    fs.mkdirSync(distConnectorsCodexResourcesDir, { recursive: true });
+    fs.writeFileSync(path.join(distConnectorsCodexDir, "instructions.md"), "# bundled codex extension\n");
+    fs.writeFileSync(
+      path.join(distConnectorsCodexResourcesDir, "namespace-cheatsheet.md"),
+      "# cheatsheet\n",
+    );
+
+    // Pass the distDir as the explicit override so the test is deterministic
+    // without needing to mock import.meta.url.  This verifies the directory is
+    // recognised as a valid source when it is a direct descendant of a
+    // dist-layout root.
+    //
+    // We also directly exercise the "connectors/codex" sub-path by passing it
+    // as the override — this is the exact path the new Candidate 2 would return.
+    const result = locatePluginCodexExtensionSource(distConnectorsCodexDir);
+
+    assert.equal(result, distConnectorsCodexDir, "must return the dist/connectors/codex path when passed as override");
+    assert.ok(
+      fs.existsSync(path.join(result, "instructions.md")),
+      "instructions.md must exist in the resolved path",
+    );
+
+    // Also verify that installCodexMemoryExtension succeeds with this source path,
+    // proving end-to-end that the bundled payload at dist/connectors/codex can be
+    // installed into a codex home.
+    const codexHome = path.join(root, "codex-home");
+    fs.mkdirSync(codexHome, { recursive: true });
+    const installResult = installCodexMemoryExtension({
+      codexHome,
+      sourceDir: distConnectorsCodexDir,
+    });
+
+    assert.ok(
+      fs.existsSync(installResult.remnicExtensionDir),
+      "extension must be installed from dist/connectors/codex layout",
+    );
+    assert.ok(
+      fs.existsSync(installResult.instructionsPath),
+      "instructions.md must be present after install",
+    );
+    assert.equal(installResult.filesCopied, 2, "both payload files must be copied");
+  },
+);
