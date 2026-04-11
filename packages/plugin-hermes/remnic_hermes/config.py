@@ -8,7 +8,7 @@ from dataclasses import dataclass
 
 
 @dataclass
-class EngramHermesConfig:
+class RemnicHermesConfig:
     """Configuration for the Remnic Hermes MemoryProvider."""
 
     host: str = "127.0.0.1"
@@ -18,7 +18,7 @@ class EngramHermesConfig:
     timeout: float = 30.0
 
     @classmethod
-    def from_hermes_config(cls, config: dict[str, object]) -> EngramHermesConfig:
+    def from_hermes_config(cls, config: dict[str, object]) -> RemnicHermesConfig:
         """Load from the Remnic config section (already extracted by the register() caller).
 
         Accepts either the top-level Hermes config (with 'remnic' or legacy
@@ -28,23 +28,27 @@ class EngramHermesConfig:
         remnic_candidate = config.get("remnic")
         engram_candidate = config.get("engram")
         if isinstance(remnic_candidate, dict):
-            engram = remnic_candidate
+            section = remnic_candidate
         elif isinstance(engram_candidate, dict):
-            engram = engram_candidate
+            section = engram_candidate
         else:
-            engram = config
+            section = config
 
-        token = str(engram.get("token", ""))
+        token = str(section.get("token", ""))
         if not token:
             token = _load_token_from_file()
 
         return cls(
-            host=str(engram.get("host", _read_compat_env("REMNIC_HOST", "ENGRAM_HOST", "127.0.0.1"))),
-            port=int(engram.get("port", _read_compat_env("REMNIC_PORT", "ENGRAM_PORT", "4318"))),
+            host=str(section.get("host", _read_compat_env("REMNIC_HOST", "ENGRAM_HOST", "127.0.0.1"))),
+            port=int(section.get("port", _read_compat_env("REMNIC_PORT", "ENGRAM_PORT", "4318"))),
             token=token,
-            session_key=str(engram.get("session_key", "")),
-            timeout=float(engram.get("timeout", 30.0)),
+            session_key=str(section.get("session_key", "")),
+            timeout=float(section.get("timeout", 30.0)),
         )
+
+
+# Legacy class alias — import path compat for pre-rename consumers.
+EngramHermesConfig = RemnicHermesConfig
 
 
 def _read_compat_env(primary: str, legacy: str, default: str) -> str:

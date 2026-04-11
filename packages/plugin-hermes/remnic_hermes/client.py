@@ -7,8 +7,14 @@ from typing import Any
 import httpx
 
 
-class EngramClient:
-    """Typed async HTTP client for the EMO daemon."""
+class RemnicClient:
+    """Typed async HTTP client for the Remnic daemon.
+
+    NOTE: HTTP paths and the client-id header still use the legacy ``engram``
+    prefix because the server exposes the legacy surface for the v1.x compat
+    window. These will switch to a ``/remnic/v1`` surface once the daemon ships
+    the dual-path rollout.
+    """
 
     def __init__(
         self,
@@ -81,3 +87,7 @@ class EngramClient:
 
     async def close(self) -> None:
         await self._http.aclose()
+
+
+# Legacy class alias — import path compat for pre-rename consumers.
+EngramClient = RemnicClient

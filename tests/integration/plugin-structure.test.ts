@@ -101,7 +101,11 @@ test("plugin-hermes has MemoryProvider module", () => {
   const initPy = path.join(PACKAGES, "plugin-hermes", "remnic_hermes", "__init__.py");
   assert.ok(fs.existsSync(initPy));
   const content = fs.readFileSync(initPy, "utf-8");
-  assert.ok(content.includes("EngramMemoryProvider"), "Must export EngramMemoryProvider");
+  assert.ok(content.includes("RemnicMemoryProvider"), "Must export RemnicMemoryProvider");
+  assert.ok(
+    content.includes("EngramMemoryProvider"),
+    "Must keep the EngramMemoryProvider alias during the compat window",
+  );
   assert.ok(content.includes("def register"), "Must have register() entry point");
 });
 

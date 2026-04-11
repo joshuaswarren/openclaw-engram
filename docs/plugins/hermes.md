@@ -48,13 +48,14 @@ The plugin also registers tools the agent can call directly:
 
 | Tool | Description |
 |------|-------------|
-| `engram_recall` | Search memories with a query |
-| `engram_store` | Store a memory explicitly |
-| `engram_search` | Semantic search across all memories |
+| `remnic_recall` | Search memories with a query |
+| `remnic_store` | Store a memory explicitly |
+| `remnic_search` | Semantic search across all memories |
 
-Hermes still exposes the legacy `engram_*` tool names today. The product and
-connector are Remnic; the tool names stay legacy until the Hermes-side
-compatibility window closes.
+Legacy aliases `engram_recall`, `engram_store`, and `engram_search` are also
+registered during the Engram → Remnic compat window so existing Hermes configs
+that reference the older names keep working. New integrations should use the
+`remnic_*` names.
 
 ## Why MemoryProvider > MCP
 
@@ -62,8 +63,8 @@ MCP gives Hermes tools to call, but the agent must choose to call them. The Memo
 
 | Aspect | MCP Only | MemoryProvider |
 |--------|----------|---------------|
-| Recall | Agent must call `engram.recall` | Automatic on every turn |
-| Observe | Agent must call `engram.observe` | Automatic after every response |
+| Recall | Agent must call `remnic_recall` | Automatic on every turn |
+| Observe | Agent must call `remnic_store` | Automatic after every response |
 | Latency | Tool call overhead | Pre-fetched, non-blocking |
 | Reliability | Agent may forget to call | Structural — cannot be skipped |
 
