@@ -74,6 +74,7 @@ import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
 import {
   decideSemanticDedup,
+  type SemanticDedupDecision,
   type SemanticDedupHit,
 } from "./dedup/semantic.js";
 import { BootstrapEngine } from "./bootstrap.js";
@@ -8646,16 +8647,35 @@ export class Orchestrator {
       //   (b) low-importance facts that will be dropped never trigger an
       //       embedding lookup (avoids unnecessary API latency/cost).
       // Fails open when the embedding backend is unavailable.
+      //
+      // Defense in depth (PR #399 review): decideSemanticDedup already
+      // catches lookup errors internally, and the embedding fetch is
+      // bounded by a timeout in embedding-fallback.ts. We still wrap the
+      // whole call in its own try/catch here so that any unexpected
+      // rejection (future refactors, misbehaving custom backends, etc.)
+      // can never block the persist loop — a failure in the dedup path
+      // must always default to "not a duplicate".
       if (this.config.semanticDedupEnabled) {
-        const semanticDecision = await decideSemanticDedup(
-          fact.content,
-          (content, limit) => this.semanticDedupLookup(content, limit),
-          {
-            enabled: true,
-            threshold: this.config.semanticDedupThreshold,
-            candidates: this.config.semanticDedupCandidates,
-          },
-        );
+        let semanticDecision: SemanticDedupDecision;
+        try {
+          semanticDecision = await decideSemanticDedup(
+            fact.content,
+            (content, limit) => this.semanticDedupLookup(content, limit),
+            {
+              enabled: true,
+              threshold: this.config.semanticDedupThreshold,
+              candidates: this.config.semanticDedupCandidates,
+            },
+          );
+        } catch (err) {
+          log.warn(
+            `semantic dedup decision failed; failing open and writing fact: ${err}`,
+          );
+          semanticDecision = {
+            action: "keep",
+            reason: "backend_unavailable",
+          };
+        }
         if (semanticDecision.action === "skip") {
           log.debug(
             `dedup: skipping semantic near-duplicate fact "${fact.content

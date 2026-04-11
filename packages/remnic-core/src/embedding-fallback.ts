@@ -26,6 +26,35 @@ type EmbeddingIndexFile = {
 
 const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
 
+/**
+ * Maximum time to wait for an embedding HTTP request before giving up.
+ *
+ * The write-time semantic dedup guard in orchestrator.persistExtraction()
+ * blocks each candidate fact on an embedding lookup. If the embedding
+ * endpoint hangs (degraded OpenAI, stalled local gateway, DNS timeout),
+ * extraction would otherwise stall indefinitely — a single bad backend
+ * could freeze the entire persist loop. Bounding the fetch here ensures
+ * the decision path fails open (returns null) within a predictable window
+ * and writes proceed as non-duplicates.
+ *
+ * Tests can override via REMNIC_EMBEDDING_FETCH_TIMEOUT_MS so they don't
+ * have to wait the full default on hung-fetch assertions.
+ *
+ * Related: joshuaswarren/remnic#373, PR #399 P1 review.
+ */
+const DEFAULT_EMBEDDING_FETCH_TIMEOUT_MS = 5000;
+
+function resolveEmbeddingFetchTimeoutMs(): number {
+  const raw = process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed);
+    }
+  }
+  return DEFAULT_EMBEDDING_FETCH_TIMEOUT_MS;
+}
+
 export class EmbeddingFallback {
   private readonly indexPath: string;
   private loaded: EmbeddingIndexFile | null = null;
@@ -136,6 +165,9 @@ export class EmbeddingFallback {
   }
 
   private async embed(input: string, provider: ProviderConfig): Promise<number[] | null> {
+    // Bound the fetch so a hung embedding endpoint cannot stall callers.
+    // See DEFAULT_EMBEDDING_FETCH_TIMEOUT_MS docblock for context.
+    const timeoutMs = resolveEmbeddingFetchTimeoutMs();
     try {
       const res = await fetch(provider.endpoint, {
         method: "POST",
@@ -145,6 +177,7 @@ export class EmbeddingFallback {
           input: input.slice(0, 8000),
           encoding_format: "float",
         }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
       if (!res.ok) {
         log.debug(`embedding fallback request failed: ${provider.type} ${res.status}`);
@@ -155,7 +188,19 @@ export class EmbeddingFallback {
       if (!Array.isArray(vector)) return null;
       return vector.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n));
     } catch (err) {
-      log.debug(`embedding fallback error: ${err}`);
+      // AbortSignal.timeout throws a DOMException with name "TimeoutError";
+      // callers fail open regardless, but surface the timeout at warn level
+      // so operators can distinguish slow backends from generic errors.
+      const isTimeout =
+        err instanceof Error &&
+        (err.name === "TimeoutError" || err.name === "AbortError");
+      if (isTimeout) {
+        log.warn(
+          `embedding fallback fetch timed out after ${timeoutMs}ms (${provider.type}); failing open`,
+        );
+      } else {
+        log.debug(`embedding fallback error: ${err}`);
+      }
       return null;
     }
   }
