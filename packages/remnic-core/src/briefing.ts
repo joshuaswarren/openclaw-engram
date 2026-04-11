@@ -66,6 +66,13 @@ export interface ParsedBriefingWindow {
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
+ * Maximum allowed lookback offset in milliseconds (100 years).
+ * Anything beyond this is almost certainly a typo or abuse — and would
+ * overflow to `Invalid Date` for sufficiently large values anyway.
+ */
+const MAX_WINDOW_MS = 100 * 365 * DAY_MS;
+
+/**
  * Parse a CLI-friendly window token into a concrete date range.
  *
  * Accepted forms (case-insensitive):
@@ -104,8 +111,12 @@ export function parseBriefingWindow(
   else if (unit === "d") ms = value * DAY_MS;
   else if (unit === "w") ms = value * 7 * DAY_MS;
   if (ms === 0) return null;
+  // Reject values that exceed the 100-year cap or would overflow to Invalid Date.
+  if (ms > MAX_WINDOW_MS || !Number.isFinite(ms)) return null;
+  const from = new Date(now.getTime() - ms);
+  if (!Number.isFinite(from.getTime())) return null;
   return {
-    from: new Date(now.getTime() - ms),
+    from,
     to: now,
     label: `last ${value}${unit}`,
   };

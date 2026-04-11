@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { EngramAccessService } from "./access-service.js";
 import { readEnvVar } from "./runtime/env.js";
 import type { RecallPlanMode } from "./types.js";
+import { validateBriefingFormat } from "./briefing.js";
 
 type JsonRpcId = string | number | null;
 
@@ -1260,19 +1261,23 @@ export class EngramMcpServer {
           principal: effectivePrincipal,
         });
       // ── Daily Context Briefing (#370) ───────────────────────────────────
-      case "engram.briefing":
+      case "engram.briefing": {
+        // Validate the format value upfront — unsupported values (e.g. "xml")
+        // must be rejected with a descriptive error rather than silently
+        // falling back to the default format.
+        const rawFormat = typeof args.format === "string" ? args.format : undefined;
+        const formatErr = validateBriefingFormat(rawFormat);
+        if (formatErr) throw new Error(formatErr);
         return this.service.briefing({
           since: typeof args.since === "string" ? args.since : undefined,
           focus: typeof args.focus === "string" ? args.focus : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
-          format:
-            args.format === "json" || args.format === "markdown"
-              ? (args.format as "json" | "markdown")
-              : undefined,
+          format: rawFormat as "json" | "markdown" | undefined,
           maxFollowups:
             typeof args.maxFollowups === "number" ? args.maxFollowups : undefined,
           principal: effectivePrincipal,
         });
+      }
       default:
         throw new Error(`unknown tool: ${name}`);
     }

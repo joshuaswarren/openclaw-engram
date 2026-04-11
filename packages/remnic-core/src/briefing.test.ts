@@ -288,3 +288,45 @@ test("validateBriefingFormat: rejects arbitrary strings", () => {
     assert.ok(typeof err === "string", `"${bad}" should be rejected`);
   }
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 1 (#396 new): parseBriefingWindow must reject overflow/huge values
+// ──────────────────────────────────────────────────────────────────────────
+
+test("parseBriefingWindow: rejects hugely large week value that would overflow Date", () => {
+  // 99999999w far exceeds 100 years — must return null, not Invalid Date.
+  const result = parseBriefingWindow("99999999w");
+  assert.equal(result, null, "99999999w should be rejected as out-of-bounds");
+});
+
+test("parseBriefingWindow: rejects hugely large day value that would overflow Date", () => {
+  const result = parseBriefingWindow("99999999d");
+  assert.equal(result, null, "99999999d should be rejected as out-of-bounds");
+});
+
+test("parseBriefingWindow: rejects hugely large hour value that would overflow Date", () => {
+  const result = parseBriefingWindow("99999999h");
+  assert.equal(result, null, "99999999h should be rejected as out-of-bounds");
+});
+
+test("parseBriefingWindow: rejects a window exactly above the 100-year cap", () => {
+  // 36501 days = ~100.003 years — just above the 100-year limit.
+  const result = parseBriefingWindow("36501d");
+  assert.equal(result, null, "36501d exceeds 100-year cap and must be rejected");
+});
+
+test("parseBriefingWindow: accepts a reasonable 10-year (3650d) window", () => {
+  // 3650d ≈ 10 years — well within the 100-year cap.
+  const result = parseBriefingWindow("3650d");
+  assert.ok(result !== null, "3650d (≈10 years) should be accepted");
+  assert.equal(result.label, "last 3650d");
+  assert.ok(Number.isFinite(result.from.getTime()), "from must be a valid Date");
+});
+
+test("parseBriefingWindow: from date is always a valid finite Date for normal inputs", () => {
+  for (const token of ["1h", "7d", "2w", "365d", "52w"]) {
+    const result = parseBriefingWindow(token);
+    assert.ok(result !== null, `"${token}" should parse successfully`);
+    assert.ok(Number.isFinite(result.from.getTime()), `"${token}" from must be a valid Date`);
+  }
+});
