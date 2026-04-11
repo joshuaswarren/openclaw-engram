@@ -225,6 +225,19 @@ export async function listRemnicPublicArtifacts(params: {
     if (!(await pathExists(absolutePath))) continue;
     // Block symlink traversal for standalone files
     if (!(await isContainedWithin(absolutePath, memoryDir))) continue;
+    // Reject symlinks that redirect to a different file (e.g., profile.md -> state/index.md)
+    try {
+      const linkStat = await lstat(absolutePath);
+      if (linkStat.isSymbolicLink()) {
+        const resolvedPath = await realpath(absolutePath);
+        const expectedParent = await realpath(memoryDir);
+        // Resolved path must be directly in memoryDir with the expected basename
+        if (path.dirname(resolvedPath) !== expectedParent) continue;
+        if (path.basename(resolvedPath) !== path.basename(spec.relativePath)) continue;
+      }
+    } catch {
+      continue;
+    }
     // Verify it's a file (not a directory)
     try {
       const fileStat = await stat(absolutePath);
