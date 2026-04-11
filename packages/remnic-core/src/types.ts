@@ -934,6 +934,17 @@ export interface MemoryFrontmatter {
   memoryKind?: "episode" | "note";
   /** Structured key-value attributes extracted from the content (e.g., product attributes, dates, quantities). */
   structuredAttributes?: Record<string, string>;
+  /**
+   * SHA-256 (via ContentHashIndex.computeHash) of the raw content that was
+   * used as the dedup key at write time. Persists through archive and
+   * consolidation so the hash can be removed from the index even if the stored
+   * content has been transformed (e.g. an inline citation was appended).
+   *
+   * When present, archive/consolidation paths use this directly instead of
+   * calling stripCitation(memory.content), which only handles the default
+   * [Source: ...] format and silently fails for custom citation templates.
+   */
+  contentHash?: string;
 }
 
 /** Memory link relationship types */

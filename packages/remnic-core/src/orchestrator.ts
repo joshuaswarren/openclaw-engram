@@ -2116,14 +2116,15 @@ export class Orchestrator {
           });
           if (archiveResult) {
             // Remove from content-hash index.
-            // Strip any inline citation suffix before hashing so the key
-            // matches the raw-content hash recorded at write time
-            // (contentHashSource = fact.content, pre-citation).  Without
-            // stripCitation, inlineSourceAttributionEnabled=true causes a
-            // hash mismatch here and leaves stale entries that later
-            // false-dedup re-extractions of the same underlying fact.
+            // Prefer the raw-content hash stored on the frontmatter at write
+            // time (contentHash) — it is format-agnostic and survives any
+            // citation template. Fall back to stripCitation(memory.content)
+            // only for legacy memories written before contentHash was added to
+            // frontmatter (those use the default [Source: ...] format only, so
+            // stripCitation is still a safe fallback for them).
             if (this.contentHashIndex) {
-              this.contentHashIndex.remove(stripCitation(m.content));
+              const hashKey = m.frontmatter.contentHash ?? stripCitation(m.content);
+              this.contentHashIndex.remove(hashKey);
             }
             await this.embeddingFallback.removeFromIndex(m.frontmatter.id);
             if (
@@ -10368,14 +10369,15 @@ export class Orchestrator {
       const result = await this.storage.archiveMemory(memory);
       if (result) {
         // Remove from content-hash index since it's no longer in hot search.
-        // Strip any inline citation suffix before hashing so the key matches
-        // the raw-content hash recorded at write time (contentHashSource =
-        // fact.content, pre-citation).  Without stripCitation,
-        // inlineSourceAttributionEnabled=true causes a hash mismatch here and
-        // leaves stale entries that later false-dedup re-extractions of the
-        // same underlying fact.
+        // Prefer the raw-content hash stored on the frontmatter at write
+        // time (contentHash) — it is format-agnostic and survives any
+        // citation template. Fall back to stripCitation(memory.content)
+        // only for legacy memories written before contentHash was added to
+        // frontmatter (those use the default [Source: ...] format only, so
+        // stripCitation is still a safe fallback for them).
         if (this.contentHashIndex) {
-          this.contentHashIndex.remove(stripCitation(memory.content));
+          const hashKey = memory.frontmatter.contentHash ?? stripCitation(memory.content);
+          this.contentHashIndex.remove(hashKey);
         }
         await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);
         if (

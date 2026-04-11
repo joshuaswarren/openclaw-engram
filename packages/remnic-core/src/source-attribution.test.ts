@@ -906,3 +906,181 @@ test(
     }
   },
 );
+
+// ── Option A (contentHash on frontmatter): format-agnostic archive cleanup ────
+
+test(
+  "Option A — Test A: custom unbracketed inline citation: archive removes raw-content hash via stored contentHash",
+  async () => {
+    // Configure an unbracketed template: "{agent} {sessionId}"
+    // formatCitation produces something like "user prefers tea planner main"
+    // stripCitation cannot strip it (no [Source: ...] bracket), but the stored
+    // frontmatter.contentHash must still let us remove the correct hash.
+    const dir = await mkdtemp(path.join(os.tmpdir(), "engram-option-a-test-a-"));
+    try {
+      const rawContent = "user prefers tea";
+      const template = "{agent} {sessionId}";
+      const citedContent = attachCitation(
+        rawContent,
+        { agent: "planner", session: "agent:planner:main" },
+        template,
+      );
+      // citedContent = "user prefers tea planner main" (no brackets — stripCitation is a no-op)
+      assert.ok(!rawContent.includes("["), "raw content must have no brackets");
+
+      // Write with contentHashSource so the raw-content hash lands in the index
+      // and on frontmatter.contentHash.
+      const storage = new StorageManager(dir);
+      await storage.writeMemory("fact", citedContent, {
+        source: "extraction",
+        contentHashSource: rawContent,
+      });
+
+      // Confirm raw-content hash is indexed.
+      assert.ok(
+        await storage.hasFactContentHash(rawContent),
+        "raw-content hash must be in the index after write",
+      );
+
+      // Load the written memory from disk to retrieve frontmatter.contentHash.
+      const allMemories = await storage.readAllMemories();
+      const written = allMemories.find((m) => m.content.includes("planner main") || (m.content.includes("planner") && m.content.includes("tea")));
+      assert.ok(written, "written memory must be findable");
+      assert.ok(
+        written!.frontmatter.contentHash,
+        "frontmatter.contentHash must be persisted on disk",
+      );
+
+      // Simulate archive: use frontmatter.contentHash to remove from index.
+      const idx = new ContentHashIndex(dir);
+      await idx.load();
+      const hashKey = written!.frontmatter.contentHash ?? stripCitation(written!.content);
+      idx.remove(hashKey);
+      await idx.save();
+
+      // Reload index and verify hash is gone.
+      const idxAfter = new ContentHashIndex(dir);
+      await idxAfter.load();
+      assert.ok(
+        !idxAfter.has(rawContent),
+        "after archive using frontmatter.contentHash, raw-content hash must be removed from index",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "Option A — Test B: custom bracketed inline citation: archive removes raw-content hash via stored contentHash",
+  async () => {
+    // Configure a bracketed custom template: "[src:{agent}/{sessionId}@{date}]"
+    // The stored body is "user prefers tea [src:planner/main@2026-04-11]"
+    // stripCitation only strips [Source: ...] shape, so this format is a no-op.
+    const dir = await mkdtemp(path.join(os.tmpdir(), "engram-option-a-test-b-"));
+    try {
+      const rawContent = "user prefers tea";
+      const template = "[src:{agent}/{sessionId}@{date}]";
+      const citedContent = attachCitation(
+        rawContent,
+        { agent: "planner", session: "agent:planner:main", ts: "2026-04-11T00:00:00Z" },
+        template,
+      );
+      // citedContent = "user prefers tea [src:planner/main@2026-04-11]"
+      assert.ok(citedContent.includes("[src:"), "cited content must use custom bracket format");
+      assert.ok(!citedContent.includes("[Source:"), "must NOT use default [Source: ...] format");
+
+      // Write fact with raw-content as contentHashSource.
+      const storage = new StorageManager(dir);
+      await storage.writeMemory("fact", citedContent, {
+        source: "extraction",
+        contentHashSource: rawContent,
+      });
+
+      // Confirm raw-content hash is indexed.
+      assert.ok(
+        await storage.hasFactContentHash(rawContent),
+        "raw-content hash must be in the index after write",
+      );
+
+      // Load from disk and check frontmatter.contentHash.
+      const allMemories = await storage.readAllMemories();
+      const written = allMemories.find((m) => m.content.includes("[src:planner/main@"));
+      assert.ok(written, "written memory must be findable by custom citation");
+      assert.ok(
+        written!.frontmatter.contentHash,
+        "frontmatter.contentHash must be persisted on disk",
+      );
+
+      // Simulate archive: use frontmatter.contentHash to remove from index.
+      const idx = new ContentHashIndex(dir);
+      await idx.load();
+      const hashKey = written!.frontmatter.contentHash ?? stripCitation(written!.content);
+      idx.remove(hashKey);
+      await idx.save();
+
+      // Reload and verify hash is gone.
+      const idxAfter = new ContentHashIndex(dir);
+      await idxAfter.load();
+      assert.ok(
+        !idxAfter.has(rawContent),
+        "after archive using frontmatter.contentHash, raw-content hash must be removed from index",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "Option A — Test C (legacy): memory without frontmatter.contentHash falls back to stripCitation for default format",
+  async () => {
+    // Simulate a legacy memory loaded from disk without contentHash in frontmatter.
+    // The memory body uses the default [Source: ...] format, so stripCitation
+    // can recover the raw content for the fallback path.
+    const dir = await mkdtemp(path.join(os.tmpdir(), "engram-option-a-test-c-"));
+    try {
+      const rawContent = "user prefers coffee";
+      const citedContent = attachCitation(
+        rawContent,
+        { agent: "planner", session: "agent:planner:main", ts: "2026-04-11T00:00:00Z" },
+        DEFAULT_CITATION_FORMAT,
+      );
+      // citedContent uses [Source: agent=planner, session=main, ts=...] — default format.
+      assert.ok(citedContent.includes("[Source:"), "must use default [Source: ...] format");
+
+      // Manually populate a ContentHashIndex with the raw-content hash (as if
+      // it were written by StorageManager.writeMemory in a past version that
+      // did not store contentHash on the frontmatter).
+      const idx = new ContentHashIndex(dir);
+      await idx.load();
+      idx.add(rawContent); // raw content hash only — no cited variant
+      await idx.save();
+
+      // Verify the hash is present.
+      const idxCheck = new ContentHashIndex(dir);
+      await idxCheck.load();
+      assert.ok(idxCheck.has(rawContent), "raw-content hash must be present before archive");
+
+      // Simulate the legacy fallback: frontmatter has NO contentHash, so use
+      // stripCitation(citedContent) to recover the raw content for index removal.
+      const legacyMemory = { frontmatter: { contentHash: undefined }, content: citedContent } as unknown as import("./types.js").MemoryFile;
+      const hashKey = legacyMemory.frontmatter.contentHash ?? stripCitation(legacyMemory.content);
+      // hashKey must equal rawContent (stripCitation removes the [Source: ...] suffix)
+      assert.equal(hashKey, rawContent, "stripCitation fallback must recover the raw content");
+
+      idxCheck.remove(hashKey);
+      await idxCheck.save();
+
+      // Reload and verify hash is gone.
+      const idxAfter = new ContentHashIndex(dir);
+      await idxAfter.load();
+      assert.ok(
+        !idxAfter.has(rawContent),
+        "legacy fallback via stripCitation must successfully remove the raw-content hash from the index",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);

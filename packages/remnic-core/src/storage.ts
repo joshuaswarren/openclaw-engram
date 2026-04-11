@@ -205,6 +205,8 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.structuredAttributes && Object.keys(fm.structuredAttributes).length > 0) {
     lines.push(`structuredAttributes: ${JSON.stringify(fm.structuredAttributes)}`);
   }
+  // Raw-content dedup hash — format-agnostic archive/consolidation cleanup
+  if (fm.contentHash) lines.push(`contentHash: ${fm.contentHash}`);
   lines.push("---");
   return lines.join("\n");
 }
@@ -380,6 +382,8 @@ function parseFrontmatter(
       memoryKind: (fm.memoryKind as MemoryFrontmatter["memoryKind"]) || undefined,
       // Structured attributes (JSON on a single line)
       structuredAttributes: parseStructuredAttributes(fm.structuredAttributes),
+      // Raw-content dedup hash (format-agnostic archive/consolidation cleanup)
+      contentHash: fm.contentHash || undefined,
     },
     content,
   };
@@ -1084,6 +1088,19 @@ export class StorageManager {
     if (!sanitized.clean) {
       log.warn(`memory content sanitized for ${id}; violations=${sanitized.violations.join(", ")}`);
     }
+
+    // Persist the raw-content dedup hash on the frontmatter so archive and
+    // consolidation paths can remove the correct hash from ContentHashIndex
+    // regardless of what citation format (if any) has been appended to the
+    // stored body. Mirrors the logic in the fact-hash-index update below.
+    if (category === "fact") {
+      const hashSource =
+        options.contentHashSource !== undefined && options.contentHashSource.length > 0
+          ? sanitizeMemoryContent(options.contentHashSource).text
+          : sanitized.text;
+      fm.contentHash = ContentHashIndex.computeHash(hashSource);
+    }
+
     const fileContent = `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`;
 
     let filePath: string;
