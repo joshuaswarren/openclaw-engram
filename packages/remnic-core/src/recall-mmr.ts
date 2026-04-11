@@ -527,19 +527,26 @@ export function reorderRecallResultsWithMmr<R extends MmrRecallResult>(
 
   // Build a per-result *unique* key so distinct results with colliding
   // docids or paths are never silently collapsed by id-based lookups.
-  const candidateKeys: string[] = new Array(results.length);
-  const byKey = new Map<string, R>();
-  const candidates: MmrCandidate[] = results.map((r, index) => {
-    const key = makeRecallKey(r, index);
-    candidateKeys[index] = key;
-    byKey.set(key, r);
-    return {
-      id: key,
-      content: r.snippet ?? "",
-      score: typeof r.score === "number" ? r.score : 0,
-      embedding: null,
-    };
-  });
+  // Keys are always suffixed with the original input index so two results
+  // that share the same `path` (or share the same `docid` when `path` is
+  // empty) still get distinct identities.
+  const candidates: MmrCandidate[] = results.map((r, index) => ({
+    id: makeRecallKey(r, index),
+    content: r.snippet ?? "",
+    score: typeof r.score === "number" ? r.score : 0,
+    embedding: null,
+  }));
+  // Index lookup by id so we can map MMR-selected candidates back to their
+  // *original* position (and therefore their original `candidates[i]` object,
+  // which preserves its `id` across the reorder). Reusing those original
+  // candidate objects in the diversity comparison means
+  // `headReorderCount` works correctly even when two results in the input
+  // share the same base key: a swap at the same head position shows up
+  // because their original-index-suffixed ids still differ.
+  const indexById = new Map<string, number>();
+  for (let i = 0; i < candidates.length; i += 1) {
+    indexById.set(candidates[i]!.id, i);
+  }
 
   const selectedMmr = applyMmrToCandidates({
     candidates,
@@ -549,30 +556,30 @@ export function reorderRecallResultsWithMmr<R extends MmrRecallResult>(
   });
 
   const reordered: R[] = [];
+  // Parallel array of the *original* candidate objects in the new (post-MMR)
+  // order. Used for a faithful diversity comparison that preserves each
+  // candidate's original identity.
+  const reorderedCandidates: MmrCandidate[] = [];
   const seen = new Set<string>();
   for (const c of selectedMmr) {
     if (seen.has(c.id)) continue;
-    const original = byKey.get(c.id);
-    if (!original) continue;
+    const origIndex = indexById.get(c.id);
+    if (origIndex === undefined) continue;
     seen.add(c.id);
-    reordered.push(original);
+    reordered.push(results[origIndex]!);
+    reorderedCandidates.push(candidates[origIndex]!);
   }
   // Safety: append any candidates MMR did not select so nothing is dropped.
   if (reordered.length < results.length) {
     for (let i = 0; i < results.length; i += 1) {
-      const key = candidateKeys[i]!;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const origCandidate = candidates[i]!;
+      if (seen.has(origCandidate.id)) continue;
+      seen.add(origCandidate.id);
       reordered.push(results[i]!);
+      reorderedCandidates.push(origCandidate);
     }
   }
 
-  const reorderedCandidates: MmrCandidate[] = reordered.map((r, index) => ({
-    id: makeRecallKey(r, index),
-    content: r.snippet ?? "",
-    score: typeof r.score === "number" ? r.score : 0,
-    embedding: null,
-  }));
   const diversity = summarizeMmrDiversity(
     candidates,
     reorderedCandidates,

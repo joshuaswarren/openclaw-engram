@@ -690,6 +690,68 @@ test(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Regression: diversity metric must detect head swaps even when two results
+// share the same base key (path or docid). Previously the reordered-side
+// candidate ids were rebuilt with the *post-MMR* position index, so the
+// position suffix cancelled out and two same-path results swapping into the
+// same head position looked like a no-op.
+// (Cursor Bugbot Low-severity review comment on PR #391)
+// ---------------------------------------------------------------------------
+
+test(
+  "reorderRecallResultsWithMmr detects head swaps for results sharing a base key",
+  () => {
+    // Both results share the same `path` and empty `docid`, so the base
+    // portion of makeRecallKey is identical. Only the input-index suffix
+    // distinguishes them. If the diversity report rebuilt the reordered
+    // candidate ids with the post-MMR position index, a swap at position 0
+    // would be invisible because both reorderings produce the same
+    // `"shared-path::0"` id. After the fix the original-index-suffixed ids
+    // are preserved, so the head swap is counted.
+    const results: MmrRecallResult[] = [
+      {
+        docid: "",
+        path: "shared/path.md",
+        // Strongly duplicate-cluster-forming snippet at top.
+        snippet: "dup alpha content alpha",
+        score: 0.99,
+      },
+      {
+        docid: "",
+        path: "shared/path.md",
+        snippet: "dup alpha content alpha near",
+        score: 0.98,
+      },
+      {
+        docid: "",
+        path: "shared/path.md",
+        // Orthogonal diverse candidate.
+        snippet: "rocket propellant chemistry",
+        score: 0.97,
+      },
+    ];
+    const { reordered, diversity } = reorderRecallResultsWithMmr(results, {
+      lambda: 0.3,
+      diversitySampleSize: 2,
+    });
+    // MMR should have surfaced the diverse "rocket" candidate into the head
+    // two — verify by checking the first two snippets include the diverse
+    // one (order of the cluster pair is implementation-dependent).
+    const headSnippets = reordered.slice(0, 2).map((r) => r.snippet);
+    assert.ok(
+      headSnippets.some((s) => s && s.includes("rocket")),
+      `diverse candidate should be in head-of-list: ${headSnippets.join(" | ")}`,
+    );
+    // The real regression: headReorderCount must be > 0 even though all
+    // three inputs share the same base key.
+    assert.ok(
+      diversity.headReorderCount > 0,
+      `headReorderCount must detect same-base-key head swaps, got ${diversity.headReorderCount}`,
+    );
+  },
+);
+
 test(
   "reorderRecallResultsWithMmr diversity report defaults to head-of-list sample",
   () => {
