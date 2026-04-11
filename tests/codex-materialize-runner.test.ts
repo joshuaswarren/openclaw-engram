@@ -1,0 +1,198 @@
+/**
+ * codex-materialize-runner.test.ts — runner-level behavior for #378.
+ *
+ * These tests exercise the I/O bridge in
+ * `packages/remnic-core/src/connectors/codex-materialize-runner.ts`:
+ *
+ *  1. Namespaced memories are read from the same storage root that
+ *     `NamespaceStorageRouter` writes to (`memoryDir/namespaces/<ns>`),
+ *     not from the legacy `memoryDir/<ns>` layout. The default namespace
+ *     still maps to `memoryDir` itself unless a namespaced root exists.
+ *  2. `reason="session_end"` short-circuits when
+ *     `codexMaterializeOnSessionEnd=false`, honoring the per-trigger toggle
+ *     that users control via config.
+ *
+ * All memory data is synthetic — no real user content per repo privacy
+ * policy (see CLAUDE.md).
+ */
+
+import test from "node:test";
+import assert from "node:assert/strict";
+import { mkdtempSync, mkdirSync, existsSync, readdirSync, rmSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import { runCodexMaterialize } from "../src/connectors/codex-materialize-runner.js";
+import { ensureSentinel, SENTINEL_FILE } from "../src/connectors/codex-materialize.js";
+import { parseConfig } from "../src/config.js";
+import { StorageManager } from "../src/storage.js";
+
+function makeTempDir(prefix: string): string {
+  return mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+function makeCodexHome(): { root: string; memoriesDir: string } {
+  const root = makeTempDir("codex-materialize-runner-home-");
+  const memoriesDir = path.join(root, "memories");
+  mkdirSync(memoriesDir, { recursive: true });
+  return { root, memoriesDir };
+}
+
+test("runner reads namespaced memories from memoryDir/namespaces/<ns> (P1 fix)", async () => {
+  const memoryDir = makeTempDir("codex-materialize-runner-memdir-");
+  const workspaceDir = makeTempDir("codex-materialize-runner-workspace-");
+  const { root: codexHome, memoriesDir } = makeCodexHome();
+
+  try {
+    // Seed a synthetic memory into the *namespaced* storage root that
+    // NamespaceStorageRouter would use for non-default namespaces.
+    const nsName = "synth-ns";
+    const nsRoot = path.join(memoryDir, "namespaces", nsName);
+    mkdirSync(nsRoot, { recursive: true });
+    const nsStorage = new StorageManager(nsRoot);
+    await nsStorage.writeMemory(
+      "fact",
+      "synthetic namespaced memory used to verify runner path resolution.",
+      { source: "runner-test" },
+    );
+
+    // Intentionally also write a memory to the WRONG legacy path
+    // (memoryDir/<ns>) so we can assert the runner is *not* reading it.
+    const legacyPath = path.join(memoryDir, nsName);
+    mkdirSync(legacyPath, { recursive: true });
+    const legacyStorage = new StorageManager(legacyPath);
+    await legacyStorage.writeMemory(
+      "fact",
+      "LEGACY decoy memory that the runner must NOT pick up.",
+      { source: "runner-test-decoy" },
+    );
+
+    // Opt-in sentinel so the materializer actually writes.
+    ensureSentinel(memoriesDir, nsName, new Date("2026-04-02T00:00:00Z"));
+
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      namespacesEnabled: true,
+      defaultNamespace: "default",
+      codexMaterializeMemories: true,
+    });
+
+    const result = await runCodexMaterialize({
+      config,
+      namespace: nsName,
+      codexHome,
+      reason: "manual",
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+
+    assert.ok(result, "runner should have materialized instead of skipping");
+    assert.equal(result!.wrote, true);
+    assert.equal(result!.skippedNoSentinel, false);
+
+    // MEMORY.md should include the synthetic namespaced memory, and must
+    // not include the decoy. We sniff the raw_memories.md contents for
+    // concreteness.
+    const raw = readdirSync(memoriesDir);
+    assert.ok(raw.includes("raw_memories.md"));
+    const rawContents = (await import("node:fs")).readFileSync(
+      path.join(memoriesDir, "raw_memories.md"),
+      "utf-8",
+    );
+    assert.match(rawContents, /synthetic namespaced memory/);
+    assert.doesNotMatch(rawContents, /LEGACY decoy/);
+  } finally {
+    rmSync(memoryDir, { recursive: true, force: true });
+    rmSync(workspaceDir, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("runner skips when reason=session_end and codexMaterializeOnSessionEnd=false (P2 fix)", async () => {
+  const memoryDir = makeTempDir("codex-materialize-runner-sessend-memdir-");
+  const workspaceDir = makeTempDir("codex-materialize-runner-sessend-workspace-");
+  const { root: codexHome, memoriesDir } = makeCodexHome();
+
+  try {
+    const storage = new StorageManager(memoryDir);
+    await storage.writeMemory(
+      "fact",
+      "synthetic session-end gating memory.",
+      { source: "runner-test" },
+    );
+
+    ensureSentinel(memoriesDir, "default", new Date("2026-04-02T00:00:00Z"));
+
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      codexMaterializeMemories: true,
+      codexMaterializeOnSessionEnd: false,
+    });
+
+    const result = await runCodexMaterialize({
+      config,
+      codexHome,
+      reason: "session_end",
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+
+    assert.equal(result, null, "runner should short-circuit for disabled session_end");
+
+    // No Codex artifacts beyond the sentinel should have been created.
+    const filesAfter = readdirSync(memoriesDir).sort();
+    assert.deepEqual(filesAfter, [SENTINEL_FILE]);
+    assert.equal(existsSync(path.join(memoriesDir, "MEMORY.md")), false);
+    assert.equal(existsSync(path.join(memoriesDir, "memory_summary.md")), false);
+  } finally {
+    rmSync(memoryDir, { recursive: true, force: true });
+    rmSync(workspaceDir, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});
+
+test("runner still runs on session_end when codexMaterializeOnSessionEnd=true (default)", async () => {
+  const memoryDir = makeTempDir("codex-materialize-runner-sessend-on-memdir-");
+  const workspaceDir = makeTempDir("codex-materialize-runner-sessend-on-workspace-");
+  const { root: codexHome, memoriesDir } = makeCodexHome();
+
+  try {
+    const storage = new StorageManager(memoryDir);
+    await storage.writeMemory(
+      "fact",
+      "synthetic session-end enabled memory.",
+      { source: "runner-test" },
+    );
+
+    ensureSentinel(memoriesDir, "default", new Date("2026-04-02T00:00:00Z"));
+
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      codexMaterializeMemories: true,
+      // codexMaterializeOnSessionEnd defaults to true.
+    });
+
+    const result = await runCodexMaterialize({
+      config,
+      codexHome,
+      reason: "session_end",
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+
+    assert.ok(result, "runner should have materialized on session_end when toggle is on");
+    assert.equal(result!.wrote, true);
+    assert.ok(existsSync(path.join(memoriesDir, "MEMORY.md")));
+    assert.ok(existsSync(path.join(memoriesDir, "memory_summary.md")));
+  } finally {
+    rmSync(memoryDir, { recursive: true, force: true });
+    rmSync(workspaceDir, { recursive: true, force: true });
+    rmSync(codexHome, { recursive: true, force: true });
+  }
+});

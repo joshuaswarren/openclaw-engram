@@ -10,6 +10,7 @@
  */
 
 import path from "node:path";
+import { existsSync } from "node:fs";
 
 import { log } from "../logger.js";
 import { StorageManager } from "../storage.js";
@@ -55,6 +56,16 @@ export async function runCodexMaterialize(
     return null;
   }
 
+  // Per-trigger gate: session-end runs must honor codexMaterializeOnSessionEnd.
+  // session-end.sh passes reason="session_end"; when the user has turned off the
+  // session-end trigger we short-circuit here without touching disk.
+  if (options.reason === "session_end" && cfg.codexMaterializeOnSessionEnd === false) {
+    log.debug(
+      `[codex-materialize] skipped — session-end disabled via codexMaterializeOnSessionEnd=false`,
+    );
+    return null;
+  }
+
   const namespace = resolveNamespace(options.namespace, cfg);
   const memoryDir = options.memoryDir ?? cfg.memoryDir;
   if (!memoryDir) {
@@ -66,7 +77,7 @@ export async function runCodexMaterialize(
   if (options.memories) {
     memories = options.memories;
   } else {
-    const nsDir = resolveNamespaceDir(memoryDir, namespace);
+    const nsDir = resolveNamespaceDir(memoryDir, namespace, cfg);
     const storage = new StorageManager(nsDir);
     try {
       memories = await storage.readAllMemories();
@@ -108,15 +119,41 @@ export async function runCodexMaterialize(
 function resolveNamespace(override: string | undefined, cfg: PluginConfig): string {
   const requested = (override ?? cfg.codexMaterializeNamespace ?? "auto").trim();
   if (requested.length === 0 || requested === "auto") {
-    return "default";
+    // When the caller asks for "auto", fall back to the configured default
+    // namespace (if any) so storage-root resolution lines up with what
+    // NamespaceStorageRouter would do for the same install.
+    return cfg.defaultNamespace && cfg.defaultNamespace.length > 0
+      ? cfg.defaultNamespace
+      : "default";
   }
   return requested;
 }
 
-function resolveNamespaceDir(memoryDir: string, namespace: string): string {
-  if (!namespace || namespace === "default") return memoryDir;
-  // Remnic stores namespaces under `memoryDir/<namespace>/` per the repo's
-  // existing convention; fall back to `memoryDir` itself if we cannot locate
-  // a dedicated subdir.
-  return path.join(memoryDir, namespace);
+/**
+ * Resolve the on-disk storage root for a namespace, matching
+ * `NamespaceStorageRouter` in `packages/remnic-core/src/namespaces/storage.ts`.
+ *
+ * Contract:
+ *  - When namespaces are disabled, every namespace maps to `memoryDir` itself.
+ *  - When namespaces are enabled, non-default namespaces always live under
+ *    `memoryDir/namespaces/<namespace>`.
+ *  - The default namespace prefers `memoryDir/namespaces/<defaultNamespace>`
+ *    when that directory already exists (migrated install); otherwise it
+ *    falls back to the legacy `memoryDir` root so materialization does not
+ *    silently switch directories out from under an existing install.
+ */
+function resolveNamespaceDir(
+  memoryDir: string,
+  namespace: string,
+  cfg: PluginConfig,
+): string {
+  if (!cfg.namespacesEnabled) return memoryDir;
+
+  const ns = namespace || cfg.defaultNamespace || "default";
+  const namespacedRoot = path.join(memoryDir, "namespaces", ns);
+
+  if (ns === cfg.defaultNamespace) {
+    return existsSync(namespacedRoot) ? namespacedRoot : memoryDir;
+  }
+  return namespacedRoot;
 }
