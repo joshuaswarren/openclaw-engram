@@ -717,6 +717,20 @@ export function installConnector(options: InstallOptions): InstallResult {
     } catch {
       // Non-fatal: token store unavailable. Connector config will still be
       // written; user can run `remnic token generate <id>` to create the token.
+      //
+      // Roll back the snapshot so that a partial write of tokens.json during
+      // generateToken (e.g. ENOSPC/EIO mid-write) does not leave other
+      // connectors' auth state corrupted. Best-effort: if the restore itself
+      // fails there is nothing more we can do here, but the error is swallowed
+      // so install continues in the same degraded (tokenEntry === null) path
+      // as before (PRRT_kwDORJXyws56UleN fix).
+      if (nonHermesPriorTokenStore !== null) {
+        try {
+          saveTokenStore(nonHermesPriorTokenStore);
+        } catch {
+          // Best-effort: snapshot restore failed; caller sees degraded install.
+        }
+      }
     }
   }
 

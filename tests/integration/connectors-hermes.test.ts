@@ -2560,3 +2560,137 @@ test("non-Hermes replit: force-reinstall config write failure restores prior tok
     }
   });
 });
+
+// ── Round 14: generateToken partial-write rollback (PRRT_kwDORJXyws56UleN) ──
+
+test("non-Hermes generateToken partial-write: tokens.json restored to pre-install snapshot, install continues in degraded mode", async () => {
+  // Regression test for PRRT_kwDORJXyws56UleN: when generateToken throws after
+  // partially overwriting tokens.json (e.g. ENOSPC mid-write), the non-hermes
+  // catch block previously swallowed the error without restoring the token store,
+  // leaving other connectors' tokens corrupted.
+  //
+  // Fix: on generateToken throw, call saveTokenStore(nonHermesPriorTokenStore)
+  // to restore the pre-install snapshot.  Install continues in the degraded path
+  // (tokenEntry === null, config written without a token entry) — same observable
+  // outcome as before for the connector being installed.
+  //
+  // Strategy — monkey-patch fs.writeFileSync on the shared node:fs module:
+  //   Write 1: replit seed install token write       → SUCCEED (real write)
+  //   Write 2: generateToken for "cursor" token write → FAIL before completing
+  //              (writes garbage first to simulate partial write)
+  //   Write 3: saveTokenStore snapshot restore        → SUCCEED (real write)
+  //   Write N: connector JSON write                  → SUCCEED (real write)
+  //
+  // After the failed install attempt:
+  //   - install result must NOT be a throw (degraded, non-fatal path)
+  //   - tokens.json must match the pre-install snapshot (replit token intact)
+  //   - the cursor token must NOT be present (partial write rolled back)
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Step 1: Install replit to seed tokens.json with a known entry (T1).
+        const install1 = mod.installConnector({ connectorId: "replit", config: {} });
+        assert.equal(install1.status, "installed", "Seed replit install must succeed");
+        assert.ok(install1.configPath, "Seed install must return a configPath");
+
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const store1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const replitEntry = store1.tokens.find((t) => t.connector === "replit");
+        assert.ok(replitEntry, "Seed install must write a replit token (T1)");
+        const t1 = replitEntry!.token;
+
+        // Capture the pre-install snapshot content (what tokens.json looks like
+        // before the cursor install attempt).
+        const snapshotContent = fs.readFileSync(tokensPath, "utf-8");
+
+        // Step 2: Monkey-patch fs.writeFileSync so the NEXT write to tokens.json
+        // (the generateToken call inside the cursor install) throws after first
+        // writing garbage to simulate a partial write.  Subsequent writes (the
+        // snapshot restore and the connector JSON write) must succeed normally.
+        const originalWriteFileSync = (fs as unknown as { writeFileSync: typeof fs.writeFileSync }).writeFileSync;
+        let tokensWriteCount = 0;
+        const patchedWriteFileSync: typeof fs.writeFileSync = function(...args: Parameters<typeof fs.writeFileSync>) {
+          // Only intercept writes to the tokens.json path.
+          const filePath = String(args[0]);
+          if (filePath === tokensPath || filePath.endsWith("tokens.json")) {
+            tokensWriteCount++;
+            if (tokensWriteCount === 1) {
+              // Simulate partial write: corrupt the file, then throw.
+              originalWriteFileSync.apply(fs, [args[0], '{"tokens":[{"CORRUPT', { mode: 0o600 }]);
+              const err = Object.assign(new Error("ENOSPC: no space left on device, write"), { code: "ENOSPC" });
+              throw err;
+            }
+          }
+          return originalWriteFileSync.apply(fs, args);
+        };
+        (fs as unknown as { writeFileSync: typeof fs.writeFileSync }).writeFileSync = patchedWriteFileSync;
+
+        let result: ReturnType<typeof mod.installConnector>;
+        try {
+          // Step 3: Install cursor — generateToken will try to write tokens.json
+          // (write 1 to tokens.json → FAIL after partial write), catch block must
+          // restore the snapshot (write 2 to tokens.json → SUCCEED).
+          result = mod.installConnector({ connectorId: "cursor", config: {} });
+        } finally {
+          // Always restore the original writeFileSync.
+          (fs as unknown as { writeFileSync: typeof fs.writeFileSync }).writeFileSync = originalWriteFileSync;
+        }
+
+        // Step 4: Install must not throw — it continues in degraded mode.
+        // The status may be "installed" (config written without token) or "error"
+        // depending on whether the connector JSON write itself also failed.
+        // What matters is that it does NOT throw.
+        assert.ok(
+          result! !== undefined,
+          "installConnector must return a result (not throw) even when generateToken fails",
+        );
+
+        // Step 5: tokens.json content must match the pre-install snapshot.
+        // The partial garbage write must have been overwritten by the restore.
+        const storeAfter = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+
+        // The replit token (T1) must still be present and uncorrupted.
+        const restoredReplit = storeAfter.tokens.find((t) => t.connector === "replit");
+        assert.ok(
+          restoredReplit,
+          "tokens.json must still contain the replit entry (T1) after cursor generateToken failure (PRRT_kwDORJXyws56UleN fix)",
+        );
+        assert.equal(
+          restoredReplit!.token,
+          t1,
+          "Replit token T1 must be uncorrupted after partial-write rollback",
+        );
+
+        // The cursor token must NOT be present (generate failed, store rolled back).
+        const cursorEntry = storeAfter.tokens.find((t) => t.connector === "cursor");
+        assert.ok(
+          !cursorEntry,
+          "tokens.json must NOT contain a cursor token after failed generateToken (snapshot restored)",
+        );
+
+        // The file content must be valid JSON (not the partial garbage we injected).
+        const rawAfter = fs.readFileSync(tokensPath, "utf-8");
+        assert.doesNotThrow(
+          () => JSON.parse(rawAfter),
+          "tokens.json must contain valid JSON after snapshot restore",
+        );
+
+        // Snapshot content must match what was present before the install attempt.
+        assert.equal(
+          rawAfter,
+          snapshotContent,
+          "tokens.json must match the pre-install snapshot exactly after rollback",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
