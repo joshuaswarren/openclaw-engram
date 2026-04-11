@@ -586,17 +586,21 @@ function cmdDoctor(): void {
 
   if (openclawConfigValid) {
     const plugins = (openclawConfig.plugins ?? {}) as Record<string, unknown>;
-    const entries = plugins.entries && typeof plugins.entries === "object"
-      ? plugins.entries as Record<string, unknown>
-      : null;
+    const entries =
+      plugins.entries &&
+      typeof plugins.entries === "object" &&
+      !Array.isArray(plugins.entries)
+        ? plugins.entries as Record<string, unknown>
+        : null;
     const slots = plugins.slots && typeof plugins.slots === "object"
       ? plugins.slots as Record<string, unknown>
       : null;
 
+    const entriesIsArray = Array.isArray(plugins.entries);
     checks.push({
       name: "OpenClaw plugins.entries",
       ok: !!entries,
-      detail: entries ? "present" : "missing",
+      detail: entries ? "present" : entriesIsArray ? "invalid (array)" : "missing",
       remediation: !entries
         ? "Run `remnic openclaw install` to add the Remnic plugin entry."
         : undefined,
@@ -646,6 +650,8 @@ function cmdDoctor(): void {
           ? `plugins.slots.memory = "${slotValue}" but no matching entry exists. Run \`remnic openclaw install\` to fix.`
           : slotIsLegacy
           ? `Slot is set to the legacy id "${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID}". Run \`remnic openclaw install\` to migrate to "${REMNIC_OPENCLAW_PLUGIN_ID}" (optional — hooks fire with either id while the legacy entry is present).`
+          : slotMatchesEntry && !slotIsPreferred && !slotIsLegacy
+          ? `plugins.slots.memory = "${slotValue}" points to another plugin. Run \`remnic openclaw install\` to set it to "${REMNIC_OPENCLAW_PLUGIN_ID}".`
           : undefined,
       });
 
