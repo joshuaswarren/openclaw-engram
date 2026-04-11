@@ -555,6 +555,55 @@ test("installConnector persists resolved $CODEX_HOME even without explicit codex
   );
 });
 
+// ── PR #394 Findings 1 & 2: malformed codex-cli.json must return status:"skipped" with reason:"config-parse-failed"
+
+test("removeConnector returns status:skipped reason:config-parse-failed when codex-cli.json is malformed", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      // Install normally first so the config file exists.
+      const installResult = installConnector({
+        connectorId: "codex-cli",
+        config: { installExtension: false },
+      });
+      assert.equal(installResult.status, "installed");
+
+      const configPath = installResult.configPath as string;
+      assert.ok(fs.existsSync(configPath), "precondition: config file must exist after install");
+
+      // Corrupt the config file with invalid JSON to simulate a malformed state.
+      fs.writeFileSync(configPath, "{ this is not valid JSON !!!");
+
+      const removeResult = removeConnector("codex-cli");
+
+      // Must signal skip, not silent success.
+      assert.equal(
+        removeResult.status,
+        "skipped",
+        "removeConnector must return status:'skipped' when codex-cli.json is malformed",
+      );
+      assert.equal(
+        removeResult.reason,
+        "config-parse-failed",
+        "removeConnector must return reason:'config-parse-failed' when config cannot be parsed",
+      );
+
+      // The config file must remain untouched so the operator can inspect and retry.
+      assert.ok(
+        fs.existsSync(configPath),
+        "malformed config file must be left in place for operator inspection",
+      );
+    },
+  );
+});
+
 // ── PR #394 Finding 1: recovery branch must NOT remove extension when config is missing
 
 test("removeConnector with missing config does not remove a self-managed extension", async (t) => {

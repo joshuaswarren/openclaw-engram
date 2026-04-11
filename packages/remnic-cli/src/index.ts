@@ -583,6 +583,16 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     }
     const result = removeConnector(connectorId);
     console.log(result.message);
+    if (result.status === "skipped" && result.reason === "config-parse-failed") {
+      // A malformed codex-cli.json means we could not verify or complete removal.
+      // This is not a benign no-op — the connector may still be partially installed.
+      // Exit non-zero so automation does not treat a failed removal as success.
+      console.error(
+        `Error: removal skipped because the connector config could not be parsed. ` +
+          `Fix or delete the config file at ${result.configPath} manually and retry.`,
+      );
+      process.exit(1);
+    }
   } else if (action === "doctor") {
     if (!connectorId) {
       console.error("Usage: remnic connectors doctor <id>");
