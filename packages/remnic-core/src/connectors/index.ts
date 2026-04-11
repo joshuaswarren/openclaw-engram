@@ -561,6 +561,11 @@ export function installConnector(options: InstallOptions): InstallResult {
       resolvedConfig.installExtension = coerced;
     }
     const shouldInstall = resolvedConfig.installExtension !== false;
+    // Persist the effective installExtension boolean explicitly so that
+    // removeConnector's provenance check (Finding 3) can match. When the caller
+    // did not pass the key, the default is true — write it so later removal
+    // knows Remnic owned the install.
+    resolvedConfig.installExtension = shouldInstall;
     // Resolve the Codex home path NOW so we can persist the absolute path
     // into the saved config. This guarantees removeConnector can target the
     // exact same directory later even if $CODEX_HOME is unset or changed.
