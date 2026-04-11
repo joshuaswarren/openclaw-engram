@@ -10854,15 +10854,17 @@ export class Orchestrator {
     results: QmdSearchResult[],
     limit: number,
   ): QmdSearchResult[] {
-    const safeLimit = Math.max(
-      0,
+    const safeLimit =
       typeof limit === "number" && Number.isFinite(limit)
-        ? Math.floor(limit)
-        : 0,
-    );
+        ? Math.max(0, Math.floor(limit))
+        : 0;
     if (!Array.isArray(results) || results.length === 0) return [];
+    // `recallResultLimit === 0` is a true zero limit (e.g. when
+    // `memoriesSectionEnabled` is false) and must return an empty array so
+    // the memories section is genuinely skipped. This mirrors the
+    // `slice(0, 0)` semantics of every call site this helper replaced.
+    if (safeLimit === 0) return [];
     const diversified = this.applyMmrToQmdResults(sectionId, results);
-    if (safeLimit === 0) return diversified;
     return diversified.slice(0, safeLimit);
   }
 

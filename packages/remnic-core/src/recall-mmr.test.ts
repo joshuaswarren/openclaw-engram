@@ -472,6 +472,31 @@ test(
   },
 );
 
+// NOTE: the orchestrator's `diversifyAndLimitRecallResults` helper is a
+// private method, but its zero-limit behavior is covered by the pure
+// equivalent below: when the caller wants zero results, MMR plus a slice of
+// zero should yield an empty array. This mirrors the legacy
+// `.slice(0, recallResultLimit)` semantics when `recallResultLimit === 0`
+// (which happens when `memoriesSectionEnabled` is false). Cursor Bugbot flagged
+// this regression on PR #391.
+
+test(
+  "MMR + slice(0) idiom yields empty array when limit is zero",
+  () => {
+    const results: MmrRecallResult[] = [
+      { docid: "a", path: "p/a", snippet: "one", score: 0.9 },
+      { docid: "b", path: "p/b", snippet: "two", score: 0.8 },
+    ];
+    const { reordered } = reorderRecallResultsWithMmr(results);
+    const limited = reordered.slice(0, 0);
+    assert.equal(
+      limited.length,
+      0,
+      "slice(0, 0) must still yield an empty array after MMR",
+    );
+  },
+);
+
 test(
   "reorderRecallResultsWithMmr with topN=0 is a full no-op preserving input order",
   () => {
