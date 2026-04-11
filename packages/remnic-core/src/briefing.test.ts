@@ -11,6 +11,7 @@ import {
   buildRecentEntities,
   eventFallsOnDate,
   parseBriefingWindow,
+  validateBriefingFormat,
 } from "./briefing.js";
 import type { MemoryFile, EntityFile, CalendarEvent } from "./types.js";
 
@@ -156,4 +157,129 @@ test("eventFallsOnDate: empty start string returns false and does not throw", ()
     const result = eventFallsOnDate(event, "2026-04-11");
     assert.equal(result, false);
   });
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 2 (#396): ICS floating-time events must not be shifted by server TZ
+// ──────────────────────────────────────────────────────────────────────────
+
+test("eventFallsOnDate: floating time 01:00 (early morning) matches its calendar day", () => {
+  // "20260411T010000" → normalizeIcsDate → "2026-04-11T01:00:00" (no Z).
+  // On a server at UTC-8 this would incorrectly become 2026-04-10 if
+  // round-tripped through new Date().toISOString().
+  const event = makeCalendarEvent("2026-04-11T01:00:00");
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "01:00 floating time must match its own calendar day",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-10"),
+    false,
+    "01:00 floating time must NOT match the previous calendar day",
+  );
+});
+
+test("eventFallsOnDate: floating time 23:00 (late night) matches its calendar day", () => {
+  const event = makeCalendarEvent("2026-04-11T23:00:00");
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "23:00 floating time must match its own calendar day",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-12"),
+    false,
+    "23:00 floating time must NOT match the following calendar day",
+  );
+});
+
+test("eventFallsOnDate: Z-suffixed UTC time compares against UTC date", () => {
+  // 2026-04-11T01:30:00Z — UTC date is 2026-04-11
+  const event = makeCalendarEvent("2026-04-11T01:30:00Z");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true);
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), false);
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 4 (#396): superseded/archived memories must not appear in briefing
+// ──────────────────────────────────────────────────────────────────────────
+
+function makeMemoryWithStatus(
+  updated: string,
+  status?: "active" | "superseded" | "archived" | "pending_review",
+): MemoryFile {
+  return {
+    path: "/synthetic/mem.md",
+    frontmatter: {
+      id: "test-mem-status",
+      category: "commitment",
+      created: updated,
+      updated,
+      source: "test",
+      confidence: 0.9,
+      confidenceTier: "explicit",
+      tags: ["pending"],
+      status,
+    },
+    content: "Follow up on this commitment.",
+  };
+}
+
+test("filterMemoriesByWindow: superseded commitment within window is excluded", () => {
+  const window = makeWindow("2026-04-10T00:00:00.000Z", "2026-04-11T00:00:00.000Z");
+  const superseded = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "superseded");
+  const active = makeMemoryWithStatus("2026-04-10T11:00:00.000Z", "active");
+  const noStatus = makeMemoryWithStatus("2026-04-10T12:00:00.000Z", undefined);
+
+  const result = filterMemoriesByWindow([superseded, active, noStatus], window);
+  assert.equal(result.length, 2, "superseded memory must be excluded");
+  assert.ok(!result.some((m) => m.frontmatter.status === "superseded"), "no superseded in result");
+});
+
+test("filterMemoriesByWindow: archived memory within window is excluded", () => {
+  const window = makeWindow("2026-04-10T00:00:00.000Z", "2026-04-11T00:00:00.000Z");
+  const archived = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "archived");
+  const result = filterMemoriesByWindow([archived], window);
+  assert.equal(result.length, 0, "archived memory must be excluded from briefing");
+});
+
+test("filterMemoriesByWindow: active and undefined-status memories within window are included", () => {
+  const window = makeWindow("2026-04-10T00:00:00.000Z", "2026-04-11T00:00:00.000Z");
+  const active = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "active");
+  const noStatus = makeMemoryWithStatus("2026-04-10T11:00:00.000Z", undefined);
+  const result = filterMemoriesByWindow([active, noStatus], window);
+  assert.equal(result.length, 2, "active and status-less memories must be included");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 7 (#396): --format flag must reject invalid values
+// ──────────────────────────────────────────────────────────────────────────
+
+test("validateBriefingFormat: returns null for valid format values", () => {
+  assert.equal(validateBriefingFormat("markdown"), null);
+  assert.equal(validateBriefingFormat("json"), null);
+  assert.equal(validateBriefingFormat("text"), null);
+});
+
+test("validateBriefingFormat: returns null when value is undefined (flag not supplied)", () => {
+  assert.equal(validateBriefingFormat(undefined), null, "absent flag must not produce an error");
+});
+
+test("validateBriefingFormat: returns error string for invalid values like 'jsno'", () => {
+  const err = validateBriefingFormat("jsno");
+  assert.ok(typeof err === "string" && err.length > 0, "typo should produce an error message");
+  assert.match(err, /jsno/, "error should include the invalid value");
+});
+
+test("validateBriefingFormat: rejects empty string as invalid", () => {
+  const err = validateBriefingFormat("");
+  assert.ok(typeof err === "string" && err.length > 0, "empty string is not a valid format");
+});
+
+test("validateBriefingFormat: rejects arbitrary strings", () => {
+  for (const bad of ["xml", "html", "plain", "MARKDOWN"]) {
+    const err = validateBriefingFormat(bad);
+    assert.ok(typeof err === "string", `"${bad}" should be rejected`);
+  }
 });

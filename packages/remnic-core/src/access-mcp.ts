@@ -1260,7 +1260,6 @@ export class EngramMcpServer {
           principal: effectivePrincipal,
         });
       // ── Daily Context Briefing (#370) ───────────────────────────────────
-      case "remnic.briefing":
       case "engram.briefing":
         return this.service.briefing({
           since: typeof args.since === "string" ? args.since : undefined,
@@ -1272,6 +1271,7 @@ export class EngramMcpServer {
               : undefined,
           maxFollowups:
             typeof args.maxFollowups === "number" ? args.maxFollowups : undefined,
+          principal: effectivePrincipal,
         });
       default:
         throw new Error(`unknown tool: ${name}`);

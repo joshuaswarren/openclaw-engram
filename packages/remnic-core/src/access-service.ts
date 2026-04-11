@@ -43,6 +43,7 @@ import type {
 import { parseEntityFile } from "./storage.js";
 import {
   buildBriefing,
+  FileCalendarSource,
   parseBriefingFocus,
   parseBriefingWindow,
 } from "./briefing.js";
@@ -162,6 +163,8 @@ export interface EngramAccessBriefingRequest {
   namespace?: string;
   format?: "markdown" | "json";
   maxFollowups?: number;
+  /** Caller principal for namespace access checks. Transport-bound — never from untrusted payloads. */
+  principal?: string;
 }
 
 /** Response for `remnic_briefing`. */
@@ -857,14 +860,16 @@ export class EngramAccessService {
       throw new EngramAccessInputError("briefing is disabled");
     }
 
-    const namespace = this.resolveRecallNamespace(request.namespace, undefined)
-      ?? config.defaultNamespace;
+    const namespace = this.resolveReadableNamespace(request.namespace, request.principal);
     const storage = await this.orchestrator.getStorage(namespace);
 
     const token = typeof request.since === "string" && request.since.trim().length > 0
       ? request.since.trim()
       : config.briefing.defaultWindow;
-    const window = parseBriefingWindow(token) ?? parseBriefingWindow("yesterday")!;
+    const window = parseBriefingWindow(token);
+    if (!window) {
+      throw new EngramAccessInputError(`invalid briefing window: ${token}`);
+    }
 
     const focus = parseBriefingFocus(request.focus);
 
@@ -879,7 +884,7 @@ export class EngramAccessService {
       : config.briefing.maxFollowups;
 
     const calendarSource = config.briefing.calendarSource
-      ? new (await import("./briefing.js")).FileCalendarSource(config.briefing.calendarSource)
+      ? new FileCalendarSource(config.briefing.calendarSource)
       : undefined;
 
     const result = await buildBriefing({

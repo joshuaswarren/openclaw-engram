@@ -66,6 +66,7 @@ import {
   buildBriefing,
   parseBriefingWindow,
   parseBriefingFocus,
+  validateBriefingFormat,
   resolveBriefingSaveDir,
   briefingFilename,
   FileCalendarSource,
@@ -350,6 +351,11 @@ async function cmdBriefing(rest: string[]): Promise<void> {
   }
 
   const focus = parseBriefingFocus(focusFlag);
+  const formatError = validateBriefingFormat(formatFlag);
+  if (formatError) {
+    console.error(formatError);
+    process.exit(1);
+  }
   const format: "markdown" | "json" =
     formatFlag === "json" ? "json" : formatFlag === "markdown" ? "markdown" : config.briefing.defaultFormat;
 

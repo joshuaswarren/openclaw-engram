@@ -37,6 +37,22 @@ import type {
 // Window parsing
 // ──────────────────────────────────────────────────────────────────────────
 
+/** Allowed values for the briefing format flag/field. */
+export const BRIEFING_FORMAT_ALLOWED = ["markdown", "json", "text"] as const;
+export type BriefingFormatValue = typeof BRIEFING_FORMAT_ALLOWED[number];
+
+/**
+ * Validate a user-supplied `--format` flag value.
+ * Returns `null` when the value is valid (or `undefined`, meaning the flag
+ * was not supplied and the caller should fall back to the configured default).
+ * Returns an error message string when the value is explicitly invalid.
+ */
+export function validateBriefingFormat(value: string | undefined): string | null {
+  if (value === undefined) return null;
+  if ((BRIEFING_FORMAT_ALLOWED as readonly string[]).includes(value)) return null;
+  return `Invalid --format value: "${value}". Accepted: ${BRIEFING_FORMAT_ALLOWED.join(", ")}.`;
+}
+
 /** Parsed briefing lookback window. */
 export interface ParsedBriefingWindow {
   /** Start of the window (inclusive). */
@@ -281,13 +297,32 @@ function normalizeIcsDate(value: string): string {
 /** @internal — exported for testing only. */
 export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean {
   const target = dateIso.slice(0, 10);
-  const parsed = new Date(event.start);
+  const start = event.start;
+
+  // Floating ICS datetime (no Z, no offset): `normalizeIcsDate` produces
+  // "YYYY-MM-DDTHH:MM:SS" with no timezone. Passing this to `new Date()`
+  // causes ECMAScript to parse it as local time, which then round-trips
+  // through UTC via `toISOString()` and can shift the calendar date.
+  // For floating times we compare the date portion directly.
+  const hasTimezone = /Z$|[+-]\d{2}:\d{2}$/.test(start);
+  if (!hasTimezone) {
+    // Verify the value is at least parseable before accepting it.
+    const probe = new Date(start);
+    if (!Number.isFinite(probe.getTime())) {
+      log.debug(`briefing: skipping calendar event with invalid start value: ${JSON.stringify(start)}`);
+      return false;
+    }
+    // Extract YYYY-MM-DD directly from the string — no UTC shift.
+    return start.slice(0, 10) === target;
+  }
+
+  // UTC or offset-aware ISO string: parse and normalise to UTC date.
+  const parsed = new Date(start);
   if (!Number.isFinite(parsed.getTime())) {
-    log.debug(`briefing: skipping calendar event with invalid start value: ${JSON.stringify(event.start)}`);
+    log.debug(`briefing: skipping calendar event with invalid start value: ${JSON.stringify(start)}`);
     return false;
   }
-  const startDay = parsed.toISOString().slice(0, 10);
-  return startDay === target;
+  return parsed.toISOString().slice(0, 10) === target;
 }
 
 function cryptoRandomId(): string {
@@ -475,6 +510,10 @@ export function filterMemoriesByWindow(memories: MemoryFile[], window: ParsedBri
   const fromMs = window.from.getTime();
   const toMs = window.to.getTime();
   return memories.filter((m) => {
+    // Exclude non-active memories (superseded, archived, etc.) so that
+    // commitments overridden within the window don't appear as open.
+    const status = m.frontmatter.status;
+    if (status !== undefined && status !== "active") return false;
     const ts = memoryTimestamp(m);
     return ts >= fromMs && ts < toMs;
   });

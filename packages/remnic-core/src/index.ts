@@ -115,15 +115,18 @@ export {
   buildBriefing,
   parseBriefingWindow,
   parseBriefingFocus,
+  validateBriefingFormat,
   focusMatchesMemory,
   focusMatchesEntity,
   renderBriefingMarkdown,
   resolveBriefingSaveDir,
   briefingFilename,
   FileCalendarSource,
+  BRIEFING_FORMAT_ALLOWED,
   type BuildBriefingOptions,
   type BriefingFollowupGenerator,
   type ParsedBriefingWindow,
+  type BriefingFormatValue,
 } from "./briefing.js";
 
 // ---------------------------------------------------------------------------

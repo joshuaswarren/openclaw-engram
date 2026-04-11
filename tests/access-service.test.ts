@@ -2288,3 +2288,97 @@ test("access service trust-zone browse reports promotions as blocked when promot
     await rm(memoryDir, { recursive: true, force: true });
   }
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 3 (#396): briefing() must reject invalid window tokens
+// ──────────────────────────────────────────────────────────────────────────
+
+function createBriefingService() {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "restricted-ns",
+          readPrincipals: ["trusted-agent"],
+          writePrincipals: ["trusted-agent"],
+        },
+      ],
+      defaultRecallNamespaces: ["global"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      briefing: {
+        enabled: true,
+        defaultWindow: "yesterday",
+        defaultFormat: "markdown",
+        maxFollowups: 0,
+        calendarSource: null,
+        saveByDefault: false,
+        saveDir: null,
+        llmFollowups: false,
+      },
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({
+      readAllMemories: async () => [],
+      readAllEntityFiles: async () => [],
+      ensureDirectories: async () => {},
+    }),
+  };
+  return new EngramAccessService(orchestrator as any);
+}
+
+test("briefing() rejects invalid since token with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ since: "3x" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /invalid briefing window/.test(err.message),
+  );
+});
+
+test("briefing() rejects invalid since token even when a default exists", async () => {
+  const service = createBriefingService();
+  // The explicit since value overrides the config default — it must be validated.
+  await assert.rejects(
+    () => service.briefing({ since: "99z" }),
+    (err: unknown) => err instanceof EngramAccessInputError,
+  );
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 6 (#396): briefing() uses caller principal for namespace access
+// ──────────────────────────────────────────────────────────────────────────
+
+test("briefing() rejects when namespace is not readable by the caller principal", async () => {
+  const service = createBriefingService();
+  // "untrusted-agent" is not in the readPrincipals for "restricted-ns"
+  await assert.rejects(
+    () =>
+      service.briefing({
+        namespace: "restricted-ns",
+        principal: "untrusted-agent",
+      }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /namespace is not readable/.test(err.message),
+  );
+});
+
+test("briefing() allows access when namespace is readable by the caller principal", async () => {
+  const service = createBriefingService();
+  // "trusted-agent" is in readPrincipals for "restricted-ns"
+  const result = await service.briefing({
+    namespace: "restricted-ns",
+    principal: "trusted-agent",
+  });
+  assert.equal(result.namespace, "restricted-ns");
+});
