@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry, restoreTokenEntry, loadTokenStore, saveTokenStore } from "../tokens.js";
+import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry, restoreTokenEntry } from "../tokens.js";
 
 // Native memory artifact materialization for Codex CLI (#378). Surfaced here
 // so downstream callers can `import { materializeForNamespace } from "@remnic/core/connectors"`.
@@ -803,26 +803,28 @@ export function installConnector(options: InstallOptions): InstallResult {
     // and abort — the old token must remain valid and connector.json must stay
     // unchanged so the daemon keeps working.
     //
-    // Snapshot the full token store BEFORE the commit so Phase E rollback (and
-    // Phase D rollback) can restore the exact prior state — including the
-    // previous hermes token entry if this is a force-reinstall. Without the
-    // snapshot, Phase E rollback would only revoke the new token, leaving
-    // tokens.json with NO hermes entry even though config.yaml was rolled back
-    // to the old token value (PRRT_kwDORJXyws56UTrT).
-    const priorTokenStore = loadTokenStore();
+    // commitTokenEntry() returns the prior TokenEntry it displaced (if any).
+    // We capture it here so Phase E rollback can precisely restore it —
+    // including the previous hermes token entry if this is a force-reinstall.
+    // Without restoration, Phase E rollback would leave tokens.json with NO
+    // hermes entry while config.yaml was rolled back to the old token value,
+    // breaking Hermes auth (PRRT_kwDORJXyws56UTrT).
+    let priorTokenEntry: import("../tokens.js").TokenEntry | null = null;
     let committed = false;
     try {
-      commitTokenEntry(tokenEntry);
+      priorTokenEntry = commitTokenEntry(tokenEntry);
       committed = true;
     } catch (commitErr) {
-      // Roll back the token store: restore the exact prior snapshot so that
+      // Roll back the token store: if the prior entry existed, restore it so
       // a partial write (e.g. ENOSPC truncating tokens.json mid-write) cannot
       // leave the store without the prior hermes entry.
-      try {
-        saveTokenStore(priorTokenStore);
-      } catch {
-        // Best-effort: if the restore also fails, we'll still report the
-        // original commit error so the user knows to intervene manually.
+      if (priorTokenEntry !== null) {
+        try {
+          restoreTokenEntry(priorTokenEntry);
+        } catch {
+          // Best-effort: if the restore also fails, we'll still report the
+          // original commit error so the user knows to intervene manually.
+        }
       }
       // Roll back the YAML write: restore prior content (or delete newly-created file).
       try {
@@ -851,22 +853,29 @@ export function installConnector(options: InstallOptions): InstallResult {
     // (e) Both YAML write and token commit succeeded — now attempt to write connector.json.
     // If this write fails (e.g. connectors dir is not writable), roll back Phase D (token
     // commit) and Phase C (YAML upsert) so no partial-install state is left behind.
-    // We restore the full token store snapshot from before Phase D so that a force-
-    // reinstall over an existing Hermes setup correctly reinserts the prior token
-    // entry — not just revokes the new one — leaving tokens.json consistent with
-    // the rolled-back config.yaml (PRRT_kwDORJXyws56UTrT).
+    // If a prior token entry was displaced by commitTokenEntry, restoreTokenEntry
+    // reinserts it so tokens.json stays consistent with the rolled-back config.yaml.
     try {
       writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
     } catch (writeErr) {
-      // Roll back Phase D: restore the pre-commit token store snapshot so the
-      // prior hermes token (if any) is reinstated in tokens.json.
+      // Roll back Phase D: revoke the newly-committed token and restore the
+      // prior hermes token (if any) so tokens.json is consistent with the
+      // rolled-back config.yaml (PRRT_kwDORJXyws56UTrT fix).
       let tokenRollbackFailed = false;
-      let tokenRollbackMsg = "token store restored to prior snapshot";
+      let tokenRollbackMsg = priorTokenEntry !== null
+        ? "prior token entry reinstated"
+        : "new token entry revoked";
       try {
-        saveTokenStore(priorTokenStore);
+        if (priorTokenEntry !== null) {
+          // Restore the exact prior entry — this also removes the new token.
+          restoreTokenEntry(priorTokenEntry);
+        } else {
+          // No prior entry: simply revoke the new token.
+          revokeToken(options.connectorId);
+        }
       } catch (tokenRestoreErr) {
         tokenRollbackFailed = true;
-        tokenRollbackMsg = `token store rollback failed: ${tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr)}`;
+        tokenRollbackMsg = `token rollback failed: ${tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr)}`;
       }
       // Roll back Phase C: restore config.yaml to its prior content.
       let yamlRollbackMsg = "config.yaml restored";
