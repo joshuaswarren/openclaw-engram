@@ -11253,13 +11253,20 @@ export class Orchestrator {
     }
     let rel = path.relative(memoryDir, storageDir);
     if (!rel || rel.startsWith("..")) {
-      // targetStorage lives outside memoryDir — extremely unusual (custom
-      // routing). Fall back to no scoping rather than silently dropping
-      // every candidate.
+      // Round 12 fix (PR #399 thread PRRT_kwDORJXyws56U6Gj): when
+      // targetStorage.dir is outside memoryDir (custom namespace routing),
+      // toMemoryRelativePath() stores the absolute file path in the index
+      // rather than a memoryDir-relative path. Return the absolute storageDir
+      // as the pathPrefix so the search() filter still scopes the lookup to
+      // the correct tenant's files. Previously this returned {} (no scoping),
+      // which let high-similarity hits from other namespaces' absolute-path
+      // entries suppress writes in the target namespace — a cross-tenant
+      // dedup suppression path.
       log.debug(
-        `semantic dedup: target storage dir ${storageDir} is outside memoryDir ${memoryDir}, skipping namespace scope`,
+        `semantic dedup: target storage dir ${storageDir} is outside memoryDir ${memoryDir}; scoping lookup to absolute path prefix`,
       );
-      return {};
+      const absPrefix = storageDir.replace(/\\/g, "/");
+      return { pathPrefix: absPrefix.endsWith("/") ? absPrefix : `${absPrefix}/` };
     }
     rel = rel.replace(/\\/g, "/");
     if (!rel.endsWith("/")) rel = `${rel}/`;

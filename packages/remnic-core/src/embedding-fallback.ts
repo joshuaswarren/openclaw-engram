@@ -394,6 +394,26 @@ export class EmbeddingFallback {
           );
         }
       } else {
+        // Round 12 fix (PR #399 thread PRRT_kwDORJXyws56U6Gi): non-timeout
+        // transport failures (ECONNREFUSED, DNS errors, TLS failures) are just
+        // as fatal as timeouts on the LOOKUP path — the embedding backend is
+        // effectively unreachable. Throw EmbeddingTimeoutError so that
+        // search() (when called with throwOnTimeout:true) propagates the error
+        // to decideSemanticDedup's backend_unavailable branch, activating the
+        // per-batch short-circuit. Without this, each fact in the batch would
+        // pay a full ECONNREFUSED roundtrip and return null → [] → no_candidates,
+        // preventing batchBackendUnavailable from ever being set.
+        //
+        // On the INDEX path a transport failure is non-fatal — the memory is
+        // already persisted; index update can be safely skipped.
+        if (mode === "lookup") {
+          log.warn(
+            `embedding fallback transport error on lookup path (${provider.type}): ${err}`,
+          );
+          throw new EmbeddingTimeoutError(
+            `embedding backend transport failure (${provider.type}): ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         log.debug(`embedding fallback error: ${err}`);
       }
       return null;

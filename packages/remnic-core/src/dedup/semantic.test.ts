@@ -1418,3 +1418,160 @@ test("P2: semantic-skip gate does not fire when contradiction detected with auto
     );
   }
 });
+
+// ── Round 12 regression tests ──────────────────────────────────────────────────
+//
+// Fix #1 (thread PRRT_kwDORJXyws56U6Gi): non-timeout transport failures on the
+// LOOKUP path must throw EmbeddingTimeoutError so decideSemanticDedup can
+// classify them as backend_unavailable and activate the per-batch short-circuit.
+//
+// Fix #2 (thread PRRT_kwDORJXyws56U6Gj): when targetStorage.dir is outside
+// memoryDir, the semantic dedup scope must NOT be {} — it must use the absolute
+// storageDir as pathPrefix so cross-tenant suppression cannot occur.
+
+test("round 12 fix #1: non-timeout fetch error on lookup path throws EmbeddingTimeoutError", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-r12-transport-"));
+  const original = globalThis.fetch;
+  try {
+    // Seed a non-empty index so search() reaches the embed() call.
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-001": { vector: [1, 0, 0, 0], path: "facts/f-001.md" },
+    });
+
+    // Stub fetch to throw a transport error (ECONNREFUSED / DNS failure).
+    const transportErr = Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:11434"), { code: "ECONNREFUSED" }),
+    });
+    (globalThis as any).fetch = async () => { throw transportErr; };
+
+    const config = parseConfig({
+      memoryDir,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      openaiApiKey: "test-key",
+    });
+    const fallback = new EmbeddingFallback(config);
+
+    // search() with throwOnTimeout:true must re-throw EmbeddingTimeoutError
+    // (not return []) when fetch throws a non-timeout transport error.
+    await assert.rejects(
+      () => fallback.search("query text", 5, { throwOnTimeout: true }),
+      EmbeddingTimeoutError,
+      "non-timeout transport failure on lookup path must throw EmbeddingTimeoutError",
+    );
+
+    // Without throwOnTimeout (recall path), search() must still fail open.
+    // No throw — returns [].
+    const result = await fallback.search("query text", 5);
+    assert.deepEqual(result, [], "recall path must fail open (return []) on transport error");
+
+    // End-to-end: a transport failure must be classified as backend_unavailable,
+    // NOT no_candidates.
+    const decision = await decideSemanticDedup(
+      "some fact content",
+      async (_content, limit) => {
+        await fallback.search(_content, limit, { throwOnTimeout: true });
+        return [];
+      },
+      DEFAULT_OPTS,
+    );
+    assert.equal(decision.action, "keep");
+    assert.equal(
+      decision.reason,
+      "backend_unavailable",
+      "transport error must yield backend_unavailable so batchBackendUnavailable short-circuit activates",
+    );
+  } finally {
+    (globalThis as any).fetch = original;
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("round 12 fix #2: external storage dir scopes lookup to absolute path prefix", async () => {
+  const memoryDir = await mkdtemp(join(tmpdir(), "remnic-r12-scope-mem-"));
+  const externalDir = await mkdtemp(join(tmpdir(), "remnic-r12-scope-ext-"));
+  const original = globalThis.fetch;
+  try {
+    const vec = [1, 0, 0, 0];
+
+    // Seed the index with:
+    //   - One entry whose path is inside memoryDir (relative path, as normal).
+    //   - One entry whose path is in externalDir (absolute path, as
+    //     toMemoryRelativePath() produces for outside-memoryDir files).
+    await seedEmbeddingIndex(memoryDir, {
+      "mem-internal": {
+        vector: vec,
+        path: "facts/internal.md",
+      },
+      "mem-external": {
+        vector: vec,
+        // toMemoryRelativePath returns the absolute path when outside memoryDir.
+        path: join(externalDir, "facts", "external.md").replace(/\\/g, "/"),
+      },
+    });
+
+    // Stub fetch to return the same vector for any query.
+    (globalThis as any).fetch = async () =>
+      new Response(
+        JSON.stringify({ data: [{ embedding: vec }] }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+
+    const config = parseConfig({
+      memoryDir,
+      namespacesEnabled: true,
+      embeddingFallbackEnabled: true,
+      embeddingFallbackProvider: "openai",
+      openaiApiKey: "test-key",
+    });
+    const fallback = new EmbeddingFallback(config);
+
+    // Unscoped search must return both entries.
+    const unscoped = await fallback.search("test query", 10);
+    assert.equal(unscoped.length, 2, "unscoped search must return both entries");
+
+    // Scoped to externalDir (absolute prefix): only the external entry must match.
+    const extNorm = externalDir.replace(/\\/g, "/");
+    const extPrefix = extNorm.endsWith("/") ? extNorm : `${extNorm}/`;
+    const externalHits = await fallback.search("test query", 10, { pathPrefix: extPrefix });
+    assert.equal(externalHits.length, 1, "absolute-prefix search must return only the external entry");
+    assert.equal(externalHits[0]?.id, "mem-external");
+
+    // Scoped to a DIFFERENT absolute prefix must return nothing — confirming
+    // that the external entry is not visible in the wrong tenant's scope.
+    const otherDir = join(tmpdir(), "remnic-r12-other-").replace(/\\/g, "/") + "/";
+    const otherHits = await fallback.search("test query", 10, { pathPrefix: otherDir });
+    assert.equal(
+      otherHits.length,
+      0,
+      "external entry must not appear under a different tenant's absolute prefix",
+    );
+
+    // This is the core invariant: without the round 12 fix, semanticDedupScopeFor()
+    // returned {} for externalDir, letting the high-similarity internal entry
+    // suppress writes destined for externalDir. Confirm that scoping by the
+    // absolute external prefix isolates the lookup correctly.
+    const decision = await decideSemanticDedup(
+      "test query",
+      async (content, limit) => {
+        const hits = await fallback.search(content, limit, { pathPrefix: extPrefix });
+        return hits.map((h) => ({ id: h.id, score: h.score, path: h.path }));
+      },
+      DEFAULT_OPTS,
+    );
+    // The external entry has cosine similarity ≈ 1 (same vector) → skip.
+    // The internal entry must NOT influence this decision.
+    assert.equal(decision.action, "skip");
+    if (decision.action === "skip") {
+      assert.equal(
+        decision.topId,
+        "mem-external",
+        "dedup lookup scoped to external dir must only find the external entry as the near-duplicate",
+      );
+    }
+  } finally {
+    (globalThis as any).fetch = original;
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(externalDir, { recursive: true, force: true });
+  }
+});
