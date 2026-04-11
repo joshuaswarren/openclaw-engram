@@ -192,12 +192,33 @@ function resolveFlag(args: string[], flag: string): string | undefined {
   return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : undefined;
 }
 
-function parseConnectorConfig(args: string[]): Record<string, unknown> {
+export function parseConnectorConfig(args: string[]): Record<string, unknown> {
   const config: Record<string, unknown> = {};
-  for (const arg of args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
     if (arg.startsWith("--config=")) {
-      const [key, value] = arg.slice("--config=".length).split("=");
-      if (key && value) config[key] = value;
+      // Joined form: --config=key=value  (value may itself contain "=")
+      const rest = arg.slice("--config=".length);
+      const eqIdx = rest.indexOf("=");
+      if (eqIdx !== -1) {
+        const key = rest.slice(0, eqIdx);
+        const value = rest.slice(eqIdx + 1);
+        if (key) config[key] = value;
+      }
+    } else if (arg === "--config") {
+      // Split form: --config key=value
+      const next = args[i + 1];
+      if (next !== undefined) {
+        const eqIdx = next.indexOf("=");
+        if (eqIdx !== -1) {
+          const key = next.slice(0, eqIdx);
+          const value = next.slice(eqIdx + 1);
+          if (key) {
+            config[key] = value;
+            i++; // consume the next token
+          }
+        }
+      }
     }
   }
   return config;

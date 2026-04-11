@@ -1,0 +1,58 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { parseConnectorConfig } from "../packages/remnic-cli/src/index.js";
+
+test("parseConnectorConfig: --config=key=value joined form", () => {
+  const result = parseConnectorConfig(["--config=installExtension=false"]);
+  assert.deepEqual(result, { installExtension: "false" });
+});
+
+test("parseConnectorConfig: --config key=value split form", () => {
+  const result = parseConnectorConfig(["--config", "installExtension=false"]);
+  assert.deepEqual(result, { installExtension: "false" });
+});
+
+test("parseConnectorConfig: mixed joined and split forms", () => {
+  const result = parseConnectorConfig([
+    "--config=codexHome=/tmp/custom",
+    "--config",
+    "installExtension=true",
+  ]);
+  assert.deepEqual(result, {
+    codexHome: "/tmp/custom",
+    installExtension: "true",
+  });
+});
+
+test("parseConnectorConfig: value containing = in joined form", () => {
+  // --config=token=a=b should yield { token: "a=b" }
+  const result = parseConnectorConfig(["--config=token=a=b"]);
+  assert.deepEqual(result, { token: "a=b" });
+});
+
+test("parseConnectorConfig: value containing = in split form", () => {
+  const result = parseConnectorConfig(["--config", "token=a=b"]);
+  assert.deepEqual(result, { token: "a=b" });
+});
+
+test("parseConnectorConfig: multiple --config flags both forms", () => {
+  const result = parseConnectorConfig([
+    "--config=alpha=1",
+    "--config",
+    "beta=2",
+    "--config=gamma=3",
+    "--force",
+  ]);
+  assert.deepEqual(result, { alpha: "1", beta: "2", gamma: "3" });
+});
+
+test("parseConnectorConfig: no --config flags yields empty object", () => {
+  const result = parseConnectorConfig(["install", "codex-cli", "--force"]);
+  assert.deepEqual(result, {});
+});
+
+test("parseConnectorConfig: split form does not consume non-kv next arg", () => {
+  // --config followed by something without = should be ignored
+  const result = parseConnectorConfig(["--config", "--force"]);
+  assert.deepEqual(result, {});
+});

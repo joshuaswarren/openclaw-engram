@@ -11,6 +11,7 @@ import {
   resolveCodexMemoryExtensionPaths,
   installConnector,
   removeConnector,
+  locatePluginCodexExtensionSource,
 } from "../packages/remnic-core/src/connectors/index.js";
 
 async function makeTempCodexHome(): Promise<string> {
@@ -233,5 +234,64 @@ test("removeConnector(codex-cli) removes only the remnic extension folder", asyn
   } finally {
     await rm(codexHome, { recursive: true, force: true });
     await rm(xdg, { recursive: true, force: true });
+  }
+});
+
+// ── Finding 2: resolveCodexHome always returns an absolute path ──────────────
+
+test("resolveCodexHome returns an absolute path even when HOME and USERPROFILE are unset", () => {
+  const prevHome = process.env.HOME;
+  const prevUserProfile = process.env.USERPROFILE;
+  const prevCodexHome = process.env.CODEX_HOME;
+  try {
+    delete process.env.HOME;
+    delete process.env.USERPROFILE;
+    delete process.env.CODEX_HOME;
+    const result = resolveCodexHome();
+    assert.ok(
+      path.isAbsolute(result),
+      `expected an absolute path, got: ${result}`,
+    );
+  } finally {
+    if (prevHome !== undefined) process.env.HOME = prevHome;
+    if (prevUserProfile !== undefined) process.env.USERPROFILE = prevUserProfile;
+    if (prevCodexHome !== undefined) process.env.CODEX_HOME = prevCodexHome;
+    else delete process.env.CODEX_HOME;
+  }
+});
+
+// ── Finding 3: bundled payload works without @remnic/plugin-codex ────────────
+
+test("locatePluginCodexExtensionSource finds bundled payload without @remnic/plugin-codex", () => {
+  // The bundled codex/ directory lives alongside the connectors source file.
+  // This test verifies the primary lookup path resolves and contains instructions.md,
+  // confirming installCodexMemoryExtension works in a standalone @remnic/core install.
+  const sourceDir = locatePluginCodexExtensionSource(null);
+  assert.ok(
+    path.isAbsolute(sourceDir),
+    `expected absolute path, got: ${sourceDir}`,
+  );
+  const instructionsPath = path.join(sourceDir, "instructions.md");
+  assert.ok(
+    fs.existsSync(instructionsPath),
+    `expected instructions.md at ${instructionsPath}`,
+  );
+  const content = fs.readFileSync(instructionsPath, "utf8");
+  assert.ok(content.length > 0, "instructions.md should be non-empty");
+});
+
+test("installCodexMemoryExtension works against a temp codexHome using only bundled payload", async () => {
+  const codexHome = await makeTempCodexHome();
+  try {
+    // Pass no sourceDir — forces locatePluginCodexExtensionSource to find the
+    // bundled payload (primary path) without relying on @remnic/plugin-codex.
+    const result = installCodexMemoryExtension({ codexHome });
+    assert.equal(result.codexHome, codexHome);
+    assert.ok(fs.existsSync(result.instructionsPath));
+    const content = fs.readFileSync(result.instructionsPath, "utf8");
+    assert.ok(content.length > 0);
+    assert.ok(result.filesCopied >= 1);
+  } finally {
+    await rm(codexHome, { recursive: true, force: true });
   }
 });

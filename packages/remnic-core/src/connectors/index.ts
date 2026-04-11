@@ -847,7 +847,11 @@ export function resolveCodexHome(override?: string | null): string {
     return path.resolve(envHome.trim());
   }
   const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
-  return path.join(home, ".codex");
+  // Use path.resolve so the result is always absolute. When both HOME and
+  // USERPROFILE are unset we fall back to the literal "~" sentinel and
+  // path.resolve("~", ".codex") resolves it against cwd — not ideal, but
+  // still an absolute path. A cleaner error can be added later if needed.
+  return path.resolve(home, ".codex");
 }
 
 /**
@@ -900,6 +904,24 @@ export function locatePluginCodexExtensionSource(override?: string | null): stri
   );
 
   const searched: string[] = [];
+
+  // Primary path: the bundled payload shipped with @remnic/core itself.
+  // The `codex/` subdirectory lives alongside this source file and is
+  // included in the package `files` field so it ships with the npm artifact.
+  // This ensures installCodexMemoryExtension works even when @remnic/plugin-codex
+  // is not installed (e.g. a user installs only @remnic/core + remnic-cli).
+  try {
+    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+    // When compiled: dist/connectors/index.js → dist/connectors/codex/
+    // When run via tsx/ts-node on src: src/connectors/codex/
+    const bundledCandidate = path.join(moduleDir, "codex");
+    searched.push(bundledCandidate);
+    if (fs.existsSync(bundledCandidate) && fs.statSync(bundledCandidate).isDirectory()) {
+      return bundledCandidate;
+    }
+  } catch {
+    // import.meta.url unavailable — not running as ESM, skip bundled path.
+  }
 
   // Finding 2 — path 1: resolve via `@remnic/plugin-codex` package.json.
   // This covers global `npm install -g @remnic/remnic-core` or pnpm global installs

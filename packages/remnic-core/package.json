@@ -16,7 +16,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "dist/connectors/codex"
   ],
   "publishConfig": {
     "access": "public",
