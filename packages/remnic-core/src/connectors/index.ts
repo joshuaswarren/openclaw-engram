@@ -1193,7 +1193,7 @@ export function removeConnector(connectorId: string): RemoveResult {
     }
     const message = staleTokenRevoked
       ? `${connectorId} is not installed. Removed stale token entry for ${connectorId}.`
-      : `${connectorId} is not installed.`;
+      : "Not installed";
     return {
       connectorId,
       configPath,
