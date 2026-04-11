@@ -36,6 +36,7 @@ import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import { migrateFromEngram } from "./migrate/from-engram.js";
 import { cleanUserMessage } from "./user-message-cleaning.js";
 import { listRemnicPublicArtifacts } from "../packages/plugin-openclaw/src/public-artifacts.js";
+import { PLUGIN_ID, LEGACY_PLUGIN_ID } from "../packages/remnic-core/src/plugin-id.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -72,7 +73,8 @@ function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
         : path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
-    return config?.plugins?.entries?.["openclaw-engram"] as
+    // Check new id first, fall back to legacy id for existing configs (#403)
+    return (config?.plugins?.entries?.[PLUGIN_ID] ?? config?.plugins?.entries?.[LEGACY_PLUGIN_ID]) as
       | Record<string, unknown>
       | undefined;
   } catch (err) {
@@ -95,7 +97,8 @@ function readPluginHooksPolicy(
   apiConfig: unknown,
 ): Record<string, unknown> | undefined {
   // Try api.config first
-  const fromApi = (apiConfig as any)?.plugins?.entries?.["openclaw-engram"]
+  // Check new id first, fall back to legacy id for existing configs (#403)
+  const fromApi = ((apiConfig as any)?.plugins?.entries?.[PLUGIN_ID] ?? (apiConfig as any)?.plugins?.entries?.[LEGACY_PLUGIN_ID])
     ?.hooks;
   if (fromApi && typeof fromApi === "object") return fromApi;
   // Fall back to file-backed config
@@ -161,7 +164,7 @@ function tryDefinePluginEntry(def: {
 let sdkCaps: SdkCapabilities | undefined;
 
 const pluginDefinition = {
-  id: "openclaw-engram",
+  id: PLUGIN_ID,
   name: "Remnic (Local Memory)",
   description:
     "Local-first memory plugin. Uses GPT-5.2 for intelligent extraction and hybrid local retrieval.",
@@ -1409,7 +1412,7 @@ const pluginDefinition = {
     // start() threw before successfully initializing).
     let didCountStart = false;
     api.registerService({
-      id: "openclaw-engram",
+      id: PLUGIN_ID,
       start: async () => {
         // Check the in-flight promise BEFORE the started flag. ENGRAM_SERVICE_STARTED
         // is set to true inside the IIFE (only on success), so checking the flag

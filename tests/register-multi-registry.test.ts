@@ -251,17 +251,17 @@ test("register() calls registerService on every api object, not just the first o
 
     assert.deepEqual(
       first.getServiceIds(),
-      ["openclaw-engram"],
+      ["openclaw-remnic"],
       "first registry must have service registered",
     );
     assert.deepEqual(
       second.getServiceIds(),
-      ["openclaw-engram"],
+      ["openclaw-remnic"],
       "second registry must have service registered (was missing before #285 fix)",
     );
     assert.deepEqual(
       third.getServiceIds(),
-      ["openclaw-engram"],
+      ["openclaw-remnic"],
       "third registry must have service registered (simulates 3-4 loads per restart)",
     );
   } finally {
@@ -671,7 +671,7 @@ const api = {
 
 plugin.register(api);
 
-if (!serviceIds.includes("openclaw-engram")) {
+if (!serviceIds.includes("openclaw-remnic")) {
   process.stderr.write("FAIL: service not registered. ids=" + JSON.stringify(serviceIds) + "\\n");
   process.exit(1);
 }

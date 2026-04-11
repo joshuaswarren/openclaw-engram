@@ -4,6 +4,7 @@ import { access, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:
 import { lintWorkspaceFiles } from "./hygiene.js";
 import { parseConfig } from "./config.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
+import { PLUGIN_ID, LEGACY_PLUGIN_ID } from "./plugin-id.js";
 import {
   resolveCuratedIncludeFilesStatePath,
   resolveNativeKnowledgeStatePath,
@@ -374,7 +375,8 @@ async function loadCliPluginConfig(configPath?: string): Promise<OperatorConfigL
       : undefined;
     const config =
       pluginEntry && typeof pluginEntry === "object"
-        ? (pluginEntry as Record<string, unknown>)["openclaw-engram"]
+        // Check new id first, fall back to legacy id for existing configs (#403)
+        ? ((pluginEntry as Record<string, unknown>)[PLUGIN_ID] ?? (pluginEntry as Record<string, unknown>)[LEGACY_PLUGIN_ID])
         : undefined;
     const parsedConfig = parseConfig(
       config && typeof config === "object"

@@ -24,7 +24,7 @@ function openclawConfigDocument(pluginConfig: Record<string, unknown>): string {
   return JSON.stringify({
     plugins: {
       entries: {
-        "openclaw-engram": {
+        "openclaw-remnic": {
           config: pluginConfig,
         },
       },

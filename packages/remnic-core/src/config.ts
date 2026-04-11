@@ -576,6 +576,9 @@ export function parseConfig(raw: unknown): PluginConfig {
     qmdCollection:
       typeof cfg.qmdCollection === "string"
         ? cfg.qmdCollection
+        // TODO(#403): Keep legacy collection name for backwards compat so existing
+        // installs don't lose their QMD vector store data on upgrade. New installs
+        // can override via qmdCollection config. Consider migrating in a future PR.
         : "openclaw-engram",
     qmdMaxResults:
       typeof cfg.qmdMaxResults === "number" ? cfg.qmdMaxResults : 8,
@@ -583,6 +586,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     qmdColdCollection:
       typeof cfg.qmdColdCollection === "string" && cfg.qmdColdCollection.length > 0
         ? cfg.qmdColdCollection
+        // TODO(#403): Keep legacy collection name for backwards compat.
         : "openclaw-engram-cold",
     qmdColdMaxResults:
       typeof cfg.qmdColdMaxResults === "number" ? cfg.qmdColdMaxResults : 8,
@@ -768,6 +772,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     conversationIndexQmdCollection:
       typeof cfg.conversationIndexQmdCollection === "string" && cfg.conversationIndexQmdCollection.length > 0
         ? cfg.conversationIndexQmdCollection
+        // TODO(#403): Keep legacy collection name for backwards compat.
         : "openclaw-engram-conversations",
     conversationIndexRetentionDays:
       typeof cfg.conversationIndexRetentionDays === "number" ? cfg.conversationIndexRetentionDays : 30,
