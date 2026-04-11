@@ -297,6 +297,27 @@ const pluginDefinition = {
       typeof api.registerMemoryPromptSection === "function" &&
       promptInjectionAllowed;
 
+    // Per-session cache: shared by the hook fallback path (populated when only
+    // registerMemoryCapability is available) and the registerMemoryPromptSection
+    // path (populated by the async pre-compute hook). Declared early so both
+    // paths and the closure-captured handlers below can reference it without
+    // TDZ surprises.
+    const cachedMemoryBySession = new Map<string, string[] | null>();
+
+    // Single source of truth for the structured memory section: every code path
+    // that populates `cachedMemoryBySession` MUST use this helper so the cache
+    // format stays consistent regardless of which registration path produced it.
+    function buildMemoryContextLines(trimmed: string): string[] {
+      return [
+        "## Memory Context (Remnic)",
+        "",
+        trimmed,
+        "",
+        "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
+        "",
+      ];
+    }
+
     async function recallHookHandler(
       hookLabel: string,
       event: Record<string, unknown>,
@@ -366,7 +387,10 @@ const pluginDefinition = {
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
 
-        const memoryContextPrompt = `## Memory Context (Remnic)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+        // Build the structured line array first so both the gateway return
+        // value and the capability cache fallback share an identical format.
+        const memoryLines = buildMemoryContextLines(trimmed);
+        const memoryContextPrompt = memoryLines.join("\n");
 
         log.debug(
           `${hookLabel}: returning system prompt with ${trimmed.length} chars`,
@@ -376,11 +400,12 @@ const pluginDefinition = {
         // Legacy (before_agent_start): return both for backward compat with
         // older gateways that may consume either field.
         if (hookLabel === "before_prompt_build") {
-          return { prependSystemContext: memoryContextPrompt };
+          return { prependSystemContext: memoryContextPrompt, memoryLines };
         }
         return {
           prependSystemContext: memoryContextPrompt,
           prependContext: memoryContextPrompt,
+          memoryLines,
         };
       } catch (err) {
         log.error("recall failed", err);
@@ -410,11 +435,18 @@ const pluginDefinition = {
             event: Record<string, unknown>,
             ctx: Record<string, unknown>,
           ) => {
+            const sessionKey = (ctx?.sessionKey as string) ?? "default";
+            // Reset the cache at the start of every turn so a recall miss
+            // can never serve stale memory from a prior turn through the
+            // capability promptBuilder fallback.
+            if (needsCacheFallback) {
+              cachedMemoryBySession.set(sessionKey, null);
+            }
             const result = await recallHookHandler("before_prompt_build", event, ctx);
-            // Also populate cache for capability promptBuilder fallback
-            if (needsCacheFallback && result?.prependSystemContext) {
-              const sessionKey = (ctx?.sessionKey as string) ?? "default";
-              cachedMemoryBySession.set(sessionKey, [result.prependSystemContext as string]);
+            // Populate cache for capability promptBuilder fallback using the
+            // same structured line format as the registerMemoryPromptSection path.
+            if (needsCacheFallback && result?.memoryLines) {
+              cachedMemoryBySession.set(sessionKey, result.memoryLines);
             }
             return result;
           },
@@ -427,11 +459,18 @@ const pluginDefinition = {
             event: Record<string, unknown>,
             ctx: Record<string, unknown>,
           ) => {
+            const sessionKey = (ctx?.sessionKey as string) ?? "default";
+            // Reset the cache at the start of every turn so a recall miss
+            // can never serve stale memory from a prior turn through the
+            // capability promptBuilder fallback.
+            if (needsCacheFallback) {
+              cachedMemoryBySession.set(sessionKey, null);
+            }
             const result = await recallHookHandler("before_agent_start", event, ctx);
-            // Also populate cache for capability promptBuilder fallback
-            if (needsCacheFallback && result?.prependSystemContext) {
-              const sessionKey = (ctx?.sessionKey as string) ?? "default";
-              cachedMemoryBySession.set(sessionKey, [result.prependSystemContext as string]);
+            // Populate cache for capability promptBuilder fallback using the
+            // same structured line format as the registerMemoryPromptSection path.
+            if (needsCacheFallback && result?.memoryLines) {
+              cachedMemoryBySession.set(sessionKey, result.memoryLines);
             }
             return result;
           },
@@ -452,9 +491,8 @@ const pluginDefinition = {
     // before_prompt_build hook (which IS async-capable) and cache the result
     // for the synchronous builder to return.
     // ========================================================================
-    // Per-session cache: isolates concurrent prompt builds so one session
-    // cannot clobber another's cached recall result.
-    const cachedMemoryBySession = new Map<string, string[] | null>();
+    // Note: `cachedMemoryBySession` is declared earlier in this function so
+    // both this section path and the hook fallback path can populate it.
 
     // Hoisted reference to the prompt builder so registerMemoryCapability
     // can include it alongside publicArtifacts (prevents SDK >=2026.4.5
@@ -511,14 +549,7 @@ const pluginDefinition = {
               context.length > maxChars
                 ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
                 : context;
-            cachedMemoryBySession.set(sessionKey, [
-              "## Memory Context (Remnic)",
-              "",
-              trimmed,
-              "",
-              "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
-              "",
-            ]);
+            cachedMemoryBySession.set(sessionKey, buildMemoryContextLines(trimmed));
           } catch (err) {
             log.error("registerMemoryPromptSection pre-compute failed", err);
             if (orchestrator.config.compactionResetEnabled) {
