@@ -134,8 +134,8 @@ export interface RemoveResult {
   configPath: string;
   /** Message */
   message: string;
-  /** Optional status: "removed" on success, "error" if the removal failed partway. */
-  status?: "removed" | "error";
+  /** Status: "removed" on success, "error" if the removal failed partway. */
+  status: "removed" | "error" | "not_found";
 }
 
 export interface DoctorResult {
@@ -943,6 +943,7 @@ export function removeConnector(connectorId: string): RemoveResult {
     return {
       connectorId,
       configPath,
+      status: "not_found",
       message: "Not installed",
     };
   }
@@ -964,15 +965,14 @@ export function removeConnector(connectorId: string): RemoveResult {
   try {
     fs.unlinkSync(configPath);
   } catch (unlinkErr) {
+    const sanitizedErr = unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr);
     return {
       connectorId,
       configPath,
       status: "error",
       message:
-        `Hermes remove aborted: could not delete connector config — ` +
-        `${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}. ` +
-        `Token and Hermes config.yaml have NOT been modified. ` +
-        `Resolve the permission issue, then retry.`,
+        `${connectorId} remove aborted: could not delete connector file (${sanitizedErr}). ` +
+        `Token and any connector-specific state were not modified.`,
     };
   }
 

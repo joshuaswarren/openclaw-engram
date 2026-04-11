@@ -567,17 +567,24 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
       config: parseConnectorConfig(rest),
       force: rest.includes("--force"),
     });
+    if (result.status === "error") {
+      console.error(result.message);
+      process.exit(1);
+    }
     console.log(result.message);
     if (result.configPath) console.log(`  Config: ${result.configPath}`);
     if (result.status === "already_installed") console.log("Use --force to reinstall.");
     if (result.status === "config_required") console.log("Set config with --config <key>=<value>");
-    if (result.status === "error") console.error(`Error: ${result.message}`);
   } else if (action === "remove") {
     if (!connectorId) {
       console.error("Usage: remnic connectors remove <id>");
       process.exit(1);
     }
     const result = removeConnector(connectorId);
+    if (result.status === "error") {
+      console.error(result.message);
+      process.exit(1);
+    }
     console.log(result.message);
   } else if (action === "doctor") {
     if (!connectorId) {

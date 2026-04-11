@@ -1895,3 +1895,93 @@ test("removeConnector: unlink failure leaves token intact and returns error", as
     }
   });
 });
+
+// ── Round 9 regression: generic remove error message (PRRT_kwDORJXyws56UQQk) ─
+
+test("removeConnector unlink error message is connector-agnostic (no Hermes/config.yaml)", () => {
+  // Source-level guard: the shared unlinkSync catch block must not hardcode
+  // "Hermes" or "config.yaml" text. The message template must use connectorId.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+
+  // Find the unlinkSync catch block
+  const unlinkCatchIdx = content.indexOf("could not delete connector file");
+  assert.ok(
+    unlinkCatchIdx >= 0,
+    "The generic unlink error message must say 'could not delete connector file'",
+  );
+
+  // Extract a window around the catch block (up to 300 chars) and assert
+  // it does NOT contain hardcoded Hermes references or config.yaml text.
+  const window = content.slice(Math.max(0, unlinkCatchIdx - 50), unlinkCatchIdx + 300);
+  assert.ok(
+    !window.includes("Hermes config.yaml"),
+    "Generic unlink error must NOT reference 'Hermes config.yaml'",
+  );
+  assert.ok(
+    !window.includes('"Hermes remove aborted"'),
+    "Generic unlink error must NOT hardcode 'Hermes remove aborted'",
+  );
+  // Must use the connectorId variable in the message (connector-agnostic)
+  assert.ok(
+    window.includes("connectorId"),
+    "Generic unlink error must interpolate connectorId for the connector name",
+  );
+});
+
+test("removeConnector: unlink failure for non-hermes connector uses connector ID in message", async () => {
+  // When removing a non-hermes connector (e.g., claude-code) and unlinkSync
+  // fails, the error message must name "claude-code", not "Hermes".
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Install claude-code connector so the config file exists.
+        const installResult = mod.installConnector({
+          connectorId: "claude-code",
+          config: {},
+        });
+        assert.equal(installResult.status, "installed", "Pre-condition: claude-code install must succeed");
+
+        // Make the connectors dir read-only so unlinkSync fails.
+        const connectorsDir = path.dirname(installResult.configPath!);
+        fs.chmodSync(connectorsDir, 0o555);
+
+        let removeResult: ReturnType<typeof mod.removeConnector>;
+        try {
+          removeResult = mod.removeConnector("claude-code");
+        } finally {
+          try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
+        }
+
+        // Must return error status.
+        assert.equal(
+          removeResult!.status,
+          "error",
+          "Unlink failure on non-hermes connector must return status: error",
+        );
+
+        // Message must reference claude-code and must not hardcode Hermes-specific text.
+        assert.ok(
+          removeResult!.message.includes("claude-code"),
+          "Error message must reference the connector ID (claude-code)",
+        );
+        assert.ok(
+          !removeResult!.message.includes("Hermes remove aborted"),
+          "Error message must NOT use the old hardcoded 'Hermes remove aborted' string",
+        );
+        assert.ok(
+          !removeResult!.message.includes("Hermes config.yaml"),
+          "Error message must NOT reference 'Hermes config.yaml' in the generic path",
+        );
+        assert.ok(
+          !removeResult!.message.includes("config.yaml"),
+          "Error message must NOT reference config.yaml in the generic path",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
