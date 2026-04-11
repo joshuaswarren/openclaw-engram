@@ -734,6 +734,9 @@ export class StorageManager {
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
   private static readonly artifactWriteVersionByDir = new Map<string, number>();
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
+  // In-process fallback for the cold-write sentinel (used when the disk file
+  // is not accessible).  The canonical source of truth is state/cold-write.log.
+  private static readonly coldWriteVersionByDir = new Map<string, number>();
 
   // Module-level cache for readAllMemories() keyed by base directory.
   // Shared across all StorageManager instances to avoid duplicate I/O when
@@ -749,16 +752,26 @@ export class StorageManager {
 
   // Cache for readAllColdMemories() — keyed by cold root directory path.
   // Prevents an uncached full-tree directory scan on every structured-attribute
-  // write (Finding UOGi, PR #402 round-6).  The cache is invalidated whenever
-  // invalidateAllMemoriesCache() fires (which happens on every write that
-  // calls invalidateAllMemoriesCache or invalidateAllMemoriesCacheForDir) and
-  // also expires after COLD_SCAN_CACHE_TTL_MS as a safety net.
+  // write (Finding UOGi, PR #402 round-6).  The cache is only invalidated when
+  // cold-tier content actually changes (via invalidateColdMemoriesCache), NOT
+  // on every hot-tier write.  It also expires after COLD_SCAN_CACHE_TTL_MS as
+  // a safety net.
+  //
+  // Finding UvUy (PR #402 round-11): cache entries now carry a `coldVersion`
+  // sentinel that is bumped (via a file-size counter in state/cold-write.log)
+  // on every write that modifies cold-tier content.  Before serving a cached
+  // result, readAllColdMemories() reads the sentinel from disk and compares.
+  // If they differ the entry is dropped and the cold tree is re-scanned.  This
+  // makes the cache correct across process boundaries (gateway + CLI): a second
+  // process that writes a new cold memory bumps the sentinel on disk, so the
+  // first process's next readAllColdMemories() sees the change within one call
+  // (rather than waiting up to 30s for TTL expiry).
   //
   // After Finding UTsP broadened readAllColdMemories to scan the entire cold/
   // subtree (not just facts/+corrections/), amortizing this I/O across
   // back-to-back writes in the same burst is even more important.
   private static readonly COLD_SCAN_CACHE_TTL_MS = 30_000; // 30 seconds
-  private static readonly coldMemoriesCache = new Map<string, { memories: MemoryFile[]; loadedAt: number }>();
+  private static readonly coldMemoriesCache = new Map<string, { memories: MemoryFile[]; loadedAt: number; coldVersion: number }>();
 
   // Cache for readQuestions() — avoids serially re-reading tens of thousands of
   // question files on every recall.  60-second TTL is intentionally short so that
@@ -798,14 +811,18 @@ export class StorageManager {
     return path.join(workspaceDir, `IDENTITY.${safeNamespace}.md`);
   }
 
-  private versionFilePath(kind: "memory-status" | "artifact-write"): string {
+  private versionFilePath(kind: "memory-status" | "artifact-write" | "cold-write"): string {
     const fileName =
-      kind === "memory-status" ? ".memory-status-version.log" : ".artifact-write-version.log";
+      kind === "memory-status"
+        ? ".memory-status-version.log"
+        : kind === "artifact-write"
+          ? ".artifact-write-version.log"
+          : ".cold-write-version.log";
     return path.join(this.stateDir, fileName);
   }
 
   private bumpSharedVersion(
-    kind: "memory-status" | "artifact-write",
+    kind: "memory-status" | "artifact-write" | "cold-write",
     fallbackMap: Map<string, number>,
   ): number {
     const filePath = this.versionFilePath(kind);
@@ -823,7 +840,7 @@ export class StorageManager {
   }
 
   private readSharedVersion(
-    kind: "memory-status" | "artifact-write",
+    kind: "memory-status" | "artifact-write" | "cold-write",
     fallbackMap: Map<string, number>,
   ): number {
     const filePath = this.versionFilePath(kind);
@@ -1446,25 +1463,50 @@ export class StorageManager {
   }
 
   /** Cancel any in-flight concurrent read so the next readAllMemories()
-   *  starts a fresh disk scan and sees the just-written data.  Also clears
-   *  the cold-scan cache so that readAllColdMemories() re-scans on the next
-   *  call — required whenever a hot→cold demotion may have changed cold-tier
-   *  contents (and harmless for ordinary hot-tier writes). */
+   *  starts a fresh disk scan and sees the just-written data.
+   *
+   *  Finding UvBq (PR #402 round-11): this method intentionally does NOT
+   *  invalidate the cold-scan cache.  Ordinary hot-tier writes (writeMemory)
+   *  do not change cold-tier content, so evicting the cold cache on every hot
+   *  write was defeating the burst-dedup optimisation — the cold cache was
+   *  cleared before applyTemporalSupersession ran, causing a full cold-tree
+   *  disk scan on every write in a burst.  Cold cache invalidation is handled
+   *  exclusively by invalidateColdMemoriesCache(), which is called only when
+   *  cold content actually changes (hot→cold demotions, writeMemoryFileAtomic
+   *  inside cold/, archiveMemory, etc.). */
   private invalidateAllMemoriesCache(): void {
     StorageManager.allMemoriesInFlight.delete(this.baseDir);
-    const coldRoot = path.join(this.baseDir, "cold");
-    StorageManager.coldMemoriesCache.delete(coldRoot);
   }
 
   /**
-   * Invalidate the cold-scan cache for this storage root.
-   * Must be called whenever a memory is moved INTO the cold tier so that the
-   * next readAllColdMemories() call sees the newly-demoted file.
+   * Invalidate the cold-scan cache for this storage root and bump the
+   * on-disk cold-version sentinel so that other processes (gateway, CLI) see
+   * the change immediately on their next readAllColdMemories() call.
+   *
+   * Must be called whenever a memory is written INTO the cold tier — hot→cold
+   * demotion, atomic writes inside cold/, archiving a cold memory, etc.
    * NOT called on ordinary hot-tier writes (those don't change cold contents).
+   *
+   * Finding UvUy (PR #402 round-11): bumping the sentinel here makes the
+   * per-process in-memory cache safe across process boundaries.
    */
   private invalidateColdMemoriesCache(): void {
     const coldRoot = path.join(this.baseDir, "cold");
     StorageManager.coldMemoriesCache.delete(coldRoot);
+    this.bumpColdWriteVersion();
+  }
+
+  /** Return the current cold-write version counter for this storage root.
+   *  Reads the on-disk sentinel (state/cold-write.log) so it reflects writes
+   *  made by other processes. */
+  private readColdWriteVersion(): number {
+    return this.readSharedVersion("cold-write", StorageManager.coldWriteVersionByDir);
+  }
+
+  /** Bump the on-disk cold-write version sentinel and update the in-process
+   *  fallback map.  Called by invalidateColdMemoriesCache(). */
+  private bumpColdWriteVersion(): void {
+    this.bumpSharedVersion("cold-write", StorageManager.coldWriteVersionByDir);
   }
 
   private normalizeMemoryReadBatchSize(batchSize?: number): number {
@@ -1719,9 +1761,19 @@ export class StorageManager {
   async readAllColdMemories(): Promise<MemoryFile[]> {
     const coldRoot = this.resolveTierRootDir("cold");
 
-    // Return cached result if still valid.
+    // Read the on-disk cold-version sentinel BEFORE checking the cache so that
+    // writes made by other processes (gateway + CLI) are detected immediately.
+    // Finding UvUy (PR #402 round-11): without this check the cache served
+    // stale data for up to 30s when another process wrote a new cold memory.
+    const currentColdVersion = this.readColdWriteVersion();
+
+    // Return cached result if still valid by both TTL and sentinel version.
     const cached = StorageManager.coldMemoriesCache.get(coldRoot);
-    if (cached && Date.now() - cached.loadedAt < StorageManager.COLD_SCAN_CACHE_TTL_MS) {
+    if (
+      cached &&
+      Date.now() - cached.loadedAt < StorageManager.COLD_SCAN_CACHE_TTL_MS &&
+      cached.coldVersion === currentColdVersion
+    ) {
       return cached.memories;
     }
 
@@ -1755,9 +1807,9 @@ export class StorageManager {
     await collectPaths(coldRoot);
     const memories = await this.readParsedMemoriesFromPaths(filePaths, 50);
 
-    // Store in cache.  The cache entry will be evicted by the next write's
-    // invalidateAllMemoriesCache() call or by TTL expiry, whichever comes first.
-    StorageManager.coldMemoriesCache.set(coldRoot, { memories, loadedAt: Date.now() });
+    // Store in cache with the sentinel version captured above so that any
+    // subsequent cold-version bump (by this or another process) invalidates it.
+    StorageManager.coldMemoriesCache.set(coldRoot, { memories, loadedAt: Date.now(), coldVersion: currentColdVersion });
     return memories;
   }
 
@@ -2181,6 +2233,12 @@ export class StorageManager {
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
     this.invalidateAllMemoriesCache();
+    // If the target file lives in cold/, bump the cold-version sentinel so
+    // other processes detect the change on their next readAllColdMemories()
+    // call (Finding UvUy fix).
+    if (memory.path.includes(`${path.sep}cold${path.sep}`) || memory.path.endsWith(`${path.sep}cold`)) {
+      this.invalidateColdMemoriesCache();
+    }
     await this.appendGeneratedMemoryLifecycleEventFailOpen(
       "storage.writeMemoryFrontmatter",
       {

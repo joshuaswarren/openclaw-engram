@@ -8469,12 +8469,18 @@ export class Orchestrator {
                 return ContentHashIndex.normalizeContent(rawBody) === normalizedIncoming;
               });
               if (matchingFact) {
+                // Finding UvU1 (PR #402 round-11): anchor supersession to the
+                // CURRENT wall-clock time, not the existing fact's persisted
+                // `created`.  The matching fact may be an old shared copy whose
+                // `created` predates the incoming promotion event — using it as
+                // `createdAt` would make the new memory appear older than the
+                // existing one, preventing supersession from firing.
                 await applyTemporalSupersession({
                   storage: sharedStorage,
                   newMemoryId: matchingFact.frontmatter.id,
                   entityRef: options.entityRef,
                   structuredAttributes: options.structuredAttributes,
-                  createdAt: matchingFact.frontmatter.created ?? new Date().toISOString(),
+                  createdAt: new Date().toISOString(),
                   enabled: true,
                 });
               }

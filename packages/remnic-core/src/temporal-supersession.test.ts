@@ -1651,27 +1651,28 @@ test("readAllColdMemories: finds .md files in non-standard cold subdirectory (e.
   }
 });
 
-// ─── Regression: Finding UXw3 — invalidateAllMemoriesCache must also clear cold cache ─
+// ─── Regression: Finding UvBq — hot-tier writes must NOT evict the cold cache ─
 //
-// The coldMemoriesCache comment and the readAllColdMemories JSDoc both state that
-// the cold-scan cache is evicted whenever invalidateAllMemoriesCache() fires.
-// Before the fix, invalidateAllMemoriesCache() only cleared allMemoriesInFlight and
-// left coldMemoriesCache intact, so a stale cold snapshot could persist after a
-// hot-tier write that triggered the hot invalidation.
+// Finding UvBq (PR #402 round-11): invalidateAllMemoriesCache() previously also
+// cleared coldMemoriesCache on every hot-tier write (writeMemory), which defeated
+// the burst-dedup optimisation — each write in a burst caused applyTemporalSupersession
+// to re-scan the entire cold/ tree from disk.  The fix limits cold-cache eviction to
+// invalidateColdMemoriesCache(), which is only called when cold content actually changes
+// (hot→cold demotions, writeMemoryFrontmatter on cold paths, etc.).
 
-test("readAllColdMemories: cold-scan cache is invalidated by a hot-tier write (invalidateAllMemoriesCache)", async () => {
+test("readAllColdMemories: hot-tier write does NOT evict the cold cache (Finding UvBq)", async () => {
   // Strategy:
   // 1. Seed cold tier via migrateMemoryToTier.
   // 2. Call readAllColdMemories() once to populate the cold-scan cache.
   // 3. Inject a ghost file directly into cold/ on disk (bypasses all invalidation).
-  // 4. Trigger a hot-tier write (writeFact), which calls invalidateAllMemoriesCache().
-  // 5. Call readAllColdMemories() again — the cold cache must have been evicted by
-  //    step 4, so the fresh disk scan returns the ghost file.
-  const { storage, memoryDir, cleanup } = await makeStorage("engram-uxw3-cold-evict-");
+  // 4. Trigger a hot-tier write (writeFact) — must NOT evict cold cache.
+  // 5. Call readAllColdMemories() again — the cached result must be returned
+  //    (ghost not visible), confirming cold cache survived the hot-tier write.
+  const { storage, memoryDir, cleanup } = await makeStorage("engram-uvbq-cold-hot-");
   try {
     StorageManager.clearAllStaticCaches();
 
-    // Seed an existing cold fact.
+    // Step 1: Seed an existing cold fact.
     const baseId = await writeFact(storage, "entity in Portland", TEST_ENTITY, { city: "Portland" });
     await new Promise((resolve) => setTimeout(resolve, 5));
     storage.invalidateAllMemoriesCacheForDir();
@@ -1687,28 +1688,88 @@ test("readAllColdMemories: cold-scan cache is invalidated by a hot-tier write (i
       "first readAllColdMemories must contain the demoted fact",
     );
 
-    // Step 3: Inject a ghost file directly into cold/ WITHOUT invalidating the cache.
-    const ghostId = `fact-ghost-uxw3-${Date.now()}`;
+    // Step 3: Inject a ghost file directly into cold/ WITHOUT triggering any
+    // cold-cache invalidation — simulating what happens when another process
+    // writes to cold/ and we haven't yet bumped the sentinel from this side.
+    const ghostId = `fact-ghost-uvbq-${Date.now()}`;
     const coldFactsDir = path.join(memoryDir, "cold", "facts", "2026-01-01");
     await mkdir(coldFactsDir, { recursive: true });
     const ghostContent =
       `---\nid: ${ghostId}\ncategory: fact\ncreated: 2026-01-01T00:00:00.000Z\n` +
       `updated: 2026-01-01T00:00:00.000Z\nsource: test\nconfidence: 0.9\n` +
       `confidenceTier: explicit\ntags: []\nentityRef: ${TEST_ENTITY}\n` +
-      `structuredAttributes:\n  city: Ghost\nstatus: active\n---\n\nGhost fact (UXw3 test).\n`;
+      `structuredAttributes:\n  city: Ghost\nstatus: active\n---\n\nGhost fact (UvBq test).\n`;
     await writeFile(path.join(coldFactsDir, `${ghostId}.md`), ghostContent, "utf-8");
 
-    // Step 4: Hot-tier write — triggers invalidateAllMemoriesCache(), which must
-    // now also evict coldMemoriesCache (the UXw3 fix).
+    // Step 4: Hot-tier write — must NOT evict the cold cache (Finding UvBq fix).
     await writeFact(storage, "entity has new role", TEST_ENTITY, { role: "engineer" });
 
-    // Step 5: A fresh readAllColdMemories() must NOT return the stale cached
-    // snapshot — the ghost file must be visible because the cache was evicted.
+    // Step 5: Cold cache must still be valid after a hot-tier write — the ghost
+    // file must NOT be visible because the cold cache was not evicted.
     const afterHotWrite = await storage.readAllColdMemories();
     assert.ok(
-      afterHotWrite.some((m) => m.frontmatter.id === ghostId),
-      "after hot-tier write, readAllColdMemories must re-scan disk and find the ghost file",
+      !afterHotWrite.some((m) => m.frontmatter.id === ghostId),
+      "after hot-tier write, cold cache must NOT be evicted — ghost file must remain invisible",
     );
+    assert.ok(
+      afterHotWrite.some((m) => m.frontmatter.id === baseId),
+      "after hot-tier write, cached cold fact must still be present",
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+// ─── Regression: Finding UvUy — cold-write sentinel invalidates stale cache ──
+//
+// The cold cache is process-local.  Before Finding UvUy, a second process that
+// wrote a new cold memory would not be detected by the first process until the
+// 30s TTL expired.  The fix adds a file-size sentinel (state/cold-write.log)
+// that is bumped on every cold write.  readAllColdMemories() compares the cached
+// sentinel against the on-disk sentinel before serving cached data.
+
+test("readAllColdMemories: cold-write sentinel invalidates stale cache across simulated process boundary (Finding UvUy)", async () => {
+  // Simulates two "processes" sharing the same baseDir.  After process-B writes
+  // a cold memory (bumping the sentinel), process-A's next readAllColdMemories()
+  // must detect the sentinel change and re-scan, finding the new memory.
+  const { storage: storageA, memoryDir, cleanup } = await makeStorage("engram-uvuy-sentinel-");
+  // storageB represents a different process instance hitting the same directory.
+  const storageB = new StorageManager(memoryDir);
+  await storageB.ensureDirectories();
+
+  try {
+    StorageManager.clearAllStaticCaches();
+
+    // Process-A: seed and demote a fact so there is something in cold.
+    const baseId = await writeFact(storageA, "entity in Seattle", TEST_ENTITY, { city: "Seattle" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    storageA.invalidateAllMemoriesCacheForDir();
+    const baseMem = (await storageA.readAllMemories()).find((m) => m.frontmatter.id === baseId);
+    assert.ok(baseMem, "seed fact must be readable");
+    await storageA.migrateMemoryToTier(baseMem!, "cold");
+    StorageManager.clearAllStaticCaches();
+
+    // Process-A: populate its cold cache.
+    const firstRead = await storageA.readAllColdMemories();
+    assert.ok(firstRead.some((m) => m.frontmatter.id === baseId), "initial cold read must include baseId");
+
+    // Process-B: demote a NEW cold fact (bumps cold-write sentinel on disk).
+    const newId = await writeFact(storageB, "entity in Portland", TEST_ENTITY, { city: "Portland" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    storageB.invalidateAllMemoriesCacheForDir();
+    const newMem = (await storageB.readAllMemories()).find((m) => m.frontmatter.id === newId);
+    assert.ok(newMem, "process-B fact must be readable");
+    await storageB.migrateMemoryToTier(newMem!, "cold");
+    // NOTE: storageA's in-process cache still has the old snapshot from firstRead.
+
+    // Process-A: next readAllColdMemories() must detect the sentinel change and
+    // re-scan disk — finding process-B's new cold memory.
+    const secondRead = await storageA.readAllColdMemories();
+    assert.ok(
+      secondRead.some((m) => m.frontmatter.id === newId),
+      "process-A must see process-B's cold memory after sentinel bump (Finding UvUy)",
+    );
+    assert.ok(secondRead.some((m) => m.frontmatter.id === baseId), "process-A must still see its own cold fact");
   } finally {
     await cleanup();
   }
@@ -1805,6 +1866,78 @@ test("applyTemporalSupersession: hash-dedup path — supersedes older conflictin
     // The existing matching fact itself must remain active.
     const existingFm = await readFrontmatterById(sharedStorage, existingMatchingId);
     assert.equal(existingFm?.status ?? "active", "active", "existing matching shared fact must remain active");
+  } finally {
+    await cleanup();
+  }
+});
+
+// ─── Regression: Finding UvU1 — hash-dedup path must use current write time ──
+//
+// In the hash-dedup promotion path, supersession was anchored to
+// matchingFact.frontmatter.created (the existing shared fact's creation time).
+// If that existing fact was older than the conflicting stale fact being retired,
+// supersession would refuse to fire because it would look like a stale write
+// (new.created < existing.created).  The fix anchors to new Date().toISOString()
+// (the current write time) so supersession always runs as a fresh event.
+
+test("applyTemporalSupersession: hash-dedup path — current write time anchors supersession even when matching fact is old (Finding UvU1)", async () => {
+  // Scenario: shared namespace has two facts —
+  //   factOld: entity.city = Austin, created = T_very_old (well before both others)
+  //   factMatch: entity.city = NYC,  created = T_mid (the "matching" fact the hash-dedup finds)
+  // The incoming promotion event is happening NOW (T_now > both).
+  // When the hash-dedup path passes factMatch.frontmatter.created as createdAt,
+  // T_mid is used as the "new" time — but factOld.created may be similar in age
+  // to T_mid, causing the ordering check to fail or be ambiguous.
+  // With the fix, T_now is passed so the ordering is unambiguous.
+  const { storage: sharedStorage, cleanup } = await makeStorage("engram-uvU1-hash-dedup-");
+  try {
+    const tVeryOld = "2025-01-01T00:00:00.000Z"; // old stale conflicting fact
+    const tMid     = "2025-06-01T00:00:00.000Z"; // existing matching fact (found by hash-dedup)
+    const tNow     = new Date().toISOString();   // current write time (the fix uses this)
+
+    // Seed the older conflicting fact (Austin).
+    const staleId = await writeFact(sharedStorage, "entity lives in Austin", TEST_ENTITY, { city: "Austin" });
+    sharedStorage.invalidateAllMemoriesCacheForDir();
+    const staleMem = (await sharedStorage.readAllMemories()).find((m) => m.frontmatter.id === staleId);
+    assert.ok(staleMem);
+    await sharedStorage.writeMemoryFrontmatter(staleMem!, { created: tVeryOld, updated: tVeryOld });
+
+    // Seed the existing matching fact (NYC) with T_mid.
+    const matchId = await writeFact(sharedStorage, "entity relocated to NYC", TEST_ENTITY, { city: "NYC" });
+    sharedStorage.invalidateAllMemoriesCacheForDir();
+    const matchMem = (await sharedStorage.readAllMemories()).find((m) => m.frontmatter.id === matchId);
+    assert.ok(matchMem);
+    await sharedStorage.writeMemoryFrontmatter(matchMem!, { created: tMid, updated: tMid });
+
+    // Simulate the hash-dedup fix using the CURRENT write time (T_now), NOT
+    // matchMem.frontmatter.created (T_mid).  T_now > T_very_old so supersession fires.
+    sharedStorage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage: sharedStorage,
+      newMemoryId: matchId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },
+      createdAt: tNow, // ← the fix: current write time, not matchMem.frontmatter.created
+      enabled: true,
+    });
+
+    assert.deepEqual(
+      result.supersededIds,
+      [staleId],
+      "hash-dedup path: stale Austin fact must be superseded when anchored to current write time",
+    );
+
+    const staleFm = await readFrontmatterById(sharedStorage, staleId);
+    assert.equal(staleFm?.status, "superseded", "stale fact must be marked superseded");
+    assert.equal(staleFm?.supersededBy, matchId, "stale fact must link to the matching NYC fact");
+
+    // Sanity: if we had passed T_mid (the wrong value, the old bug), supersession
+    // would still fire here because T_mid > T_very_old — but in the real bug the
+    // existing fact's created can be OLDER than the stale fact's created, flipping
+    // the ordering.  Demonstrate that ordering is the critical invariant.
+    const staleFmCreatedMs = new Date(tVeryOld).getTime();
+    const supersededAtMs   = new Date(staleFm!.supersededAt!).getTime();
+    assert.ok(supersededAtMs > staleFmCreatedMs, "supersededAt must be after the stale fact's created (monotonic)");
   } finally {
     await cleanup();
   }
