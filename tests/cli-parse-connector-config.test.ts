@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseConnectorConfig } from "../packages/remnic-cli/src/index.js";
+// Import directly from the helper, not from the CLI entry.
+// The CLI entry imports `@remnic/core`, whose `dist/index.js` is not built
+// when `tsx --test` runs at the repo root in CI (ERR_MODULE_NOT_FOUND).
+import { parseConnectorConfig } from "../packages/remnic-cli/src/parse-connector-config.ts";
 
 test("parseConnectorConfig: --config=key=value joined form", () => {
   const result = parseConnectorConfig(["--config=installExtension=false"]);
