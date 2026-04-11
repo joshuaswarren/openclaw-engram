@@ -196,6 +196,45 @@ Default: `"low"` — only `"trivial"` content is dropped. Raise to `"normal"` or
 
 Category boosts still apply before the gate, so corrections, principles, preferences, and commitments stay above `"normal"` even when their raw text would otherwise score low. Every gated fact increments the `importance_gated` counter (grep `metric:importance_gated` in `~/.openclaw/logs/gateway.log`) and the final extraction log line reports the gated count.
 
+### Inline source attribution (opt-in, issue #369)
+
+Extracted facts can optionally carry a compact provenance tag inline in the fact body — not just in YAML frontmatter — so the citation survives prompt injection, copy/paste, and LLM quoting. When an agent later quotes a memory back or a user asks "where did you learn that?", the source travels with the claim.
+
+Default format:
+
+```
+The foo service uses Redis for rate limiting. [Source: agent=planner, session=main, ts=2026-04-10T14:25:07Z]
+```
+
+Enable it per plugin:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-engram": {
+        "config": {
+          "inlineSourceAttributionEnabled": true,
+          // Optional: customize the tag format.
+          // Placeholders: {agent}, {session}, {sessionId}, {ts}, {date}
+          "inlineSourceAttributionFormat": "[Source: agent={agent}, session={sessionId}, ts={ts}]"
+        }
+      }
+    }
+  }
+}
+```
+
+Properties:
+
+- **Off by default** to preserve backwards compatibility with downstream consumers that expect raw fact text.
+- **Inline** — the tag is part of the stored fact body, so it flows through every write site (direct writes, chunked writes, shared-namespace promotion, verbatim artifacts) and recall injection without special handling.
+- **Legacy-safe** — facts written before the flag was enabled still read and recall normally; nothing is retroactively rewritten.
+- **Non-destructive** — facts that already carry a citation (e.g. relayed from an upstream system) are left untouched.
+- **Machine-parseable** — `parseCitation(text)` and `stripCitation(text)` are exported from `@remnic/core` for callers that want the raw body (e.g. for dedup hashing, display, or verification tooling). Malformed citations never throw.
+
+See `packages/remnic-core/src/source-attribution.ts` for the helpers and `packages/remnic-core/src/source-attribution.test.ts` for the round-trip contract.
+
 ### Verify installation
 
 ```bash

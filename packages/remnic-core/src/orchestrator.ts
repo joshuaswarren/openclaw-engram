@@ -18,6 +18,11 @@ import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
+import {
+  attachCitation,
+  hasCitation as hasSourceCitation,
+  type CitationContext,
+} from "./source-attribution.js";
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
 import type {
   SearchBackend,
@@ -7910,6 +7915,7 @@ export class Orchestrator {
       result,
       storage,
       threadIdForExtraction,
+      { sessionKey, principal },
     );
     await clearBuffer();
 
@@ -8295,7 +8301,28 @@ export class Orchestrator {
     result: ExtractionResult,
     storage: StorageManager,
     threadIdForExtraction?: string | null,
+    sourceContext?: { sessionKey?: string; principal?: string },
   ): Promise<string[]> {
+    // Inline source attribution (issue #369). When enabled, every extracted
+    // fact is rewritten to carry a compact provenance tag inside its body so
+    // the citation survives prompt injection, copy/paste, and LLM quoting.
+    // The helper is a no-op when the feature flag is off, so legacy pipelines
+    // see zero behavioral change.
+    const citationEnabled = this.config.inlineSourceAttributionEnabled === true;
+    const citationTemplate = this.config.inlineSourceAttributionFormat;
+    const citationContext: CitationContext = citationEnabled
+      ? {
+          agent: sourceContext?.principal,
+          session: sourceContext?.sessionKey,
+          ts: new Date().toISOString(),
+        }
+      : {};
+    const applyInlineCitation = (content: string): string => {
+      if (!citationEnabled) return content;
+      if (typeof content !== "string" || content.length === 0) return content;
+      if (hasSourceCitation(content)) return content;
+      return attachCitation(content, citationContext, citationTemplate);
+    };
     const persistedIds: string[] = [];
     const persistedIdsByStorage = new Map<
       string,
@@ -8408,7 +8435,7 @@ export class Orchestrator {
         }
         const promotedId = await sharedStorage.writeMemory(
           options.category as any,
-          options.content,
+          applyInlineCitation(options.content),
           {
             confidence: options.confidence,
             tags: [...options.tags, "shared-promotion"],
@@ -8656,7 +8683,7 @@ export class Orchestrator {
           // Write the parent memory first (with full content for reference)
           const parentId = await targetStorage.writeMemory(
             writeCategory,
-            fact.content,
+            applyInlineCitation(fact.content),
             {
               confidence: fact.confidence,
               tags: [...fact.tags, "chunked"],
@@ -8689,7 +8716,9 @@ export class Orchestrator {
               chunk.index,
               chunkResult.chunks.length,
               writeCategory,
-              chunk.content,
+              // Each chunk carries its own inline citation so provenance
+              // survives when a single chunk is quoted in isolation.
+              applyInlineCitation(chunk.content),
               {
                 confidence: fact.confidence,
                 tags: fact.tags,
@@ -8753,7 +8782,7 @@ export class Orchestrator {
             this.config.verbatimArtifactCategories.includes(writeCategory) &&
             fact.confidence >= this.config.verbatimArtifactsMinConfidence
           ) {
-            await targetStorage.writeArtifact(fact.content, {
+            await targetStorage.writeArtifact(applyInlineCitation(fact.content), {
               confidence: fact.confidence,
               tags: [...fact.tags, "artifact", "chunked-parent"],
               artifactType: this.artifactTypeForCategory(writeCategory),
@@ -8874,7 +8903,7 @@ export class Orchestrator {
       // Normal write (no chunking)
       const memoryId = await targetStorage.writeMemory(
         writeCategory,
-        fact.content,
+        applyInlineCitation(fact.content),
         {
           confidence: fact.confidence,
           tags: fact.tags,
@@ -8980,7 +9009,7 @@ export class Orchestrator {
         this.config.verbatimArtifactCategories.includes(writeCategory) &&
         fact.confidence >= this.config.verbatimArtifactsMinConfidence
       ) {
-        await targetStorage.writeArtifact(fact.content, {
+        await targetStorage.writeArtifact(applyInlineCitation(fact.content), {
           confidence: fact.confidence,
           tags: [...fact.tags, "artifact"],
           artifactType: this.artifactTypeForCategory(writeCategory),

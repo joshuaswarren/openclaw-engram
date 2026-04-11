@@ -396,6 +396,21 @@ export interface PluginConfig {
    * silently dropped while everything else still passes.
    */
   extractionMinImportanceLevel: ImportanceLevel;
+  /**
+   * Inline source attribution (issue #369).
+   * When enabled, extracted facts carry a compact provenance tag (agent,
+   * session, timestamp) inlined into the fact text — not just in YAML
+   * frontmatter — so the citation survives prompt injection, copy/paste,
+   * and LLM quoting. Off by default to preserve backwards compatibility
+   * with existing downstream consumers that expect raw fact text.
+   */
+  inlineSourceAttributionEnabled: boolean;
+  /**
+   * Template used when injecting inline citations. Supported placeholders:
+   * `{agent}`, `{session}`, `{sessionId}`, `{ts}`, `{date}`. Defaults to
+   * `[Source: agent={agent}, session={sessionId}, ts={ts}]`.
+   */
+  inlineSourceAttributionFormat: string;
   consolidationRequireNonZeroExtraction: boolean;
   consolidationMinIntervalMs: number;
   // QMD maintenance (debounced singleflight)

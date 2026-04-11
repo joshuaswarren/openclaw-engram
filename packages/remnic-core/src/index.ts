@@ -52,6 +52,24 @@ export { StorageManager } from "./storage.js";
 export { ExtractionEngine } from "./extraction.js";
 
 // ---------------------------------------------------------------------------
+// Inline source attribution (issue #369)
+// ---------------------------------------------------------------------------
+
+export {
+  DEFAULT_CITATION_FORMAT,
+  CITATION_UNKNOWN,
+  attachCitation,
+  deriveSessionId,
+  formatCitation,
+  hasCitation,
+  parseAllCitations,
+  parseCitation,
+  stripCitation,
+  type CitationContext,
+  type ParsedCitation,
+} from "./source-attribution.js";
+
+// ---------------------------------------------------------------------------
 // Search backends
 // ---------------------------------------------------------------------------
 
