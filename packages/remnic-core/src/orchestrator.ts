@@ -8509,14 +8509,28 @@ export class Orchestrator {
                   enabled: true,
                   useCallerTimestamp: true,
                 });
+                // Active matching fact exists — normal short-circuit is safe.
+                return;
               }
+              // No active same-entity shared fact found with this content hash.
+              // This can happen when the previously-written shared fact has since
+              // been superseded (e.g. Austin → NYC → Austin reversion): the hash
+              // index still records the hash but the fact is no longer active.
+              // Fall through to the write path below so a new active shared
+              // memory is created, then supersession fires post-write as usual.
+              log.debug(
+                `persistExtraction: hash-dedup found no active same-entity shared fact for ${options.sourceMemoryId}; falling through to write`,
+              );
             } catch (hashDedupSupersessionErr) {
               log.warn(
                 `persistExtraction: shared-namespace supersession on hash-dedup path failed open for ${options.sourceMemoryId}: ${hashDedupSupersessionErr}`,
               );
             }
+          } else {
+            // temporalSupersessionEnabled is off or no entity/attributes — keep
+            // the original short-circuit behaviour.
+            return;
           }
-          return;
         }
         const promotedId = await sharedStorage.writeMemory(
           options.category as any,

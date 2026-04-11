@@ -63,6 +63,27 @@ async function readFrontmatterById(
   return mems.find((m) => m.frontmatter.id === id)?.frontmatter ?? null;
 }
 
+test("normalizeSupersessionKey: symmetric hyphen and whitespace normalization", () => {
+  // All of these must produce the same canonical key "foo-bar".
+  // Regression for round-5 review thread: hyphens and whitespace were not
+  // treated symmetrically — "foo - bar" (space-hyphen-space) produced
+  // "foo---bar" instead of "foo-bar".
+  const canonical = "foo-bar";
+  assert.equal(normalizeSupersessionKey("foo bar"), canonical, '"foo bar" (space)');
+  assert.equal(normalizeSupersessionKey("foo-bar"), canonical, '"foo-bar" (hyphen)');
+  assert.equal(normalizeSupersessionKey("foo - bar"), canonical, '"foo - bar" (space-hyphen-space)');
+  assert.equal(normalizeSupersessionKey("foo  bar"), canonical, '"foo  bar" (double space)');
+  assert.equal(normalizeSupersessionKey("-foo-bar-"), canonical, '"-foo-bar-" (leading/trailing hyphens)');
+  assert.equal(normalizeSupersessionKey(" foo bar "), canonical, '" foo bar " (surrounding whitespace)');
+  // Single word — no separators, just casing.
+  assert.equal(normalizeSupersessionKey("City"), "city");
+  assert.equal(normalizeSupersessionKey("  City  "), "city");
+  // Mixed case with hyphens.
+  assert.equal(normalizeSupersessionKey("Job-Title"), "job-title");
+  assert.equal(normalizeSupersessionKey("Job Title"), "job-title");
+  assert.equal(normalizeSupersessionKey("Job - Title"), "job-title");
+});
+
 test("computeSupersessionKey normalizes entity + attribute", () => {
   assert.equal(
     computeSupersessionKey("Project X", "City"),
@@ -71,6 +92,11 @@ test("computeSupersessionKey normalizes entity + attribute", () => {
   assert.equal(
     computeSupersessionKey("  project-x ", "  city "),
     "project-x::city",
+  );
+  // Hyphen-space-hyphen in attribute name collapses to single hyphen.
+  assert.equal(
+    computeSupersessionKey("entity", "job - title"),
+    "entity::job-title",
   );
   assert.equal(computeSupersessionKey(undefined, "city"), null);
   assert.equal(computeSupersessionKey("entity", ""), null);

@@ -20,15 +20,23 @@ import { log } from "./logger.js";
  * Shared normalization for supersession key components.
  *
  * Trims surrounding whitespace, lowercases, then collapses any run of
- * internal whitespace to a single hyphen.  Both `computeSupersessionKey`
- * and `lookupAttributeByNormalizedKey` must use this so that keys produced
- * at write time and keys used at lookup time are identical regardless of
- * how the LLM encoded whitespace or casing (Finding B fix).
+ * whitespace OR hyphens to a single hyphen, and strips any leading/trailing
+ * hyphens that result.  Both `computeSupersessionKey` and
+ * `lookupAttributeByNormalizedKey` must use this so that keys produced at
+ * write time and keys used at lookup time are identical regardless of how
+ * the LLM encoded whitespace, hyphens, or casing (Finding B fix).
+ *
+ * Symmetry guarantee: `"foo bar"`, `"foo-bar"`, `"foo - bar"`, and
+ * `"foo  bar"` all canonicalize to `"foo-bar"`.
  *
  * Exported so external tests can verify the canonical form.
  */
 export function normalizeSupersessionKey(raw: string): string {
-  return raw.trim().toLowerCase().replace(/\s+/g, "-");
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s\-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /**
