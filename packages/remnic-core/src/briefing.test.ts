@@ -207,7 +207,13 @@ test("eventFallsOnDate: Z-suffixed UTC time compares against UTC date", () => {
 
 function makeMemoryWithStatus(
   updated: string,
-  status?: "active" | "superseded" | "archived" | "pending_review",
+  status?:
+    | "active"
+    | "superseded"
+    | "archived"
+    | "pending_review"
+    | "rejected"
+    | "quarantined",
 ): MemoryFile {
   return {
     path: "/synthetic/mem.md",
@@ -242,6 +248,30 @@ test("filterMemoriesByWindow: archived memory within window is excluded", () => 
   const archived = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "archived");
   const result = filterMemoriesByWindow([archived], window);
   assert.equal(result.length, 0, "archived memory must be excluded from briefing");
+});
+
+test("filterMemoriesByWindow: rejected memory within window is excluded from briefing", () => {
+  // Governance/disposition workflows mark unsafe or invalid memories as
+  // `rejected`. filterMemoriesByWindow must NOT leak them into briefings or
+  // downstream follow-up generation, since they represent content explicitly
+  // flagged as not-actionable.
+  const window = makeWindow("2026-04-10T00:00:00.000Z", "2026-04-11T00:00:00.000Z");
+  const rejected = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "rejected");
+  const active = makeMemoryWithStatus("2026-04-10T11:00:00.000Z", "active");
+  const result = filterMemoriesByWindow([rejected, active], window);
+  assert.equal(result.length, 1, "rejected memory must be excluded from briefing");
+  assert.equal(result[0]!.frontmatter.status, "active");
+});
+
+test("filterMemoriesByWindow: quarantined memory within window is excluded from briefing", () => {
+  // Quarantined memories have been flagged as unsafe by governance review.
+  // They must not surface in the briefing, even within the time window.
+  const window = makeWindow("2026-04-10T00:00:00.000Z", "2026-04-11T00:00:00.000Z");
+  const quarantined = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "quarantined");
+  const active = makeMemoryWithStatus("2026-04-10T11:00:00.000Z", "active");
+  const result = filterMemoriesByWindow([quarantined, active], window);
+  assert.equal(result.length, 1, "quarantined memory must be excluded from briefing");
+  assert.equal(result[0]!.frontmatter.status, "active");
 });
 
 test("filterMemoriesByWindow: active and undefined-status memories within window are included", () => {

@@ -688,12 +688,26 @@ export function filterMemoriesByWindow(memories: MemoryFile[], window: ParsedBri
   const fromMs = window.from.getTime();
   const toMs = window.to.getTime();
   return memories.filter((m) => {
-    // Exclude only explicitly retired statuses (superseded, archived) so that
-    // commitments overridden within the window don't appear as open.
-    // pending_review memories are awaiting human review — not invalidated —
+    // Exclude explicitly retired statuses so commitments overridden within the
+    // window don't appear as open. In addition to `superseded` / `archived`
+    // (temporal retirement), also exclude `rejected` and `quarantined`, which
+    // come from governance/disposition workflows: those memories have been
+    // explicitly marked unsafe or invalid and must NOT flow into active
+    // threads, open commitments, or follow-up generation, even if they
+    // fall within the briefing window. Surfacing them would reintroduce
+    // quarantined content into downstream automation as actionable context.
+    //
+    // `pending_review` memories are awaiting human review — not invalidated —
     // and must be included so reviewers see them in the briefing.
     const status = m.frontmatter.status;
-    if (status === "superseded" || status === "archived") return false;
+    if (
+      status === "superseded" ||
+      status === "archived" ||
+      status === "rejected" ||
+      status === "quarantined"
+    ) {
+      return false;
+    }
     const ts = memoryTimestamp(m);
     return ts >= fromMs && ts < toMs;
   });
