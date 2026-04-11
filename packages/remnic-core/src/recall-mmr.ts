@@ -516,9 +516,21 @@ export function reorderRecallResultsWithMmr<R extends MmrRecallResult>(
     return { reordered: [], diversity: emptyReport, lambda };
   }
   if (results.length < 2) {
+    // Single-element input: MMR is a trivial no-op but the diversity report
+    // must still reflect the real pool size so external callers see
+    // `considered=1 kept=1` rather than the `0/0` sentinel used for the
+    // empty case. This is also the exact path the orchestrator short-circuits
+    // past, but the helper is a public export and external callers cannot
+    // rely on that invariant.
     return {
       reordered: [results[0]!],
-      diversity: emptyReport,
+      diversity: {
+        considered: 1,
+        kept: 1,
+        headReorderCount: 0,
+        avgPairwiseSimBefore: 0,
+        avgPairwiseSimAfter: 0,
+      },
       lambda,
     };
   }

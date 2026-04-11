@@ -691,6 +691,26 @@ test(
 );
 
 // ---------------------------------------------------------------------------
+// Regression: single-element input must report considered=1 kept=1, not the
+// 0/0 sentinel meant for the empty case.
+// (Cursor Bugbot Low-severity review comment on PR #391)
+// ---------------------------------------------------------------------------
+
+test(
+  "reorderRecallResultsWithMmr reports considered=1 kept=1 for single-element input",
+  () => {
+    const results: MmrRecallResult[] = [
+      { docid: "only", path: "p/only", snippet: "sole result", score: 0.9 },
+    ];
+    const { reordered, diversity } = reorderRecallResultsWithMmr(results);
+    assert.equal(reordered.length, 1);
+    assert.equal(diversity.considered, 1);
+    assert.equal(diversity.kept, 1);
+    assert.equal(diversity.headReorderCount, 0);
+  },
+);
+
+// ---------------------------------------------------------------------------
 // Regression: diversity metric must detect head swaps even when two results
 // share the same base key (path or docid). Previously the reordered-side
 // candidate ids were rebuilt with the *post-MMR* position index, so the
