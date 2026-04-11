@@ -186,12 +186,20 @@ export async function applyTemporalSupersession(args: {
   });
   if (newKeys.length === 0) return empty;
 
-  let memories: MemoryFile[];
+  let hotMemories: MemoryFile[];
   try {
-    memories = await args.storage.readAllMemories();
+    hotMemories = await args.storage.readAllMemories();
   } catch (err) {
     log.warn(`temporal-supersession: readAllMemories failed: ${err}`);
     return empty;
+  }
+
+  let coldMemories: MemoryFile[];
+  try {
+    coldMemories = await args.storage.readAllColdMemories();
+  } catch (err) {
+    log.warn(`temporal-supersession: readAllColdMemories failed: ${err}`);
+    coldMemories = [];
   }
 
   // Finding 1 fix: use the on-disk `frontmatter.created` of the newly-written
@@ -199,14 +207,30 @@ export async function applyTemporalSupersession(args: {
   // returns.  In concurrent writers the two can differ by enough to cause
   // wrong-direction supersession.  If the memory is not yet visible in the
   // cache (edge case during fast concurrent writes) fall back to args.createdAt.
-  const newMemoryFile = memories.find((m) => m.frontmatter.id === args.newMemoryId);
+  const newMemoryFile = hotMemories.find((m) => m.frontmatter.id === args.newMemoryId);
   const persistedCreatedAt = newMemoryFile?.frontmatter.created ?? args.createdAt;
 
   const supersededIds: string[] = [];
   const matchedKeys = new Set<string>();
 
-  for (const memory of memories) {
+  // Process hot then cold.  Hot-then-cold ordering is safer because hot
+  // writes are more frequent and the CAS re-read guards against double-writes.
+  // A Set<string> of already-processed paths ensures that a memory visible in
+  // both tiers (shouldn't happen, but possible during a migration race) is
+  // processed at most once.
+  const processedPaths = new Set<string>();
+
+  // Combine hot and cold memories into a single scan.  New memory itself is
+  // excluded inline.  We do NOT skip cold scan when hot produced zero
+  // supersessions — the P1 finding is precisely that stale cold facts leak
+  // when hot has no hits.
+  const allCandidates: MemoryFile[] = [...hotMemories, ...coldMemories];
+
+  for (const memory of allCandidates) {
     if (memory.frontmatter.id === args.newMemoryId) continue;
+    if (processedPaths.has(memory.path)) continue;
+    processedPaths.add(memory.path);
+
     const decision = shouldSupersedeExisting({
       candidate: memory.frontmatter,
       newEntityRef: args.entityRef,
@@ -227,6 +251,7 @@ export async function applyTemporalSupersession(args: {
       //   2. verify status is still "active" and no `supersededBy` is set
       //   3. only then issue the write
       // If the re-read shows a newer concurrent writer beat us to it, skip.
+      // This CAS pattern applies equally to hot and cold tier candidates.
       const fresh = await args.storage.readMemoryByPath(memory.path);
       if (!fresh) {
         log.debug(
@@ -250,6 +275,7 @@ export async function applyTemporalSupersession(args: {
       // persisted `created` (T_old), we'd be writing a nonsensical
       // `supersededAt` that precedes the old memory's own creation.  Clamp to
       // the monotonic maximum so time only moves forward.
+      // This monotonic clamp is applied for both hot and cold tier writes.
       const oldCreatedMs = new Date(fresh.frontmatter.created).getTime();
       const newCreatedMs = new Date(persistedCreatedAt).getTime();
       const argCreatedMs = new Date(args.createdAt).getTime();

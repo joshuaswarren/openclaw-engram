@@ -1662,6 +1662,45 @@ export class StorageManager {
   }
 
   /**
+   * Read all memories from the cold tier (baseDir/cold/facts/ and
+   * baseDir/cold/corrections/).  Mirrors the hot-tier scan done by
+   * readAllMemories() but targets the cold directory tree.
+   *
+   * Used by applyTemporalSupersession so that memories already demoted to
+   * cold/ can still be marked superseded when a newer hot fact arrives.
+   * Not cached — cold scans are infrequent (one per supersession write) and
+   * caching would add complexity for a path that is rarely called.
+   */
+  async readAllColdMemories(): Promise<MemoryFile[]> {
+    const coldRoot = this.resolveTierRootDir("cold");
+    const filePaths: string[] = [];
+
+    const collectPaths = async (dir: string) => {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        const subdirs: string[] = [];
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            subdirs.push(fullPath);
+          } else if (entry.name.endsWith(".md")) {
+            filePaths.push(fullPath);
+          }
+        }
+        for (const subdir of subdirs) {
+          await collectPaths(subdir);
+        }
+      } catch {
+        // Directory does not exist yet — cold tier may be empty.
+      }
+    };
+
+    await collectPaths(path.join(coldRoot, "facts"));
+    await collectPaths(path.join(coldRoot, "corrections"));
+    return this.readParsedMemoriesFromPaths(filePaths, 50);
+  }
+
+  /**
    * Read archived memory markdown files under archive/.
    * Used by long-term recall fallback when hot recall has no hits.
    */

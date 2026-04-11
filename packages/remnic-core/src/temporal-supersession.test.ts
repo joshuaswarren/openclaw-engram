@@ -1004,3 +1004,216 @@ test("shouldFilterSupersededFromRecall: filters superseded regardless of lifecyc
     "archived (non-superseded) memory must not be filtered by supersession filter",
   );
 });
+
+// ─── Regression: P1 finding PRRT_kwDORJXyws56UBxt — cold-tier scan ───────────
+//
+// applyTemporalSupersession previously only scanned the hot tier via
+// readAllMemories().  Memories already demoted to cold/ were never marked
+// superseded, so cold fallback retrieval could surface stale truths when hot
+// had no hits.
+
+/**
+ * Migrate a memory to the cold tier and return its new path.
+ * Used only in cold-tier supersession regression tests.
+ */
+async function migrateFactToCold(
+  storage: StorageManager,
+  id: string,
+): Promise<string> {
+  storage.invalidateAllMemoriesCacheForDir();
+  const mems = await storage.readAllMemories();
+  const mem = mems.find((m) => m.frontmatter.id === id);
+  assert.ok(mem, `memory ${id} not found for cold migration`);
+  const { targetPath } = await storage.migrateMemoryToTier(mem!, "cold");
+  storage.invalidateAllMemoriesCacheForDir();
+  return targetPath;
+}
+
+test("applyTemporalSupersession: cold-tier memory with same key is marked superseded", async () => {
+  // A memory is written to hot, then demoted to cold/.  A newer hot fact
+  // arrives for the same entity+attribute.  The cold memory must be marked
+  // superseded — the bug left it active because the scan never looked in cold/.
+  const { storage, cleanup } = await makeStorage("engram-cold-supersession-basic-");
+  try {
+    // Write old cold fact (city = Austin).
+    const oldId = await writeFact(storage, "entity lives in Austin", TEST_ENTITY, { city: "Austin" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const coldPath = await migrateFactToCold(storage, oldId);
+
+    // Write new hot fact (city = NYC) — strictly newer.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const newId = await writeFact(storage, "entity moved to NYC", TEST_ENTITY, { city: "NYC" });
+
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: newId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },
+      createdAt: new Date().toISOString(),
+      enabled: true,
+    });
+
+    assert.deepEqual(result.supersededIds, [oldId], "cold-tier memory should be superseded");
+    assert.deepEqual(result.matchedKeys, [`${TEST_ENTITY}::city`]);
+
+    // Verify the written frontmatter on disk in the cold directory.
+    const coldMem = await storage.readMemoryByPath(coldPath);
+    assert.ok(coldMem, "cold memory file must still exist");
+    assert.equal(coldMem!.frontmatter.status, "superseded", "cold memory status must be superseded");
+    assert.equal(coldMem!.frontmatter.supersededBy, newId, "cold memory must link to new hot memory");
+    assert.ok(coldMem!.frontmatter.supersededAt, "cold memory must have supersededAt timestamp");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("applyTemporalSupersession: cold-tier memory with different key is left unchanged", async () => {
+  // A cold memory with a different attribute (tool) must NOT be superseded
+  // when the new hot fact only covers city.
+  const { storage, cleanup } = await makeStorage("engram-cold-supersession-diffkey-");
+  try {
+    const unrelatedId = await writeFact(
+      storage,
+      "entity uses vim",
+      TEST_ENTITY,
+      { tool: "vim" },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const coldPath = await migrateFactToCold(storage, unrelatedId);
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const newId = await writeFact(storage, "entity moved to NYC", TEST_ENTITY, { city: "NYC" });
+
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: newId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },
+      createdAt: new Date().toISOString(),
+      enabled: true,
+    });
+
+    assert.deepEqual(result.supersededIds, [], "unrelated cold-tier memory must not be superseded");
+
+    const coldMem = await storage.readMemoryByPath(coldPath);
+    assert.ok(coldMem, "cold memory file must still exist");
+    assert.equal(coldMem!.frontmatter.status ?? "active", "active", "unrelated cold memory must remain active");
+  } finally {
+    await cleanup();
+  }
+});
+
+test("applyTemporalSupersession: both hot and cold memories sharing a key are processed; no double-processing", async () => {
+  // Hot memory (city=Austin, older) and cold memory (city=Dallas, older) both
+  // share the city key.  After the run, both must be superseded and neither
+  // should be processed twice (dedup by path).
+  const { storage, cleanup } = await makeStorage("engram-cold-supersession-both-");
+  try {
+    // Write hot old fact (city = Austin).
+    const hotOldId = await writeFact(storage, "entity in Austin", TEST_ENTITY, { city: "Austin" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // Write another old fact (city = Dallas) and demote to cold.
+    const coldOldId = await writeFact(storage, "entity in Dallas", TEST_ENTITY, { city: "Dallas" });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const coldPath = await migrateFactToCold(storage, coldOldId);
+
+    // Write new hot fact (city = NYC) — strictly newer than both.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const newId = await writeFact(storage, "entity moved to NYC", TEST_ENTITY, { city: "NYC" });
+
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: newId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },
+      createdAt: new Date().toISOString(),
+      enabled: true,
+    });
+
+    // Both old memories (hot + cold) must be superseded.
+    const sortedIds = [...result.supersededIds].sort();
+    assert.deepEqual(sortedIds, [coldOldId, hotOldId].sort(), "both hot and cold memories must be superseded");
+    assert.deepEqual(result.matchedKeys, [`${TEST_ENTITY}::city`]);
+
+    // Verify cold memory on disk.
+    const coldMem = await storage.readMemoryByPath(coldPath);
+    assert.ok(coldMem, "cold memory file must still exist");
+    assert.equal(coldMem!.frontmatter.status, "superseded");
+    assert.equal(coldMem!.frontmatter.supersededBy, newId);
+  } finally {
+    await cleanup();
+  }
+});
+
+test("applyTemporalSupersession: cold-tier writes use CAS re-read and monotonic supersededAt", async () => {
+  // CAS regression for cold tier: supersededAt must be the monotonic max of
+  // (cold.created, hot.created, args.createdAt) — same guarantee as hot tier.
+  const { storage, cleanup } = await makeStorage("engram-cold-supersession-cas-");
+  try {
+    const tCold = "2026-04-11T10:00:00.000Z";
+    const tNew  = "2026-04-11T12:00:00.000Z";
+    const staleWallClock = "2026-04-11T09:00:00.000Z"; // earlier than tCold
+
+    // Write old fact and patch its created to tCold, then demote to cold.
+    const coldOldId = await writeFact(storage, "entity in Austin", TEST_ENTITY, { city: "Austin" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const coldOldMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === coldOldId);
+    assert.ok(coldOldMem);
+    await storage.writeMemoryFrontmatter(coldOldMem!, { created: tCold, updated: tCold });
+    storage.invalidateAllMemoriesCacheForDir();
+    // Re-read after the frontmatter patch before migrating.
+    const coldOldMemPatched = (await storage.readAllMemories()).find((m) => m.frontmatter.id === coldOldId);
+    assert.ok(coldOldMemPatched);
+    const coldPath = await migrateFactToCold(storage, coldOldId);
+
+    // Write new hot fact and patch its created to tNew (> tCold).
+    const newId = await writeFact(storage, "entity moved to NYC", TEST_ENTITY, { city: "NYC" });
+    storage.invalidateAllMemoriesCacheForDir();
+    const newMem = (await storage.readAllMemories()).find((m) => m.frontmatter.id === newId);
+    assert.ok(newMem);
+    await storage.writeMemoryFrontmatter(newMem!, { created: tNew, updated: tNew });
+
+    storage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage,
+      newMemoryId: newId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },
+      createdAt: staleWallClock, // stale — earlier than both persisted timestamps
+      enabled: true,
+    });
+
+    assert.deepEqual(result.supersededIds, [coldOldId], "cold-tier memory should be superseded");
+
+    const coldMem = await storage.readMemoryByPath(coldPath);
+    assert.ok(coldMem, "cold memory file must still exist");
+    assert.equal(coldMem!.frontmatter.status, "superseded");
+    assert.equal(coldMem!.frontmatter.supersededBy, newId);
+
+    // supersededAt must be the monotonic max (tNew) — not the stale wall clock.
+    assert.equal(
+      coldMem!.frontmatter.supersededAt,
+      tNew,
+      "supersededAt for cold-tier write must be the monotonic max of (cold.created, hot.created, args.createdAt)",
+    );
+    assert.equal(
+      coldMem!.frontmatter.updated,
+      tNew,
+      "updated for cold-tier write must match supersededAt",
+    );
+
+    // Sanity: supersededAt must not predate cold.created.
+    const coldCreatedMs = new Date(tCold).getTime();
+    const supersededAtMs = new Date(coldMem!.frontmatter.supersededAt!).getTime();
+    assert.ok(
+      supersededAtMs >= coldCreatedMs,
+      `supersededAt (${coldMem!.frontmatter.supersededAt}) must not predate cold.created (${tCold})`,
+    );
+  } finally {
+    await cleanup();
+  }
+});
