@@ -566,13 +566,23 @@ export function installConnector(options: InstallOptions): InstallResult {
   //   a) token gen is always safe and idempotent
   //   b) several connectors (replit, hermes) need it to avoid 401s
   //   c) any connector that doesn't use token auth simply ignores the entry
-  const tokenEntry = generateToken(options.connectorId);
+  //
+  // Token write errors (e.g. read-only HOME with writable XDG_CONFIG_HOME)
+  // are non-fatal: we degrade gracefully and proceed with the connector
+  // config write rather than aborting the whole install.
+  let tokenEntry: ReturnType<typeof generateToken> | null = null;
+  try {
+    tokenEntry = generateToken(options.connectorId);
+  } catch {
+    // Non-fatal: token store unavailable. Connector config will still be
+    // written; user can run `remnic token generate <id>` to create the token.
+  }
 
   // Build config from schema defaults + user overrides
   const resolvedConfig: Record<string, unknown> = {
     connectorId: options.connectorId,
     installedAt: new Date().toISOString(),
-    token: tokenEntry.token,
+    ...(tokenEntry ? { token: tokenEntry.token } : {}),
     ...options.config,
   };
   fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
@@ -588,7 +598,7 @@ export function installConnector(options: InstallOptions): InstallResult {
       profile,
       host,
       port,
-      token: tokenEntry.token,
+      token: tokenEntry?.token ?? "",
     });
     if (yamlResult.updated) {
       notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
@@ -862,18 +872,39 @@ export function removeHermesConfig(opts: { profile: string }): HermesConfigResul
  * Returns true if the daemon responds with HTTP 200, false otherwise.
  * Uses child_process.spawnSync to run a one-liner Node script so that the
  * existing synchronous installConnector() flow does not need to become async.
+ *
+ * Port and host are passed via environment variables — NOT interpolated into
+ * the script string — to prevent injection from user-supplied config values.
  */
 function checkDaemonHealth(host: string, port: number): boolean {
   try {
+    // Validate port: must be an integer in [1, 65535].
+    // This guards against user config supplying a non-numeric string.
+    const safePort = Math.trunc(Number(port));
+    if (!Number.isFinite(safePort) || safePort < 1 || safePort > 65535) {
+      return false;
+    }
+    // Data (host and port) are passed via env vars, never interpolated into the
+    // script string, preventing any code-injection from malformed config values.
     const script = [
       "const http = require('http');",
-      `const req = http.get({host:${JSON.stringify(host)},port:${port},path:'/engram/v1/health',timeout:3000}, (res) => {`,
-      "  process.exit(res.statusCode === 200 ? 0 : 1);",
-      "});",
+      "const req = http.get({",
+      "  host: process.env.REMNIC_HEALTH_HOST,",
+      "  port: parseInt(process.env.REMNIC_HEALTH_PORT, 10),",
+      "  path: '/engram/v1/health',",
+      "  timeout: 3000,",
+      "}, (res) => { process.exit(res.statusCode === 200 ? 0 : 1); });",
       "req.on('error', () => process.exit(1));",
       "req.on('timeout', () => { req.destroy(); process.exit(1); });",
     ].join("\n");
-    const result = spawnSync(process.execPath, ["-e", script], { timeout: 4000 });
+    const result = spawnSync(process.execPath, ["-e", script], {
+      timeout: 4000,
+      env: {
+        ...process.env,
+        REMNIC_HEALTH_HOST: host,
+        REMNIC_HEALTH_PORT: String(safePort),
+      },
+    });
     return result.status === 0;
   } catch {
     return false;
