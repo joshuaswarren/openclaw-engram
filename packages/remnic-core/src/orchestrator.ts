@@ -8433,9 +8433,25 @@ export class Orchestrator {
         const sharedStorage = await this.storageRouter.storageFor(
           this.config.sharedNamespace,
         );
+        // PR #402 round-6 (Fix #2 / chatgpt-codex P1 PRRT_kwDORJXyws56U74n):
+        // Compute the enriched content before the hash-dedup check so the lookup
+        // uses the same content that writeMemory will actually store.  When
+        // structuredAttributes are present, writeMemory appends an
+        // "[Attributes: ...]" suffix before hashing; hasFactContentHash must
+        // receive the same enriched body or the check is against a different hash
+        // and dedup fails to fire (letting duplicates through) or fires when it
+        // shouldn't (collapsing memories with different enrichments).
+        const dedupContent =
+          options.category === "fact" &&
+          options.structuredAttributes &&
+          Object.keys(options.structuredAttributes).length > 0
+            ? `${options.content}\n[Attributes: ${Object.entries(options.structuredAttributes)
+                .map(([k, v]) => `${k}: ${v}`)
+                .join("; ")}]`
+            : options.content;
         if (
           options.category === "fact" &&
-          (await sharedStorage.hasFactContentHash(options.content))
+          (await sharedStorage.hasFactContentHash(dedupContent))
         ) {
           // Uj6H fix: shared-namespace temporal supersession must also run when
           // the hash-dedup short-circuit fires.  Without this, an existing shared
@@ -8458,11 +8474,11 @@ export class Orchestrator {
               const normalizedIncoming = ContentHashIndex.normalizeContent(options.content);
               const allShared = await sharedStorage.readAllMemories();
               // Strip the appended `[Attributes: ...]` enrichment suffix before
-              // comparing so that facts stored with or without the suffix are
-              // found correctly.  The suffix is appended by writeMemory when
-              // structuredAttributes are present, but hasFactContentHash hashes
-              // only the raw (non-enriched) content — so the matching must strip
-              // the enrichment to obtain the same normalized base.
+              // comparing so that the normalized base content matches the incoming
+              // raw content.  The suffix was appended by writeMemory when
+              // structuredAttributes were present; we strip it here to recover the
+              // raw body so that normalizeContent comparison is stable regardless
+              // of which enrichment the stored fact carries.
               // PR #402 round-12 (Finding Uybg): restrict hash-dedup matching to
               // the SAME entity.  Content-hash equality alone can collide across
               // entities when two entities share identical fact text.  Using an
@@ -8525,6 +8541,13 @@ export class Orchestrator {
               log.warn(
                 `persistExtraction: shared-namespace supersession on hash-dedup path failed open for ${options.sourceMemoryId}: ${hashDedupSupersessionErr}`,
               );
+              // PR #402 round-6 (Fix #1 / cursor Medium PRRT_kwDORJXyws56U7Qa):
+              // A matching shared fact was found (matchingFact is set) — even if
+              // supersession threw, we must NOT fall through to writeMemory.
+              // Falling through would create a duplicate shared entry for content
+              // that is already present.  Fail open by skipping the write; the
+              // existing fact remains active and no duplicate is created.
+              return;
             }
           } else {
             // temporalSupersessionEnabled is off or no entity/attributes — keep

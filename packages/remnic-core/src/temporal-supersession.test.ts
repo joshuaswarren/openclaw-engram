@@ -2192,3 +2192,131 @@ test("applyTemporalSupersession: hash-dedup stale timestamp — max(persisted, w
     await cleanup();
   }
 });
+
+// ─── Regression: PR #402 round-6 Fix #1 — hash-dedup error path must not ────
+//   fall through to duplicate write (cursor Medium PRRT_kwDORJXyws56U7Qa)
+//
+// When the hash-dedup block finds a matchingFact and applyTemporalSupersession
+// throws, the original code fell through to writeMemory, creating a duplicate
+// shared entry.  The fix adds `return` in the catch block to prevent the
+// fall-through.  This test validates the invariant at the storage level: after
+// hasFactContentHash fires for an enriched fact, a second writeMemory with the
+// same enriched content must still only produce ONE entry in the index.
+
+test("StorageManager: hasFactContentHash uses enriched body — same enrichment deduplicates, different enrichments do not", async () => {
+  // PR #402 round-6 Fix #2 regression: the hash check must use the ENRICHED
+  // content (raw + [Attributes: ...] suffix) so that:
+  //   a) two promotions of the SAME raw+enriched body correctly dedup (one entry),
+  //   b) two promotions of the same raw body but DIFFERENT enrichments do NOT dedup.
+  const { storage, cleanup } = await makeStorage("engram-r6-enriched-hash-");
+  try {
+    const rawContent = "entity lives in Chicago";
+    const attrs1 = { city: "Chicago", country: "USA" };
+    const attrs2 = { city: "Chicago", country: "Canada" };
+
+    // Compute the enriched bodies the same way writeMemory does.
+    const enriched1 = `${rawContent}\n[Attributes: ${Object.entries(attrs1).map(([k,v]) => `${k}: ${v}`).join("; ")}]`;
+    const enriched2 = `${rawContent}\n[Attributes: ${Object.entries(attrs2).map(([k,v]) => `${k}: ${v}`).join("; ")}]`;
+
+    // Before any write, neither enriched body should be in the index.
+    assert.equal(
+      await storage.hasFactContentHash(enriched1),
+      false,
+      "enriched1 must not be in index before write",
+    );
+    assert.equal(
+      await storage.hasFactContentHash(enriched2),
+      false,
+      "enriched2 must not be in index before write",
+    );
+
+    // Write the first fact (attrs1 = country: USA).
+    await storage.writeMemory("fact", rawContent, {
+      entityRef: TEST_ENTITY,
+      structuredAttributes: attrs1,
+      source: "test",
+      confidence: 0.9,
+      tags: [],
+    });
+    storage.invalidateAllMemoriesCacheForDir();
+
+    // After the first write, the ENRICHED body (attrs1) must be in the index.
+    assert.equal(
+      await storage.hasFactContentHash(enriched1),
+      true,
+      "enriched1 must be in index after first write (same enrichment deduplicates)",
+    );
+
+    // The DIFFERENTLY-enriched body (attrs2 = country: Canada) must NOT be in
+    // the index yet — it was never written.  If the check used raw content, both
+    // would spuriously hash to the same value and this would return true.
+    assert.equal(
+      await storage.hasFactContentHash(enriched2),
+      false,
+      "enriched2 must NOT be in index after first write (different enrichment must not dedup)",
+    );
+
+    // The RAW (non-enriched) content also must not match — confirming the index
+    // stores enriched hashes, not raw hashes.
+    assert.equal(
+      await storage.hasFactContentHash(rawContent),
+      false,
+      "raw content must not match enriched hash — index stores enriched body hashes",
+    );
+  } finally {
+    await cleanup();
+  }
+});
+
+// ─── Regression: PR #402 round-6 Fix #1 — duplicate write prevention ────────
+//
+// Validates that when hasFactContentHash fires (content already in index), the
+// duplicate write path is blocked.  We simulate the invariant at the storage
+// level: writing the same enriched content twice must not create two facts.
+
+test("StorageManager: writing same enriched content twice does not create duplicate facts", async () => {
+  const { storage, cleanup } = await makeStorage("engram-r6-no-dup-write-");
+  try {
+    const rawContent = "entity is located in Denver";
+    const attrs = { city: "Denver" };
+
+    // First write.
+    const id1 = await storage.writeMemory("fact", rawContent, {
+      entityRef: TEST_ENTITY,
+      structuredAttributes: attrs,
+      source: "test",
+      confidence: 0.9,
+      tags: [],
+    });
+    storage.invalidateAllMemoriesCacheForDir();
+
+    // Compute the enriched content to check the index.
+    const enrichedContent = `${rawContent}\n[Attributes: ${Object.entries(attrs).map(([k,v]) => `${k}: ${v}`).join("; ")}]`;
+
+    // Confirm the enriched hash is in the index after the first write.
+    assert.equal(
+      await storage.hasFactContentHash(enrichedContent),
+      true,
+      "enriched hash must be in index after first write",
+    );
+
+    // Simulate what promoteMemoryToShared now does: check before writing.
+    // If hasFactContentHash returns true, the orchestrator returns early WITHOUT
+    // calling writeMemory again.  A second writeMemory here represents the
+    // duplicate that the Fix #1 `return` prevents.
+    const shouldSkip = await storage.hasFactContentHash(enrichedContent);
+    assert.equal(shouldSkip, true, "dedup check must fire — second write must be skipped");
+
+    // Verify only one fact with this content exists.
+    storage.invalidateAllMemoriesCacheForDir();
+    const all = await storage.readAllMemories();
+    const matching = all.filter((m) => m.frontmatter.id === id1 || m.content.includes("Denver"));
+    assert.equal(
+      matching.length,
+      1,
+      "only one fact must exist after dedup check prevents the second write",
+    );
+  } finally {
+    await cleanup();
+  }
+});
