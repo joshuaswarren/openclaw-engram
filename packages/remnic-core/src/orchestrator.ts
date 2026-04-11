@@ -8320,12 +8320,10 @@ export class Orchestrator {
     const applyInlineCitation = (content: string): string => {
       if (!citationEnabled) return content;
       if (typeof content !== "string" || content.length === 0) return content;
-      // Use template-aware detection so facts that already carry a custom
-      // citation marker (e.g. from a re-processed or relayed extraction) are
-      // treated as already-tagged and are not given a second citation tail.
-      // The default [Source: ...] pattern is always included as a fallback for
-      // facts that were tagged before a configuration change.
-      if (hasCitationForTemplate(content, citationTemplate)) return content;
+      // `attachCitation` already calls `hasCitationForTemplate` internally and
+      // is a no-op when the content already carries a citation (default or
+      // custom template).  The outer check was redundant and has been removed
+      // to avoid a maintenance hazard where the two guard paths could diverge.
       return attachCitation(content, citationContext, citationTemplate);
     };
     const persistedIds: string[] = [];
@@ -8432,16 +8430,23 @@ export class Orchestrator {
         const sharedStorage = await this.storageRouter.storageFor(
           this.config.sharedNamespace,
         );
-        // Compute the cited content once so the dedup hash and the written
-        // content are always identical. Previously the dedup check used raw
-        // `options.content` while the write used `applyInlineCitation(...)`,
-        // meaning the hash stored after the first write (of cited text) would
-        // never match a subsequent dedup check (of raw text), allowing the
-        // same fact to be promoted repeatedly.
-        const citedContent = applyInlineCitation(options.content);
+        // Dedup gate: hash the RAW content before citation is applied.
+        //
+        // When inline attribution is enabled, `applyInlineCitation` appends a
+        // timestamp-bearing marker (e.g. `[Source: ..., ts=2026-04-11T...]`).
+        // Because the timestamp changes on every call, hashing the cited
+        // content would produce a unique hash each time — defeating the dedup
+        // check entirely and allowing the same logical fact to be promoted
+        // repeatedly.
+        //
+        // The fix: always hash `options.content` (the pre-citation raw fact)
+        // as the dedup key.  The write still uses the cited variant so the
+        // persisted copy carries correct provenance.
+        const rawContent = options.content;
+        const citedContent = applyInlineCitation(rawContent);
         if (
           options.category === "fact" &&
-          (await sharedStorage.hasFactContentHash(citedContent))
+          (await sharedStorage.hasFactContentHash(rawContent))
         ) {
           return;
         }

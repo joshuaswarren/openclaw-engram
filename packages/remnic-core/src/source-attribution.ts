@@ -137,19 +137,47 @@ function escapeRegExp(s: string): string {
  * This is robust for any bracket-delimited format like `[Source: ...]`,
  * `[src:...]`, `(prov: ...)`, etc.
  *
- * Returns `null` when the template has no placeholders and therefore produces
- * a fully-literal citation string (handled by the prefix-equality fast path in
- * {@link hasCitationForTemplate}).
+ * Edge-case — placeholder-bounded templates (e.g. `"{source}: {content}"` or
+ * `"{source}"`): when both the prefix and suffix are empty strings the naive
+ * `"" + [^\n]*? + ""` regex matches ANY non-empty string, making
+ * `hasCitationForTemplate` treat everything as already-tagged. Instead:
+ *
+ *  1. Look for a non-empty literal segment in the middle of the template (any
+ *     inter-placeholder span).  Use that as the match anchor.
+ *  2. If no such literal exists (e.g. `"{source}{content}"`) return `null` so
+ *     the caller falls back to a safer inclusion check.
+ *
+ * Returns `null` when the template has no placeholders (fully-literal
+ * citation, handled by the prefix-equality fast path in
+ * {@link hasCitationForTemplate}) **or** when the template is entirely
+ * placeholder-bounded with no internal literals.
  */
 function templateMatcher(template: string): RegExp | null {
   // Split around all {placeholder} tokens.
   const parts = template.split(/\{[^}]+\}/);
   if (parts.length <= 1) return null;
-  // We only need the prefix and suffix to anchor the search.
-  const prefix = escapeRegExp(parts[0] ?? "");
-  const suffix = escapeRegExp(parts[parts.length - 1] ?? "");
+
+  const prefix = parts[0] ?? "";
+  const suffix = parts[parts.length - 1] ?? "";
+
+  // When both the prefix and suffix are blank the anchoring regex would match
+  // any string.  Look for a non-empty literal in the middle segments first.
+  if (prefix.trim().length === 0 && suffix.trim().length === 0) {
+    const middleLiteral = parts.slice(1, -1).find((p) => p.trim().length > 0);
+    if (!middleLiteral) {
+      // Entirely placeholder-bounded with no internal literal — cannot build a
+      // reliable matcher.  Signal the caller to use a fallback strategy.
+      return null;
+    }
+    // Anchor on the internal literal only (e.g. ": " from "{source}: {content}").
+    return new RegExp(escapeRegExp(middleLiteral), "i");
+  }
+
+  // Normal case: anchor with prefix + wildcard + suffix.
+  const escapedPrefix = escapeRegExp(prefix);
+  const escapedSuffix = escapeRegExp(suffix);
   const middle = "[^\\n]*?";
-  const pattern = prefix + middle + suffix;
+  const pattern = escapedPrefix + middle + escapedSuffix;
   return new RegExp(pattern, "i");
 }
 

@@ -239,3 +239,67 @@ test("attachCitation with custom template tags untagged text exactly once (Findi
   const again = attachCitation(result, ctx, customTemplate);
   assert.equal(again, result);
 });
+
+// ── Finding 2 regression: placeholder-bounded template matcher ─────────────────
+
+test("hasCitationForTemplate with placeholder-bounded template does not match arbitrary text", () => {
+  // Template starts AND ends with a placeholder — prefix and suffix are both "".
+  // The middle literal is ": " which must be the anchor.
+  const template = "{source}: {content}";
+  // Text that contains ": " should match (it contains the middle literal).
+  assert.equal(hasCitationForTemplate("planner: The service uses Redis", template), true);
+  // Random text without the middle literal must NOT match.
+  assert.equal(hasCitationForTemplate("random text without separator", template), false);
+  assert.equal(hasCitationForTemplate("no separator here at all", template), false);
+});
+
+test("hasCitationForTemplate with fully placeholder-only template returns false (null matcher fallback)", () => {
+  // Template has no literal segments at all — templateMatcher returns null.
+  // The null-matcher path falls back to text.includes(template) which will be
+  // false for any real text (the template contains raw placeholder syntax).
+  const template = "{source}{content}";
+  assert.equal(hasCitationForTemplate("anything goes here", template), false);
+  assert.equal(hasCitationForTemplate("{source}{content}", template), true);
+});
+
+test("hasCitationForTemplate preserves normal behaviour for well-formed templates (Finding 2 non-regression)", () => {
+  // Well-formed template with non-empty prefix and suffix — existing behaviour.
+  const template = "Source: {source} — Content: {content}";
+  assert.equal(hasCitationForTemplate("Source: planner — Content: some fact", template), true);
+  assert.equal(hasCitationForTemplate("random unrelated text", template), false);
+});
+
+test("hasCitationForTemplate: placeholder-bounded template does not falsely tag plain text (Finding 2 negative)", () => {
+  const template = "{source}: {content}";
+  // Plain text with no colon-space separator must return false.
+  assert.equal(hasCitationForTemplate("just a plain statement", template), false);
+});
+
+// ── Finding 1 dedup regression: same raw content, different timestamps ─────────
+
+test("attachCitation is idempotent across different timestamps for the same raw content (Finding 1 dedup)", () => {
+  // Simulates the dedup scenario: the same raw fact content is presented twice
+  // to applyInlineCitation with different "now" values (different timestamps).
+  // The CITED content varies each call, but the RAW content is the same.
+  // This test verifies that hasCitationForTemplate correctly sees already-cited
+  // text as tagged regardless of the exact timestamp in the marker.
+  const rawContent = "The database uses PostgreSQL for persistent storage.";
+  const template = DEFAULT_CITATION_FORMAT;
+
+  const ctx1 = { agent: "planner", session: "agent:planner:main", ts: "2026-04-11T10:00:00Z" };
+  const ctx2 = { agent: "planner", session: "agent:planner:main", ts: "2026-04-11T10:05:00Z" };
+
+  const cited1 = attachCitation(rawContent, ctx1, template);
+  // cited1 includes ts=2026-04-11T10:00:00Z
+  assert.ok(cited1.includes("2026-04-11T10:00:00Z"), "first citation should include first timestamp");
+
+  // A second attachCitation call on already-cited text (different ts) must be a no-op.
+  const cited2 = attachCitation(cited1, ctx2, template);
+  assert.equal(cited2, cited1, "second attachCitation must not append a second marker");
+
+  // hasCitationForTemplate must return true for cited1 regardless of template/ts.
+  assert.equal(hasCitationForTemplate(cited1, template), true);
+
+  // The raw content itself should NOT be seen as already-cited.
+  assert.equal(hasCitationForTemplate(rawContent, template), false);
+});
