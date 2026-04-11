@@ -1118,25 +1118,37 @@ export function installConnector(options: InstallOptions): InstallResult {
         // connector.json was written — roll back the token store to the
         // pre-install snapshot so tokens.json and the absent connector.json
         // stay consistent (no orphaned/active token without a matching config).
-        let extensionErrTokenRolledBack = true;
+        //
+        // Initialize to false: only set true once saveTokenStore() succeeds.
+        // For connectors without requiresToken the rollback block is skipped
+        // entirely, so the suffix must remain absent — not "Token has been
+        // rolled back." (which would be factually incorrect).
+        let extensionErrTokenRolledBack = false;
         let extensionErrTokenRollbackMsg = "";
         if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
           try {
             saveTokenStore(nonHermesPriorTokenStore);
+            extensionErrTokenRolledBack = true;
           } catch (tokenRestoreErr) {
             extensionErrTokenRolledBack = false;
             extensionErrTokenRollbackMsg =
               tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr);
           }
         }
-        const tokenRollbackSuffix = extensionErrTokenRolledBack
-          ? "Token has been rolled back."
-          : `Token rollback FAILED (${extensionErrTokenRollbackMsg}) — tokens.json may contain an orphaned entry. ` +
-            `Manually inspect ~/.remnic/tokens.json and reinstall.`;
+        // Only include a token-rollback suffix for connectors that have a token
+        // to roll back. Non-token connectors (requiresToken !== true) never
+        // generated a token entry, so no rollback occurred and the message must
+        // not claim otherwise.
+        const tokenRollbackSuffix = manifest.requiresToken
+          ? extensionErrTokenRolledBack
+            ? " Token has been rolled back."
+            : ` Token rollback FAILED (${extensionErrTokenRollbackMsg}) — tokens.json may contain an orphaned entry. ` +
+              `Manually inspect ~/.remnic/tokens.json and reinstall.`
+          : "";
         return {
           connectorId: options.connectorId,
           status: "error",
-          message: `Memory extension install failed — ${errMsg}. ${tokenRollbackSuffix} Resolve the issue, then reinstall.`,
+          message: `Memory extension install failed — ${errMsg}.${tokenRollbackSuffix} Resolve the issue, then reinstall.`,
         };
       }
     } else {
@@ -1172,11 +1184,16 @@ export function installConnector(options: InstallOptions): InstallResult {
     // Roll back non-hermes token store if needed. Track success so we can
     // report accurately — unconditionally claiming rollback succeeded when it
     // silently failed would leave operators unable to diagnose inconsistent state.
-    let configWriteTokenRolledBack = true;
+    //
+    // Initialize to false: only set true once saveTokenStore() succeeds.
+    // Non-token connectors skip this block entirely, so we must not emit a
+    // "Token has been rolled back." suffix for them.
+    let configWriteTokenRolledBack = false;
     let configWriteTokenRollbackMsg = "";
     if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
       try {
         saveTokenStore(nonHermesPriorTokenStore);
+        configWriteTokenRolledBack = true;
       } catch (tokenRestoreErr) {
         configWriteTokenRolledBack = false;
         configWriteTokenRollbackMsg =
@@ -1198,16 +1215,22 @@ export function installConnector(options: InstallOptions): InstallResult {
         );
       }
     }
-    const configWriteTokenSuffix = configWriteTokenRolledBack
-      ? "Token has been rolled back."
-      : `Token rollback FAILED (${configWriteTokenRollbackMsg}) — tokens.json may contain an orphaned entry. ` +
-        `Manually inspect ~/.remnic/tokens.json and reinstall.`;
+    // Only include a token-rollback suffix for connectors that have a token
+    // to roll back. Non-token connectors (requiresToken !== true) never
+    // generated a token entry, so no rollback occurred and the message must
+    // not claim otherwise.
+    const configWriteTokenSuffix = manifest.requiresToken
+      ? configWriteTokenRolledBack
+        ? " Token has been rolled back."
+        : ` Token rollback FAILED (${configWriteTokenRollbackMsg}) — tokens.json may contain an orphaned entry. ` +
+          `Manually inspect ~/.remnic/tokens.json and reinstall.`
+      : "";
     return {
       connectorId: options.connectorId,
       status: "error",
       message:
         `${manifest.name} install aborted: connector config write failed — ` +
-        `${writeErr instanceof Error ? writeErr.message : String(writeErr)}. ` +
+        `${writeErr instanceof Error ? writeErr.message : String(writeErr)}.` +
         `${configWriteTokenSuffix} Resolve the write permission issue, then reinstall.`,
     };
   }
