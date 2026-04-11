@@ -419,6 +419,59 @@ test(
   },
 );
 
+// ---------------------------------------------------------------------------
+// Regression: MMR must run before truncation so diverse candidates just below
+// the cutoff can be promoted into the final injected set.
+// (ChatGPT Codex P2 review comment on PR #391)
+// ---------------------------------------------------------------------------
+
+test(
+  "reorderRecallResultsWithMmr promotes sub-cutoff diverse candidates when run pre-slice",
+  () => {
+    // Simulate a near-duplicate cluster of 5 high-score candidates followed
+    // by a truly diverse candidate at position 5 (just below a final limit
+    // of 5). If MMR ran only on the already-truncated top-5, the diverse
+    // candidate would never make it into the injected set. Running MMR on
+    // the full 6-candidate pool and then slicing to 5 must pull the diverse
+    // candidate into the final slice.
+    const results: MmrRecallResult[] = [
+      { docid: "a1", path: "p/a1", snippet: "alpha fact one", score: 0.99 },
+      { docid: "a2", path: "p/a2", snippet: "alpha fact two", score: 0.98 },
+      { docid: "a3", path: "p/a3", snippet: "alpha fact three", score: 0.97 },
+      { docid: "a4", path: "p/a4", snippet: "alpha fact four", score: 0.96 },
+      { docid: "a5", path: "p/a5", snippet: "alpha fact five", score: 0.95 },
+      {
+        docid: "d1",
+        path: "p/d1",
+        snippet: "orthogonal concept rocket fuel chemistry",
+        score: 0.94,
+      },
+    ];
+
+    // Simulate the buggy "slice then MMR" behavior.
+    const sliceFirst = results.slice(0, 5);
+    const sliceFirstMmr = reorderRecallResultsWithMmr(sliceFirst, {
+      lambda: 0.3,
+    }).reordered;
+    const sliceFirstIds = sliceFirstMmr.map((r) => r.docid);
+    assert.ok(
+      !sliceFirstIds.includes("d1"),
+      "sanity: slicing before MMR cannot recover the sub-cutoff diverse candidate",
+    );
+
+    // Now the correct "MMR then slice" behavior.
+    const mmrFirst = reorderRecallResultsWithMmr(results, {
+      lambda: 0.3,
+    }).reordered.slice(0, 5);
+    const mmrFirstIds = mmrFirst.map((r) => r.docid);
+    assert.equal(mmrFirst.length, 5);
+    assert.ok(
+      mmrFirstIds.includes("d1"),
+      `MMR-then-slice should promote the diverse candidate into the top-5: ${mmrFirstIds.join(",")}`,
+    );
+  },
+);
+
 test(
   "reorderRecallResultsWithMmr with topN=0 is a full no-op preserving input order",
   () => {
