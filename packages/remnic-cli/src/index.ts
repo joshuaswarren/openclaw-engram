@@ -243,7 +243,7 @@ const DEFAULT_OPENCLAW_CONFIG_PATHS_FOR_DOCTOR = [
 ].filter(Boolean) as string[];
 
 function resolveOpenclawConfigPath(cliPath?: string): string {
-  if (cliPath) return path.resolve(cliPath);
+  if (cliPath) return path.resolve(expandTilde(cliPath));
 
   // Env-var paths are always honoured regardless of whether the file exists yet
   // (a first-time install needs to create the file at the configured location).
