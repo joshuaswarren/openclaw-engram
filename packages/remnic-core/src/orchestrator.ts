@@ -20,7 +20,6 @@ import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   attachCitation,
-  hasCitationForTemplate,
   type CitationContext,
 } from "./source-attribution.js";
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
@@ -8702,7 +8701,12 @@ export class Orchestrator {
             ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
             : undefined;
 
-          // Write the parent memory first (with full content for reference)
+          // Write the parent memory first (with full content for reference).
+          //
+          // Pass the RAW (pre-citation) fact as `contentHashSource` — see the
+          // normal write path below for the full rationale. Inline citations
+          // include a per-call timestamp so hashing the persisted body would
+          // break cross-session dedup via `hasFactContentHash`.
           const parentId = await targetStorage.writeMemory(
             writeCategory,
             applyInlineCitation(fact.content),
@@ -8717,6 +8721,7 @@ export class Orchestrator {
               intentEntityTypes: inferredIntent?.entityTypes,
               memoryKind,
               structuredAttributes: fact.structuredAttributes,
+              contentHashSource: fact.content,
             },
           );
 
@@ -8923,6 +8928,15 @@ export class Orchestrator {
         : undefined;
 
       // Normal write (no chunking)
+      //
+      // Pass the RAW (pre-citation) fact as `contentHashSource` so the
+      // fact-content hash index records the hash of the canonical fact text
+      // rather than the citation-annotated variant. When inline attribution is
+      // enabled, `applyInlineCitation` appends a timestamp-bearing marker, so
+      // hashing the persisted body would produce a different hash on every
+      // write and defeat cross-session dedup (see `findDuplicateExplicitCapture`
+      // in explicit-capture.ts which calls `hasFactContentHash(candidate.content)`
+      // on raw content).
       const memoryId = await targetStorage.writeMemory(
         writeCategory,
         applyInlineCitation(fact.content),
@@ -8942,6 +8956,7 @@ export class Orchestrator {
           intentEntityTypes: inferredIntent?.entityTypes,
           memoryKind,
           structuredAttributes: fact.structuredAttributes,
+          contentHashSource: fact.content,
         },
       );
       if (routedRuleId) {

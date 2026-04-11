@@ -141,14 +141,25 @@ function escapeRegExp(s: string): string {
  * `[src:...]`, `(prov: ...)`, etc.
  *
  * Edge-case — placeholder-bounded templates (e.g. `"{source}: {content}"` or
- * `"{source}"`): when both the prefix and suffix are empty strings the naive
- * `"" + [^\n]*? + ""` regex matches ANY non-empty string, making
- * `hasCitationForTemplate` treat everything as already-tagged. Instead:
+ * `"{agent}:{sessionId}"`): when both the prefix and suffix are empty strings
+ * the naive `"" + [^\n]*? + ""` regex matches ANY non-empty string, and even
+ * anchoring on the first non-empty middle literal alone is too loose — a
+ * template like `"{agent}:{sessionId}"` collapses to just `":"`, which fires
+ * on incidental colons in plain text (e.g. `"URL uses http://host:80"`).
  *
- *  1. Look for a non-empty literal segment in the middle of the template (any
- *     inter-placeholder span).  Use that as the match anchor.
- *  2. If no such literal exists (e.g. `"{source}{content}"`) return `null` so
- *     the caller falls back to a safer inclusion check.
+ * The stricter placeholder-bounded strategy:
+ *
+ *  1. Reconstruct the full template shape by joining every inter-placeholder
+ *     literal segment, requiring each placeholder slot to look like an
+ *     identifier token (`[\w.-]+`) so that random prose cannot slip through.
+ *  2. Anchor the overall match so the first identifier token is preceded by
+ *     whitespace, a bracket/paren/angle opener, or the start of the string,
+ *     and the final identifier token is followed by whitespace, a closer,
+ *     common punctuation, or end of string.  This rejects embedded matches
+ *     like `host:80` inside `http://host:80` without over-rejecting real
+ *     citations like `[backend-agent:abc123]`.
+ *  3. If the template has no internal literal at all (e.g. `"{source}{content}"`)
+ *     return `null` so the caller falls back to a safer inclusion check.
  *
  * Returns `null` when the template has no placeholders (fully-literal
  * citation, handled by the prefix-equality fast path in
@@ -163,17 +174,32 @@ function templateMatcher(template: string): RegExp | null {
   const prefix = parts[0] ?? "";
   const suffix = parts[parts.length - 1] ?? "";
 
-  // When both the prefix and suffix are blank the anchoring regex would match
-  // any string.  Look for a non-empty literal in the middle segments first.
+  // When both the prefix and suffix are blank the naive anchoring regex would
+  // match any string.  Build a stricter reconstruction of the template shape
+  // where each placeholder slot is a word-ish identifier token and the whole
+  // match is bracketed by clean boundaries.
   if (prefix.trim().length === 0 && suffix.trim().length === 0) {
-    const middleLiteral = parts.slice(1, -1).find((p) => p.trim().length > 0);
-    if (!middleLiteral) {
+    const middleLiterals = parts.slice(1, -1);
+    const hasNonEmptyMiddle = middleLiterals.some((p) => p.length > 0);
+    if (!hasNonEmptyMiddle) {
       // Entirely placeholder-bounded with no internal literal — cannot build a
       // reliable matcher.  Signal the caller to use a fallback strategy.
       return null;
     }
-    // Anchor on the internal literal only (e.g. ": " from "{source}: {content}").
-    return new RegExp(escapeRegExp(middleLiteral), "i");
+    // Identifier token: one or more word chars, dots, or dashes.  Intentionally
+    // excludes `/`, `:`, whitespace and most punctuation so that URL-like
+    // fragments (`http://host:80`) cannot masquerade as a citation.
+    const idToken = "[\\w.-]+";
+    // Reconstruct: idToken + literal_1 + idToken + literal_2 + ... + idToken
+    const body =
+      idToken +
+      middleLiterals.map((lit) => escapeRegExp(lit) + idToken).join("");
+    // Leading boundary: start-of-string, whitespace, or a bracket/paren/angle
+    // opener.  Trailing boundary (lookahead so it does not consume): the
+    // complementary closers plus common sentence punctuation or end-of-string.
+    const leading = "(?:^|[\\s\\[\\(\\<])";
+    const trailing = "(?=[\\s\\]\\)\\>,.;]|$)";
+    return new RegExp(leading + body + trailing, "i");
   }
 
   // Normal case: anchor with prefix + wildcard + suffix.

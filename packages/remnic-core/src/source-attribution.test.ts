@@ -279,6 +279,35 @@ test("hasCitationForTemplate: placeholder-bounded template does not falsely tag 
   assert.equal(hasCitationForTemplate("just a plain statement", template), false);
 });
 
+test("hasCitationForTemplate: {agent}:{sessionId} template rejects embedded URL colons", () => {
+  // Regression for Cursor High: the previous implementation anchored on the
+  // first non-empty middle literal alone — for this template that's just ":",
+  // which false-positives on any text containing a colon (URLs, paths, any
+  // other prose). The stricter reconstruction requires identifier-shaped
+  // tokens on both sides of the literal, bounded by clean delimiters, which
+  // in particular rejects the `http://host:80` shape.
+  const template = "{agent}:{sessionId}";
+  assert.equal(
+    hasCitationForTemplate("URL uses http://host:80", template),
+    false,
+    "a colon inside a URL must not be classified as a citation",
+  );
+  assert.equal(
+    hasCitationForTemplate("plain statement without a colon", template),
+    false,
+  );
+});
+
+test("hasCitationForTemplate: {agent}:{sessionId} template accepts a real citation-shaped token", () => {
+  // Positive case — a bracket-wrapped agent:sessionId token looks like an
+  // inline citation and should be detected so attachCitation stays idempotent.
+  const template = "{agent}:{sessionId}";
+  assert.equal(
+    hasCitationForTemplate("[backend-agent:abc123] some text", template),
+    true,
+  );
+});
+
 // ── Finding 1 dedup regression: same raw content, different timestamps ─────────
 
 // ── Finding A regression: $ special patterns in replacement strings ───────────
