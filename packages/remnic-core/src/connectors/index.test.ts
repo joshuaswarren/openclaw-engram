@@ -207,12 +207,17 @@ test(
 
         // Seed three stale tmp directories that look like leftover crashed runs
         // from previous invocations (different pid, different timestamp).
+        // Back-date their mtime to 1 hour ago so the staleness threshold (10 min)
+        // treats them as safe to remove.
         const stale1 = path.join(paths.extensionsRoot, ".remnic.tmp-99999-1111111111111");
         const stale2 = path.join(paths.extensionsRoot, ".remnic.tmp-88888-2222222222222");
         const stale3 = path.join(paths.extensionsRoot, ".remnic.tmp-77777-3333333333333");
+        const staleTime = new Date(Date.now() - 60 * 60 * 1000); // 1 hour ago
         for (const staleDir of [stale1, stale2, stale3]) {
           fs.mkdirSync(staleDir, { recursive: true });
           fs.writeFileSync(path.join(staleDir, "leftover.txt"), "stale\n");
+          // Backdate mtime so the cleanup sees these as provably stale.
+          fs.utimesSync(staleDir, staleTime, staleTime);
         }
 
         // Also seed an unrelated file that must NOT be touched.
@@ -756,6 +761,216 @@ test("installCodexMemoryExtension atomic replace happy path — no backup direct
       const entries = fs.readdirSync(extRoot);
       const bakEntries = entries.filter((e) => e.includes(".bak-"));
       assert.equal(bakEntries.length, 0, `no .bak-* dirs should remain after successful replace, found: ${bakEntries.join(", ")}`);
+    },
+  );
+});
+
+// ── PR #394 Finding 1: corrupt config must not trigger extension removal ──────
+
+test("removeConnector with corrupt codex-cli.json does NOT remove extension", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      // Write a syntactically invalid JSON file as the connector config.
+      const connectorsDir = path.join(sandbox.xdgConfigHome, "engram", ".engram-connectors", "connectors");
+      fs.mkdirSync(connectorsDir, { recursive: true });
+      const configPath = path.join(connectorsDir, "codex-cli.json");
+      fs.writeFileSync(configPath, "{ this is not valid json !!! }");
+
+      // Place a self-managed extension directory that must survive.
+      const paths = resolveCodexMemoryExtensionPaths(sandbox.codexHome);
+      fs.mkdirSync(paths.remnicExtensionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(paths.remnicExtensionDir, "instructions.md"),
+        "# user-managed extension\n",
+      );
+
+      const removeResult = removeConnector("codex-cli");
+
+      // The config file was present (malformed but present) so "Not installed"
+      // would be wrong — instead we should get a Removed message but with the
+      // extension step skipped.
+      assert.ok(
+        removeResult.message.includes("Removed"),
+        `expected Removed, got: ${removeResult.message}`,
+      );
+      assert.ok(
+        removeResult.message.includes("parse failed") || removeResult.message.includes("skipped"),
+        `message should indicate extension was skipped due to parse failure, got: ${removeResult.message}`,
+      );
+
+      // The self-managed extension must NOT have been deleted.
+      assert.ok(
+        fs.existsSync(paths.remnicExtensionDir),
+        "extension must survive when config parsing fails",
+      );
+    },
+  );
+});
+
+// ── PR #394 Finding 2: fresh temp dirs must NOT be cleaned by pre-install sweep
+
+test("installCodexMemoryExtension does NOT remove fresh .remnic.tmp-* dirs (concurrent install guard)", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      const paths = resolveCodexMemoryExtensionPaths(sandbox.codexHome);
+      fs.mkdirSync(paths.extensionsRoot, { recursive: true });
+
+      // Create a fresh tmp dir with current mtime (simulates a concurrent install
+      // that is still in progress — its mtime is "now").
+      const freshTmp = path.join(paths.extensionsRoot, `.remnic.tmp-12345-${Date.now()}`);
+      fs.mkdirSync(freshTmp, { recursive: true });
+      fs.writeFileSync(path.join(freshTmp, "in-progress.txt"), "in-progress\n");
+      // Leave mtime at "now" (default) — this is fresh and must not be removed.
+
+      // Run install; the fresh tmp dir is younger than the 10-minute threshold.
+      installCodexMemoryExtension({
+        codexHome: sandbox.codexHome,
+        sourceDir: sandbox.syntheticSourceDir,
+      });
+
+      // The fresh dir must still exist — the sweep must have left it alone.
+      assert.ok(
+        fs.existsSync(freshTmp),
+        "fresh .remnic.tmp-* dir must NOT be deleted by the pre-install cleanup sweep",
+      );
+    },
+  );
+});
+
+// ── PR #394 Finding 3: legacy config (no installExtension key) skips removal ──
+
+test("removeConnector with legacy config (no installExtension key) skips extension removal", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      // Write a legacy config that lacks both installExtension and codexHome —
+      // simulating a config created before the provenance fields were added.
+      const connectorsDir = path.join(sandbox.xdgConfigHome, "engram", ".engram-connectors", "connectors");
+      fs.mkdirSync(connectorsDir, { recursive: true });
+      const configPath = path.join(connectorsDir, "codex-cli.json");
+      fs.writeFileSync(
+        configPath,
+        JSON.stringify({ connectorId: "codex-cli", installedAt: "2024-01-01T00:00:00Z" }, null, 2),
+      );
+
+      // Create an extension that Remnic did NOT own (user-managed).
+      const paths = resolveCodexMemoryExtensionPaths(sandbox.codexHome);
+      fs.mkdirSync(paths.remnicExtensionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(paths.remnicExtensionDir, "instructions.md"),
+        "# user-managed legacy extension\n",
+      );
+
+      const removeResult = removeConnector("codex-cli");
+
+      assert.ok(
+        removeResult.message.includes("Removed"),
+        `expected Removed, got: ${removeResult.message}`,
+      );
+      assert.ok(
+        removeResult.message.includes("provenance") || removeResult.message.includes("skipped"),
+        `message should indicate removal was skipped due to missing provenance, got: ${removeResult.message}`,
+      );
+
+      // Extension must survive — no provenance = no removal.
+      assert.ok(
+        fs.existsSync(paths.remnicExtensionDir),
+        "user-managed extension must survive when saved config has no install provenance",
+      );
+    },
+  );
+});
+
+// ── PR #394 Finding 4: parseConfig and coerceInstallExtension agree on parity ─
+//
+// Verifies that coerceInstallExtension (now shared via coerce.ts) produces the
+// correct results for all representative inputs.  The same function is called by
+// both config.ts (parseConfig) and connectors/index.ts (installConnector /
+// removeConnector), ensuring the two callers always agree.
+
+test("coerceInstallExtension parity — all representative inputs match expected coercion", () => {
+  const testCases: Array<[unknown, boolean | undefined]> = [
+    ["false", false],
+    ["FALSE", false],
+    ["0", false],
+    ["no", false],
+    ["off", false],
+    ["true", true],
+    ["TRUE", true],
+    ["1", true],
+    ["yes", true],
+    ["on", true],
+    [false, false],
+    [true, true],
+    [undefined, undefined],
+    [null, undefined],
+    ["maybe", undefined],
+    [2, undefined],
+  ];
+
+  for (const [input, expected] of testCases) {
+    assert.equal(
+      coerceInstallExtension(input),
+      expected,
+      `coerceInstallExtension(${JSON.stringify(input)}) should be ${String(expected)}`,
+    );
+  }
+});
+
+// ── PR #394 Finding 5: extensionSourceDir must NOT be persisted to config file ─
+
+test("installConnector does NOT persist extensionSourceDir to saved config", async (t) => {
+  const sandbox = makeSandbox(t);
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      CODEX_HOME: sandbox.codexHome,
+    },
+    () => {
+      const result = installConnector({
+        connectorId: "codex-cli",
+        config: {
+          installExtension: true,
+          extensionSourceDir: sandbox.syntheticSourceDir, // test-only key
+        },
+      });
+
+      assert.equal(result.status, "installed");
+      assert.ok(result.configPath, "configPath should be set");
+
+      const saved = JSON.parse(fs.readFileSync(result.configPath as string, "utf8")) as Record<string, unknown>;
+
+      assert.equal(
+        "extensionSourceDir" in saved,
+        false,
+        `extensionSourceDir must NOT appear in the persisted config, found: ${JSON.stringify(saved)}`,
+      );
     },
   );
 });

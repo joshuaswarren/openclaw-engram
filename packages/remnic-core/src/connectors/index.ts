@@ -10,6 +10,8 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
+import { coerceInstallExtension } from "./coerce.js";
+
 // Native memory artifact materialization for Codex CLI (#378). Surfaced here
 // so downstream callers can `import { materializeForNamespace } from "@remnic/core/connectors"`.
 export {
@@ -153,25 +155,12 @@ export interface DoctorCheck {
   detail: string;
 }
 
-// ── Helpers (Finding 1) ───────────────────────────────────────────────────
+// ── Helpers (Finding 4) ───────────────────────────────────────────────────
 
-/**
- * Coerce the `installExtension` config value from a string (e.g. from CLI
- * `--config installExtension=false`) to a proper boolean. Accepts the same
- * truthy/falsy strings that common shells and env vars use.
- *
- * Returns `undefined` when the value is neither a boolean nor a recognised
- * string, so callers can fall back to a default.
- */
-export function coerceInstallExtension(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    const v = value.trim().toLowerCase();
-    if (["false", "0", "no", "off"].includes(v)) return false;
-    if (["true", "1", "yes", "on"].includes(v)) return true;
-  }
-  return undefined;
-}
+// Re-export coerceInstallExtension from the shared coerce module so existing
+// import sites (`import { coerceInstallExtension } from "./index.js"`) keep
+// working without change.
+export { coerceInstallExtension } from "./coerce.js";
 
 // ── Built-in connector definitions ─────────────────────────────────────────
 
@@ -607,6 +596,17 @@ export function installConnector(options: InstallOptions): InstallResult {
     }
   }
 
+  // Finding 5: strip internal/test-only keys that must never be persisted to
+  // the config file. These keys are used at install time only (e.g. to inject
+  // a synthetic extension source dir in tests) and have no meaning on disk.
+  // Denylist — add any future test-only keys here with a comment.
+  const INTERNAL_KEYS_DENYLIST = [
+    "extensionSourceDir", // test-only override for the plugin-codex source path
+  ];
+  for (const key of INTERNAL_KEYS_DENYLIST) {
+    delete resolvedConfig[key];
+  }
+
   fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
 
   return {
@@ -625,12 +625,16 @@ export function removeConnector(connectorId: string): RemoveResult {
 
   // For codex-cli, read the saved config BEFORE touching anything so we have
   // both the persisted codexHome and the installExtension flag available for
-  // later use in extension removal (Findings 3, 4, 5).
+  // later use in extension removal (Findings 1, 3, 4, 5).
   let codexHomeOverride: string | null = null;
   let savedInstallExtension: boolean | undefined = undefined;
+  // Finding 1: track whether config parsing succeeded. If parsing throws, we
+  // cannot trust any metadata and must fail closed (skip extension removal).
+  let configParsed = false;
   if (connectorId === "codex-cli" && fs.existsSync(configPath)) {
     try {
       const parsed = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      configParsed = true;
       if (typeof parsed.codexHome === "string" && parsed.codexHome.length > 0) {
         codexHomeOverride = parsed.codexHome;
       }
@@ -640,7 +644,12 @@ export function removeConnector(connectorId: string): RemoveResult {
         savedInstallExtension = coerced;
       }
     } catch {
-      // ignore malformed config
+      // Finding 1: config is malformed — log debug and fail closed.
+      // codexHomeOverride and savedInstallExtension remain unset; configParsed
+      // stays false so extension removal is skipped below.
+      console.debug(
+        "[remnic/connectors] removeConnector: codex-cli.json parse failed — skipping extension removal to avoid touching unverified paths",
+      );
     }
   }
 
@@ -662,9 +671,18 @@ export function removeConnector(connectorId: string): RemoveResult {
   // to locate the extension directory.
   let extensionMessage = "";
   if (connectorId === "codex-cli") {
-    // Finding 4: skip extension deletion when installExtension was disabled.
-    if (savedInstallExtension === false) {
+    // Finding 1: config parse failed — skip extension removal entirely.
+    if (!configParsed) {
+      extensionMessage = " (memory extension: skipped — config parse failed)";
+    // Finding 4: skip extension deletion when installExtension was explicitly disabled.
+    } else if (savedInstallExtension === false) {
       extensionMessage = " (memory extension: skipped — installExtension=false)";
+    // Finding 3: require EXPLICIT provenance (installExtension===true AND a saved
+    // codexHome) before removing the extension. Legacy configs that pre-date this
+    // feature have no installExtension key, so savedInstallExtension is undefined;
+    // without provenance we cannot be sure Remnic ever owned the directory.
+    } else if (savedInstallExtension !== true || codexHomeOverride === null) {
+      extensionMessage = " (memory extension: skipped — no install provenance in saved config)";
     } else {
       const extResult = removeCodexMemoryExtension({ codexHome: codexHomeOverride });
       extensionMessage = extResult.removed
@@ -994,13 +1012,26 @@ export function installCodexMemoryExtension(
   // extensions root for any `.remnic.tmp-*` prefixed entry. We must do this
   // BEFORE creating the new tmp directory. Per-entry errors are swallowed so
   // one bad entry doesn't abort cleanup of the rest.
+  //
+  // Finding 2: only remove tmp dirs that are provably stale (older than
+  // STALE_TMP_THRESHOLD_MS). Dirs younger than the threshold belong to a
+  // concurrent install that is still in progress; deleting them would corrupt
+  // the other process's atomic rename.
   const tmpPrefix = `.${REMNIC_EXTENSION_DIR_NAME}.tmp-`;
+  const STALE_TMP_THRESHOLD_MS = 10 * 60 * 1000; // 10 minutes
+  const now = Date.now();
   try {
     const existingEntries = fs.readdirSync(paths.extensionsRoot);
     for (const entry of existingEntries) {
       if (!entry.startsWith(tmpPrefix)) continue;
       const stalePath = path.join(paths.extensionsRoot, entry);
       try {
+        const stat = fs.statSync(stalePath);
+        const ageMs = now - stat.mtimeMs;
+        if (ageMs < STALE_TMP_THRESHOLD_MS) {
+          // Too recent — leave it alone; another install is likely still running.
+          continue;
+        }
         fs.rmSync(stalePath, { recursive: true, force: true });
       } catch {
         // swallow — one bad entry should not abort the others
