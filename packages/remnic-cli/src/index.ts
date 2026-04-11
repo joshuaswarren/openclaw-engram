@@ -663,15 +663,30 @@ function cmdDoctor(): void {
       const configuredMemoryDir = entryConfig?.memoryDir as string | undefined;
       if (configuredMemoryDir) {
         const resolvedMemDir = path.resolve(expandTilde(configuredMemoryDir));
-        const memDirExists = fs.existsSync(resolvedMemDir);
+        let memDirOk = false;
+        let memDirDetail = `${resolvedMemDir} (not found)`;
+        let memDirRemediation: string | undefined = `Run \`remnic openclaw install --memory-dir "${resolvedMemDir}"\` to create the directory.`;
+        if (fs.existsSync(resolvedMemDir)) {
+          try {
+            const stat = fs.statSync(resolvedMemDir);
+            if (stat.isDirectory()) {
+              memDirOk = true;
+              memDirDetail = resolvedMemDir;
+              memDirRemediation = undefined;
+            } else {
+              memDirDetail = `${resolvedMemDir} (exists but is not a directory)`;
+              memDirRemediation = `Remove the file at ${resolvedMemDir} and run \`remnic openclaw install --memory-dir "${resolvedMemDir}"\` to create it as a directory.`;
+            }
+          } catch {
+            memDirDetail = `${resolvedMemDir} (cannot stat)`;
+          }
+        }
         checks.push({
           name: "OpenClaw memoryDir",
-          ok: memDirExists,
-          warn: !memDirExists,
-          detail: memDirExists ? resolvedMemDir : `${resolvedMemDir} (not found)`,
-          remediation: !memDirExists
-            ? `Run \`remnic openclaw install --memory-dir "${resolvedMemDir}"\` to create the directory.`
-            : undefined,
+          ok: memDirOk,
+          warn: !memDirOk,
+          detail: memDirDetail,
+          remediation: memDirRemediation,
         });
       }
     }
@@ -1693,7 +1708,11 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
 
   console.log(`Memory dir:      ${memoryDir}`);
 
+  // Preserve all top-level entry fields (e.g. hooks, enabled) from the
+  // existing openclaw-remnic entry so reinstalls don't silently drop runtime
+  // policy. Only the config sub-object is updated.
   const newEntry: Record<string, unknown> = {
+    ...(existingNewEntry ?? {}),
     config: {
       ...legacyConfigToMerge,
       ...existingNewEntryConfig,
