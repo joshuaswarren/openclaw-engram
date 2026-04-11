@@ -165,17 +165,19 @@ test("semantic dedup: candidates option is forwarded to lookup", async () => {
   assert.equal(limitSeen, 11);
 });
 
-test("semantic dedup: candidates option clamps to >=1", async () => {
-  let limitSeen = -1;
-  await decideSemanticDedup(
+test("semantic dedup: candidates=0 short-circuits without calling lookup", async () => {
+  let called = 0;
+  const decision = await decideSemanticDedup(
     "anything",
-    async (_content, limit) => {
-      limitSeen = limit;
+    async () => {
+      called++;
       return [];
     },
     { ...DEFAULT_OPTS, candidates: 0 },
   );
-  assert.equal(limitSeen, 1);
+  assert.equal(called, 0, "lookup must not be called when candidates=0");
+  assert.equal(decision.action, "keep");
+  assert.equal(decision.reason, "disabled");
 });
 
 // ── Config flag parsing ───────────────────────────────────────────────────────
@@ -205,9 +207,17 @@ test("parseConfig: semantic dedup threshold clamps to [0, 1]", () => {
   assert.equal(above.semanticDedupThreshold, 1);
 });
 
-test("parseConfig: semantic dedup candidates clamps to >=1", () => {
+test("parseConfig: semanticDedupCandidates=0 is preserved (operator disable signal)", () => {
   const zero = parseConfig({ semanticDedupCandidates: 0 });
+  assert.equal(zero.semanticDedupCandidates, 0);
+});
+
+test("parseConfig: negative semanticDedupCandidates falls back to default 5", () => {
   const negative = parseConfig({ semanticDedupCandidates: -3 });
-  assert.equal(zero.semanticDedupCandidates, 1);
-  assert.equal(negative.semanticDedupCandidates, 1);
+  assert.equal(negative.semanticDedupCandidates, 5);
+});
+
+test("parseConfig: NaN semanticDedupCandidates falls back to default 5", () => {
+  const nan = parseConfig({ semanticDedupCandidates: Number.NaN });
+  assert.equal(nan.semanticDedupCandidates, 5);
 });

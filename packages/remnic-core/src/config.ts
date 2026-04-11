@@ -1273,9 +1273,13 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.semanticDedupThreshold === "number"
         ? Math.min(1, Math.max(0, cfg.semanticDedupThreshold))
         : 0.92,
+    // Zero is a valid "disable candidate lookup" signal and must be preserved.
+    // Only negative or non-finite values fall back to the default of 5.
     semanticDedupCandidates:
-      typeof cfg.semanticDedupCandidates === "number"
-        ? Math.max(1, Math.floor(cfg.semanticDedupCandidates))
+      typeof cfg.semanticDedupCandidates === "number" &&
+      Number.isFinite(cfg.semanticDedupCandidates) &&
+      cfg.semanticDedupCandidates >= 0
+        ? Math.floor(cfg.semanticDedupCandidates)
         : 5,
     factArchivalEnabled: cfg.factArchivalEnabled === true,
     factArchivalAgeDays:

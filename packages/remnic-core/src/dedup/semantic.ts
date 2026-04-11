@@ -83,6 +83,11 @@ export async function decideSemanticDedup(
   if (!options.enabled) {
     return { action: "keep", reason: "disabled" };
   }
+  // Zero candidates means the operator has disabled the embedding lookup.
+  // Treat it identically to enabled=false so no backend call is made.
+  if (options.candidates === 0) {
+    return { action: "keep", reason: "disabled" };
+  }
   const trimmed = typeof content === "string" ? content.trim() : "";
   if (!trimmed) {
     return { action: "keep", reason: "no_near_duplicate" };

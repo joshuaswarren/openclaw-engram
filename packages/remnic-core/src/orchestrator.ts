@@ -8581,39 +8581,9 @@ export class Orchestrator {
         continue;
       }
 
-      // Issue #373 — write-time semantic similarity guard. Hook runs after
-      // the exact content-hash miss and before any storage work so that
-      // paraphrased near-duplicates never reach writeMemory() in the first
-      // place. Fails open when the embedding backend is unavailable.
-      if (this.config.semanticDedupEnabled) {
-        const semanticDecision = await decideSemanticDedup(
-          fact.content,
-          (content, limit) => this.semanticDedupLookup(content, limit),
-          {
-            enabled: true,
-            threshold: this.config.semanticDedupThreshold,
-            candidates: this.config.semanticDedupCandidates,
-          },
-        );
-        if (semanticDecision.action === "skip") {
-          log.debug(
-            `dedup: skipping semantic near-duplicate fact "${fact.content
-              .slice(0, 60)
-              .replace(/\s+/g, " ")}…" score=${semanticDecision.topScore.toFixed(
-              3,
-            )} neighbor=${semanticDecision.topId}`,
-          );
-          dedupedCount++;
-          // Still record the content hash so a later exact-copy attempt
-          // short-circuits on the cheaper hash path without re-embedding.
-          if (this.contentHashIndex) {
-            this.contentHashIndex.add(fact.content);
-          }
-          continue;
-        }
-      }
-
-      // Score importance using local heuristics (Phase 1B)
+      // Score importance using local heuristics (Phase 1B).
+      // Routing runs first so that category overrides (which affect scoring)
+      // are applied before the importance gate.
       let writeCategory = fact.category;
       let targetStorage = storage;
       let routedRuleId: string | undefined;
@@ -8645,7 +8615,8 @@ export class Orchestrator {
       );
 
       // Importance write-gate (issue #372). Drop facts whose locally-scored
-      // level falls below the configured minimum before any storage work.
+      // level falls below the configured minimum BEFORE the semantic dedup
+      // lookup so that low-importance facts never incur an embedding search.
       // scoreImportance() already applies category boosts (e.g. corrections
       // +0.15) before deriving the level, so a correction at raw ~0.35
       // still lands at "normal" and passes the default gate. Without this
@@ -8667,6 +8638,40 @@ export class Orchestrator {
           `metric:importance_gated level=${importance.level} threshold=${this.config.extractionMinImportanceLevel} category=${writeCategory} count=${importanceGatedCount}`,
         );
         continue;
+      }
+
+      // Issue #373 — write-time semantic similarity guard. Hook runs after
+      // the exact content-hash miss and the importance gate so that:
+      //   (a) paraphrased near-duplicates never reach writeMemory(), and
+      //   (b) low-importance facts that will be dropped never trigger an
+      //       embedding lookup (avoids unnecessary API latency/cost).
+      // Fails open when the embedding backend is unavailable.
+      if (this.config.semanticDedupEnabled) {
+        const semanticDecision = await decideSemanticDedup(
+          fact.content,
+          (content, limit) => this.semanticDedupLookup(content, limit),
+          {
+            enabled: true,
+            threshold: this.config.semanticDedupThreshold,
+            candidates: this.config.semanticDedupCandidates,
+          },
+        );
+        if (semanticDecision.action === "skip") {
+          log.debug(
+            `dedup: skipping semantic near-duplicate fact "${fact.content
+              .slice(0, 60)
+              .replace(/\s+/g, " ")}…" score=${semanticDecision.topScore.toFixed(
+              3,
+            )} neighbor=${semanticDecision.topId}`,
+          );
+          dedupedCount++;
+          // Still record the content hash so a later exact-copy attempt
+          // short-circuits on the cheaper hash path without re-embedding.
+          if (this.contentHashIndex) {
+            this.contentHashIndex.add(fact.content);
+          }
+          continue;
+        }
       }
 
       const inferredIntent = this.config.intentRoutingEnabled
