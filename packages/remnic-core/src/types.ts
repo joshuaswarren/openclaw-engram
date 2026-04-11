@@ -527,6 +527,12 @@ export interface PluginConfig {
   recallCoreDeadlineMs: number;
   recallEnrichmentDeadlineMs: number;
   recallPipeline: RecallSectionConfig[];
+  /** Apply Maximal Marginal Relevance to the final recall selection per-section. */
+  recallMmrEnabled: boolean;
+  /** MMR λ parameter. 1.0 = pure relevance, 0.0 = pure diversity. Default 0.7. */
+  recallMmrLambda: number;
+  /** MMR is applied over the top N candidates per section. Default 40. */
+  recallMmrTopN: number;
   qmdRecallCacheTtlMs: number;
   qmdRecallCacheStaleTtlMs: number;
   qmdRecallCacheMaxEntries: number;

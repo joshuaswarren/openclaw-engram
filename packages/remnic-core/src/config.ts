@@ -1187,6 +1187,15 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? Math.max(0, Math.floor(cfg.recallEnrichmentDeadlineMs))
         : 25_000,
     recallPipeline: recallPipelineConfig.pipeline,
+    recallMmrEnabled: cfg.recallMmrEnabled !== false,
+    recallMmrLambda:
+      typeof cfg.recallMmrLambda === "number" && Number.isFinite(cfg.recallMmrLambda)
+        ? Math.min(1, Math.max(0, cfg.recallMmrLambda))
+        : 0.7,
+    recallMmrTopN:
+      typeof cfg.recallMmrTopN === "number" && Number.isFinite(cfg.recallMmrTopN)
+        ? Math.max(0, Math.floor(cfg.recallMmrTopN))
+        : 40,
     qmdRecallCacheTtlMs:
       typeof cfg.qmdRecallCacheTtlMs === "number" ? Math.max(0, Math.floor(cfg.qmdRecallCacheTtlMs)) : 60_000,
     qmdRecallCacheStaleTtlMs:
