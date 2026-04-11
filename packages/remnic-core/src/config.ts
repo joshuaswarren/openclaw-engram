@@ -993,6 +993,22 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.extractionMaxQuestionsPerRun === "number" ? cfg.extractionMaxQuestionsPerRun : 3,
     extractionMaxProfileUpdatesPerRun:
       typeof cfg.extractionMaxProfileUpdatesPerRun === "number" ? cfg.extractionMaxProfileUpdatesPerRun : 4,
+    // Importance write-gate for trivial extracted content (issue #372).
+    // Default "low" drops only "trivial" facts (greetings, single-word replies,
+    // heartbeat pings); set to "normal" or higher to make the gate stricter.
+    extractionMinImportanceLevel: ((): PluginConfig["extractionMinImportanceLevel"] => {
+      const raw = cfg.extractionMinImportanceLevel;
+      if (
+        raw === "trivial" ||
+        raw === "low" ||
+        raw === "normal" ||
+        raw === "high" ||
+        raw === "critical"
+      ) {
+        return raw;
+      }
+      return "low";
+    })(),
     consolidationRequireNonZeroExtraction: cfg.consolidationRequireNonZeroExtraction !== false,
     consolidationMinIntervalMs:
       typeof cfg.consolidationMinIntervalMs === "number" ? cfg.consolidationMinIntervalMs : 10 * 60_000,
