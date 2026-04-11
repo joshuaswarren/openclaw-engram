@@ -79,6 +79,11 @@ import { SessionObserverState } from "./session-observer-state.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
+import {
+  decideSemanticDedup,
+  type SemanticDedupDecision,
+  type SemanticDedupHit,
+} from "./dedup/semantic.js";
 import { BootstrapEngine } from "./bootstrap.js";
 import { parseQmdExplain } from "./qmd.js";
 import {
@@ -8356,6 +8361,14 @@ export class Orchestrator {
     // Emitted via the `importance_gated` metric below and rolled into the
     // final `persisted:` log line so operators can tune the threshold.
     let importanceGatedCount = 0;
+    // UUI2: short-circuit semantic dedup after first backend-unavailable signal
+    // within this batch. Once any fact in the batch gets reason="backend_unavailable"
+    // (meaning the embedding backend is degraded), subsequent facts skip the
+    // lookup entirely and proceed directly to write. This prevents N-fact batches
+    // from paying N × timeout when the backend is down. The flag resets per-batch
+    // (declared here, inside persistExtraction) so a transient hiccup in one
+    // batch does not permanently disable dedup in future batches.
+    let batchBackendUnavailable = false;
     const behaviorSignalsByStorage = new Map<
       string,
       { storage: StorageManager; events: BehaviorSignalEvent[] }
@@ -8792,7 +8805,9 @@ export class Orchestrator {
         continue;
       }
 
-      // Score importance using local heuristics (Phase 1B)
+      // Score importance using local heuristics (Phase 1B).
+      // Routing runs first so that category overrides (which affect scoring)
+      // are applied before the importance gate.
       let writeCategory = fact.category;
       let targetStorage = storage;
       let routedRuleId: string | undefined;
@@ -8824,7 +8839,8 @@ export class Orchestrator {
       );
 
       // Importance write-gate (issue #372). Drop facts whose locally-scored
-      // level falls below the configured minimum before any storage work.
+      // level falls below the configured minimum BEFORE the semantic dedup
+      // lookup so that low-importance facts never incur an embedding search.
       // scoreImportance() already applies category boosts (e.g. corrections
       // +0.15) before deriving the level, so a correction at raw ~0.35
       // still lands at "normal" and passes the default gate. Without this
@@ -8848,6 +8864,70 @@ export class Orchestrator {
         continue;
       }
 
+      // Issue #373 — write-time semantic similarity guard. Hook runs after
+      // the exact content-hash miss and the importance gate so that:
+      //   (a) paraphrased near-duplicates never reach writeMemory(), and
+      //   (b) low-importance facts that will be dropped never trigger an
+      //       embedding lookup (avoids unnecessary API latency/cost).
+      // Fails open when the embedding backend is unavailable.
+      //
+      // Defense in depth (PR #399 review): decideSemanticDedup already
+      // catches lookup errors internally, and the embedding fetch is
+      // bounded by a timeout in embedding-fallback.ts. We still wrap the
+      // whole call in its own try/catch here so that any unexpected
+      // rejection (future refactors, misbehaving custom backends, etc.)
+      // can never block the persist loop — a failure in the dedup path
+      // must always default to "not a duplicate".
+      // Track a pending semantic-skip decision (populated inside the block
+      // below). The actual drop happens AFTER contradiction detection so that
+      // a high-similarity update/correction is linked as a superseding
+      // contradiction rather than silently dropped.
+      let pendingSemanticSkip: (SemanticDedupDecision & { action: "skip" }) | null = null;
+      if (this.config.semanticDedupEnabled) {
+        let semanticDecision: SemanticDedupDecision;
+        // UUI2: skip embedding lookup for the rest of this batch once we know
+        // the backend is unavailable. The flag is reset per-batch (set to false
+        // at the top of persistExtraction), so a transient hiccup in one call
+        // does not permanently disable dedup in subsequent calls.
+        if (batchBackendUnavailable) {
+          semanticDecision = { action: "keep", reason: "backend_unavailable" };
+        } else {
+          try {
+            // Pass the resolved target storage so the lookup scopes the
+            // embedding index to the target namespace (PR #399 P1 fix).
+            // Without this, a high-similarity hit in a different namespace
+            // would cause the fact to be dropped here — cross-namespace
+            // write suppression / data loss.
+            const lookupStorage = targetStorage;
+            semanticDecision = await decideSemanticDedup(
+              fact.content,
+              (content, limit) =>
+                this.semanticDedupLookup(content, limit, lookupStorage),
+              {
+                enabled: true,
+                threshold: this.config.semanticDedupThreshold,
+                candidates: this.config.semanticDedupCandidates,
+              },
+            );
+          } catch (err) {
+            log.warn(
+              `semantic dedup decision failed; failing open and writing fact: ${err}`,
+            );
+            semanticDecision = {
+              action: "keep",
+              reason: "backend_unavailable",
+            };
+          }
+          // UUI2: cache the backend-unavailable signal for the rest of this batch.
+          if (semanticDecision.reason === "backend_unavailable") {
+            batchBackendUnavailable = true;
+          }
+        }
+        if (semanticDecision.action === "skip") {
+          pendingSemanticSkip = semanticDecision;
+        }
+      }
+
       const inferredIntent = this.config.intentRoutingEnabled
         ? inferIntentFromText(
             `${writeCategory} ${fact.tags.join(" ")} ${fact.content}`,
@@ -8857,6 +8937,103 @@ export class Orchestrator {
         (fact as any).source === "proactive"
           ? "extraction-proactive"
           : "extraction";
+
+      // Check for contradictions before writing (Phase 2B).
+      // NOTE: This block was moved above the chunking branch so that the
+      // pendingSemanticSkip guard (below) can also protect the chunking path.
+      // Previously, contradiction detection only ran on the non-chunked path,
+      // meaning chunked facts could be persisted even when semanticDecision was
+      // "skip" (the deferred guard was bypassed by the chunking `continue`).
+      let supersedes: string | undefined;
+      let links: MemoryLink[] = [];
+      // True when contradiction detection ran and confirmed a contradiction,
+      // regardless of whether auto-resolve is enabled. Used by the
+      // semantic-skip guard so that contradictory updates are never silently
+      // dropped — even when `contradictionAutoResolve=false` (in which case
+      // `supersedes` is intentionally left unset to avoid retiring the old
+      // memory without user confirmation).
+      let contradictionDetected = false;
+
+      if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
+        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
+        const contradiction = await this.checkForContradiction(
+          fact.content,
+          writeCategory,
+          targetNamespace,
+        );
+        if (contradiction) {
+          contradictionDetected = true;
+          // When auto-resolve is enabled the existing memory has already been
+          // marked superseded; set `supersedes` so the new write carries the
+          // relationship. When auto-resolve is disabled we still record the
+          // contradiction link (so the memory is annotated for manual review)
+          // but do NOT set `supersedes` on the new write — the old memory
+          // remains active until a human resolves it.
+          if (this.config.contradictionAutoResolve) {
+            supersedes = contradiction.supersededId;
+          }
+          links.push({
+            targetId: contradiction.supersededId,
+            linkType: "contradicts",
+            strength: contradiction.confidence,
+            reason: contradiction.reason,
+          });
+          // Deindex the superseded memory so stale paths don't remain in
+          // index_time.json / index_tags.json after the incremental update.
+          // Only applicable when auto-resolve is on and the old memory is
+          // actually being retired; skip when manual review is required.
+          if (
+            this.config.contradictionAutoResolve &&
+            this.config.queryAwareIndexingEnabled &&
+            contradiction.supersededPath
+          ) {
+            deindexMemory(
+              this.config.memoryDir,
+              contradiction.supersededPath,
+              contradiction.supersededCreated,
+              contradiction.supersededTags,
+            );
+          }
+        }
+      }
+
+      // Apply the deferred semantic-skip now that contradiction detection has
+      // run. If a contradiction was found (contradictionDetected is true), the
+      // candidate is a contradictory update and must be written — do not skip
+      // it. Only drop it when there is no detected contradiction (true
+      // near-duplicate). This check intentionally runs BEFORE the chunking
+      // branch so that a fact flagged as a semantic near-duplicate cannot be
+      // persisted (with its hash registered) simply because it was long enough
+      // to trigger chunking.
+      //
+      // NOTE: We use `contradictionDetected` rather than `!!supersedes` here
+      // so that facts are preserved even when `contradictionAutoResolve=false`.
+      // When auto-resolve is disabled `supersedes` is intentionally unset, but
+      // the write must still proceed so the user can manually reconcile the
+      // two memories later.
+      //
+      // UUI1: correction category writes are NEVER suppressed by the semantic
+      // skip fallback, regardless of whether supersedes is set. When contradiction
+      // detection is disabled or QMD is unavailable, supersedes is never set —
+      // without this exemption a high-similarity correction would be silently
+      // dropped, leaving a stale fact active. writeCategory (not fact.category)
+      // is used because routing rules may have overridden the raw category.
+      const isCorrection = writeCategory === "correction";
+      if (pendingSemanticSkip && !contradictionDetected && !isCorrection) {
+        log.debug(
+          `dedup: skipping semantic near-duplicate fact "${fact.content
+            .slice(0, 60)
+            .replace(/\s+/g, " ")}…" score=${pendingSemanticSkip.topScore.toFixed(
+            3,
+          )} neighbor=${pendingSemanticSkip.topId}`,
+        );
+        dedupedCount++;
+        // Do NOT add fact.content to contentHashIndex here. No memory was
+        // persisted for this fact, so registering a synthetic hash would
+        // permanently suppress exact-copy writes once the neighbor memory is
+        // archived or deleted (the hash would linger with no backing record).
+        continue;
+      }
 
       // Check if chunking is enabled and content should be chunked
       if (this.config.chunkingEnabled) {
@@ -8868,7 +9045,14 @@ export class Orchestrator {
             ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
             : undefined;
 
-          // Write the parent memory first (with full content for reference)
+          // Write the parent memory first (with full content for reference).
+          // Propagate supersedes/links from contradiction detection (round 6
+          // fix): contradiction detection now runs BEFORE this branch so the
+          // parent must carry the supersession relationship — without it the
+          // old memory is deindexed but the new chunked parent has no link
+          // back, leaving a dangling deindex with no replacement reference.
+          // Child chunks intentionally do NOT carry supersedes; only the
+          // parent represents the logical memory unit.
           const parentId = await targetStorage.writeMemory(
             writeCategory,
             fact.content,
@@ -8878,6 +9062,8 @@ export class Orchestrator {
               entityRef: fact.entityRef,
               source: extractionWriteSource,
               importance,
+              supersedes,
+              links: links.length > 0 ? links : undefined,
               intentGoal: inferredIntent?.goal,
               intentActionType: inferredIntent?.actionType,
               intentEntityTypes: inferredIntent?.entityTypes,
@@ -9031,41 +9217,6 @@ export class Orchestrator {
             }),
           );
           continue; // Skip the normal write below
-        }
-      }
-
-      // Check for contradictions before writing (Phase 2B)
-      let supersedes: string | undefined;
-      let links: MemoryLink[] = [];
-
-      if (this.config.contradictionDetectionEnabled && this.qmd.isAvailable()) {
-        const targetNamespace = this.namespaceFromStorageDir(targetStorage.dir);
-        const contradiction = await this.checkForContradiction(
-          fact.content,
-          writeCategory,
-          targetNamespace,
-        );
-        if (contradiction) {
-          supersedes = contradiction.supersededId;
-          links.push({
-            targetId: contradiction.supersededId,
-            linkType: "contradicts",
-            strength: contradiction.confidence,
-            reason: contradiction.reason,
-          });
-          // Deindex the superseded memory so stale paths don't remain in
-          // index_time.json / index_tags.json after the incremental update.
-          if (
-            this.config.queryAwareIndexingEnabled &&
-            contradiction.supersededPath
-          ) {
-            deindexMemory(
-              this.config.memoryDir,
-              contradiction.supersededPath,
-              contradiction.supersededCreated,
-              contradiction.supersededTags,
-            );
-          }
         }
       }
 
@@ -11254,6 +11405,110 @@ export class Orchestrator {
     return [...used];
   }
 
+  /**
+   * Issue #373 — nearest-neighbor lookup for the write-time semantic dedup
+   * guard. Returns the top-K embedding hits against the currently indexed
+   * memories, or an empty array when the embedding backend is unavailable.
+   * Intentionally does NOT throw; `decideSemanticDedup` treats both "empty"
+   * and "error" outcomes as fail-open (keep the candidate).
+   *
+   * PR #399 P1 fix: when namespaces are enabled the lookup must be scoped
+   * to the SAME namespace as the fact being written. Otherwise a
+   * high-similarity memory from another namespace can suppress a write in
+   * the target namespace — cross-tenant data loss. Callers pass the target
+   * storage so we can translate its root directory into the correct index
+   * path prefix (and, for the legacy default-namespace layout at
+   * `memoryDir` root, an exclusion list for `namespaces/*`).
+   */
+  private async semanticDedupLookup(
+    content: string,
+    limit: number,
+    targetStorage: StorageManager,
+  ): Promise<SemanticDedupHit[]> {
+    // Round 6 fix (Finding 3): backend-unavailable conditions must THROW so
+    // that `decideSemanticDedup`'s catch block can return
+    // reason="backend_unavailable".  Previously all error/unavailable paths
+    // returned [] — causing decideSemanticDedup to always report
+    // reason="no_candidates" even when the provider was actually down.
+    //
+    // Contract after this fix:
+    //   • embeddingFallbackEnabled=false  → throw (feature not configured;
+    //     caller treats this as backend_unavailable and fails open).
+    //   • isAvailable() returns false     → throw (provider is reachable but
+    //     reports itself unavailable; distinct from empty index).
+    //   • search() throws                 → re-throw (network/provider error).
+    //   • search() returns []             → return [] (empty index, not a
+    //     backend failure; decideSemanticDedup reports no_candidates).
+    if (!this.config.embeddingFallbackEnabled) {
+      throw new Error("semantic dedup: embedding backend not configured");
+    }
+    if (!(await this.embeddingFallback.isAvailable())) {
+      log.debug("semantic dedup: embedding backend unavailable, skipping");
+      throw new Error("semantic dedup: embedding backend unavailable");
+    }
+    // search() may throw — let it propagate so decideSemanticDedup catches it
+    // and returns reason="backend_unavailable". Pass throwOnTimeout:true so
+    // EmbeddingTimeoutError is re-thrown here (Round 10 fix, Ui1J+Ui1L: the
+    // recall-path caller searchEmbeddingFallback does NOT pass this flag,
+    // keeping its fail-open [] contract on timeout).
+    const scope = this.semanticDedupScopeFor(targetStorage);
+    const hits = await this.embeddingFallback.search(content, limit, { ...scope, throwOnTimeout: true });
+    if (!Array.isArray(hits) || hits.length === 0) return [];
+    return hits.map((hit) => ({
+      id: hit.id,
+      score: hit.score,
+      path: hit.path,
+    }));
+  }
+
+  /**
+   * Resolve the namespace-scoped filter to pass into
+   * `EmbeddingFallback.search()` for semantic dedup. Returns an empty
+   * object (no filter) when namespaces are disabled, preserving the
+   * pre-PR #399 behavior for single-tenant installs.
+   *
+   * Index entries are stored as paths relative to `config.memoryDir`, so:
+   *   - A non-default namespace `ns` lives under `namespaces/<ns>/…` and
+   *     we include exactly that prefix.
+   *   - The default namespace may live at `memoryDir` root (legacy) or at
+   *     `memoryDir/namespaces/<default>/…` (migrated). When it lives at
+   *     root we include everything but EXCLUDE all `namespaces/…` entries
+   *     so facts from non-default namespaces can't cross-match.
+   */
+  private semanticDedupScopeFor(targetStorage: StorageManager): {
+    pathPrefix?: string;
+    pathExcludePrefixes?: readonly string[];
+  } {
+    if (!this.config.namespacesEnabled) return {};
+    const memoryDir = path.resolve(this.config.memoryDir);
+    const storageDir = path.resolve(targetStorage.dir);
+    if (storageDir === memoryDir) {
+      // Default namespace at legacy root. Include everything that isn't
+      // under `namespaces/*` (those belong to other namespaces).
+      return { pathExcludePrefixes: ["namespaces/"] };
+    }
+    let rel = path.relative(memoryDir, storageDir);
+    if (!rel || rel.startsWith("..")) {
+      // Round 12 fix (PR #399 thread PRRT_kwDORJXyws56U6Gj): when
+      // targetStorage.dir is outside memoryDir (custom namespace routing),
+      // toMemoryRelativePath() stores the absolute file path in the index
+      // rather than a memoryDir-relative path. Return the absolute storageDir
+      // as the pathPrefix so the search() filter still scopes the lookup to
+      // the correct tenant's files. Previously this returned {} (no scoping),
+      // which let high-similarity hits from other namespaces' absolute-path
+      // entries suppress writes in the target namespace — a cross-tenant
+      // dedup suppression path.
+      log.debug(
+        `semantic dedup: target storage dir ${storageDir} is outside memoryDir ${memoryDir}; scoping lookup to absolute path prefix`,
+      );
+      const absPrefix = storageDir.replace(/\\/g, "/");
+      return { pathPrefix: absPrefix.endsWith("/") ? absPrefix : `${absPrefix}/` };
+    }
+    rel = rel.replace(/\\/g, "/");
+    if (!rel.endsWith("/")) rel = `${rel}/`;
+    return { pathPrefix: rel };
+  }
+
   private async searchEmbeddingFallback(
     query: string,
     limit: number,
@@ -11937,30 +12192,43 @@ export class Orchestrator {
         verification.isContradiction &&
         verification.confidence >= this.config.contradictionMinConfidence
       ) {
-        // Auto-resolve if enabled
-        if (this.config.contradictionAutoResolve) {
-          // The new memory supersedes the old one (unless LLM said first is newer)
-          if (verification.whichIsNewer !== "first") {
-            await resultStorage.supersedeMemory(
-              existingMemory.frontmatter.id,
-              "pending-new", // Will be updated after the new memory is written
-              verification.reasoning,
-            );
-
-            return {
-              supersededId: existingMemory.frontmatter.id,
-              confidence: verification.confidence,
-              reason: verification.reasoning,
-              supersededPath: existingMemory.path,
-              supersededCreated: existingMemory.frontmatter.created,
-              supersededTags: existingMemory.frontmatter.tags ?? [],
-            };
-          }
+        // When the LLM says the existing memory is newer (whichIsNewer ===
+        // "first") the incoming fact is the stale one in both resolve modes —
+        // log and continue so the caller never marks contradictionDetected and
+        // the semantic-skip gate can discard the outdated write normally.
+        if (verification.whichIsNewer === "first") {
+          log.info(
+            `detected contradiction (confidence: ${verification.confidence}): ${existingMemory.frontmatter.id} vs new memory — existing is newer, incoming fact is stale`,
+          );
+          continue;
         }
 
+        // The new fact is newer than the existing one. When auto-resolve is
+        // enabled, immediately retire the old memory. When disabled, leave the
+        // old memory active for manual review.
+        if (this.config.contradictionAutoResolve) {
+          await resultStorage.supersedeMemory(
+            existingMemory.frontmatter.id,
+            "pending-new", // Will be updated after the new memory is written
+            verification.reasoning,
+          );
+        }
+
+        // Return the contradiction info regardless of auto-resolve setting.
+        // The caller uses this to set `contradictionDetected=true` which
+        // prevents the semantic-skip guard from silently dropping a
+        // legitimately contradictory update (the regression this fixes).
         log.info(
-          `detected contradiction (confidence: ${verification.confidence}): ${existingMemory.frontmatter.id} vs new memory`,
+          `detected contradiction (confidence: ${verification.confidence}): ${existingMemory.frontmatter.id} vs new memory${this.config.contradictionAutoResolve ? " (auto-resolved)" : " (queued for manual review)"}`,
         );
+        return {
+          supersededId: existingMemory.frontmatter.id,
+          confidence: verification.confidence,
+          reason: verification.reasoning,
+          supersededPath: existingMemory.path,
+          supersededCreated: existingMemory.frontmatter.created,
+          supersededTags: existingMemory.frontmatter.tags ?? [],
+        };
       }
     }
 

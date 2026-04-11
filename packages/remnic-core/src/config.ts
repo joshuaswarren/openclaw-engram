@@ -13,6 +13,11 @@ import type {
 import { log } from "./logger.js";
 import { cloneDefaultSessionObserverBands } from "./session-observer-bands.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
+// Finding 4 (#394): use the shared coerce helper instead of inlining the same
+// boolean-coercion logic that connectors/index.ts already exports. The helper
+// lives in connectors/coerce.ts (a tiny, dependency-free module) so neither
+// config.ts → connectors/index.ts nor the reverse circular import arises.
+import { coerceInstallExtension } from "./connectors/coerce.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
   resolveHomeDir(),
@@ -1271,6 +1276,28 @@ export function parseConfig(raw: unknown): PluginConfig {
 
     // v6.0 Fact deduplication & archival
     factDeduplicationEnabled: cfg.factDeduplicationEnabled !== false,
+    // Issue #373 — write-time semantic similarity guard
+    semanticDedupEnabled: cfg.semanticDedupEnabled !== false,
+    // Guard against NaN / Infinity — Number.isFinite rejects both and falls
+    // back to the documented default so the semantic dedup guard cannot be
+    // silently disabled by a malformed config value.
+    semanticDedupThreshold:
+      typeof cfg.semanticDedupThreshold === "number" &&
+      Number.isFinite(cfg.semanticDedupThreshold)
+        ? Math.min(1, Math.max(0, cfg.semanticDedupThreshold))
+        : 0.92,
+    // Zero is a valid "disable candidate lookup" signal and must be preserved.
+    // Only negative or non-finite values fall back to the default of 5.
+    // Fractional values in (0, 1) floor to 0, which would silently disable
+    // semantic dedup despite a clearly non-zero operator intent — clamp to 1.
+    semanticDedupCandidates: (() => {
+      const raw = cfg.semanticDedupCandidates;
+      if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return 5;
+      const n = Math.floor(raw);
+      // Positive fractional input (e.g. 0.5) should mean "at least 1 candidate",
+      // not "disabled". Only explicit 0 is the operator's disable signal.
+      return raw > 0 && n === 0 ? 1 : n;
+    })(),
     factArchivalEnabled: cfg.factArchivalEnabled === true,
     factArchivalAgeDays:
       typeof cfg.factArchivalAgeDays === "number" ? cfg.factArchivalAgeDays : 90,
@@ -1590,6 +1617,24 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.parallelMaxResultsPerAgent === "number"
         ? Math.max(0, Math.floor(cfg.parallelMaxResultsPerAgent))
         : 20,
+
+    // Codex CLI connector settings (install-time)
+    codex: (() => {
+      const raw =
+        cfg.codex && typeof cfg.codex === "object" && !Array.isArray(cfg.codex)
+          ? (cfg.codex as Record<string, unknown>)
+          : {};
+      // Coerce string "false"/"0"/"no" → false and "true"/"1"/"yes" → true so
+      // that CLI inputs like --config installExtension=false are handled correctly.
+      // Missing / undefined defaults to true (coerceInstallExtension returns
+      // undefined for unknown values, so ?? true applies the default).
+      const installExtension = coerceInstallExtension(raw.installExtension) ?? true;
+      const codexHome =
+        typeof raw.codexHome === "string" && raw.codexHome.trim().length > 0
+          ? raw.codexHome.trim()
+          : null;
+      return { installExtension, codexHome };
+    })(),
 
     // Codex CLI — native memory materialization (#378)
     codexMaterializeMemories: cfg.codexMaterializeMemories !== false,

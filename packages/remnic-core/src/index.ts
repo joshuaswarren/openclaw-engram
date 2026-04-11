@@ -174,6 +174,14 @@ export {
   type ContradictionPair,
 } from "./dedup/index.js";
 
+export {
+  decideSemanticDedup,
+  type SemanticDedupHit,
+  type SemanticDedupLookup,
+  type SemanticDedupOptions,
+  type SemanticDedupDecision,
+} from "./dedup/semantic.js";
+
 // ---------------------------------------------------------------------------
 // Review Inbox
 // ---------------------------------------------------------------------------
