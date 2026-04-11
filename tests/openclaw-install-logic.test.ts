@@ -50,9 +50,16 @@ function buildUpdatedOpenclawConfig(
   const legacyEntry = entries["openclaw-engram"];
   const existingNewEntry = entries["openclaw-remnic"];
 
+  // Only merge legacy config when the operator confirmed migration (migrateLegacy=true),
+  // matching the behaviour in cmdOpenclawInstall.
+  const legacyConfigToMerge =
+    migrateLegacy && legacyEntry?.config && typeof legacyEntry.config === "object"
+      ? (legacyEntry.config as Record<string, unknown>)
+      : {};
+
   const newEntry: OpenclawPluginEntry = {
     config: {
-      ...(legacyEntry?.config && typeof legacyEntry.config === "object" ? legacyEntry.config : {}),
+      ...legacyConfigToMerge,
       ...(existingNewEntry?.config && typeof existingNewEntry.config === "object" ? existingNewEntry.config : {}),
       memoryDir,
     },
