@@ -398,6 +398,7 @@ const pluginDefinition = {
       // the capability's promptBuilder can return recall context for runtimes
       // that treat the capability as the authoritative source.
       const needsCacheFallback =
+        promptInjectionAllowed &&
         sdkCaps.hasRegisterMemoryCapability &&
         typeof (api as any).registerMemoryCapability === "function";
 
