@@ -441,3 +441,82 @@ test("removeConnector hermes removes the tokens.json entry", () => {
     );
   });
 });
+
+// ── Review-feedback regression tests (PR #400) ────────────────────────────
+
+test("sanitizeHermesProfile rejects path-traversing profile values", () => {
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+  // Source-level guard: the sanitizer must exist and be called by hermesConfigPath
+  assert.ok(
+    content.includes("function sanitizeHermesProfile"),
+    "sanitizeHermesProfile must exist to validate profile names",
+  );
+  assert.ok(
+    content.includes("sanitizeHermesProfile(profile)"),
+    "hermesConfigPath must call sanitizeHermesProfile on the profile argument",
+  );
+  // The regex anchors and explicit `..` rejection are what prevent traversal.
+  assert.ok(
+    content.includes("^[A-Za-z0-9][A-Za-z0-9._-]*$"),
+    "sanitizer must pin profile names to a safe character class",
+  );
+  assert.ok(
+    content.includes('profile.includes("..")'),
+    "sanitizer must explicitly reject parent-directory references",
+  );
+  // Defense in depth: the resolved path must be confirmed inside profilesRoot.
+  assert.ok(
+    content.includes('resolved outside'),
+    "hermesConfigPath must verify the resolved path stays under the profiles root",
+  );
+});
+
+test("installConnector writes user config before the generated token (token wins)", () => {
+  // Regression test for the cursor-reported issue: a stray `token` key in
+  // options.config would silently override the daemon-generated token,
+  // producing a mismatch between the JSON config and tokens.json.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+  // The spread order inside resolvedConfig must be: options.config, THEN token.
+  const resolvedStart = content.indexOf("const resolvedConfig");
+  assert.ok(resolvedStart >= 0, "resolvedConfig must exist in installConnector");
+  const resolvedEnd = content.indexOf("};", resolvedStart);
+  assert.ok(resolvedEnd > resolvedStart, "resolvedConfig block must close");
+  const block = content.slice(resolvedStart, resolvedEnd);
+  const userSpreadIdx = block.indexOf("...options.config");
+  const tokenSpreadIdx = block.indexOf("tokenEntry ? { token: tokenEntry.token }");
+  assert.ok(userSpreadIdx >= 0, "resolvedConfig must spread options.config");
+  assert.ok(tokenSpreadIdx >= 0, "resolvedConfig must overlay tokenEntry.token");
+  assert.ok(
+    userSpreadIdx < tokenSpreadIdx,
+    "options.config must be spread before tokenEntry so the generated token wins",
+  );
+});
+
+test("checkDaemonHealth forwards the bearer token to the health probe", () => {
+  // Regression test for the codex-reported issue: /engram/v1/health is behind
+  // bearer auth in the access HTTP server, so the probe must send the token
+  // the connector just generated (or was configured with). Without it the
+  // probe always returns 401 and reports the daemon as unreachable.
+  const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
+  assert.ok(
+    content.includes("authToken?: string"),
+    "checkDaemonHealth must accept an optional auth token",
+  );
+  assert.ok(
+    content.includes("REMNIC_HEALTH_TOKEN"),
+    "checkDaemonHealth must expose the token via env var (not script interpolation)",
+  );
+  assert.ok(
+    content.includes("'authorization'") || content.includes('"authorization"'),
+    "health probe script must set an Authorization header",
+  );
+  assert.ok(
+    content.includes("'Bearer '") || content.includes('"Bearer "'),
+    "health probe script must use a Bearer scheme",
+  );
+  // installConnector must actually pass the generated token in.
+  assert.ok(
+    /checkDaemonHealth\(hermesHost, hermesPort, healthToken\)/.test(content),
+    "installConnector must pass the connector token to checkDaemonHealth",
+  );
+});

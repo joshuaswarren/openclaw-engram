@@ -578,12 +578,16 @@ export function installConnector(options: InstallOptions): InstallResult {
     // written; user can run `remnic token generate <id>` to create the token.
   }
 
-  // Build config from schema defaults + user overrides
+  // Build config from schema defaults + user overrides.
+  // Spread user config FIRST, then overlay the daemon-generated token so that
+  // a stray `token` key in options.config cannot silently override the value
+  // we just wrote to the token store. The connector JSON config and the
+  // daemon's tokens.json must agree on which token authorizes this connector.
   const resolvedConfig: Record<string, unknown> = {
     connectorId: options.connectorId,
     installedAt: new Date().toISOString(),
-    ...(tokenEntry ? { token: tokenEntry.token } : {}),
     ...options.config,
+    ...(tokenEntry ? { token: tokenEntry.token } : {}),
   };
   fs.writeFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
 
@@ -595,31 +599,53 @@ export function installConnector(options: InstallOptions): InstallResult {
   // auth silently. The connector config file is still created; the user can run
   // `remnic token generate hermes` to create the token, then re-run install.
   if (options.connectorId === "hermes") {
-    const hermesProfile = (options.config?.profile as string | undefined) ?? "default";
+    const rawProfile = (options.config?.profile as string | undefined) ?? "default";
     const hermesHost = (options.config?.host as string | undefined) ?? "127.0.0.1";
     const hermesPort = (options.config?.port as number | undefined) ?? 4318;
 
-    if (!tokenEntry) {
+    // Reject path-traversing or otherwise invalid profile values up front.
+    let hermesProfile: string | null = null;
+    try {
+      hermesProfile = sanitizeHermesProfile(rawProfile);
+    } catch (err) {
       notes.push(
-        "Token store unavailable — skipped Hermes config.yaml update. " +
-          "Run `remnic token generate hermes` then reinstall to complete setup.",
+        `Skipped Hermes config.yaml update: ${err instanceof Error ? err.message : String(err)}`,
       );
-    } else {
-      const yamlResult = upsertHermesConfig({
-        profile: hermesProfile,
-        host: hermesHost,
-        port: hermesPort,
-        token: tokenEntry.token,
-      });
-      if (yamlResult.updated) {
-        notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
-      } else if (yamlResult.skipped) {
-        notes.push(`Hermes config not written: ${yamlResult.reason}`);
+    }
+
+    if (hermesProfile !== null) {
+      if (!tokenEntry) {
+        notes.push(
+          "Token store unavailable — skipped Hermes config.yaml update. " +
+            "Run `remnic token generate hermes` then reinstall to complete setup.",
+        );
+      } else {
+        try {
+          const yamlResult = upsertHermesConfig({
+            profile: hermesProfile,
+            host: hermesHost,
+            port: hermesPort,
+            token: tokenEntry.token,
+          });
+          if (yamlResult.updated) {
+            notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
+          } else if (yamlResult.skipped) {
+            notes.push(`Hermes config not written: ${yamlResult.reason}`);
+          }
+        } catch (err) {
+          notes.push(
+            `Hermes config not written: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
     }
 
-    // Health-check the daemon (non-fatal, independent of token availability)
-    const daemonOk = checkDaemonHealth(hermesHost, hermesPort);
+    // Health-check the daemon (non-fatal, independent of token availability).
+    // /engram/v1/health sits behind bearer auth, so we pass the generated
+    // token when we have one — otherwise the probe would always 401 and
+    // falsely report the daemon as unreachable.
+    const healthToken = tokenEntry?.token;
+    const daemonOk = checkDaemonHealth(hermesHost, hermesPort, healthToken);
     if (daemonOk) {
       notes.push("Daemon health check: OK");
     } else {
@@ -679,11 +705,17 @@ export function removeConnector(connectorId: string): RemoveResult {
 
   // Hermes-specific: strip the remnic: block from config.yaml
   if (connectorId === "hermes") {
-    const yamlResult = removeHermesConfig({ profile: storedProfile });
-    if (yamlResult.updated) {
-      notes.push(`Removed remnic: block from Hermes config: ${yamlResult.configPath}`);
-    } else if (yamlResult.skipped) {
-      notes.push(`Hermes config cleanup skipped: ${yamlResult.reason}`);
+    try {
+      const yamlResult = removeHermesConfig({ profile: storedProfile });
+      if (yamlResult.updated) {
+        notes.push(`Removed remnic: block from Hermes config: ${yamlResult.configPath}`);
+      } else if (yamlResult.skipped) {
+        notes.push(`Hermes config cleanup skipped: ${yamlResult.reason}`);
+      }
+    } catch (err) {
+      notes.push(
+        `Hermes config cleanup skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   }
 
@@ -704,8 +736,48 @@ interface HermesConfigResult {
   configPath: string;
 }
 
+/**
+ * Validate and sanitize a Hermes profile name.
+ *
+ * Profile names appear as a path segment under `~/.hermes/profiles/`, so we
+ * must reject any value that could traverse outside that directory. Hermes
+ * itself restricts profile names to filesystem-safe identifiers; we mirror
+ * that convention and additionally require the resolved config path to stay
+ * under the profiles root.
+ *
+ * Throws on invalid input rather than silently normalizing — the caller
+ * should surface the error so the user can supply a valid profile.
+ */
+function sanitizeHermesProfile(profile: string): string {
+  if (typeof profile !== "string" || profile.length === 0) {
+    throw new Error("Hermes profile name must be a non-empty string");
+  }
+  // Disallow anything that isn't a plain profile identifier. We accept
+  // letters, digits, hyphen, underscore, and dot — but reject leading dots
+  // (hidden dirs) and any path separator or parent-dir reference.
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(profile)) {
+    throw new Error(
+      `Invalid Hermes profile name: ${JSON.stringify(profile)} — must match [A-Za-z0-9][A-Za-z0-9._-]*`,
+    );
+  }
+  if (profile.includes("..")) {
+    throw new Error(`Invalid Hermes profile name: ${JSON.stringify(profile)} — must not contain ".."`);
+  }
+  return profile;
+}
+
 function hermesConfigPath(profile: string): string {
-  return path.join(os.homedir(), ".hermes", "profiles", profile, "config.yaml");
+  const safeProfile = sanitizeHermesProfile(profile);
+  const profilesRoot = path.resolve(os.homedir(), ".hermes", "profiles");
+  const cfgPath = path.resolve(profilesRoot, safeProfile, "config.yaml");
+  // Defense in depth: ensure the resolved path is still under profilesRoot.
+  const rel = path.relative(profilesRoot, cfgPath);
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(
+      `Invalid Hermes profile path: resolved outside ${profilesRoot}`,
+    );
+  }
+  return cfgPath;
 }
 
 /**
@@ -892,10 +964,16 @@ export function removeHermesConfig(opts: { profile: string }): HermesConfigResul
  * Uses child_process.spawnSync to run a one-liner Node script so that the
  * existing synchronous installConnector() flow does not need to become async.
  *
- * Port and host are passed via environment variables — NOT interpolated into
- * the script string — to prevent injection from user-supplied config values.
+ * Data (host, port, token) are passed via environment variables — NOT
+ * interpolated into the script string — to prevent injection from
+ * user-supplied config values.
+ *
+ * /engram/v1/health is protected by bearer auth in the access HTTP server,
+ * so the caller must pass the connector token (or the configured server
+ * token) or the probe will always return 401 and report the daemon as
+ * unreachable even when it is running.
  */
-function checkDaemonHealth(host: string, port: number): boolean {
+function checkDaemonHealth(host: string, port: number, authToken?: string): boolean {
   try {
     // Validate port: must be an integer in [1, 65535].
     // This guards against user config supplying a non-numeric string.
@@ -903,26 +981,36 @@ function checkDaemonHealth(host: string, port: number): boolean {
     if (!Number.isFinite(safePort) || safePort < 1 || safePort > 65535) {
       return false;
     }
-    // Data (host and port) are passed via env vars, never interpolated into the
-    // script string, preventing any code-injection from malformed config values.
+    // Data (host, port, token) are passed via env vars, never interpolated
+    // into the script string, preventing any code-injection from malformed
+    // config values.
     const script = [
       "const http = require('http');",
+      "const headers = {};",
+      "if (process.env.REMNIC_HEALTH_TOKEN) {",
+      "  headers['authorization'] = 'Bearer ' + process.env.REMNIC_HEALTH_TOKEN;",
+      "}",
       "const req = http.get({",
       "  host: process.env.REMNIC_HEALTH_HOST,",
       "  port: parseInt(process.env.REMNIC_HEALTH_PORT, 10),",
       "  path: '/engram/v1/health',",
+      "  headers,",
       "  timeout: 3000,",
       "}, (res) => { process.exit(res.statusCode === 200 ? 0 : 1); });",
       "req.on('error', () => process.exit(1));",
       "req.on('timeout', () => { req.destroy(); process.exit(1); });",
     ].join("\n");
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      REMNIC_HEALTH_HOST: host,
+      REMNIC_HEALTH_PORT: String(safePort),
+    };
+    if (authToken) {
+      env.REMNIC_HEALTH_TOKEN = authToken;
+    }
     const result = spawnSync(process.execPath, ["-e", script], {
       timeout: 4000,
-      env: {
-        ...process.env,
-        REMNIC_HEALTH_HOST: host,
-        REMNIC_HEALTH_PORT: String(safePort),
-      },
+      env,
     });
     return result.status === 0;
   } catch {
