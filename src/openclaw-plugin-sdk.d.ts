@@ -127,6 +127,30 @@ declare module "openclaw/plugin-sdk" {
     }) => Promise<string | null | undefined> | string | null | undefined;
   }
 
+  // ---- Memory capability types (new SDK >=2026.4.5) ----
+
+  export type MemoryPluginPublicArtifactContentType = "markdown" | "json" | "text";
+
+  export interface MemoryPluginPublicArtifact {
+    kind: string;
+    workspaceDir: string;
+    relativePath: string;
+    absolutePath: string;
+    agentIds: string[];
+    contentType: MemoryPluginPublicArtifactContentType;
+  }
+
+  export interface MemoryPluginPublicArtifactsProvider {
+    listArtifacts(params: { cfg: unknown }): Promise<MemoryPluginPublicArtifact[]>;
+  }
+
+  export interface MemoryPluginCapability {
+    promptBuilder?: MemoryPromptSectionBuilder["build"] | ((...args: any[]) => any);
+    flushPlanResolver?: (...args: any[]) => any;
+    runtime?: Record<string, unknown>;
+    publicArtifacts?: MemoryPluginPublicArtifactsProvider;
+  }
+
   // ---- Runtime namespace (new SDK) ----
 
   export interface OpenClawRuntime {
@@ -194,6 +218,11 @@ declare module "openclaw/plugin-sdk" {
      *  Gateway <=2026.3.22 expects a bare function; future versions may
      *  accept the structured MemoryPromptSectionBuilder object. */
     registerMemoryPromptSection?: (builder: MemoryPromptSectionBuilder | MemoryPromptSectionBuilder["build"]) => void;
+
+    /** Register the full memory capability for this memory plugin (exclusive slot).
+     *  New SDK >=2026.4.5. Replaces the deprecated split registration methods
+     *  (registerMemoryPromptSection, registerMemoryFlushPlan, registerMemoryRuntime). */
+    registerMemoryCapability?: (capability: MemoryPluginCapability) => void;
 
     /** Registration mode: "full" | "setup-only" | "setup-runtime" (new SDK >=2026.3.22) */
     registrationMode?: "full" | "setup-only" | "setup-runtime";

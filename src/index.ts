@@ -35,6 +35,7 @@ import { createOpikExporter } from "./opik-exporter.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import { migrateFromEngram } from "./migrate/from-engram.js";
 import { cleanUserMessage } from "./user-message-cleaning.js";
+import { listRemnicPublicArtifacts } from "../packages/plugin-openclaw/src/public-artifacts.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -187,7 +188,7 @@ const pluginDefinition = {
     // Detect SDK capabilities for dual-path hook registration.
     sdkCaps = detectSdkCapabilities(api as unknown as Record<string, unknown>);
     log.info(
-      `SDK detection: version=${sdkCaps.sdkVersion}, beforePromptBuild=${sdkCaps.hasBeforePromptBuild}, memoryPromptSection=${sdkCaps.hasRegisterMemoryPromptSection}, typedHooks=${sdkCaps.hasTypedHooks}`,
+      `SDK detection: version=${sdkCaps.sdkVersion}, beforePromptBuild=${sdkCaps.hasBeforePromptBuild}, memoryPromptSection=${sdkCaps.hasRegisterMemoryPromptSection}, memoryCapability=${sdkCaps.hasRegisterMemoryCapability}, typedHooks=${sdkCaps.hasTypedHooks}`,
     );
 
     // Skip heavy initialization in setup-only mode (new SDK channel setup flows)
@@ -296,6 +297,37 @@ const pluginDefinition = {
       typeof api.registerMemoryPromptSection === "function" &&
       promptInjectionAllowed;
 
+    // Per-session cache: shared by the hook fallback path (populated when only
+    // registerMemoryCapability is available) and the registerMemoryPromptSection
+    // path (populated by the async pre-compute hook). Declared early so both
+    // paths and the closure-captured handlers below can reference it without
+    // TDZ surprises.
+    const cachedMemoryBySession = new Map<string, string[] | null>();
+
+    // Single source of truth for the structured memory section: every code path
+    // that populates `cachedMemoryBySession` MUST use this helper so the cache
+    // format stays consistent regardless of which registration path produced it.
+    function buildMemoryContextLines(trimmed: string): string[] {
+      return [
+        "## Memory Context (Remnic)",
+        "",
+        trimmed,
+        "",
+        "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
+        "",
+      ];
+    }
+
+    // Flat-string rendering for the gateway `prependSystemContext` slot.
+    // Derives from `buildMemoryContextLines` so the wording stays in lock-step
+    // with the capability/section builder cache. The trailing empty element
+    // produced by `buildMemoryContextLines` would become a trailing newline
+    // after joining — strip it to preserve the exact format the gateway
+    // expects for `prependSystemContext`.
+    function renderMemoryContextPrompt(trimmed: string): string {
+      return buildMemoryContextLines(trimmed).join("\n").replace(/\n$/, "");
+    }
+
     async function recallHookHandler(
       hookLabel: string,
       event: Record<string, unknown>,
@@ -365,7 +397,14 @@ const pluginDefinition = {
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
 
-        const memoryContextPrompt = `## Memory Context (Remnic)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+        // Build the structured line array for the capability cache fallback,
+        // then derive the flat `prependSystemContext` string from the same
+        // source so the hook-based and capability-based memory-injection
+        // paths can never drift. `memoryLines` is an internal return field
+        // consumed by the wrapping closure and MUST be stripped before the
+        // hook result is passed back to the gateway.
+        const memoryLines = buildMemoryContextLines(trimmed);
+        const memoryContextPrompt = renderMemoryContextPrompt(trimmed);
 
         log.debug(
           `${hookLabel}: returning system prompt with ${trimmed.length} chars`,
@@ -375,11 +414,12 @@ const pluginDefinition = {
         // Legacy (before_agent_start): return both for backward compat with
         // older gateways that may consume either field.
         if (hookLabel === "before_prompt_build") {
-          return { prependSystemContext: memoryContextPrompt };
+          return { prependSystemContext: memoryContextPrompt, memoryLines };
         }
         return {
           prependSystemContext: memoryContextPrompt,
           prependContext: memoryContextPrompt,
+          memoryLines,
         };
       } catch (err) {
         log.error("recall failed", err);
@@ -390,7 +430,29 @@ const pluginDefinition = {
       }
     }
 
-    if (!useMemoryPromptSection) {
+    // Memory recall injection through hook handlers is only legal when the
+    // operator policy allows prompt injection. When
+    // `hooks.allowPromptInjection=false`, the capability registration below
+    // already omits `promptBuilder`, so we also MUST NOT register the recall
+    // hook here: otherwise `recallHookHandler` would still return
+    // `prependSystemContext`, silently bypassing the policy on capability-only
+    // SDKs (and on legacy SDKs too).
+    if (!useMemoryPromptSection && promptInjectionAllowed) {
+      // When registerMemoryCapability is available but registerMemoryPromptSection
+      // is not (capability-only SDK), we need a hybrid approach: continue using
+      // the hook for backward compat, but also populate cachedMemoryBySession so
+      // the capability's promptBuilder can return recall context for runtimes
+      // that treat the capability as the authoritative source.
+      //
+      // NOTE: needsCacheFallback only applies to the before_prompt_build path.
+      // `sdkCaps.hasRegisterMemoryCapability` implies `sdkCaps.hasBeforePromptBuild`
+      // (see hasNewHookSystem in sdk-compat.ts), so the legacy before_agent_start
+      // branch can never observe a capability-enabled runtime and therefore
+      // does not populate the cache.
+      const needsCacheFallback =
+        sdkCaps.hasRegisterMemoryCapability &&
+        typeof (api as any).registerMemoryCapability === "function";
+
       if (sdkCaps.hasBeforePromptBuild) {
         // New SDK path — literal string for compat checker detection
         api.on(
@@ -398,16 +460,50 @@ const pluginDefinition = {
           async (
             event: Record<string, unknown>,
             ctx: Record<string, unknown>,
-          ) => recallHookHandler("before_prompt_build", event, ctx),
+          ) => {
+            const sessionKey = (ctx?.sessionKey as string) ?? "default";
+            // Reset the cache at the start of every turn so a recall miss
+            // can never serve stale memory from a prior turn through the
+            // capability promptBuilder fallback.
+            if (needsCacheFallback) {
+              cachedMemoryBySession.set(sessionKey, null);
+            }
+            const result = await recallHookHandler("before_prompt_build", event, ctx);
+            // Populate cache for capability promptBuilder fallback using the
+            // same structured line format as the registerMemoryPromptSection path.
+            if (needsCacheFallback && result?.memoryLines) {
+              cachedMemoryBySession.set(sessionKey, result.memoryLines);
+            }
+            // Strip the internal `memoryLines` field before returning to the
+            // gateway — it's a closure-private carrier for cache population
+            // and is not part of the hook contract.
+            if (result && "memoryLines" in result) {
+              const { memoryLines: _ml, ...gatewayResult } = result;
+              return gatewayResult;
+            }
+            return result;
+          },
         );
       } else {
-        // Legacy SDK path — literal string for compat checker detection
+        // Legacy SDK path — literal string for compat checker detection.
+        // Capability-only runtimes cannot reach this branch (they land on
+        // before_prompt_build above), so cache fallback logic is omitted here.
         api.on(
           "before_agent_start",
           async (
             event: Record<string, unknown>,
             ctx: Record<string, unknown>,
-          ) => recallHookHandler("before_agent_start", event, ctx),
+          ) => {
+            const result = await recallHookHandler("before_agent_start", event, ctx);
+            // Strip the internal `memoryLines` field before returning to the
+            // gateway — it's a closure-private carrier for cache population
+            // and is not part of the hook contract.
+            if (result && "memoryLines" in result) {
+              const { memoryLines: _ml, ...gatewayResult } = result;
+              return gatewayResult;
+            }
+            return result;
+          },
         );
       }
     }
@@ -425,9 +521,13 @@ const pluginDefinition = {
     // before_prompt_build hook (which IS async-capable) and cache the result
     // for the synchronous builder to return.
     // ========================================================================
-    // Per-session cache: isolates concurrent prompt builds so one session
-    // cannot clobber another's cached recall result.
-    const cachedMemoryBySession = new Map<string, string[] | null>();
+    // Note: `cachedMemoryBySession` is declared earlier in this function so
+    // both this section path and the hook fallback path can populate it.
+
+    // Hoisted reference to the prompt builder so registerMemoryCapability
+    // can include it alongside publicArtifacts (prevents SDK >=2026.4.5
+    // from treating the capability as authoritative without a promptBuilder).
+    let memoryPromptBuilder: ((params: { sessionKey?: string }) => string[] | null) | undefined;
 
     if (useMemoryPromptSection && api.registerMemoryPromptSection) {
       // Async pre-compute: run recall in before_prompt_build and cache result.
@@ -479,14 +579,7 @@ const pluginDefinition = {
               context.length > maxChars
                 ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
                 : context;
-            cachedMemoryBySession.set(sessionKey, [
-              "## Memory Context (Remnic)",
-              "",
-              trimmed,
-              "",
-              "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
-              "",
-            ]);
+            cachedMemoryBySession.set(sessionKey, buildMemoryContextLines(trimmed));
           } catch (err) {
             log.error("registerMemoryPromptSection pre-compute failed", err);
             if (orchestrator.config.compactionResetEnabled) {
@@ -512,6 +605,93 @@ const pluginDefinition = {
       (memoryBuildFn as any).id = "engram-memory";
       (memoryBuildFn as any).label = "Engram Memory Context";
       api.registerMemoryPromptSection(memoryBuildFn as any);
+
+      // Hoist for registerMemoryCapability below
+      memoryPromptBuilder = memoryBuildFn;
+    }
+
+    // ========================================================================
+    // registerMemoryCapability — unified memory plugin registration (new SDK)
+    // ========================================================================
+    // When registerMemoryCapability is available (>=2026.4.5), register the
+    // full capability object including publicArtifacts so memory-wiki bridge
+    // mode can discover and ingest Remnic artifacts.
+    //
+    // This does NOT replace the existing registerMemoryPromptSection / hook
+    // paths above — those handle recall injection. registerMemoryCapability
+    // adds the publicArtifacts provider and establishes Remnic as the active
+    // memory plugin for the gateway.
+    if (
+      sdkCaps.hasRegisterMemoryCapability &&
+      typeof (api as any).registerMemoryCapability === "function"
+    ) {
+      // Build a promptBuilder for the capability. When registerMemoryPromptSection
+      // was also registered, the section builder already does a destructive read
+      // (get + delete). To avoid double-consumption if the runtime calls both,
+      // the capability builder uses a non-destructive peek (get without delete).
+      // In capability-only SDK shapes, the capability builder IS the sole
+      // consumer so it performs the destructive read.
+      const capabilityPromptBuilder = memoryPromptBuilder
+        ? (params: { sessionKey?: string }): string[] | null => {
+            // Non-destructive peek — the section builder will handle cleanup
+            const key = params?.sessionKey ?? "default";
+            return cachedMemoryBySession.get(key) ?? null;
+          }
+        : (params: { sessionKey?: string }): string[] | null => {
+            // Capability-only: destructive read since we are the sole consumer
+            const key = params?.sessionKey ?? "default";
+            const lines = cachedMemoryBySession.get(key) ?? null;
+            cachedMemoryBySession.delete(key);
+            return lines;
+          };
+
+      // Derive the agent id owning this memory from the registration-time
+      // runtime context. Each plugin register() call is scoped to one agent
+      // (see singleton guard comment above), so api.runtime?.agent?.id is
+      // authoritative for this registry. Fall back to "generalist" only when
+      // the runtime does not expose an agent id (older new-SDK shapes).
+      const runtimeAgent = (api as any).runtime?.agent;
+      const runtimeAgentId =
+        typeof runtimeAgent?.id === "string" && runtimeAgent.id.length > 0
+          ? runtimeAgent.id
+          : undefined;
+      const capabilityAgentIds = runtimeAgentId ? [runtimeAgentId] : ["generalist"];
+      const capabilityWorkspaceDir =
+        (typeof runtimeAgent?.workspaceDir === "string" && runtimeAgent.workspaceDir.length > 0
+          ? runtimeAgent.workspaceDir
+          : undefined) ??
+        orchestrator.config.workspaceDir ??
+        defaultWorkspaceDir();
+
+      const memoryCapability: import("openclaw/plugin-sdk").MemoryPluginCapability = {
+        // Include the promptBuilder so runtimes that treat unified capability
+        // registration as authoritative (SDK >=2026.4.5) continue to inject
+        // recall context via the prompt builder.
+        // Respect promptInjectionAllowed policy — omit promptBuilder if injection
+        // is disabled, so the capability only provides publicArtifacts.
+        ...(promptInjectionAllowed ? { promptBuilder: capabilityPromptBuilder } : {}),
+        publicArtifacts: {
+          listArtifacts: async (_params: { cfg: unknown }) => {
+            try {
+              return await listRemnicPublicArtifacts({
+                memoryDir: orchestrator.config.memoryDir,
+                workspaceDir: capabilityWorkspaceDir,
+                agentIds: capabilityAgentIds,
+              });
+            } catch (err) {
+              log.error("publicArtifacts.listArtifacts failed", err);
+              return [];
+            }
+          },
+        },
+      };
+      (api as any).registerMemoryCapability(memoryCapability);
+      const builderDesc = !promptInjectionAllowed
+        ? " (promptBuilder omitted — injection disabled by policy)"
+        : memoryPromptBuilder
+          ? " and promptBuilder (from registerMemoryPromptSection)"
+          : " and promptBuilder (capability-only fallback)";
+      log.info(`registered memory capability with publicArtifacts provider${builderDesc}`);
     }
 
     // ========================================================================
