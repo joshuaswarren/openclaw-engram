@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- `@joshuaswarren/openclaw-engram` shim binary (`engram-access`) now passes
+  `preferredId: "openclaw-engram"` to `runCli`, so legacy shim installs target
+  their own `plugins.entries["openclaw-engram"]` block instead of falling
+  through to the canonical `"openclaw-remnic"` entry during migration when
+  `plugins.slots.memory` is unset. Without this, the shim CLI could silently
+  read/write the wrong memory store when both config blocks existed. (#403)
+
 ## [1.0.0] — The Remnic Release — 2026-04-10
 
 ### Engram is now Remnic

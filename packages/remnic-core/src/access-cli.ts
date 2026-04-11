@@ -20,6 +20,17 @@ type Runtime = {
   service: EngramAccessService;
 };
 
+export type AccessCliOptions = {
+  /**
+   * The calling plugin's own id (e.g. `"openclaw-engram"` when invoked by the
+   * shim binary).  Forwarded to {@link resolveRemnicPluginEntry} so shim CLI
+   * users target their own `plugins.entries["openclaw-engram"]` block instead
+   * of accidentally resolving to the canonical `"openclaw-remnic"` entry when
+   * `plugins.slots.memory` is unset (#403).
+   */
+  preferredId?: string;
+};
+
 type UsageErrorKind =
   | "unsupported-command"
   | "unexpected-positional"
@@ -161,28 +172,31 @@ function parseFloatOption(args: ParsedArgs, name: string): number | undefined {
   return value;
 }
 
-function loadPluginConfig(): Record<string, unknown> {
+function loadPluginConfig(preferredId?: string): Record<string, unknown> {
   const configPath =
     readEnvVar("OPENCLAW_ENGRAM_CONFIG_PATH") ||
     readEnvVar("OPENCLAW_CONFIG_PATH") ||
     path.join(resolveHomeDir(), ".openclaw", "openclaw.json");
   const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  // Delegate slot → PLUGIN_ID → LEGACY_PLUGIN_ID resolution to the shared
-  // helper so all config loaders stay in sync (#403).
-  const entry = resolveRemnicPluginEntry(raw);
+  // Delegate slot → preferredId → PLUGIN_ID → LEGACY_PLUGIN_ID resolution to
+  // the shared helper so all config loaders stay in sync (#403).  Shim CLI
+  // callers pass `preferredId: "openclaw-engram"` so legacy shim installs
+  // target their own config block instead of falling through to the canonical
+  // "openclaw-remnic" entry.
+  const entry = resolveRemnicPluginEntry(raw, preferredId);
   return (entry?.["config"] as Record<string, unknown> | undefined) ?? {};
 }
 
-function buildRuntime(): Runtime {
-  const config = parseConfig(loadPluginConfig());
+function buildRuntime(preferredId?: string): Runtime {
+  const config = parseConfig(loadPluginConfig(preferredId));
   return {
     config,
     service: new EngramAccessService(new Orchestrator(config)),
   };
 }
 
-async function runBrowse(args: ParsedArgs): Promise<void> {
-  const { service } = buildRuntime();
+async function runBrowse(args: ParsedArgs, preferredId?: string): Promise<void> {
+  const { service } = buildRuntime(preferredId);
   const result = await service.memoryBrowse({
     namespace: getLastOption(args, "namespace"),
     query: getLastOption(args, "query"),
@@ -195,8 +209,8 @@ async function runBrowse(args: ParsedArgs): Promise<void> {
   console.log(JSON.stringify(result, null, 2));
 }
 
-async function runStore(args: ParsedArgs): Promise<void> {
-  const { config, service } = buildRuntime();
+async function runStore(args: ParsedArgs, preferredId?: string): Promise<void> {
+  const { config, service } = buildRuntime(preferredId);
   const contentFile = getLastOption(args, "content-file");
   const inlineContent = getLastOption(args, "content");
   const content = contentFile ? fs.readFileSync(contentFile, "utf8") : inlineContent;
@@ -221,22 +235,28 @@ async function runStore(args: ParsedArgs): Promise<void> {
   console.log(JSON.stringify(result, null, 2));
 }
 
-export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+export async function main(
+  argv: string[] = process.argv.slice(2),
+  options: AccessCliOptions = {},
+): Promise<void> {
   const args = parseArgs(argv);
   if (args.command === "browse") {
-    await runBrowse(args);
+    await runBrowse(args, options.preferredId);
     return;
   }
-  await runStore(args);
+  await runStore(args, options.preferredId);
 }
 
 export function printUsage(): void {
   writeCliOutput(usage());
 }
 
-export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
+export async function runCli(
+  argv: string[] = process.argv.slice(2),
+  options: AccessCliOptions = {},
+): Promise<void> {
   try {
-    await main(argv);
+    await main(argv, options);
   } catch (error) {
     if (error instanceof UsageError) {
       writeCliOutput(formatUsageError(error));
