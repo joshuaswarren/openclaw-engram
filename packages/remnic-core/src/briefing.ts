@@ -716,6 +716,8 @@ export interface BuildBriefingOptions {
   allowLlm?: boolean;
   /** OpenAI API key. If absent the follow-up section is gracefully omitted. */
   openaiApiKey?: string;
+  /** OpenAI-compatible base URL (for Azure or proxied endpoints). */
+  openaiBaseUrl?: string;
   /** Model id for the Responses call. */
   model?: string;
   /** Injected follow-up generator. Overrides real LLM call (tests). */
@@ -778,6 +780,7 @@ export async function buildBriefing(options: BuildBriefingOptions): Promise<Brie
       const generator = options.followupGenerator ?? buildOpenAiFollowupGenerator({
         apiKey: options.openaiApiKey!,
         model: options.model ?? BRIEFING_FOLLOWUP_DEFAULT_MODEL,
+        baseURL: options.openaiBaseUrl,
       });
       const generated = await generator({
         sections: sectionsBase,
@@ -1036,11 +1039,16 @@ async function loadTodayCalendar(
 function buildOpenAiFollowupGenerator(cfg: {
   apiKey: string;
   model: string;
+  baseURL?: string;
 }): BriefingFollowupGenerator {
   return async ({ sections, windowLabel, maxFollowups }) => {
     // Lazy import keeps the module dependency-free when LLM path is unused.
-    const { OpenAI } = (await import("openai")) as { OpenAI: new (opts: { apiKey: string }) => unknown };
-    const client = new OpenAI({ apiKey: cfg.apiKey }) as {
+    const { OpenAI } = (await import("openai")) as {
+      OpenAI: new (opts: { apiKey: string; baseURL?: string }) => unknown;
+    };
+    const clientOpts: { apiKey: string; baseURL?: string } = { apiKey: cfg.apiKey };
+    if (cfg.baseURL) clientOpts.baseURL = cfg.baseURL;
+    const client = new OpenAI(clientOpts) as {
       responses: {
         create: (args: {
           model: string;
@@ -1093,27 +1101,30 @@ function buildFollowupPrompt(
 }
 
 function parseFollowupResponse(raw: string, max: number): BriefingFollowup[] {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!parsed || typeof parsed !== "object") return [];
-    const arr = (parsed as { followups?: unknown }).followups;
-    if (!Array.isArray(arr)) return [];
-    const out: BriefingFollowup[] = [];
-    for (const entry of arr) {
-      if (!entry || typeof entry !== "object") continue;
-      const text = (entry as Record<string, unknown>).text;
-      if (typeof text !== "string" || text.trim().length === 0) continue;
-      const rationale = (entry as Record<string, unknown>).rationale;
-      out.push({
-        text: text.trim(),
-        rationale: typeof rationale === "string" ? rationale.trim() : undefined,
-      });
-      if (out.length >= max) break;
-    }
-    return out;
-  } catch {
-    return [];
+  // JSON.parse throws on invalid JSON — let the caller catch it so the outer
+  // try/catch in buildBriefing can set followupsUnavailableReason rather than
+  // silently returning an empty array that masks the parse failure.
+  const parsed = JSON.parse(raw) as unknown;
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error(`LLM returned non-object JSON: ${typeof parsed}`);
   }
+  const arr = (parsed as { followups?: unknown }).followups;
+  if (!Array.isArray(arr)) {
+    throw new Error(`LLM response missing "followups" array`);
+  }
+  const out: BriefingFollowup[] = [];
+  for (const entry of arr) {
+    if (!entry || typeof entry !== "object") continue;
+    const text = (entry as Record<string, unknown>).text;
+    if (typeof text !== "string" || text.trim().length === 0) continue;
+    const rationale = (entry as Record<string, unknown>).rationale;
+    out.push({
+      text: text.trim(),
+      rationale: typeof rationale === "string" ? rationale.trim() : undefined,
+    });
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 function stringifyError(err: unknown): string {

@@ -372,13 +372,23 @@ async function cmdBriefing(rest: string[]): Promise<void> {
     );
     process.exit(1);
   }
-  const formatError = validateBriefingFormat(formatFlag);
+  // Honor the global --json flag: treat it as shorthand for --format json.
+  // If both --json and --format are supplied and they conflict, fail fast.
+  const jsonFlag = rest.includes("--json");
+  if (jsonFlag && formatFlag !== undefined && formatFlag !== "json") {
+    console.error(
+      `Conflicting flags: --json and --format ${formatFlag}. Use one or the other.`,
+    );
+    process.exit(1);
+  }
+  const effectiveFormatFlag = jsonFlag ? "json" : formatFlag;
+  const formatError = validateBriefingFormat(effectiveFormatFlag);
   if (formatError) {
     console.error(formatError);
     process.exit(1);
   }
   const format: "markdown" | "json" =
-    formatFlag === "json" ? "json" : formatFlag === "markdown" ? "markdown" : config.briefing.defaultFormat;
+    effectiveFormatFlag === "json" ? "json" : effectiveFormatFlag === "markdown" ? "markdown" : config.briefing.defaultFormat;
 
   const orchestrator = new Orchestrator(config);
   await orchestrator.initialize();
@@ -397,6 +407,7 @@ async function cmdBriefing(rest: string[]): Promise<void> {
     maxFollowups: config.briefing.maxFollowups,
     allowLlm: config.briefing.llmFollowups,
     openaiApiKey: config.openaiApiKey,
+    openaiBaseUrl: config.openaiBaseUrl,
     model: config.model,
   });
 
