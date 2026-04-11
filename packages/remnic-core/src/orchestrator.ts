@@ -8436,6 +8436,54 @@ export class Orchestrator {
           options.category === "fact" &&
           (await sharedStorage.hasFactContentHash(options.content))
         ) {
+          // Uj6H fix: shared-namespace temporal supersession must also run when
+          // the hash-dedup short-circuit fires.  Without this, an existing shared
+          // fact whose structuredAttributes are stale (or an older conflicting
+          // shared fact that is still active) never gets retired — supersession
+          // only ran in the post-writeMemory block which is unreachable here.
+          //
+          // Strategy: scan the shared namespace for the existing fact whose
+          // normalized content matches the incoming content, then run
+          // applyTemporalSupersession against it using the same logic that
+          // would have run post-writeMemory.  This is a best-effort / fail-open
+          // step — if the lookup fails we skip silently (same as the normal path).
+          if (
+            this.config.temporalSupersessionEnabled &&
+            options.entityRef &&
+            options.structuredAttributes &&
+            Object.keys(options.structuredAttributes).length > 0
+          ) {
+            try {
+              const normalizedIncoming = ContentHashIndex.normalizeContent(options.content);
+              const allShared = await sharedStorage.readAllMemories();
+              // Strip the appended `[Attributes: ...]` enrichment suffix before
+              // comparing so that facts stored with or without the suffix are
+              // found correctly.  The suffix is appended by writeMemory when
+              // structuredAttributes are present, but hasFactContentHash hashes
+              // only the raw (non-enriched) content — so the matching must strip
+              // the enrichment to obtain the same normalized base.
+              const matchingFact = allShared.find((m) => {
+                if (m.frontmatter.category !== "fact") return false;
+                if ((m.frontmatter.status ?? "active") !== "active") return false;
+                const rawBody = (m.content ?? "").replace(/\n\[Attributes:[^\]]*\]\s*$/, "").trimEnd();
+                return ContentHashIndex.normalizeContent(rawBody) === normalizedIncoming;
+              });
+              if (matchingFact) {
+                await applyTemporalSupersession({
+                  storage: sharedStorage,
+                  newMemoryId: matchingFact.frontmatter.id,
+                  entityRef: options.entityRef,
+                  structuredAttributes: options.structuredAttributes,
+                  createdAt: matchingFact.frontmatter.created ?? new Date().toISOString(),
+                  enabled: true,
+                });
+              }
+            } catch (hashDedupSupersessionErr) {
+              log.warn(
+                `persistExtraction: shared-namespace supersession on hash-dedup path failed open for ${options.sourceMemoryId}: ${hashDedupSupersessionErr}`,
+              );
+            }
+          }
           return;
         }
         const promotedId = await sharedStorage.writeMemory(

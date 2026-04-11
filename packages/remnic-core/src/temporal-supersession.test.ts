@@ -1721,6 +1721,95 @@ test("readAllColdMemories: cold-scan cache is invalidated by a hot-tier write (i
 // for COLD_SCAN_CACHE_TTL_MS; back-to-back hot-tier writes in the same burst
 // reuse the cached result instead of re-scanning.
 
+// ─── Regression: Uj6H — shared supersession on hash-dedup promotion path ────────
+//
+// When `hasFactContentHash` fires and the promotion short-circuits (the shared
+// namespace already contains the same raw content), the temporal supersession
+// block was never reached.  The fix runs `applyTemporalSupersession` against
+// the existing shared fact even on the hash-dedup path so that older conflicting
+// shared facts are still retired.
+//
+// This test verifies the core invariant: even when a shared fact with the
+// matching content already exists (hash-dedup hit), calling
+// `applyTemporalSupersession` with that existing fact's ID and the new
+// structuredAttributes correctly retires older conflicting shared facts.
+
+test("applyTemporalSupersession: hash-dedup path — supersedes older conflicting shared fact via existing matching memory", async () => {
+  // Simulate the shared namespace storage.
+  const { storage: sharedStorage, cleanup } = await makeStorage("engram-hash-dedup-shared-");
+  try {
+    // Step 1: Pre-seed an older conflicting shared fact (city = Austin, T0).
+    const t0 = "2026-01-01T00:00:00.000Z";
+    const staleId = await writeFact(
+      sharedStorage,
+      "entity lives in Austin (shared)",
+      TEST_ENTITY,
+      { city: "Austin" },
+    );
+    sharedStorage.invalidateAllMemoriesCacheForDir();
+    const staleMem = (await sharedStorage.readAllMemories()).find((m) => m.frontmatter.id === staleId);
+    assert.ok(staleMem, "stale shared fact must exist");
+    await sharedStorage.writeMemoryFrontmatter(staleMem!, { created: t0, updated: t0 });
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    // Step 2: Pre-seed an existing shared fact with the same raw content as the
+    // incoming promotion.  In the hash-dedup scenario, this is the fact whose
+    // hash triggered the short-circuit.  It may have stale or empty
+    // structuredAttributes — the key point is that it has a newer timestamp (T1)
+    // than the stale conflicting fact (T0).
+    const t1 = "2026-02-01T00:00:00.000Z";
+    const existingMatchingId = await writeFact(
+      sharedStorage,
+      "entity relocated to NYC (shared)",
+      TEST_ENTITY,
+      // The existing shared fact might have stale/empty structuredAttributes
+      // (e.g., written before the structuredAttributes feature was added).
+      // The incoming promotion provides the correct new attributes.
+      {},
+    );
+    sharedStorage.invalidateAllMemoriesCacheForDir();
+    const existingMem = (await sharedStorage.readAllMemories()).find((m) => m.frontmatter.id === existingMatchingId);
+    assert.ok(existingMem, "existing matching shared fact must exist");
+    await sharedStorage.writeMemoryFrontmatter(existingMem!, { created: t1, updated: t1 });
+
+    // Step 3: Simulate what the hash-dedup fix does: instead of returning early,
+    // call applyTemporalSupersession with the existing matching fact's ID and the
+    // new structuredAttributes from the incoming promotion.  This is the logic
+    // that was missing before the Uj6H fix.
+    sharedStorage.invalidateAllMemoriesCacheForDir();
+    const result = await applyTemporalSupersession({
+      storage: sharedStorage,
+      newMemoryId: existingMatchingId,
+      entityRef: TEST_ENTITY,
+      structuredAttributes: { city: "NYC" },  // new attributes from the incoming promotion
+      createdAt: t1,
+      enabled: true,
+    });
+
+    // The older conflicting shared fact (city=Austin, T0) must be superseded.
+    // Without the hash-dedup fix, this call was never made, so the stale fact
+    // would remain active.
+    assert.deepEqual(
+      result.supersededIds,
+      [staleId],
+      "hash-dedup path: older conflicting shared fact (city=Austin) must be superseded by the existing matching fact (city=NYC)",
+    );
+    assert.deepEqual(result.matchedKeys, [`${TEST_ENTITY}::city`]);
+
+    // Verify the stale fact is marked superseded on disk.
+    const staleFm = await readFrontmatterById(sharedStorage, staleId);
+    assert.equal(staleFm?.status, "superseded", "stale shared fact must be marked superseded");
+    assert.equal(staleFm?.supersededBy, existingMatchingId, "stale shared fact must link to the existing matching fact");
+
+    // The existing matching fact itself must remain active.
+    const existingFm = await readFrontmatterById(sharedStorage, existingMatchingId);
+    assert.equal(existingFm?.status ?? "active", "active", "existing matching shared fact must remain active");
+  } finally {
+    await cleanup();
+  }
+});
+
 test("readAllColdMemories: cold-scan cache is a hit when no cold demotion occurs between calls", async () => {
   // Strategy: populate the cold-scan cache via a first readAllColdMemories() call.
   // Then add a new .md file directly to cold/ WITHOUT going through
