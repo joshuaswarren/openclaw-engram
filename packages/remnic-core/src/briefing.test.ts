@@ -10,6 +10,7 @@ import {
   filterMemoriesByWindow,
   buildRecentEntities,
   eventFallsOnDate,
+  parseIcsEvents,
   parseBriefingWindow,
   validateBriefingFormat,
 } from "./briefing.js";
@@ -418,4 +419,125 @@ test("parseBriefingWindow: from date is always a valid finite Date for normal in
     assert.ok(result !== null, `"${token}" should parse successfully`);
     assert.ok(Number.isFinite(result.from.getTime()), `"${token}" from must be a valid Date`);
   }
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// PR #396 Finding 1: eventFallsOnDate — overlapping / multi-day events
+// ──────────────────────────────────────────────────────────────────────────
+
+function makeCalendarEventWithEnd(start: string, end: string): CalendarEvent {
+  return { id: "evt-synthetic-span", title: "Span Event", start, end };
+}
+
+test("eventFallsOnDate: midnight-crossing event appears on both dates (UTC)", () => {
+  // Event 2026-04-10T23:30:00Z → 2026-04-11T01:00:00Z spans midnight UTC.
+  // It should be visible on both 2026-04-10 and 2026-04-11.
+  const event = makeCalendarEventWithEnd("2026-04-10T23:30:00Z", "2026-04-11T01:00:00Z");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true, "spans midnight — must appear on start date");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true, "spans midnight — must appear on end date");
+  assert.equal(eventFallsOnDate(event, "2026-04-09"), false, "must not appear before start date");
+  assert.equal(eventFallsOnDate(event, "2026-04-12"), false, "must not appear after end date");
+});
+
+test("eventFallsOnDate: multi-day event appears on every day it spans", () => {
+  // Event from 2026-04-09T00:00:00Z to 2026-04-12T00:00:00Z spans 3 full days.
+  const event = makeCalendarEventWithEnd("2026-04-09T00:00:00Z", "2026-04-12T00:00:00Z");
+  assert.equal(eventFallsOnDate(event, "2026-04-09"), true, "must appear on day 1");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true, "must appear on day 2");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true, "must appear on day 3");
+  // end is exactly midnight of 2026-04-12 — half-open [start, end) means it
+  // does NOT count as active on 2026-04-12.
+  assert.equal(eventFallsOnDate(event, "2026-04-12"), false, "event ending at midnight must not appear on that day");
+  assert.equal(eventFallsOnDate(event, "2026-04-08"), false, "must not appear before start");
+});
+
+test("eventFallsOnDate: event ending exactly at day boundary (midnight) excluded from next day", () => {
+  // An event ending at exactly 2026-04-11T00:00:00Z ends at the first instant
+  // of 2026-04-11 — half-open semantics means it is NOT active on 2026-04-11.
+  const event = makeCalendarEventWithEnd("2026-04-10T22:00:00Z", "2026-04-11T00:00:00Z");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true, "must appear on start date");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), false, "end-at-midnight must NOT appear on next day");
+});
+
+test("eventFallsOnDate: point event (no end) still works correctly after refactor", () => {
+  const event = makeCalendarEvent("2026-04-11T10:00:00Z");
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true);
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), false);
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// PR #396 Finding 2: parseIcsEvents — RFC 5545 line unfolding
+// ──────────────────────────────────────────────────────────────────────────
+
+test("parseIcsEvents: folded SUMMARY line (space continuation) is unfolded correctly", () => {
+  // RFC 5545 §3.1 line folding: CRLF followed by a single whitespace character
+  // is a fold — the CRLF + that one whitespace byte are removed entirely when
+  // unfolding.  Real ICS encoders place the fold at a convenient byte boundary;
+  // any space that is part of the content appears at the END of the first
+  // physical line (before the CRLF), NOT at the start of the continuation.
+  // The leading space on the continuation line is purely the fold indicator
+  // and is discarded.  The fixture below reflects that: the first physical line
+  // ends with " physical" (space is part of the value) and the continuation
+  // starts with " lines" (leading space is the fold marker, discarded).
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:test-fold-1@synthetic",
+    "DTSTART:20260411T100000Z",
+    "DTEND:20260411T110000Z",
+    // Content space is at end of first line; continuation space is fold marker.
+    "SUMMARY:This is a long summary folded across two physical ",
+    " lines by the ICS encoder",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const events = parseIcsEvents(ics);
+  assert.equal(events.length, 1, "should parse exactly one event");
+  assert.equal(
+    events[0]!.title,
+    "This is a long summary folded across two physical lines by the ICS encoder",
+    "folded SUMMARY must be unfolded into a single string (fold marker space discarded)",
+  );
+});
+
+test("parseIcsEvents: folded SUMMARY line (tab continuation) is unfolded correctly", () => {
+  // RFC 5545 allows either a space or tab as the fold whitespace character.
+  // The leading tab on the continuation line is the fold marker and is discarded.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:test-fold-tab@synthetic",
+    "DTSTART:20260412T090000Z",
+    "DTEND:20260412T100000Z",
+    "SUMMARY:Tab-folded summary part one ",
+    "\tcontinued after a tab",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const events = parseIcsEvents(ics);
+  assert.equal(events.length, 1);
+  assert.equal(
+    events[0]!.title,
+    "Tab-folded summary part one continued after a tab",
+    "tab-folded SUMMARY must be joined without the fold-marker tab",
+  );
+});
+
+test("parseIcsEvents: unfolded ICS (no folds) is parsed unchanged", () => {
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:test-no-fold@synthetic",
+    "DTSTART:20260413T080000Z",
+    "DTEND:20260413T090000Z",
+    "SUMMARY:Simple one-line title",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const events = parseIcsEvents(ics);
+  assert.equal(events.length, 1);
+  assert.equal(events[0]!.title, "Simple one-line title");
 });

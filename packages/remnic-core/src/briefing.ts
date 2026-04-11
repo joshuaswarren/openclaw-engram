@@ -304,9 +304,14 @@ interface IcsDateField {
   params: Record<string, string>;
 }
 
-function parseIcsEvents(raw: string): CalendarEvent[] {
+/** @internal — exported for testing only. */
+export function parseIcsEvents(raw: string): CalendarEvent[] {
   const events: CalendarEvent[] = [];
-  const normalized = raw.replace(/\r\n/g, "\n");
+  // RFC 5545 §3.1 line unfolding: a CRLF (now \n) followed by a single
+  // whitespace character (space or tab) is a fold — remove both characters
+  // to join the continuation onto the preceding logical line.  This MUST
+  // happen after normalising CRLF → \n and BEFORE splitting on \n.
+  const normalized = raw.replace(/\r\n/g, "\n").replace(/\n[ \t]/g, "");
   const blocks = normalized.split(/BEGIN:VEVENT/i).slice(1);
   for (const block of blocks) {
     const endIdx = block.search(/END:VEVENT/i);
@@ -472,6 +477,35 @@ function zonedFormatToMs(formatter: Intl.DateTimeFormat, date: Date): number | n
   return Number.isFinite(ms) ? ms : null;
 }
 
+/**
+ * Returns true when `isoStr` has an explicit UTC or numeric offset suffix
+ * (Z, ±HH:MM, or ±HHMM).  Floating datetimes produced by `normalizeIcsDate`
+ * have no such suffix.
+ */
+function isoHasTimezone(isoStr: string): boolean {
+  return /(Z|[+-]\d{2}:?\d{2})$/.test(isoStr);
+}
+
+/**
+ * Parse an ISO datetime string (UTC-aware or floating) to milliseconds since
+ * epoch, or `null` if the string is not a valid datetime.
+ *
+ * - UTC / offset-aware strings are passed directly to `new Date()`.
+ * - Floating strings (no timezone suffix) are interpreted as UTC so that
+ *   interval arithmetic uses the same epoch base as UTC-aware strings.
+ *   The caller is responsible for using the correct date-boundary constants.
+ */
+function isoToMs(isoStr: string): number | null {
+  if (!isoStr) return null;
+  let src = isoStr;
+  if (!isoHasTimezone(src)) {
+    // Treat floating time as UTC for interval math (append Z).
+    src = src + "Z";
+  }
+  const ms = new Date(src).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /** @internal — exported for testing only. */
 export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean {
   const target = dateIso.slice(0, 10);
@@ -481,26 +515,62 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
   // "YYYY-MM-DDTHH:MM:SS" with no timezone. Passing this to `new Date()`
   // causes ECMAScript to parse it as local time, which then round-trips
   // through UTC via `toISOString()` and can shift the calendar date.
-  // For floating times we compare the date portion directly.
-  const hasTimezone = /(Z|[+-]\d{2}:?\d{2})$/.test(start);
-  if (!hasTimezone) {
+  // For floating times we compare date portions directly (no epoch arithmetic).
+  const startIsFloating = !isoHasTimezone(start);
+
+  if (startIsFloating) {
     // Verify the value is at least parseable before accepting it.
     const probe = new Date(start);
     if (!Number.isFinite(probe.getTime())) {
       log.debug(`briefing: skipping calendar event with invalid start value: ${JSON.stringify(start)}`);
       return false;
     }
-    // Extract YYYY-MM-DD directly from the string — no UTC shift.
-    return start.slice(0, 10) === target;
+
+    const startDate = start.slice(0, 10);
+    const end = event.end;
+
+    // Point event (no end) — simple date prefix comparison.
+    if (!end) return startDate === target;
+
+    // Span event: include if [startDate, endDate) overlaps target.
+    // For floating spans, compare YYYY-MM-DD strings lexicographically.
+    const endDate = end.slice(0, 10);
+    return startDate <= target && target < endDate;
   }
 
-  // UTC or offset-aware ISO string: parse and normalise to UTC date.
-  const parsed = new Date(start);
-  if (!Number.isFinite(parsed.getTime())) {
+  // UTC or offset-aware ISO string: parse and normalise to UTC milliseconds,
+  // then check whether the event's [start, end) interval overlaps the target
+  // UTC day [dayStart, dayEnd).
+  const startMs = isoToMs(start);
+  if (startMs === null) {
     log.debug(`briefing: skipping calendar event with invalid start value: ${JSON.stringify(start)}`);
     return false;
   }
-  return parsed.toISOString().slice(0, 10) === target;
+
+  // Boundaries of the target UTC day (half-open: [dayStart, dayEnd)).
+  const dayStart = Date.UTC(
+    Number(target.slice(0, 4)),
+    Number(target.slice(5, 7)) - 1,
+    Number(target.slice(8, 10)),
+  );
+  const dayEnd = dayStart + 86_400_000; // +24 h
+
+  const end = event.end;
+  if (!end) {
+    // Point event: included iff start falls within [dayStart, dayEnd).
+    return startMs >= dayStart && startMs < dayEnd;
+  }
+
+  const endMs = isoToMs(end);
+  if (endMs === null) {
+    // Unparseable end — fall back to point-event semantics.
+    return startMs >= dayStart && startMs < dayEnd;
+  }
+
+  // Interval event: overlaps day iff start < dayEnd AND end > dayStart.
+  // Using strict > for end so that an event ending exactly at midnight
+  // (dayEnd of previous day) is NOT counted on the next day.
+  return startMs < dayEnd && endMs > dayStart;
 }
 
 function cryptoRandomId(): string {
