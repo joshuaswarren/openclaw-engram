@@ -1071,10 +1071,22 @@ export function installConnector(options: InstallOptions): InstallResult {
         extensionHandle = extResult;
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : "unknown error";
+        // Codex P2 (PRRT_kwDORJXyws56Ur_G): generateToken already rotated
+        // tokens.json before reaching this point. The extension threw, so no
+        // connector.json was written — roll back the token store to the
+        // pre-install snapshot so tokens.json and the absent connector.json
+        // stay consistent (no orphaned/active token without a matching config).
+        if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
+          try {
+            saveTokenStore(nonHermesPriorTokenStore);
+          } catch {
+            // Best-effort: rollback failed; caller sees the original install error.
+          }
+        }
         return {
           connectorId: options.connectorId,
           status: "error",
-          message: `Memory extension install failed — ${errMsg}`,
+          message: `Memory extension install failed — ${errMsg}. Token has been rolled back. Resolve the issue, then reinstall.`,
         };
       }
     } else {

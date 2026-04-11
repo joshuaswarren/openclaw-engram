@@ -2694,3 +2694,92 @@ test("non-Hermes generateToken partial-write: tokens.json restored to pre-instal
     }
   });
 });
+
+// ── Codex P2 regression: PRRT_kwDORJXyws56Ur_G ───────────────────────────
+// When installCodexMemoryExtension throws, the token rotated by generateToken
+// must be rolled back so tokens.json stays consistent with the absent
+// connector.json.
+
+test("codex-cli: token is rolled back when installCodexMemoryExtension throws (Codex P2 PRRT_kwDORJXyws56Ur_G)", async () => {
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Seed tokens.json with an unrelated connector entry so we can verify
+        // the snapshot is restored byte-for-byte (not just "no codex-cli entry").
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        fs.mkdirSync(path.dirname(tokensPath), { recursive: true });
+        const preSeedStore = {
+          tokens: [
+            {
+              token: "remnic_rl_SYNTHETICREPLIT1234567890abcdef",
+              connector: "replit",
+              createdAt: new Date().toISOString(),
+            },
+          ],
+        };
+        // Write with a trailing newline — same format saveTokenStore uses — so the
+        // byte-for-byte snapshot comparison holds after rollback restores the store.
+        fs.writeFileSync(tokensPath, JSON.stringify(preSeedStore, null, 2) + "\n", { mode: 0o600 });
+        // Snapshot the raw bytes before the install attempt.
+        const snapshotContent = fs.readFileSync(tokensPath, "utf-8");
+
+        // Attempt to install codex-cli with extensionSourceDir pointing to a
+        // non-existent path — this forces locatePluginCodexExtensionSource to
+        // throw "Codex extension source directory not found: <path>" before any
+        // filesystem writes to codexHome occur.
+        const nonExistentSource = path.join(tmpHome, "does-not-exist-extension-source");
+        const result = mod.installConnector({
+          connectorId: "codex-cli",
+          config: { extensionSourceDir: nonExistentSource },
+        });
+
+        // installConnector must return an error, not throw.
+        assert.equal(
+          result.status,
+          "error",
+          "installConnector must return status 'error' when installCodexMemoryExtension throws",
+        );
+        assert.match(
+          result.message,
+          /Memory extension install failed/,
+          "Error message must mention memory extension install failure",
+        );
+        assert.match(
+          result.message,
+          /Token has been rolled back/,
+          "Error message must indicate the token has been rolled back",
+        );
+
+        // tokens.json must match the pre-install snapshot byte-for-byte.
+        // The codex-cli token that generateToken rotated in must no longer be present.
+        const rawAfter = fs.readFileSync(tokensPath, "utf-8");
+        assert.equal(
+          rawAfter,
+          snapshotContent,
+          "tokens.json must match the pre-install snapshot exactly after rollback",
+        );
+        const storeAfter = JSON.parse(rawAfter) as { tokens: Array<{ connector: string }> };
+        const codexEntry = storeAfter.tokens.find((t) => t.connector === "codex-cli");
+        assert.ok(
+          !codexEntry,
+          "tokens.json must NOT contain a codex-cli token after failed extension install",
+        );
+
+        // codex-cli.json connector file must NOT have been written.
+        const connectorsDir = path.join(
+          tmpHome, ".config", "engram", ".engram-connectors", "connectors",
+        );
+        const codexConnectorPath = path.join(connectorsDir, "codex-cli.json");
+        assert.ok(
+          !fs.existsSync(codexConnectorPath),
+          "codex-cli.json must NOT be written when extension install fails",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
