@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 
 import { parseConfig } from "../config.js";
 import { chunkContent, type ChunkingConfig } from "../chunking.js";
 import { EmbeddingFallback } from "../embedding-fallback.js";
-import { ContentHashIndex } from "../storage.js";
+import { ContentHashIndex, StorageManager } from "../storage.js";
 import {
   decideSemanticDedup,
   type SemanticDedupHit,
@@ -770,4 +770,126 @@ test("regression #399 HIGH: long content that would chunk IS written when semant
   } finally {
     await rm(stateDir, { recursive: true, force: true });
   }
+});
+
+// ── Round 6 regression tests ───────────────────────────────────────────────────
+
+// Finding 1+2 (round 6): chunked parent must carry supersedes + links
+//
+// When contradiction detection runs before the chunking branch (the round 5
+// fix) and finds a conflict, the chunked parent writeMemory() call must pass
+// supersedes and links. Without this fix, deindexMemory() fires on the old
+// memory but the new chunked parent has no supersedes frontmatter field —
+// leaving a dangling deindex reference.
+//
+// This test exercises StorageManager.writeMemory() directly with both
+// supersedes and links to verify the round 6 fix propagates them to the
+// written file's YAML frontmatter.
+
+test("round 6: chunked parent writeMemory carries supersedes in frontmatter", async () => {
+  const memDir = await mkdtemp(join(tmpdir(), "remnic-chunked-supersedes-"));
+  try {
+    const storage = new StorageManager(memDir);
+    const OLD_ID = "fact-old-abc-123";
+
+    const newId = await storage.writeMemory("fact", "the user prefers dark mode", {
+      confidence: 0.9,
+      tags: ["chunked", "preference"],
+      supersedes: OLD_ID,
+      links: [
+        {
+          targetId: OLD_ID,
+          linkType: "contradicts",
+          strength: 0.88,
+          reason: "user corrected earlier preference",
+        },
+      ],
+    });
+
+    // Find the written file and parse its raw YAML to verify the fields.
+    const allFiles: string[] = [];
+    const factsBase = join(memDir, "facts");
+    try {
+      for (const dateDir of await readdir(factsBase)) {
+        const dir = join(factsBase, dateDir);
+        for (const f of await readdir(dir)) {
+          if (f.endsWith(".md")) allFiles.push(join(dir, f));
+        }
+      }
+    } catch {
+      // factsBase may not exist if today's directory hasn't been created yet
+    }
+
+    assert.equal(allFiles.length, 1, "exactly one memory file must be written");
+    const raw = await readFile(allFiles[0]!, "utf-8");
+
+    // Verify supersedes appears in the YAML block.
+    assert.ok(
+      raw.includes(`supersedes: ${OLD_ID}`),
+      `written file must contain supersedes: ${OLD_ID}\nActual content:\n${raw}`,
+    );
+
+    // Verify links block appears in the YAML block.
+    assert.ok(
+      raw.includes("contradicts"),
+      `written file must contain the contradicts link type\nActual content:\n${raw}`,
+    );
+    assert.ok(
+      raw.includes(OLD_ID),
+      `written file must reference the old memory id in links\nActual content:\n${raw}`,
+    );
+
+    // Verify the returned ID is what we'd find in the file.
+    assert.ok(newId.startsWith("fact-"), `memory id must start with 'fact-'; got ${newId}`);
+    assert.ok(raw.includes(`id: ${newId}`), `file must contain id: ${newId}`);
+  } finally {
+    StorageManager.clearAllStaticCaches();
+    await rm(memDir, { recursive: true, force: true });
+  }
+});
+
+// Finding 3 (round 6): semanticDedupLookup throws on backend unavailability
+//
+// The round 6 fix changes semanticDedupLookup to THROW when the embedding
+// backend is not configured or is unavailable, rather than returning [].
+// This ensures decideSemanticDedup's catch block fires and sets
+// reason="backend_unavailable" instead of reason="no_candidates".
+//
+// We test the boundary at the pure decideSemanticDedup level: a lookup that
+// throws (simulating the new semanticDedupLookup behaviour) must yield
+// reason="backend_unavailable", not reason="no_candidates".
+
+test("round 6: orchestrator lookup throw (backend down) maps to backend_unavailable, not no_candidates", async () => {
+  // Simulate the new semanticDedupLookup behaviour: throws when backend unavailable.
+  const throwingLookup: SemanticDedupLookup = async () => {
+    throw new Error("semantic dedup: embedding backend unavailable");
+  };
+
+  const decision = await decideSemanticDedup("some fact content", throwingLookup, DEFAULT_OPTS);
+
+  assert.equal(
+    decision.action,
+    "keep",
+    "backend unavailable must keep the fact (fail-open)",
+  );
+  assert.equal(
+    decision.reason,
+    "backend_unavailable",
+    "reason must be backend_unavailable (not no_candidates) when lookup throws",
+  );
+});
+
+test("round 6: empty lookup result (index empty, backend OK) still maps to no_candidates", async () => {
+  // Simulate the new semanticDedupLookup behaviour when the backend is OK but
+  // the index is empty: return [], do NOT throw.
+  const emptyLookup: SemanticDedupLookup = async () => [];
+
+  const decision = await decideSemanticDedup("some fact content", emptyLookup, DEFAULT_OPTS);
+
+  assert.equal(decision.action, "keep");
+  assert.equal(
+    decision.reason,
+    "no_candidates",
+    "empty index (backend reachable, returns []) must yield no_candidates, not backend_unavailable",
+  );
 });

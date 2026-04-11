@@ -8776,7 +8776,14 @@ export class Orchestrator {
             ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
             : undefined;
 
-          // Write the parent memory first (with full content for reference)
+          // Write the parent memory first (with full content for reference).
+          // Propagate supersedes/links from contradiction detection (round 6
+          // fix): contradiction detection now runs BEFORE this branch so the
+          // parent must carry the supersession relationship — without it the
+          // old memory is deindexed but the new chunked parent has no link
+          // back, leaving a dangling deindex with no replacement reference.
+          // Child chunks intentionally do NOT carry supersedes; only the
+          // parent represents the logical memory unit.
           const parentId = await targetStorage.writeMemory(
             writeCategory,
             fact.content,
@@ -8786,6 +8793,8 @@ export class Orchestrator {
               entityRef: fact.entityRef,
               source: extractionWriteSource,
               importance,
+              supersedes,
+              links: links.length > 0 ? links : undefined,
               intentGoal: inferredIntent?.goal,
               intentActionType: inferredIntent?.actionType,
               intentEntityTypes: inferredIntent?.entityTypes,
@@ -11126,24 +11135,37 @@ export class Orchestrator {
     limit: number,
     targetStorage: StorageManager,
   ): Promise<SemanticDedupHit[]> {
-    if (!this.config.embeddingFallbackEnabled) return [];
-    try {
-      if (!(await this.embeddingFallback.isAvailable())) {
-        log.debug("semantic dedup: embedding backend unavailable, skipping");
-        return [];
-      }
-      const scope = this.semanticDedupScopeFor(targetStorage);
-      const hits = await this.embeddingFallback.search(content, limit, scope);
-      if (!Array.isArray(hits) || hits.length === 0) return [];
-      return hits.map((hit) => ({
-        id: hit.id,
-        score: hit.score,
-        path: hit.path,
-      }));
-    } catch (err) {
-      log.debug(`semantic dedup: lookup failed (${err}), failing open`);
-      return [];
+    // Round 6 fix (Finding 3): backend-unavailable conditions must THROW so
+    // that `decideSemanticDedup`'s catch block can return
+    // reason="backend_unavailable".  Previously all error/unavailable paths
+    // returned [] — causing decideSemanticDedup to always report
+    // reason="no_candidates" even when the provider was actually down.
+    //
+    // Contract after this fix:
+    //   • embeddingFallbackEnabled=false  → throw (feature not configured;
+    //     caller treats this as backend_unavailable and fails open).
+    //   • isAvailable() returns false     → throw (provider is reachable but
+    //     reports itself unavailable; distinct from empty index).
+    //   • search() throws                 → re-throw (network/provider error).
+    //   • search() returns []             → return [] (empty index, not a
+    //     backend failure; decideSemanticDedup reports no_candidates).
+    if (!this.config.embeddingFallbackEnabled) {
+      throw new Error("semantic dedup: embedding backend not configured");
     }
+    if (!(await this.embeddingFallback.isAvailable())) {
+      log.debug("semantic dedup: embedding backend unavailable, skipping");
+      throw new Error("semantic dedup: embedding backend unavailable");
+    }
+    // search() may throw — let it propagate so decideSemanticDedup catches it
+    // and returns reason="backend_unavailable".
+    const scope = this.semanticDedupScopeFor(targetStorage);
+    const hits = await this.embeddingFallback.search(content, limit, scope);
+    if (!Array.isArray(hits) || hits.length === 0) return [];
+    return hits.map((hit) => ({
+      id: hit.id,
+      score: hit.score,
+      path: hit.path,
+    }));
   }
 
   /**
