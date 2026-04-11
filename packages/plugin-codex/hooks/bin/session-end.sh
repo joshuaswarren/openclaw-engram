@@ -105,10 +105,32 @@ rmdir "/tmp/engram-lock-${SESSION_ID}.d" 2>/dev/null
 # Codex-native memory materialization (#378). The script honors the
 # `codexMaterializeMemories` config flag and the `.remnic-managed` sentinel,
 # so it's safe to run unconditionally here.
+#
+# Root-resolution order (first hit wins):
+#   1. $REMNIC_REPO_ROOT — explicit override from the environment.
+#   2. Hook's own filesystem location. This script ships inside the repo at
+#      `packages/plugin-codex/hooks/bin/session-end.sh`, so `<this script>/../../../..`
+#      is the repo root. We resolve through `cd -P` so symlinked checkouts
+#      (pnpm hoisted installs, worktree copies) still land at the real path.
+#      This is the reliable source the P1 review asked for — it does not
+#      depend on any optional CLI sub-command that may not exist.
+#   3. If neither of the above yielded a usable path, we log the miss and
+#      exit the block without running the materializer, rather than silently
+#      skipping. A verbose log line is strictly better than a mysterious
+#      no-op when `codexMaterializeMemories=true`.
 if [ "${REMNIC_CODEX_MATERIALIZE:-1}" != "0" ]; then
   REMNIC_REPO_ROOT="${REMNIC_REPO_ROOT:-}"
-  if [ -z "$REMNIC_REPO_ROOT" ] && command -v remnic >/dev/null 2>&1; then
-    REMNIC_REPO_ROOT="$(remnic --print-root 2>/dev/null || true)"
+  if [ -z "$REMNIC_REPO_ROOT" ]; then
+    # Resolve relative to this script. BASH_SOURCE[0] is robust against
+    # symlinks / sourced execution; we chase the dirname with `cd -P` so the
+    # final path is fully physical (no symlink components).
+    HOOK_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || HOOK_DIR=""
+    if [ -n "$HOOK_DIR" ]; then
+      CANDIDATE_ROOT="$(cd -P "${HOOK_DIR}/../../../.." 2>/dev/null && pwd)" || CANDIDATE_ROOT=""
+      if [ -n "$CANDIDATE_ROOT" ] && [ -f "${CANDIDATE_ROOT}/scripts/codex-materialize.ts" ]; then
+        REMNIC_REPO_ROOT="$CANDIDATE_ROOT"
+      fi
+    fi
   fi
   if [ -n "$REMNIC_REPO_ROOT" ] && [ -f "${REMNIC_REPO_ROOT}/scripts/codex-materialize.ts" ]; then
     (
@@ -116,6 +138,8 @@ if [ "${REMNIC_CODEX_MATERIALIZE:-1}" != "0" ]; then
       npx --yes tsx scripts/codex-materialize.ts --reason session_end >> "$LOG" 2>&1 || \
         log "codex-materialize session_end failed"
     )
+  else
+    log "codex-materialize skipped — could not resolve REMNIC_REPO_ROOT (hook_dir=${HOOK_DIR:-unset})"
   fi
 fi
 

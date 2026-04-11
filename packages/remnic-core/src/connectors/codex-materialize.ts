@@ -48,6 +48,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -207,10 +208,42 @@ export function materializeForNamespace(
   const rolloutsSupplied = options.rolloutSummaries !== undefined;
   const rolloutSummaries = options.rolloutSummaries ?? [];
 
+  // Prune-before-render: MEMORY.md and memory_summary.md both embed rollout
+  // filenames in their body, so they must only ever see the *retained* set.
+  // Running pruneRollouts after the renderers (as an earlier revision did)
+  // caused MEMORY.md to list `rollout_summaries/<slug>.md` paths for rollouts
+  // that were then pruned and never written — a broken link pointing at a
+  // ghost file. See review feedback on PR #392.
+  const retainedRollouts = pruneRollouts(rolloutSummaries, rolloutRetentionDays, now);
+
+  // Deduplicate on sanitized filename. Two different slugs ("Session 1" and
+  // "session!!!1") can sanitize to the same output ("session-1"), which would
+  // otherwise make the first entry's tmp file get overwritten and cause the
+  // later rename step to crash with ENOENT. We keep the *last* entry with a
+  // given sanitized name so the most-recent rollout for that slot wins.
+  // We do this at the retained-input level (not just at the written-file
+  // level) so MEMORY.md's "rollout_summary_files" section lists each slot
+  // exactly once and matches what actually gets written to disk.
+  const dedupedRollouts: RolloutSummaryInput[] = [];
+  const seenNames = new Map<string, number>();
+  for (const r of retainedRollouts) {
+    const name = `${sanitizeSlug(r.slug)}.md`;
+    const existingIdx = seenNames.get(name);
+    if (existingIdx === undefined) {
+      seenNames.set(name, dedupedRollouts.length);
+      dedupedRollouts.push(r);
+    } else {
+      // Last-wins: replace the previous entry with this one so the newest
+      // rollout for that filename slot is what MEMORY.md and the rendered
+      // file both reflect.
+      dedupedRollouts[existingIdx] = r;
+    }
+  }
+
   const memorySummary = renderMemorySummary({
     namespace,
     memories,
-    rolloutSummaries,
+    rolloutSummaries: dedupedRollouts,
     maxTokens: maxSummaryTokens,
     now,
   });
@@ -218,7 +251,7 @@ export function materializeForNamespace(
   const memoryMd = renderMemoryMd({
     namespace,
     memories,
-    rolloutSummaries,
+    rolloutSummaries: dedupedRollouts,
     now,
   });
 
@@ -232,18 +265,10 @@ export function materializeForNamespace(
 
   const rawMemories = renderRawMemories({ memories });
 
-  const retainedRollouts = pruneRollouts(rolloutSummaries, rolloutRetentionDays, now);
-  // Deduplicate on sanitized filename. Two different slugs ("Session 1" and
-  // "session_1") can sanitize to the same output ("session-1"), which would
-  // otherwise make the first entry's tmp file get overwritten and cause the
-  // later rename step to crash with ENOENT. We keep the *last* entry with a
-  // given sanitized name so the most-recent rollout for that slot wins.
-  const rolloutFileMap = new Map<string, { name: string; body: string }>();
-  for (const r of retainedRollouts) {
-    const name = `${sanitizeSlug(r.slug)}.md`;
-    rolloutFileMap.set(name, { name, body: renderRolloutSummary(r) });
-  }
-  const rolloutFiles = [...rolloutFileMap.values()];
+  const rolloutFiles = dedupedRollouts.map((r) => ({
+    name: `${sanitizeSlug(r.slug)}.md`,
+    body: renderRolloutSummary(r),
+  }));
 
   // ── Idempotence check ──────────────────────────────────────────────────
   const hash = computeContentHash({
@@ -286,11 +311,45 @@ export function materializeForNamespace(
   }
 
   // ── Atomic writes ──────────────────────────────────────────────────────
-  const tmpDir = path.join(memoriesDir, TMP_DIR);
+  // Use a unique, per-run staging sub-directory so two overlapping runs
+  // (e.g. a session-end trigger overlapping with a consolidation post-hook)
+  // can't stomp each other's tmp files mid-rename. The old "fixed TMP_DIR,
+  // wipe-on-entry" layout meant run B would delete run A's staging area out
+  // from under it, causing ENOENT on A's rename loop. Per-run uniqueness
+  // turns the shared dir into an insulated workspace. See review feedback on
+  // PR #392.
+  const runTag = `${process.pid}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const tmpDir = path.join(memoriesDir, `${TMP_DIR}-${runTag}`);
+  // Opportunistic GC for stale scratch dirs left behind by a previous
+  // crashed run. We only remove entries whose mtime is older than the
+  // stale-threshold below — that way we never delete another in-flight
+  // run's staging area out from under it. The threshold is deliberately
+  // generous (1h) because a healthy materialize completes in milliseconds
+  // and there's no legitimate reason for a live staging dir to be older.
+  //
+  // NB: we compare against `Date.now()` (wall-clock), not against the
+  // injected `options.now`. Tests and deterministic replays commonly
+  // inject a non-current timestamp, but file mtimes on disk are always
+  // wall-clock, so mixing the two would either false-positive delete
+  // fresh dirs (test-time in the past) or false-negative skip stale ones
+  // (test-time in the future).
+  const TMP_STALE_MS = 60 * 60 * 1000;
+  const wallClockMs = Date.now();
   try {
-    rmSync(tmpDir, { recursive: true, force: true });
+    for (const entry of readdirSync(memoriesDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      if (!entry.name.startsWith(TMP_DIR)) continue;
+      const stalePath = path.join(memoriesDir, entry.name);
+      try {
+        const stat = statSync(stalePath);
+        if (wallClockMs - stat.mtimeMs < TMP_STALE_MS) continue;
+        rmSync(stalePath, { recursive: true, force: true });
+      } catch {
+        // ignore — another concurrent run may own it, or we lack perms
+      }
+    }
   } catch {
-    // ignore
+    // ignore — dir may not exist yet
   }
   mkdirSync(tmpDir, { recursive: true });
   mkdirSync(path.join(tmpDir, ROLLOUT_SUBDIR), { recursive: true });

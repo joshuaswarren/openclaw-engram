@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -392,6 +392,152 @@ test("does not overwrite a corrupted sentinel silently (treats as missing)", () 
     });
     assert.equal(result.skippedNoSentinel, true);
     assert.equal(result.wrote, false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MEMORY.md does not reference rollouts pruned by retention", () => {
+  // Regression (PR #392 review): renderMemoryMd/renderMemorySummary used to
+  // receive the raw rolloutSummaries array before pruneRollouts ran, so
+  // MEMORY.md listed `rollout_summaries/<slug>.md` paths for files that
+  // were never written. Verify the retained set flows all the way through.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "prune-render-ns");
+    materializeForNamespace("prune-render-ns", {
+      memories: [makeMemory({ content: "synthetic prune-render anchor" })],
+      codexHome: root,
+      rolloutRetentionDays: 30,
+      rolloutSummaries: [
+        {
+          slug: "fresh-session",
+          updatedAt: "2026-04-01T00:00:00Z",
+          body: "fresh synthetic recap.",
+        },
+        {
+          // Older than retention — must not appear anywhere in rendered output.
+          slug: "ancient-ghost-session",
+          updatedAt: "2025-01-01T00:00:00Z",
+          body: "ancient synthetic recap.",
+        },
+      ],
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+
+    const memoryMd = readFileSync(path.join(memoriesDir, "MEMORY.md"), "utf-8");
+    const memorySummary = readFileSync(
+      path.join(memoriesDir, "memory_summary.md"),
+      "utf-8",
+    );
+
+    // The retained rollout is listed.
+    assert.match(memoryMd, /rollout_summaries\/fresh-session\.md/u);
+    // The pruned rollout is NOT listed (would be a broken link).
+    assert.doesNotMatch(memoryMd, /ancient-ghost-session/u);
+    assert.doesNotMatch(memorySummary, /ancient-ghost-session/u);
+    // And it's also not on disk.
+    assert.equal(
+      existsSync(path.join(memoriesDir, "rollout_summaries", "ancient-ghost-session.md")),
+      false,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("MEMORY.md does not list colliding-slug duplicates", () => {
+  // Regression (PR #392 review): dedupe used to happen only on the final
+  // `rolloutFiles` list, not on the input that was passed to renderMemoryMd.
+  // That meant MEMORY.md could list the same `rollout_summaries/session-1.md`
+  // entry twice while only one file was written. Verify the rendered list
+  // has exactly one entry for a collided slug.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "dedupe-render-ns");
+    materializeForNamespace("dedupe-render-ns", {
+      memories: [makeMemory({ content: "synthetic dedupe-render anchor" })],
+      codexHome: root,
+      rolloutSummaries: [
+        {
+          slug: "Session 1",
+          updatedAt: "2026-04-01T00:00:00Z",
+          body: "first synthetic recap.",
+        },
+        {
+          slug: "session!!!1",
+          updatedAt: "2026-04-01T12:00:00Z",
+          body: "second synthetic recap.",
+        },
+      ],
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+
+    const memoryMd = readFileSync(path.join(memoriesDir, "MEMORY.md"), "utf-8");
+    const matches = memoryMd.match(/rollout_summaries\/session-1\.md/gu) ?? [];
+    // Exactly one listing — not two. (The `else` branch of renderMemoryMd
+    // emits one per task block; with a single fact-category task this is
+    // exactly one entry.)
+    assert.equal(matches.length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("concurrent materialize runs use isolated staging dirs", () => {
+  // Regression (PR #392 review): the shared `.remnic-tmp/` staging dir was
+  // deleted at the start of every run, so two overlapping runs could delete
+  // each other's tmp files mid-rename and crash with ENOENT. Per-run tmp dirs
+  // avoid that — simulate overlap by kicking two runs from inside the same
+  // process and asserting both succeed.
+  const { root, memoriesDir } = makeTempCodexHome();
+  try {
+    ensureSentinel(memoriesDir, "concurrent-ns");
+    // First run stages and completes.
+    const r1 = materializeForNamespace("concurrent-ns", {
+      memories: [makeMemory({ id: "r1", content: "synthetic concurrent payload A" })],
+      codexHome: root,
+      now: new Date("2026-04-02T00:00:00Z"),
+    });
+    assert.equal(r1.wrote, true);
+
+    // Seed a stale tmp dir that a previous crashed run would have left
+    // behind. Set its mtime to 2 hours ago so the GC sweeps it.
+    const staleDir = path.join(memoriesDir, ".remnic-tmp-crashed-run");
+    mkdirSync(staleDir, { recursive: true });
+    writeFileSync(path.join(staleDir, "leftover.txt"), "crash residue");
+    const twoHoursAgo = Date.now() / 1000 - 2 * 60 * 60;
+    utimesSync(staleDir, twoHoursAgo, twoHoursAgo);
+
+    // Seed a FRESH tmp dir that represents an in-flight concurrent run.
+    // Its mtime is "now" so the GC must NOT delete it.
+    const freshDir = path.join(memoriesDir, ".remnic-tmp-inflight-run");
+    mkdirSync(freshDir, { recursive: true });
+    writeFileSync(path.join(freshDir, "inflight.txt"), "in-flight payload");
+
+    // Second run should:
+    //   - succeed
+    //   - remove the stale dir (mtime > 1h)
+    //   - leave the fresh dir alone (mtime ≈ now)
+    const r2 = materializeForNamespace("concurrent-ns", {
+      memories: [makeMemory({ id: "r2", content: "synthetic concurrent payload B — distinct" })],
+      codexHome: root,
+      now: new Date("2026-04-02T01:00:00Z"),
+    });
+    assert.equal(r2.wrote, true);
+    assert.equal(existsSync(staleDir), false, "stale tmp dir must be GC'd");
+    assert.equal(existsSync(freshDir), true, "fresh tmp dir must survive");
+    assert.equal(existsSync(path.join(freshDir, "inflight.txt")), true);
+
+    // And the final artifacts are still intact after the second run.
+    assert.ok(existsSync(path.join(memoriesDir, "MEMORY.md")));
+    assert.ok(existsSync(path.join(memoriesDir, "memory_summary.md")));
+    assert.ok(existsSync(path.join(memoriesDir, "raw_memories.md")));
+
+    // Clean up the simulated in-flight dir ourselves so the assert in the
+    // "leaves no .remnic-tmp/ scratch directory" test doesn't false-negative
+    // if the test ordering changes. (We own this dir — it's synthetic.)
+    rmSync(freshDir, { recursive: true, force: true });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
