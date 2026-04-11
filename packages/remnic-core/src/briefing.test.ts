@@ -259,7 +259,12 @@ test("filterMemoriesByWindow: active and undefined-status memories within window
 test("validateBriefingFormat: returns null for valid format values", () => {
   assert.equal(validateBriefingFormat("markdown"), null);
   assert.equal(validateBriefingFormat("json"), null);
-  assert.equal(validateBriefingFormat("text"), null);
+});
+
+test("validateBriefingFormat: rejects 'text' (not a supported output format)", () => {
+  const err = validateBriefingFormat("text");
+  assert.ok(typeof err === "string" && err.length > 0, "'text' is not a supported format and must be rejected");
+  assert.match(err, /text/, "error message should include the rejected value");
 });
 
 test("validateBriefingFormat: returns null when value is undefined (flag not supplied)", () => {

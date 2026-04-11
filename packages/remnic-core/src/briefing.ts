@@ -38,7 +38,7 @@ import type {
 // ──────────────────────────────────────────────────────────────────────────
 
 /** Allowed values for the briefing format flag/field. */
-export const BRIEFING_FORMAT_ALLOWED = ["markdown", "json", "text"] as const;
+export const BRIEFING_FORMAT_ALLOWED = ["markdown", "json"] as const;
 export type BriefingFormatValue = typeof BRIEFING_FORMAT_ALLOWED[number];
 
 /**

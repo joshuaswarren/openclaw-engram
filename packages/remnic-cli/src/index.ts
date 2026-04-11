@@ -195,9 +195,14 @@ function resolveMemoryDir(): string {
   return configMemoryDir;
 }
 
-function resolveFlag(args: string[], flag: string): string | undefined {
+export function resolveFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : undefined;
+}
+
+/** Returns true if `flag` appears anywhere in `args`, regardless of whether it has a trailing value. */
+export function hasFlag(args: string[], flag: string): boolean {
+  return args.indexOf(flag) !== -1;
 }
 
 function parseConnectorConfig(args: string[]): Record<string, unknown> {
@@ -340,6 +345,11 @@ async function cmdBriefing(rest: string[]): Promise<void> {
   const focusFlag = resolveFlag(rest, "--focus");
   const formatFlag = resolveFlag(rest, "--format");
   const save = rest.includes("--save") || config.briefing.saveByDefault;
+
+  if (hasFlag(rest, "--since") && sinceFlag === undefined) {
+    console.error("Missing value for --since. Accepted: yesterday, today, NNh, NNd, NNw.");
+    process.exit(1);
+  }
 
   const token = sinceFlag ?? config.briefing.defaultWindow;
   const window = parseBriefingWindow(token);
