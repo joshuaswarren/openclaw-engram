@@ -11,6 +11,9 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 // ============================================================================
 // Shared constants — must match src/index.ts
@@ -28,6 +31,33 @@ const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
 // ============================================================================
 // Helpers
 // ============================================================================
+
+async function makeMemoryFixture(): Promise<{ memoryDir: string; workspaceDir: string; cleanup: () => Promise<void> }> {
+  const tmpRoot = await mkdtemp(path.join(os.tmpdir(), "remnic-public-artifacts-"));
+  const memoryDir = path.join(tmpRoot, "memory");
+  const workspaceDir = path.join(tmpRoot, "workspace");
+  await mkdir(memoryDir, { recursive: true });
+  await mkdir(workspaceDir, { recursive: true });
+  // At least one public fact so the provider always returns a non-empty array,
+  // making the agentIds assertions non-vacuous.
+  await mkdir(path.join(memoryDir, "facts"), { recursive: true });
+  await writeFile(
+    path.join(memoryDir, "facts", "sample-fact.md"),
+    "---\ntitle: sample\n---\n\nHello world.\n",
+    "utf8",
+  );
+  return {
+    memoryDir,
+    workspaceDir,
+    cleanup: async () => {
+      try {
+        await rm(tmpRoot, { recursive: true, force: true });
+      } catch {
+        // best-effort
+      }
+    },
+  };
+}
 
 async function awaitPendingMigration() {
   const pending = (globalThis as any)[MIGRATION_PROMISE_KEY];
@@ -381,10 +411,14 @@ test("setup-only mode skips all registration", async () => {
 test("publicArtifacts.listArtifacts derives agentIds from api.runtime.agent.id", async () => {
   resetGlobals();
   const previousDisableMigration = disableRegisterMigrationForTest();
+  const fixture = await makeMemoryFixture();
   try {
     const { default: plugin } = await import("../src/index.js");
 
     const api = buildNewSdkApi("capability-runtime-agent-test");
+    // Point the orchestrator at the fixture so publicArtifacts actually
+    // enumerates files (otherwise the assertion loop is vacuous).
+    api.pluginConfig = { memoryDir: fixture.memoryDir, workspaceDir: fixture.workspaceDir };
     // Capture info log output so we can assert SDK detection reports the new
     // memoryCapability flag.
     const infoLogs: string[] = [];
@@ -425,10 +459,13 @@ test("publicArtifacts.listArtifacts derives agentIds from api.runtime.agent.id",
     assert.equal(typeof cap.publicArtifacts.listArtifacts, "function");
 
     const result = await cap.publicArtifacts.listArtifacts({ cfg: {} });
-    // Whether or not artifacts are found (memoryDir likely empty), every
-    // returned artifact must carry the runtime agent id — never the hardcoded
-    // "generalist" fallback.
     assert.ok(Array.isArray(result), "listArtifacts must return an array");
+    // Fixture guarantees at least one artifact so the agentIds assertion is
+    // never vacuous.
+    assert.ok(
+      result.length > 0,
+      "expected the fixture sample-fact.md to produce at least one artifact",
+    );
     for (const artifact of result) {
       assert.deepStrictEqual(
         artifact.agentIds,
@@ -437,6 +474,7 @@ test("publicArtifacts.listArtifacts derives agentIds from api.runtime.agent.id",
       );
     }
   } finally {
+    await fixture.cleanup();
     await awaitPendingMigration();
     restoreRegisterMigrationEnv(previousDisableMigration);
     resetGlobals();
@@ -446,10 +484,12 @@ test("publicArtifacts.listArtifacts derives agentIds from api.runtime.agent.id",
 test("publicArtifacts.listArtifacts falls back to default agent id when runtime agent is absent", async () => {
   resetGlobals();
   const previousDisableMigration = disableRegisterMigrationForTest();
+  const fixture = await makeMemoryFixture();
   try {
     const { default: plugin } = await import("../src/index.js");
 
     const api = buildNewSdkApi("capability-no-runtime-agent-test");
+    api.pluginConfig = { memoryDir: fixture.memoryDir, workspaceDir: fixture.workspaceDir };
     // runtime is present but without an agent.id — older new-SDK shape.
     api.runtime = { version: "2026.4.9" };
     api.registerMemoryCapability = (spec: any) => {
@@ -462,14 +502,20 @@ test("publicArtifacts.listArtifacts falls back to default agent id when runtime 
     const cap = api._registeredMemoryCapability;
     const result = await cap.publicArtifacts.listArtifacts({ cfg: {} });
     assert.ok(Array.isArray(result));
-    // Every returned artifact must carry a non-empty agentIds array.
+    // Fixture guarantees a non-empty result so the fallback assertion runs.
+    assert.ok(
+      result.length > 0,
+      "expected the fixture sample-fact.md to produce at least one artifact",
+    );
     for (const artifact of result) {
-      assert.ok(
-        Array.isArray(artifact.agentIds) && artifact.agentIds.length > 0,
-        "agentIds fallback must be a non-empty array",
+      assert.deepStrictEqual(
+        artifact.agentIds,
+        ["generalist"],
+        "agentIds should fall back to 'generalist' when runtime agent is absent",
       );
     }
   } finally {
+    await fixture.cleanup();
     await awaitPendingMigration();
     restoreRegisterMigrationEnv(previousDisableMigration);
     resetGlobals();
