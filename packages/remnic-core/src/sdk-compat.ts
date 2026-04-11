@@ -49,9 +49,17 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
   const isNewSdk =
     hasRegisterMemoryPromptSection || hasRegisterMemoryCapability || hasRuntimeNamespace || hasRegistrationMode;
 
-  // New hook system requires registerMemoryPromptSection or registrationMode.
-  // Just having runtime.version is NOT sufficient — some legacy builds expose it.
-  const hasNewHookSystem = hasRegisterMemoryPromptSection || hasRegistrationMode;
+  // New hook system requires one of the authoritative new-SDK signals:
+  //   - registerMemoryPromptSection (pre-capability new SDKs, ≥2026.3.22)
+  //   - registerMemoryCapability   (capability-based SDKs, ≥2026.4.5; the
+  //     deprecated registerMemoryPromptSection may be absent)
+  //   - registrationMode           (explicit registration lifecycle signal)
+  // Just having runtime.version is NOT sufficient — some legacy builds
+  // expose it. Omitting registerMemoryCapability here would cause the
+  // legacy before_agent_start hook to be registered on new SDKs that only
+  // expose registerMemoryCapability, silently breaking memory injection.
+  const hasNewHookSystem =
+    hasRegisterMemoryPromptSection || hasRegisterMemoryCapability || hasRegistrationMode;
 
   return {
     hasBeforePromptBuild: hasNewHookSystem,
