@@ -614,7 +614,7 @@ export class EngramAccessService {
   }
 
   get briefingEnabled(): boolean {
-    return this.orchestrator.config.briefing.enabled === true;
+    return this.orchestrator.config.briefing?.enabled === true;
   }
 
   private resolveNamespace(namespace?: string): string {
