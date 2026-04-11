@@ -683,3 +683,157 @@ test("upsertHermesConfig throws on YAML-injection host (colon + space)", async (
     }
   });
 });
+
+// ── Round 3 regression: force reinstall preserves saved profile/host/port ──
+
+test("force reinstall preserves previously saved profile/host/port when no overrides are supplied", async () => {
+  // Regression for Codex P2: installConnector hard-reset to default/127.0.0.1/4318
+  // on force reinstall, writing the new token to the wrong Hermes profile.
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Set up a Hermes profile dir for "research" at a non-default host/port
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "research");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // Initial install with explicit profile / host / port
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "research", host: "10.0.0.5", port: 5555 },
+        });
+        assert.equal(install1.status, "installed", "First install must succeed");
+
+        // install1.configPath is the connector JSON path — use it directly rather
+        // than reconstructing the XDG-aware path by hand.
+        const connectorJsonPath = install1.configPath;
+        assert.ok(connectorJsonPath, "install1 must return a configPath");
+        const connectorJson = JSON.parse(fs.readFileSync(connectorJsonPath!, "utf-8"));
+        assert.equal(connectorJson.profile, "research", "Initial install: profile must be research");
+        assert.equal(connectorJson.host, "10.0.0.5", "Initial install: host must be 10.0.0.5");
+        assert.equal(connectorJson.port, 5555, "Initial install: port must be 5555");
+
+        // Verify tokens.json has a token for hermes (tokens live at ~/.remnic/tokens.json)
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const tokens1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const entry1 = tokens1.tokens.find((t) => t.connector === "hermes");
+        assert.ok(entry1, "tokens.json must have a hermes entry after first install");
+        const token1 = entry1.token;
+
+        // Force reinstall with NO config overrides
+        const install2 = mod.installConnector({
+          connectorId: "hermes",
+          force: true,
+          // No config supplied — must inherit profile/host/port from saved JSON
+        });
+        assert.equal(install2.status, "installed", "Force reinstall must succeed");
+
+        // The connector JSON must still use research / 10.0.0.5 / 5555
+        const connectorJson2 = JSON.parse(fs.readFileSync(connectorJsonPath!, "utf-8"));
+        assert.equal(connectorJson2.profile, "research", "Force reinstall: profile must be preserved as research");
+        assert.equal(connectorJson2.host, "10.0.0.5", "Force reinstall: host must be preserved as 10.0.0.5");
+        assert.equal(connectorJson2.port, 5555, "Force reinstall: port must be preserved as 5555");
+
+        // The token must have been regenerated (new value)
+        const tokens2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const entry2 = tokens2.tokens.find((t) => t.connector === "hermes");
+        assert.ok(entry2, "tokens.json must still have a hermes entry after force reinstall");
+        assert.notEqual(entry2.token, token1, "Force reinstall must produce a new token");
+
+        // The research profile config.yaml must contain the NEW token
+        const yamlContent = fs.readFileSync(
+          path.join(profileDir, "config.yaml"),
+          "utf-8",
+        );
+        assert.ok(yamlContent.includes(entry2.token), "research config.yaml must contain the new token");
+        assert.ok(!yamlContent.includes(token1), "research config.yaml must not contain the old token");
+
+        // Verify no stale remnic: block was written to the default profile
+        const defaultProfileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        const defaultCfgPath = path.join(defaultProfileDir, "config.yaml");
+        assert.ok(
+          !fs.existsSync(defaultCfgPath),
+          "default profile config.yaml must not exist — token must not spill to wrong profile",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// ── Round 3 regression: upsertHermesConfig trailing newline and no blank lines ──
+
+test("upsertHermesConfig in-place update: file ending with \\n gets exactly one trailing newline and no blank line before appended sub-keys", async () => {
+  // Regression for Cursor Low: split("\\n") on a file ending with "\\n" produced
+  // a trailing empty-string element that was pushed into newLines while still
+  // inside the remnic: block, causing a blank line between existing sub-keys and
+  // any newly-appended missing sub-keys. The write path also dropped the trailing
+  // newline, producing inconsistent results across create/append/update paths.
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+        const cfgPath = path.join(profileDir, "config.yaml");
+
+        // Write a config.yaml ending with "\n" that has a remnic: block missing token:.
+        // The trailing "\n" causes split("\n") to produce a final empty-string element
+        // that the old code injected as a blank line inside the remnic: block.
+        const FAKE_TOKEN = "remnic_hm_SYNTHETICROUND3TRAILINGNL";
+        const initial = "remnic:\n  host: \"127.0.0.1\"\n  port: 4318\n";
+        fs.writeFileSync(cfgPath, initial, { mode: 0o600 });
+
+        // Confirm file ends with exactly one "\n" (precondition for the test)
+        assert.ok(initial.endsWith("\n"), "Precondition: test input must end with \\n");
+        assert.ok(!initial.endsWith("\n\n"), "Precondition: test input must not end with two \\n");
+
+        // Call upsertHermesConfig — triggers the in-place update path and must
+        // append token: without a blank line and preserve the trailing newline.
+        mod.upsertHermesConfig({
+          profile: "default",
+          host: "127.0.0.1",
+          port: 4318,
+          token: FAKE_TOKEN,
+        });
+
+        const result = fs.readFileSync(cfgPath, "utf-8");
+
+        // Must end with exactly one "\n"
+        assert.ok(result.endsWith("\n"), "Result must end with a trailing newline");
+        assert.ok(!result.endsWith("\n\n"), "Result must not end with two consecutive newlines");
+
+        // Must contain the token
+        assert.ok(result.includes(FAKE_TOKEN), "Result must contain the supplied token");
+
+        // Must contain no blank line between existing sub-keys and the appended token.
+        // We detect this by checking for the specific "sub-key\n\n  sub-key" pattern.
+        assert.ok(
+          !result.includes("  port: 4318\n\n  token:"),
+          "Must not have a blank line between port: and token:",
+        );
+        assert.ok(
+          !result.includes("  host: \"127.0.0.1\"\n\n  port:"),
+          "Must not have a blank line between host: and port:",
+        );
+
+        // Sanity: the remnic: block itself must be structurally valid
+        assert.ok(result.includes("remnic:"), "Must contain remnic: key");
+        assert.ok(result.includes('  host: "127.0.0.1"'), "Must contain host sub-key");
+        assert.ok(result.includes("  port: 4318"), "Must contain port sub-key");
+        assert.ok(result.includes(`  token: "${FAKE_TOKEN}"`), "Must contain token sub-key");
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});

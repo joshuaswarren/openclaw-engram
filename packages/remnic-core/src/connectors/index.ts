@@ -578,14 +578,59 @@ export function installConnector(options: InstallOptions): InstallResult {
     // written; user can run `remnic token generate <id>` to create the token.
   }
 
+  // For the hermes connector, resolve profile/host/port with the following
+  // precedence: saved-connector-JSON → explicit options.config → defaults.
+  // Reading happens BEFORE we overwrite the connector JSON so that a
+  // force-reinstall without re-supplied --config options preserves the
+  // previously configured values and writes the new token to the correct
+  // Hermes profile rather than resetting to "default"/127.0.0.1/4318.
+  let hermesSavedProfile: string | undefined;
+  let hermesSavedHost: string | undefined;
+  let hermesSavedPort: number | undefined;
+  // Resolved values (used both in resolvedConfig and in the YAML update below)
+  let hermesResolvedProfile: string | undefined;
+  let hermesResolvedHost: string | undefined;
+  let hermesResolvedPort: number | undefined;
+  if (options.connectorId === "hermes") {
+    if (fs.existsSync(configPath)) {
+      try {
+        const prev = JSON.parse(fs.readFileSync(configPath, "utf8"));
+        if (typeof prev?.profile === "string") hermesSavedProfile = prev.profile;
+        if (typeof prev?.host === "string") hermesSavedHost = prev.host;
+        if (typeof prev?.port === "number") hermesSavedPort = prev.port;
+      } catch {
+        // Could not read existing config — fall through to defaults
+      }
+    }
+    hermesResolvedProfile =
+      (options.config?.profile as string | undefined) ??
+      hermesSavedProfile ??
+      "default";
+    hermesResolvedHost =
+      (options.config?.host as string | undefined) ??
+      hermesSavedHost ??
+      "127.0.0.1";
+    hermesResolvedPort =
+      (options.config?.port as number | undefined) ??
+      hermesSavedPort ??
+      4318;
+  }
+
   // Build config from schema defaults + user overrides.
   // Spread user config FIRST, then overlay the daemon-generated token so that
   // a stray `token` key in options.config cannot silently override the value
   // we just wrote to the token store. The connector JSON config and the
   // daemon's tokens.json must agree on which token authorizes this connector.
+  // For hermes, also include the resolved profile/host/port so that future
+  // force-reinstalls can read them back even if options.config is not supplied.
   const resolvedConfig: Record<string, unknown> = {
     connectorId: options.connectorId,
     installedAt: new Date().toISOString(),
+    ...(hermesResolvedProfile !== undefined ? {
+      profile: hermesResolvedProfile,
+      host: hermesResolvedHost,
+      port: hermesResolvedPort,
+    } : {}),
     ...options.config,
     ...(tokenEntry ? { token: tokenEntry.token } : {}),
   };
@@ -603,9 +648,11 @@ export function installConnector(options: InstallOptions): InstallResult {
   // auth silently. The connector config file is still created; the user can run
   // `remnic token generate hermes` to create the token, then re-run install.
   if (options.connectorId === "hermes") {
-    const rawProfile = (options.config?.profile as string | undefined) ?? "default";
-    const hermesHost = (options.config?.host as string | undefined) ?? "127.0.0.1";
-    const hermesPort = (options.config?.port as number | undefined) ?? 4318;
+    // hermesResolvedProfile/Host/Port were computed above using the correct
+    // precedence (saved JSON → explicit options.config → defaults).
+    const rawProfile = hermesResolvedProfile!;
+    const hermesHost = hermesResolvedHost!;
+    const hermesPort = hermesResolvedPort!;
 
     // Reject path-traversing or otherwise invalid profile values up front.
     let hermesProfile: string | null = null;
@@ -618,6 +665,22 @@ export function installConnector(options: InstallOptions): InstallResult {
     }
 
     if (hermesProfile !== null) {
+      // If the saved profile differs from the new target profile, clean the old
+      // profile's config.yaml first so a revoked token block is not left behind.
+      // This can happen when the user explicitly passes a different --config profile=
+      // on reinstall. On no-args force reinstall hermesSavedProfile === hermesProfile,
+      // so this is a no-op in the common case.
+      if (hermesSavedProfile !== undefined && hermesSavedProfile !== hermesProfile) {
+        try {
+          const oldCleanResult = removeHermesConfig({ profile: hermesSavedProfile });
+          if (oldCleanResult.updated) {
+            notes.push(`Cleaned stale remnic: block from previous profile: ${oldCleanResult.configPath}`);
+          }
+        } catch {
+          // Non-fatal: if we can't clean the old profile, proceed anyway.
+        }
+      }
+
       if (!tokenEntry) {
         notes.push(
           "Token store unavailable — skipped Hermes config.yaml update. " +
@@ -916,7 +979,19 @@ export function upsertHermesConfig(opts: {
   // section by matching from `^remnic:` to the next top-level key or end-of-file.
   // We rewrite only the host/port/token sub-keys inside the block; other keys
   // under remnic: (e.g. session_key, timeout) are preserved.
-  const lines = raw.split("\n");
+  //
+  // Trailing-newline handling: split("\n") on a file that ends with "\n" produces
+  // a final empty-string element. If that element is still inside the remnic block
+  // when we hit it, it gets pushed to newLines via the else branch — placing a
+  // blank line between existing sub-keys and any newly-appended missing sub-keys.
+  // We strip the trailing empty element before the loop and re-add a single "\n"
+  // at write time, normalising the file to always end with exactly one newline.
+  const splitLines = raw.split("\n");
+  // Remove trailing empty element produced by a file that ends with "\n"
+  if (splitLines.length > 0 && splitLines[splitLines.length - 1] === "") {
+    splitLines.pop();
+  }
+  const lines = splitLines;
   const newLines: string[] = [];
   let inRemnicBlock = false;
   let blockWritten = false;
@@ -974,7 +1049,8 @@ export function upsertHermesConfig(opts: {
     if (!written.token) newLines.push(`  token: "${opts.token}"`);
   }
 
-  writeSecretFileSync(cfgPath, newLines.join("\n"));
+  // Always write exactly one trailing newline, matching the create and append paths.
+  writeSecretFileSync(cfgPath, newLines.join("\n") + "\n");
   return { updated: true, skipped: false, configPath: cfgPath };
 }
 
