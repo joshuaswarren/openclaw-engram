@@ -251,7 +251,7 @@ test("new SDK api gets all new hooks + memory section", async () => {
 
     // Service was registered
     assert.ok(
-      api._registeredServiceIds.includes("openclaw-engram"),
+      api._registeredServiceIds.includes("openclaw-remnic"),
       "service should be registered",
     );
   } finally {
@@ -337,7 +337,7 @@ test("legacy SDK api gets legacy hooks only", async () => {
 
     // Service still registered
     assert.ok(
-      api._registeredServiceIds.includes("openclaw-engram"),
+      api._registeredServiceIds.includes("openclaw-remnic"),
       "service should still be registered on legacy SDK",
     );
   } finally {
@@ -353,7 +353,7 @@ test("legacy SDK api gets legacy hooks only", async () => {
 test("tryDefinePluginEntry: fallback produces correct plugin shape when SDK module unavailable", async () => {
   const mod = await import("../src/index.js");
   const plugin = mod.default;
-  assert.equal(plugin.id, "openclaw-engram");
+  assert.equal(plugin.id, "openclaw-remnic");
   assert.equal(plugin.name, "Remnic (Local Memory)");
   assert.equal(plugin.kind, "memory");
   assert.equal(typeof plugin.register, "function");
@@ -503,7 +503,7 @@ test("capability-only SDK with allowPromptInjection=false skips recall hook regi
     api.config = {
       plugins: {
         entries: {
-          "openclaw-engram": { hooks: { allowPromptInjection: false } },
+          "openclaw-remnic": { hooks: { allowPromptInjection: false } },
         },
       },
     };
