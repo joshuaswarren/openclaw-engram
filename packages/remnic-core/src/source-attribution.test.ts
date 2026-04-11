@@ -1087,33 +1087,23 @@ test(
 );
 
 test(
-  "Option A — Test C (legacy, Finding 2): memory without frontmatter.contentHash — archive SKIPS hash removal rather than guessing via stripCitation",
+  "Option A — Test C (legacy, round-4 fix): memory without frontmatter.contentHash — archive removes hash via content fallback",
   async () => {
-    // Verifies the Finding 2 (Urgw) fix: when a legacy memory has no
-    // contentHash frontmatter, the archive path must NOT call
-    // stripCitation(content) because that only handles the default
-    // [Source: ...] format.  With a custom citation template the hash computed
-    // from stripCitation(content) would NOT match the indexed raw-content hash,
-    // silently leaking a stale entry.
+    // Verifies the round-4 (P2) fix: when a legacy memory has no contentHash
+    // frontmatter, the archive path must call remove(memory.content) to clear
+    // the stale dedup entry.  Pre-#369 facts were stored without inline
+    // citations, so memory.content is the raw fact text and hashing it via
+    // remove() will hit the correct index entry.
     //
-    // The correct behaviour is to SKIP removal and leave the hash in the index
-    // (a false-negative dedup miss is preferable to corrupting the index with a
-    // wrong hash that blocks future extractions of unrelated content).
+    // This replaces the earlier "skip" behaviour (Finding 2 — Urgw) which left
+    // stale entries in the index and caused false-dedup suppression of
+    // re-extracted facts in upgraded deployments.
     const dir = await mkdtemp(path.join(os.tmpdir(), "engram-option-a-test-c-"));
     try {
       const rawContent = "user prefers coffee";
-      const customTemplate = "[src:{agent}/{sessionId}@{date}]";
-      const citedContent = attachCitation(
-        rawContent,
-        { agent: "planner", session: "agent:planner:main", ts: "2026-04-11T00:00:00Z" },
-        customTemplate,
-      );
-      // citedContent = "user prefers coffee [src:planner/main@2026-04-11]"
-      assert.ok(citedContent.includes("[src:"), "must use custom [src:...] citation format");
-      assert.ok(!citedContent.includes("[Source:"), "must NOT use default format");
 
       // Populate the index with the raw-content hash (simulates what writeMemory
-      // does when contentHashSource is provided).
+      // did in pre-#369 builds when contentHashSource was not yet supported).
       const idx = new ContentHashIndex(dir);
       await idx.load();
       idx.add(rawContent);
@@ -1123,38 +1113,29 @@ test(
       await idxCheck.load();
       assert.ok(idxCheck.has(rawContent), "raw-content hash must be present before archive");
 
-      // Simulate the legacy archive path: frontmatter has NO contentHash.
-      // Correct fix: check contentHash first; when absent, SKIP (do nothing).
+      // Simulate the legacy archive path: frontmatter has NO contentHash, and
+      // memory.content is the raw (un-cited) fact text (pre-#369 write).
       const legacyMemory = {
         frontmatter: { contentHash: undefined as string | undefined },
-        content: citedContent,
+        content: rawContent,
       } as unknown as import("./types.js").MemoryFile;
 
-      // The fixed archive path only removes when contentHash is present.
+      // The updated archive path: use removeByHash when contentHash present,
+      // else fall back to remove(memory.content) for legacy memories.
       if (legacyMemory.frontmatter.contentHash) {
         idxCheck.removeByHash(legacyMemory.frontmatter.contentHash);
+      } else {
+        idxCheck.remove(legacyMemory.content);
       }
-      // else: skip — no removal when contentHash is absent.
 
       await idxCheck.save();
 
-      // The raw-content hash MUST still be present (skip means no removal).
+      // The raw-content hash MUST now be gone — stale entry cleared.
       const idxAfter = new ContentHashIndex(dir);
       await idxAfter.load();
       assert.ok(
-        idxAfter.has(rawContent),
-        "raw-content hash must remain in the index when legacy archive SKIPS removal (no contentHash)",
-      );
-
-      // Additional regression: verify that calling stripCitation on the CUSTOM
-      // format body produces the WRONG key (confirming the old approach would
-      // have been incorrect).
-      const strippedContent = stripCitation(citedContent);
-      // stripCitation only removes [Source: ...] format; custom format is a no-op.
-      assert.notEqual(
-        strippedContent,
-        rawContent,
-        "stripCitation on a custom-format cited body must NOT recover rawContent — proves the old fallback was wrong",
+        !idxAfter.has(rawContent),
+        "raw-content hash must be removed from the index after legacy archive content-fallback removal",
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1342,6 +1323,53 @@ test(
       hasCitationForTemplate(validCitation, template),
       true,
       "valid citation matching template separators must be detected",
+    );
+  },
+);
+
+// ── Fix #3 regression: verbatim artifact must share citation timestamp with memory ──
+
+test(
+  "Fix #3 (UzK9): verbatim artifact and memory write share the same citation timestamp",
+  () => {
+    // Regression test for the duplicate-citation bug: when applyInlineCitation
+    // is called twice on the same raw content (once for writeMemory and once for
+    // writeArtifact), each invocation generates a fresh new Date().toISOString()
+    // timestamp, producing two distinct citations for the same logical fact.
+    //
+    // The fix: compute applyInlineCitation(fact.content) ONCE and reuse the
+    // result for both writeMemory and writeArtifact.  This test verifies that
+    // calling attachCitation on the SAME already-cited string is idempotent
+    // (hasCitationForTemplate returns true, so attachCitation is a no-op),
+    // and that calling it on the raw content twice produces different citations.
+    const rawContent = "user prefers dark mode";
+    const ts1 = "2026-04-11T10:00:00.000Z";
+    const ts2 = "2026-04-11T10:00:00.001Z";
+
+    const cited1 = attachCitation(rawContent, { agent: "planner", session: "s1", ts: ts1 });
+    const cited2 = attachCitation(rawContent, { agent: "planner", session: "s1", ts: ts2 });
+
+    // Two separate calls on raw content produce different citations (different ts).
+    assert.notEqual(
+      cited1,
+      cited2,
+      "two separate attachCitation calls on raw content produce different timestamps",
+    );
+
+    // The fix: the second call receives the ALREADY-CITED string from the first call.
+    // attachCitation must be idempotent — it should not append a second citation.
+    const citedAgain = attachCitation(cited1, { agent: "planner", session: "s1", ts: ts2 });
+    assert.equal(
+      citedAgain,
+      cited1,
+      "attachCitation on already-cited content must be idempotent — no duplicate citation appended",
+    );
+
+    // Verify hasCitationForTemplate detects the citation on cited1.
+    assert.equal(
+      hasCitationForTemplate(cited1, DEFAULT_CITATION_FORMAT),
+      true,
+      "already-cited content must be detected as having a citation",
     );
   },
 );

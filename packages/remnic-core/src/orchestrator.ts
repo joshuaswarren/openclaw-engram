@@ -2129,14 +2129,14 @@ export class Orchestrator {
                 this.contentHashIndex.removeByHash(m.frontmatter.contentHash);
               } else {
                 // Legacy memory written before contentHash was stored on the
-                // frontmatter.  stripCitation() only removes the default
-                // [Source: ...] pattern; with a custom citation template it
-                // would produce the wrong hash and silently leak a stale entry.
-                // Skip removal instead — the hash will simply be absent from
-                // the index (Finding 2 — Urgw).
+                // frontmatter.  Pre-#369 facts were stored without inline
+                // citations, so m.content is the raw fact text and we can
+                // remove the hash directly from the content.  This clears
+                // stale dedup entries so the fact can be re-extracted.
                 log.warn(
-                  `[semantic-consolidation] skipping hash removal for legacy memory ${m.frontmatter.id ?? "(unknown)"} — no contentHash in frontmatter`,
+                  `[semantic-consolidation] removing hash for legacy memory ${m.frontmatter.id ?? "(unknown)"} via content fallback — no contentHash in frontmatter`,
                 );
+                this.contentHashIndex.remove(m.content);
               }
             }
             await this.embeddingFallback.removeFromIndex(m.frontmatter.id);
@@ -8732,13 +8732,13 @@ export class Orchestrator {
 
           // Write the parent memory first (with full content for reference).
           //
-          // Pass the RAW (pre-citation) fact as `contentHashSource` — see the
-          // normal write path below for the full rationale. Inline citations
-          // include a per-call timestamp so hashing the persisted body would
-          // break cross-session dedup via `hasFactContentHash`.
+          // Compute the cited content once so that writeMemory and writeArtifact
+          // (when verbatim artifacts are enabled) share the same citation timestamp.
+          // See the normal write path comment for the full dedup rationale.
+          const citedChunkedContent = applyInlineCitation(fact.content);
           const parentId = await targetStorage.writeMemory(
             writeCategory,
-            applyInlineCitation(fact.content),
+            citedChunkedContent,
             {
               confidence: fact.confidence,
               tags: [...fact.tags, "chunked"],
@@ -8838,7 +8838,9 @@ export class Orchestrator {
             this.config.verbatimArtifactCategories.includes(writeCategory) &&
             fact.confidence >= this.config.verbatimArtifactsMinConfidence
           ) {
-            await targetStorage.writeArtifact(applyInlineCitation(fact.content), {
+            // Reuse citedChunkedContent so the artifact carries the same citation
+            // timestamp as the parent memory write above (Fix #3 — duplicate-citation).
+            await targetStorage.writeArtifact(citedChunkedContent, {
               confidence: fact.confidence,
               tags: [...fact.tags, "artifact", "chunked-parent"],
               artifactType: this.artifactTypeForCategory(writeCategory),
@@ -8958,6 +8960,12 @@ export class Orchestrator {
 
       // Normal write (no chunking)
       //
+      // Compute the cited content once so that writeMemory and writeArtifact
+      // (when verbatim artifacts are enabled) share the same citation timestamp.
+      // Calling applyInlineCitation twice on the same raw content would produce
+      // two different timestamps, creating duplicate citations with divergent
+      // provenance metadata on the memory and artifact copies of the same fact.
+      //
       // Pass the RAW (pre-citation) fact as `contentHashSource` so the
       // fact-content hash index records the hash of the canonical fact text
       // rather than the citation-annotated variant. When inline attribution is
@@ -8966,9 +8974,10 @@ export class Orchestrator {
       // write and defeat cross-session dedup (see `findDuplicateExplicitCapture`
       // in explicit-capture.ts which calls `hasFactContentHash(candidate.content)`
       // on raw content).
+      const citedFactContent = applyInlineCitation(fact.content);
       const memoryId = await targetStorage.writeMemory(
         writeCategory,
-        applyInlineCitation(fact.content),
+        citedFactContent,
         {
           confidence: fact.confidence,
           tags: fact.tags,
@@ -9075,7 +9084,9 @@ export class Orchestrator {
         this.config.verbatimArtifactCategories.includes(writeCategory) &&
         fact.confidence >= this.config.verbatimArtifactsMinConfidence
       ) {
-        await targetStorage.writeArtifact(applyInlineCitation(fact.content), {
+        // Reuse citedFactContent so the artifact carries the same citation
+        // timestamp as the memory write above (Fix #3 — duplicate-citation).
+        await targetStorage.writeArtifact(citedFactContent, {
           confidence: fact.confidence,
           tags: [...fact.tags, "artifact"],
           artifactType: this.artifactTypeForCategory(writeCategory),
@@ -10400,14 +10411,14 @@ export class Orchestrator {
             this.contentHashIndex.removeByHash(memory.frontmatter.contentHash);
           } else {
             // Legacy memory written before contentHash was stored on the
-            // frontmatter.  stripCitation() only removes the default
-            // [Source: ...] pattern; with a custom citation template it
-            // would produce the wrong hash and silently leak a stale entry.
-            // Skip removal — the hash will simply be absent from the index
-            // (Finding 2 — Urgw).
+            // frontmatter.  Pre-#369 facts were stored without inline
+            // citations, so memory.content is the raw fact text and we can
+            // remove the hash directly from the content.  This clears
+            // stale dedup entries so the fact can be re-extracted.
             log.warn(
-              `[fact-archival] skipping hash removal for legacy memory ${memory.frontmatter.id ?? "(unknown)"} — no contentHash in frontmatter`,
+              `[fact-archival] removing hash for legacy memory ${memory.frontmatter.id ?? "(unknown)"} via content fallback — no contentHash in frontmatter`,
             );
+            this.contentHashIndex.remove(memory.content);
           }
         }
         await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);

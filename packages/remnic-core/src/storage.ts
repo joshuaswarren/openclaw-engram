@@ -591,6 +591,9 @@ export class ContentHashIndex {
    * Use this when the caller already holds the stored hash
    * (e.g. `memory.frontmatter.contentHash`) so that the index records the raw
    * content hash rather than re-hashing the citation-annotated body.
+   *
+   * @internal Only called from `StorageManager.ensureFactHashIndexAuthoritative`.
+   * Not part of the public API — prefer `add(content)` for external callers.
    */
   addByHash(hash: string): void {
     if (!this.hashes.has(hash)) {
