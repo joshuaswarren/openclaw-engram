@@ -36,7 +36,7 @@ import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import { migrateFromEngram } from "./migrate/from-engram.js";
 import { cleanUserMessage } from "./user-message-cleaning.js";
 import { listRemnicPublicArtifacts } from "../packages/plugin-openclaw/src/public-artifacts.js";
-import { PLUGIN_ID, LEGACY_PLUGIN_ID } from "../packages/remnic-core/src/plugin-id.js";
+import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src/plugin-id.js";
 
 const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
 /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -73,23 +73,9 @@ function loadPluginEntryFromFile(): Record<string, unknown> | undefined {
         : path.join(homeDir, ".openclaw", "openclaw.json");
     const content = readFileSync(configPath, "utf-8");
     const config = JSON.parse(content);
-    // Resolve via the active memory slot first so migration configs that have
-    // both entries honour whichever id the operator has set (#403).
-    // Guard: only trust the slot when it points to a known Remnic plugin id so
-    // mixed-plugin installs with a different memory plugin in slots.memory don't
-    // accidentally apply that plugin's config to Remnic (#403).
-    // Use ternary-plus-?? to match the same pattern in access-cli.ts and
-    // operator-toolkit.ts so all entry-point loaders agree on the selection.
-    const activeSlot: string | undefined = config?.plugins?.slots?.memory;
-    const isRemnicSlot =
-      activeSlot === PLUGIN_ID || activeSlot === LEGACY_PLUGIN_ID;
-    return (
-      (isRemnicSlot && config?.plugins?.entries?.[activeSlot!] !== undefined
-        ? config.plugins.entries[activeSlot!]
-        : undefined) ??
-      config?.plugins?.entries?.[PLUGIN_ID] ??
-      config?.plugins?.entries?.[LEGACY_PLUGIN_ID]
-    ) as Record<string, unknown> | undefined;
+    // Delegate slot → PLUGIN_ID → LEGACY_PLUGIN_ID resolution to the shared
+    // helper so all config loaders stay in sync (#403).
+    return resolveRemnicPluginEntry(config);
   } catch (err) {
     log.warn(`Failed to load config from file: ${err}`);
     return undefined;
@@ -109,19 +95,10 @@ function loadPluginConfigFromFile(): Record<string, unknown> | undefined {
 function readPluginHooksPolicy(
   apiConfig: unknown,
 ): Record<string, unknown> | undefined {
-  // Try api.config first — resolve via active memory slot, then fall back by id.
-  // Guard: only trust the slot when it points to a known Remnic plugin id so
-  // mixed-plugin installs don't apply another plugin's hooks policy to Remnic.
-  const apiAny = apiConfig as any;
-  const apiSlot: string | undefined = apiAny?.plugins?.slots?.memory;
-  const isRemnicSlot = apiSlot === PLUGIN_ID || apiSlot === LEGACY_PLUGIN_ID;
-  const apiEntry =
-    (isRemnicSlot && apiAny?.plugins?.entries?.[apiSlot!] !== undefined
-      ? apiAny.plugins.entries[apiSlot!]
-      : undefined) ??
-    apiAny?.plugins?.entries?.[PLUGIN_ID] ??
-    apiAny?.plugins?.entries?.[LEGACY_PLUGIN_ID];
-  const fromApi = apiEntry?.hooks;
+  // Try api.config first — delegate slot → PLUGIN_ID → LEGACY_PLUGIN_ID
+  // resolution to the shared helper so all config loaders stay in sync (#403).
+  const apiEntry = resolveRemnicPluginEntry(apiConfig);
+  const fromApi = apiEntry?.["hooks"] as Record<string, unknown> | undefined;
   if (fromApi && typeof fromApi === "object") return fromApi;
   // Fall back to file-backed config
   return loadPluginEntryFromFile()?.hooks as

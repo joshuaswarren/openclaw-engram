@@ -5,7 +5,7 @@ import type { PluginConfig } from "./types.js";
 import { Orchestrator } from "./orchestrator.js";
 import { EngramAccessService } from "./access-service.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
-import { PLUGIN_ID, LEGACY_PLUGIN_ID } from "./plugin-id.js";
+import { resolveRemnicPluginEntry } from "./plugin-id.js";
 
 type CommandName = "browse" | "store";
 
@@ -167,19 +167,10 @@ function loadPluginConfig(): Record<string, unknown> {
     readEnvVar("OPENCLAW_CONFIG_PATH") ||
     path.join(resolveHomeDir(), ".openclaw", "openclaw.json");
   const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
-  // Resolve via the active memory slot first so that migration configs with
-  // both entries honour whichever id the operator configured (#403).
-  // Guard: only trust the slot when it points to a known Remnic plugin id so
-  // mixed-plugin installs don't apply another plugin's config to Remnic.
-  const activeSlot: string | undefined = raw?.plugins?.slots?.memory;
-  const isRemnicSlot = activeSlot === PLUGIN_ID || activeSlot === LEGACY_PLUGIN_ID;
-  const entry =
-    (isRemnicSlot && raw?.plugins?.entries?.[activeSlot!] !== undefined
-      ? raw.plugins.entries[activeSlot!]
-      : undefined) ??
-    raw?.plugins?.entries?.[PLUGIN_ID] ??
-    raw?.plugins?.entries?.[LEGACY_PLUGIN_ID];
-  return entry?.config ?? {};
+  // Delegate slot → PLUGIN_ID → LEGACY_PLUGIN_ID resolution to the shared
+  // helper so all config loaders stay in sync (#403).
+  const entry = resolveRemnicPluginEntry(raw);
+  return (entry?.["config"] as Record<string, unknown> | undefined) ?? {};
 }
 
 function buildRuntime(): Runtime {

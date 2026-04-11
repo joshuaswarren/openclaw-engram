@@ -69,72 +69,48 @@ function parseArgs(argv) {
 }
 
 /**
- * Pull out the Remnic plugin config block from an OpenClaw-shaped or
- * legacy-Remnic-shaped raw config object.
- *
- * OpenClaw stores Remnic settings under
- * `plugins.entries["<id>"].config` where <id> is determined by:
- *   1. `plugins.slots.memory` (the operator-configured active entry)
- *   2. "openclaw-remnic" (the canonical id after the 1/2 rename PR)
- *   3. "openclaw-engram" (the legacy id, kept for backward compat)
- *
- * The legacy Remnic/Engram layouts kept settings at the top level.
+ * Return candidate config file paths to search, in priority order.
+ * The caller is responsible for parsing and entry-resolution.
  */
-function unwrapOpenClawEntry(raw) {
-  if (!raw || typeof raw !== "object") return null;
-  const plugins = raw.plugins && typeof raw.plugins === "object" ? raw.plugins : undefined;
-  const entry = plugins && plugins.entries && typeof plugins.entries === "object"
-    ? plugins.entries
-    : undefined;
-  if (entry) {
-    // Honour the operator's configured memory slot first, but only when it
-    // points to a known Remnic plugin id so mixed-plugin installs don't
-    // accidentally unwrap a different plugin's config into Remnic.
-    const rawSlot =
-      plugins.slots && typeof plugins.slots === "object"
-        ? plugins.slots.memory
-        : undefined;
-    const KNOWN_IDS = ["openclaw-remnic", "openclaw-engram"];
-    const activeId =
-      typeof rawSlot === "string" && KNOWN_IDS.includes(rawSlot)
-        ? rawSlot
-        : undefined;
-    const candidateIds = [
-      activeId,
-      "openclaw-remnic",
-      "openclaw-engram",
-    ].filter((id) => typeof id === "string" && id !== undefined && id.length > 0);
-    for (const id of candidateIds) {
-      const pluginConfig = entry[id] && entry[id].config;
-      if (pluginConfig && typeof pluginConfig === "object") {
-        return pluginConfig;
-      }
-    }
-  }
-  // Legacy / developer config layout — the top-level object IS the config.
-  return raw;
-}
-
-function loadRawConfig() {
+function configCandidates() {
   const home = process.env.HOME || "";
   const openclawConfigPath =
     process.env.OPENCLAW_ENGRAM_CONFIG_PATH ||
     process.env.OPENCLAW_CONFIG_PATH ||
     path.join(home, ".openclaw", "openclaw.json");
-  const candidates = [
+  return [
     process.env.REMNIC_CONFIG,
     openclawConfigPath,
     path.join(home, ".config", "remnic", "config.json"),
     path.join(home, ".config", "engram", "config.json"),
     path.join(home, ".remnic", "config.json"),
   ].filter((p) => typeof p === "string" && p.length > 0);
+}
 
-  for (const candidate of candidates) {
+/**
+ * Load the Remnic plugin config block from the first matching config file.
+ *
+ * Entry resolution is delegated to `resolveRemnicPluginEntry` from
+ * `@remnic/core` so the slot → PLUGIN_ID → LEGACY_PLUGIN_ID logic lives
+ * in exactly one place across all five config-loader sites (#403).
+ *
+ * @param {Function} resolveEntry - resolveRemnicPluginEntry from @remnic/core
+ */
+function loadRawConfig(resolveEntry) {
+  for (const candidate of configCandidates()) {
     if (!fs.existsSync(candidate)) continue;
     try {
       const raw = JSON.parse(fs.readFileSync(candidate, "utf-8"));
-      const unwrapped = unwrapOpenClawEntry(raw);
-      if (unwrapped) return unwrapped;
+      // resolveEntry returns the full plugin entry (including .config).
+      // Fall back to the raw object for legacy / developer config layouts
+      // where the top-level object IS the config.
+      const entry = resolveEntry(raw);
+      if (entry && typeof entry === "object") {
+        return entry.config && typeof entry.config === "object"
+          ? entry.config
+          : entry;
+      }
+      // No recognised entry in this file; try the next candidate.
     } catch (_err) {
       // fall through to next candidate
     }
@@ -169,14 +145,20 @@ async function main() {
 
   // Dynamic import because @remnic/core is ESM-only.
   const core = await import("@remnic/core");
-  const { parseConfig, runCodexMaterialize } = core;
-  if (typeof parseConfig !== "function" || typeof runCodexMaterialize !== "function") {
+  const { parseConfig, runCodexMaterialize, resolveRemnicPluginEntry } = core;
+  if (
+    typeof parseConfig !== "function" ||
+    typeof runCodexMaterialize !== "function" ||
+    typeof resolveRemnicPluginEntry !== "function"
+  ) {
     throw new Error(
-      "codex-materialize: @remnic/core is missing expected exports (parseConfig, runCodexMaterialize)",
+      "codex-materialize: @remnic/core is missing expected exports (parseConfig, runCodexMaterialize, resolveRemnicPluginEntry)",
     );
   }
 
-  const rawConfig = loadRawConfig();
+  // Pass the shared resolver so loadRawConfig uses the same slot → id lookup
+  // logic as all other config-loader sites (#403).
+  const rawConfig = loadRawConfig(resolveRemnicPluginEntry);
   const config = parseConfig(rawConfig);
   if (args.memoryDir) {
     // parseConfig already locked in a memoryDir, but the CLI override wins.

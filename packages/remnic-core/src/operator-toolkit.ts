@@ -4,7 +4,7 @@ import { access, mkdir, readFile, readdir, stat, unlink, writeFile } from "node:
 import { lintWorkspaceFiles } from "./hygiene.js";
 import { parseConfig } from "./config.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
-import { PLUGIN_ID, LEGACY_PLUGIN_ID } from "./plugin-id.js";
+import { resolveRemnicPluginEntry } from "./plugin-id.js";
 import {
   resolveCuratedIncludeFilesStatePath,
   resolveNativeKnowledgeStatePath,
@@ -370,39 +370,12 @@ async function loadCliPluginConfig(configPath?: string): Promise<OperatorConfigL
   const resolvedPath = resolveConfigPath(configPath);
   try {
     const raw = JSON.parse(await readFile(resolvedPath, "utf-8")) as Record<string, unknown>;
-    const pluginsNode =
-      raw?.plugins && typeof raw.plugins === "object"
-        ? (raw.plugins as Record<string, unknown>)
-        : undefined;
-    const entries =
-      pluginsNode && typeof pluginsNode.entries === "object"
-        ? (pluginsNode.entries as Record<string, unknown>)
-        : undefined;
-    // Resolve via the active memory slot first so migration configs with
-    // both entries honour whichever id the operator configured (#403).
-    // Mirror the pattern in access-cli.ts / loadPluginEntryFromFile /
-    // readPluginHooksPolicy so every entry point agrees on the selection.
-    // Guard: only trust the slot when it points to a known Remnic plugin id so
-    // mixed-plugin installs don't apply another plugin's config to Remnic.
-    const slotsNode =
-      pluginsNode && typeof pluginsNode.slots === "object"
-        ? (pluginsNode.slots as Record<string, unknown>)
-        : undefined;
-    const activeSlot =
-      slotsNode && typeof slotsNode.memory === "string"
-        ? (slotsNode.memory as string)
-        : undefined;
-    const isRemnicSlot = activeSlot === PLUGIN_ID || activeSlot === LEGACY_PLUGIN_ID;
-    const config = entries
-      ? ((isRemnicSlot && entries[activeSlot!] !== undefined
-          ? entries[activeSlot!]
-          : undefined) ??
-        entries[PLUGIN_ID] ??
-        entries[LEGACY_PLUGIN_ID])
-      : undefined;
+    // Delegate slot → PLUGIN_ID → LEGACY_PLUGIN_ID resolution to the shared
+    // helper so all config loaders stay in sync (#403).
+    const entry = resolveRemnicPluginEntry(raw);
     const parsedConfig = parseConfig(
-      config && typeof config === "object"
-        ? ((config as Record<string, unknown>).config ?? {})
+      entry && typeof entry === "object"
+        ? ((entry["config"] as Record<string, unknown> | undefined) ?? {})
         : {},
     );
     return {

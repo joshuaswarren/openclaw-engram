@@ -20,7 +20,7 @@
 // Plugin identity
 // ---------------------------------------------------------------------------
 
-export { PLUGIN_ID, LEGACY_PLUGIN_ID } from "./plugin-id.js";
+export { PLUGIN_ID, LEGACY_PLUGIN_ID, resolveRemnicPluginEntry } from "./plugin-id.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
