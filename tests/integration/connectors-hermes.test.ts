@@ -1695,3 +1695,203 @@ test("atomic flow: happy path — connector.json and token written only after YA
     }
   });
 });
+
+// ── Round 8 regression: partial-failure rollback (PRRT_kwDORJXyws56UNDM) ────
+
+test("installConnector Phase E failure: connector JSON write fails → token and YAML rolled back", async () => {
+  // Simulate writeSecretFileSync failing for the connector JSON (Phase E) while
+  // the Hermes YAML (Phase C) and token commit (Phase D) already succeeded.
+  // Strategy: do a first install to establish the connectors dir path, read it
+  // from installResult.configPath, then make that dir read-only, then force
+  // reinstall. The force reinstall triggers Phases C+D again and then tries
+  // Phase E, which fails — rollback must undo D and C.
+  // Expected outcome: installConnector returns status "error" AND:
+  //   - tokens.json no longer contains a hermes entry (token revoked by rollback)
+  //   - config.yaml is restored to its prior content (YAML rolled back to first-install state)
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+
+        // Set up a Hermes profile dir so upsertHermesConfig can write config.yaml.
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // First install to get the correct connectors dir path and to put
+        // config.yaml in a known prior state.
+        const firstInstall = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "default", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(firstInstall.status, "installed", "Pre-condition: first install must succeed");
+
+        const connectorsDir = path.dirname(firstInstall.configPath!);
+        const cfgPath = path.join(profileDir, "config.yaml");
+        assert.ok(fs.existsSync(cfgPath), "Pre-condition: config.yaml must exist after first install");
+        const yamlAfterFirst = fs.readFileSync(cfgPath, "utf-8");
+
+        // Remove the existing connector.json so the force reinstall will try to
+        // CREATE a new file (not overwrite). On a 0o555 dir, creating a new file
+        // fails with EACCES but overwriting an existing file does not — so we must
+        // ensure no file is present before locking down the dir.
+        fs.unlinkSync(firstInstall.configPath!);
+        // Make the connectors dir read-only so the Phase E write fails.
+        fs.chmodSync(connectorsDir, 0o555);
+
+        let result: ReturnType<typeof mod.installConnector>;
+        try {
+          result = mod.installConnector({
+            connectorId: "hermes",
+            force: true,
+            config: { profile: "default", host: "127.0.0.1", port: 4318 },
+          });
+        } finally {
+          // Restore write permission so withTempHome cleanup can remove the dir.
+          try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
+        }
+
+        // installConnector must return an error status (not throw).
+        assert.equal(result!.status, "error", "Phase E failure must return status: error");
+        assert.ok(
+          result!.message.includes("connector config write failed") ||
+          result!.message.includes("aborted"),
+          "Error message must mention the connector config write failure",
+        );
+
+        // Token must have been rolled back — tokens.json must have no hermes entry.
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        if (fs.existsSync(tokensPath)) {
+          const store = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+            tokens: Array<{ connector: string }>;
+          };
+          assert.ok(
+            !store.tokens.find((t) => t.connector === "hermes"),
+            "tokens.json must not contain a hermes entry after Phase E rollback",
+          );
+        }
+
+        // config.yaml must have been rolled back to its state before the force reinstall
+        // (priorContent was the first-install content, not null — so it must be restored).
+        assert.ok(
+          fs.existsSync(cfgPath),
+          "config.yaml must exist after Phase E rollback (restored to prior content)",
+        );
+        const yamlAfterRollback = fs.readFileSync(cfgPath, "utf-8");
+        // The rollback restores the YAML content from before the force reinstall attempt.
+        // The content may differ from yamlAfterFirst in token value only — either way the
+        // file must exist and the remnic: block must be present.
+        assert.ok(
+          yamlAfterRollback.includes("remnic:"),
+          "config.yaml must contain remnic: block after rollback (restored to prior state)",
+        );
+        assert.ok(
+          yamlAfterRollback.includes("127.0.0.1"),
+          "config.yaml must contain host after rollback",
+        );
+        // The rolled-back content must match what was present before the failed reinstall.
+        assert.equal(
+          yamlAfterRollback,
+          yamlAfterFirst,
+          "config.yaml must be restored to exactly its pre-reinstall content",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// ── Round 8 regression: removeConnector partial-failure (PRRT_kwDORJXyws56UNDO) ─
+
+test("removeConnector: unlink failure leaves token intact and returns error", async () => {
+  // Simulate fs.unlinkSync failing for the connector JSON (e.g., connectors dir
+  // is read-only). Expected outcome: removeConnector returns status "error" AND:
+  //   - tokens.json STILL contains the hermes entry (token NOT revoked)
+  //   - The connector JSON still exists on disk (unlink failed)
+  //   - Hermes config.yaml is NOT cleaned up (cleanup skipped — file not deleted)
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+
+        // Set up a Hermes profile dir and install the connector successfully.
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "default");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        const installResult = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "default", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(installResult.status, "installed", "Pre-condition: install must succeed");
+
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const storeBefore = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const entryBefore = storeBefore.tokens.find((t) => t.connector === "hermes");
+        assert.ok(entryBefore, "Pre-condition: hermes token must exist before removal attempt");
+
+        // Make the connectors dir read-only so unlinkSync fails.
+        const connectorsDir = path.dirname(installResult.configPath!);
+        fs.chmodSync(connectorsDir, 0o555);
+
+        let removeResult: ReturnType<typeof mod.removeConnector>;
+        try {
+          removeResult = mod.removeConnector("hermes");
+        } finally {
+          // Restore write permission so withTempHome cleanup can remove the dir.
+          try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
+        }
+
+        // removeConnector must return error status (not throw).
+        assert.equal(removeResult!.status, "error", "Unlink failure must return status: error");
+        assert.ok(
+          removeResult!.message.toLowerCase().includes("aborted") ||
+          removeResult!.message.toLowerCase().includes("could not delete"),
+          "Error message must indicate removal was aborted",
+        );
+
+        // Token must NOT have been revoked.
+        const storeAfter = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const entryAfter = storeAfter.tokens.find((t) => t.connector === "hermes");
+        assert.ok(
+          entryAfter,
+          "tokens.json must still contain the hermes entry when unlink failed",
+        );
+        assert.equal(
+          entryAfter!.token,
+          entryBefore!.token,
+          "Token value must be unchanged after failed removal",
+        );
+
+        // Connector JSON must still exist (unlink failed).
+        assert.ok(
+          fs.existsSync(installResult.configPath!),
+          "Connector JSON must still exist after failed unlink",
+        );
+
+        // Hermes config.yaml must NOT have been cleaned up (removal aborted before cleanup).
+        const cfgPath = path.join(profileDir, "config.yaml");
+        assert.ok(
+          fs.existsSync(cfgPath),
+          "config.yaml must still exist — removal was aborted before YAML cleanup",
+        );
+        const yamlContent = fs.readFileSync(cfgPath, "utf-8");
+        assert.ok(
+          yamlContent.includes("remnic:"),
+          "config.yaml remnic: block must still be present after failed removal",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});

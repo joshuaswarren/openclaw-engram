@@ -134,6 +134,8 @@ export interface RemoveResult {
   configPath: string;
   /** Message */
   message: string;
+  /** Optional status: "removed" on success, "error" if the removal failed partway. */
+  status?: "removed" | "error";
 }
 
 export interface DoctorResult {
@@ -829,10 +831,51 @@ export function installConnector(options: InstallOptions): InstallResult {
       };
     }
 
-    // (e) Both YAML write and token commit succeeded — now safe to write connector.json.
-    // This is the point of no return: the daemon already has the new token and the
-    // new config.yaml has been written, so connector.json must reflect the new state.
-    writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
+    // (e) Both YAML write and token commit succeeded — now attempt to write connector.json.
+    // If this write fails (e.g. connectors dir is not writable), roll back Phase D (token
+    // commit) and Phase C (YAML upsert) so no partial-install state is left behind.
+    // Note: we intentionally do NOT reintroduce the prior token — the old token was
+    // already removed from tokens.json by commitTokenEntry. We revoke the newly-committed
+    // entry instead, leaving no token for this connector.
+    try {
+      writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
+    } catch (writeErr) {
+      // Roll back Phase D: revoke the newly-committed token entry.
+      let tokenRollbackMsg = "token entry revoked";
+      try {
+        revokeToken(options.connectorId);
+      } catch (revokeErr) {
+        tokenRollbackMsg = `token rollback failed: ${revokeErr instanceof Error ? revokeErr.message : String(revokeErr)}`;
+      }
+      // Roll back Phase C: restore config.yaml to its prior content.
+      let yamlRollbackMsg = "config.yaml restored";
+      try {
+        if (yamlResult.priorContent === null) {
+          // File was created new — delete it.
+          try {
+            fs.unlinkSync(yamlResult.configPath);
+          } catch {
+            // If the new file was also created inside a hermesDir we created,
+            // best-effort: leave note. The directory is harmless without a file.
+          }
+          yamlRollbackMsg = "config.yaml removed (was newly created)";
+        } else if (typeof yamlResult.priorContent === "string") {
+          writeSecretFileSync(yamlResult.configPath, yamlResult.priorContent);
+          yamlRollbackMsg = "config.yaml restored to prior content";
+        }
+      } catch (yamlRollbackErr) {
+        yamlRollbackMsg = `config.yaml rollback failed: ${yamlRollbackErr instanceof Error ? yamlRollbackErr.message : String(yamlRollbackErr)}`;
+      }
+      return {
+        connectorId: options.connectorId,
+        status: "error",
+        message:
+          `Hermes install aborted: connector config write failed — ` +
+          `connector directory may not be writable. ` +
+          `Rollback: ${tokenRollbackMsg}; ${yamlRollbackMsg}. ` +
+          `Resolve the permission issue, then reinstall.`,
+      };
+    }
 
     const notes: string[] = [];
     notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
@@ -915,7 +958,25 @@ export function removeConnector(connectorId: string): RemoveResult {
     }
   }
 
-  // Revoke the auth token for this connector so the daemon stops accepting it.
+  // Delete the connector config file FIRST. Token revocation and YAML cleanup
+  // only happen after the file is gone so that a failed unlink (e.g., read-only
+  // directory) does not leave a token-less orphan install on disk.
+  try {
+    fs.unlinkSync(configPath);
+  } catch (unlinkErr) {
+    return {
+      connectorId,
+      configPath,
+      status: "error",
+      message:
+        `Hermes remove aborted: could not delete connector config — ` +
+        `${unlinkErr instanceof Error ? unlinkErr.message : String(unlinkErr)}. ` +
+        `Token and Hermes config.yaml have NOT been modified. ` +
+        `Resolve the permission issue, then retry.`,
+    };
+  }
+
+  // File removed — now safe to revoke the auth token.
   // Non-fatal: if the token store is read-only or missing, connector removal
   // should still succeed. Stale tokens will be rejected by the daemon when the
   // token file is later accessible.
@@ -925,11 +986,11 @@ export function removeConnector(connectorId: string): RemoveResult {
     // Best-effort: log nothing here; caller sees the config removal succeed.
   }
 
-  fs.unlinkSync(configPath);
-
   const notes: string[] = [];
 
-  // Hermes-specific: strip the remnic: block from config.yaml
+  // Hermes-specific: strip the remnic: block from config.yaml.
+  // Only attempted after successful file removal so that config.yaml cleanup
+  // is consistent with the connector JSON state.
   if (connectorId === "hermes") {
     try {
       const yamlResult = removeHermesConfig({ profile: storedProfile });
@@ -949,6 +1010,7 @@ export function removeConnector(connectorId: string): RemoveResult {
   return {
     connectorId,
     configPath,
+    status: "removed",
     message: `Removed${suffix}`,
   };
 }
