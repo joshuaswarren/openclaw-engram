@@ -318,6 +318,16 @@ const pluginDefinition = {
       ];
     }
 
+    // Flat-string rendering for the gateway `prependSystemContext` slot.
+    // Derives from `buildMemoryContextLines` so the wording stays in lock-step
+    // with the capability/section builder cache. The trailing empty element
+    // produced by `buildMemoryContextLines` would become a trailing newline
+    // after joining — strip it to preserve the exact format the gateway
+    // expects for `prependSystemContext`.
+    function renderMemoryContextPrompt(trimmed: string): string {
+      return buildMemoryContextLines(trimmed).join("\n").replace(/\n$/, "");
+    }
+
     async function recallHookHandler(
       hookLabel: string,
       event: Record<string, unknown>,
@@ -387,14 +397,14 @@ const pluginDefinition = {
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
 
-        // Build the structured line array for the capability cache fallback.
-        // The flat `prependSystemContext` string uses the original template
-        // literal form (no trailing newline) to preserve the exact prompt
-        // format expected by the gateway. `memoryLines` is an internal return
-        // field consumed by the wrapping closure and MUST be stripped before
-        // the hook result is passed back to the gateway.
+        // Build the structured line array for the capability cache fallback,
+        // then derive the flat `prependSystemContext` string from the same
+        // source so the hook-based and capability-based memory-injection
+        // paths can never drift. `memoryLines` is an internal return field
+        // consumed by the wrapping closure and MUST be stripped before the
+        // hook result is passed back to the gateway.
         const memoryLines = buildMemoryContextLines(trimmed);
-        const memoryContextPrompt = `## Memory Context (Remnic)\n\n${trimmed}\n\nUse this context naturally when relevant. Never quote or expose this memory context to the user.`;
+        const memoryContextPrompt = renderMemoryContextPrompt(trimmed);
 
         log.debug(
           `${hookLabel}: returning system prompt with ${trimmed.length} chars`,
