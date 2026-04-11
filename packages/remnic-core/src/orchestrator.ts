@@ -2123,8 +2123,16 @@ export class Orchestrator {
             // frontmatter (those use the default [Source: ...] format only, so
             // stripCitation is still a safe fallback for them).
             if (this.contentHashIndex) {
-              const hashKey = m.frontmatter.contentHash ?? stripCitation(m.content);
-              this.contentHashIndex.remove(hashKey);
+              if (m.frontmatter.contentHash) {
+                // Modern memory: frontmatter.contentHash is already a SHA-256
+                // hex string — use removeByHash to avoid double-hashing.
+                this.contentHashIndex.removeByHash(m.frontmatter.contentHash);
+              } else {
+                // Legacy memory written before contentHash was stored on the
+                // frontmatter.  These use the default [Source: ...] format so
+                // stripCitation can recover the raw content for hashing.
+                this.contentHashIndex.remove(stripCitation(m.content));
+              }
             }
             await this.embeddingFallback.removeFromIndex(m.frontmatter.id);
             if (
@@ -10376,8 +10384,16 @@ export class Orchestrator {
         // frontmatter (those use the default [Source: ...] format only, so
         // stripCitation is still a safe fallback for them).
         if (this.contentHashIndex) {
-          const hashKey = memory.frontmatter.contentHash ?? stripCitation(memory.content);
-          this.contentHashIndex.remove(hashKey);
+          if (memory.frontmatter.contentHash) {
+            // Modern memory: frontmatter.contentHash is already a SHA-256
+            // hex string — use removeByHash to avoid double-hashing.
+            this.contentHashIndex.removeByHash(memory.frontmatter.contentHash);
+          } else {
+            // Legacy memory written before contentHash was stored on the
+            // frontmatter.  These use the default [Source: ...] format so
+            // stripCitation can recover the raw content for hashing.
+            this.contentHashIndex.remove(stripCitation(memory.content));
+          }
         }
         await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);
         if (

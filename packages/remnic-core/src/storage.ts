@@ -571,6 +571,19 @@ export class ContentHashIndex {
     }
   }
 
+  /**
+   * Remove a pre-computed SHA-256 hash directly from the index without
+   * re-hashing.  Use this when the caller already holds the stored hash
+   * (e.g. `memory.frontmatter.contentHash`) to avoid the double-hash bug
+   * where `remove(hash)` would compute `hash(hash)` and never match the
+   * entry.
+   */
+  removeByHash(hash: string): void {
+    if (this.hashes.delete(hash)) {
+      this.dirty = true;
+    }
+  }
+
   /** Normalize content and compute SHA-256 hash. */
   static normalizeContent(content: string): string {
     return content

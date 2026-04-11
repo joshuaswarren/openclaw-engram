@@ -916,6 +916,9 @@ test(
     // formatCitation produces something like "user prefers tea planner main"
     // stripCitation cannot strip it (no [Source: ...] bracket), but the stored
     // frontmatter.contentHash must still let us remove the correct hash.
+    //
+    // Verifies Option 1 fix: removeByHash(frontmatter.contentHash) correctly
+    // deletes the entry without double-hashing.
     const dir = await mkdtemp(path.join(os.tmpdir(), "engram-option-a-test-a-"));
     try {
       const rawContent = "user prefers tea";
@@ -951,19 +954,44 @@ test(
         "frontmatter.contentHash must be persisted on disk",
       );
 
-      // Simulate archive: use frontmatter.contentHash to remove from index.
-      const idx = new ContentHashIndex(dir);
+      // Confirm frontmatter.contentHash is a 64-char hex string (pre-computed hash).
+      assert.match(
+        written!.frontmatter.contentHash!,
+        /^[a-f0-9]{64}$/,
+        "frontmatter.contentHash must be a 64-char SHA-256 hex string",
+      );
+
+      // Simulate archive via Option 1 fix: use removeByHash so we skip hashing
+      // the already-hashed value.  StorageManager stores fact-hashes.txt under
+      // the `state/` subdir — use that same path for the ContentHashIndex.
+      const stateDir = path.join(dir, "state");
+      const idx = new ContentHashIndex(stateDir);
       await idx.load();
-      const hashKey = written!.frontmatter.contentHash ?? stripCitation(written!.content);
-      idx.remove(hashKey);
+      // Verify the raw-content hash IS present before archive (proves we loaded the right file).
+      assert.ok(idx.has(rawContent), "raw-content hash must be present in the state index before archive");
+      idx.removeByHash(written!.frontmatter.contentHash!);
       await idx.save();
 
       // Reload index and verify hash is gone.
-      const idxAfter = new ContentHashIndex(dir);
+      const idxAfter = new ContentHashIndex(stateDir);
       await idxAfter.load();
       assert.ok(
         !idxAfter.has(rawContent),
-        "after archive using frontmatter.contentHash, raw-content hash must be removed from index",
+        "after archive using removeByHash(frontmatter.contentHash), raw-content hash must be removed from index",
+      );
+
+      // Confirm that the buggy approach (double-hash via remove()) would have failed.
+      // Re-add the raw hash and then remove() the already-hashed value — must be a no-op.
+      const idxDoubleHashCheck = new ContentHashIndex(stateDir);
+      await idxDoubleHashCheck.load();
+      idxDoubleHashCheck.add(rawContent);
+      await idxDoubleHashCheck.save();
+      const idxBuggy = new ContentHashIndex(stateDir);
+      await idxBuggy.load();
+      idxBuggy.remove(written!.frontmatter.contentHash!); // double-hash: no-op
+      assert.ok(
+        idxBuggy.has(rawContent),
+        "buggy remove(alreadyHashedValue) must be a no-op — stale hash remains",
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -977,6 +1005,9 @@ test(
     // Configure a bracketed custom template: "[src:{agent}/{sessionId}@{date}]"
     // The stored body is "user prefers tea [src:planner/main@2026-04-11]"
     // stripCitation only strips [Source: ...] shape, so this format is a no-op.
+    //
+    // Verifies Option 1 fix: removeByHash(frontmatter.contentHash) correctly
+    // deletes the entry without double-hashing.
     const dir = await mkdtemp(path.join(os.tmpdir(), "engram-option-a-test-b-"));
     try {
       const rawContent = "user prefers tea";
@@ -1012,19 +1043,42 @@ test(
         "frontmatter.contentHash must be persisted on disk",
       );
 
-      // Simulate archive: use frontmatter.contentHash to remove from index.
-      const idx = new ContentHashIndex(dir);
+      // Confirm frontmatter.contentHash is a 64-char hex string (pre-computed hash).
+      assert.match(
+        written!.frontmatter.contentHash!,
+        /^[a-f0-9]{64}$/,
+        "frontmatter.contentHash must be a 64-char SHA-256 hex string",
+      );
+
+      // Simulate archive via Option 1 fix: use removeByHash with the correct
+      // state/ subdir path that StorageManager uses.
+      const stateDir = path.join(dir, "state");
+      const idx = new ContentHashIndex(stateDir);
       await idx.load();
-      const hashKey = written!.frontmatter.contentHash ?? stripCitation(written!.content);
-      idx.remove(hashKey);
+      // Verify the raw-content hash IS present before archive.
+      assert.ok(idx.has(rawContent), "raw-content hash must be present in the state index before archive");
+      idx.removeByHash(written!.frontmatter.contentHash!);
       await idx.save();
 
       // Reload and verify hash is gone.
-      const idxAfter = new ContentHashIndex(dir);
+      const idxAfter = new ContentHashIndex(stateDir);
       await idxAfter.load();
       assert.ok(
         !idxAfter.has(rawContent),
-        "after archive using frontmatter.contentHash, raw-content hash must be removed from index",
+        "after archive using removeByHash(frontmatter.contentHash), raw-content hash must be removed from index",
+      );
+
+      // Confirm that the buggy approach (double-hash via remove()) would have failed.
+      const idxDoubleHashCheck = new ContentHashIndex(stateDir);
+      await idxDoubleHashCheck.load();
+      idxDoubleHashCheck.add(rawContent);
+      await idxDoubleHashCheck.save();
+      const idxBuggy = new ContentHashIndex(stateDir);
+      await idxBuggy.load();
+      idxBuggy.remove(written!.frontmatter.contentHash!); // double-hash: no-op
+      assert.ok(
+        idxBuggy.has(rawContent),
+        "buggy remove(alreadyHashedValue) must be a no-op — stale hash remains",
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1078,6 +1132,102 @@ test(
       assert.ok(
         !idxAfter.has(rawContent),
         "legacy fallback via stripCitation must successfully remove the raw-content hash from the index",
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  },
+);
+
+// ── Test D: round 8 double-hash regression (Option 1 fix verification) ────────
+
+test(
+  "Test D: archive removes hash via frontmatter.contentHash — no double hashing (round 8 regression)",
+  async () => {
+    // Regression test for the round 8 double-hash bug:
+    //   Round 8 changed archive call sites to:
+    //     const hashKey = memory.frontmatter.contentHash ?? stripCitation(memory.content);
+    //     contentHashIndex.remove(hashKey);
+    //   But ContentHashIndex.remove() internally calls computeHash(hashKey).
+    //   When hashKey is already a SHA-256 hex string, we compute hash(hash(rawContent))
+    //   which never matches the index entry — silent no-op, stale hash leaks.
+    //
+    // Option 1 fix: removeByHash(hash) deletes the hash directly without re-hashing.
+    // This test verifies:
+    //   1. After write, has(rawContent) is true.
+    //   2. After removeByHash(frontmatter.contentHash), has(rawContent) is false.
+    //   3. After the buggy remove(frontmatter.contentHash), has(rawContent) is STILL true.
+    //   4. Re-extraction after correct removal is NOT false-deduped.
+    const dir = await mkdtemp(path.join(os.tmpdir(), "engram-test-d-double-hash-"));
+    try {
+      const rawContent = "user prefers tea";
+      const template = DEFAULT_CITATION_FORMAT;
+      const citedContent = attachCitation(
+        rawContent,
+        { agent: "planner", session: "agent:planner:main", ts: "2026-04-11T10:00:00Z" },
+        template,
+      );
+
+      // Write the fact with contentHashSource so both the index and frontmatter.contentHash
+      // store hash(rawContent).
+      const storage = new StorageManager(dir);
+      await storage.writeMemory("fact", citedContent, {
+        source: "extraction",
+        contentHashSource: rawContent,
+      });
+
+      // Step 1: verify has(rawContent) is true immediately after write.
+      assert.ok(
+        await storage.hasFactContentHash(rawContent),
+        "Step 1: has(rawContent) must be true after write",
+      );
+
+      // Load the written memory to retrieve frontmatter.contentHash.
+      const allMemories = await storage.readAllMemories();
+      const written = allMemories.find((m) => m.content.includes("[Source: agent=planner"));
+      assert.ok(written, "written memory must be findable");
+      const storedHash = written!.frontmatter.contentHash;
+      assert.ok(storedHash, "frontmatter.contentHash must be present");
+      assert.match(storedHash!, /^[a-f0-9]{64}$/, "frontmatter.contentHash must be a 64-char SHA-256 hex");
+
+      // Verify storedHash equals computeHash(rawContent) — proves it's a pre-computed hash.
+      assert.equal(
+        storedHash,
+        ContentHashIndex.computeHash(rawContent),
+        "frontmatter.contentHash must equal computeHash(rawContent)",
+      );
+
+      // Step 2a: demonstrate the BUGGY path — remove(alreadyHashedValue) is a no-op.
+      // This is the double-hash bug from round 8.
+      const stateDir = path.join(dir, "state");
+      const idxBuggy = new ContentHashIndex(stateDir);
+      await idxBuggy.load();
+      assert.ok(idxBuggy.has(rawContent), "Step 2a-pre: hash must be present before buggy remove");
+      idxBuggy.remove(storedHash!); // double-hash: hash(hash(rawContent)) — no match
+      // The hash must STILL be present (remove was a no-op).
+      assert.ok(
+        idxBuggy.has(rawContent),
+        "Step 2a: buggy remove(alreadyHashedValue) must leave the hash intact — stale hash leaks",
+      );
+
+      // Step 2b: demonstrate the FIXED path — removeByHash(alreadyHashedValue) removes directly.
+      const idxFixed = new ContentHashIndex(stateDir);
+      await idxFixed.load();
+      assert.ok(idxFixed.has(rawContent), "Step 2b-pre: hash must be present before fixed remove");
+      idxFixed.removeByHash(storedHash!); // correct: no re-hashing
+      assert.ok(
+        !idxFixed.has(rawContent),
+        "Step 2b: removeByHash(frontmatter.contentHash) must remove the raw-content hash",
+      );
+      await idxFixed.save();
+
+      // Step 3: re-extraction after correct removal must NOT be false-deduped.
+      // Load a fresh index (simulating a new extraction session).
+      const idxReextract = new ContentHashIndex(stateDir);
+      await idxReextract.load();
+      assert.ok(
+        !idxReextract.has(rawContent),
+        "Step 3: after archive, re-extraction of the same raw fact must not be false-deduped (hash is gone)",
       );
     } finally {
       await rm(dir, { recursive: true, force: true });
