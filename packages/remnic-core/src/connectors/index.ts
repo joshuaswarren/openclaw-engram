@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { spawnSync } from "node:child_process";
-import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry, restoreTokenEntry } from "../tokens.js";
+import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry, loadTokenStore, saveTokenStore } from "../tokens.js";
 
 // Native memory artifact materialization for Codex CLI (#378). Surfaced here
 // so downstream callers can `import { materializeForNamespace } from "@remnic/core/connectors"`.
@@ -679,6 +679,17 @@ export function installConnector(options: InstallOptions): InstallResult {
   // Token write errors (e.g. read-only HOME with writable XDG_CONFIG_HOME)
   // are non-fatal: we degrade gracefully and proceed with the connector
   // config write rather than aborting the whole install.
+  //
+  // For non-Hermes: snapshot the FULL token store BEFORE generateToken() so
+  // that if the connector JSON write later fails, we can restore the store to
+  // its pre-install state (UXJG fix — non-Hermes atomic rollback).
+  // Using a full-store snapshot (not a single-entry snapshot) ensures that a
+  // partial write of tokens.json during generateToken can be unwound atomically,
+  // covering both fresh-install and force-reinstall cases uniformly.
+  const nonHermesPriorTokenStore = options.connectorId !== "hermes"
+    ? loadTokenStore()
+    : null;
+
   let tokenEntry: ReturnType<typeof generateToken> | null = null;
   if (options.connectorId === "hermes") {
     // Build a candidate token; do NOT save yet (Issue B).
@@ -803,28 +814,27 @@ export function installConnector(options: InstallOptions): InstallResult {
     // and abort — the old token must remain valid and connector.json must stay
     // unchanged so the daemon keeps working.
     //
-    // commitTokenEntry() returns the prior TokenEntry it displaced (if any).
-    // We capture it here so Phase E rollback can precisely restore it —
-    // including the previous hermes token entry if this is a force-reinstall.
-    // Without restoration, Phase E rollback would leave tokens.json with NO
-    // hermes entry while config.yaml was rolled back to the old token value,
-    // breaking Hermes auth (PRRT_kwDORJXyws56UTrT).
-    let priorTokenEntry: import("../tokens.js").TokenEntry | null = null;
+    // IMPORTANT (UXJI/UXJT): Snapshot the FULL token store BEFORE calling
+    // commitTokenEntry(). A single-entry approach (capturing the return value
+    // of commitTokenEntry) is insufficient: if commitTokenEntry throws mid-write
+    // (e.g. ENOSPC truncating tokens.json), the assignment never completes and
+    // the rollback becomes a no-op, leaving tokens.json potentially corrupt.
+    // The full-store snapshot, captured before the write attempt, is guaranteed
+    // clean and can be written back atomically by saveTokenStore.
+    const priorTokenStore = loadTokenStore();
     let committed = false;
     try {
-      priorTokenEntry = commitTokenEntry(tokenEntry);
+      commitTokenEntry(tokenEntry);
       committed = true;
     } catch (commitErr) {
-      // Roll back the token store: if the prior entry existed, restore it so
-      // a partial write (e.g. ENOSPC truncating tokens.json mid-write) cannot
-      // leave the store without the prior hermes entry.
-      if (priorTokenEntry !== null) {
-        try {
-          restoreTokenEntry(priorTokenEntry);
-        } catch {
-          // Best-effort: if the restore also fails, we'll still report the
-          // original commit error so the user knows to intervene manually.
-        }
+      // Roll back the token store: restore the full snapshot so a partial write
+      // (e.g. ENOSPC truncating tokens.json mid-write) cannot leave the store
+      // corrupt or missing the prior hermes entry.
+      try {
+        saveTokenStore(priorTokenStore);
+      } catch {
+        // Best-effort: if the restore also fails, we'll still report the
+        // original commit error so the user knows to intervene manually.
       }
       // Roll back the YAML write: restore prior content (or delete newly-created file).
       try {
@@ -853,26 +863,17 @@ export function installConnector(options: InstallOptions): InstallResult {
     // (e) Both YAML write and token commit succeeded — now attempt to write connector.json.
     // If this write fails (e.g. connectors dir is not writable), roll back Phase D (token
     // commit) and Phase C (YAML upsert) so no partial-install state is left behind.
-    // If a prior token entry was displaced by commitTokenEntry, restoreTokenEntry
-    // reinserts it so tokens.json stays consistent with the rolled-back config.yaml.
+    // We restore the full token store snapshot captured before Phase D so that
+    // tokens.json is guaranteed consistent with the rolled-back config.yaml.
     try {
       writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
     } catch (writeErr) {
-      // Roll back Phase D: revoke the newly-committed token and restore the
-      // prior hermes token (if any) so tokens.json is consistent with the
-      // rolled-back config.yaml (PRRT_kwDORJXyws56UTrT fix).
+      // Roll back Phase D: restore the full token store snapshot so tokens.json
+      // is consistent with the rolled-back config.yaml.
       let tokenRollbackFailed = false;
-      let tokenRollbackMsg = priorTokenEntry !== null
-        ? "prior token entry reinstated"
-        : "new token entry revoked";
+      let tokenRollbackMsg = "token store restored to pre-install snapshot";
       try {
-        if (priorTokenEntry !== null) {
-          // Restore the exact prior entry — this also removes the new token.
-          restoreTokenEntry(priorTokenEntry);
-        } else {
-          // No prior entry: simply revoke the new token.
-          revokeToken(options.connectorId);
-        }
+        saveTokenStore(priorTokenStore);
       } catch (tokenRestoreErr) {
         tokenRollbackFailed = true;
         tokenRollbackMsg = `token rollback failed: ${tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr)}`;
@@ -956,7 +957,33 @@ export function installConnector(options: InstallOptions): InstallResult {
   // connector bearer token. Matches the 0o600 hardening on
   // ~/.remnic/tokens.json so the token is never world-readable via this
   // secondary location.
-  writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
+  //
+  // Atomic rollback (UXJG / Codex P1): if the JSON write fails (e.g., permission
+  // denied on XDG_CONFIG_HOME), generateToken() above already rotated the token in
+  // tokens.json. Roll back via the full-store snapshot captured before generateToken
+  // so tokens.json and the absent connector.json stay consistent — no stale token
+  // lingers without a matching config file. Full-store restore (vs. single-entry
+  // restore/revoke) handles partial writes atomically for both fresh-install and
+  // force-reinstall paths uniformly.
+  try {
+    writeSecretFileSync(configPath, JSON.stringify(resolvedConfig, null, 2));
+  } catch (writeErr) {
+    if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
+      try {
+        saveTokenStore(nonHermesPriorTokenStore);
+      } catch {
+        // Best-effort: token rollback failed; caller sees the original write error.
+      }
+    }
+    return {
+      connectorId: options.connectorId,
+      status: "error",
+      message:
+        `${manifest.name} install aborted: connector config write failed — ` +
+        `${writeErr instanceof Error ? writeErr.message : String(writeErr)}. ` +
+        `Token has been rolled back. Resolve the write permission issue, then reinstall.`,
+    };
+  }
 
   return {
     connectorId: options.connectorId,

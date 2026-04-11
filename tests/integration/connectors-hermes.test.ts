@@ -2104,6 +2104,210 @@ test("removeConnector: unlink failure for non-hermes connector uses connector ID
   });
 });
 
+// ── Round 10 regression: UXJI/UXJT — prior token preserved when commitTokenEntry throws ──
+
+test("atomic flow: commitTokenEntry throw during saveTokenStore still preserves prior hermes token via pre-commit snapshot", async () => {
+  // Regression test for UXJI/UXJT: previously, `priorTokenEntry = commitTokenEntry(...)`
+  // was used — if commitTokenEntry throws DURING saveTokenStore, the assignment never
+  // completes, priorTokenEntry stays null, and the Phase D rollback becomes a no-op.
+  //
+  // Fix: snapshot the full token store via loadTokenStore() BEFORE commitTokenEntry(),
+  // so even if the commit throws mid-write, the pre-commit store is available for
+  // restore via saveTokenStore(). This test verifies the ORIGINAL hermes token is
+  // present in tokens.json after a commitTokenEntry failure on force-reinstall.
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        mod.removeConnector("hermes");
+
+        const profileDir = path.join(tmpHome, ".hermes", "profiles", "writable");
+        fs.mkdirSync(profileDir, { recursive: true });
+
+        // Step 1: Initial install to establish a prior hermes token.
+        const install1 = mod.installConnector({
+          connectorId: "hermes",
+          config: { profile: "writable", host: "127.0.0.1", port: 4318 },
+        });
+        assert.equal(install1.status, "installed", "Initial install must succeed");
+
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const store1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const originalToken = store1.tokens.find((t) => t.connector === "hermes")?.token;
+        assert.ok(originalToken, "Initial install must produce a hermes token");
+        assert.ok(originalToken.startsWith("remnic_hm_"), "Prior token must have hermes prefix");
+
+        // Step 2: Make tokens.json read-only so commitTokenEntry's saveTokenStore throws.
+        fs.chmodSync(tokensPath, 0o444);
+        try {
+          const install2 = mod.installConnector({
+            connectorId: "hermes",
+            force: true,
+            config: { profile: "writable", host: "127.0.0.1", port: 4318 },
+          });
+
+          // Must return error (commit failed).
+          assert.equal(install2.status, "error", "commitTokenEntry failure must return error");
+          assert.ok(
+            install2.message.toLowerCase().includes("abort") ||
+            install2.message.toLowerCase().includes("token") ||
+            install2.message.toLowerCase().includes("commit"),
+            `Error message must explain the commit failure, got: ${install2.message}`,
+          );
+        } finally {
+          // Restore write permission before assertions.
+          try { fs.chmodSync(tokensPath, 0o600); } catch { /* ignore */ }
+        }
+
+        // Step 3: The ORIGINAL hermes token must still be in tokens.json.
+        // Without the UXJI fix (pre-commit snapshot), priorTokenEntry would be null
+        // and the rollback would be a no-op, leaving tokens.json without the prior
+        // hermes entry. With the fix, the snapshot is restored successfully.
+        const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const restoredEntry = store2.tokens.find((t) => t.connector === "hermes");
+        assert.ok(
+          restoredEntry,
+          "tokens.json must still contain a hermes entry after commitTokenEntry failure (UXJI fix)",
+        );
+        assert.equal(
+          restoredEntry!.token,
+          originalToken,
+          "The ORIGINAL prior hermes token must be present after commitTokenEntry throw — not absent (UXJI fix)",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// ── Round 10 regression: UXJG — non-Hermes install atomic token rollback ──
+
+test("non-Hermes install: config write failure on fresh install revokes rotated token (UXJG)", async () => {
+  // Regression test for UXJG: when a non-Hermes connector config write fails
+  // (e.g. XDG_CONFIG_HOME permission denied), generateToken() has already rotated
+  // the token in tokens.json. Without rollback, the caller is left with a new
+  // token in tokens.json and no connector.json on disk — a stale credential.
+  //
+  // Fix: capture the full token store before generateToken(), then on write
+  // failure restore it (saveTokenStore with prior snapshot) so tokens.json has
+  // no orphan entry for a fresh install (no prior entry → restored snapshot is
+  // also empty → claude-code entry is absent after rollback).
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Seed another connector (not claude-code) to discover the connectors dir,
+        // then lock the dir before the first claude-code install attempt.
+        // This ensures claude-code has NO prior token (fresh install scenario).
+        const seedOther = mod.installConnector({ connectorId: "cursor", config: {} });
+        assert.equal(seedOther.status, "installed", "Seed install of cursor must succeed");
+        const connectorsDir = path.dirname(seedOther.configPath!);
+
+        // Remove any seeded cursor connector JSON (we only needed the dir path).
+        fs.unlinkSync(seedOther.configPath!);
+        // Lock the connectors dir so claude-code.json creation fails.
+        fs.chmodSync(connectorsDir, 0o555);
+
+        let result: ReturnType<typeof mod.installConnector>;
+        try {
+          result = mod.installConnector({ connectorId: "claude-code", config: {} });
+        } finally {
+          try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
+        }
+
+        // Must return error (config write failed).
+        assert.equal(result!.status, "error", "Config write failure must return status: error");
+        assert.ok(
+          result!.message.toLowerCase().includes("abort") ||
+          result!.message.toLowerCase().includes("install") ||
+          result!.message.toLowerCase().includes("write"),
+          `Error message must describe the write failure, got: ${result!.message}`,
+        );
+
+        // The claude-code token must NOT be in tokens.json. The pre-install snapshot
+        // had no claude-code entry, so restoring it removes the rotated token.
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const storeAfter = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        assert.ok(
+          !storeAfter.tokens.find((t) => t.connector === "claude-code"),
+          "tokens.json must NOT contain a claude-code token after failed fresh install (UXJG fix)",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+test("non-Hermes install: config write failure on force-reinstall restores prior token (UXJG)", async () => {
+  // Regression test for UXJG force-reinstall: if force-reinstall config write fails,
+  // the PRIOR token (not the new rotated one, not absent) must be restored in
+  // tokens.json. The daemon is still running with the old token, so restoring it
+  // keeps authentication working without any disruption visible to the caller.
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Step 1: Initial install to establish a prior token.
+        const install1 = mod.installConnector({ connectorId: "claude-code", config: {} });
+        assert.equal(install1.status, "installed", "Initial install must succeed");
+
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const store1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const originalToken = store1.tokens.find((t) => t.connector === "claude-code")?.token;
+        assert.ok(originalToken, "Initial install must write a claude-code token");
+
+        // Step 2: Force-reinstall with connectors dir locked — write will fail.
+        const connectorsDir = path.dirname(install1.configPath!);
+        fs.unlinkSync(install1.configPath!);
+        fs.chmodSync(connectorsDir, 0o555);
+
+        let install2: ReturnType<typeof mod.installConnector>;
+        try {
+          install2 = mod.installConnector({ connectorId: "claude-code", config: {}, force: true });
+        } finally {
+          try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
+        }
+
+        // Must return error.
+        assert.equal(install2!.status, "error", "Config write failure on force-reinstall must return error");
+
+        // Step 3: The ORIGINAL token must be restored (not the new rotated one, not absent).
+        const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const restoredEntry = store2.tokens.find((t) => t.connector === "claude-code");
+        assert.ok(
+          restoredEntry,
+          "tokens.json must contain a claude-code entry after failed force-reinstall (UXJG fix)",
+        );
+        assert.equal(
+          restoredEntry!.token,
+          originalToken,
+          "The ORIGINAL prior token must be restored after force-reinstall write failure (UXJG fix)",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
 // ── Round 11: revoke token on stale not_found path (PRRT_kwDORJXyws56UWH6) ──
 
 test("removeConnector: best-effort revokeToken on not_found path clears orphan token", async () => {
@@ -2171,6 +2375,96 @@ test("removeConnector: best-effort revokeToken on not_found path clears orphan t
         assert.ok(
           !storeAfter.tokens.find((t) => t.connector === "hermes"),
           "tokens.json must NOT contain a hermes entry after stale-token revoke",
+        );
+      });
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+});
+
+// ── Round 12: UXJG (Codex P1) — full-store snapshot rollback for replit ──
+
+test("non-Hermes replit: force-reinstall config write failure restores prior token via full-store snapshot", async () => {
+  // Regression test for UXJG / Codex P1: non-Hermes connectors (e.g. replit) must
+  // use a full token-store snapshot for rollback, not single-entry restore/revoke.
+  // A full-store snapshot (loadTokenStore before generateToken) handles partial
+  // writes to tokens.json atomically — the prior token survives even if the file
+  // was partially overwritten before the connector JSON write failed.
+  //
+  // Scenario:
+  //   1. Install replit successfully (tokens.json gets T1, connectors/replit.json gets T1).
+  //   2. chmod 0o555 on the connectors dir to force a write failure on the next install.
+  //   3. Force-reinstall replit — generateToken rotates to T2 in tokens.json, then the
+  //      connector JSON write fails.
+  //   4. After rollback, tokens.json must still contain T1 (NOT T2).
+  //   5. connectors/replit.json must not exist (write was rejected).
+  const mod = await import("../../packages/remnic-core/src/connectors/index.ts");
+
+  await new Promise<void>((resolve, reject) => {
+    try {
+      withTempHome((tmpHome) => {
+        // Step 1: Initial install of replit.
+        const install1 = mod.installConnector({ connectorId: "replit", config: {} });
+        assert.equal(install1.status, "installed", "Initial replit install must succeed");
+        assert.ok(install1.configPath, "Initial install must return a configPath");
+
+        const tokensPath = path.join(tmpHome, ".remnic", "tokens.json");
+        const store1 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const t1Entry = store1.tokens.find((t) => t.connector === "replit");
+        assert.ok(t1Entry, "Initial install must write a replit token (T1)");
+        assert.ok(t1Entry!.token.startsWith("remnic_rl_"), "T1 must have replit prefix (remnic_rl_)");
+        const t1 = t1Entry!.token;
+
+        // connectors/replit.json must contain T1.
+        const connectorJson1 = JSON.parse(fs.readFileSync(install1.configPath!, "utf-8")) as { token?: string };
+        assert.equal(connectorJson1.token, t1, "connectors/replit.json must reference T1");
+
+        // Step 2: Lock the connectors dir so the next write fails.
+        const connectorsDir = path.dirname(install1.configPath!);
+        fs.unlinkSync(install1.configPath!); // remove to force a CREATE (not overwrite) on next install
+        fs.chmodSync(connectorsDir, 0o555);
+
+        // Step 3: Force-reinstall with locked dir.
+        let install2: ReturnType<typeof mod.installConnector>;
+        try {
+          install2 = mod.installConnector({ connectorId: "replit", config: {}, force: true });
+        } finally {
+          // Restore permissions so temp dir can be cleaned up.
+          try { fs.chmodSync(connectorsDir, 0o755); } catch { /* ignore */ }
+        }
+
+        // Step 4: Must return error.
+        assert.equal(install2!.status, "error", "Locked-dir force-reinstall must return status: error");
+        assert.ok(
+          install2!.message.toLowerCase().includes("abort") ||
+          install2!.message.toLowerCase().includes("write") ||
+          install2!.message.toLowerCase().includes("install"),
+          `Error message must describe the write failure, got: ${install2!.message}`,
+        );
+
+        // Step 5: tokens.json must still contain T1 (full-store rollback restored it).
+        const store2 = JSON.parse(fs.readFileSync(tokensPath, "utf-8")) as {
+          tokens: Array<{ token: string; connector: string }>;
+        };
+        const t1Restored = store2.tokens.find((t) => t.connector === "replit");
+        assert.ok(
+          t1Restored,
+          "tokens.json must still contain a replit entry (T1) after failed force-reinstall (UXJG full-store fix)",
+        );
+        assert.equal(
+          t1Restored!.token,
+          t1,
+          "tokens.json must contain T1 (prior token) — NOT a new T2 — after failed force-reinstall (UXJG full-store fix)",
+        );
+
+        // connector.json must NOT exist (write was refused, rolled back).
+        assert.ok(
+          !fs.existsSync(install1.configPath!),
+          "connectors/replit.json must not exist after write failure — no partial install state",
         );
       });
       resolve();

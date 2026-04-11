@@ -97,6 +97,20 @@ export function saveTokenStore(store: TokenStore, tokensPath?: string): void {
 }
 
 /**
+ * Read the current TokenEntry for a connector WITHOUT modifying the store.
+ * Callers use this to snapshot the prior entry BEFORE calling commitTokenEntry()
+ * so that a throw inside commitTokenEntry (e.g., ENOSPC in saveTokenStore) does
+ * not prevent rollback — the caller already holds the prior value independently
+ * of the commit's return path (UXJI/UXJT fix).
+ *
+ * Returns null when no entry exists for the connector.
+ */
+export function readTokenEntry(connector: string, tokensPath?: string): TokenEntry | null {
+  const store = loadTokenStore(tokensPath);
+  return store.tokens.find((t) => t.connector === connector) ?? null;
+}
+
+/**
  * Build a TokenEntry candidate WITHOUT saving it to the store.
  * Callers use this when they need to defer the save until after a
  * dependent write (e.g. Hermes config.yaml) succeeds — see
@@ -117,26 +131,14 @@ export function buildTokenEntry(connector: string): TokenEntry {
  * entry for the same connector. Used together with buildTokenEntry() when
  * the caller wants to defer the save until after a dependent write succeeds.
  *
- * Returns the prior TokenEntry that was displaced (if any), or `null` when
- * no entry existed for this connector before the commit. Callers that need
- * transactional rollback (e.g. Hermes Phase E) can use the returned value to
- * restore the previous token if a subsequent write fails.
+ * For transactional rollback, callers should snapshot the full store via
+ * loadTokenStore() BEFORE calling commitTokenEntry() and restore it with
+ * saveTokenStore() on failure. A full-store snapshot handles partial writes
+ * of tokens.json atomically — single-entry restore via the return value is
+ * insufficient because if this function throws during saveTokenStore, the
+ * return statement never executes (UXJI/UXJT fix).
  */
-export function commitTokenEntry(entry: TokenEntry, tokensPath?: string): TokenEntry | null {
-  const store = loadTokenStore(tokensPath);
-  const prior = store.tokens.find((t) => t.connector === entry.connector) ?? null;
-  store.tokens = store.tokens.filter((t) => t.connector !== entry.connector);
-  store.tokens.push(entry);
-  saveTokenStore(store, tokensPath);
-  return prior;
-}
-
-/**
- * Restore a previously displaced TokenEntry into the store, replacing any
- * current entry for the same connector. Used by rollback paths to undo a
- * commitTokenEntry call when a subsequent operation fails.
- */
-export function restoreTokenEntry(entry: TokenEntry, tokensPath?: string): void {
+export function commitTokenEntry(entry: TokenEntry, tokensPath?: string): void {
   const store = loadTokenStore(tokensPath);
   store.tokens = store.tokens.filter((t) => t.connector !== entry.connector);
   store.tokens.push(entry);
