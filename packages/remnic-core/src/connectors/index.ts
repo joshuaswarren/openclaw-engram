@@ -559,19 +559,6 @@ export function listConnectors(): {
   return { installed, available };
 }
 
-// ── Get connector token ────────────────────────────────────────────────────
-// Codex P1 (PRRT_kwDORJXyws56U9U0): tokens are stored exclusively in
-// tokens.json. This helper is the canonical way to retrieve the bearer token
-// for a connector — connector.json never contains it.
-
-export function getConnectorToken(connectorId: string): string | undefined {
-  try {
-    return loadTokenStore().tokens.find((t) => t.connector === connectorId)?.token;
-  } catch {
-    return undefined;
-  }
-}
-
 // ── Install connector ───────────────────────────────────────────────────────
 
 export function installConnector(options: InstallOptions): InstallResult {
@@ -776,7 +763,7 @@ export function installConnector(options: InstallOptions): InstallResult {
   // token here created a second, unredacted copy that `remnic connectors list
   // --json` printed verbatim, leaking live bearer tokens into shell history, CI
   // logs, and telemetry. Callers needing the token for a specific connector
-  // must use getConnectorToken(connectorId) which looks up tokens.json directly.
+  // must use loadTokenStore() and find the entry by connectorId directly.
   //
   // For hermes, include the resolved profile/host/port so that future
   // force-reinstalls can read them back even if options.config is not supplied.

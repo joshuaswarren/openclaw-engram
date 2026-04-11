@@ -137,13 +137,7 @@ export function generateToken(connector: string, tokensPath?: string): TokenEntr
   // Remove existing token for this connector
   store.tokens = store.tokens.filter((t) => t.connector !== connector);
 
-  const prefix = TOKEN_PREFIXES[connector] ?? "remnic_xx_";
-  const token = prefix + randomBytes(24).toString("hex");
-  const entry: TokenEntry = {
-    token,
-    connector,
-    createdAt: new Date().toISOString(),
-  };
+  const entry = buildTokenEntry(connector);
   store.tokens.push(entry);
   saveTokenStore(store, tokensPath);
   return entry;
