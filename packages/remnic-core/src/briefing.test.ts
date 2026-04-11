@@ -1232,3 +1232,74 @@ test("eventFallsOnDate: floating event with impossible end date '2026-01-99' is 
     "impossible-end event must NOT appear on the JS-autocorrected date",
   );
 });
+
+// Round 11 Finding PRRT_kwDORJXyws56U7at: Validate time components of floating-event end timestamps
+// ──────────────────────────────────────────────────────────────────────────────────────────────────
+// The regex and date-round-trip checks (UhLh) only cover the YYYY-MM-DD portion.
+// Invalid time fields (hour > 23, minute > 59, second > 59) pass those checks
+// but cause JavaScript's Date to roll over into unrelated future dates, polluting
+// the daily calendar output.
+
+test("eventFallsOnDate: floating event with bad month '2026-13-01T10:00:00' is treated as single-day", () => {
+  // Month 13 passes the shape regex (\d{2}) but is not a real calendar month.
+  // The date round-trip check must catch this and fall back to single-day semantics.
+  const event = makeCalendarEventWithEnd("2026-04-11T09:00", "2026-13-01T10:00:00");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "bad-month end event must still appear on its start date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-12"),
+    false,
+    "bad-month end event must NOT bleed into subsequent days",
+  );
+  // JS auto-corrects 2026-13-01 to 2027-01-01 — verify that date is excluded too.
+  assert.equal(
+    eventFallsOnDate(event, "2027-01-01"),
+    false,
+    "bad-month end event must NOT appear on the JS-autocorrected date",
+  );
+});
+
+test("eventFallsOnDate: floating event with bad day '2026-02-30T10:00:00' is treated as single-day", () => {
+  // February 30 passes the shape regex but is never a real date.
+  // The date round-trip check catches this and falls back to single-day semantics.
+  const event = makeCalendarEventWithEnd("2026-02-10T09:00", "2026-02-30T10:00:00");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-02-10"),
+    true,
+    "bad-day end event must still appear on its start date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-02-11"),
+    false,
+    "bad-day end event must NOT bleed into subsequent days",
+  );
+  // JS auto-corrects 2026-02-30 to 2026-03-02 — verify that date is excluded too.
+  assert.equal(
+    eventFallsOnDate(event, "2026-03-02"),
+    false,
+    "bad-day end event must NOT appear on the JS-autocorrected date",
+  );
+});
+
+test("eventFallsOnDate: floating event with bad hour '2026-04-11T25:00:00' is treated as single-day", () => {
+  // Hour 25 passes the shape regex (\d{2}) and the date portion "2026-04-11" is
+  // real, but 25:00:00 is not a valid time.  Without the time-range guard, JS
+  // rolls this over to the next day and the event bleeds into 2026-04-12.
+  const event = makeCalendarEventWithEnd("2026-04-11T09:00", "2026-04-11T25:00:00");
+
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "bad-hour end event must still appear on its start date",
+  );
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-12"),
+    false,
+    "bad-hour end event must NOT bleed into the JS-autocorrected next day",
+  );
+});

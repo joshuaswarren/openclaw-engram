@@ -608,6 +608,29 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
       return startDate === target;
     }
 
+    // Validate the time components of the end timestamp when present.
+    // The regex above only checks the shape (e.g. two digits for hour) but does
+    // not enforce numeric ranges.  A value like "2026-04-11T25:99:99" passes the
+    // regex and the date-round-trip check above yet carries an impossible time.
+    // JavaScript's Date constructor silently rolls such values over to a later
+    // date, which would make the event bleed into unrelated days.  Extract the
+    // individual time fields and reject anything outside the valid range.
+    const rawTime = end.indexOf("T") !== -1 ? end.slice(end.indexOf("T") + 1) : "";
+    if (rawTime !== "") {
+      const timeParts = rawTime.split(":").map(Number);
+      const hh = timeParts[0] ?? 0;
+      const mm = timeParts[1] ?? 0;
+      // Seconds may carry a fractional component; floor to get the integer part.
+      const ss = Math.floor(timeParts[2] ?? 0);
+      const timeIsValid = hh <= 23 && mm <= 59 && ss <= 59;
+      if (!timeIsValid) {
+        log.warn(
+          `briefing: event "${event.title}" has out-of-range end time ${JSON.stringify(rawTime)}; treating as single-day event at ${startDate}`,
+        );
+        return startDate === target;
+      }
+    }
+
     // Span event: include if [start, end) overlaps the target calendar day.
     //
     // We can't use pure YYYY-MM-DD lexicographic comparison because a
