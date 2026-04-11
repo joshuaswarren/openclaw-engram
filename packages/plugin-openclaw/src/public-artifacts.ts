@@ -85,18 +85,26 @@ async function isContainedWithin(target: string, boundary: string): Promise<bool
 async function listMarkdownFilesRecursive(
   rootDir: string,
   boundary?: string,
-  visited?: Set<string>,
+  ancestorRealPaths?: ReadonlySet<string>,
 ): Promise<string[]> {
   const boundaryDir = boundary ?? rootDir;
-  // Track visited real paths to detect symlink cycles
-  const visitedPaths = visited ?? new Set<string>();
+  // Cycle detection uses only the current recursion path — the set of real
+  // paths of ancestors we've descended through. This prevents infinite
+  // recursion on symlink cycles while still allowing sibling aliases that
+  // point at the same real directory to each be traversed independently.
+  // Globally tracking visited real paths (as the earlier implementation
+  // did) suppressed all-but-one of the aliases, leaving the surviving one
+  // dependent on readdir() order — a source of unstable relativePath
+  // output across environments/runs.
+  let resolvedRoot: string;
   try {
-    const resolvedRoot = await realpath(rootDir);
-    if (visitedPaths.has(resolvedRoot)) return []; // Cycle detected — stop
-    visitedPaths.add(resolvedRoot);
+    resolvedRoot = await realpath(rootDir);
   } catch {
     return [];
   }
+  if (ancestorRealPaths?.has(resolvedRoot)) return []; // Cycle — stop
+  const nextAncestors = new Set<string>(ancestorRealPaths ?? []);
+  nextAncestors.add(resolvedRoot);
 
   let entries: import("node:fs").Dirent[];
   try {
@@ -104,6 +112,11 @@ async function listMarkdownFilesRecursive(
   } catch {
     return [];
   }
+
+  // Sort entries deterministically before traversal so readdir() order
+  // cannot influence which aliases survive cycle pruning, and so the
+  // overall output order is stable across filesystems.
+  entries.sort((a, b) => String(a.name).localeCompare(String(b.name)));
 
   const files: string[] = [];
   for (const entry of entries) {
@@ -132,7 +145,7 @@ async function listMarkdownFilesRecursive(
     }
 
     if (isDir) {
-      files.push(...(await listMarkdownFilesRecursive(fullPath, boundaryDir, visitedPaths)));
+      files.push(...(await listMarkdownFilesRecursive(fullPath, boundaryDir, nextAncestors)));
       continue;
     }
     if (isFile && String(entry.name).endsWith(".md")) {
