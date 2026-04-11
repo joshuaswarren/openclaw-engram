@@ -532,9 +532,27 @@ export function eventFallsOnDate(event: CalendarEvent, dateIso: string): boolean
     // Point event (no end) — simple date prefix comparison.
     if (!end) return startDate === target;
 
-    // Span event: include if [startDate, endDate) overlaps target.
-    // For floating spans, compare YYYY-MM-DD strings lexicographically.
+    // Span event: include if [start, end) overlaps the target calendar day.
+    //
+    // We can't use pure YYYY-MM-DD lexicographic comparison because a
+    // same-day event (`start=2026-04-11T14:30`, `end=2026-04-11T15:00`)
+    // has `startDate === endDate === "2026-04-11"`, and a `target < endDate`
+    // check would wrongly exclude it. A cross-day event ending at
+    // `2026-04-12T00:00:00` (exact midnight) also needs the end day to be
+    // treated as exclusive per half-open `[start, end)` semantics.
+    //
+    // Decide whether the end day is still active on the end date by looking
+    // at the time portion: if the end time is strictly after midnight, the
+    // event is still running at the start of the end day and should include
+    // it; if the end time is exactly midnight, the event ends precisely at
+    // the boundary and the end day is excluded. Within-day spans always
+    // have a non-zero end time and so correctly include their own date.
     const endDate = end.slice(0, 10);
+    const endTime = end.slice(11); // "HH:MM:SS"
+    const endActiveOnEndDay = endTime > "00:00:00";
+    if (endActiveOnEndDay) {
+      return startDate <= target && target <= endDate;
+    }
     return startDate <= target && target < endDate;
   }
 

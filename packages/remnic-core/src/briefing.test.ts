@@ -465,6 +465,39 @@ test("eventFallsOnDate: point event (no end) still works correctly after refacto
   assert.equal(eventFallsOnDate(event, "2026-04-10"), false);
 });
 
+// PR #396 round 5 — PRRT_kwDORJXyws56UJ14: same-day floating spans were dropped
+// because the original fix used pure `target < endDate` lexicographic compare
+// on date prefixes. A DTSTART:20260411T143000 / DTEND:20260411T150000 event
+// has startDate == endDate == "2026-04-11", so `target < endDate` was false
+// and the event vanished from its own calendar day.
+test("eventFallsOnDate: same-day floating span (no TZID) appears on its calendar day", () => {
+  const event = makeCalendarEventWithEnd("2026-04-11T14:30:00", "2026-04-11T15:00:00");
+  assert.equal(
+    eventFallsOnDate(event, "2026-04-11"),
+    true,
+    "same-day floating span must match its own calendar day",
+  );
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), false);
+  assert.equal(eventFallsOnDate(event, "2026-04-12"), false);
+});
+
+test("eventFallsOnDate: floating span ending exactly at midnight excludes next day", () => {
+  // Floating 2026-04-10T22:00:00 → 2026-04-11T00:00:00 — half-open semantics
+  // means the end-day (2026-04-11) must NOT be included.
+  const event = makeCalendarEventWithEnd("2026-04-10T22:00:00", "2026-04-11T00:00:00");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true);
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), false);
+});
+
+test("eventFallsOnDate: floating span crossing midnight appears on both dates", () => {
+  // Floating 2026-04-10T23:30:00 → 2026-04-11T01:00:00 crosses the day
+  // boundary with a non-zero end time, so the end day is still active.
+  const event = makeCalendarEventWithEnd("2026-04-10T23:30:00", "2026-04-11T01:00:00");
+  assert.equal(eventFallsOnDate(event, "2026-04-10"), true);
+  assert.equal(eventFallsOnDate(event, "2026-04-11"), true);
+  assert.equal(eventFallsOnDate(event, "2026-04-12"), false);
+});
+
 // ──────────────────────────────────────────────────────────────────────────
 // PR #396 Finding 2: parseIcsEvents — RFC 5545 line unfolding
 // ──────────────────────────────────────────────────────────────────────────
