@@ -674,6 +674,56 @@ test("parseIcsEvents: TZID midnight event (UTC-5) lands on correct UTC day", () 
 });
 
 // ──────────────────────────────────────────────────────────────────────────
+// Round 5 Finding 2 (chatgpt-codex-connector): zonedFormatToMs must clamp
+// Intl hour "24" to 0 on the same calendar day.
+//
+// Some Intl.DateTimeFormat implementations return hour="24" for midnight while
+// keeping the same calendar date (rather than rolling the date forward and
+// returning hour="0").  If the raw "24" is passed to Date.UTC it would roll
+// the day forward, producing a UTC timestamp 24 h later than the actual
+// midnight, corrupting the zone-offset calculation and misplacing TZID
+// midnight events in the daily briefing.
+//
+// The fix: normalise hour 24 → 0 without touching the day digits so the
+// resulting ms is the same midnight, not next-day midnight.
+//
+// Test strategy: use UTC+1 (Europe/London in summer, BST) where midnight
+// local = 23:00 the prior UTC day.  Verifying the UTC date is one day
+// behind the local date confirms the offset calculation used the correct
+// midnight, not a next-day midnight.
+// ──────────────────────────────────────────────────────────────────────────
+
+test("parseIcsEvents: TZID midnight event (UTC+1, Europe/London BST) lands on correct UTC day", () => {
+  // 2026-07-01T00:00:00 BST (Europe/London, UTC+1) = 2026-06-30T23:00:00Z.
+  // The UTC date must be 2026-06-30, one day behind the local date.
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "BEGIN:VEVENT",
+    "UID:test-tzid-midnight-bst@synthetic",
+    "DTSTART;TZID=Europe/London:20260701T000000",
+    "DTEND;TZID=Europe/London:20260701T010000",
+    "SUMMARY:Midnight BST event",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+
+  const events = parseIcsEvents(ics);
+  assert.equal(events.length, 1, "should parse one event");
+  const ev = events[0]!;
+  assert.ok(
+    ev.start.endsWith("Z") || /[+-]\d{2}:?\d{2}$/.test(ev.start),
+    `start "${ev.start}" must be UTC-aware`,
+  );
+  // 2026-07-01T00:00 BST = 2026-06-30T23:00Z — UTC date is 2026-06-30.
+  const utcDate = new Date(ev.start).toISOString().slice(0, 10);
+  assert.equal(
+    utcDate,
+    "2026-06-30",
+    `midnight BST (UTC+1) must land on 2026-06-30 UTC, got "${utcDate}" from start="${ev.start}"`,
+  );
+});
+
+// ──────────────────────────────────────────────────────────────────────────
 // Round 7 Finding 1 (UNBW): BRIEFING_FOLLOWUP_DEFAULT_MODEL constant must be
 // exported and must be the same model string used by the extraction engine.
 // ──────────────────────────────────────────────────────────────────────────

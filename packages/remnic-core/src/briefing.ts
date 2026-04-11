@@ -508,11 +508,14 @@ function zonedFormatToMs(formatter: Intl.DateTimeFormat, date: Date): number | n
   const mm = get("minute");
   const ss = get("second");
   if (!y || !mo || !d || !hh || !mm || !ss) return null;
-  // `Intl.DateTimeFormat` returns "24" for midnight in some runtimes.
-  // Pass the raw hour value directly — Date.UTC natively rolls hour 24 to
-  // 00:00:00 on the *next* day.  Clamping to 0 here would leave the date
-  // unchanged, producing a 24-hour offset error in icsWallclockToUtc.
-  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), Number(hh), Number(mm), Number(ss));
+  // RFC 5545 / Intl edge-case: some runtimes return `hour: "24"` for midnight
+  // while keeping the same calendar day (instead of returning hour=0 with the
+  // next day).  Passing 24 straight to Date.UTC would roll the date forward by
+  // one day, producing a 24-hour-skewed offset in icsWallclockToUtc and
+  // shifting TZID midnight events to the wrong briefing day.  Normalise to 0
+  // and leave the date component unchanged.
+  const normalizedHour = Number(hh) === 24 ? 0 : Number(hh);
+  const ms = Date.UTC(Number(y), Number(mo) - 1, Number(d), normalizedHour, Number(mm), Number(ss));
   return Number.isFinite(ms) ? ms : null;
 }
 
