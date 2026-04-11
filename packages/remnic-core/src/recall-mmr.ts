@@ -49,18 +49,27 @@ export interface ApplyMmrOptions<C extends MmrCandidate> {
 }
 
 export interface MmrDiversityReport {
-  /** Number of candidates considered after topN clamping. */
+  /** Number of candidates considered after sample-size clamping. */
   considered: number;
   /** Number of candidates kept after MMR. */
   kept: number;
-  /** Average pairwise similarity of the top-K input slice (pre-MMR). */
+  /** Average pairwise similarity of the head-of-list input slice (pre-MMR). */
   avgPairwiseSimBefore: number;
-  /** Average pairwise similarity of the selected set (post-MMR). */
+  /** Average pairwise similarity of the head-of-list MMR output slice. */
   avgPairwiseSimAfter: number;
 }
 
-const DEFAULT_LAMBDA = 0.7;
-const DEFAULT_TOP_N = 40;
+export const DEFAULT_LAMBDA = 0.7;
+export const DEFAULT_TOP_N = 40;
+/**
+ * Default number of head-of-list candidates compared by
+ * {@link summarizeMmrDiversity}. Small on purpose: we want to measure whether
+ * MMR actually *changed* the head of the list. Comparing the full top-N slice
+ * is meaningless when `budget >= candidates.length` because both slices
+ * contain the same set (just reordered), making pairwise-similarity
+ * order-independent and identical before vs after.
+ */
+const DEFAULT_DIVERSITY_SAMPLE_SIZE = 10;
 
 /**
  * Pure MMR re-selection over an ordered candidate list.
@@ -154,20 +163,35 @@ export function applyMmrToCandidates<C extends MmrCandidate>(
 }
 
 /**
- * Summarize how much MMR collapsed duplicate clusters, for logging. Optional —
- * callers can skip this if they don't care about metrics.
+ * Summarize how much MMR reshuffled the head of the candidate list, for
+ * logging. Optional — callers can skip this if they don't care about metrics.
+ *
+ * IMPORTANT: `before` should be the score-ordered input (the same ordering the
+ * upstream reranker emitted, *not* the MMR output), and `after` should be the
+ * MMR-reordered list. Both are truncated to `sampleSize` before their pairwise
+ * similarity is averaged.
+ *
+ * The sample size intentionally defaults to a small number
+ * ({@link DEFAULT_DIVERSITY_SAMPLE_SIZE}) so that when the caller uses
+ * `budget >= candidates.length` (i.e. MMR only reorders without dropping), the
+ * head-of-list comparison still reflects whether MMR promoted diverse
+ * candidates. Passing a sample size `>= candidates.length` in that situation
+ * makes `avgPairwiseSimBefore` and `avgPairwiseSimAfter` trivially equal
+ * because pairwise similarity is order-independent.
  */
 export function summarizeMmrDiversity<C extends MmrCandidate>(
   before: readonly C[],
   after: readonly C[],
-  topN: number = DEFAULT_TOP_N,
+  sampleSize: number = DEFAULT_DIVERSITY_SAMPLE_SIZE,
 ): MmrDiversityReport {
-  const beforeSlice = before.slice(0, topN);
+  const n = clampPositiveInt(sampleSize, DEFAULT_DIVERSITY_SAMPLE_SIZE);
+  const beforeSlice = before.slice(0, n);
+  const afterSlice = after.slice(0, n);
   return {
     considered: beforeSlice.length,
-    kept: after.length,
+    kept: afterSlice.length,
     avgPairwiseSimBefore: averagePairwiseSimilarity(beforeSlice),
-    avgPairwiseSimAfter: averagePairwiseSimilarity(after),
+    avgPairwiseSimAfter: averagePairwiseSimilarity(afterSlice),
   };
 }
 
@@ -317,4 +341,144 @@ function averagePairwiseSimilarity<C extends MmrCandidate>(
   }
   if (count === 0) return 0;
   return sum / count;
+}
+
+// -----------------------------------------------------------------------------
+// Orchestration helper: MMR for recall results keyed by path-first
+// -----------------------------------------------------------------------------
+
+/**
+ * Minimum shape the recall-MMR orchestration helper expects from a result.
+ * Any richer result type (e.g. {@link QmdSearchResult}) satisfies this.
+ */
+export interface MmrRecallResult {
+  readonly docid?: string;
+  readonly path?: string;
+  readonly snippet?: string;
+  readonly score?: number;
+}
+
+export interface ReorderRecallResultsOptions {
+  readonly lambda?: number;
+  readonly topN?: number;
+  /**
+   * Head-of-list sample size used by the diversity metric. Defaults to
+   * {@link DEFAULT_DIVERSITY_SAMPLE_SIZE}. Intentionally small so the metric
+   * reflects head-of-list changes even when `budget >= results.length`.
+   */
+  readonly diversitySampleSize?: number;
+}
+
+export interface ReorderRecallResultsOutcome<R extends MmrRecallResult> {
+  readonly reordered: R[];
+  readonly diversity: MmrDiversityReport;
+  readonly lambda: number;
+}
+
+/**
+ * Apply MMR to an ordered list of recall results and return the reordered
+ * list plus a head-of-list diversity report.
+ *
+ * This helper is the single source of truth for the orchestrator's
+ * per-section MMR pass. It is pure and deterministic so it can be unit
+ * tested without constructing an Orchestrator.
+ *
+ * Key invariants:
+ * 1. **No silent drops.** Candidates are keyed by a stable unique key derived
+ *    from `path` first, falling back to `docid`, and always suffixed with the
+ *    candidate's original index. Two results that share a basename-style
+ *    docid but differ in path are treated as distinct candidates and both
+ *    survive the reorder.
+ * 2. **No mutation.** The input array is never mutated; a new array is
+ *    returned.
+ * 3. **Diversity metric is meaningful.** The report compares the *head of
+ *    list* before and after MMR using a small sample size, so it reflects
+ *    whether MMR promoted diverse candidates even when
+ *    `budget >= results.length`.
+ */
+export function reorderRecallResultsWithMmr<R extends MmrRecallResult>(
+  results: readonly R[],
+  options: ReorderRecallResultsOptions = {},
+): ReorderRecallResultsOutcome<R> {
+  const emptyReport: MmrDiversityReport = {
+    considered: 0,
+    kept: 0,
+    avgPairwiseSimBefore: 0,
+    avgPairwiseSimAfter: 0,
+  };
+  const lambda = clampLambda(options.lambda);
+
+  if (!Array.isArray(results) || results.length === 0) {
+    return { reordered: [], diversity: emptyReport, lambda };
+  }
+  if (results.length < 2) {
+    return {
+      reordered: [results[0]!],
+      diversity: emptyReport,
+      lambda,
+    };
+  }
+
+  const topN = clampPositiveInt(options.topN, DEFAULT_TOP_N);
+
+  // Build a per-result *unique* key so distinct results with colliding
+  // docids or paths are never silently collapsed by id-based lookups.
+  const candidateKeys: string[] = new Array(results.length);
+  const byKey = new Map<string, R>();
+  const candidates: MmrCandidate[] = results.map((r, index) => {
+    const key = makeRecallKey(r, index);
+    candidateKeys[index] = key;
+    byKey.set(key, r);
+    return {
+      id: key,
+      content: r.snippet ?? "",
+      score: typeof r.score === "number" ? r.score : 0,
+      embedding: null,
+    };
+  });
+
+  const selectedMmr = applyMmrToCandidates({
+    candidates,
+    lambda,
+    topN,
+    budget: results.length,
+  });
+
+  const reordered: R[] = [];
+  const seen = new Set<string>();
+  for (const c of selectedMmr) {
+    if (seen.has(c.id)) continue;
+    const original = byKey.get(c.id);
+    if (!original) continue;
+    seen.add(c.id);
+    reordered.push(original);
+  }
+  // Safety: append any candidates MMR did not select so nothing is dropped.
+  if (reordered.length < results.length) {
+    for (let i = 0; i < results.length; i += 1) {
+      const key = candidateKeys[i]!;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      reordered.push(results[i]!);
+    }
+  }
+
+  const reorderedCandidates: MmrCandidate[] = reordered.map((r, index) => ({
+    id: makeRecallKey(r, index),
+    content: r.snippet ?? "",
+    score: typeof r.score === "number" ? r.score : 0,
+    embedding: null,
+  }));
+  const diversity = summarizeMmrDiversity(
+    candidates,
+    reorderedCandidates,
+    options.diversitySampleSize,
+  );
+
+  return { reordered, diversity, lambda };
+}
+
+function makeRecallKey(r: MmrRecallResult, index: number): string {
+  const baseKey = r.path || r.docid || "";
+  return `${baseKey}::${index}`;
 }

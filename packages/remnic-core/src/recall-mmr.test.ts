@@ -3,9 +3,11 @@ import test from "node:test";
 
 import {
   applyMmrToCandidates,
+  reorderRecallResultsWithMmr,
   summarizeMmrDiversity,
   normalizeTokens,
   type MmrCandidate,
+  type MmrRecallResult,
 } from "./recall-mmr.js";
 
 function makeCandidate(
@@ -293,3 +295,161 @@ test("applyMmrToCandidates end-to-end: duplicate sentences reduced vs disabled",
     `MMR should surface at least one diverse candidate: ${mmrIds}`,
   );
 });
+
+// ---------------------------------------------------------------------------
+// Regression: path-first keying for reorderRecallResultsWithMmr
+// (ChatGPT Codex P2 review comment on PR #391)
+// ---------------------------------------------------------------------------
+
+test(
+  "reorderRecallResultsWithMmr preserves distinct results that share a docid",
+  () => {
+    // Two results with IDENTICAL docids but DIFFERENT paths. A docid-keyed
+    // implementation would collapse these into one and silently drop a valid
+    // recall candidate.
+    const results: MmrRecallResult[] = [
+      {
+        docid: "fact-007",
+        path: "memories/facts/source-a/fact-007.md",
+        snippet: "Some fact from source A",
+        score: 0.95,
+      },
+      {
+        docid: "fact-007",
+        path: "memories/facts/source-b/fact-007.md",
+        snippet: "A very different fact from source B",
+        score: 0.92,
+      },
+      {
+        docid: "fact-008",
+        path: "memories/facts/source-a/fact-008.md",
+        snippet: "Yet another unrelated fact",
+        score: 0.9,
+      },
+    ];
+
+    const { reordered } = reorderRecallResultsWithMmr(results);
+
+    assert.equal(
+      reordered.length,
+      results.length,
+      "no candidate should be dropped when docids collide across paths",
+    );
+    const paths = reordered.map((r) => r.path).sort();
+    assert.deepEqual(paths, [
+      "memories/facts/source-a/fact-007.md",
+      "memories/facts/source-a/fact-008.md",
+      "memories/facts/source-b/fact-007.md",
+    ]);
+  },
+);
+
+test(
+  "reorderRecallResultsWithMmr keeps results with empty path AND empty docid distinct",
+  () => {
+    // Pathological input: every result has empty path and empty docid. The
+    // stable index-suffix fallback must still give each candidate its own
+    // key so none of them collapse.
+    const results: MmrRecallResult[] = [
+      { docid: "", path: "", snippet: "alpha content", score: 0.9 },
+      { docid: "", path: "", snippet: "beta content", score: 0.8 },
+      { docid: "", path: "", snippet: "gamma content", score: 0.7 },
+    ];
+
+    const { reordered } = reorderRecallResultsWithMmr(results);
+    assert.equal(reordered.length, 3);
+    const snippets = reordered.map((r) => r.snippet).sort();
+    assert.deepEqual(snippets, ["alpha content", "beta content", "gamma content"]);
+  },
+);
+
+// ---------------------------------------------------------------------------
+// Regression: head-of-list diversity metric actually reflects reordering
+// (Cursor Bugbot Medium review comment on PR #391)
+// ---------------------------------------------------------------------------
+
+test(
+  "summarizeMmrDiversity with small sample size reflects head-of-list reordering",
+  () => {
+    // Input: 5 near-duplicate high-score "a*" candidates up front, then 3
+    // diverse candidates. With `budget = candidates.length`, MMR reorders but
+    // drops nothing — the two slices pre- and post-MMR contain the same
+    // SET. If the diversity metric used a large sample size it would report
+    // identical before/after averages. With a small head-of-list sample size
+    // the head *does* differ, so avgPairwiseSimAfter < avgPairwiseSimBefore.
+    const candidates: MmrCandidate[] = [
+      { id: "a1", content: "alpha", score: 0.99, embedding: [1, 0.001, 0] },
+      { id: "a2", content: "alpha", score: 0.98, embedding: [1, 0.002, 0] },
+      { id: "a3", content: "alpha", score: 0.97, embedding: [1, 0.003, 0] },
+      { id: "a4", content: "alpha", score: 0.96, embedding: [1, 0.004, 0] },
+      { id: "a5", content: "alpha", score: 0.95, embedding: [1, 0.005, 0] },
+      { id: "b1", content: "beta", score: 0.9, embedding: [0, 1, 0] },
+      { id: "b2", content: "gamma", score: 0.85, embedding: [0, 0, 1] },
+      { id: "b3", content: "delta", score: 0.8, embedding: [1, 1, 0] },
+    ];
+
+    const reordered = applyMmrToCandidates({
+      candidates,
+      lambda: 0.3, // push hard toward diversity
+      budget: candidates.length, // same set, just reordered — same bug regime
+    });
+    assert.equal(reordered.length, candidates.length);
+
+    // Default small sample size (10 is larger than our 8-element pool, so
+    // everything is compared — this recreates the bug the comment flagged).
+    const trivialReport = summarizeMmrDiversity(
+      candidates,
+      reordered,
+      candidates.length,
+    );
+    // With full-pool sampling the before/after average pairwise similarity
+    // is order-independent — the bug condition.
+    assert.ok(
+      Math.abs(trivialReport.avgPairwiseSimBefore - trivialReport.avgPairwiseSimAfter) < 1e-9,
+      "sanity: full-pool sampling is order-independent and hides diversity gains",
+    );
+
+    // With a small head-of-list sample size (4), MMR's reordering *must*
+    // show up as a strictly lower average pairwise similarity.
+    const headReport = summarizeMmrDiversity(candidates, reordered, 4);
+    assert.ok(
+      headReport.avgPairwiseSimAfter + 1e-9 < headReport.avgPairwiseSimBefore,
+      `head-of-list sample should show MMR diversity gain: before=${headReport.avgPairwiseSimBefore} after=${headReport.avgPairwiseSimAfter}`,
+    );
+  },
+);
+
+test(
+  "reorderRecallResultsWithMmr diversity report defaults to head-of-list sample",
+  () => {
+    // Integration check for the orchestration helper: even with
+    // `budget = results.length`, the default diversity report should surface
+    // the fact that MMR promoted diverse candidates to the head.
+    const results: MmrRecallResult[] = [
+      { docid: "a1", path: "p/a1", snippet: "the quick brown fox jumps over the lazy dog", score: 0.99 },
+      { docid: "a2", path: "p/a2", snippet: "the quick brown fox jumps over a lazy dog", score: 0.98 },
+      { docid: "a3", path: "p/a3", snippet: "a quick brown fox jumps over the lazy dog", score: 0.97 },
+      { docid: "a4", path: "p/a4", snippet: "quick brown fox jumping over lazy dogs", score: 0.96 },
+      { docid: "a5", path: "p/a5", snippet: "brown foxes jumping over lazy dogs", score: 0.95 },
+      { docid: "d1", path: "p/d1", snippet: "rocket thrust vectoring", score: 0.6 },
+      { docid: "d2", path: "p/d2", snippet: "violin bow rosin reservoir", score: 0.5 },
+      { docid: "d3", path: "p/d3", snippet: "coffee brewing at high altitude", score: 0.4 },
+    ];
+
+    const { reordered, diversity } = reorderRecallResultsWithMmr(results, {
+      lambda: 0.3,
+      diversitySampleSize: 4,
+    });
+    assert.equal(reordered.length, results.length);
+    assert.ok(
+      diversity.avgPairwiseSimAfter + 1e-9 < diversity.avgPairwiseSimBefore,
+      `head-of-list MMR should lower avg pairwise similarity: before=${diversity.avgPairwiseSimBefore} after=${diversity.avgPairwiseSimAfter}`,
+    );
+    // Sanity: MMR should have pulled at least one diverse candidate into the head.
+    const headDocids = reordered.slice(0, 4).map((r) => r.docid);
+    assert.ok(
+      headDocids.some((d) => d && d.startsWith("d")),
+      `expected a diverse candidate in the head after MMR: ${headDocids.join(",")}`,
+    );
+  },
+);

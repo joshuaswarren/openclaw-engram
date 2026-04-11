@@ -51,11 +51,7 @@ import {
   type ParallelSearchResult,
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
-import {
-  applyMmrToCandidates,
-  summarizeMmrDiversity,
-  type MmrCandidate,
-} from "./recall-mmr.js";
+import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import {
@@ -10843,65 +10839,19 @@ export class Orchestrator {
     const topN = Math.max(1, Math.floor(this.config.recallMmrTopN ?? 40));
     const lambda = this.config.recallMmrLambda ?? 0.7;
 
-    const candidates: MmrCandidate[] = results.map((r, index) => ({
-      id: r.docid || r.path || `idx-${index}`,
-      content: r.snippet ?? "",
-      score: typeof r.score === "number" ? r.score : 0,
-      // Upstream QmdSearchResult does not currently carry an embedding; MMR
-      // will transparently fall back to Jaccard over normalized tokens.
-      embedding: null,
-    }));
-
-    const selectedMmr = applyMmrToCandidates({
-      candidates,
+    // Delegate to the pure helper so candidate keying (path-first, index
+    // suffixed for uniqueness) and the head-of-list diversity metric are
+    // exercised by the same code path that the unit tests cover.
+    const { reordered, diversity } = reorderRecallResultsWithMmr(results, {
       lambda,
       topN,
-      budget: results.length,
     });
 
-    // Map selected MMR candidates back to the original QmdSearchResult order.
-    const byId = new Map<string, QmdSearchResult>();
-    for (let i = 0; i < results.length; i += 1) {
-      const key = candidates[i]!.id;
-      if (!byId.has(key)) byId.set(key, results[i]!);
-    }
-
-    const reordered: QmdSearchResult[] = [];
-    const seen = new Set<string>();
-    for (const c of selectedMmr) {
-      const original = byId.get(c.id);
-      if (!original) continue;
-      if (seen.has(c.id)) continue;
-      seen.add(c.id);
-      reordered.push(original);
-    }
-    // Safety: append any candidates MMR did not select so nothing is dropped.
-    if (reordered.length < results.length) {
-      for (let i = 0; i < results.length; i += 1) {
-        const key = candidates[i]!.id;
-        if (seen.has(key)) continue;
-        seen.add(key);
-        reordered.push(results[i]!);
-      }
-    }
-
-    // Emit a concise diversity metric for the top-N slice only (before vs
-    // after). This mirrors how other recall stages log single-line summaries.
     try {
-      const report = summarizeMmrDiversity(
-        candidates,
-        reordered.slice(0, topN).map((r, index) => ({
-          id: r.docid || r.path || `idx-${index}`,
-          content: r.snippet ?? "",
-          score: typeof r.score === "number" ? r.score : 0,
-          embedding: null,
-        })),
-        topN,
-      );
       log.info(
-        `recall_mmr: section=${sectionId} kept=${report.kept}/${report.considered} ` +
-          `avgSimBefore=${report.avgPairwiseSimBefore.toFixed(3)} ` +
-          `avgSimAfter=${report.avgPairwiseSimAfter.toFixed(3)} ` +
+        `recall_mmr: section=${sectionId} kept=${diversity.kept}/${diversity.considered} ` +
+          `avgSimBefore=${diversity.avgPairwiseSimBefore.toFixed(3)} ` +
+          `avgSimAfter=${diversity.avgPairwiseSimAfter.toFixed(3)} ` +
           `lambda=${lambda.toFixed(2)}`,
       );
     } catch {
