@@ -11201,7 +11201,15 @@ export class Orchestrator {
       );
     }
 
-    return results.slice(0, options.recallResultLimit);
+    // Apply MMR before final truncation so the cold fallback path mirrors
+    // the diversification policy applied in the hot QMD/embedding/recent
+    // paths. Running MMR post-slice would be unable to promote diverse
+    // candidates sitting just below the cutoff.
+    return this.diversifyAndLimitRecallResults(
+      "memories",
+      results,
+      options.recallResultLimit,
+    );
   }
 
   // ---------------------------------------------------------------------------
