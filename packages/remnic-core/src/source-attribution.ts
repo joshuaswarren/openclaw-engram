@@ -160,26 +160,30 @@ const PLACEHOLDER_REGEX = /\{[a-zA-Z_][\w]*\}/g;
  *    `[src:{agent}/{sessionId}@{date}]` collapses to `\[src:[^\n]*?\]` which
  *    is robust: it requires the full literal frame the template defines.
  *
- *  - **Placeholder-bounded case (both prefix and suffix empty).** The naive
- *    prefix/suffix approach degenerates to `[^\n]*?`, matching anything. And
- *    anchoring on just the middle literal (e.g. `":"` for `{agent}:{sessionId}`)
- *    false-positives on ordinary prose. The prior attempt — requiring each
- *    placeholder slot to be `[\w.-]+` with whitespace/bracket boundaries — was
- *    still too permissive: `[\w.-]+ [\w.-]+` happily fires on two English
- *    words like `"The service"`, and adjacent punctuation/word-boundary
- *    context cannot reliably distinguish citations from prose.
+ *  - **Placeholder-bounded with whitespace separator.** Both prefix and
+ *    suffix are empty and the separator literal(s) between placeholders
+ *    contain at least one whitespace character (e.g. `{source}: {content}`,
+ *    `{agent} {sessionId}`). A whitespace-containing separator produces
+ *    output that is visually indistinguishable from ordinary prose, so the
+ *    safe strategy is to require a **hard bracket/paren/angle delimiter** on
+ *    both sides of the reconstructed match. Prose almost never places
+ *    `[...]` / `(...)` / `<...>` around a phrase, so this yields clean
+ *    false-positive rejection.
  *
- *    The new strategy requires a **hard bracket/paren/angle delimiter** on
- *    both sides of the reconstructed match. Every well-formed citation
- *    template in the wild wraps its content in some bracket pair (see issue
- *    #369 format), and prose almost never places `[...]` / `(...)` / `<...>`
- *    around a two-word phrase. This yields the cleanest false-positive
- *    rejection for common prose like `"The service"` or `"http://host:80"`
- *    while still accepting realistic inline citations such as
- *    `"[backend-agent session-abc123]"` or `"[backend-agent:abc123]"`.
+ *  - **Placeholder-bounded with compact (non-whitespace) separator.** Both
+ *    prefix and suffix are empty and the separator literal(s) contain NO
+ *    whitespace (e.g. `{agent}:{sessionId}`, `{agent}/{sessionId}`).
+ *    `formatCitation` emits a compact token like `planner:main` with no
+ *    surrounding delimiters, so the bracket strategy cannot detect it.
+ *    Instead, the pattern requires that the entire token is bordered by
+ *    whitespace or a bracket/paren/angle on each side:
  *
- *    Each placeholder slot is a non-empty `[\w.-]+` identifier token so that
- *    whitespace and URL slashes cannot bleed across placeholder boundaries.
+ *      `(?:(?<=[\[\(\<])|(?<!\S))[\w.-]+<sep>[\w.-]+(?:(?=[\]\)\>])|(?!\S))`
+ *
+ *    This accepts `planner:main` when it appears standalone or inside a
+ *    bracket-wrapped token, and rejects `host:80` embedded inside a URL like
+ *    `http://host:80` because `host` is immediately preceded by `/`
+ *    (non-whitespace, non-bracket).
  *
  *  - **All-placeholder case (no literals between placeholders either).** No
  *    reliable regex can be built — a template like `{agent}{sessionId}`
@@ -210,10 +214,7 @@ function templateMatcher(template: string): RegExp | null {
     return new RegExp(pattern, "i");
   }
 
-  // Placeholder-bounded case: prefix and suffix are both empty. We require a
-  // hard bracket-style delimiter on each side of the reconstructed match, so
-  // that normal prose (even prose containing the middle literal) cannot be
-  // classified as a citation.
+  // Placeholder-bounded case: prefix and suffix are both empty.
   const middleLiterals = parts.slice(1, -1);
   const hasNonEmptyMiddle = middleLiterals.some((p) => p.length > 0);
   if (!hasNonEmptyMiddle) {
@@ -230,14 +231,33 @@ function templateMatcher(template: string): RegExp | null {
   const body =
     idToken +
     middleLiterals.map((lit) => escapeRegExp(lit) + idToken).join("");
-  // Require an opening bracket/paren/angle immediately before the body and a
-  // closing one immediately after. Using a lookahead for the closer lets
-  // parseAllCitations-style consumers extract just the bracketed content if
-  // they want to, but here we only use .test() so a consuming group would
-  // also be fine.
-  const opener = "[\\[\\(\\<]";
-  const closer = "[\\]\\)\\>]";
-  return new RegExp(opener + body + closer, "i");
+
+  const separatorText = middleLiterals.join("");
+  if (/\s/.test(separatorText)) {
+    // Separator contains whitespace: the emitted citation looks like ordinary
+    // prose (e.g. `planner main`). Require a hard bracket/paren/angle
+    // delimiter on both sides to prevent false matches on English text.
+    const opener = "[\\[\\(\\<]";
+    const closer = "[\\]\\)\\>]";
+    return new RegExp(opener + body + closer, "i");
+  }
+
+  // Separator is compact (no whitespace): `formatCitation` emits a token like
+  // `planner:main` without surrounding delimiters, so the bracket strategy
+  // cannot detect already-emitted citations. Use whitespace/boundary
+  // lookarounds instead. The lookaheads/lookbehinds accept either a bracket
+  // (so `[planner:main]` also matches) or a whitespace boundary (so
+  // standalone `planner:main` in prose matches), while rejecting tokens
+  // embedded inside URLs or other non-whitespace contexts.
+  //
+  // Example — why `http://host:80` does NOT match:
+  //   Trying to match `host:80`: the char before `h` is `/` (non-whitespace,
+  //   non-bracket), so both `(?<=[\[\(\<])` and `(?<!\S)` fail ⟹ no match.
+  //   Trying to match `http:...`: after `http:` the next chars are `//` which
+  //   are not `[\w.-]+`, so the second id-token group fails ⟹ no match.
+  const leadAnchor = "(?:(?<=[\\[\\(\\<])|(?<!\\S))";
+  const trailAnchor = "(?:(?=[\\]\\)\\>])|(?!\\S))";
+  return new RegExp(leadAnchor + body + trailAnchor, "i");
 }
 
 /**

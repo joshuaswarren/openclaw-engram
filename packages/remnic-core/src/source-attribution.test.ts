@@ -574,3 +574,113 @@ test("formatCitation: single-pass substitution handles nested placeholder syntax
     "[S: agent=a1, session=sess:{date}, date=2026-04-11]",
   );
 });
+
+// ── PR #401 P2 finding (PRRT_kwDORJXyws56UCB6): separator-only placeholder templates ──
+
+test("formatCitation: '{agent}:{sessionId}' produces compact token without brackets", () => {
+  // Baseline: confirm that formatCitation never adds brackets for this template.
+  // The P2 finding was that hasCitationForTemplate could not detect the
+  // already-emitted 'planner:main' token, causing attachCitation to re-append.
+  const out = formatCitation(
+    { agent: "planner", session: "agent:planner:main", ts: "2026-04-10T14:25:07Z" },
+    "{agent}:{sessionId}",
+  );
+  assert.equal(out, "planner:main");
+});
+
+test("hasCitationForTemplate: '{agent}:{sessionId}' detects standalone compact token", () => {
+  // Core fix: the pattern must match 'planner:main' when it appears at the
+  // start of the string (no preceding context).
+  assert.equal(
+    hasCitationForTemplate("planner:main", "{agent}:{sessionId}"),
+    true,
+    "compact citation at start of string must be detected",
+  );
+});
+
+test("hasCitationForTemplate: '{agent}:{sessionId}' detects token embedded in prose", () => {
+  assert.equal(
+    hasCitationForTemplate("Fact body. planner:main", "{agent}:{sessionId}"),
+    true,
+    "compact citation after prose must be detected",
+  );
+  assert.equal(
+    hasCitationForTemplate("The service planner:main is done.", "{agent}:{sessionId}"),
+    true,
+    "compact citation surrounded by prose must be detected",
+  );
+});
+
+test("hasCitationForTemplate: '{agent}:{sessionId}' rejects URL-embedded colons", () => {
+  // Regression guard: 'host:80' inside 'http://host:80' must NOT match.
+  // Trace: trying 'host:80' — the char before 'h' is '/' (non-whitespace,
+  // non-bracket), so both (?<=[\[\(\<]) and (?<!\S) fail. Trying 'http:...'
+  // — after 'http:' the next chars are '//' which are not [\w.-]+, so the
+  // second id-token group fails. Neither attempt matches.
+  assert.equal(
+    hasCitationForTemplate("URL uses http://host:80", "{agent}:{sessionId}"),
+    false,
+    "colon inside a URL must not be classified as a citation",
+  );
+});
+
+test("hasCitationForTemplate: '{agent}:{sessionId}' rejects plain text without colon", () => {
+  assert.equal(
+    hasCitationForTemplate("Plain text with no colon", "{agent}:{sessionId}"),
+    false,
+  );
+});
+
+test("hasCitationForTemplate: '{agent}:{sessionId}' accepts bracket-wrapped token", () => {
+  // A bracket-wrapped form also counts as a valid citation marker.
+  assert.equal(
+    hasCitationForTemplate("[backend-agent:abc123] some text", "{agent}:{sessionId}"),
+    true,
+    "bracket-wrapped compact token must be recognised",
+  );
+});
+
+test("attachCitation idempotency: '{agent}:{sessionId}' template appends citation exactly once", () => {
+  // Regression for the P2 finding: without the fix, each reprocess pass would
+  // call hasCitationForTemplate → false → append another citation, producing
+  // 'planner:main planner:main planner:main...' on repeated passes.
+  const template = "{agent}:{sessionId}";
+  const ctx = { agent: "planner", session: "agent:planner:main", ts: "2026-04-10T14:25:07Z" };
+  const rawFact = "The service caches with Redis.";
+
+  const pass1 = attachCitation(rawFact, ctx, template);
+  assert.ok(pass1.endsWith("planner:main"), `pass1 should end with citation, got: ${pass1}`);
+
+  // Second pass on already-cited text must be a no-op.
+  const pass2 = attachCitation(pass1, ctx, template);
+  assert.equal(pass2, pass1, "second attachCitation pass must not append another citation");
+
+  // Third pass too.
+  const pass3 = attachCitation(pass2, ctx, template);
+  assert.equal(pass3, pass1, "third attachCitation pass must not append another citation");
+
+  // Confirm only one occurrence of the compact token.
+  const tokenCount = (pass3.match(/planner:main/g) ?? []).length;
+  assert.equal(tokenCount, 1, "citation token must appear exactly once");
+});
+
+test("hasCitationForTemplate: '{agent}/{sessionId}' slash separator — compact token detected", () => {
+  // Ensure the separator-only path works for slash separators too.
+  const template = "{agent}/{sessionId}";
+  assert.equal(hasCitationForTemplate("planner/main", template), true);
+  assert.equal(hasCitationForTemplate("Fact. planner/main", template), true);
+  // URL path segments must not false-positive.
+  assert.equal(hasCitationForTemplate("see https://example.com/planner/main for docs", template), false);
+});
+
+test("hasCitationForTemplate: '{agent}-{sessionId}' dash separator — compact token detected", () => {
+  // Hyphen-separated compact tokens should also work.
+  const template = "{agent}-{sessionId}";
+  assert.equal(hasCitationForTemplate("planner-main", template), true);
+  // The space before 'planner' in 'Fact. planner-main' qualifies as a
+  // whitespace boundary (the period is not immediately adjacent to 'planner').
+  assert.equal(hasCitationForTemplate("Fact. planner-main", template), true);
+  assert.equal(hasCitationForTemplate("Fact planner-main rest", template), true);
+  // Plain text with no separator must return false.
+  assert.equal(hasCitationForTemplate("no separator here", template), false);
+});
