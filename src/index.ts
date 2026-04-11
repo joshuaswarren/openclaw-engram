@@ -38,26 +38,59 @@ import { cleanUserMessage } from "./user-message-cleaning.js";
 import { listRemnicPublicArtifacts } from "../packages/plugin-openclaw/src/public-artifacts.js";
 import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src/plugin-id.js";
 
-const ENGRAM_REGISTERED_GUARD = "__openclawEngramRegistered";
-/** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
-const ENGRAM_HOOK_APIS = "__openclawEngramHookApis";
-const ENGRAM_ACCESS_SERVICE = "__openclawEngramAccessService";
-const ENGRAM_ACCESS_HTTP_SERVER = "__openclawEngramAccessHttpServer";
 /**
- * Guards service.start() against duplicate invocation when multiple api instances
- * each register the service (all registries get registerService, but initialize
- * must only run once per process lifetime). Cleared by stop() so restart cycles
- * re-initialize correctly.
+ * Per-plugin runtime state is scoped by `serviceId` so a single process can host
+ * both the canonical `openclaw-remnic` plugin and the legacy `openclaw-engram`
+ * shim plugin without them trampling each other's orchestrator/config (#403 P2).
+ *
+ * Each slot base name is suffixed with `::${serviceId}` — e.g.
+ * `__openclawEngramRegistered::openclaw-remnic` and
+ * `__openclawEngramRegistered::openclaw-engram` are independent slots. Without
+ * this, whichever plugin registered first would force the second one to reuse
+ * the first plugin's orchestrator and `memoryDir`/policy despite having a
+ * different id — silently operating on the wrong memory store during migration.
+ *
+ * `ENGRAM_MIGRATION_PROMISE` is intentionally **not** keyed: migrating
+ * `~/.engram` → `~/.remnic` is a one-time process-wide operation, not a
+ * per-plugin concern, and both plugin ids should observe the same migration.
  */
-const ENGRAM_SERVICE_STARTED = "__openclawEngramServiceStarted";
-/**
- * Holds the in-flight initialization Promise while the first registry's start()
- * is running. Concurrent start() calls from other registries await this promise
- * so they do not resolve before the orchestrator and HTTP server are fully ready.
- * Set to null after init completes (success or failure) and cleared on stop().
- */
-const ENGRAM_INIT_PROMISE = "__openclawEngramInitPromise";
 const ENGRAM_MIGRATION_PROMISE = "__openclawEngramMigrationPromise";
+
+type ServiceKeys = {
+  REGISTERED_GUARD: string;
+  /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
+  HOOK_APIS: string;
+  ACCESS_SERVICE: string;
+  ACCESS_HTTP_SERVER: string;
+  /**
+   * Guards service.start() against duplicate invocation when multiple api instances
+   * each register the service (all registries get registerService, but initialize
+   * must only run once per process lifetime). Cleared by stop() so restart cycles
+   * re-initialize correctly.
+   */
+  SERVICE_STARTED: string;
+  /**
+   * Holds the in-flight initialization Promise while the first registry's start()
+   * is running. Concurrent start() calls from other registries await this promise
+   * so they do not resolve before the orchestrator and HTTP server are fully ready.
+   * Set to null after init completes (success or failure) and cleared on stop().
+   */
+  INIT_PROMISE: string;
+  ORCHESTRATOR: string;
+};
+
+function buildServiceKeys(serviceId: string): ServiceKeys {
+  const suffix = `::${serviceId}`;
+  return {
+    REGISTERED_GUARD: `__openclawEngramRegistered${suffix}`,
+    HOOK_APIS: `__openclawEngramHookApis${suffix}`,
+    ACCESS_SERVICE: `__openclawEngramAccessService${suffix}`,
+    ACCESS_HTTP_SERVER: `__openclawEngramAccessHttpServer${suffix}`,
+    SERVICE_STARTED: `__openclawEngramServiceStarted${suffix}`,
+    INIT_PROMISE: `__openclawEngramInitPromise${suffix}`,
+    ORCHESTRATOR: `__openclawEngramOrchestrator${suffix}`,
+  };
+}
 // Workaround: Read config directly from openclaw.json since gateway may not pass it.
 // IMPORTANT: Do not log raw config contents (may include secrets).
 // Shared helper: read and parse the full plugin entry from openclaw.json.
@@ -178,6 +211,11 @@ const pluginDefinition = {
     // still register the service under the correct id (#403).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const serviceId: string = (this as any).id ?? PLUGIN_ID;
+    // Scope all per-plugin runtime singletons (orchestrator, start guards,
+    // access service, HTTP server, etc.) by serviceId so a migration install
+    // can host both `openclaw-remnic` and `openclaw-engram` without the second
+    // plugin silently reusing the first plugin's orchestrator/config (#403 P2).
+    const keys = buildServiceKeys(serviceId);
 
     // Initialize logger early (debug off until config is parsed).
     initLogger(api.logger, false);
@@ -229,17 +267,22 @@ const pluginDefinition = {
     // different plugin registry). Reuse the orchestrator (heavy object) but always
     // re-register hooks — each api.on() call binds to the caller's registry, so
     // skipping registration leaves later registries with zero hooks.
-    const existing = (globalThis as any).__openclawEngramOrchestrator as
+    //
+    // The orchestrator slot is keyed by serviceId, so a same-process migration
+    // install with both `openclaw-remnic` and `openclaw-engram` plugin ids loaded
+    // gives each plugin its own orchestrator with its own `memoryDir`/policy
+    // instead of forcing the second plugin to reuse the first's (#403 P2).
+    const existing = (globalThis as any)[keys.ORCHESTRATOR] as
       | Orchestrator
       | undefined;
     const orchestrator = existing?.recall ? existing : new Orchestrator(cfg);
-    const isFirstRegistration = !(globalThis as any)[ENGRAM_REGISTERED_GUARD];
-    (globalThis as any)[ENGRAM_REGISTERED_GUARD] = true;
+    const isFirstRegistration = !(globalThis as any)[keys.REGISTERED_GUARD];
+    (globalThis as any)[keys.REGISTERED_GUARD] = true;
 
     // Per-api hook deduplication: if the same api object calls register() twice
     // (e.g., during reload edge cases), skip re-binding hooks to avoid double-
     // fired handlers (double recall, double extraction, double reset).
-    const hookApis: WeakSet<object> = ((globalThis as any)[ENGRAM_HOOK_APIS] ??=
+    const hookApis: WeakSet<object> = ((globalThis as any)[keys.HOOK_APIS] ??=
       new WeakSet());
     if (hookApis.has(api)) {
       log.debug(
@@ -255,24 +298,31 @@ const pluginDefinition = {
       );
     }
 
-    // Expose for inter-plugin discovery (e.g., langsmith tracing)
+    // Expose for inter-plugin discovery (e.g., langsmith tracing).
+    // Store under the keyed slot (per-serviceId, authoritative) AND under the
+    // unkeyed slot as a "last registered Remnic orchestrator" pointer for
+    // cross-plugin observers (langsmith etc.) that don't know the serviceId.
+    // Observers use this only for tracing — never for memory reads/writes —
+    // so the ambiguity of which plugin it points at is acceptable there.
+    (globalThis as any)[keys.ORCHESTRATOR] = orchestrator;
     (globalThis as any).__openclawEngramOrchestrator = orchestrator;
-    // Trace callback slot — langsmith (or any observer) will overwrite this
+    // Trace callback slot — langsmith (or any observer) will overwrite this.
+    // Intentionally unkeyed: tracing is cross-plugin.
     if ((globalThis as any).__openclawEngramTrace === undefined) {
       (globalThis as any).__openclawEngramTrace = undefined;
     }
 
-    const existingAccessService = (globalThis as any)[ENGRAM_ACCESS_SERVICE] as
+    const existingAccessService = (globalThis as any)[keys.ACCESS_SERVICE] as
       | EngramAccessService
       | undefined;
     const accessService =
       existingAccessService && (existingAccessService as EngramAccessService)
         ? existingAccessService
         : new EngramAccessService(orchestrator);
-    (globalThis as any)[ENGRAM_ACCESS_SERVICE] = accessService;
+    (globalThis as any)[keys.ACCESS_SERVICE] = accessService;
 
     const existingAccessHttpServer = (globalThis as any)[
-      ENGRAM_ACCESS_HTTP_SERVER
+      keys.ACCESS_HTTP_SERVER
     ] as EngramAccessHttpServer | undefined;
     const accessHttpServer =
       existingAccessHttpServer &&
@@ -286,7 +336,7 @@ const pluginDefinition = {
             principal: cfg.agentAccessHttp.principal,
             maxBodyBytes: cfg.agentAccessHttp.maxBodyBytes,
           });
-    (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER] = accessHttpServer;
+    (globalThis as any)[keys.ACCESS_HTTP_SERVER] = accessHttpServer;
 
     // ========================================================================
     // HOOK: before_prompt_build / before_agent_start — Inject memory context
@@ -1410,9 +1460,9 @@ const pluginDefinition = {
     // the registry it owns — if that registry has no service registered, start()
     // never fires and the orchestrator never initializes (issue #285).
     //
-    // Duplicate start() calls are safe: the ENGRAM_SERVICE_STARTED guard inside
-    // start() makes initialize() idempotent within a process lifetime. stop()
-    // clears the flag so restart cycles reinitialize correctly.
+    // Duplicate start() calls are safe: the per-serviceId SERVICE_STARTED guard
+    // inside start() makes initialize() idempotent within a process lifetime.
+    // stop() clears the flag so restart cycles reinitialize correctly.
     let activeOpikExporter: import("./opik-exporter.js").OpikExporter | null =
       null;
     // Whether this specific registry's start() claimed a slot in ACTIVE_REGISTRIES.
@@ -1423,7 +1473,7 @@ const pluginDefinition = {
     api.registerService({
       id: serviceId,
       start: async () => {
-        // Check the in-flight promise BEFORE the started flag. ENGRAM_SERVICE_STARTED
+        // Check the in-flight promise BEFORE the started flag. SERVICE_STARTED
         // is set to true inside the IIFE (only on success), so checking the flag
         // first would let concurrent callers return before init completes. By
         // checking INIT_PROMISE first, concurrent start() calls await the in-flight
@@ -1448,26 +1498,26 @@ const pluginDefinition = {
           // concurrently — re-running orchestrator.initialize() multiple times. The
           // while-loop re-checks INIT_PROMISE after every await so each waiter sees
           // the new promise and awaits it instead of racing to become a second primary.
-          while ((globalThis as any)[ENGRAM_INIT_PROMISE]) {
+          while ((globalThis as any)[keys.INIT_PROMISE]) {
             try {
-              await (globalThis as any)[ENGRAM_INIT_PROMISE];
+              await (globalThis as any)[keys.INIT_PROMISE];
             } catch {
               // A primary's init failed and its outer try-finally already cleared
-              // ENGRAM_INIT_PROMISE to null. Re-evaluate the while condition: if
-              // another secondary claimed INIT_PROMISE in the meantime, await it;
-              // otherwise exit and decide whether to become the next primary.
+              // INIT_PROMISE to null. Re-evaluate the while condition: if another
+              // secondary claimed INIT_PROMISE in the meantime, await it; otherwise
+              // exit and decide whether to become the next primary.
             }
             // Re-check after awaiting: the primary's start() may have been aborted by
             // a concurrent stop() (via the !didCountStart early return), leaving
-            // ENGRAM_SERVICE_STARTED=false even though the promise resolved. In that
+            // SERVICE_STARTED=false even though the promise resolved. In that
             // case continue the loop — we will either see a new INIT_PROMISE (set by
             // the first-resuming takeover waiter) or exit the loop to become primary.
-            if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) return;
+            if ((globalThis as any)[keys.SERVICE_STARTED]) return;
           }
           // No in-flight init — check if already fully initialized.
-          if ((globalThis as any)[ENGRAM_SERVICE_STARTED]) {
+          if ((globalThis as any)[keys.SERVICE_STARTED]) {
             log.debug(
-              "openclaw-engram: service.start() called again — skipping duplicate init",
+              `${serviceId}: service.start() called again — skipping duplicate init`,
             );
             return;
           }
@@ -1475,17 +1525,17 @@ const pluginDefinition = {
           // JS, no await between the inner while exit and here) INIT_PROMISE cannot
           // become non-null at this point, but the check makes the ownership invariant
           // self-documenting: we only proceed when no other primary is in-flight.
-          if ((globalThis as any)[ENGRAM_INIT_PROMISE]) continue;
+          if ((globalThis as any)[keys.INIT_PROMISE]) continue;
           break;
         }
         // We are the first — claim ownership and drive initialization.
         didCountStart = true;
-        // IMPORTANT: Do NOT put a `finally` inside the IIFE to clear ENGRAM_INIT_PROMISE.
+        // IMPORTANT: Do NOT put a `finally` inside the IIFE to clear INIT_PROMISE.
         // If anything in the try block throws synchronously (before the first `await`),
         // the IIFE's finally would run before the outer assignment, and the outer line
-        // `ENGRAM_INIT_PROMISE = initPromise` would then overwrite null with a stale
+        // `INIT_PROMISE = initPromise` would then overwrite null with a stale
         // rejected promise — permanently blocking future start() calls. Instead, clear
-        // ENGRAM_INIT_PROMISE in the outer try-finally below after `await initPromise`.
+        // INIT_PROMISE in the outer try-finally below after `await initPromise`.
         const initPromise = (async () => {
           try {
             log.info("initializing engram memory system...");
@@ -1545,8 +1595,8 @@ const pluginDefinition = {
             // cancellation has not been requested. Setting the flag here (not before
             // the await) prevents SERVICE_STARTED=true from being observable while init
             // is still in-flight, and ensures the flag accurately reflects completion.
-            (globalThis as any)[ENGRAM_SERVICE_STARTED] = true;
-            // Note: ENGRAM_REGISTERED_GUARD is intentionally NOT set here.
+            (globalThis as any)[keys.SERVICE_STARTED] = true;
+            // Note: REGISTERED_GUARD is intentionally NOT set here.
             //
             // In the stop-during-init takeover case (the one that prompted PR description
             // language about "restoring GUARD=true"): stop() no longer clears GUARD for
@@ -1568,8 +1618,8 @@ const pluginDefinition = {
             // SERVICE_STARTED was not set yet (only set on success above), but
             // clear it defensively in case another code path set it.
             didCountStart = false;
-            (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
-            // Do NOT clear ENGRAM_REGISTERED_GUARD here. On an ordinary startup
+            (globalThis as any)[keys.SERVICE_STARTED] = false;
+            // Do NOT clear REGISTERED_GUARD here. On an ordinary startup
             // failure (no preceding stop/reload) the CLI registered during register()
             // is still present in the gateway's command registry. Clearing the guard
             // would let a subsequent register() call re-register CLI commands,
@@ -1580,15 +1630,15 @@ const pluginDefinition = {
             // in the gateway's registry. No deferred clearing is performed.
             throw err;
           }
-          // No finally here — see comment above. ENGRAM_INIT_PROMISE is cleared
+          // No finally here — see comment above. INIT_PROMISE is cleared
           // by the outer try-finally after `await initPromise` below.
         })();
-        // ENGRAM_SERVICE_STARTED is set inside the IIFE (on success only), so any
+        // SERVICE_STARTED is set inside the IIFE (on success only), so any
         // concurrent caller that arrives after INIT_PROMISE is set will await the
         // in-flight init. The SERVICE_STARTED early-return path above is only
         // reachable when INIT_PROMISE is null (init not in-flight), which means
         // SERVICE_STARTED truly reflects a completed, successful init.
-        (globalThis as any)[ENGRAM_INIT_PROMISE] = initPromise;
+        (globalThis as any)[keys.INIT_PROMISE] = initPromise;
         try {
           await initPromise;
         } finally {
@@ -1596,12 +1646,12 @@ const pluginDefinition = {
           // Placing this here (not inside the IIFE) avoids the ordering hazard where
           // a pre-await throw inside the IIFE would let the outer assignment overwrite
           // null with the rejected promise.
-          (globalThis as any)[ENGRAM_INIT_PROMISE] = null;
+          (globalThis as any)[keys.INIT_PROMISE] = null;
         }
       },
       stop: async () => {
         // Only the registry whose start() successfully ran initialize() does teardown.
-        // Secondary registries (start() returned early on ENGRAM_SERVICE_STARTED) and
+        // Secondary registries (start() returned early on SERVICE_STARTED) and
         // failed registries (start() rolled back in catch) have didCountStart=false
         // and skip all cleanup — including Opik — to avoid detaching a live exporter.
         if (!didCountStart) return;
@@ -1609,7 +1659,7 @@ const pluginDefinition = {
         // Opik cleanup: placed after the guard so secondary stop()s never detach
         // the process-wide exporter while Engram is still running.
         // Wrapped in try-catch (like accessHttpServer.stop()) so a throwing
-        // unsubscribe does not leave ENGRAM_SERVICE_STARTED=true and prevent restart.
+        // unsubscribe does not leave SERVICE_STARTED=true and prevent restart.
         try {
           activeOpikExporter?.unsubscribe();
         } catch (err) {
@@ -1621,28 +1671,28 @@ const pluginDefinition = {
         } catch (err) {
           log.debug(`engram access HTTP stop failed: ${err}`);
         }
-        delete (globalThis as any)[ENGRAM_ACCESS_HTTP_SERVER];
-        delete (globalThis as any)[ENGRAM_ACCESS_SERVICE];
-        // ENGRAM_REGISTERED_GUARD policy:
+        delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
+        delete (globalThis as any)[keys.ACCESS_SERVICE];
+        // REGISTERED_GUARD policy:
         //
-        // Full stop (ENGRAM_INIT_PROMISE is null when stop() is called):
+        // Full stop (INIT_PROMISE is null when stop() is called):
         //   Clear GUARD so a subsequent register() in a fresh session can
         //   re-register CLI commands after a stop/reload cycle.
         //
-        // Stop-during-init (ENGRAM_INIT_PROMISE is non-null):
+        // Stop-during-init (INIT_PROMISE is non-null):
         //   Leave GUARD as-is. The CLI registered by the original register()
         //   call is still present in the gateway's registry — stop() does not
         //   unregister CLI commands. Clearing GUARD here would allow a
         //   subsequent register() to register CLI again on top of the
         //   still-live registration, duplicating the CLI command tree.
         const currentInitPromise = (globalThis as any)[
-          ENGRAM_INIT_PROMISE
+          keys.INIT_PROMISE
         ] as Promise<void> | null;
         // Track whether a secondary completed init during stop()'s await window.
         // Used below to guard the SERVICE_STARTED=false assignment.
         let secondaryTookOver = false;
         if (!currentInitPromise) {
-          (globalThis as any)[ENGRAM_REGISTERED_GUARD] = false;
+          (globalThis as any)[keys.REGISTERED_GUARD] = false;
         } else {
           // Stop-during-init: leave GUARD as-is.
           // The CLI registered by the original register() call is still present
@@ -1660,8 +1710,8 @@ const pluginDefinition = {
           // execute here and synchronously set its own INIT_PROMISE.
           await new Promise<void>((resolve) => queueMicrotask(resolve));
           if (
-            (globalThis as any)[ENGRAM_INIT_PROMISE] ||
-            (globalThis as any)[ENGRAM_SERVICE_STARTED]
+            (globalThis as any)[keys.INIT_PROMISE] ||
+            (globalThis as any)[keys.SERVICE_STARTED]
           ) {
             secondaryTookOver = true;
           }
@@ -1671,7 +1721,7 @@ const pluginDefinition = {
         // and resetting the WeakSet here would cause duplicate hook registration
         // the next time those api objects trigger hook paths (thread PRRT_kwDORJXyws5159K0).
         if (!secondaryTookOver) {
-          (globalThis as any)[ENGRAM_HOOK_APIS] = new WeakSet();
+          (globalThis as any)[keys.HOOK_APIS] = new WeakSet();
         }
         // Allow service.start() to reinitialize after a stop/restart cycle.
         // Skip this when a secondary completed init while stop() was suspended:
@@ -1680,13 +1730,13 @@ const pluginDefinition = {
         // next start() bypass the idempotency guard and re-run initialize() on
         // the live singleton (Cursor review thread PRRT_kwDORJXyws5156Lw).
         if (!secondaryTookOver) {
-          (globalThis as any)[ENGRAM_SERVICE_STARTED] = false;
+          (globalThis as any)[keys.SERVICE_STARTED] = false;
         }
-        // Do NOT clear ENGRAM_INIT_PROMISE here. If stop() is called while init is
+        // Do NOT clear INIT_PROMISE here. If stop() is called while init is
         // still in-flight (start() suspended at an await), clearing the promise here
         // would let a new registry enter start() before the original initializer settles
         // and call orchestrator.initialize() a second time on the same singleton.
-        // The outer try-finally in start() already clears ENGRAM_INIT_PROMISE when
+        // The outer try-finally in start() already clears INIT_PROMISE when
         // initPromise settles, so no cleanup is needed here — in the normal (after init)
         // case it is already null, and in the in-flight case it must stay set.
         log.info("stopped");

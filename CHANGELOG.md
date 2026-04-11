@@ -12,6 +12,16 @@ All notable changes to this project will be documented in this file.
   through to the canonical `"openclaw-remnic"` entry during migration when
   `plugins.slots.memory` is unset. Without this, the shim CLI could silently
   read/write the wrong memory store when both config blocks existed. (#403)
+- Runtime singletons (orchestrator, start/init guards, access service/HTTP
+  server) in `@remnic/plugin-openclaw` are now scoped per `serviceId` on
+  `globalThis`, so a migration install that loads both the canonical
+  `openclaw-remnic` plugin and the legacy `openclaw-engram` shim in the same
+  process gives each plugin its own orchestrator with its own
+  `memoryDir`/policy instead of forcing the second plugin to silently reuse
+  the first plugin's state. An unkeyed
+  `globalThis.__openclawEngramOrchestrator` mirror is still maintained as a
+  "last registered Remnic orchestrator" pointer for cross-plugin observers
+  that don't know the `serviceId`. (#403)
 
 ## [1.0.0] — The Remnic Release — 2026-04-10
 

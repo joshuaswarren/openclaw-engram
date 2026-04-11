@@ -38,14 +38,21 @@ import { join, dirname } from "node:path";
 
 // ============================================================================
 // Shared constants — must match src/index.ts
+//
+// Per-plugin runtime state is keyed by serviceId (#403 P2) so a migration
+// install hosting both `openclaw-remnic` and `openclaw-engram` plugin ids does
+// not force the second plugin to reuse the first plugin's orchestrator/config.
+// These tests register the canonical plugin id (`openclaw-remnic`), so the
+// keys below include the `::openclaw-remnic` suffix.
 // ============================================================================
-const GUARD_KEY = "__openclawEngramRegistered";
-const HOOK_APIS_KEY = "__openclawEngramHookApis";
-const ORCH_KEY = "__openclawEngramOrchestrator";
-const ACCESS_SVC_KEY = "__openclawEngramAccessService";
-const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
-const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
-const INIT_PROMISE_KEY = "__openclawEngramInitPromise";
+const SERVICE_ID = "openclaw-remnic";
+const GUARD_KEY = `__openclawEngramRegistered::${SERVICE_ID}`;
+const HOOK_APIS_KEY = `__openclawEngramHookApis::${SERVICE_ID}`;
+const ORCH_KEY = `__openclawEngramOrchestrator::${SERVICE_ID}`;
+const ACCESS_SVC_KEY = `__openclawEngramAccessService::${SERVICE_ID}`;
+const ACCESS_HTTP_KEY = `__openclawEngramAccessHttpServer::${SERVICE_ID}`;
+const SERVICE_STARTED_KEY = `__openclawEngramServiceStarted::${SERVICE_ID}`;
+const INIT_PROMISE_KEY = `__openclawEngramInitPromise::${SERVICE_ID}`;
 const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
 const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
 
@@ -639,12 +646,17 @@ test("Scenario B: fresh process registers and starts service independently (proc
   const tsxBin = join(__dirname, "../node_modules/.bin/tsx");
   const indexPath = join(__dirname, "../src/index.ts");
 
-  // Inline script passed via --eval / stdin using tsx
+  // Inline script passed via --eval / stdin using tsx.
+  //
+  // Runtime state is keyed per serviceId (#403 P2).  This fresh-process test
+  // loads the canonical plugin id (`openclaw-remnic`), so the guard/started
+  // slots it reads and writes include the `::openclaw-remnic` suffix.
   const script = `
 import { default as plugin } from ${JSON.stringify(indexPath)};
 
-const GUARD_KEY = "__openclawEngramRegistered";
-const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
+const SERVICE_ID = "openclaw-remnic";
+const GUARD_KEY = "__openclawEngramRegistered::" + SERVICE_ID;
+const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted::" + SERVICE_ID;
 
 // A fresh process must always start with a clean globalThis.
 if (globalThis[GUARD_KEY] !== undefined) {
@@ -705,4 +717,156 @@ process.stdout.write("PASS\\n");
     result.stdout.includes("PASS"),
     `Expected PASS in stdout:\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
   );
+});
+
+// ============================================================================
+// Scenario C: migration install — two different plugin ids in one process
+// ============================================================================
+
+test("register() scopes runtime singletons per serviceId when two plugin ids share a process (regression: #403 P2)", async () => {
+  // Before the fix, the runtime singletons (orchestrator, start/init guards,
+  // access service, HTTP server, etc.) lived on unkeyed `globalThis` slots.
+  // In a migration install that loads both plugin ids in one process
+  // (`openclaw-remnic` canonical + `openclaw-engram` legacy shim), whichever
+  // plugin registered first forced the second plugin to reuse the first
+  // plugin's orchestrator/config — so the second service could run with the
+  // wrong `memoryDir`/policy despite having a different plugin id.
+  //
+  // With the fix, each plugin id gets its own `::${serviceId}` slot and thus
+  // its own orchestrator.  A single unkeyed `__openclawEngramOrchestrator`
+  // mirror is still maintained for cross-plugin observers, but it points at
+  // whichever plugin registered most recently — it is NOT the source of
+  // truth and MUST NOT be read during per-service startup.
+  const LEGACY_SERVICE_ID = "openclaw-engram";
+  const LEGACY_GUARD_KEY = `__openclawEngramRegistered::${LEGACY_SERVICE_ID}`;
+  const LEGACY_HOOK_APIS_KEY = `__openclawEngramHookApis::${LEGACY_SERVICE_ID}`;
+  const LEGACY_ORCH_KEY = `__openclawEngramOrchestrator::${LEGACY_SERVICE_ID}`;
+  const LEGACY_ACCESS_SVC_KEY = `__openclawEngramAccessService::${LEGACY_SERVICE_ID}`;
+  const LEGACY_ACCESS_HTTP_KEY = `__openclawEngramAccessHttpServer::${LEGACY_SERVICE_ID}`;
+  const LEGACY_SERVICE_STARTED_KEY = `__openclawEngramServiceStarted::${LEGACY_SERVICE_ID}`;
+  const LEGACY_INIT_PROMISE_KEY = `__openclawEngramInitPromise::${LEGACY_SERVICE_ID}`;
+
+  const saved = saveAndResetGlobals();
+  const savedLegacy = {
+    guard: (globalThis as any)[LEGACY_GUARD_KEY],
+    hookApis: (globalThis as any)[LEGACY_HOOK_APIS_KEY],
+    orch: (globalThis as any)[LEGACY_ORCH_KEY],
+    accessSvc: (globalThis as any)[LEGACY_ACCESS_SVC_KEY],
+    accessHttp: (globalThis as any)[LEGACY_ACCESS_HTTP_KEY],
+    serviceStarted: (globalThis as any)[LEGACY_SERVICE_STARTED_KEY],
+    initPromise: (globalThis as any)[LEGACY_INIT_PROMISE_KEY],
+    unkeyedOrch: (globalThis as any).__openclawEngramOrchestrator,
+  };
+  delete (globalThis as any)[LEGACY_GUARD_KEY];
+  delete (globalThis as any)[LEGACY_HOOK_APIS_KEY];
+  delete (globalThis as any)[LEGACY_ORCH_KEY];
+  delete (globalThis as any)[LEGACY_ACCESS_SVC_KEY];
+  delete (globalThis as any)[LEGACY_ACCESS_HTTP_KEY];
+  delete (globalThis as any)[LEGACY_SERVICE_STARTED_KEY];
+  delete (globalThis as any)[LEGACY_INIT_PROMISE_KEY];
+  delete (globalThis as any).__openclawEngramOrchestrator;
+
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  let canonical: ReturnType<typeof buildApi> | undefined;
+  let legacy: ReturnType<typeof buildApi> | undefined;
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    canonical = buildApi("canonical-registry");
+    legacy = buildApi("legacy-registry");
+
+    // Canonical plugin (`openclaw-remnic`).  `plugin.register(api)` binds
+    // `this = plugin`, and `plugin.id === "openclaw-remnic"`.
+    plugin.register(canonical.api as any);
+
+    // Legacy shim plugin (`openclaw-engram`).  Rebind `this` so `register()`
+    // sees `this.id === "openclaw-engram"`.  This simulates the migration
+    // install where both the canonical package and the legacy shim package
+    // load the same underlying plugin module but expose different plugin ids.
+    const legacyThis = { ...plugin, id: LEGACY_SERVICE_ID };
+    (plugin.register as any).call(legacyThis, legacy!.api as any);
+
+    // Both keyed guard slots must be set independently.
+    assert.equal(
+      (globalThis as any)[GUARD_KEY],
+      true,
+      `canonical guard slot ${GUARD_KEY} must be set`,
+    );
+    assert.equal(
+      (globalThis as any)[LEGACY_GUARD_KEY],
+      true,
+      `legacy guard slot ${LEGACY_GUARD_KEY} must be set`,
+    );
+
+    // Each plugin must have its own orchestrator instance — the second
+    // register() call must not silently adopt the first one.
+    const canonicalOrch = (globalThis as any)[ORCH_KEY];
+    const legacyOrch = (globalThis as any)[LEGACY_ORCH_KEY];
+    assert.ok(canonicalOrch, `canonical orchestrator slot ${ORCH_KEY} must be set`);
+    assert.ok(legacyOrch, `legacy orchestrator slot ${LEGACY_ORCH_KEY} must be set`);
+    assert.notStrictEqual(
+      canonicalOrch,
+      legacyOrch,
+      "canonical and legacy plugin ids must get distinct orchestrator instances " +
+        "(regression: before #403 P2 fix, the second register() silently reused " +
+        "the first orchestrator via unkeyed globalThis slots)",
+    );
+
+    // Each plugin must have its own access service instance.
+    const canonicalAccess = (globalThis as any)[ACCESS_SVC_KEY];
+    const legacyAccess = (globalThis as any)[LEGACY_ACCESS_SVC_KEY];
+    assert.ok(canonicalAccess, "canonical access service must exist");
+    assert.ok(legacyAccess, "legacy access service must exist");
+    assert.notStrictEqual(
+      canonicalAccess,
+      legacyAccess,
+      "canonical and legacy plugin ids must get distinct access service instances",
+    );
+
+    // Each plugin must register its own service with its own id.
+    assert.deepEqual(
+      canonical.getServiceIds(),
+      ["openclaw-remnic"],
+      "canonical registry must register service id openclaw-remnic",
+    );
+    assert.deepEqual(
+      legacy.getServiceIds(),
+      ["openclaw-engram"],
+      "legacy registry must register service id openclaw-engram",
+    );
+
+    // The unkeyed orchestrator mirror must point at whichever plugin
+    // registered most recently (legacy here).  This is a best-effort pointer
+    // for cross-plugin observers that don't know the serviceId.
+    assert.strictEqual(
+      (globalThis as any).__openclawEngramOrchestrator,
+      legacyOrch,
+      "unkeyed __openclawEngramOrchestrator mirror must point at the most-recently-registered plugin's orchestrator",
+    );
+  } finally {
+    // Stop any registered services / HTTP listeners so the event loop can drain.
+    await safeStop(canonical?.api, legacy?.api);
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+
+    // Restore legacy slots.
+    if (savedLegacy.guard !== undefined) (globalThis as any)[LEGACY_GUARD_KEY] = savedLegacy.guard;
+    else delete (globalThis as any)[LEGACY_GUARD_KEY];
+    if (savedLegacy.hookApis !== undefined) (globalThis as any)[LEGACY_HOOK_APIS_KEY] = savedLegacy.hookApis;
+    else delete (globalThis as any)[LEGACY_HOOK_APIS_KEY];
+    if (savedLegacy.orch !== undefined) (globalThis as any)[LEGACY_ORCH_KEY] = savedLegacy.orch;
+    else delete (globalThis as any)[LEGACY_ORCH_KEY];
+    if (savedLegacy.accessSvc !== undefined) (globalThis as any)[LEGACY_ACCESS_SVC_KEY] = savedLegacy.accessSvc;
+    else delete (globalThis as any)[LEGACY_ACCESS_SVC_KEY];
+    if (savedLegacy.accessHttp !== undefined) (globalThis as any)[LEGACY_ACCESS_HTTP_KEY] = savedLegacy.accessHttp;
+    else delete (globalThis as any)[LEGACY_ACCESS_HTTP_KEY];
+    if (savedLegacy.serviceStarted !== undefined) (globalThis as any)[LEGACY_SERVICE_STARTED_KEY] = savedLegacy.serviceStarted;
+    else delete (globalThis as any)[LEGACY_SERVICE_STARTED_KEY];
+    if (savedLegacy.initPromise !== undefined) (globalThis as any)[LEGACY_INIT_PROMISE_KEY] = savedLegacy.initPromise;
+    else delete (globalThis as any)[LEGACY_INIT_PROMISE_KEY];
+    if (savedLegacy.unkeyedOrch !== undefined) (globalThis as any).__openclawEngramOrchestrator = savedLegacy.unkeyedOrch;
+    else delete (globalThis as any).__openclawEngramOrchestrator;
+
+    restoreGlobals(saved);
+  }
 });

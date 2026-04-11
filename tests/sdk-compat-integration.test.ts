@@ -17,14 +17,23 @@ import path from "node:path";
 
 // ============================================================================
 // Shared constants — must match src/index.ts
+//
+// Per-plugin runtime state is keyed by serviceId (#403 P2) so a migration
+// install hosting both `openclaw-remnic` and `openclaw-engram` plugin ids does
+// not force the second plugin to reuse the first plugin's orchestrator/config.
+// These tests register the canonical plugin id (`openclaw-remnic`), so the
+// keys below include the `::openclaw-remnic` suffix.  The migration promise
+// remains unkeyed because `~/.engram` → `~/.remnic` migration is a one-time
+// process-wide operation.
 // ============================================================================
-const GUARD_KEY = "__openclawEngramRegistered";
-const HOOK_APIS_KEY = "__openclawEngramHookApis";
-const ORCH_KEY = "__openclawEngramOrchestrator";
-const ACCESS_SVC_KEY = "__openclawEngramAccessService";
-const ACCESS_HTTP_KEY = "__openclawEngramAccessHttpServer";
-const SERVICE_STARTED_KEY = "__openclawEngramServiceStarted";
-const INIT_PROMISE_KEY = "__openclawEngramInitPromise";
+const SERVICE_ID = "openclaw-remnic";
+const GUARD_KEY = `__openclawEngramRegistered::${SERVICE_ID}`;
+const HOOK_APIS_KEY = `__openclawEngramHookApis::${SERVICE_ID}`;
+const ORCH_KEY = `__openclawEngramOrchestrator::${SERVICE_ID}`;
+const ACCESS_SVC_KEY = `__openclawEngramAccessService::${SERVICE_ID}`;
+const ACCESS_HTTP_KEY = `__openclawEngramAccessHttpServer::${SERVICE_ID}`;
+const SERVICE_STARTED_KEY = `__openclawEngramServiceStarted::${SERVICE_ID}`;
+const INIT_PROMISE_KEY = `__openclawEngramInitPromise::${SERVICE_ID}`;
 const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
 const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
 
