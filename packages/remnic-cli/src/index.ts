@@ -1669,7 +1669,16 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
     );
   }
   const entries = (rawEntries ?? {}) as Record<string, unknown>;
-  const slots = (plugins.slots ?? {}) as Record<string, unknown>;
+
+  // Validate plugins.slots shape for the same reason as entries.
+  const rawSlots = plugins.slots;
+  if (rawSlots !== undefined && (typeof rawSlots !== "object" || rawSlots === null || Array.isArray(rawSlots))) {
+    throw new Error(
+      `OpenClaw config at ${configPath} has an invalid plugins.slots field (expected an object, got ${Array.isArray(rawSlots) ? "array" : typeof rawSlots}). ` +
+      `Fix the file manually and re-run.`,
+    );
+  }
+  const slots = (rawSlots ?? {}) as Record<string, unknown>;
 
   // Check for legacy entry. REMNIC_OPENCLAW_PLUGIN_ID is the canonical (post-#405) id.
   // REMNIC_OPENCLAW_LEGACY_PLUGIN_ID is the pre-#405 id retained for rollback/migration.
