@@ -61,3 +61,20 @@ test("SmartBuffer clearAfterExtraction only clears the targeted logical session"
   assert.equal(buffer.getExtractionCount("thread-a"), 1);
   assert.equal(buffer.getExtractionCount("thread-b"), 0);
 });
+
+test("SmartBuffer read-only accessors do not persist phantom entries for unknown buffers", async () => {
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  assert.deepEqual(buffer.getTurns("missing-thread"), []);
+  assert.equal(buffer.getExtractionCount("missing-thread"), 0);
+
+  await buffer.addTurn("thread-a", makeTurn("thread-a", "alpha memory"));
+
+  assert.ok(storage.saved);
+  assert.deepEqual(Object.keys(storage.saved?.entries ?? {}).sort(), ["default", "thread-a"]);
+});

@@ -35,6 +35,18 @@ export class SmartBuffer {
     return created;
   }
 
+  private peekEntry(key: string): BufferEntryState | null {
+    const existing = this.state.entries?.[key];
+    if (existing) return existing;
+    if (key !== "default") return null;
+    return {
+      turns: Array.isArray(this.state.turns) ? this.state.turns : [],
+      lastExtractionAt: this.state.lastExtractionAt ?? null,
+      extractionCount:
+        typeof this.state.extractionCount === "number" ? this.state.extractionCount : 0,
+    };
+  }
+
   private normalizeState(state: BufferState): BufferState {
     const entries = state.entries ?? {};
     if (!entries.default) {
@@ -124,7 +136,8 @@ export class SmartBuffer {
   }
 
   getTurns(bufferKey = "default"): BufferTurn[] {
-    const entry = this.entryFor(bufferKey);
+    const entry = this.peekEntry(bufferKey);
+    if (!entry) return [];
     return [...entry.turns];
   }
 
@@ -143,6 +156,6 @@ export class SmartBuffer {
   }
 
   getExtractionCount(bufferKey = "default"): number {
-    return this.entryFor(bufferKey).extractionCount;
+    return this.peekEntry(bufferKey)?.extractionCount ?? 0;
   }
 }
