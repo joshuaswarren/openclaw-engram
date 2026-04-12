@@ -1,7 +1,10 @@
 {
   "plugins": {
+    "slots": {
+      "memory": "openclaw-remnic"
+    },
     "entries": {
-      "openclaw-engram": {
+      "openclaw-remnic": {
         "config": {
           "debug": false,
           "model": "gpt-5.2",

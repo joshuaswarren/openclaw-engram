@@ -5,14 +5,24 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 
+// Per-plugin runtime state is keyed by serviceId (#403 P2) so two plugin ids
+// loaded in the same process don't trample each other.  This test registers
+// the canonical plugin id (`openclaw-remnic`), so the keyed slots get that
+// suffix; the migration promise stays unkeyed because legacy-dir migration is
+// a one-time process-wide operation; the unkeyed orchestrator mirror is
+// maintained by register() for cross-plugin observers.
+const SERVICE_ID = "openclaw-remnic";
 const GLOBAL_KEYS = [
-  "__openclawEngramRegistered",
-  "__openclawEngramHookApis",
+  `__openclawEngramRegistered::${SERVICE_ID}`,
+  `__openclawEngramHookApis::${SERVICE_ID}`,
+  `__openclawEngramOrchestrator::${SERVICE_ID}`,
+  `__openclawEngramAccessService::${SERVICE_ID}`,
+  `__openclawEngramAccessHttpServer::${SERVICE_ID}`,
+  `__openclawEngramServiceStarted::${SERVICE_ID}`,
+  `__openclawEngramInitPromise::${SERVICE_ID}`,
   "__openclawEngramOrchestrator",
-  "__openclawEngramAccessService",
-  "__openclawEngramAccessHttpServer",
-  "__openclawEngramServiceStarted",
-  "__openclawEngramInitPromise",
+  "__openclawEngramCliRegistered",
+  "__openclawEngramCliActiveServiceCount",
   "__openclawEngramMigrationPromise",
 ];
 

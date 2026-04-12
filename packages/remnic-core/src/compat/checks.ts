@@ -3,6 +3,7 @@ import path from "node:path";
 import type { CompatCheckOptions, CompatCheckResult, CompatReport, CompatRunner } from "./types.js";
 import { compareVersions } from "../version-utils.js";
 import { launchProcess } from "../runtime/child-process.js";
+import { PLUGIN_ID, LEGACY_PLUGIN_ID } from "../plugin-id.js";
 
 const REQUIRED_HOOKS_LEGACY = ["before_agent_start", "agent_end"];
 const REQUIRED_HOOKS_NEW = ["before_prompt_build", "agent_end"];
@@ -229,7 +230,8 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
   if (pluginManifestPresent) {
     try {
       const plugin = JSON.parse(pluginRaw) as { id?: string; kind?: string };
-      if (plugin.id === "openclaw-engram" && plugin.kind === "memory") {
+      const isValidId = plugin.id === PLUGIN_ID || plugin.id === LEGACY_PLUGIN_ID;
+      if (isValidId && plugin.kind === "memory") {
         checks.push({
           id: "plugin-manifest-shape",
           title: "Plugin manifest ID and kind",
@@ -242,7 +244,7 @@ export async function runCompatChecks(options: CompatCheckOptions): Promise<Comp
           title: "Plugin manifest ID and kind",
           level: "error",
           message: `Unexpected manifest values (id=${String(plugin.id)}, kind=${String(plugin.kind)})`,
-          remediation: "Set manifest id=openclaw-engram and kind=memory.",
+          remediation: `Set manifest id=${PLUGIN_ID} (or ${LEGACY_PLUGIN_ID} for the shim) and kind=memory.`,
         });
       }
     } catch {

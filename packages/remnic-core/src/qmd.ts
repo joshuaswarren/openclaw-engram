@@ -484,7 +484,7 @@ class QmdDaemonSession {
           {
             protocolVersion: "2024-11-05",
             capabilities: {},
-            clientInfo: { name: "openclaw-engram", version: "1.0.0" },
+            clientInfo: { name: "openclaw-remnic", version: "1.0.0" },
           },
           60_000,
         );

@@ -11,8 +11,17 @@ import assert from "node:assert/strict";
 
 // ============================================================================
 // Shared constants — must match src/index.ts
+//
+// Per-plugin runtime state is keyed by serviceId (#403 P2).  These tests load
+// the canonical plugin (id = "openclaw-remnic"), so the per-service slot names
+// get the `::openclaw-remnic` suffix.  We also clean the unkeyed mirror slot
+// `__openclawEngramOrchestrator` that `register()` maintains as a "last
+// registered Remnic orchestrator" pointer for cross-plugin observers.
+// The migration promise stays unkeyed because the legacy-dir migration is a
+// one-time process-wide operation.
 // ============================================================================
-const GLOBAL_KEYS = [
+const SERVICE_ID = "openclaw-remnic";
+const KEYED_BASE_NAMES = [
   "__openclawEngramRegistered",
   "__openclawEngramHookApis",
   "__openclawEngramOrchestrator",
@@ -20,6 +29,18 @@ const GLOBAL_KEYS = [
   "__openclawEngramAccessHttpServer",
   "__openclawEngramServiceStarted",
   "__openclawEngramInitPromise",
+];
+const GLOBAL_KEYS = [
+  // Per-service keyed slots (authoritative).
+  ...KEYED_BASE_NAMES.map((name) => `${name}::${SERVICE_ID}`),
+  // Unkeyed mirror that register() maintains for observers that don't know
+  // the serviceId (currently only the orchestrator).
+  "__openclawEngramOrchestrator",
+  // CLI dedupe guard — intentionally process-global (not per-serviceId).
+  "__openclawEngramCliRegistered",
+  // CLI active-service refcount.
+  "__openclawEngramCliActiveServiceCount",
+  // Intentionally unkeyed.
   "__openclawEngramMigrationPromise",
 ];
 const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
