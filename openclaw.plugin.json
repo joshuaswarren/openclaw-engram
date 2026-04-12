@@ -2,6 +2,14 @@
   "id": "openclaw-remnic",
   "kind": "memory",
   "description": "Local semantic memory for OpenClaw. Requires plugins.slots.memory set to this plugin id for hooks to fire.",
+  "supports": {
+    "memorySlot": true,
+    "dreamingSlot": true,
+    "activeMemory": true,
+    "heartbeat": true,
+    "commandsList": true,
+    "beforeReset": true
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -165,6 +173,98 @@
       "memoryDir": {
         "type": "string",
         "description": "Override memory storage directory"
+      },
+      "dreaming": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "journalPath": {
+            "type": "string",
+            "default": "DREAMS.md"
+          },
+          "maxEntries": {
+            "type": "integer",
+            "minimum": 10,
+            "maximum": 10000,
+            "default": 500
+          },
+          "injectRecentCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 3
+          }
+        }
+      },
+      "slotBehavior": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "requireExclusiveMemorySlot": {
+            "type": "boolean",
+            "default": true
+          },
+          "onSlotMismatch": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warn",
+              "silent"
+            ],
+            "default": "error"
+          }
+        }
+      },
+      "beforeResetTimeoutMs": {
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 30000,
+        "default": 2000,
+        "description": "Maximum time to wait for a reset-triggered flush before returning control to OpenClaw."
+      },
+      "flushOnResetEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Flush buffered turns through extraction when OpenClaw resets a session."
+      },
+      "commandsListEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Advertise Remnic slash-command descriptors through the commands.list runtime surface."
+      },
+      "codexCompat": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "threadIdBufferKeying": {
+            "type": "boolean",
+            "default": true
+          },
+          "compactionFlushMode": {
+            "type": "string",
+            "enum": [
+              "signal",
+              "heuristic",
+              "auto"
+            ],
+            "default": "auto"
+          },
+          "fingerprintDedup": {
+            "type": "boolean",
+            "default": true
+          }
+        }
       },
       "debug": {
         "type": "boolean",

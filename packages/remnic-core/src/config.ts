@@ -1,5 +1,8 @@
 import path from "node:path";
 import type {
+  CodexCompactionFlushMode,
+  CodexCompatConfig,
+  DreamingConfig,
   IdentityInjectionMode,
   MemoryOsPresetName,
   PluginConfig,
@@ -8,6 +11,8 @@ import type {
   RecallSectionConfig,
   ReasoningEffort,
   SessionObserverBandConfig,
+  SlotBehaviorConfig,
+  SlotMismatchMode,
   TriggerMode,
 } from "./types.js";
 import { log } from "./logger.js";
@@ -100,6 +105,8 @@ const VALID_MEMORY_OS_PRESETS: MemoryOsPresetName[] = [
   "research-max",
   "local-llm-heavy",
 ];
+const VALID_SLOT_MISMATCH_MODES: SlotMismatchMode[] = ["error", "warn", "silent"];
+const VALID_CODEX_COMPACTION_FLUSH_MODES: CodexCompactionFlushMode[] = ["signal", "heuristic", "auto"];
 export const VALID_MEMORY_CATEGORIES = new Set([
   "fact",
   "preference",
@@ -271,6 +278,56 @@ export function parseConfig(raw: unknown): PluginConfig {
     rawTrigger && VALID_TRIGGERS.includes(rawTrigger as TriggerMode)
       ? (rawTrigger as TriggerMode)
       : "smart";
+  const rawSlotBehavior =
+    cfg.slotBehavior && typeof cfg.slotBehavior === "object" && !Array.isArray(cfg.slotBehavior)
+      ? (cfg.slotBehavior as Record<string, unknown>)
+      : {};
+  const slotBehavior: SlotBehaviorConfig = {
+    requireExclusiveMemorySlot:
+      rawSlotBehavior.requireExclusiveMemorySlot !== false,
+    onSlotMismatch:
+      typeof rawSlotBehavior.onSlotMismatch === "string" &&
+      VALID_SLOT_MISMATCH_MODES.includes(
+        rawSlotBehavior.onSlotMismatch as SlotMismatchMode,
+      )
+        ? (rawSlotBehavior.onSlotMismatch as SlotMismatchMode)
+        : "error",
+  };
+  const rawDreaming =
+    cfg.dreaming && typeof cfg.dreaming === "object" && !Array.isArray(cfg.dreaming)
+      ? (cfg.dreaming as Record<string, unknown>)
+      : {};
+  const dreaming: DreamingConfig = {
+    enabled: rawDreaming.enabled === true,
+    journalPath:
+      typeof rawDreaming.journalPath === "string" && rawDreaming.journalPath.trim().length > 0
+        ? rawDreaming.journalPath.trim()
+        : "DREAMS.md",
+    maxEntries:
+      typeof rawDreaming.maxEntries === "number"
+        ? Math.min(10000, Math.max(10, Math.floor(rawDreaming.maxEntries)))
+        : 500,
+    injectRecentCount:
+      typeof rawDreaming.injectRecentCount === "number"
+        ? Math.min(20, Math.max(0, Math.floor(rawDreaming.injectRecentCount)))
+        : 3,
+  };
+  const rawCodexCompat =
+    cfg.codexCompat && typeof cfg.codexCompat === "object" && !Array.isArray(cfg.codexCompat)
+      ? (cfg.codexCompat as Record<string, unknown>)
+      : {};
+  const codexCompat: CodexCompatConfig = {
+    enabled: rawCodexCompat.enabled !== false,
+    threadIdBufferKeying: rawCodexCompat.threadIdBufferKeying !== false,
+    compactionFlushMode:
+      typeof rawCodexCompat.compactionFlushMode === "string" &&
+      VALID_CODEX_COMPACTION_FLUSH_MODES.includes(
+        rawCodexCompat.compactionFlushMode as CodexCompactionFlushMode,
+      )
+        ? (rawCodexCompat.compactionFlushMode as CodexCompactionFlushMode)
+        : "auto",
+    fingerprintDedup: rawCodexCompat.fingerprintDedup !== false,
+  };
 
   const memoryDir =
     typeof cfg.memoryDir === "string" && cfg.memoryDir.length > 0
@@ -751,6 +808,15 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.checkpointTurns === "number" ? cfg.checkpointTurns : 15,
     // Compaction reset (opt-in, default: false)
     compactionResetEnabled: cfg.compactionResetEnabled === true,
+    beforeResetTimeoutMs:
+      typeof cfg.beforeResetTimeoutMs === "number"
+        ? Math.min(30_000, Math.max(100, Math.floor(cfg.beforeResetTimeoutMs)))
+        : 2_000,
+    flushOnResetEnabled: cfg.flushOnResetEnabled !== false,
+    commandsListEnabled: cfg.commandsListEnabled !== false,
+    dreaming,
+    slotBehavior,
+    codexCompat,
     // Hourly summaries
     hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
     daySummaryEnabled: cfg.daySummaryEnabled !== false, // default: true

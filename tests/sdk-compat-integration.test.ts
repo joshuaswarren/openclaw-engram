@@ -132,11 +132,13 @@ interface MockApi {
   registrationMode?: string;
   registerMemoryPromptSection?: (spec: unknown) => void;
   registerMemoryCapability?: (spec: unknown) => void;
+  registerCommand?: (spec: unknown) => void;
   _registeredHooks: string[];
   _registeredToolCount: number;
   _registeredServiceIds: string[];
   _memoryPromptSectionRegistered: boolean;
   _registeredMemoryCapability?: any;
+  _registeredCommands: unknown[];
 }
 
 function buildNewSdkApi(label: string): MockApi {
@@ -149,8 +151,12 @@ function buildNewSdkApi(label: string): MockApi {
     _registeredToolCount: 0,
     _registeredServiceIds: [],
     _memoryPromptSectionRegistered: false,
+    _registeredCommands: [],
     registerTool(_spec: unknown) {
       api._registeredToolCount++;
+    },
+    registerCommand(spec: unknown) {
+      api._registeredCommands.push(spec);
     },
     registerCli(_spec: unknown) {},
     registerService(spec) {
@@ -179,6 +185,7 @@ function buildLegacySdkApi(label: string): MockApi {
     _registeredToolCount: 0,
     _registeredServiceIds: [],
     _memoryPromptSectionRegistered: false,
+    _registeredCommands: [],
     registerTool(_spec: unknown) {
       api._registeredToolCount++;
     },
@@ -233,6 +240,14 @@ test("new SDK api gets all new hooks + memory section", async () => {
       api._registeredHooks.includes("after_compaction"),
       "after_compaction should be registered",
     );
+    assert.ok(
+      api._registeredHooks.includes("before_reset"),
+      "before_reset should be registered on new SDK",
+    );
+    assert.ok(
+      api._registeredHooks.includes("commands.list"),
+      "commands.list should be registered on new SDK",
+    );
 
     // New SDK-only hooks
     assert.ok(
@@ -274,6 +289,41 @@ test("new SDK api gets all new hooks + memory section", async () => {
     assert.ok(
       api._registeredServiceIds.includes("openclaw-remnic"),
       "service should be registered",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("slot mismatch warn mode suppresses hook registration but still registers tools and service", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("slot-mismatch-passive");
+    api.config = {
+      plugins: {
+        slots: {
+          memory: "other-memory-plugin",
+        },
+      },
+    };
+    api.pluginConfig = {
+      slotBehavior: {
+        onSlotMismatch: "warn",
+      },
+    };
+
+    plugin.register(api as any);
+
+    assert.equal(api._registeredHooks.length, 0, "passive mode should not register hooks");
+    assert.ok(api._registeredToolCount > 0, "tools should still register in passive mode");
+    assert.ok(
+      api._registeredServiceIds.includes("openclaw-remnic"),
+      "service should still register in passive mode",
     );
   } finally {
     await awaitPendingMigration();

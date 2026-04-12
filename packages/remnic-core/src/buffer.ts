@@ -2,6 +2,7 @@ import { log } from "./logger.js";
 import { scanSignals } from "./signal.js";
 import type { StorageManager } from "./storage.js";
 import type {
+  BufferEntryState,
   BufferState,
   BufferTurn,
   PluginConfig,
@@ -21,9 +22,40 @@ export class SmartBuffer {
     this.state = { turns: [], lastExtractionAt: null, extractionCount: 0 };
   }
 
+  private entryFor(key: string): BufferEntryState {
+    this.state.entries ??= {};
+    const existing = this.state.entries[key];
+    if (existing) return existing;
+    const created: BufferEntryState = {
+      turns: [],
+      lastExtractionAt: null,
+      extractionCount: 0,
+    };
+    this.state.entries[key] = created;
+    return created;
+  }
+
+  private normalizeState(state: BufferState): BufferState {
+    const entries = state.entries ?? {};
+    if (!entries.default) {
+      entries.default = {
+        turns: Array.isArray(state.turns) ? [...state.turns] : [],
+        lastExtractionAt: state.lastExtractionAt ?? null,
+        extractionCount:
+          typeof state.extractionCount === "number" ? state.extractionCount : 0,
+      };
+    }
+    return {
+      turns: entries.default.turns,
+      lastExtractionAt: entries.default.lastExtractionAt,
+      extractionCount: entries.default.extractionCount,
+      entries,
+    };
+  }
+
   async load(): Promise<void> {
     if (this.loaded) return;
-    this.state = await this.storage.loadBuffer();
+    this.state = this.normalizeState(await this.storage.loadBuffer());
     this.loaded = true;
   }
 
@@ -31,32 +63,36 @@ export class SmartBuffer {
     await this.storage.saveBuffer(this.state);
   }
 
-  async addTurn(turn: BufferTurn): Promise<TriggerDecision> {
+  async addTurn(bufferKey: string, turn: BufferTurn): Promise<TriggerDecision> {
     await this.load();
-    this.state.turns.push(turn);
+    const entry = this.entryFor(bufferKey);
+    entry.turns.push(turn);
+    if (bufferKey === "default") {
+      this.state.turns = entry.turns;
+    }
 
     const signal = scanSignals(turn.content, this.config.highSignalPatterns);
-    const decision = this.evaluate(signal.level);
+    const decision = this.evaluate(entry, signal.level);
 
     log.debug(
-      `buffer: ${this.state.turns.length} turns, signal=${signal.level}, decision=${decision}`,
+      `buffer[${bufferKey}]: ${entry.turns.length} turns, signal=${signal.level}, decision=${decision}`,
     );
 
     await this.save();
     return decision;
   }
 
-  private evaluate(signalLevel: SignalLevel): TriggerDecision {
+  private evaluate(entry: BufferEntryState, signalLevel: SignalLevel): TriggerDecision {
     if (this.config.triggerMode === "smart") {
       if (signalLevel === "high") return "extract_now";
 
-      if (this.state.turns.length >= this.config.bufferMaxTurns) {
+      if (entry.turns.length >= this.config.bufferMaxTurns) {
         return "extract_batch";
       }
 
-      if (this.state.lastExtractionAt) {
+      if (entry.lastExtractionAt) {
         const elapsed =
-          Date.now() - new Date(this.state.lastExtractionAt).getTime();
+          Date.now() - new Date(entry.lastExtractionAt).getTime();
         if (elapsed >= this.config.bufferMaxMinutes * 60_000) {
           return "extract_batch";
         }
@@ -66,19 +102,19 @@ export class SmartBuffer {
     }
 
     if (this.config.triggerMode === "every_n") {
-      return this.state.turns.length >= this.config.bufferMaxTurns
+      return entry.turns.length >= this.config.bufferMaxTurns
         ? "extract_batch"
         : "keep_buffering";
     }
 
     if (this.config.triggerMode === "time_based") {
-      if (!this.state.lastExtractionAt) {
-        return this.state.turns.length >= this.config.bufferMaxTurns
+      if (!entry.lastExtractionAt) {
+        return entry.turns.length >= this.config.bufferMaxTurns
           ? "extract_batch"
           : "keep_buffering";
       }
       const elapsed =
-        Date.now() - new Date(this.state.lastExtractionAt).getTime();
+        Date.now() - new Date(entry.lastExtractionAt).getTime();
       return elapsed >= this.config.bufferMaxMinutes * 60_000
         ? "extract_batch"
         : "keep_buffering";
@@ -87,18 +123,26 @@ export class SmartBuffer {
     return "keep_buffering";
   }
 
-  getTurns(): BufferTurn[] {
-    return [...this.state.turns];
+  getTurns(bufferKey = "default"): BufferTurn[] {
+    const entry = this.entryFor(bufferKey);
+    return [...entry.turns];
   }
 
-  async clearAfterExtraction(): Promise<void> {
-    this.state.turns = [];
-    this.state.lastExtractionAt = new Date().toISOString();
-    this.state.extractionCount += 1;
+  async clearAfterExtraction(bufferKey = "default"): Promise<void> {
+    await this.load();
+    const entry = this.entryFor(bufferKey);
+    entry.turns = [];
+    entry.lastExtractionAt = new Date().toISOString();
+    entry.extractionCount += 1;
+    if (bufferKey === "default") {
+      this.state.turns = entry.turns;
+      this.state.lastExtractionAt = entry.lastExtractionAt;
+      this.state.extractionCount = entry.extractionCount;
+    }
     await this.save();
   }
 
-  getExtractionCount(): number {
-    return this.state.extractionCount;
+  getExtractionCount(bufferKey = "default"): number {
+    return this.entryFor(bufferKey).extractionCount;
   }
 }

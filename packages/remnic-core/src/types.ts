@@ -12,6 +12,8 @@ export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
 export type CaptureMode = "implicit" | "explicit" | "hybrid";
 export type MemoryOsPresetName = "conservative" | "balanced" | "research-max" | "local-llm-heavy";
 export type ExtractionPassSource = "base" | "proactive";
+export type SlotMismatchMode = "error" | "warn" | "silent";
+export type CodexCompactionFlushMode = "signal" | "heuristic" | "auto";
 
 export interface RecallSectionConfig {
   id: string;
@@ -116,6 +118,25 @@ export interface AgentAccessHttpConfig {
   authToken?: string;
   principal?: string;
   maxBodyBytes: number;
+}
+
+export interface DreamingConfig {
+  enabled: boolean;
+  journalPath: string;
+  maxEntries: number;
+  injectRecentCount: number;
+}
+
+export interface SlotBehaviorConfig {
+  requireExclusiveMemorySlot: boolean;
+  onSlotMismatch: SlotMismatchMode;
+}
+
+export interface CodexCompatConfig {
+  enabled: boolean;
+  threadIdBufferKeying: boolean;
+  compactionFlushMode: CodexCompactionFlushMode;
+  fingerprintDedup: boolean;
 }
 
 export function confidenceTier(score: number): ConfidenceTier {
@@ -256,6 +277,12 @@ export interface PluginConfig {
   // Compaction reset: trigger session reset after compaction instead of continuing degraded.
   // Requires OC fork with PR #29985 (api.resetSession).
   compactionResetEnabled: boolean;
+  beforeResetTimeoutMs: number;
+  flushOnResetEnabled: boolean;
+  commandsListEnabled: boolean;
+  dreaming: DreamingConfig;
+  slotBehavior: SlotBehaviorConfig;
+  codexCompat: CodexCompatConfig;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   daySummaryEnabled: boolean;
@@ -977,10 +1004,17 @@ export interface BufferTurn {
   sessionKey?: string;
 }
 
+export interface BufferEntryState {
+  turns: BufferTurn[];
+  lastExtractionAt: string | null;
+  extractionCount: number;
+}
+
 export interface BufferState {
   turns: BufferTurn[];
   lastExtractionAt: string | null;
   extractionCount: number;
+  entries?: Record<string, BufferEntryState>;
 }
 
 export interface BehaviorLoopAdjustment {

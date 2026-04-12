@@ -21,8 +21,13 @@ Add the plugin to your `openclaw.json`:
 ```jsonc
 {
   "plugins": {
-    "allow": ["openclaw-engram"],
-    "slots": { "memory": "openclaw-engram" }
+    "allow": ["openclaw-remnic"],
+    "slots": { "memory": "openclaw-remnic" },
+    "entries": {
+      "openclaw-remnic": {
+        "package": "@remnic/plugin-openclaw"
+      }
+    }
   }
 }
 ```
@@ -41,6 +46,8 @@ This plugin hooks into the OpenClaw gateway lifecycle:
 - **`before_agent_start`** / **`before_prompt_build`** -- injects relevant memories into the agent's context
 - **`agent_end`** -- buffers the conversation turn for extraction
 - **`before_compaction`** / **`after_compaction`** -- saves checkpoints and triggers session reset on context compaction
+- **`before_reset`** -- bounded flush of the in-flight buffer before OpenClaw discards a session
+- **`commands.list`** -- exposes Remnic slash-command descriptors to the command palette
 - **`session_start`** / **`session_end`** -- session lifecycle tracking
 - **`before_tool_call`** / **`after_tool_call`** -- tool usage observation for analytics
 - **`llm_output`** -- LLM token usage tracking
@@ -49,6 +56,32 @@ This plugin hooks into the OpenClaw gateway lifecycle:
 - **Commands** -- provides CLI commands for memory management
 
 All memory processing uses [`@remnic/core`](https://www.npmjs.com/package/@remnic/core). Data stays on your local filesystem as plain markdown files.
+
+## Slot Selection
+
+Remnic is an exclusive memory-slot plugin. When `plugins.slots.memory` points
+to another plugin, Remnic now validates that mismatch and either errors or
+loads passively depending on `slotBehavior`:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "slotBehavior": {
+            "requireExclusiveMemorySlot": true,
+            "onSlotMismatch": "error"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Passive mode keeps the tool/service surface available but skips prompt
+injection and extraction hooks so two memory plugins do not race each other.
 
 ## Supported OpenClaw Memory Features
 
@@ -87,8 +120,31 @@ With this feature, `openclaw wiki status` reports Remnic artifacts, and `memory-
 |---------|--------|-------|
 | `session_start` / `session_end` hooks | Supported | 2026.3.22 |
 | `before_compaction` / `after_compaction` hooks | Supported | 2026.3.22 |
+| `before_reset` hook | Supported | 2026.4.10 |
+| `commands.list` runtime discovery | Supported | 2026.4.10 |
 | `api.resetSession()` (compaction reset) | Supported | 2026.3.22 |
 | Checkpoint saves before compaction | Supported | 2026.3.22 |
+
+Reset handling is configurable:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "flushOnResetEnabled": true,
+          "beforeResetTimeoutMs": 2000
+        }
+      }
+    }
+  }
+}
+```
+
+The reset path clears per-session prompt caches and workspace override state.
+If `flushOnResetEnabled` is true, Remnic also attempts a bounded extraction
+flush before the reset completes.
 
 ### Observation Hooks
 
@@ -101,6 +157,56 @@ With this feature, `openclaw wiki status` reports Remnic artifacts, and `memory-
 ### Dreaming
 
 OpenClaw's dreaming feature (background memory consolidation) is handled by OpenClaw's built-in `memory-core` extension. Remnic implements its own consolidation pipeline (extraction, deduplication, graph maintenance, hourly summaries) that runs independently of OpenClaw's dreaming system. The two systems are complementary -- Remnic's consolidation handles the heavy memory extraction, while OpenClaw's dreaming (if enabled alongside Remnic) can further organize knowledge.
+
+The plugin manifest now accepts the OpenClaw `dreaming` config block directly
+so newer runtimes do not reject the config at validation time:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "dreaming": {
+            "enabled": false,
+            "journalPath": "DREAMS.md",
+            "maxEntries": 500,
+            "injectRecentCount": 3
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+## Codex Compatibility
+
+Remnic now advertises and parses a dedicated `codexCompat` block for bundled
+Codex-provider safety work:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "codexCompat": {
+            "enabled": true,
+            "threadIdBufferKeying": true,
+            "compactionFlushMode": "auto",
+            "fingerprintDedup": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+This governs Remnic's own buffering and extraction behavior only. Remnic still
+uses its own extraction auth path; OpenClaw's bundled Codex provider auth does
+not replace Remnic's extraction credentials.
 
 ### Bridge Mode
 

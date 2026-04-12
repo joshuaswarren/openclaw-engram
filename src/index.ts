@@ -36,6 +36,7 @@ import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import { migrateFromEngram } from "./migrate/from-engram.js";
 import { cleanUserMessage } from "./user-message-cleaning.js";
 import { listRemnicPublicArtifacts } from "../packages/plugin-openclaw/src/public-artifacts.js";
+import { validateSlotSelection } from "../packages/plugin-openclaw/src/slot-validator.js";
 import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src/plugin-id.js";
 
 /**
@@ -149,6 +150,27 @@ function loadPluginConfigFromFile(pluginId?: string): Record<string, unknown> | 
     | undefined;
 }
 
+function loadRawConfigFromFile(): Record<string, unknown> | undefined {
+  try {
+    const explicitConfigPath =
+      readEnvVar("OPENCLAW_ENGRAM_CONFIG_PATH") ||
+      readEnvVar("OPENCLAW_CONFIG_PATH");
+    const homeDir = resolveHomeDir();
+    const configPath =
+      explicitConfigPath && explicitConfigPath.length > 0
+        ? explicitConfigPath
+        : path.join(homeDir, ".openclaw", "openclaw.json");
+    const content = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(content);
+    return config && typeof config === "object"
+      ? (config as Record<string, unknown>)
+      : undefined;
+  } catch (err) {
+    log.warn(`Failed to load raw OpenClaw config from file: ${err}`);
+    return undefined;
+  }
+}
+
 /**
  * Read the plugin hooks policy from both the API config and the file-backed
  * config, since the gateway may not pass the full config to the plugin.
@@ -194,6 +216,48 @@ function shouldSkipRecallForSession(
       return false;
     }
   });
+}
+
+function buildSlashCommandDescriptors(pluginId: string) {
+  return [
+    {
+      name: "remnic",
+      category: "memory",
+      pluginId,
+      subcommands: [
+        {
+          name: "off",
+          description: "Disable Remnic recall for this session",
+          args: [],
+        },
+        {
+          name: "on",
+          description: "Re-enable Remnic recall for this session",
+          args: [],
+        },
+        {
+          name: "status",
+          description: "Show Remnic recall status and last injected summary",
+          args: [],
+        },
+        {
+          name: "clear",
+          description: "Clear the session override and use global config again",
+          args: [],
+        },
+        {
+          name: "stats",
+          description: "Show Remnic extraction and recall stats for this session",
+          args: [],
+        },
+        {
+          name: "flush",
+          description: "Force-flush the extraction buffer now",
+          args: [],
+        },
+      ],
+    },
+  ];
 }
 
 /**
@@ -288,6 +352,23 @@ const pluginDefinition = {
     log.debug(
       `init llm routing (modelSource=${cfg.modelSource}, localLlmEnabled=${cfg.localLlmEnabled}${cfg.localLlmFastEnabled ? `, fastLlm=${cfg.localLlmFastModel || "(primary)"}` : ""})`,
     );
+    const rawRuntimeConfig =
+      api.config && typeof api.config === "object"
+        ? (api.config as Record<string, unknown>)
+        : loadRawConfigFromFile();
+    const slotValidationMode = validateSlotSelection({
+      pluginId: serviceId,
+      runtimeConfig: rawRuntimeConfig,
+      requireExclusive: cfg.slotBehavior.requireExclusiveMemorySlot,
+      onMismatch: cfg.slotBehavior.onSlotMismatch,
+      logger: api.logger,
+    });
+    const passiveMode = slotValidationMode === "passive";
+    if (passiveMode) {
+      log.info(
+        `[remnic] memory slot not assigned to ${serviceId}; running passively`,
+      );
+    }
 
     // Singleton guard: the gateway calls register() once per agent (each with a
     // different plugin registry). Reuse the orchestrator (heavy object) but always
@@ -364,6 +445,7 @@ const pluginDefinition = {
           });
     (globalThis as any)[keys.ACCESS_HTTP_SERVER] = accessHttpServer;
 
+    if (!passiveMode) {
     // ========================================================================
     // HOOK: before_prompt_build / before_agent_start — Inject memory context
     // ========================================================================
@@ -1172,12 +1254,66 @@ const pluginDefinition = {
       },
     );
 
+    try {
+      api.on(
+        "before_reset",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookBeforeResetEvent &
+            Record<string, unknown>,
+          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
+        ) => {
+          const sessionKey =
+            (ctx?.sessionKey as string) ??
+            (event?.sessionKey as string) ??
+            "default";
+          const flushPromise =
+            cfg.flushOnResetEnabled &&
+            typeof (orchestrator as any).flushSession === "function"
+              ? (orchestrator as any).flushSession(sessionKey, {
+                  reason: "before_reset",
+                })
+              : Promise.resolve();
+          const boundedFlush = Promise.race([
+            flushPromise,
+            new Promise<void>((resolve) => {
+              setTimeout(resolve, cfg.beforeResetTimeoutMs);
+            }),
+          ]);
+          await boundedFlush.catch((error) => {
+            log.warn(`before_reset flush failed: ${String(error)}`);
+          });
+          cachedMemoryBySession.delete(sessionKey);
+          if (
+            typeof (orchestrator as any).clearRecallWorkspaceOverride === "function"
+          ) {
+            (orchestrator as any).clearRecallWorkspaceOverride(sessionKey);
+          }
+        },
+      );
+    } catch (error) {
+      log.debug(`before_reset hook unavailable on this runtime: ${String(error)}`);
+    }
+    }
+
     // ========================================================================
     // NEW SDK HOOKS (≥2026.3.22 only)
     // These hooks are only available on the new SDK and provide richer
     // lifecycle, tool, LLM, and subagent observation capabilities.
     // ========================================================================
-    if (sdkCaps.hasBeforePromptBuild) {
+    if (!passiveMode && cfg.commandsListEnabled) {
+      try {
+        api.on("commands.list", async () =>
+          buildSlashCommandDescriptors(serviceId),
+        );
+      } catch (error) {
+        log.debug(
+          `commands.list unavailable on this runtime: ${String(error)}`,
+        );
+      }
+    }
+
+    if (!passiveMode && sdkCaps.hasBeforePromptBuild) {
       // ---- Session lifecycle ----
       api.on(
         "session_start",
@@ -1294,7 +1430,7 @@ const pluginDefinition = {
           );
         },
       );
-    } else {
+    } else if (!passiveMode) {
       // Legacy runtime: restore heartbeat observer for sessionObserverEnabled.
       // On new SDK, session_start/session_end hooks replace this.
       // Two paths: registerHook for runtimes that emit event-style heartbeats,

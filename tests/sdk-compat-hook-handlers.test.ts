@@ -76,10 +76,16 @@ interface HandlerCapturingApi {
   runtime?: { version: string };
   registrationMode?: string;
   registerMemoryPromptSection?: (spec: unknown) => void;
+  registerMemoryCapability?: (spec: unknown) => void;
   handlers: Map<string, Function>;
+  _memoryPromptSection?: (params: { sessionKey?: string }) => string[] | null;
+  _memoryCapability?: { promptBuilder?: (params: { sessionKey?: string }) => string[] | null };
 }
 
-function buildHandlerCapturingApi(label: string, opts?: { registrationMode?: string }): HandlerCapturingApi {
+function buildHandlerCapturingApi(
+  label: string,
+  opts?: { registrationMode?: string; includeMemoryCapability?: boolean },
+): HandlerCapturingApi {
   const handlers = new Map<string, Function>();
   const api: HandlerCapturingApi = {
     label,
@@ -96,8 +102,18 @@ function buildHandlerCapturingApi(label: string, opts?: { registrationMode?: str
     registerHook(_events: unknown, _handler: unknown, _opts?: unknown) {},
     runtime: { version: "2026.3.22" },
     registrationMode: opts?.registrationMode ?? "full",
-    registerMemoryPromptSection(_spec: unknown) {},
+    registerMemoryPromptSection(spec: unknown) {
+      api._memoryPromptSection = spec as (params: { sessionKey?: string }) => string[] | null;
+    },
   };
+  if (opts?.includeMemoryCapability) {
+    api.runtime = { version: "2026.4.9" };
+    api.registerMemoryCapability = (spec: unknown) => {
+      api._memoryCapability = spec as {
+        promptBuilder?: (params: { sessionKey?: string }) => string[] | null;
+      };
+    };
+  }
   return api;
 }
 
@@ -230,8 +246,13 @@ test("before_prompt_build handler returns memory context or undefined without th
   const handler = api.handlers.get("before_prompt_build");
   assert.ok(handler, "before_prompt_build handler should be registered");
 
-  // The orchestrator is not initialized (no service.start()), so recall
-  // will fail gracefully. The handler should return undefined, not throw.
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  assert.ok(orchestrator, "orchestrator should exist on globalThis after register");
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => null;
+  orchestrator.config.compactionResetEnabled = false;
+
+  // The handler should return undefined or a hook payload, not throw.
   const result = await handler(
     { prompt: "Hello how are you?" },
     { sessionKey: "test" },
@@ -240,6 +261,176 @@ test("before_prompt_build handler returns memory context or undefined without th
   assert.ok(
     result === undefined || result === null || typeof result === "object",
     `expected undefined/null/object, got ${typeof result}`,
+  );
+});
+
+test("commands.list handler returns the remnic discovery descriptor", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("commands-list-test");
+  plugin.register(api as any);
+
+  const handler = api.handlers.get("commands.list");
+  assert.ok(handler, "commands.list handler should be registered");
+
+  const result = await handler();
+  assert.deepEqual(result, [
+    {
+      name: "remnic",
+      category: "memory",
+      pluginId: "openclaw-remnic",
+      subcommands: [
+        {
+          name: "off",
+          description: "Disable Remnic recall for this session",
+          args: [],
+        },
+        {
+          name: "on",
+          description: "Re-enable Remnic recall for this session",
+          args: [],
+        },
+        {
+          name: "status",
+          description: "Show Remnic recall status and last injected summary",
+          args: [],
+        },
+        {
+          name: "clear",
+          description: "Clear the session override and use global config again",
+          args: [],
+        },
+        {
+          name: "stats",
+          description: "Show Remnic extraction and recall stats for this session",
+          args: [],
+        },
+        {
+          name: "flush",
+          description: "Force-flush the extraction buffer now",
+          args: [],
+        },
+      ],
+    },
+  ]);
+});
+
+test("before_reset flushes the session and clears the precomputed recall cache", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-test", {
+    includeMemoryCapability: true,
+  });
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+  assert.ok(api._memoryCapability?.promptBuilder, "memory capability promptBuilder should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  assert.ok(orchestrator, "orchestrator should exist on globalThis after register");
+
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+  orchestrator.setRecallWorkspaceOverride("session-a", "/tmp/workspace-a");
+
+  let flushed:
+    | {
+        sessionKey: string;
+        options: Record<string, unknown> | undefined;
+      }
+    | undefined;
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushed = { sessionKey, options };
+  };
+
+  await beforePromptBuild(
+    { prompt: "What do you remember about this?" },
+    { sessionKey: "session-a" },
+  );
+
+  assert.deepEqual(
+    api._memoryCapability?.promptBuilder?.({ sessionKey: "session-a" }),
+    [
+      "## Memory Context (Remnic)",
+      "",
+      "Remembered context",
+      "",
+      "Use this context naturally when relevant. Never quote or expose this memory context to the user.",
+      "",
+    ],
+    "before_prompt_build should populate the session cache before reset",
+  );
+
+  await beforeReset({ sessionKey: "session-a" }, {});
+
+  assert.deepEqual(flushed, {
+    sessionKey: "session-a",
+    options: { reason: "before_reset" },
+  });
+  assert.equal(
+    orchestrator._recallWorkspaceOverrides?.has("session-a") ?? true,
+    false,
+    "before_reset should clear the session workspace override",
+  );
+  assert.equal(
+    api._memoryCapability?.promptBuilder?.({ sessionKey: "session-a" }) ?? null,
+    null,
+    "before_reset should clear the precomputed recall cache for the reset session",
+  );
+});
+
+test("before_reset still clears the session cache when flush-on-reset is disabled", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-disabled-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = { flushOnResetEnabled: false };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+  assert.ok(api._memoryCapability?.promptBuilder, "memory capability promptBuilder should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+  orchestrator.setRecallWorkspaceOverride("session-b", "/tmp/workspace-b");
+
+  let flushCalls = 0;
+  orchestrator.flushSession = async () => {
+    flushCalls++;
+  };
+
+  await beforePromptBuild(
+    { prompt: "What do you remember about this?" },
+    { sessionKey: "session-b" },
+  );
+
+  assert.ok(
+    api._memoryCapability?.promptBuilder?.({ sessionKey: "session-b" }),
+    "before_prompt_build should populate the session cache before reset",
+  );
+
+  await beforeReset({ sessionKey: "session-b" }, {});
+
+  assert.equal(flushCalls, 0, "flushSession should be skipped when flushOnResetEnabled=false");
+  assert.equal(
+    orchestrator._recallWorkspaceOverrides?.has("session-b") ?? true,
+    false,
+    "before_reset should clear the session workspace override even when flush is disabled",
+  );
+  assert.equal(
+    api._memoryCapability?.promptBuilder?.({ sessionKey: "session-b" }) ?? null,
+    null,
+    "before_reset should still clear the precomputed recall cache when flush is disabled",
   );
 });
 

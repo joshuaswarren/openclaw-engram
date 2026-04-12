@@ -7632,17 +7632,38 @@ export class Orchestrator {
       return;
     }
 
+    const bufferKey = sessionKey ?? "default";
     const turn: BufferTurn = {
       role,
       content,
       timestamp: new Date().toISOString(),
-      sessionKey,
+      sessionKey: bufferKey,
     };
 
-    const decision = await this.buffer.addTurn(turn);
+    const decision = await this.buffer.addTurn(bufferKey, turn);
 
     if (decision === "keep_buffering") return;
-    await this.queueBufferedExtraction(this.buffer.getTurns(), "trigger_mode");
+    await this.queueBufferedExtraction(
+      this.buffer.getTurns(bufferKey),
+      "trigger_mode",
+      { bufferKey },
+    );
+  }
+
+  async flushSession(
+    sessionKey: string,
+    _options: { reason: string },
+  ): Promise<void> {
+    const bufferKey =
+      typeof sessionKey === "string" && sessionKey.length > 0
+        ? sessionKey
+        : "default";
+    const turns = this.buffer.getTurns(bufferKey);
+    if (turns.length === 0) return;
+    await this.queueBufferedExtraction(turns, "trigger_mode", {
+      bufferKey,
+      clearBufferAfterExtraction: true,
+    });
   }
 
   async ingestReplayBatch(
@@ -7707,17 +7728,8 @@ export class Orchestrator {
     const next = previous
       .catch(() => undefined)
       .then(async () => {
-        const turns = this.buffer.getTurns();
+        const turns = this.buffer.getTurns(sessionKey);
         if (turns.length === 0) return;
-        const mixedSessionTurns = turns.some(
-          (turn) => turn.sessionKey !== sessionKey,
-        );
-        if (mixedSessionTurns) {
-          log.debug(
-            `heartbeat observer skipped: mixed session buffer for ${sessionKey}`,
-          );
-          return;
-        }
         if (!this.shouldQueueExtraction(turns, { commit: false })) {
           log.debug(
             `heartbeat observer skipped: extraction dedupe for ${sessionKey}`,
@@ -7735,7 +7747,9 @@ export class Orchestrator {
         log.debug(
           `heartbeat observer trigger: session=${sessionKey} deltaBytes=${decision.deltaBytes} deltaTokens=${decision.deltaTokens}`,
         );
-        await this.queueBufferedExtraction(turns, "heartbeat_observer");
+        await this.queueBufferedExtraction(turns, "heartbeat_observer", {
+          bufferKey: sessionKey,
+        });
       });
 
     this.heartbeatObserverChains.set(sessionKey, next);
@@ -7757,6 +7771,7 @@ export class Orchestrator {
       skipCharThreshold?: boolean;
       extractionDeadlineMs?: number;
       onTaskSettled?: (error?: unknown) => void;
+      bufferKey?: string;
     } = {},
   ): Promise<void> {
     if (
@@ -7775,6 +7790,7 @@ export class Orchestrator {
             options.clearBufferAfterExtraction ?? true,
           skipCharThreshold: options.skipCharThreshold ?? false,
           deadlineMs: options.extractionDeadlineMs,
+          bufferKey: options.bufferKey,
         });
         options.onTaskSettled?.();
       } catch (err) {
@@ -7863,6 +7879,7 @@ export class Orchestrator {
       clearBufferAfterExtraction?: boolean;
       skipCharThreshold?: boolean;
       deadlineMs?: number;
+      bufferKey?: string;
     } = {},
   ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
@@ -7881,7 +7898,7 @@ export class Orchestrator {
     };
     const clearBuffer = async () => {
       if (clearBufferAfterExtraction) {
-        await this.buffer.clearAfterExtraction();
+        await this.buffer.clearAfterExtraction(options.bufferKey);
       }
     };
 
