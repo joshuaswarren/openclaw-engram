@@ -1648,11 +1648,19 @@ const pluginDefinition = {
             // Roll back ownership so the next registry's start() can retry.
             // SERVICE_STARTED was not set yet (only set on success above), but
             // clear it defensively in case another code path set it.
+            //
+            // Only decrement CLI_ACTIVE_SERVICE_COUNT if didCountStart is still
+            // true.  If stop() already ran during this init, it set
+            // didCountStart=false and already decremented the count.  Without
+            // this guard, both paths decrement → underflow → premature CLI
+            // guard clearing while another service is still running.
+            if (didCountStart) {
+              (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] = Math.max(
+                0,
+                ((globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] || 0) - 1,
+              );
+            }
             didCountStart = false;
-            (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] = Math.max(
-              0,
-              ((globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] || 0) - 1,
-            );
             (globalThis as any)[keys.SERVICE_STARTED] = false;
             // Do NOT clear REGISTERED_GUARD here. On an ordinary startup
             // failure (no preceding stop/reload) the CLI registered during register()
