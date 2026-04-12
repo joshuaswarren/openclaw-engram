@@ -1708,10 +1708,17 @@ const pluginDefinition = {
         let secondaryTookOver = false;
         if (!currentInitPromise) {
           (globalThis as any)[keys.REGISTERED_GUARD] = false;
-          // Clear global CLI guard so a fresh register() cycle can re-register
-          // CLI commands after stop/reload.  Same full-stop-only policy as
-          // REGISTERED_GUARD above.
-          (globalThis as any)[CLI_REGISTERED_GUARD] = false;
+          // Note: CLI_REGISTERED_GUARD is intentionally NOT cleared here.
+          // stop() does not unregister CLI commands from the gateway's central
+          // registry — they remain live.  Clearing the guard would let a
+          // subsequent register() call registerCli() again, duplicating the
+          // command tree on top of the still-live registration.  In multi-plugin
+          // installs (openclaw-remnic + openclaw-engram), one plugin stopping
+          // must not open the door for the other to re-register CLI.
+          //
+          // CLI_REGISTERED_GUARD is only reset when globalThis is reset (full
+          // process restart), at which point the gateway's CLI registry is also
+          // clean and re-registration is correct.
         } else {
           // Stop-during-init: leave GUARD as-is.
           // The CLI registered by the original register() call is still present
