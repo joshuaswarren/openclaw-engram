@@ -53,7 +53,7 @@ pip install remnic-hermes
 remnic connectors install hermes
 ```
 
-`remnic connectors install hermes` starts the daemon if needed, generates an auth token, writes `~/.remnic/tokens.json`, and adds the `remnic:` block to your Hermes `config.yaml`. Restart Hermes after running it.
+`remnic connectors install hermes` generates an auth token, writes `~/.remnic/tokens.json`, adds the `remnic:` block to your Hermes `config.yaml`, and runs a daemon health check. It does **not** start the daemon — if unreachable, it prints `remnic daemon start` as the next step. Restart Hermes after running it.
 
 ### Option B: pip only (manual config)
 
