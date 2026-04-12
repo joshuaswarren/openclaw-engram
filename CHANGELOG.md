@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.3.2] — 2026-04-12
+
 ### Added
 
 - OpenClaw plugin manifests (`openclaw.plugin.json` at root and
