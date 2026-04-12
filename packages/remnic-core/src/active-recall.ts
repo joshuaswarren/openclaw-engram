@@ -1,5 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
+import { collapseWhitespace } from "./whitespace.js";
 import type {
   ActiveRecallChatType,
   ActiveRecallModelFallbackPolicy,
@@ -117,10 +118,6 @@ const STYLE_INSTRUCTIONS: Record<ActiveRecallPromptStyle, string> = {
   "preference-only": "Only surface user preference or operating-style memory when present.",
 };
 
-function compactWhitespace(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
 function cloneRecallResult(value: ActiveRecallResult): ActiveRecallResult {
   return {
     ...value,
@@ -183,7 +180,7 @@ function cropTurns(
       selected.push({
         index,
         role: turn.role,
-        content: compactWhitespace(truncateCodePointSafe(turn.content, maxChars)),
+        content: collapseWhitespace(truncateCodePointSafe(turn.content, maxChars)),
       });
     }
   }
@@ -205,7 +202,7 @@ export function buildActiveRecallQueryBundle(
   config: ActiveRecallConfig,
 ): string {
   if (config.queryMode === "message") {
-    return compactWhitespace(input.currentMessage);
+    return collapseWhitespace(input.currentMessage);
   }
 
   const userTurns = cropTurns(
@@ -227,21 +224,26 @@ export function buildActiveRecallQueryBundle(
   ];
 
   if (config.queryMode === "full") {
-    return [...parts, `current: ${compactWhitespace(input.currentMessage)}`]
+    return [...parts, `current: ${collapseWhitespace(input.currentMessage)}`]
       .filter((value) => value.trim().length > 0)
       .join("\n");
   }
 
-  return [`current: ${compactWhitespace(input.currentMessage)}`, ...parts]
+  return [`current: ${collapseWhitespace(input.currentMessage)}`, ...parts]
     .filter((value) => value.trim().length > 0)
     .join("\n");
 }
 
 export function normalizeActiveRecallSummary(value: string | null, maxChars: number): string | null {
   if (value == null) return null;
-  const compact = compactWhitespace(value);
+  const compact = collapseWhitespace(value);
   if (NONE_SET.has(compact.toLowerCase())) return null;
   return truncateCodePointSafe(compact, maxChars);
+}
+
+function sanitizeTranscriptPathSegment(value: string): string {
+  const normalized = collapseWhitespace(value);
+  return encodeURIComponent(normalized.length > 0 ? normalized : "unknown");
 }
 
 export function buildActiveRecallPrompt(params: {
@@ -278,9 +280,9 @@ async function appendActiveRecallTranscript(
   const filePath = path.join(
     transcriptRoot,
     "agents",
-    input.agentId,
+    sanitizeTranscriptPathSegment(input.agentId),
     date,
-    `${encodeURIComponent(input.sessionKey)}.jsonl`,
+    `${sanitizeTranscriptPathSegment(input.sessionKey)}.jsonl`,
   );
   await mkdir(path.dirname(filePath), { recursive: true });
   await appendFile(

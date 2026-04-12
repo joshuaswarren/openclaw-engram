@@ -1,5 +1,6 @@
 import { canReadNamespace, defaultNamespaceForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
 import type { MemoryFile, PluginConfig } from "./types.js";
+import { collapseWhitespace } from "./whitespace.js";
 
 export interface ActiveMemoryMetadata {
   type?: "fact" | "preference";
@@ -53,10 +54,6 @@ type ActiveMemorySearchCandidate = {
 function clampLimit(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 8;
   return Math.max(1, Math.min(50, Math.floor(value)));
-}
-
-function collapseWhitespace(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
 }
 
 function truncateSnippet(value: string, maxChars: number): string {
