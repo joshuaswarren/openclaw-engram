@@ -188,9 +188,17 @@
             "default": "DREAMS.md"
           },
           "maxEntries": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 10000,
+            "anyOf": [
+              {
+                "type": "integer",
+                "const": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 10000
+              }
+            ],
             "default": 500
           },
           "injectRecentCount": {

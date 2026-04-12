@@ -410,6 +410,37 @@ test("syncHeartbeatOutcomeLinks annotates non-heartbeat memories that clearly re
   assert.deepEqual(reindexed, ["fact-1"]);
 });
 
+test("syncHeartbeatOutcomeLinks does not treat empty heartbeat titles as universal matches", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "fact-1",
+      content: "This memory does not mention any heartbeat slug.",
+      tags: ["ci"],
+    }),
+  ]);
+
+  const result = await syncHeartbeatOutcomeLinks({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-a",
+        slug: "check-test-suite",
+        title: "",
+        body: "Run the suite and report new failures.",
+        schedule: "hourly",
+        tags: ["ci"],
+        sourceOffset: 0,
+      },
+    ],
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 0, linked: 0 });
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    undefined,
+  );
+});
+
 test("planDreamEntryFromConsolidation requires enough session-like spread, meta tags, and interval headroom", () => {
   const observation: ConsolidationObservation = {
     runAt: "2026-04-12T15:00:00.000Z",

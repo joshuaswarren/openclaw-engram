@@ -77,10 +77,18 @@ for (const manifestPath of [
       ["compactionFlushMode", "enabled", "fingerprintDedup", "threadIdBufferKeying"],
     );
 
-    assert.equal(
-      properties.dreaming.properties?.maxEntries?.minimum,
-      0,
-      "dreaming.maxEntries must allow 0 so the runtime hard-disable switch remains reachable",
+    const maxEntries = properties.dreaming.properties?.maxEntries;
+    assert.ok(
+      Array.isArray(maxEntries?.anyOf),
+      "dreaming.maxEntries should use an explicit 0-or-10+ schema",
+    );
+    assert.deepEqual(
+      maxEntries.anyOf,
+      [
+        { type: "integer", const: 0 },
+        { type: "integer", minimum: 10, maximum: 10000 },
+      ],
+      "dreaming.maxEntries must allow the runtime disable switch without advertising unsupported 1..9 values",
     );
   });
 }
