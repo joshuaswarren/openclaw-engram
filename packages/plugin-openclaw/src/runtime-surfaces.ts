@@ -526,16 +526,18 @@ export function parseDreamNarrativeResponse(
 
     let consumedTrailingTags = false;
     const trailingTagsIndex = findLastNonEmptyLineIndex(lines, explicitBodyIndex);
-    if (trailingTagsIndex > explicitBodyIndex && parsedTags.length === 0) {
+    if (trailingTagsIndex > explicitBodyIndex) {
       const trailingLine = lines[trailingTagsIndex] ?? "";
       const tagsMatch = trailingLine.match(/^Tags:\s*(.+)$/i);
       if (tagsMatch) {
         consumedTrailingTags = true;
-        parsedTags =
-          tagsMatch[1]
-            ?.split(/\s+/)
-            .map((tag) => tag.replace(/^#/, "").trim())
-            .filter(Boolean) ?? [];
+        if (parsedTags.length === 0) {
+          parsedTags =
+            tagsMatch[1]
+              ?.split(/\s+/)
+              .map((tag) => tag.replace(/^#/, "").trim())
+              .filter(Boolean) ?? [];
+        }
       }
     }
 

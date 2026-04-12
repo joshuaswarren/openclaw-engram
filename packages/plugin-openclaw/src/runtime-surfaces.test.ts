@@ -858,4 +858,24 @@ test("parseDreamNarrativeResponse extracts title, body, and tags with fallback t
     ].join("\n"),
     tags: ["fallback"],
   });
+
+  const headerAndTrailingTags = parseDreamNarrativeResponse(
+    [
+      "Title: Signal drift",
+      "Tags: #header-tag",
+      "Body: Inline reflection from the model",
+      "Closing line keeps the note in the body.",
+      "Tags: #trailing-tag",
+    ].join("\n"),
+    ["fallback"],
+  );
+
+  assert.deepEqual(headerAndTrailingTags, {
+    title: "Signal drift",
+    body: [
+      "Inline reflection from the model",
+      "Closing line keeps the note in the body.",
+    ].join("\n"),
+    tags: ["header-tag"],
+  });
 });
