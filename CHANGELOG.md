@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.3.1] — 2026-04-12
+
 ### Added
 
 - **`remnic openclaw install` CLI command** — configures OpenClaw to use Remnic
