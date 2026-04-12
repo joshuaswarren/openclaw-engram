@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.3.0] — 2026-04-12
+
 ### Fixed
 
 - `@joshuaswarren/openclaw-engram` shim binary (`engram-access`) now passes
