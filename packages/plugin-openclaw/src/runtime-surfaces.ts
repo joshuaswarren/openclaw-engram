@@ -71,6 +71,14 @@ function uniqueTags(tags: string[]): string[] {
   );
 }
 
+function serializeStringRecord(
+  value: Record<string, string> | undefined,
+): string {
+  return JSON.stringify(
+    Object.entries(value ?? {}).sort(([left], [right]) => left.localeCompare(right)),
+  );
+}
+
 function buildDreamMemoryContent(entry: DreamEntry): string {
   return entry.title ? `${entry.title}\n\n${entry.body}` : entry.body;
 }
@@ -111,8 +119,10 @@ async function patchMemory(
   }
   const nextTags = JSON.stringify(uniqueTags(patch.tags ?? memory.frontmatter.tags ?? []));
   const prevTags = JSON.stringify(uniqueTags(memory.frontmatter.tags ?? []));
-  const nextAttrs = JSON.stringify(patch.structuredAttributes ?? memory.frontmatter.structuredAttributes ?? {});
-  const prevAttrs = JSON.stringify(memory.frontmatter.structuredAttributes ?? {});
+  const nextAttrs = serializeStringRecord(
+    patch.structuredAttributes ?? memory.frontmatter.structuredAttributes,
+  );
+  const prevAttrs = serializeStringRecord(memory.frontmatter.structuredAttributes);
   const sourceChanged =
     patch.source !== undefined && patch.source !== memory.frontmatter.source;
   const memoryKindChanged =

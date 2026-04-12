@@ -214,6 +214,49 @@ test("syncDreamSurfaceEntries updates an edited dream entry instead of duplicati
   assert.deepEqual(reindexed, ["moment-1", "moment-1"]);
 });
 
+test("syncDreamSurfaceEntries ignores structured attribute key reordering when the entry is unchanged", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "moment-1",
+      category: "moment",
+      content: "Patterns in the test suite\n\nThe failures clustered around one fragile adapter.",
+      tags: ["debug", "recurring", "dream"],
+      source: "dreams.md",
+      memoryKind: "dream",
+      structuredAttributes: {
+        remnicDreamTitle: "Patterns in the test suite",
+        remnicDreamSourceOffset: "12",
+        remnicDreamJournalPath: "/workspace/DREAMS.md",
+        remnicDreamTimestamp: "2026-04-12T10:00:00Z",
+        remnicDreamEntryId: "dream-a",
+        remnicSurfaceType: "dream",
+      },
+    }),
+  ]);
+
+  const result = await syncDreamSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "dream-a",
+        timestamp: "2026-04-12T10:00:00Z",
+        title: "Patterns in the test suite",
+        body: "The failures clustered around one fragile adapter.",
+        tags: ["debug", "recurring"],
+        sourceOffset: 12,
+      },
+    ],
+    journalPath: "/workspace/DREAMS.md",
+    maxEntries: 10,
+    reindexMemory: async () => {
+      throw new Error("reindex should not run when only structured-attribute key order differs");
+    },
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 0, linked: 0 });
+  assert.equal(storage.memories.length, 1);
+});
+
 test("syncDreamSurfaceEntries treats maxEntries zero as a hard disable", async () => {
   const storage = makeStorage();
   const reindexed: string[] = [];
