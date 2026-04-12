@@ -36,6 +36,9 @@
 - [ ] Loop iterator matches needed data (`.entries()` if key is used, not `.values()`)
 - [ ] Namespace consistency verified (read/write paths use same resolution layer)
 - [ ] Direct-write paths trigger reindex (bypassing extraction pipeline must update search index)
+- [ ] Index-only additions confirmed after persistence (no phantom entries for rejected content)
+- [ ] Config schema minimums honor documented disable-at-zero values
+- [ ] Template-derived regexes escape literal parts (no match-everything patterns)
 
 ## Notes for reviewers
 

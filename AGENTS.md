@@ -36,7 +36,7 @@ Use these as the canonical starting points for adapter work:
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
 These patterns were extracted from 50+ PRs across 2026-04-05 to 2026-04-12
-(including deep analysis of PRs #393-#408 with 700+ review comments).
+(including deep analysis of PRs #393-#408 with 750+ review comments).
 Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
 required a follow-up commit to fix. Follow these rules to ship clean on the first push.
 
@@ -527,6 +527,57 @@ PR #408 (P2 severity).
   miss index staleness.
 - **Document all direct-write paths** — any code that bypasses the normal
   write pipeline should be flagged as needing manual reindex triggers.
+
+### 32. Index-Persistence Consistency — Don't Index Rejected/Non-Persisted Content
+
+In the semantic dedup guard (PR #399), when a fact was rejected by the
+importance gate or semantic dedup check, `fact.content` was still added to
+`contentHashIndex`. The index accumulated phantom entries for content that
+doesn't exist in storage, causing false dedup matches on subsequent extractions.
+
+- **Only add to index AFTER successful persistence** — move `contentHashIndex.add()`
+  calls to after the write succeeds. If a dedup check, importance gate, or other
+  filter rejects content before persistence, the index must remain untouched.
+- **Phantom index entries cause silent data loss** — a phantom entry causes the
+  next extraction with similar content to be dedup-suppressed against a
+  non-existent stored fact, effectively losing the new extraction silently.
+- **Test index consistency after rejection paths** — force a dedup/importance
+  rejection in a test, then verify the index does not contain an entry for the
+  rejected content.
+
+### 33. Config Schema-Code Consistency — Schema Minimums Must Honor Documented Disable Values
+
+In PR #399, `semanticDedupCandidates` was documented as "set to 0 to disable"
+but the JSON schema had `minimum: 1` and the code clamped to `Math.max(1, ...)`.
+Users following docs to disable the feature got silently overridden to minimum 1.
+
+- **When a config value can disable a feature, schema AND code must accept 0** —
+  if docs say "set `maxCandidates` to 0 to disable", the JSON schema must set
+  `minimum: 0` (not `1`), and the code must handle the `0` case (typically by
+  short-circuiting before the operation).
+- **Zero-value semantics are a compatibility contract** — `enabled=false` and
+  `0` limits are user-facing guarantees. Coercing `0` to `1` violates the
+  documented contract silently. Test with the documented disable values.
+- **Validate schema against documented behavior in CI** — the `check-config-contract`
+  script should flag when a config property's schema `minimum` contradicts the
+  documented disable value.
+
+### 34. Template-Derived Regex Safety — Escape Literal Parts Before Building Patterns
+
+In PR #401, `templateMatcher` built a regex from only the prefix (before first
+placeholder) and suffix (after last placeholder) of a citation template. When
+both were empty (a template consisting of only a placeholder), the resulting
+regex matched everything. Additionally, special `$` patterns in regex replacement
+strings corrupted citation output.
+
+- **Escape all literal template parts before embedding in regex** — use
+  `String.raw` or `escapeRegex()` on prefix/suffix before building the pattern.
+  Never assume template parts are regex-safe.
+- **Test with empty prefix/suffix** — a template like `{{tag}}` with no surrounding
+  literal text must not produce a match-everything regex.
+- **Escape `$` in replacement strings** — `String.replace` with a regex treats
+  `$'`, `` $` ``, `$&`, `$1`, etc. as special in the replacement string. Use a
+  replacement function or escape `$` → `$$` before passing to replace.
 
 ---
 

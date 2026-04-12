@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # check-review-patterns.sh — Catch common issues that reviewers (Cursor Bugbot,
-# Codex, CodeQL) repeatedly flagged across PRs #343-#408 (504+ review comments).
+# Codex, CodeQL) repeatedly flagged across PRs #343-#408 (700+ review comments).
 # Run this before pushing. Zero exit = clean.
-# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4, 18-21 from iteration 5).
+# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4, 18-21 from iteration 5, 22-23 from iteration 7, 24-26 from iteration 8).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -78,6 +78,7 @@ for helper in "toolJsonResult" "parseConfig" "formatMemory"; do
     | grep -v dist \
     || true)
   COUNT=$(echo "$FILES" | grep -c "." 2>/dev/null || echo "0")
+  COUNT=$(echo "$COUNT" | tr -d '[:space:]')
   if [[ "$COUNT" -gt 2 ]]; then
     warn "$helper defined in $COUNT files — consider extracting to shared utility:"
     echo "$FILES"
@@ -499,6 +500,71 @@ if [[ -n "$VALUES_KEY_MISMATCH" ]]; then
       break
     fi
   done <<< "$VALUES_KEY_MISMATCH"
+fi
+
+# ---- 24. Index add before persistence confirmed ----
+echo "[check] Index/hash additions before persistence confirmation..."
+
+INDEX_ADDS=$(grep -rn 'contentHashIndex\.add\|hashIndex\.add' \
+  --include="*.ts" \
+  packages/remnic-core/src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  || true)
+
+if [[ -n "$INDEX_ADDS" ]]; then
+  COUNT=$(echo "$INDEX_ADDS" | wc -l | tr -d ' ')
+  if [[ "$COUNT" -gt 3 ]]; then
+    warn "$COUNT contentHashIndex/hashIndex.add() calls in core — verify each is called AFTER successful persistence, not before:"
+    echo "$INDEX_ADDS" | head -5
+  fi
+fi
+
+# ---- 25. Config schema minimum > 0 for documented disable-at-zero fields ----
+echo "[check] Config schema minimums vs documented zero-disable..."
+
+SCHEMA_MINIMUM_ONE=$(grep -rn '"minimum":\s*1' \
+  --include="*.json" \
+  . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep "plugin" \
+  || true)
+
+if [[ -n "$SCHEMA_MINIMUM_ONE" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    # Check if docs or code mention "set to 0 to disable" for this field
+    if grep -rq "0.*disable\|disable.*0\|set to 0" --include="*.ts" --include="*.md" . 2>/dev/null; then
+      # Only warn for known fields that should accept 0
+      if echo "$line" | grep -qi "candidate\|limit\|max\|min\|threshold\|count"; then
+        warn "$line — schema minimum is 1. If docs say 'set to 0 to disable', change minimum to 0 and handle the 0 case in code."
+      fi
+    fi
+  done <<< "$SCHEMA_MINIMUM_ONE"
+fi
+
+# ---- 26. Template-derived regex without escapeRegex ----
+echo "[check] Template-derived regex without escaping..."
+
+TEMPLATE_REGEX=$(grep -rn 'new RegExp(' \
+  --include="*.ts" \
+  packages/ src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "escapeRegex\|escape(" \
+  | grep -i "template\|prefix\|suffix\|pattern\|format\|config" \
+  || true)
+
+if [[ -n "$TEMPLATE_REGEX" ]]; then
+  COUNT=$(echo "$TEMPLATE_REGEX" | wc -l | tr -d ' ')
+  warn "$COUNT new RegExp() calls from template/config values without escapeRegex(). Literal parts must be escaped:"
+  echo "$TEMPLATE_REGEX" | head -5
 fi
 
 if [[ $ERRORS -gt 0 ]]; then
