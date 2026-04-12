@@ -383,7 +383,7 @@ export async function syncHeartbeatOutcomeLinks(params: {
       [HEARTBEAT_SLUG_KEY]: detectedSlug,
     };
     const nextTags = uniqueTags([
-      ...(memory.frontmatter.tags ?? []),
+      ...(memory.frontmatter.tags ?? []).filter((tag) => !tag.startsWith("heartbeat:")),
       `heartbeat:${detectedSlug}`,
     ]);
     const wrote = await storage.writeMemoryFrontmatter(memory, {

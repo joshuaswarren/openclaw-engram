@@ -603,7 +603,6 @@ test("syncHeartbeatOutcomeLinks repairs stale heartbeat slugs when the memory no
   );
   assert.deepEqual(storage.memories[0]?.frontmatter.tags, [
     "ops",
-    "heartbeat:check-test-suite",
     "heartbeat:sync-secrets",
   ]);
   assert.deepEqual(reindexed, ["fact-1"]);

@@ -884,15 +884,6 @@ const pluginDefinition = {
       const journalPath = resolveHeartbeatJournalPath(runtimeWorkspaceDir);
       const entries = await heartbeatSurface.read(journalPath);
       if (entries.length === 0) return null;
-      await syncHeartbeatOutcomeLinks({
-        storage: heartbeatStorage,
-        entries,
-        reindexMemory: async (id) => {
-          await orchestrator.reindexMemoryById(id, {
-            storage: heartbeatStorage,
-          });
-        },
-      });
 
       const runtimeSignal = isHeartbeatTrigger(params.event, params.ctx);
       const useRuntimeSignal =
@@ -909,6 +900,15 @@ const pluginDefinition = {
 
       const activeEntry = matchHeartbeatEntry(entries, params.prompt);
       if (!activeEntry) return null;
+      await syncHeartbeatOutcomeLinks({
+        storage: heartbeatStorage,
+        entries,
+        reindexMemory: async (id) => {
+          await orchestrator.reindexMemoryById(id, {
+            storage: heartbeatStorage,
+          });
+        },
+      });
 
       const allMemories = await heartbeatStorage.readAllMemories().catch(() => []);
       const previousRuns = allMemories

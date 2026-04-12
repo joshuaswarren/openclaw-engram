@@ -863,6 +863,92 @@ test("before_prompt_build falls back to heuristic heartbeat detection when runti
   assert.doesNotMatch(String(result?.prependSystemContext ?? ""), /## Memory Context \(Remnic\)/);
 });
 
+test("before_prompt_build does not relink heartbeat outcomes on non-heartbeat prompts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-normal-prompt-"));
+  await writeFile(
+    path.join(root, "HEARTBEAT.md"),
+    [
+      "# Heartbeat Tasks",
+      "",
+      "## check-test-suite",
+      "",
+      "Every hour, run the test suite and flag any new failures.",
+      "",
+      "Schedule: hourly",
+      "Tags: #ci #tests",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-heartbeat-normal-test");
+  delete api.registerMemoryPromptSection;
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    heartbeat: {
+      enabled: true,
+      journalPath: "HEARTBEAT.md",
+      maxPreviousRuns: 3,
+      detectionMode: "heuristic",
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+  await orchestrator.storage.writeMemory(
+    "fact",
+    "During check-test-suite we found two new failures in the smoke run.",
+    {
+      source: "test",
+      tags: ["ci"],
+    },
+  );
+
+  let writeFrontmatterCalls = 0;
+  const originalWriteMemoryFrontmatter =
+    orchestrator.storage.writeMemoryFrontmatter.bind(orchestrator.storage);
+  orchestrator.storage.writeMemoryFrontmatter = async (...args: unknown[]) => {
+    writeFrontmatterCalls++;
+    return originalWriteMemoryFrontmatter(
+      args[0] as Parameters<typeof originalWriteMemoryFrontmatter>[0],
+      args[1] as Parameters<typeof originalWriteMemoryFrontmatter>[1],
+    );
+  };
+
+  let recallCalls = 0;
+  orchestrator.recall = async () => {
+    recallCalls++;
+    return "normal recall stays active for ordinary prompts";
+  };
+
+  const result = await beforePromptBuild(
+    {
+      prompt: "What changed in the integration tests this morning?",
+    },
+    {
+      sessionKey: "session-heartbeat-normal-a",
+      agentId: "main",
+      workspaceDir: root,
+    },
+  );
+
+  assert.equal(writeFrontmatterCalls, 0);
+  assert.equal(recallCalls, 1);
+  assert.match(String(result?.prependSystemContext ?? ""), /## Memory Context \(Remnic\)/);
+  assert.match(
+    String(result?.prependSystemContext ?? ""),
+    /normal recall stays active for ordinary prompts/,
+  );
+  assert.doesNotMatch(String(result?.prependSystemContext ?? ""), /## Active Heartbeat \(Remnic\)/);
+});
+
 test("agent_end skips transcript persistence and extraction buffering for heartbeat runs by default", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-agent-end-"));
   const { default: plugin } = await import("../src/index.js");
