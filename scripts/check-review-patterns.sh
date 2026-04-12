@@ -2,7 +2,7 @@
 # check-review-patterns.sh — Catch common issues that reviewers (Cursor Bugbot,
 # Codex, CodeQL) repeatedly flagged across PRs #343-#408 (504+ review comments).
 # Run this before pushing. Zero exit = clean.
-# Updated: 2026-04-12 (added checks 7-10 from iteration 2 deep analysis).
+# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -217,6 +217,93 @@ RESOLVE_COUNT=$(echo "$RESOLVE_FILES" | grep -c "." 2>/dev/null || echo "0")
 if [[ "$RESOLVE_COUNT" -gt 3 ]]; then
   warn "Slot resolution logic found in $RESOLVE_COUNT files — should be deduplicated to single shared module:"
   echo "$RESOLVE_FILES"
+fi
+
+# ---- 11. Cross-package relative imports (breaks package boundaries) ----
+echo "[check] Cross-package relative imports..."
+
+CROSS_PKG=$(grep -rn 'from "\.\./\.\./\.\./\.\./' \
+  --include="*.ts" --include="*.js" --include="*.mjs" \
+  packages/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  || true)
+
+if [[ -n "$CROSS_PKG" ]]; then
+  COUNT=$(echo "$CROSS_PKG" | wc -l | tr -d ' ')
+  warn "$COUNT deep relative imports (4+ levels) in packages/ — likely bypassing package boundaries. Use package name imports instead:"
+  echo "$CROSS_PKG" | head -10
+fi
+
+# ---- 12. slice(-expr) without zero guard ----
+echo "[check] slice(-expr) without zero/negative guard..."
+
+SLICE_NEG=$(grep -rn 'slice(-' \
+  --include="*.ts" \
+  . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  || true)
+
+if [[ -n "$SLICE_NEG" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    LINENUM=$(echo "$line" | cut -d: -f2)
+    # Check if surrounding context has a <= 0 or < 1 guard
+    if ! sed -n "$((LINENUM > 3 ? LINENUM-3 : 1)),$((LINENUM+1))p" "$FILE" 2>/dev/null | grep -q "<= 0\|< 1\|=== 0\|!== 0\| > 0"; then
+      warn "$FILE:$LINENUM — slice(-expr) without nearby zero guard. When expr is 0, slice(-0) returns ALL items."
+    fi
+  done <<< "$SLICE_NEG"
+fi
+
+# ---- 13. typeof === "number" on config values that may be strings ----
+echo "[check] Fragile typeof === 'number' on persisted config values..."
+
+TYPEOF_NUM=$(grep -rn 'typeof.*===.*"number"' \
+  --include="*.ts" \
+  packages/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "isInteger\|Number(" \
+  | grep -i "port\|config\|prev\|saved\|stored\|options\." \
+  || true)
+
+if [[ -n "$TYPEOF_NUM" ]]; then
+  COUNT=$(echo "$TYPEOF_NUM" | wc -l | tr -d ' ')
+  warn "$COUNT typeof === 'number' checks on config/port/prev values — CLI values arrive as strings. Consider coercing first:"
+  echo "$TYPEOF_NUM" | head -5
+fi
+
+# ---- 14. Force flush / explicit operations missing skipDedupe ----
+echo "[check] Explicit flush paths missing skipDedupeCheck..."
+
+FLUSH_NO_SKIP=$(grep -rn 'flushSession\|forceFlush\|queueBufferedExtraction' \
+  --include="*.ts" \
+  . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  || true)
+
+if [[ -n "$FLUSH_NO_SKIP" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    LINENUM=$(echo "$line" | cut -d: -f2)
+    # Check if this call or its function passes skipDedupeCheck
+    if ! sed -n "$((LINENUM)),$((LINENUM+3))p" "$FILE" 2>/dev/null | grep -q "skipDedupeCheck\|skipDedupe"; then
+      # Only warn for flush paths that look explicit (not auto-extraction)
+      if echo "$line" | grep -qi "flush\|force\|reset\|replay"; then
+        warn "$FILE:$LINENUM — flush/force/replay call without skipDedupeCheck. Explicit operations should bypass dedup."
+      fi
+    fi
+  done <<< "$FLUSH_NO_SKIP"
 fi
 if [[ $ERRORS -gt 0 ]]; then
   echo "[check] FAILED — $ERRORS issue(s) found. Fix before pushing."

@@ -35,7 +35,7 @@ Use these as the canonical starting points for adapter work:
 
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
-These patterns were extracted from 40+ PRs across 2026-04-05 to 2026-04-12.
+These patterns were extracted from 50+ PRs across 2026-04-05 to 2026-04-12.
 Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
 required a follow-up commit to fix. Follow these rules to ship clean on the first push.
 
@@ -232,6 +232,92 @@ transformed form — never a mix.
 - **Don't mix `contentHashSource` and direct hashing** — if one write path
   passes `contentHashSource: rawContent` and another omits it (causing the
   index to hash the persisted form with timestamp), dedup breaks.
+
+### 14. Atomic Multi-Step Operations — Don't Destroy Old State Before New State Is Confirmed
+
+PR #400 had 20+ review rounds on connector lifecycle. The dominant pattern was
+destroying valid state before confirming the replacement is viable.
+
+- **Don't rotate/destroy tokens before confirming the new config write succeeds**
+  — if `generateToken()` revokes the old token, then `upsertHermesConfig` or
+  `commitTokenEntry` fails, the user is left with a revoked token and no working
+  config. Always confirm the new state before destroying the old.
+- **Don't clean up old profile config before new profile write succeeds** — if
+  `removeHermesConfig(oldProfile)` runs before `upsertHermesConfig(newProfile)`
+  succeeds, a partial failure leaves neither profile configured.
+- **Persist rollback data BEFORE writing success markers** — if `.rollback.json`
+  write fails, a `.migrated-from-engram` marker creates a false success signal.
+- **Don't write connector JSON with a new token before confirming token store
+  commit** — `connector.json` holding a token the daemon doesn't recognize
+  creates an invisible auth mismatch.
+
+### 15. Monorepo Package Boundaries — Never Reach Across `src/` Directories
+
+Reviewers repeatedly flagged cross-package relative imports that bypass the
+public export surface.
+
+- **Import via package name, not relative path** — use
+  `import { X } from "@remnic/core"` not
+  `import { X } from "../../../remnic-core/src/foo.js"`. A directory rename or
+  build-output change in the target package silently breaks the import.
+- **Shim packages must own their runtime identity** — when a shim re-exports
+  `pluginDefinition`, its `register()` must use its own `LEGACY_PLUGIN_ID`, not
+  the inherited `PLUGIN_ID`. Module-level constants are captured at import time,
+  not overridden by object-spread.
+- **Config loaders must ALL agree on lookup semantics** — if `access-cli.ts`
+  uses ternary+`??` fallback and `src/index.ts` uses early-return, they diverge
+  during migration when both entries exist. One shared resolver, one pattern.
+
+### 16. Config Guard Rails — New Features Must Be Gatable and Reversible
+
+Reviewers caught features that unconditionally transformed behavior without any
+escape hatch or configuration gate.
+
+- **Add an `enabled` check or escape hatch for every new filter/transform** —
+  if a new recall filter unconditionally removes `dream`/`procedural` memories,
+  users can never search for them even when the feature is disabled. Mirror the
+  pattern: lifecycle filters have `enabled` checks; new filters must too.
+- **Force reinstall must merge from existing config** — when `--force` is used
+  without re-supplying `--config profile=...`, hard-resetting to defaults
+  silently loses the user's configured profile/host/port. Read the existing
+  stored config first and merge.
+- **Guard slot-based lookups against foreign plugin IDs** — if
+  `plugins.slots.memory` points to a non-Remnic plugin, the lookup must reject
+  it rather than silently applying a foreign plugin's settings to Remnic.
+  Always validate `resolvedId === PLUGIN_ID || resolvedId === LEGACY_PLUGIN_ID`.
+
+### 17. JavaScript Numeric Footguns — Guard Zero, Negative Zero, and Type Coercion at Boundaries
+
+Multiple PRs had bugs from JavaScript's numeric quirks and CLI string→number
+coercion issues.
+
+- **Guard `slice(-maxEntries)` against `maxEntries === 0`** —
+  `entries.slice(-Math.max(0, 0))` produces `slice(-0)` which equals `slice(0)`
+  and returns ALL entries. Always check `if (maxEntries <= 0)` before negation.
+- **CLI values arrive as strings** — `--config port=5555` produces `"5555"`,
+  not `5555`. Type guards like `typeof prev?.port === "number"` reject saved
+  values on reinstall. Always coerce at the input boundary with
+  `Number(port)` + validation, then store as the expected type.
+- **Reject non-integers explicitly** — `Number.isFinite(4318.9)` is true but
+  silently truncating to a different port is a misconfiguration. Use
+  `Number.isInteger()` when integers are expected.
+
+### 18. Force-Flush and Dedupe — Explicit Operations Must Bypass Dedupe
+
+Reviewers caught a critical bug where explicit flush operations (session flush,
+before_reset) were suppressed by the same deduplication that guards automatic
+extraction.
+
+- **Explicit flushes must pass `skipDedupeCheck: true`** — if a prior
+  extraction attempt failed/timed out but left the buffer intact, the
+  dedupe fingerprint still exists. A subsequent force-flush must not be
+  suppressed by stale dedup state.
+- **Buffer key must be propagated through all extraction paths** — if
+  `ingestReplayBatch` calls `queueBufferedExtraction` without `bufferKey`,
+  the default `"default"` key is used, clearing the wrong buffer on success.
+- **Don't health-check with uncommitted tokens** — if `commitTokenEntry`
+  fails or is skipped, `checkDaemonHealth` sends an unknown token, gets 401,
+  waits 6 seconds on retry, and reports a misleading "not reachable" message.
 
 ---
 
