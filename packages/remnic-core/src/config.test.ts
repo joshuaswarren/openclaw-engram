@@ -53,3 +53,13 @@ test("parseConfig codex missing entirely → installExtension defaults to true",
   const result = parseConfig({});
   assert.equal(result.codex.installExtension, true);
 });
+
+test("parseConfig dreaming.maxEntries=0 preserves the runtime disable switch", () => {
+  const result = parseConfig({ dreaming: { maxEntries: 0 } });
+  assert.equal(result.dreaming.maxEntries, 0);
+});
+
+test("parseConfig activeRecallCacheTtlMs=0 disables the active-recall cache", () => {
+  const result = parseConfig({ activeRecallCacheTtlMs: 0 });
+  assert.equal(result.activeRecallCacheTtlMs, 0);
+});

@@ -7649,12 +7649,15 @@ export class Orchestrator {
       return;
     }
 
-    const bufferKey = sessionKey ?? "default";
+    const bufferKey =
+      typeof sessionKey === "string" && sessionKey.length > 0
+        ? sessionKey
+        : "default";
     const turn: BufferTurn = {
       role,
       content,
       timestamp: new Date().toISOString(),
-      sessionKey: bufferKey,
+      sessionKey,
     };
 
     const decision = await this.buffer.addTurn(bufferKey, turn);
@@ -7677,11 +7680,16 @@ export class Orchestrator {
         : "default";
     const turns = this.buffer.getTurns(bufferKey);
     if (turns.length === 0) return;
-    await this.queueBufferedExtraction(turns, "trigger_mode", {
-      bufferKey,
-      clearBufferAfterExtraction: true,
-      skipDedupeCheck: true,
-      abortSignal: options.abortSignal,
+    await new Promise<void>((resolve, reject) => {
+      void this
+        .queueBufferedExtraction(turns, "trigger_mode", {
+          bufferKey,
+          clearBufferAfterExtraction: true,
+          skipDedupeCheck: true,
+          abortSignal: options.abortSignal,
+          onTaskSettled: (error) => (error ? reject(error) : resolve()),
+        })
+        .catch(reject);
     });
   }
 

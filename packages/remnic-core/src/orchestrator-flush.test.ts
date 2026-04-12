@@ -94,6 +94,65 @@ test("flushSession forwards abort signals into the queued extraction", async () 
   assert.equal(queuedOptions?.abortSignal, abortController.signal);
 });
 
+test("flushSession waits for queued extraction task completion", async () => {
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  let releaseExtraction!: () => void;
+  let extractionStarted = false;
+  let flushSettled = false;
+
+  orchestrator.buffer = {
+    getTurns() {
+      return [makeTurn("thread-a", "remember alpha")];
+    },
+  };
+  orchestrator.extractionQueue = [];
+  orchestrator.queueProcessing = false;
+  orchestrator.runExtraction = async () => {
+    extractionStarted = true;
+    await new Promise<void>((resolve) => {
+      releaseExtraction = resolve;
+    });
+  };
+
+  const flushPromise = orchestrator.flushSession("thread-a", {
+    reason: "before_reset",
+  });
+  void flushPromise.then(() => {
+    flushSettled = true;
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(extractionStarted, true);
+  assert.equal(flushSettled, false);
+
+  releaseExtraction();
+  await flushPromise;
+
+  assert.equal(flushSettled, true);
+});
+
+test("processTurn preserves the original sessionKey on buffered turns", async () => {
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  let capturedTurn: BufferTurn | undefined;
+  let capturedBufferKey: string | undefined;
+
+  orchestrator.config = parseConfig({});
+  orchestrator.buffer = {
+    async addTurn(bufferKey: string, turn: BufferTurn) {
+      capturedBufferKey = bufferKey;
+      capturedTurn = turn;
+      return "keep_buffering";
+    },
+  };
+
+  await orchestrator.processTurn("user", "remember alpha");
+
+  assert.equal(capturedBufferKey, "default");
+  assert.ok(capturedTurn);
+  assert.equal(capturedTurn?.sessionKey, undefined);
+});
+
 test("runExtraction aborts before late buffer clearing when the caller cancels", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;
