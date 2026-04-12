@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { watch, type FSWatcher } from "node:fs";
+import { statSync, watch, type FSWatcher } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -210,6 +210,29 @@ export function createHeartbeatSurface(): HeartbeatSurface {
       const watchedName = path.basename(filePath);
       const watchedDir = path.dirname(filePath);
 
+      const resolveParentWatchTarget = (): { dir: string; expectedName: string } | null => {
+        let candidateDir = watchedDir;
+        while (true) {
+          try {
+            if (statSync(candidateDir).isDirectory()) {
+              const relative = path.relative(candidateDir, watchedDir);
+              return {
+                dir: candidateDir,
+                expectedName:
+                  relative.length === 0
+                    ? watchedName
+                    : (relative.split(path.sep)[0] ?? watchedName),
+              };
+            }
+          } catch {}
+          const parentDir = path.dirname(candidateDir);
+          if (parentDir === candidateDir) {
+            return null;
+          }
+          candidateDir = parentDir;
+        }
+      };
+
       const rearmFileWatcher = () => {
         fileWatcher?.close();
         fileWatcher = null;
@@ -222,14 +245,21 @@ export function createHeartbeatSurface(): HeartbeatSurface {
 
       const ensureParentWatcher = () => {
         if (parentWatcher) return;
+        const target = resolveParentWatchTarget();
+        if (!target) return;
         try {
           parentWatcher = watch(
-            watchedDir,
+            target.dir,
             { persistent: false },
             (_eventType, changed) => {
-              if (changed && String(changed) !== watchedName) return;
+              if (changed && String(changed) !== target.expectedName) return;
+              parentWatcher?.close();
+              parentWatcher = null;
+              ensureParentWatcher();
               rearmFileWatcher();
-              emit();
+              if (target.expectedName === watchedName || fileWatcher) {
+                emit();
+              }
             },
           );
         } catch {
@@ -241,8 +271,12 @@ export function createHeartbeatSurface(): HeartbeatSurface {
         if (timer) clearTimeout(timer);
         timer = setTimeout(async () => {
           timer = null;
-          rearmFileWatcher();
-          onChange(await this.read(filePath));
+          try {
+            rearmFileWatcher();
+            onChange(await this.read(filePath));
+          } catch (error) {
+            console.warn("[remnic] heartbeat surface watch update failed", error);
+          }
         }, 25);
       };
       rearmFileWatcher();

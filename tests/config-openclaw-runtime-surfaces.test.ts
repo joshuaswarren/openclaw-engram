@@ -200,6 +200,19 @@ test("parseConfig preserves explicit disables, rejects invalid dreaming minima, 
   });
 });
 
+test("parseConfig keeps explicit small positive cache ttls and rejects negative dream disables", () => {
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    activeRecallCacheTtlMs: 500,
+    dreaming: {
+      maxEntries: -5,
+    },
+  });
+
+  assert.equal(cfg.activeRecallCacheTtlMs, 500);
+  assert.equal(cfg.dreaming.maxEntries, 500);
+});
+
 test("parseConfig preserves explicit low active recall thinking mode", () => {
   const cfg = parseConfig({
     openaiApiKey: "sk-test",

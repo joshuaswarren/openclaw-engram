@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -230,4 +230,80 @@ test("heartbeat surface watch reacts when HEARTBEAT.md is created after startup"
   const entries = await entriesPromise;
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.slug, "check-health");
+});
+
+test("heartbeat surface watch catches callback failures instead of leaking unhandled rejections", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-watch-errors-"));
+  const heartbeatPath = path.join(root, "HEARTBEAT.md");
+  const surface = createHeartbeatSurface();
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  const stop = surface.watch(heartbeatPath, () => {
+    throw new Error("boom");
+  });
+
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  try {
+    await writeFile(
+      heartbeatPath,
+      [
+        "## check-health",
+        "",
+        "Ping the health endpoint.",
+        "",
+        "Schedule: hourly",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } finally {
+    console.warn = originalWarn;
+    stop();
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.match(String(warnings[0]?.[0] ?? ""), /heartbeat surface watch update failed/);
+});
+
+test("heartbeat surface watch recovers when the heartbeat journal directory appears after startup", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-watch-missing-dir-"));
+  const nestedDir = path.join(root, "missing");
+  const heartbeatPath = path.join(nestedDir, "HEARTBEAT.md");
+  const surface = createHeartbeatSurface();
+
+  const entriesPromise = new Promise<Awaited<ReturnType<typeof surface.read>>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      stop();
+      reject(new Error("heartbeat watcher did not recover after directory creation"));
+    }, 2000);
+    const stop = surface.watch(heartbeatPath, (entries) => {
+      clearTimeout(timeout);
+      stop();
+      resolve(entries);
+    });
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await mkdir(nestedDir, { recursive: true });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await writeFile(
+    heartbeatPath,
+    [
+      "## recovered-heartbeat",
+      "",
+      "The watcher survived a missing parent directory.",
+      "",
+      "Schedule: hourly",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const entries = await entriesPromise;
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.slug, "recovered-heartbeat");
 });

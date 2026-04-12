@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -197,4 +197,90 @@ test("dreams surface watch reacts when DREAMS.md is created after startup", asyn
   const entries = await entriesPromise;
   assert.equal(entries.length, 1);
   assert.equal(entries[0]?.title, "Fresh start");
+});
+
+test("dreams surface watch recovers when the dream journal directory appears after startup", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-watch-missing-dir-"));
+  const nestedDir = path.join(root, "missing");
+  const dreamsPath = path.join(nestedDir, "DREAMS.md");
+  const surface = createDreamsSurface();
+
+  const entriesPromise = new Promise<Awaited<ReturnType<typeof surface.read>>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      stop();
+      reject(new Error("dream watcher did not recover after directory creation"));
+    }, 2000);
+    const stop = surface.watch(dreamsPath, (entries) => {
+      clearTimeout(timeout);
+      stop();
+      resolve(entries);
+    });
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await mkdir(nestedDir, { recursive: true });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await writeFile(
+    dreamsPath,
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T17:00:00Z — Recovered watcher*",
+      "",
+      "The watcher survived a missing parent directory.",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const entries = await entriesPromise;
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.title, "Recovered watcher");
+});
+
+test("dreams surface watch catches callback failures instead of leaking unhandled rejections", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-watch-errors-"));
+  const dreamsPath = path.join(root, "DREAMS.md");
+  const surface = createDreamsSurface();
+  const warnings: unknown[][] = [];
+  const originalWarn = console.warn;
+  const stop = surface.watch(dreamsPath, () => {
+    throw new Error("boom");
+  });
+
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
+
+  try {
+    await writeFile(
+      dreamsPath,
+      [
+        "# Dream Diary",
+        "",
+        "<!-- openclaw:dreaming:diary:start -->",
+        "---",
+        "",
+        "*2026-04-12T15:00:00Z — Fresh start*",
+        "",
+        "Trigger the callback error path.",
+        "",
+        "<!-- openclaw:dreaming:diary:end -->",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  } finally {
+    console.warn = originalWarn;
+    stop();
+  }
+
+  assert.equal(warnings.length, 1);
+  assert.match(String(warnings[0]?.[0] ?? ""), /dreams surface watch update failed/);
 });

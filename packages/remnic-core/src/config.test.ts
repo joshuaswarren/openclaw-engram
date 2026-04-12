@@ -64,7 +64,22 @@ test("parseConfig dreaming.maxEntries=5 falls back to the documented default", (
   assert.equal(result.dreaming.maxEntries, 500);
 });
 
+test("parseConfig dreaming.maxEntries=-5 falls back to the documented default", () => {
+  const result = parseConfig({ dreaming: { maxEntries: -5 } });
+  assert.equal(result.dreaming.maxEntries, 500);
+});
+
 test("parseConfig activeRecallCacheTtlMs=0 disables the active-recall cache", () => {
   const result = parseConfig({ activeRecallCacheTtlMs: 0 });
   assert.equal(result.activeRecallCacheTtlMs, 0);
+});
+
+test("parseConfig activeRecallCacheTtlMs=500 preserves the explicit positive ttl", () => {
+  const result = parseConfig({ activeRecallCacheTtlMs: 500 });
+  assert.equal(result.activeRecallCacheTtlMs, 500);
+});
+
+test("parseConfig activeRecallCacheTtlMs=-1 falls back to the default ttl", () => {
+  const result = parseConfig({ activeRecallCacheTtlMs: -1 });
+  assert.equal(result.activeRecallCacheTtlMs, 15000);
 });

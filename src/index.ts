@@ -48,6 +48,9 @@ import {
   syncHeartbeatOutcomeLinks,
   syncHeartbeatSurfaceEntries,
 } from "../packages/plugin-openclaw/src/runtime-surfaces.js";
+import {
+  forEachRuntimeSurfaceStorage,
+} from "../packages/plugin-openclaw/src/runtime-surface-namespaces.js";
 import { buildSessionCommandDescriptors } from "../packages/plugin-openclaw/src/session-command-descriptors.js";
 import { validateSlotSelection } from "../packages/plugin-openclaw/src/slot-validator.js";
 import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src/plugin-id.js";
@@ -557,14 +560,24 @@ const pluginDefinition = {
         .then(async () => {
           const journalPath = resolveDreamJournalPath(runtimeWorkspaceDir);
           const entries = await dreamsSurface.read(journalPath);
-          await syncDreamSurfaceEntries({
+          await forEachRuntimeSurfaceStorage({
+            config: cfg,
             storage: orchestrator.storage,
-            entries,
-            journalPath,
-            maxEntries: cfg.dreaming.maxEntries,
-            reindexMemory: async (id) => {
-              await orchestrator.reindexMemoryById(id, {
-                storage: orchestrator.storage,
+            getStorageForNamespace: (namespace) =>
+              typeof orchestrator.getStorageForNamespace === "function"
+                ? orchestrator.getStorageForNamespace(namespace)
+                : Promise.resolve(orchestrator.storage),
+            work: async (storage) => {
+              await syncDreamSurfaceEntries({
+                storage,
+                entries,
+                journalPath,
+                maxEntries: cfg.dreaming.maxEntries,
+                reindexMemory: async (id) => {
+                  await orchestrator.reindexMemoryById(id, {
+                    storage,
+                  });
+                },
               });
             },
           });
@@ -579,26 +592,36 @@ const pluginDefinition = {
         .then(async () => {
           const journalPath = resolveHeartbeatJournalPath(runtimeWorkspaceDir);
           const entries = await heartbeatSurface.read(journalPath);
-          await syncHeartbeatSurfaceEntries({
+          await forEachRuntimeSurfaceStorage({
+            config: cfg,
             storage: orchestrator.storage,
-            entries,
-            journalPath,
-            reindexMemory: async (id) => {
-              await orchestrator.reindexMemoryById(id, {
-                storage: orchestrator.storage,
+            getStorageForNamespace: (namespace) =>
+              typeof orchestrator.getStorageForNamespace === "function"
+                ? orchestrator.getStorageForNamespace(namespace)
+                : Promise.resolve(orchestrator.storage),
+            work: async (storage) => {
+              await syncHeartbeatSurfaceEntries({
+                storage,
+                entries,
+                journalPath,
+                reindexMemory: async (id) => {
+                  await orchestrator.reindexMemoryById(id, {
+                    storage,
+                  });
+                },
               });
-            },
-          });
-          await syncHeartbeatOutcomeLinks({
-            storage: orchestrator.storage,
-            entries,
-            reindexMemory: async (id) => {
-              await orchestrator.reindexMemoryById(id, {
-                storage: orchestrator.storage,
+              await syncHeartbeatOutcomeLinks({
+                storage,
+                entries,
+                reindexMemory: async (id) => {
+                  await orchestrator.reindexMemoryById(id, {
+                    storage,
+                  });
+                },
+                logger: {
+                  debug: (message) => log.debug(message),
+                },
               });
-            },
-            logger: {
-              debug: (message) => log.debug(message),
             },
           });
         });

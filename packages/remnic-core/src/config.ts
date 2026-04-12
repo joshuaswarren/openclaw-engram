@@ -306,8 +306,10 @@ export function parseConfig(raw: unknown): PluginConfig {
         : "DREAMS.md",
     maxEntries:
       typeof rawDreaming.maxEntries === "number"
-        ? rawDreaming.maxEntries <= 0
+        ? rawDreaming.maxEntries === 0
           ? 0
+          : rawDreaming.maxEntries < 0
+            ? 500
           : rawDreaming.maxEntries < 10
             ? 500
             : Math.min(10000, Math.floor(rawDreaming.maxEntries))
@@ -944,11 +946,13 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 15_000,
     activeRecallCacheTtlMs:
       typeof cfg.activeRecallCacheTtlMs === "number"
-        ? cfg.activeRecallCacheTtlMs <= 0
+        ? cfg.activeRecallCacheTtlMs === 0
           ? 0
+          : cfg.activeRecallCacheTtlMs < 0
+            ? 15_000
           : Math.min(
               120_000,
-              Math.max(1_000, Math.floor(cfg.activeRecallCacheTtlMs)),
+              Math.max(1, Math.floor(cfg.activeRecallCacheTtlMs)),
             )
         : 15_000,
     activeRecallModel:
