@@ -96,7 +96,7 @@ function parseSectionEntries(content: string): ParsedHeartbeatEntry[] {
     const end = index + 1 < matches.length ? (matches[index + 1]?.index ?? content.length) : content.length;
     const rawTitle = match[1]?.trim() ?? "";
     const chunk = content.slice(start + match[0].length, end).replace(/^\s+/, "");
-    const trimmed = chunk.replace(/\n---\s*$/m, "").trim();
+    const trimmed = chunk.replace(/\n---\s*$/, "").trim();
     const lines = trimmed.split("\n");
     const tags = lines.length > 0 ? parseTags(lines[lines.length - 1] ?? "") : [];
     const withoutTags =

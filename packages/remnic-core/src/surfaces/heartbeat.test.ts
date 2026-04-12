@@ -46,6 +46,38 @@ test("heartbeat surface reads section-based entries with schedule and tags", asy
   assert.match(entries[1]?.body ?? "", /refresh dev secrets/);
 });
 
+test("heartbeat surface preserves in-body markdown dividers while still stripping a trailing section separator", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-divider-body-"));
+  const heartbeatPath = path.join(root, "HEARTBEAT.md");
+  await writeFile(
+    heartbeatPath,
+    [
+      "## check-test-suite",
+      "",
+      "Run the suite in phases:",
+      "",
+      "---",
+      "",
+      "1. Smoke.",
+      "2. Full regression.",
+      "",
+      "Schedule: hourly",
+      "",
+      "---",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const surface = createHeartbeatSurface();
+  const entries = await surface.read(heartbeatPath);
+
+  assert.equal(entries.length, 1);
+  assert.match(entries[0]?.body ?? "", /Run the suite in phases:/);
+  assert.match(entries[0]?.body ?? "", /\n---\n/);
+  assert.doesNotMatch(entries[0]?.body ?? "", /\n---\s*$/);
+});
+
 test("heartbeat surface reads tasks blocks from upstream-style HEARTBEAT.md", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-tasks-"));
   const heartbeatPath = path.join(root, "HEARTBEAT.md");
