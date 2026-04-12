@@ -53,7 +53,7 @@ pip install remnic-hermes
 remnic connectors install hermes
 ```
 
-`remnic connectors install hermes` starts the daemon if needed, generates an auth token, writes `~/.remnic/tokens.json`, and adds the `remnic:` block to your Hermes `config.yaml`. Restart Hermes after running it.
+`remnic connectors install hermes` generates an auth token, writes `~/.remnic/tokens.json`, adds the `remnic:` block to your Hermes `config.yaml`, and runs a daemon health check. It does **not** start the daemon — if unreachable, it prints `remnic daemon start` as the next step. Restart Hermes after running it.
 
 ### Option B: pip only (manual config)
 
@@ -127,11 +127,16 @@ The auth token is **not** read from an environment variable. It comes from the i
 
 `remnic connectors install hermes` handles the full flow:
 
-1. Starts the Remnic daemon if it is not running.
+1. Validates the Hermes profile and config directory.
 2. Generates a per-connector auth token scoped to Hermes.
-3. Writes the token to `~/.remnic/tokens.json`.
-4. Adds the `remnic:` block to Hermes `config.yaml`.
-5. Runs a daemon health check.
+3. Adds the `remnic:` block to Hermes `config.yaml` (with rollback on failure).
+4. Commits the token to `~/.remnic/tokens.json`.
+5. Writes the connector config to `~/.config/engram/.engram-connectors/connectors/hermes.json`.
+6. Runs a daemon health check — reports whether the daemon is reachable but does **not** start it. If unreachable, install still succeeds and prints `remnic daemon start` as the next step.
+
+To install into a non-default Hermes profile:
+
+    remnic connectors install hermes --config profile=Research
 
 ### Manual
 

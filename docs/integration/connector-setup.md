@@ -261,9 +261,9 @@ mcp_servers:
 
 ### Option B: MemoryProvider Plugin (recommended for production)
 
-Hermes v0.7.0+ has a Python `MemoryProvider` protocol (`initialize`, `enrich_turn`, `sync_turn`, `shutdown`) that provides tighter integration than MCP alone — including automatic turn-level memory sync and context enrichment.
+Hermes v0.7.0+ has a Python `MemoryProvider` protocol (`initialize`, `pre_llm_call`, `sync_turn`, `extract_memories`, `shutdown`) that provides tighter integration than MCP alone — including automatic turn-level memory sync and context enrichment.
 
-See the [Hermes MemoryProvider guide](../guides/hermes-setup.md) for the `@remnic/hermes-provider` plugin setup.
+See the [Hermes plugin reference](../plugins/hermes.md) for the `remnic-hermes` plugin setup.
 
 **Capabilities:** observe, recall, store, search, entity sync, turn-level memory
 
@@ -330,20 +330,20 @@ Any tool that supports the [Model Context Protocol](https://modelcontextprotocol
 
 ## Managing Connectors
 
-Use the `engram connectors` CLI to manage connector installations:
+Use the `remnic connectors` CLI to manage connector installations:
 
 ```bash
 # List all available connectors
-engram connectors list
+remnic connectors list
 
 # Install a connector (creates config file)
-engram connectors install claude-code
+remnic connectors install claude-code
 
 # Check connector health
-engram connectors doctor claude-code
+remnic connectors doctor claude-code
 
 # Remove a connector
-engram connectors remove claude-code
+remnic connectors remove claude-code
 ```
 
 ---
@@ -355,7 +355,7 @@ engram connectors remove claude-code
 The Remnic server isn't running. Start it:
 
 ```bash
-engram daemon start    # standalone
+remnic daemon start    # standalone
 # or
 openclaw engram access http-serve --port 4318 --token "$REMNIC_AUTH_TOKEN"  # OpenClaw
 ```
