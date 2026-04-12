@@ -64,6 +64,10 @@ export class NamespaceStorageRouter {
 
     const root = this.namespaceRootSync(ns);
     const sm = new StorageManager(root);
+    // Propagate the inline-attribution template so that router-created storages
+    // (used by extraction and shared-promotion paths) strip citations consistently,
+    // matching the behaviour of the primary this.storage instance in the orchestrator.
+    sm.citationTemplate = this.config.inlineSourceAttributionFormat;
     this.cache.set(ns, sm);
     return sm;
   }

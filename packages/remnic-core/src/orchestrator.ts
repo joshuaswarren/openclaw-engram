@@ -18,6 +18,15 @@ import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
+import {
+  attachCitation,
+  type CitationContext,
+  hasCitationForTemplate,
+  stripCitationForTemplate,
+} from "./source-attribution.js";
+// stripCitation (default-format only) is intentionally NOT used on the
+// legacy archive path — replaced by skip-with-warning (Finding 2 — Urgw).
+// stripCitationForTemplate IS used for pre-tagged dedup canonicalization.
 import { findUnresolvedEntityRefs } from "./reconstruct.js";
 import type {
   SearchBackend,
@@ -1202,6 +1211,9 @@ export class Orchestrator {
       this.storageRouter,
     );
     this.storage = new StorageManager(config.memoryDir);
+    // Propagate the inline-attribution template so the storage layer can strip
+    // citations from legacy facts during the hash-index rebuild path.
+    this.storage.citationTemplate = config.inlineSourceAttributionFormat;
     this.qmd = createSearchBackend(config);
     const conversationIndexRuntime = createConversationIndexRuntime(config, {
       getQmd: () => this.conversationQmd,
@@ -2122,9 +2134,27 @@ export class Orchestrator {
             relatedMemoryIds: [canonicalId],
           });
           if (archiveResult) {
-            // Remove from content-hash index
+            // Remove from content-hash index.
+            // Use the raw-content hash stored on the frontmatter at write
+            // time (contentHash) — it is format-agnostic and survives any
+            // citation template.  Legacy memories without contentHash are
+            // skipped (see Finding 2 — Urgw).
             if (this.contentHashIndex) {
-              this.contentHashIndex.remove(m.content);
+              if (m.frontmatter.contentHash) {
+                // Modern memory: frontmatter.contentHash is already a SHA-256
+                // hex string — use removeByHash to avoid double-hashing.
+                this.contentHashIndex.removeByHash(m.frontmatter.contentHash);
+              } else {
+                // Legacy memory written before contentHash was stored on the
+                // frontmatter.  Pre-#369 facts were stored without inline
+                // citations, so m.content is the raw fact text and we can
+                // remove the hash directly from the content.  This clears
+                // stale dedup entries so the fact can be re-extracted.
+                log.warn(
+                  `[semantic-consolidation] removing hash for legacy memory ${m.frontmatter.id ?? "(unknown)"} via content fallback — no contentHash in frontmatter`,
+                );
+                this.contentHashIndex.remove(m.content);
+              }
             }
             await this.embeddingFallback.removeFromIndex(m.frontmatter.id);
             if (
@@ -7949,6 +7979,7 @@ export class Orchestrator {
       result,
       storage,
       threadIdForExtraction,
+      { sessionKey, principal },
     );
     await clearBuffer();
 
@@ -8334,7 +8365,39 @@ export class Orchestrator {
     result: ExtractionResult,
     storage: StorageManager,
     threadIdForExtraction?: string | null,
+    sourceContext?: { sessionKey?: string; principal?: string },
   ): Promise<string[]> {
+    // Inline source attribution (issue #369). When enabled, every extracted
+    // fact is rewritten to carry a compact provenance tag inside its body so
+    // the citation survives prompt injection, copy/paste, and LLM quoting.
+    // The helper is a no-op when the feature flag is off, so legacy pipelines
+    // see zero behavioral change.
+    const citationEnabled = this.config.inlineSourceAttributionEnabled === true;
+    const citationTemplate = this.config.inlineSourceAttributionFormat;
+    // The stable fields (agent, session) are computed once; `ts` is intentionally
+    // omitted here and added fresh per invocation so each fact in a large batch
+    // gets its own insertion timestamp rather than sharing a single batch-start time.
+    const citationContextBase: Omit<CitationContext, "ts"> = citationEnabled
+      ? {
+          agent: sourceContext?.principal,
+          session: sourceContext?.sessionKey,
+        }
+      : {};
+    const applyInlineCitation = (content: string): string => {
+      if (!citationEnabled) return content;
+      if (typeof content !== "string" || content.length === 0) return content;
+      // Build a fresh CitationContext per call so `ts` reflects the actual
+      // insertion time of each individual fact rather than the batch-start time.
+      const citationContext: CitationContext = {
+        ...citationContextBase,
+        ts: new Date().toISOString(),
+      };
+      // `attachCitation` already calls `hasCitationForTemplate` internally and
+      // is a no-op when the content already carries a citation (default or
+      // custom template).  The outer check was redundant and has been removed
+      // to avoid a maintenance hazard where the two guard paths could diverge.
+      return attachCitation(content, citationContext, citationTemplate);
+    };
     const persistedIds: string[] = [];
     const persistedIdsByStorage = new Map<
       string,
@@ -8448,14 +8511,26 @@ export class Orchestrator {
         const sharedStorage = await this.storageRouter.storageFor(
           this.config.sharedNamespace,
         );
+        // Dedup gate: canonicalize content before hashing.
+        //
+        // Issue #369 (PR #401): When inline attribution is enabled,
+        // `applyInlineCitation` appends a timestamp-bearing marker (e.g.
+        // `[Source: ..., ts=2026-04-11T...]`).  Because the timestamp changes
+        // on every call, hashing cited content produces a unique hash each
+        // time — defeating dedup entirely and allowing the same logical fact to
+        // be promoted repeatedly.  Also, both promotion call sites pass
+        // `fact.content`, which can already carry an inline citation (e.g. a
+        // relayed or reprocessed fact).  Strip any pre-existing citation so the
+        // dedup key matches the hash stored from the original un-cited write.
+        //
         // PR #402 round-6 (Fix #2 / chatgpt-codex P1 PRRT_kwDORJXyws56U74n):
-        // Compute the enriched content before the hash-dedup check so the lookup
-        // uses the same content that writeMemory will actually store.  When
-        // structuredAttributes are present, writeMemory appends an
+        // Compute the enriched content before the hash-dedup check so the
+        // lookup uses the same content that writeMemory will actually store.
+        // When structuredAttributes are present, writeMemory appends an
         // "[Attributes: ...]" suffix before hashing; hasFactContentHash must
-        // receive the same enriched body or the check is against a different hash
-        // and dedup fails to fire (letting duplicates through) or fires when it
-        // shouldn't (collapsing memories with different enrichments).
+        // receive the same enriched body or the check is against a different
+        // hash and dedup fails to fire (letting duplicates through) or fires
+        // when it shouldn't (collapsing memories with different enrichments).
         // Fix #1 (P2 PRRT_kwDORJXyws56VHZc): use normalizeAttributePairs so
         // key order and casing are canonical — identical to the enrichment
         // applied by storage.writeMemory — preventing spurious hash misses
@@ -8464,11 +8539,22 @@ export class Orchestrator {
         // Fix #4 (Low PRRT_kwDORJXyws56VHth): sanitize the base content before
         // building dedupContent.  writeMemory runs sanitizeMemoryContent on the
         // enriched body before hashing; if sanitization redacts the content to
-        // REDACTED_PLACEHOLDER the stored hash is for the redacted form, not the
-        // raw form.  Computing dedupContent from sanitized.text here ensures the
-        // hash lookup and the normalizedIncoming comparison both use the same
-        // content that writeMemory will actually store.
-        const sanitizedBase = sanitizeMemoryContent(options.content);
+        // REDACTED_PLACEHOLDER the stored hash is for the redacted form, not
+        // the raw form.  Computing dedupContent from sanitized.text here ensures
+        // the hash lookup and the normalizedIncoming comparison both use the
+        // same content that writeMemory will actually store.
+        //
+        // Combined fix: strip any pre-existing citation FIRST to obtain
+        // rawContent (the canonical body), then sanitize rawContent (not
+        // options.content) when building dedupContent, so that citation
+        // stripping and sanitization are applied in a consistent order.
+        const rawContent =
+          citationEnabled &&
+          hasCitationForTemplate(options.content, citationTemplate)
+            ? stripCitationForTemplate(options.content, citationTemplate)
+            : options.content;
+        const citedContent = applyInlineCitation(rawContent);
+        const sanitizedBase = sanitizeMemoryContent(rawContent);
         const dedupContent =
           options.category === "fact" &&
           options.structuredAttributes &&
@@ -8608,7 +8694,7 @@ export class Orchestrator {
         }
         const promotedId = await sharedStorage.writeMemory(
           options.category as any,
-          options.content,
+          citedContent,
           {
             confidence: options.confidence,
             tags: [...options.tags, "shared-promotion"],
@@ -8622,6 +8708,11 @@ export class Orchestrator {
             intentActionType: options.intentActionType,
             intentEntityTypes: options.intentEntityTypes,
             memoryKind: options.memoryKind,
+            // Index the RAW content hash so hasFactContentHash(rawContent)
+            // returns true on subsequent extractions. Without this, the index
+            // would record the hash of citedContent (which changes every call
+            // due to an updated timestamp), causing duplicate promotions.
+            contentHashSource: rawContent,
           },
         );
         // PR #402 Finding 3 fix: run temporal supersession against the shared
@@ -8797,12 +8888,31 @@ export class Orchestrator {
           : 0.7;
 
       // Content-hash dedup check (v6.0)
-      if (this.contentHashIndex && this.contentHashIndex.has(fact.content)) {
-        log.debug(
-          `dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`,
-        );
-        dedupedCount++;
-        continue;
+      //
+      // Canonicalize pre-tagged facts before hashing (Codex P2 — issue #369).
+      // When a fact already carries an inline citation (e.g. relayed or
+      // reprocessed), hashing `fact.content` as-is would produce a different
+      // hash than the one stored from the original write (which used the raw,
+      // un-cited body as contentHashSource). Strip any citation first so the
+      // dedup key matches what the hash index recorded.
+      //
+      // stripCitationForTemplate handles both the default and custom template
+      // formats. For all-placeholder templates it cannot detect citations and
+      // returns the text unchanged — dedup may miss in that edge case, which
+      // is acceptable (no false-positive suppression).
+      if (this.contentHashIndex) {
+        const canonicalContent =
+          citationEnabled &&
+          hasCitationForTemplate(fact.content, citationTemplate)
+            ? stripCitationForTemplate(fact.content, citationTemplate)
+            : fact.content;
+        if (this.contentHashIndex.has(canonicalContent)) {
+          log.debug(
+            `dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`,
+          );
+          dedupedCount++;
+          continue;
+        }
       }
 
       // Score importance using local heuristics (Phase 1B).
@@ -9046,6 +9156,11 @@ export class Orchestrator {
             : undefined;
 
           // Write the parent memory first (with full content for reference).
+          //
+          // Compute the cited content once so that writeMemory and writeArtifact
+          // (when verbatim artifacts are enabled) share the same citation timestamp.
+          // See the normal write path comment for the full dedup rationale.
+          //
           // Propagate supersedes/links from contradiction detection (round 6
           // fix): contradiction detection now runs BEFORE this branch so the
           // parent must carry the supersession relationship — without it the
@@ -9053,9 +9168,21 @@ export class Orchestrator {
           // back, leaving a dangling deindex with no replacement reference.
           // Child chunks intentionally do NOT carry supersedes; only the
           // parent represents the logical memory unit.
+          //
+          // Canonicalize contentHashSource before writing (Thread 3 — Codex P2,
+          // issue #369). If fact.content already carries an inline citation
+          // (e.g. re-processed or relayed fact), strip it so contentHashSource
+          // records the raw un-cited body — matching what the dedup check hashes
+          // via stripCitationForTemplate before calling hasFactContentHash.
+          const rawChunkedContent =
+            citationEnabled &&
+            hasCitationForTemplate(fact.content, citationTemplate)
+              ? stripCitationForTemplate(fact.content, citationTemplate)
+              : fact.content;
+          const citedChunkedContent = applyInlineCitation(rawChunkedContent);
           const parentId = await targetStorage.writeMemory(
             writeCategory,
-            fact.content,
+            citedChunkedContent,
             {
               confidence: fact.confidence,
               tags: [...fact.tags, "chunked"],
@@ -9069,6 +9196,7 @@ export class Orchestrator {
               intentEntityTypes: inferredIntent?.entityTypes,
               memoryKind,
               structuredAttributes: fact.structuredAttributes,
+              contentHashSource: rawChunkedContent,
             },
           );
 
@@ -9090,7 +9218,9 @@ export class Orchestrator {
               chunk.index,
               chunkResult.chunks.length,
               writeCategory,
-              chunk.content,
+              // Each chunk carries its own inline citation so provenance
+              // survives when a single chunk is quoted in isolation.
+              applyInlineCitation(chunk.content),
               {
                 confidence: fact.confidence,
                 tags: fact.tags,
@@ -9156,9 +9286,17 @@ export class Orchestrator {
             memoryKind,
             source: extractionWriteSource,
           });
-          // Register chunked content in hash index too
+          // Register chunked content in hash index too.
+          // Thread 3 fix: canonicalize by stripping any pre-existing citation
+          // so the stored hash matches what the dedup check computes via
+          // stripCitationForTemplate before calling contentHashIndex.has().
           if (this.contentHashIndex) {
-            this.contentHashIndex.add(fact.content);
+            const canonicalChunkedContent =
+              citationEnabled &&
+              hasCitationForTemplate(fact.content, citationTemplate)
+                ? stripCitationForTemplate(fact.content, citationTemplate)
+                : fact.content;
+            this.contentHashIndex.add(canonicalChunkedContent);
           }
 
           for (const chunk of chunkResult.chunks) {
@@ -9174,7 +9312,9 @@ export class Orchestrator {
             this.config.verbatimArtifactCategories.includes(writeCategory) &&
             fact.confidence >= this.config.verbatimArtifactsMinConfidence
           ) {
-            await targetStorage.writeArtifact(fact.content, {
+            // Reuse citedChunkedContent so the artifact carries the same citation
+            // timestamp as the parent memory write above (Fix #3 — duplicate-citation).
+            await targetStorage.writeArtifact(citedChunkedContent, {
               confidence: fact.confidence,
               tags: [...fact.tags, "artifact", "chunked-parent"],
               artifactType: this.artifactTypeForCategory(writeCategory),
@@ -9258,9 +9398,25 @@ export class Orchestrator {
         : undefined;
 
       // Normal write (no chunking)
+      //
+      // Compute the cited content once so that writeMemory and writeArtifact
+      // (when verbatim artifacts are enabled) share the same citation timestamp.
+      // Calling applyInlineCitation twice on the same raw content would produce
+      // two different timestamps, creating duplicate citations with divergent
+      // provenance metadata on the memory and artifact copies of the same fact.
+      //
+      // Pass the RAW (pre-citation) fact as `contentHashSource` so the
+      // fact-content hash index records the hash of the canonical fact text
+      // rather than the citation-annotated variant. When inline attribution is
+      // enabled, `applyInlineCitation` appends a timestamp-bearing marker, so
+      // hashing the persisted body would produce a different hash on every
+      // write and defeat cross-session dedup (see `findDuplicateExplicitCapture`
+      // in explicit-capture.ts which calls `hasFactContentHash(candidate.content)`
+      // on raw content).
+      const citedFactContent = applyInlineCitation(fact.content);
       const memoryId = await targetStorage.writeMemory(
         writeCategory,
-        fact.content,
+        citedFactContent,
         {
           confidence: fact.confidence,
           tags: fact.tags,
@@ -9277,6 +9433,7 @@ export class Orchestrator {
           intentEntityTypes: inferredIntent?.entityTypes,
           memoryKind,
           structuredAttributes: fact.structuredAttributes,
+          contentHashSource: fact.content,
         },
       );
       if (routedRuleId) {
@@ -9386,7 +9543,9 @@ export class Orchestrator {
         this.config.verbatimArtifactCategories.includes(writeCategory) &&
         fact.confidence >= this.config.verbatimArtifactsMinConfidence
       ) {
-        await targetStorage.writeArtifact(fact.content, {
+        // Reuse citedFactContent so the artifact carries the same citation
+        // timestamp as the memory write above (Fix #3 — duplicate-citation).
+        await targetStorage.writeArtifact(citedFactContent, {
           confidence: fact.confidence,
           tags: [...fact.tags, "artifact"],
           artifactType: this.artifactTypeForCategory(writeCategory),
@@ -9396,9 +9555,17 @@ export class Orchestrator {
           intentEntityTypes: inferredIntent?.entityTypes,
         });
       }
-      // Register in content-hash index after successful write
+      // Register in content-hash index after successful write.
+      // Thread 3 fix: canonicalize by stripping any pre-existing citation so
+      // the stored hash matches what the dedup check computes via
+      // stripCitationForTemplate before calling contentHashIndex.has().
       if (this.contentHashIndex) {
-        this.contentHashIndex.add(fact.content);
+        const canonicalFactContent =
+          citationEnabled &&
+          hasCitationForTemplate(fact.content, citationTemplate)
+            ? stripCitationForTemplate(fact.content, citationTemplate)
+            : fact.content;
+        this.contentHashIndex.add(canonicalFactContent);
       }
     }
 
@@ -10700,9 +10867,26 @@ export class Orchestrator {
       // All criteria met — archive
       const result = await this.storage.archiveMemory(memory);
       if (result) {
-        // Remove from content-hash index since it's no longer in hot search
+        // Remove from content-hash index since it's no longer in hot search.
+        // Prefer the raw-content hash stored on the frontmatter at write
+        // time (contentHash) — it is format-agnostic and survives any
+        // citation template.
         if (this.contentHashIndex) {
-          this.contentHashIndex.remove(memory.content);
+          if (memory.frontmatter.contentHash) {
+            // Modern memory: frontmatter.contentHash is already a SHA-256
+            // hex string — use removeByHash to avoid double-hashing.
+            this.contentHashIndex.removeByHash(memory.frontmatter.contentHash);
+          } else {
+            // Legacy memory written before contentHash was stored on the
+            // frontmatter.  Pre-#369 facts were stored without inline
+            // citations, so memory.content is the raw fact text and we can
+            // remove the hash directly from the content.  This clears
+            // stale dedup entries so the fact can be re-extracted.
+            log.warn(
+              `[fact-archival] removing hash for legacy memory ${memory.frontmatter.id ?? "(unknown)"} via content fallback — no contentHash in frontmatter`,
+            );
+            this.contentHashIndex.remove(memory.content);
+          }
         }
         await this.embeddingFallback.removeFromIndex(memory.frontmatter.id);
         if (

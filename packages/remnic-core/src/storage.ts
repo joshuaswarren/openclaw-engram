@@ -6,6 +6,12 @@ import { log } from "./logger.js";
 import { getCachedEntities, setCachedEntities } from "./memory-cache.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
+import {
+  hasCitation,
+  hasCitationForTemplate,
+  stripCitationForTemplate,
+  DEFAULT_CITATION_FORMAT,
+} from "./source-attribution.js";
 import type {
   AccessTrackingEntry,
   BufferState,
@@ -71,6 +77,8 @@ import {
   serializeContinuityIncident,
   upsertContinuityLoopInMarkdown,
 } from "./identity-continuity.js";
+// stripCitation import removed: legacy rebuild fallback was replaced by a
+// skip-with-warning strategy (Finding 1 — Uhol).  See ensureFactHashIndexAuthoritative.
 
 const ARTIFACT_SEARCH_STOPWORDS = new Set([
   "a",
@@ -205,6 +213,8 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.structuredAttributes && Object.keys(fm.structuredAttributes).length > 0) {
     lines.push(`structuredAttributes: ${JSON.stringify(fm.structuredAttributes)}`);
   }
+  // Raw-content dedup hash — format-agnostic archive/consolidation cleanup
+  if (fm.contentHash) lines.push(`contentHash: ${fm.contentHash}`);
   lines.push("---");
   return lines.join("\n");
 }
@@ -380,6 +390,8 @@ function parseFrontmatter(
       memoryKind: (fm.memoryKind as MemoryFrontmatter["memoryKind"]) || undefined,
       // Structured attributes (JSON on a single line)
       structuredAttributes: parseStructuredAttributes(fm.structuredAttributes),
+      // Raw-content dedup hash (format-agnostic archive/consolidation cleanup)
+      contentHash: fm.contentHash || undefined,
     },
     content,
   };
@@ -563,6 +575,35 @@ export class ContentHashIndex {
   remove(content: string): void {
     const hash = ContentHashIndex.computeHash(content);
     if (this.hashes.delete(hash)) {
+      this.dirty = true;
+    }
+  }
+
+  /**
+   * Remove a pre-computed SHA-256 hash directly from the index without
+   * re-hashing.  Use this when the caller already holds the stored hash
+   * (e.g. `memory.frontmatter.contentHash`) to avoid the double-hash bug
+   * where `remove(hash)` would compute `hash(hash)` and never match the
+   * entry.
+   */
+  removeByHash(hash: string): void {
+    if (this.hashes.delete(hash)) {
+      this.dirty = true;
+    }
+  }
+
+  /**
+   * Add a pre-computed SHA-256 hash directly to the index without re-hashing.
+   * Use this when the caller already holds the stored hash
+   * (e.g. `memory.frontmatter.contentHash`) so that the index records the raw
+   * content hash rather than re-hashing the citation-annotated body.
+   *
+   * @internal Only called from `StorageManager.ensureFactHashIndexAuthoritative`.
+   * Not part of the public API — prefer `add(content)` for external callers.
+   */
+  addByHash(hash: string): void {
+    if (!this.hashes.has(hash)) {
+      this.hashes.add(hash);
       this.dirty = true;
     }
   }
@@ -825,6 +866,8 @@ export class StorageManager {
   private factHashIndexLoadPromise: Promise<ContentHashIndex> | null = null;
   private factHashIndexAuthoritative: boolean | null = null;
   private factHashIndexAuthoritativePromise: Promise<void> | null = null;
+  /** Optional: set by the orchestrator after construction to enable template-aware citation stripping during legacy hash rebuild. */
+  citationTemplate: string = DEFAULT_CITATION_FORMAT;
 
   constructor(private readonly baseDir: string) {}
 
@@ -952,10 +995,75 @@ export class StorageManager {
 
       const factHashIndex = await this.getFactHashIndex();
       const existing = await this.readAllMemories();
+      let legacyRecovered = 0;
       for (const memory of existing) {
         if (memory.frontmatter.category !== "fact") continue;
         if (inferMemoryStatus(memory.frontmatter, memory.path) !== "active") continue;
-        factHashIndex.add(memory.content);
+        // Prefer the pre-computed raw-content hash stored in frontmatter
+        // (written since round 8 of issue #369). This hash was derived from
+        // the content BEFORE citation annotation, so it matches what
+        // hasFactContentHash(rawFact) would compute.
+        if (memory.frontmatter.contentHash) {
+          factHashIndex.addByHash(memory.frontmatter.contentHash);
+          continue;
+        }
+        // Legacy fact written before contentHash was introduced (Finding 1 —
+        // Uhol). Apply nuanced handling based on whether the citation can be
+        // reliably stripped:
+        //
+        //  1. Default citation present → strip it and index the raw body.
+        //  2. No citation at all → index the raw body as-is.
+        //  3. Unknown/custom citation template → skip with a warning.
+        //
+        // Rationale for (3): for facts annotated with a custom citation
+        // template, stripCitationForTemplate cannot reliably detect the inline
+        // marker and would hash the cited body — producing a hash that never
+        // matches what hasFactContentHash(rawContent) computes. A
+        // false-negative miss (the fact is not in the index) is preferable to
+        // a wrong index entry that permanently suppresses legitimate duplicate
+        // writes.
+        //
+        // Limitation (Thread 2 — stale hash): even when contentHash IS present
+        // it may be stale if updateMemory() rewrote the body without updating
+        // the frontmatter hash. The hash is trusted as-is here; a future
+        // migration pass can recompute it from the current content.
+        const content = memory.content;
+        // Use the configured template (Thread 1 fix): citationTemplate is set
+        // by the orchestrator to the active inlineSourceAttributionFormat so
+        // the rebuild can strip both the default and any custom template.
+        // Falls back to DEFAULT_CITATION_FORMAT when the orchestrator has not
+        // configured a custom template (e.g. direct StorageManager construction
+        // in tests).
+        const stripped = stripCitationForTemplate(content, this.citationTemplate);
+        if (stripped !== content) {
+          // Citation was stripped — index the bare body.
+          factHashIndex.addByHash(
+            ContentHashIndex.computeHash(sanitizeMemoryContent(stripped).text),
+          );
+          continue;
+        }
+        // No citation was removed. Decide whether to index or skip.
+        // Thread 4 fix: use hasCitation() rather than the too-broad endsWith("]")
+        // heuristic. Facts that legitimately end with "]" (e.g. "User prefers
+        // [dark mode]") have no citation marker and should be indexed as-is.
+        // Only skip when hasCitation() confirms a citation is present — that
+        // means the citation is from an unknown/custom template we cannot strip.
+        if (!hasCitation(content)) {
+          // Content has no recognisable citation marker — index raw body.
+          factHashIndex.addByHash(
+            ContentHashIndex.computeHash(sanitizeMemoryContent(content).text),
+          );
+          continue;
+        }
+        // Content carries a citation from an unknown/custom template
+        // that we cannot safely strip. Skip rather than index a wrong hash.
+        legacyRecovered++;
+        continue;
+      }
+      if (legacyRecovered > 0) {
+        log.info(
+          `ensureFactHashIndexAuthoritative: skipped ${legacyRecovered} legacy fact(s) with no contentHash in frontmatter`,
+        );
       }
       await factHashIndex.save();
       await mkdir(path.dirname(this.factHashIndexReadyPath), { recursive: true });
@@ -1075,6 +1183,18 @@ export class StorageManager {
       memoryKind?: MemoryFrontmatter["memoryKind"];
       expiresAt?: string;
       structuredAttributes?: Record<string, string>;
+      /**
+       * When provided, this string is used as the source for the fact-content
+       * dedup hash index instead of the persisted body (`content`).
+       *
+       * Use this when the persisted body differs from the canonical fact text
+       * — for example when `content` is a citation-annotated variant of a raw
+       * fact. Passing the raw fact as `contentHashSource` ensures that
+       * `hasFactContentHash(rawFact)` returns `true` after the write, so
+       * subsequent extractions of the same logical fact are correctly deduped
+       * even when their citation timestamp differs.
+       */
+      contentHashSource?: string;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -1132,6 +1252,19 @@ export class StorageManager {
     if (!sanitized.clean) {
       log.warn(`memory content sanitized for ${id}; violations=${sanitized.violations.join(", ")}`);
     }
+
+    // Persist the raw-content dedup hash on the frontmatter so archive and
+    // consolidation paths can remove the correct hash from ContentHashIndex
+    // regardless of what citation format (if any) has been appended to the
+    // stored body. Mirrors the logic in the fact-hash-index update below.
+    if (category === "fact") {
+      const hashSource =
+        options.contentHashSource !== undefined && options.contentHashSource.length > 0
+          ? sanitizeMemoryContent(options.contentHashSource).text
+          : sanitized.text;
+      fm.contentHash = ContentHashIndex.computeHash(hashSource);
+    }
+
     const fileContent = `${serializeFrontmatter(fm)}\n\n${sanitized.text}\n`;
 
     let filePath: string;
@@ -1157,7 +1290,16 @@ export class StorageManager {
     if (category === "fact") {
       try {
         const factHashIndex = await this.getFactHashIndex();
-        factHashIndex.add(sanitized.text);
+        // When the caller provides a separate contentHashSource (e.g. the raw
+        // fact text before citation annotation), index THAT string so that
+        // hasFactContentHash(rawFact) returns true on subsequent extractions.
+        // Otherwise fall back to the sanitized persisted body as before.
+        if (options.contentHashSource !== undefined && options.contentHashSource.length > 0) {
+          const hashSourceSanitized = sanitizeMemoryContent(options.contentHashSource);
+          factHashIndex.add(hashSourceSanitized.text);
+        } else {
+          factHashIndex.add(sanitized.text);
+        }
         await factHashIndex.save();
       } catch (err) {
         log.warn(`storage.writeMemory completed but failed to update fact hash index: ${err}`);

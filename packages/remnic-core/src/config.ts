@@ -1018,6 +1018,14 @@ export function parseConfig(raw: unknown): PluginConfig {
       }
       return "low";
     })(),
+    // Inline source attribution (issue #369). Opt-in to preserve
+    // backwards compatibility with existing downstream consumers.
+    inlineSourceAttributionEnabled: cfg.inlineSourceAttributionEnabled === true,
+    inlineSourceAttributionFormat:
+      typeof cfg.inlineSourceAttributionFormat === "string" &&
+      cfg.inlineSourceAttributionFormat.trim().length > 0
+        ? cfg.inlineSourceAttributionFormat
+        : "[Source: agent={agent}, session={sessionId}, ts={ts}]",
     consolidationRequireNonZeroExtraction: cfg.consolidationRequireNonZeroExtraction !== false,
     consolidationMinIntervalMs:
       typeof cfg.consolidationMinIntervalMs === "number" ? cfg.consolidationMinIntervalMs : 10 * 60_000,

@@ -409,6 +409,21 @@ export interface PluginConfig {
    * silently dropped while everything else still passes.
    */
   extractionMinImportanceLevel: ImportanceLevel;
+  /**
+   * Inline source attribution (issue #369).
+   * When enabled, extracted facts carry a compact provenance tag (agent,
+   * session, timestamp) inlined into the fact text — not just in YAML
+   * frontmatter — so the citation survives prompt injection, copy/paste,
+   * and LLM quoting. Off by default to preserve backwards compatibility
+   * with existing downstream consumers that expect raw fact text.
+   */
+  inlineSourceAttributionEnabled: boolean;
+  /**
+   * Template used when injecting inline citations. Supported placeholders:
+   * `{agent}`, `{session}`, `{sessionId}`, `{ts}`, `{date}`. Defaults to
+   * `[Source: agent={agent}, session={sessionId}, ts={ts}]`.
+   */
+  inlineSourceAttributionFormat: string;
   consolidationRequireNonZeroExtraction: boolean;
   consolidationMinIntervalMs: number;
   // QMD maintenance (debounced singleflight)
@@ -1091,6 +1106,17 @@ export interface MemoryFrontmatter {
   memoryKind?: "episode" | "note";
   /** Structured key-value attributes extracted from the content (e.g., product attributes, dates, quantities). */
   structuredAttributes?: Record<string, string>;
+  /**
+   * SHA-256 (via ContentHashIndex.computeHash) of the raw content that was
+   * used as the dedup key at write time. Persists through archive and
+   * consolidation so the hash can be removed from the index even if the stored
+   * content has been transformed (e.g. an inline citation was appended).
+   *
+   * When present, archive/consolidation paths use this directly instead of
+   * calling stripCitation(memory.content), which only handles the default
+   * [Source: ...] format and silently fails for custom citation templates.
+   */
+  contentHash?: string;
 }
 
 /** Memory link relationship types */

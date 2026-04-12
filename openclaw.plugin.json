@@ -1521,6 +1521,16 @@
         "default": "low",
         "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
       },
+      "inlineSourceAttributionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inline source attribution protocol (issue #369). When true, extracted facts carry a compact provenance tag inline in the fact body (agent, session, timestamp) so the citation survives prompt injection, copy/paste, and LLM quoting. Off by default to preserve backwards compatibility with downstream consumers that expect raw fact text."
+      },
+      "inlineSourceAttributionFormat": {
+        "type": "string",
+        "default": "[Source: agent={agent}, session={sessionId}, ts={ts}]",
+        "description": "Template used when injecting inline source citations. Placeholders: {agent}, {session}, {sessionId}, {ts}, {date}. Only used when inlineSourceAttributionEnabled is true."
+      },
       "extractionMinUserTurns": {
         "type": "number",
         "default": 1,
