@@ -1152,9 +1152,30 @@ const pluginDefinition = {
         const lastRecall = orchestrator.getLastRecall(sessionKey);
         const memoryIds = lastRecall?.memoryIds ?? [];
         if (!context) {
+          const auxiliarySummary =
+            summarizeRecallTextForStatus(activeRecallResult?.summary ?? null) ??
+            summarizeRecallTextForStatus(
+              [...dreamLines, ...activeRecallLines].join(" "),
+            ) ??
+            (verboseRequested
+              ? "Remnic recall metadata injected without matching memory context."
+              : null);
+          const verboseLines = verboseRequested
+            ? buildVerboseRecallHeader({
+                sessionKey,
+                agentId,
+                latencyMs: lastRecall?.latencyMs,
+                memoryIds,
+                plannerMode: lastRecall?.plannerMode,
+                toggleState: auditToggleState,
+                summary: auxiliarySummary,
+              })
+            : [];
+          const mergedLines = [...verboseLines, ...dreamLines, ...activeRecallLines];
+          const auxiliaryPrompt = mergedLines.join("\n").replace(/\n$/, "");
           lastRecallSummaryBySession.set(
             sessionKey,
-            summarizeRecallTextForStatus(activeRecallResult?.summary ?? null),
+            auxiliarySummary,
           );
           if (cfg.recallTranscriptsEnabled) {
             await appendRecallAuditEntry(recallAuditDir, {
@@ -1164,8 +1185,8 @@ const pluginDefinition = {
               trigger: hookLabel,
               queryText: prompt.slice(0, 2000),
               candidateMemoryIds: memoryIds,
-              summary: null,
-              injectedChars: 0,
+              summary: auxiliarySummary,
+              injectedChars: auxiliaryPrompt.length,
               toggleState: auditToggleState,
               latencyMs: lastRecall?.latencyMs,
               plannerMode: lastRecall?.plannerMode,
@@ -1175,28 +1196,15 @@ const pluginDefinition = {
               log.debug(`recall audit append failed: ${String(error)}`);
             });
           }
-          if (activeRecallLines.length === 0 && dreamLines.length === 0 && !verboseRequested) return;
-          const verboseLines = verboseRequested
-            ? buildVerboseRecallHeader({
-                sessionKey,
-                agentId,
-                latencyMs: lastRecall?.latencyMs,
-                memoryIds,
-                plannerMode: lastRecall?.plannerMode,
-                toggleState: auditToggleState,
-                summary: null,
-              })
-            : [];
-          const mergedLines = [...verboseLines, ...dreamLines, ...activeRecallLines];
-          const verbosePrompt = mergedLines.join("\n").replace(/\n$/, "");
+          if (mergedLines.length === 0) return;
           if (hookLabel === "before_prompt_build") {
             return useMemoryPromptSection
               ? { memoryLines: mergedLines }
-              : { prependSystemContext: verbosePrompt, memoryLines: mergedLines };
+              : { prependSystemContext: auxiliaryPrompt, memoryLines: mergedLines };
           }
           return {
-            prependSystemContext: verbosePrompt,
-            prependContext: verbosePrompt,
+            prependSystemContext: auxiliaryPrompt,
+            prependContext: auxiliaryPrompt,
             memoryLines: mergedLines,
           };
         }

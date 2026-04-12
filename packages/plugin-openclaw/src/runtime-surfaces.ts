@@ -363,7 +363,7 @@ function detectHeartbeatSlug(
   const searchableTags = (memory.frontmatter.tags ?? []).filter(
     (tag) => !tag.startsWith("heartbeat:"),
   );
-  const haystack = `${memory.content}\n${searchableTags.join(" ")}`.toLowerCase();
+  const haystack = `${memory.content}\n${searchableTags.join(" ")}`;
   const matches = entries.filter((entry) => {
     if (matchesDelimitedPhrase(haystack, entry.title)) return true;
     return matchesDelimitedPhrase(haystack, entry.slug);

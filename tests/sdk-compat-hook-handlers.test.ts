@@ -475,6 +475,78 @@ test("before_prompt_build prepends recent dreams when dreaming injection is enab
   assert.match(String(result?.prependSystemContext ?? ""), /First dream/);
 });
 
+test("before_prompt_build records auxiliary-only dream injection in recall audit transcripts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-auxiliary-recall-audit-"));
+  await writeFile(
+    path.join(root, "DREAMS.md"),
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T09:00:00Z — Second dream*",
+      "",
+      "The second dream body.",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-auxiliary-audit-test");
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    recallTranscriptsEnabled: true,
+    dreaming: {
+      enabled: true,
+      journalPath: "DREAMS.md",
+      injectRecentCount: 1,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => null;
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
+    { prompt: "Any dream context?", verbose: true },
+    { sessionKey: "session-e", agentId: "main", workspaceDir: root },
+  );
+
+  assert.equal(result, undefined);
+  assert.match(
+    String((api._memoryPromptSection?.({ sessionKey: "session-e" }) ?? []).join("\n")),
+    /The second dream body/,
+  );
+
+  const auditPath = path.join(
+    root,
+    "state",
+    "plugins",
+    "openclaw-remnic",
+    "transcripts",
+    new Date().toISOString().slice(0, 10),
+    `${encodeURIComponent("session-e")}.jsonl`,
+  );
+  const lines = (await readFile(auditPath, "utf8")).trim().split("\n");
+  assert.equal(lines.length, 1);
+  const parsed = JSON.parse(lines[0] ?? "{}") as {
+    summary?: string | null;
+    injectedChars?: number;
+  };
+  assert.match(String(parsed.summary ?? ""), /The second dream body/);
+  assert.ok((parsed.injectedChars ?? 0) > 0);
+});
+
 test("before_prompt_build avoids double-injecting auxiliary no-recall context when memory prompt sections are enabled", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-no-recall-aux-section-"));
   await writeFile(
