@@ -107,6 +107,19 @@ function isSurfaceMemory(memory: MemoryFile, surfaceType: string): boolean {
   return memory.frontmatter.structuredAttributes?.[SURFACE_TYPE_KEY] === surfaceType;
 }
 
+function findUniqueSurfaceMemoryBySlug(
+  memories: MemoryFile[],
+  surfaceType: string,
+  slug: string,
+): MemoryFile | null {
+  const matches = memories.filter(
+    (memory) =>
+      isSurfaceMemory(memory, surfaceType) &&
+      memory.frontmatter.structuredAttributes?.[HEARTBEAT_SLUG_KEY] === slug,
+  );
+  return matches.length === 1 ? matches[0] ?? null : null;
+}
+
 async function patchMemory(
   storage: RuntimeSurfaceStorage,
   memory: MemoryFile,
@@ -276,10 +289,6 @@ export async function syncHeartbeatSurfaceEntries(params: {
 }): Promise<SurfaceSyncResult> {
   const { storage, entries, journalPath, reindexMemory } = params;
   const memories = await storage.readAllMemories();
-  const slugCounts = new Map<string, number>();
-  for (const entry of entries) {
-    slugCounts.set(entry.slug, (slugCounts.get(entry.slug) ?? 0) + 1);
-  }
   let created = 0;
   let updated = 0;
 
@@ -294,16 +303,9 @@ export async function syncHeartbeatSurfaceEntries(params: {
       remnicHeartbeatSourceOffset: String(entry.sourceOffset),
       ...(entry.schedule ? { remnicHeartbeatSchedule: entry.schedule } : {}),
     };
-    const allowSlugFallback = (slugCounts.get(entry.slug) ?? 0) === 1;
     const existing =
       findSurfaceMemoryByAttribute(memories, HEARTBEAT_ENTRY_ID_KEY, entry.id) ??
-      (allowSlugFallback
-        ? (memories.find(
-            (memory) =>
-              isSurfaceMemory(memory, HEARTBEAT_SURFACE_TYPE) &&
-              memory.frontmatter.structuredAttributes?.[HEARTBEAT_SLUG_KEY] === entry.slug,
-          ) ?? null)
-        : null);
+      findUniqueSurfaceMemoryBySlug(memories, HEARTBEAT_SURFACE_TYPE, entry.slug);
 
     if (!existing) {
       const memoryId = await storage.writeMemory("principle", content, {

@@ -554,22 +554,15 @@ test("syncHeartbeatSurfaceEntries reuses memories created earlier in the same ba
     journalPath: "/workspace/HEARTBEAT.md",
   });
 
-  assert.deepEqual(result, { created: 2, updated: 0, linked: 0 });
-  assert.equal(storage.memories.length, 2);
+  assert.deepEqual(result, { created: 1, updated: 1, linked: 0 });
+  assert.equal(storage.memories.length, 1);
   assert.equal(
     storage.memories[0]?.frontmatter.structuredAttributes?.remnicHeartbeatEntryId,
-    "heartbeat-a",
-  );
-  assert.equal(
-    storage.memories[1]?.frontmatter.structuredAttributes?.remnicHeartbeatEntryId,
     "heartbeat-b",
   );
+  assert.match(storage.memories[0]?.content ?? "", /compare to the last run/);
   assert.equal(
     storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
-    "check-test-suite",
-  );
-  assert.equal(
-    storage.memories[1]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
     "check-test-suite",
   );
 });
