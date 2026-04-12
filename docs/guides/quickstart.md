@@ -76,6 +76,19 @@ The slash commands still use the legacy `/engram:*` names during the v1.x compat
 
 Then open Codex CLI and start a new session — it already knows your preference.
 
+### Get a daily briefing
+
+Once you have memories flowing in, generate a focused summary of what changed recently:
+
+```bash
+remnic briefing                          # yesterday, markdown, no save
+remnic briefing --since 3d               # last 72 hours
+remnic briefing --focus project:alpha    # scoped to one project
+remnic briefing --format json --save     # save a dated JSON file
+```
+
+The briefing cross-references active entities, recent facts, and open commitments. If `OPENAI_API_KEY` is set, it also appends a short list of suggested follow-ups via the Responses API. See [Daily Briefing](./daily-briefing.md) for the full guide.
+
 ## Already Using OpenClaw?
 
 If you're an existing OpenClaw user:

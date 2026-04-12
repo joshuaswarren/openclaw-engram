@@ -112,6 +112,7 @@ function createFakeService(): EngramAccessService {
       runId: "gov-1",
       reviewQueue: [{ memoryId: "fact-1", reasonCode: "disputed_memory" }],
     }),
+    briefingEnabled: true,
   } as unknown as EngramAccessService;
 }
 
@@ -197,6 +198,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.memory_feedback",
     "engram.memory_promote",
     "engram.context_checkpoint",
+    "engram.briefing",
   ];
   const canonicalListed = legacyListed.map((name) => name.replace(/^engram\./, "remnic."));
   assert.deepEqual(listed, legacyListed.flatMap((name, index) => [canonicalListed[index], name]));

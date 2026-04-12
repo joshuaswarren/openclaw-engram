@@ -63,6 +63,13 @@ import {
   generateContextTree,
   migrateFromEngram,
   rollbackFromEngramMigration,
+  buildBriefing,
+  parseBriefingWindow,
+  parseBriefingFocus,
+  validateBriefingFormat,
+  resolveBriefingSaveDir,
+  briefingFilename,
+  FileCalendarSource,
 } from "@remnic/core";
 import {
   runBenchSuite,
@@ -73,6 +80,8 @@ import {
   type BenchConfig,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
+export { hasFlag, resolveFlag } from "./cli-args.js";
+import { hasFlag, resolveFlag } from "./cli-args.js";
 import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
 
 export { parseConnectorConfig, stripConfigArgv };
@@ -96,7 +105,8 @@ type CommandName =
   | "dedup"
   | "connectors"
   | "space"
-  | "benchmark";
+  | "benchmark"
+  | "briefing";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
@@ -188,11 +198,6 @@ function resolveMemoryDir(): string {
   }
 
   return configMemoryDir;
-}
-
-function resolveFlag(args: string[], flag: string): string | undefined {
-  const idx = args.indexOf(flag);
-  return idx !== -1 && idx + 1 < args.length ? args[idx + 1] : undefined;
 }
 
 // ── Commands ─────────────────────────────────────────────────────────────────
@@ -302,6 +307,127 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
     }
     for (const m of memories) {
       console.log(`- ${m.content}`);
+    }
+  }
+}
+
+async function cmdBriefing(rest: string[]): Promise<void> {
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+
+  if (!config.briefing.enabled) {
+    console.error("Briefing is disabled in config (briefing.enabled = false).");
+    process.exit(1);
+  }
+
+  const sinceFlag = resolveFlag(rest, "--since");
+  const focusFlag = resolveFlag(rest, "--focus");
+  const formatFlag = resolveFlag(rest, "--format");
+  const save = rest.includes("--save") || config.briefing.saveByDefault;
+
+  if (hasFlag(rest, "--since") && sinceFlag === undefined) {
+    console.error("Missing value for --since. Accepted: yesterday, today, NNh, NNd, NNw.");
+    process.exit(1);
+  }
+
+  if (hasFlag(rest, "--format") && formatFlag === undefined) {
+    console.error("Missing value for --format. Accepted: markdown, json.");
+    process.exit(1);
+  }
+
+  // Guard --focus the same way: if the flag is present but has no trailing
+  // value (or the next token is another flag like `--save`), reject it rather
+  // than silently consuming the next flag as the focus filter.
+  if (hasFlag(rest, "--focus") && (focusFlag === undefined || focusFlag.startsWith("--"))) {
+    console.error(
+      "Missing value for --focus. Expected: project:<id>, topic:<name>, or person:<id>.",
+    );
+    process.exit(1);
+  }
+
+  const token = sinceFlag ?? config.briefing.defaultWindow;
+  const window = parseBriefingWindow(token);
+  if (!window) {
+    console.error(
+      `Invalid --since value: ${token}. Accepted: yesterday, today, NNh, NNd, NNw.`,
+    );
+    process.exit(1);
+  }
+
+  // Validate --focus: only treat undefined / empty strings as "no filter".
+  // Anything else that parses to null (e.g. "project:", "topic:") is malformed
+  // and must be rejected so a templating miss never silently broadens the
+  // briefing from a targeted view to all memories. Mirrors the access-service
+  // rejection in packages/remnic-core/src/access-service.ts.
+  const rawFocus = typeof focusFlag === "string" ? focusFlag.trim() : "";
+  const focus = rawFocus.length > 0 ? parseBriefingFocus(rawFocus) : null;
+  if (rawFocus.length > 0 && !focus) {
+    console.error(
+      `Invalid --focus value: expected project:<id>, topic:<name>, or person:<id>, got: ${focusFlag}`,
+    );
+    process.exit(1);
+  }
+  // Honor the global --json flag: treat it as shorthand for --format json.
+  // If both --json and --format are supplied and they conflict, fail fast.
+  const jsonFlag = rest.includes("--json");
+  if (jsonFlag && formatFlag !== undefined && formatFlag !== "json") {
+    console.error(
+      `Conflicting flags: --json and --format ${formatFlag}. Use one or the other.`,
+    );
+    process.exit(1);
+  }
+  const effectiveFormatFlag = jsonFlag ? "json" : formatFlag;
+  const formatError = validateBriefingFormat(effectiveFormatFlag);
+  if (formatError) {
+    console.error(formatError);
+    process.exit(1);
+  }
+  const format: "markdown" | "json" =
+    effectiveFormatFlag === "json" ? "json" : effectiveFormatFlag === "markdown" ? "markdown" : config.briefing.defaultFormat;
+
+  const orchestrator = new Orchestrator(config);
+  await orchestrator.initialize();
+  const storage = await orchestrator.getStorage(config.defaultNamespace);
+
+  const calendarSource = config.briefing.calendarSource
+    ? new FileCalendarSource(config.briefing.calendarSource)
+    : undefined;
+
+  const result = await buildBriefing({
+    storage,
+    window,
+    focus,
+    namespace: config.defaultNamespace,
+    calendarSource,
+    maxFollowups: config.briefing.maxFollowups,
+    allowLlm: config.briefing.llmFollowups,
+    openaiApiKey: config.openaiApiKey,
+    openaiBaseUrl: config.openaiBaseUrl,
+    model: config.model,
+  });
+
+  const payload = format === "json" ? JSON.stringify(result.json, null, 2) : result.markdown;
+  console.log(payload);
+
+  if (save) {
+    try {
+      const saveDir = resolveBriefingSaveDir(config.briefing.saveDir);
+      fs.mkdirSync(saveDir, { recursive: true });
+      // Use the window's end time (not wall-clock) so the filename is stable
+      // regardless of when the command runs — a briefing covering --since 3d
+      // gets the same name whether run just before or after UTC midnight.
+      const filename = briefingFilename(new Date(result.window.to), format);
+      const filePath = path.join(saveDir, filename);
+      fs.writeFileSync(filePath, payload + (payload.endsWith("\n") ? "" : "\n"));
+      console.error(`Saved briefing: ${filePath}`);
+    } catch (err) {
+      console.error(`Failed to save briefing: ${err instanceof Error ? err.message : String(err)}`);
+      process.exit(1);
     }
   }
 }
@@ -1507,6 +1633,11 @@ Options:
       break;
     }
 
+    case "briefing": {
+      await cmdBriefing(rest);
+      break;
+    }
+
     default:
       console.log(`
 remnic — Remnic memory CLI
@@ -1531,6 +1662,9 @@ Usage:
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
   remnic benchmark <run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
+  remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
+    Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
+    Focus: person:<name>, project:<name>, topic:<name>.
 
 Options:
   --json    Output in JSON format

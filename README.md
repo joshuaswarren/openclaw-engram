@@ -648,6 +648,11 @@ openclaw engram consolidate                  # Run standard consolidation
 openclaw engram semantic-consolidate         # Run semantic dedup consolidation
 openclaw engram semantic-consolidate --dry-run  # Preview without changes
 
+# Daily context briefing (#370)
+remnic briefing                                  # Yesterday's briefing (markdown)
+remnic briefing --since 3d --focus project:alpha # Focused 3-day lookback
+remnic briefing --format json --save             # JSON + dated file in $REMNIC_HOME/briefings
+
 # Access layer
 remnic daemon start                # Start HTTP API + managed daemon
 openclaw engram access mcp-serve   # Start OpenClaw-hosted stdio MCP server

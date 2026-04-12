@@ -1618,6 +1618,8 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? Math.max(0, Math.floor(cfg.parallelMaxResultsPerAgent))
         : 20,
 
+    briefing: parseBriefingConfig(cfg.briefing),
+
     // Codex CLI connector settings (install-time)
     codex: (() => {
       const raw =
@@ -1652,6 +1654,41 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 30,
     codexMaterializeOnConsolidation: cfg.codexMaterializeOnConsolidation !== false,
     codexMaterializeOnSessionEnd: cfg.codexMaterializeOnSessionEnd !== false,
+  };
+}
+
+function parseBriefingConfig(raw: unknown): import("./types.js").BriefingConfig {
+  const entry =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const defaultFormat =
+    entry.defaultFormat === "json" || entry.defaultFormat === "markdown"
+      ? (entry.defaultFormat as "markdown" | "json")
+      : "markdown";
+  const maxFollowupsRaw =
+    typeof entry.maxFollowups === "number" && Number.isFinite(entry.maxFollowups)
+      ? Math.floor(entry.maxFollowups)
+      : 5;
+  const maxFollowups = Math.max(0, Math.min(10, maxFollowupsRaw));
+  return {
+    enabled: entry.enabled !== false,
+    defaultWindow:
+      typeof entry.defaultWindow === "string" && entry.defaultWindow.trim().length > 0
+        ? entry.defaultWindow.trim()
+        : "yesterday",
+    defaultFormat,
+    maxFollowups,
+    calendarSource:
+      typeof entry.calendarSource === "string" && entry.calendarSource.trim().length > 0
+        ? entry.calendarSource.trim()
+        : null,
+    saveByDefault: entry.saveByDefault === true,
+    saveDir:
+      typeof entry.saveDir === "string" && entry.saveDir.trim().length > 0
+        ? entry.saveDir.trim()
+        : null,
+    llmFollowups: entry.llmFollowups !== false,
   };
 }
 

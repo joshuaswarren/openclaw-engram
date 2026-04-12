@@ -42,6 +42,12 @@ import type {
 } from "./orchestrator.js";
 import { parseEntityFile } from "./storage.js";
 import {
+  buildBriefing,
+  FileCalendarSource,
+  parseBriefingFocus,
+  parseBriefingWindow,
+} from "./briefing.js";
+import {
   getTrustZoneStoreStatus,
   isTrustZoneName,
   listTrustZoneRecords,
@@ -148,6 +154,27 @@ export interface EngramAccessDaySummaryRequest {
   memories?: string;
   sessionKey?: string;
   namespace?: string;
+}
+
+/** Inputs accepted by the `remnic_briefing` MCP tool. */
+export interface EngramAccessBriefingRequest {
+  since?: string;
+  focus?: string;
+  namespace?: string;
+  format?: "markdown" | "json";
+  maxFollowups?: number;
+  /** Caller principal for namespace access checks. Transport-bound — never from untrusted payloads. */
+  principal?: string;
+}
+
+/** Response for `remnic_briefing`. */
+export interface EngramAccessBriefingResponse {
+  format: "markdown" | "json";
+  window: { from: string; to: string };
+  namespace: string;
+  markdown: string;
+  json: Record<string, unknown>;
+  followupsUnavailableReason?: string;
 }
 
 export interface EngramAccessMemoryRecord {
@@ -589,6 +616,10 @@ export class EngramAccessService {
     this.idempotency = new AccessIdempotencyStore(orchestrator.config.memoryDir);
   }
 
+  get briefingEnabled(): boolean {
+    return this.orchestrator.config.briefing?.enabled === true;
+  }
+
   private resolveNamespace(namespace?: string): string {
     const requested = namespace?.trim();
     if (!requested) return this.orchestrator.config.defaultNamespace;
@@ -638,7 +669,24 @@ export class EngramAccessService {
 
   private resolveReadableNamespace(namespace: string | undefined, principal?: string): string {
     const resolved = this.resolveNamespace(namespace);
-    if (principal && !canReadNamespace(principal, resolved, this.orchestrator.config)) {
+    const namespacesEnabled = this.orchestrator.config.namespacesEnabled;
+
+    if (!namespacesEnabled) {
+      // Namespaces are disabled globally — no ACL needed for any caller.
+      return resolved;
+    }
+
+    // Namespaces are enabled.  An absent principal means the caller is
+    // unauthenticated.  Unauthenticated callers must NOT be allowed to read
+    // arbitrary namespaces: that would bypass all readPrincipals policies.
+    if (!principal) {
+      throw new EngramAccessInputError(
+        "authentication required: namespaces are enabled and no principal was supplied",
+      );
+    }
+
+    // Authenticated caller — enforce the namespace ACL as normal.
+    if (!canReadNamespace(principal, resolved, this.orchestrator.config)) {
       throw new EngramAccessInputError(`namespace is not readable: ${resolved}`);
     }
     return resolved;
@@ -815,6 +863,95 @@ export class EngramAccessService {
       return this.orchestrator.generateDaySummaryAuto(namespace);
     }
     return this.orchestrator.generateDaySummary(memories);
+  }
+
+  /**
+   * Build a daily context briefing. Gracefully degrades when the OpenAI key
+   * or Responses API is unavailable — never throws for LLM-related problems.
+   */
+  async briefing(
+    request: EngramAccessBriefingRequest,
+  ): Promise<EngramAccessBriefingResponse> {
+    const config = this.orchestrator.config;
+    if (!config.briefing.enabled) {
+      throw new EngramAccessInputError("briefing is disabled");
+    }
+
+    const namespace = this.resolveReadableNamespace(request.namespace, request.principal);
+    const storage = await this.orchestrator.getStorage(namespace);
+
+    const token = typeof request.since === "string" && request.since.trim().length > 0
+      ? request.since.trim()
+      : config.briefing.defaultWindow;
+    const window = parseBriefingWindow(token);
+    if (!window) {
+      throw new EngramAccessInputError(`invalid briefing window: ${token}`);
+    }
+
+    // Validate focus: only treat undefined / empty strings as "no filter".
+    // Anything else that parses to null (e.g. "project:", "topic:") is malformed
+    // and must be rejected so a templating miss never silently broadens the
+    // briefing from a targeted project view to all memories.
+    const rawFocus = typeof request.focus === "string" ? request.focus.trim() : "";
+    let focus = null;
+    if (rawFocus.length > 0) {
+      focus = parseBriefingFocus(rawFocus);
+      if (!focus) {
+        throw new EngramAccessInputError(
+          `invalid briefing focus filter: ${request.focus}`,
+        );
+      }
+    }
+
+    // Reject unsupported format values explicitly.  Programmatic callers that
+    // bypass CLI/MCP pre-validation (which already use validateBriefingFormat)
+    // could otherwise send a typo like "jsno" and silently receive a response
+    // in the default format, masking the client bug and breaking format-dependent
+    // automation.  Only undefined / absent format falls through to the default.
+    const SUPPORTED_FORMATS = ["markdown", "json"] as const;
+    if (
+      typeof request.format === "string" &&
+      !(SUPPORTED_FORMATS as readonly string[]).includes(request.format)
+    ) {
+      throw new EngramAccessInputError(
+        `unsupported briefing format: "${request.format}". Accepted: ${SUPPORTED_FORMATS.join(", ")}.`,
+      );
+    }
+    const format: "markdown" | "json" = request.format === "json"
+      ? "json"
+      : request.format === "markdown"
+        ? "markdown"
+        : config.briefing.defaultFormat;
+
+    const maxFollowups = typeof request.maxFollowups === "number" && Number.isFinite(request.maxFollowups)
+      ? Math.max(0, Math.min(10, Math.floor(request.maxFollowups)))
+      : config.briefing.maxFollowups;
+
+    const calendarSource = config.briefing.calendarSource
+      ? new FileCalendarSource(config.briefing.calendarSource)
+      : undefined;
+
+    const result = await buildBriefing({
+      storage,
+      namespace,
+      window,
+      focus,
+      calendarSource,
+      maxFollowups,
+      allowLlm: config.briefing.llmFollowups,
+      openaiApiKey: config.openaiApiKey,
+      openaiBaseUrl: config.openaiBaseUrl,
+      model: config.model,
+    });
+
+    return {
+      format,
+      window: result.window,
+      namespace,
+      markdown: result.markdown,
+      json: result.json,
+      followupsUnavailableReason: result.followupsUnavailableReason,
+    };
   }
 
   async recall(request: EngramAccessRecallRequest): Promise<EngramAccessRecallResponse> {

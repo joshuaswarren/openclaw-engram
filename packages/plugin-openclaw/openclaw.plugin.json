@@ -2922,6 +2922,20 @@
         "type": "number",
         "default": 20,
         "description": "Maximum results fetched per agent before merge."
+      },
+      "briefing": {
+        "type": "object",
+        "default": {
+          "enabled": true,
+          "defaultWindow": "yesterday",
+          "defaultFormat": "markdown",
+          "maxFollowups": 5,
+          "calendarSource": null,
+          "saveByDefault": false,
+          "saveDir": null,
+          "llmFollowups": true
+        },
+        "description": "Daily Context Briefing (#370). Knobs: enabled, defaultWindow ('yesterday', '3d', '1w', '24h', ...), defaultFormat (markdown|json), maxFollowups (0-10), calendarSource (path to ICS/JSON file, null = off), saveByDefault, saveDir (null = $REMNIC_HOME/briefings/), llmFollowups (disable to skip Responses API calls)."
       }
     }
   },

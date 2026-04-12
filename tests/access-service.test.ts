@@ -2135,12 +2135,12 @@ test("access service maintenance uses namespace-scoped health metadata", async (
       getStorage: async (namespace?: string) => (namespace === "project-x" ? projectStorage : globalStorage),
     } as any);
 
-    const maintenance = await service.maintenance("project-x");
+    const maintenance = await service.maintenance("project-x", "project-x");
     assert.equal(maintenance.namespace, "project-x");
     assert.equal(maintenance.health.memoryDir, projectDir);
     assert.equal(maintenance.health.projectionAvailable, true);
 
-    const globalMaintenance = await service.maintenance("global");
+    const globalMaintenance = await service.maintenance("global", "test-user");
     assert.equal(globalMaintenance.health.memoryDir, globalDir);
     assert.equal(globalMaintenance.health.projectionAvailable, false);
   } finally {
@@ -2287,4 +2287,203 @@ test("access service trust-zone browse reports promotions as blocked when promot
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
   }
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 3 (#396): briefing() must reject invalid window tokens
+// ──────────────────────────────────────────────────────────────────────────
+
+function createBriefingService() {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        {
+          name: "restricted-ns",
+          readPrincipals: ["trusted-agent"],
+          writePrincipals: ["trusted-agent"],
+        },
+      ],
+      defaultRecallNamespaces: ["global"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      briefing: {
+        enabled: true,
+        defaultWindow: "yesterday",
+        defaultFormat: "markdown",
+        maxFollowups: 0,
+        calendarSource: null,
+        saveByDefault: false,
+        saveDir: null,
+        llmFollowups: false,
+      },
+    },
+    recall: async () => "ctx",
+    lastRecall: { get: () => null, getMostRecent: () => null },
+    getStorage: async () => ({
+      readAllMemories: async () => [],
+      readAllEntityFiles: async () => [],
+      ensureDirectories: async () => {},
+    }),
+  };
+  return new EngramAccessService(orchestrator as any);
+}
+
+test("briefing() rejects invalid since token with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ since: "3x", principal: "test-user" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /invalid briefing window/.test(err.message),
+  );
+});
+
+test("briefing() rejects invalid since token even when a default exists", async () => {
+  const service = createBriefingService();
+  // The explicit since value overrides the config default — it must be validated.
+  await assert.rejects(
+    () => service.briefing({ since: "99z" }),
+    (err: unknown) => err instanceof EngramAccessInputError,
+  );
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Focus filter validation (#396 Codex follow-up): `parseBriefingFocus` returns
+// null for malformed values like "project:" (empty suffix). `briefing()` must
+// reject these explicitly so a templating miss in automation cannot silently
+// broaden a targeted project briefing into an unscoped, all-memories briefing.
+// ──────────────────────────────────────────────────────────────────────────
+
+test("briefing() rejects malformed focus filter 'project:' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ focus: "project:", principal: "test-user" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /invalid briefing focus filter/.test(err.message),
+  );
+});
+
+test("briefing() rejects malformed focus filter 'topic:' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ focus: "topic:", principal: "test-user" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /invalid briefing focus filter/.test(err.message),
+  );
+});
+
+test("briefing() accepts undefined focus (no filter applied)", async () => {
+  const service = createBriefingService();
+  // No focus supplied — the briefing should build normally.
+  const result = await service.briefing({ principal: "test-user" });
+  assert.ok(result, "briefing should succeed with no focus filter");
+});
+
+test("briefing() accepts empty-string focus as 'no filter'", async () => {
+  const service = createBriefingService();
+  // Empty / whitespace-only string is treated as absent, not malformed.
+  const result = await service.briefing({ focus: "   ", principal: "test-user" });
+  assert.ok(result, "briefing should succeed with whitespace-only focus");
+});
+
+test("briefing() accepts a well-formed focus filter 'project:remnic-core'", async () => {
+  const service = createBriefingService();
+  const result = await service.briefing({ focus: "project:remnic-core", principal: "test-user" });
+  assert.ok(result, "briefing should succeed with a valid focus filter");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// Finding 6 (#396): briefing() uses caller principal for namespace access
+// ──────────────────────────────────────────────────────────────────────────
+
+test("briefing() rejects when namespace is not readable by the caller principal", async () => {
+  const service = createBriefingService();
+  // "untrusted-agent" is not in the readPrincipals for "restricted-ns"
+  await assert.rejects(
+    () =>
+      service.briefing({
+        namespace: "restricted-ns",
+        principal: "untrusted-agent",
+      }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /namespace is not readable/.test(err.message),
+  );
+});
+
+test("briefing() allows access when namespace is readable by the caller principal", async () => {
+  const service = createBriefingService();
+  // "trusted-agent" is in readPrincipals for "restricted-ns"
+  const result = await service.briefing({
+    namespace: "restricted-ns",
+    principal: "trusted-agent",
+  });
+  assert.equal(result.namespace, "restricted-ns");
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// PRRT_kwDORJXyws56U_7P: Reject unsupported briefing formats in access service
+// ──────────────────────────────────────────────────────────────────────────
+// Direct / programmatic callers bypass CLI and MCP pre-validation layers.
+// Passing an unknown format must raise EngramAccessInputError rather than
+// silently falling back to the configured default format.
+
+test("briefing() rejects unsupported format 'jsno' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ format: "jsno" as never, principal: "test-user" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /unsupported briefing format/.test(err.message) &&
+      err.message.includes("jsno"),
+  );
+});
+
+test("briefing() rejects unsupported format 'xml' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ format: "xml" as never, principal: "test-user" }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      /unsupported briefing format/.test(err.message),
+  );
+});
+
+test("briefing() rejects unsupported format 'text' with EngramAccessInputError", async () => {
+  const service = createBriefingService();
+  await assert.rejects(
+    () => service.briefing({ format: "text" as never }),
+    (err: unknown) => err instanceof EngramAccessInputError,
+  );
+});
+
+test("briefing() accepts valid format 'markdown' without error", async () => {
+  const service = createBriefingService();
+  const result = await service.briefing({ format: "markdown", principal: "test-user" });
+  assert.equal(result.format, "markdown", "valid markdown format must be accepted");
+});
+
+test("briefing() accepts valid format 'json' without error", async () => {
+  const service = createBriefingService();
+  const result = await service.briefing({ format: "json", principal: "test-user" });
+  assert.equal(result.format, "json", "valid json format must be accepted");
+});
+
+test("briefing() accepts absent format (undefined) without error and uses default", async () => {
+  const service = createBriefingService();
+  // No format supplied — should use config.briefing.defaultFormat ("markdown").
+  const result = await service.briefing({ principal: "test-user" });
+  assert.ok(
+    result.format === "markdown" || result.format === "json",
+    "absent format must resolve to the configured default",
+  );
 });
