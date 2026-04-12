@@ -563,7 +563,9 @@ const pluginDefinition = {
             journalPath,
             maxEntries: cfg.dreaming.maxEntries,
             reindexMemory: async (id) => {
-              await orchestrator.reindexMemoryById(id);
+              await orchestrator.reindexMemoryById(id, {
+                storage: orchestrator.storage,
+              });
             },
           });
         });
@@ -582,14 +584,18 @@ const pluginDefinition = {
             entries,
             journalPath,
             reindexMemory: async (id) => {
-              await orchestrator.reindexMemoryById(id);
+              await orchestrator.reindexMemoryById(id, {
+                storage: orchestrator.storage,
+              });
             },
           });
           await syncHeartbeatOutcomeLinks({
             storage: orchestrator.storage,
             entries,
             reindexMemory: async (id) => {
-              await orchestrator.reindexMemoryById(id);
+              await orchestrator.reindexMemoryById(id, {
+                storage: orchestrator.storage,
+              });
             },
             logger: {
               debug: (message) => log.debug(message),
@@ -859,7 +865,9 @@ const pluginDefinition = {
         storage: heartbeatStorage,
         entries,
         reindexMemory: async (id) => {
-          await orchestrator.reindexMemoryById(id);
+          await orchestrator.reindexMemoryById(id, {
+            storage: heartbeatStorage,
+          });
         },
       });
 

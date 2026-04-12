@@ -261,3 +261,46 @@ test("boostSearchResults can opt dedicated surfaces back into explicit recall fl
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
+
+test("reindexMemoryById indexes the provided storage and queues QMD maintenance", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-reindex-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-reindex-workspace-"));
+  try {
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      recencyWeight: 0,
+      boostAccessCount: false,
+      feedbackEnabled: false,
+      negativeExamplesEnabled: false,
+      intentRoutingEnabled: false,
+      queryAwareIndexingEnabled: false,
+      lifecyclePolicyEnabled: false,
+      lifecycleFilterStaleEnabled: false,
+    });
+    const orchestrator = new Orchestrator(config) as any;
+    const storage = { dir: "/tmp/custom-storage" };
+    let indexedStorage: unknown = null;
+    let indexedId: string | null = null;
+    let maintenanceRequests = 0;
+
+    orchestrator.indexPersistedMemory = async (targetStorage: unknown, memoryId: string) => {
+      indexedStorage = targetStorage;
+      indexedId = memoryId;
+    };
+    orchestrator.requestQmdMaintenance = () => {
+      maintenanceRequests += 1;
+    };
+
+    await orchestrator.reindexMemoryById("fact-1", { storage });
+
+    assert.equal(indexedStorage, storage);
+    assert.equal(indexedId, "fact-1");
+    assert.equal(maintenanceRequests, 1);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});

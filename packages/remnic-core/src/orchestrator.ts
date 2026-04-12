@@ -1981,8 +1981,12 @@ export class Orchestrator {
     return this.runConsolidation();
   }
 
-  async reindexMemoryById(id: string): Promise<void> {
-    await this.indexPersistedMemory(this.storage, id);
+  async reindexMemoryById(
+    id: string,
+    options?: { storage?: StorageManager },
+  ): Promise<void> {
+    await this.indexPersistedMemory(options?.storage ?? this.storage, id);
+    this.requestQmdMaintenance();
   }
 
   registerConsolidationObserver(

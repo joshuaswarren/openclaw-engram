@@ -168,3 +168,39 @@ test("heartbeat surface resolves entries by slug", async () => {
   assert.equal(surface.findBySlug(entries, "check-health")?.title, "check-health");
   assert.equal(surface.findBySlug(entries, "missing"), null);
 });
+
+test("heartbeat surface watch reacts when HEARTBEAT.md is created after startup", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-watch-create-"));
+  const heartbeatPath = path.join(root, "HEARTBEAT.md");
+  const surface = createHeartbeatSurface();
+
+  const entriesPromise = new Promise<Awaited<ReturnType<typeof surface.read>>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      stop();
+      reject(new Error("heartbeat watcher did not fire after file creation"));
+    }, 2000);
+    const stop = surface.watch(heartbeatPath, (entries) => {
+      clearTimeout(timeout);
+      stop();
+      resolve(entries);
+    });
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await writeFile(
+    heartbeatPath,
+    [
+      "## check-health",
+      "",
+      "Ping the health endpoint.",
+      "",
+      "Schedule: hourly",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const entries = await entriesPromise;
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.slug, "check-health");
+});
