@@ -595,7 +595,20 @@ function cmdDoctor(): void {
   });
 
   if (openclawConfigValid) {
-    const plugins = (openclawConfig.plugins ?? {}) as Record<string, unknown>;
+    const rawPlugins = openclawConfig.plugins;
+    const pluginsIsObject =
+      rawPlugins && typeof rawPlugins === "object" && !Array.isArray(rawPlugins);
+    if (!pluginsIsObject && rawPlugins !== undefined) {
+      checks.push({
+        name: "OpenClaw plugins",
+        ok: false,
+        detail: `plugins is ${typeof rawPlugins}, expected object`,
+        remediation: "Run `remnic openclaw install` to recreate the plugins section.",
+      });
+    }
+    const plugins = pluginsIsObject
+      ? rawPlugins as Record<string, unknown>
+      : {} as Record<string, unknown>;
     const entries =
       plugins.entries &&
       typeof plugins.entries === "object" &&
@@ -620,18 +633,27 @@ function cmdDoctor(): void {
     });
 
     if (entries) {
-      const hasNew = REMNIC_OPENCLAW_PLUGIN_ID in entries;
-      const hasLegacy = REMNIC_OPENCLAW_LEGACY_PLUGIN_ID in entries;
+      const isValidEntry = (v: unknown): boolean =>
+        typeof v === "object" && v !== null && !Array.isArray(v);
+      const hasNew = REMNIC_OPENCLAW_PLUGIN_ID in entries && isValidEntry(entries[REMNIC_OPENCLAW_PLUGIN_ID]);
+      const hasLegacy = REMNIC_OPENCLAW_LEGACY_PLUGIN_ID in entries && isValidEntry(entries[REMNIC_OPENCLAW_LEGACY_PLUGIN_ID]);
+      const keyExistsButMalformed =
+        (REMNIC_OPENCLAW_PLUGIN_ID in entries && !hasNew) ||
+        (REMNIC_OPENCLAW_LEGACY_PLUGIN_ID in entries && !hasLegacy);
       checks.push({
         name: "OpenClaw plugin entry",
         ok: hasNew,
-        warn: !hasNew && hasLegacy,
+        warn: (!hasNew && hasLegacy) || keyExistsButMalformed,
         detail: hasNew
           ? `${REMNIC_OPENCLAW_PLUGIN_ID} entry found`
           : hasLegacy
           ? `only legacy ${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID} entry found (upgrade recommended)`
+          : keyExistsButMalformed
+          ? "entry key exists but value is not a valid object"
           : "no Remnic entry found",
-        remediation: !hasNew && hasLegacy
+        remediation: keyExistsButMalformed
+          ? "Run `remnic openclaw install` to recreate the Remnic plugin entry with correct structure."
+          : !hasNew && hasLegacy
           ? `Run \`remnic openclaw install\` to migrate from the legacy ${REMNIC_OPENCLAW_LEGACY_PLUGIN_ID} to ${REMNIC_OPENCLAW_PLUGIN_ID}.`
           : !hasNew
           ? "Run `remnic openclaw install` to add the Remnic plugin entry."
