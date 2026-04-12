@@ -7669,7 +7669,7 @@ export class Orchestrator {
 
   async flushSession(
     sessionKey: string,
-    _options: { reason: string },
+    options: { reason: string; abortSignal?: AbortSignal },
   ): Promise<void> {
     const bufferKey =
       typeof sessionKey === "string" && sessionKey.length > 0
@@ -7681,6 +7681,7 @@ export class Orchestrator {
       bufferKey,
       clearBufferAfterExtraction: true,
       skipDedupeCheck: true,
+      abortSignal: options.abortSignal,
     });
   }
 
@@ -7762,7 +7763,10 @@ export class Orchestrator {
           );
           return;
         }
-        if (!this.shouldQueueExtraction(turns, { commit: false })) {
+        if (!this.shouldQueueExtraction(turns, {
+          commit: false,
+          bufferKey: sessionKey,
+        })) {
           log.debug(
             `heartbeat observer skipped: extraction dedupe for ${sessionKey}`,
           );
@@ -7804,11 +7808,13 @@ export class Orchestrator {
       extractionDeadlineMs?: number;
       onTaskSettled?: (error?: unknown) => void;
       bufferKey?: string;
+      abortSignal?: AbortSignal;
     } = {},
   ): Promise<void> {
+    const bufferKey = options.bufferKey ?? turnsToExtract[0]?.sessionKey ?? "default";
     if (
       !options.skipDedupeCheck &&
-      !this.shouldQueueExtraction(turnsToExtract)
+      !this.shouldQueueExtraction(turnsToExtract, { bufferKey })
     ) {
       log.debug(`extraction dedupe skip: preserving buffer (${reason})`);
       options.onTaskSettled?.();
@@ -7822,7 +7828,8 @@ export class Orchestrator {
             options.clearBufferAfterExtraction ?? true,
           skipCharThreshold: options.skipCharThreshold ?? false,
           deadlineMs: options.extractionDeadlineMs,
-          bufferKey: options.bufferKey,
+          bufferKey,
+          abortSignal: options.abortSignal,
         });
         options.onTaskSettled?.();
       } catch (err) {
@@ -7843,7 +7850,7 @@ export class Orchestrator {
 
   private shouldQueueExtraction(
     turns: BufferTurn[],
-    options: { commit?: boolean } = {},
+    options: { commit?: boolean; bufferKey?: string } = {},
   ): boolean {
     if (!this.config.extractionDedupeEnabled) return true;
     if (!Array.isArray(turns) || turns.length === 0) return false;
@@ -7858,7 +7865,10 @@ export class Orchestrator {
       .join("\n");
     if (!normalized) return false;
 
-    const fingerprint = createHash("sha256").update(normalized).digest("hex");
+    const bufferKey = options.bufferKey ?? turns[0]?.sessionKey ?? "default";
+    const fingerprint = createHash("sha256")
+      .update(`${bufferKey}\n${normalized}`)
+      .digest("hex");
     const now = Date.now();
     const seenAt = this.recentExtractionFingerprints.get(fingerprint);
     if (seenAt && now - seenAt < this.config.extractionDedupeWindowMs) {
@@ -7912,6 +7922,7 @@ export class Orchestrator {
       skipCharThreshold?: boolean;
       deadlineMs?: number;
       bufferKey?: string;
+      abortSignal?: AbortSignal;
     } = {},
   ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
@@ -7923,14 +7934,19 @@ export class Orchestrator {
       Number.isFinite(options.deadlineMs)
         ? options.deadlineMs
         : undefined;
+    const bufferKey = options.bufferKey ?? turns[0]?.sessionKey ?? "default";
     const throwIfDeadlineExceeded = (stage: string): void => {
       if (typeof deadlineMs === "number" && Date.now() > deadlineMs) {
         throw new Error(`replay extraction deadline exceeded (${stage})`);
       }
     };
+    const throwIfAborted = (stage: string): void => {
+      throwIfRecallAborted(options.abortSignal, `extraction aborted (${stage})`);
+    };
     const clearBuffer = async () => {
+      throwIfAborted("before_clear_buffer");
       if (clearBufferAfterExtraction) {
-        await this.buffer.clearAfterExtraction(options.bufferKey);
+        await this.buffer.clearAfterExtraction(bufferKey);
       }
     };
 
@@ -7954,6 +7970,7 @@ export class Orchestrator {
       }))
       .filter((t) => t.content.length > 0);
     throwIfDeadlineExceeded("before_extract");
+    throwIfAborted("before_extract");
 
     const userTurns = normalizedTurns.filter((t) => t.role === "user");
     const totalChars = normalizedTurns.reduce(
@@ -7977,11 +7994,16 @@ export class Orchestrator {
 
     // Pass existing entity names so the LLM can reuse them instead of inventing variants
     const existingEntities = await storage.listEntityNames();
-    const result = await this.extraction.extract(
-      normalizedTurns,
-      existingEntities,
+    const result = await raceRecallAbort(
+      this.extraction.extract(
+        normalizedTurns,
+        existingEntities,
+      ),
+      options.abortSignal,
+      "extraction aborted (during_extract)",
     );
     throwIfDeadlineExceeded("before_persist");
+    throwIfAborted("before_persist");
 
     // Defensive: validate extraction result before processing
     if (!result) {

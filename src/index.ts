@@ -1875,22 +1875,45 @@ const pluginDefinition = {
             (ctx?.sessionKey as string) ??
             (event?.sessionKey as string) ??
             "default";
-          const flushPromise =
+          const flushEnabled =
             cfg.flushOnResetEnabled &&
-            typeof (orchestrator as any).flushSession === "function"
-              ? (orchestrator as any).flushSession(sessionKey, {
+            typeof (orchestrator as any).flushSession === "function";
+          const flushAbort = new AbortController();
+          let flushTimedOut = false;
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          const flushPromise = flushEnabled
+            ? Promise.resolve(
+                (orchestrator as any).flushSession(sessionKey, {
                   reason: "before_reset",
-                })
-              : Promise.resolve();
-          const boundedFlush = Promise.race([
-            flushPromise,
-            new Promise<void>((resolve) => {
-              setTimeout(resolve, cfg.beforeResetTimeoutMs);
-            }),
-          ]);
-          await boundedFlush.catch((error) => {
-            log.warn(`before_reset flush failed: ${String(error)}`);
-          });
+                  abortSignal: flushAbort.signal,
+                }),
+              ).catch((error) => {
+                if (!flushAbort.signal.aborted) {
+                  log.warn(`before_reset flush failed: ${String(error)}`);
+                }
+              })
+            : Promise.resolve();
+          const boundedFlush = flushEnabled
+            ? Promise.race([
+                flushPromise,
+                new Promise<void>((resolve) => {
+                  timeoutId = setTimeout(() => {
+                    flushTimedOut = true;
+                    flushAbort.abort();
+                    resolve();
+                  }, cfg.beforeResetTimeoutMs);
+                }),
+              ])
+            : flushPromise;
+          await boundedFlush;
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          if (flushTimedOut) {
+            log.warn(
+              `before_reset flush timed out after ${cfg.beforeResetTimeoutMs}ms`,
+            );
+          }
           cachedMemoryBySession.delete(sessionKey);
           if (
             typeof (orchestrator as any).clearRecallWorkspaceOverride === "function"

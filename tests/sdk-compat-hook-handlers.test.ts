@@ -796,10 +796,12 @@ test("before_reset flushes the session and clears the precomputed recall cache",
 
   await beforeReset({ sessionKey: "session-a" }, {});
 
-  assert.deepEqual(flushed, {
-    sessionKey: "session-a",
-    options: { reason: "before_reset" },
-  });
+  assert.equal(flushed?.sessionKey, "session-a");
+  assert.equal(flushed?.options?.reason, "before_reset");
+  assert.ok(
+    flushed?.options?.abortSignal instanceof AbortSignal,
+    "before_reset should forward an abort signal to flushSession",
+  );
   assert.equal(
     orchestrator._recallWorkspaceOverrides?.has("session-a") ?? true,
     false,
