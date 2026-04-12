@@ -51,6 +51,27 @@ test("recallForActiveMemory caps limit, truncates snippets, and strips internal 
   assert.equal(result.truncated, false);
 });
 
+test("recallForActiveMemory truncates snippets without splitting surrogate pairs", async () => {
+  const orchestrator = {
+    resolveSelfNamespace: () => "resolved-namespace",
+    searchAcrossNamespaces: async () => [
+      {
+        id: "mem-emoji",
+        score: 0.5,
+        snippet: "emoji 😀😀😀 trail",
+      },
+    ],
+  };
+
+  const result = await recallForActiveMemory(orchestrator as never, {
+    query: "emoji",
+    snippetMaxChars: 8,
+    sessionKey: "session-a",
+  });
+
+  assert.equal(result.results[0]?.text, "emoji 😀😀");
+});
+
 test("recallForActiveMemory defaults to the caller namespace derived from sessionKey", async () => {
   let receivedNamespaces: string[] | undefined;
   const orchestrator = {

@@ -61,8 +61,9 @@ function collapseWhitespace(value: string): string {
 
 function truncateSnippet(value: string, maxChars: number): string {
   const compact = collapseWhitespace(value);
-  if (compact.length <= maxChars) return compact;
-  return compact.slice(0, Math.max(1, maxChars)).trimEnd();
+  const glyphs = Array.from(compact);
+  if (glyphs.length <= maxChars) return compact;
+  return glyphs.slice(0, Math.max(1, maxChars)).join("").trimEnd();
 }
 
 function pickMetadata(value: Record<string, unknown> | undefined): ActiveMemoryMetadata | undefined {
