@@ -274,7 +274,7 @@ test("syncDreamSurfaceEntries reuses memories created earlier in the same batch"
   assert.match(storage.memories[0]?.content ?? "", /Refined draft/);
 });
 
-test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and updates the same slug in place", async () => {
+test("syncHeartbeatSurfaceEntries updates an existing heartbeat memory when the stable entry id matches", async () => {
   const storage = makeStorage();
   const reindexed: string[] = [];
 
@@ -309,7 +309,7 @@ test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and upda
     storage,
     entries: [
       {
-        id: "heartbeat-b",
+        id: "heartbeat-a",
         slug: "check-test-suite",
         title: "check-test-suite",
         body: "Run the suite, compare to the last run, and report new failures.",
@@ -511,9 +511,24 @@ test("syncHeartbeatSurfaceEntries reuses memories created earlier in the same ba
     journalPath: "/workspace/HEARTBEAT.md",
   });
 
-  assert.deepEqual(result, { created: 1, updated: 1, linked: 0 });
-  assert.equal(storage.memories.length, 1);
-  assert.match(storage.memories[0]?.content ?? "", /compare to the last run/);
+  assert.deepEqual(result, { created: 2, updated: 0, linked: 0 });
+  assert.equal(storage.memories.length, 2);
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.remnicHeartbeatEntryId,
+    "heartbeat-a",
+  );
+  assert.equal(
+    storage.memories[1]?.frontmatter.structuredAttributes?.remnicHeartbeatEntryId,
+    "heartbeat-b",
+  );
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    "check-test-suite",
+  );
+  assert.equal(
+    storage.memories[1]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    "check-test-suite",
+  );
 });
 
 test("syncHeartbeatOutcomeLinks annotates non-heartbeat memories that clearly reference one heartbeat slug", async () => {
@@ -554,6 +569,38 @@ test("syncHeartbeatOutcomeLinks annotates non-heartbeat memories that clearly re
     "heartbeat:check-test-suite",
   ]);
   assert.deepEqual(reindexed, ["fact-1"]);
+});
+
+test("syncHeartbeatOutcomeLinks does not infer canonical links from plain slug tags alone", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "fact-1",
+      content: "This note does not mention the heartbeat in its body.",
+      tags: ["ops", "check-test-suite"],
+    }),
+  ]);
+
+  const result = await syncHeartbeatOutcomeLinks({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-a",
+        slug: "check-test-suite",
+        title: "check-test-suite",
+        body: "Run the suite and report new failures.",
+        schedule: "hourly",
+        tags: ["ci"],
+        sourceOffset: 0,
+      },
+    ],
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 0, linked: 0 });
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    undefined,
+  );
+  assert.deepEqual(storage.memories[0]?.frontmatter.tags, ["ops", "check-test-suite"]);
 });
 
 test("syncHeartbeatOutcomeLinks repairs stale heartbeat slugs when the memory now points to a different heartbeat", async () => {

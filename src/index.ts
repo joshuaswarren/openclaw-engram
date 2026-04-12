@@ -937,9 +937,7 @@ const pluginDefinition = {
             memory.frontmatter.structuredAttributes?.relatedHeartbeatSlug;
           if (relatedSlug === activeEntry.slug) return true;
           return (memory.frontmatter.tags ?? []).some(
-            (tag) =>
-              tag === `heartbeat:${activeEntry.slug}` ||
-              tag === activeEntry.slug,
+            (tag) => tag === `heartbeat:${activeEntry.slug}`,
           );
         })
         .sort((a, b) =>

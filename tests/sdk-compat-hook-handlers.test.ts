@@ -925,6 +925,90 @@ test("before_prompt_build reads previous heartbeat runs from the caller namespac
   );
 });
 
+test("before_prompt_build only treats canonical heartbeat links as previous runs", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-canonical-links-"));
+  await writeFile(
+    path.join(root, "HEARTBEAT.md"),
+    [
+      "# Heartbeat Tasks",
+      "",
+      "## check-test-suite",
+      "",
+      "Every hour, run the test suite and flag any new failures.",
+      "",
+      "Schedule: hourly",
+      "Tags: #ci #tests",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { StorageManager } = await import("../packages/remnic-core/src/storage.ts");
+  const storage = new StorageManager(root);
+  await storage.writeMemory(
+    "fact",
+    "During check-test-suite, the canonical heartbeat-linked run found two new failures.",
+    {
+      source: "test",
+      tags: ["heartbeat", "ci", "heartbeat:check-test-suite"],
+      structuredAttributes: {
+        relatedHeartbeatSlug: "check-test-suite",
+      },
+    },
+  );
+  await storage.writeMemory("fact", "Unrelated memory happens to use the slug as a normal tag.", {
+    source: "test",
+    tags: ["check-test-suite", "ops"],
+  });
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-heartbeat-canonical-links");
+  delete api.registerMemoryPromptSection;
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    heartbeat: {
+      enabled: true,
+      journalPath: "HEARTBEAT.md",
+      maxPreviousRuns: 5,
+      detectionMode: "runtime-signal",
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => {
+    throw new Error("normal recall should be gated during heartbeat runs");
+  };
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
+    {
+      prompt: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly.",
+    },
+    {
+      sessionKey: "session-heartbeat-canonical",
+      agentId: "main",
+      workspaceDir: root,
+      trigger: "heartbeat",
+    },
+  );
+
+  assert.match(String(result?.prependSystemContext ?? ""), /## Previous Runs/);
+  assert.match(
+    String(result?.prependSystemContext ?? ""),
+    /canonical heartbeat-linked run found two new failures\./i,
+  );
+  assert.doesNotMatch(
+    String(result?.prependSystemContext ?? ""),
+    /Unrelated memory happens to use the slug as a normal tag\./,
+  );
+});
+
 test("before_prompt_build falls back to heuristic heartbeat detection when runtime signals are absent", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-heuristic-"));
   await writeFile(

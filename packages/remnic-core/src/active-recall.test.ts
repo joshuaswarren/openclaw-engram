@@ -198,6 +198,35 @@ test("active recall cache hits report cache-hit latency instead of reusing gener
   assert.equal(second.latencyMs, 1);
 });
 
+test("active recall cache stores an isolated snapshot instead of a mutable caller reference", async () => {
+  let generateCalls = 0;
+  const engine = createActiveRecallEngine(
+    {
+      async recall() {
+        return "CI worker drain after Redis reconnect storm.";
+      },
+      async generateSummary() {
+        generateCalls++;
+        return { text: "Redis reconnect storm caused the worker drain." };
+      },
+      now: (() => {
+        let tick = 20_000;
+        return () => tick++;
+      })(),
+    },
+    baseConfig({ cacheTtlMs: 5000 }),
+  );
+
+  const first = await engine.run(baseInput());
+  first.citations.push({ memoryId: "mutated", relevance: 1 });
+
+  const second = await engine.run(baseInput());
+
+  assert.equal(generateCalls, 1);
+  assert.equal(second.cacheHit, true);
+  assert.deepEqual(second.citations, []);
+});
+
 test("active recall engine evicts expired cache entries before reusing them", async () => {
   let nowValue = 10_000;
   let generateCalls = 0;

@@ -438,7 +438,7 @@ export function createActiveRecallEngine(
         const completedAt = now();
         cache.set(cacheKey, {
           expiresAt: completedAt + config.cacheTtlMs,
-          value: result,
+          value: cloneRecallResult(result),
         });
         enforceCacheLimit(cache);
       }

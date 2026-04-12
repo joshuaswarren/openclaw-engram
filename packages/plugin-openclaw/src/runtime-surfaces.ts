@@ -266,6 +266,10 @@ export async function syncHeartbeatSurfaceEntries(params: {
 }): Promise<SurfaceSyncResult> {
   const { storage, entries, journalPath, reindexMemory } = params;
   const memories = await storage.readAllMemories();
+  const slugCounts = new Map<string, number>();
+  for (const entry of entries) {
+    slugCounts.set(entry.slug, (slugCounts.get(entry.slug) ?? 0) + 1);
+  }
   let created = 0;
   let updated = 0;
 
@@ -280,13 +284,16 @@ export async function syncHeartbeatSurfaceEntries(params: {
       remnicHeartbeatSourceOffset: String(entry.sourceOffset),
       ...(entry.schedule ? { remnicHeartbeatSchedule: entry.schedule } : {}),
     };
+    const allowSlugFallback = (slugCounts.get(entry.slug) ?? 0) === 1;
     const existing =
       findSurfaceMemoryByAttribute(memories, HEARTBEAT_ENTRY_ID_KEY, entry.id) ??
-      (memories.find(
-        (memory) =>
-          isSurfaceMemory(memory, HEARTBEAT_SURFACE_TYPE) &&
-          memory.frontmatter.structuredAttributes?.[HEARTBEAT_SLUG_KEY] === entry.slug,
-      ) ?? null);
+      (allowSlugFallback
+        ? (memories.find(
+            (memory) =>
+              isSurfaceMemory(memory, HEARTBEAT_SURFACE_TYPE) &&
+              memory.frontmatter.structuredAttributes?.[HEARTBEAT_SLUG_KEY] === entry.slug,
+          ) ?? null)
+        : null);
 
     if (!existing) {
       const memoryId = await storage.writeMemory("principle", content, {
@@ -368,12 +375,22 @@ function detectHeartbeatSlug(
   memory: MemoryFile,
   entries: Array<{
     slug: string;
+    title: string;
     titlePattern: RegExp | null;
     slugPattern: RegExp | null;
   }>,
 ): string | null {
+  const ignoredTagTerms = new Set(
+    entries.flatMap((entry) =>
+      [entry.slug, entry.title]
+        .map((value) => value.trim().toLowerCase())
+        .filter((value) => value.length > 0),
+    ),
+  );
   const searchableTags = (memory.frontmatter.tags ?? []).filter(
-    (tag) => !tag.startsWith("heartbeat:"),
+    (tag) =>
+      !tag.startsWith("heartbeat:") &&
+      !ignoredTagTerms.has(tag.trim().toLowerCase()),
   );
   const haystack = `${memory.content}\n${searchableTags.join(" ")}`.toLowerCase();
   const matches = entries.filter((entry) => {
@@ -393,6 +410,7 @@ export async function syncHeartbeatOutcomeLinks(params: {
   const memories = await storage.readAllMemories();
   const matchEntries = entries.map((entry) => ({
     slug: entry.slug,
+    title: entry.title,
     titlePattern: compileDelimitedPhrasePattern(entry.title),
     slugPattern: compileDelimitedPhrasePattern(entry.slug),
   }));
