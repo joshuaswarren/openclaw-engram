@@ -12120,6 +12120,7 @@ export class Orchestrator {
     preloadedMemoryMap?: Map<string, MemoryFile>,
     options?: {
       allowLifecycleFiltered?: boolean;
+      allowDedicatedSurface?: boolean;
     },
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
@@ -12227,8 +12228,9 @@ export class Orchestrator {
         }
 
         if (
-          memory.frontmatter.memoryKind === "dream" ||
-          memory.frontmatter.memoryKind === "procedural"
+          options?.allowDedicatedSurface !== true &&
+          (memory.frontmatter.memoryKind === "dream" ||
+            memory.frontmatter.memoryKind === "procedural")
         ) {
           dedicatedSurfaceFilteredCount += 1;
           continue;

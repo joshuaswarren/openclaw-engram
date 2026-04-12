@@ -8,7 +8,7 @@ import {
   appendRecallAuditEntry,
   buildRecallAuditPath,
   pruneRecallAuditEntries,
-} from "./openclaw-recall-audit.js";
+} from "./recall-audit.js";
 
 test("appendRecallAuditEntry writes a daily per-session JSONL audit shard", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-recall-audit-"));

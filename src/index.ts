@@ -52,7 +52,7 @@ import { buildSessionCommandDescriptors } from "../packages/plugin-openclaw/src/
 import { validateSlotSelection } from "../packages/plugin-openclaw/src/slot-validator.js";
 import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src/plugin-id.js";
 import { createFileToggleStore } from "../packages/remnic-core/src/session-toggles.js";
-import { appendRecallAuditEntry, pruneRecallAuditEntries } from "../packages/remnic-core/src/openclaw-recall-audit.js";
+import { appendRecallAuditEntry, pruneRecallAuditEntries } from "../packages/remnic-core/src/recall-audit.js";
 import { createActiveRecallEngine } from "../packages/remnic-core/src/active-recall.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";

@@ -5,6 +5,8 @@ import { buildSessionCommandDescriptors } from "./session-command-descriptors.js
 
 test("buildSessionCommandDescriptors wires toggle and status handlers", async () => {
   const disabled = new Map<string, boolean>();
+  const recallCalls: string[] = [];
+  const summaryCalls: string[] = [];
   const runtime = {
     toggles: {
       async isDisabled(sessionKey: string, agentId: string) {
@@ -27,14 +29,16 @@ test("buildSessionCommandDescriptors wires toggle and status handlers", async ()
         return [];
       },
     },
-    getLastRecall() {
+    getLastRecall(sessionKey: string) {
+      recallCalls.push(sessionKey);
       return {
         memoryIds: ["mem-1", "mem-2"],
         latencyMs: 33,
         plannerMode: "minimal",
       };
     },
-    getLastRecallSummary() {
+    getLastRecallSummary(sessionKey: string) {
+      summaryCalls.push(sessionKey);
       return "CI recovered after the flaky worker drain.";
     },
     async flushSession() {},
@@ -58,6 +62,8 @@ test("buildSessionCommandDescriptors wires toggle and status handlers", async ()
   const statusText = await status.handler({ sessionKey: "session-a", agentId: "main" });
   assert.match(statusText, /disabled/);
   assert.match(statusText, /CI recovered/);
+  assert.deepEqual(recallCalls, ["session-a"]);
+  assert.deepEqual(summaryCalls, ["session-a"]);
 
   await clear.handler({ sessionKey: "session-a", agentId: "main" });
   assert.equal(disabled.has("session-a:main"), false);
