@@ -46,6 +46,11 @@ function readManifest(relativePath: string): Record<string, any> {
   return JSON.parse(raw) as Record<string, any>;
 }
 
+function readRootPackageJson(): Record<string, any> {
+  const raw = fs.readFileSync(path.join(ROOT, "package.json"), "utf-8");
+  return JSON.parse(raw) as Record<string, any>;
+}
+
 for (const manifestPath of [
   "openclaw.plugin.json",
   "packages/plugin-openclaw/openclaw.plugin.json",
@@ -182,5 +187,25 @@ test("root and package OpenClaw manifests stay byte-identical", () => {
     root,
     packaged,
     "root openclaw.plugin.json must be synced from packages/plugin-openclaw/openclaw.plugin.json to prevent schema drift",
+  );
+});
+
+test("workspace build verifies manifest sync instead of silently rewriting root state", () => {
+  const pkg = readRootPackageJson();
+  const scripts = pkg.scripts ?? {};
+
+  assert.equal(
+    scripts["check:openclaw-plugin-sync"],
+    "node scripts/check-openclaw-plugin-sync.mjs",
+  );
+  assert.match(
+    scripts.build ?? "",
+    /\bcheck:openclaw-plugin-sync\b/,
+    "build should fail on manifest drift instead of rewriting the committed root manifest",
+  );
+  assert.doesNotMatch(
+    scripts.build ?? "",
+    /\bsync:openclaw-plugin\b/,
+    "build must not silently regenerate the committed root manifest",
   );
 });
