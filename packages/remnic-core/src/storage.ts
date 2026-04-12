@@ -969,23 +969,34 @@ export class StorageManager {
         // the frontmatter hash. The hash is trusted as-is here; a future
         // migration pass can recompute it from the current content.
         const content = memory.content;
-        const stripped = stripCitationForTemplate(content, DEFAULT_CITATION_FORMAT);
+        // Use the configured template (Thread 1 fix): citationTemplate is set
+        // by the orchestrator to the active inlineSourceAttributionFormat so
+        // the rebuild can strip both the default and any custom template.
+        // Falls back to DEFAULT_CITATION_FORMAT when the orchestrator has not
+        // configured a custom template (e.g. direct StorageManager construction
+        // in tests).
+        const stripped = stripCitationForTemplate(content, this.citationTemplate);
         if (stripped !== content) {
-          // Default-format citation was stripped — index the bare body.
+          // Citation was stripped — index the bare body.
           factHashIndex.addByHash(
             ContentHashIndex.computeHash(sanitizeMemoryContent(stripped).text),
           );
           continue;
         }
-        // No default citation was removed. Decide whether to index or skip.
-        if (!hasCitation(content) && !content.trimEnd().endsWith("]")) {
+        // No citation was removed. Decide whether to index or skip.
+        // Thread 4 fix: use hasCitation() rather than the too-broad endsWith("]")
+        // heuristic. Facts that legitimately end with "]" (e.g. "User prefers
+        // [dark mode]") have no citation marker and should be indexed as-is.
+        // Only skip when hasCitation() confirms a citation is present — that
+        // means the citation is from an unknown/custom template we cannot strip.
+        if (!hasCitation(content)) {
           // Content has no recognisable citation marker — index raw body.
           factHashIndex.addByHash(
             ContentHashIndex.computeHash(sanitizeMemoryContent(content).text),
           );
           continue;
         }
-        // Content appears to carry a citation from an unknown/custom template
+        // Content carries a citation from an unknown/custom template
         // that we cannot safely strip. Skip rather than index a wrong hash.
         legacyRecovered++;
         continue;

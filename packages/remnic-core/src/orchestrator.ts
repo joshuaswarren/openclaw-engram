@@ -9051,9 +9051,17 @@ export class Orchestrator {
             memoryKind,
             source: extractionWriteSource,
           });
-          // Register chunked content in hash index too
+          // Register chunked content in hash index too.
+          // Thread 3 fix: canonicalize by stripping any pre-existing citation
+          // so the stored hash matches what the dedup check computes via
+          // stripCitationForTemplate before calling contentHashIndex.has().
           if (this.contentHashIndex) {
-            this.contentHashIndex.add(fact.content);
+            const canonicalChunkedContent =
+              citationEnabled &&
+              hasCitationForTemplate(fact.content, citationTemplate)
+                ? stripCitationForTemplate(fact.content, citationTemplate)
+                : fact.content;
+            this.contentHashIndex.add(canonicalChunkedContent);
           }
 
           for (const chunk of chunkResult.chunks) {
@@ -9292,9 +9300,17 @@ export class Orchestrator {
           intentEntityTypes: inferredIntent?.entityTypes,
         });
       }
-      // Register in content-hash index after successful write
+      // Register in content-hash index after successful write.
+      // Thread 3 fix: canonicalize by stripping any pre-existing citation so
+      // the stored hash matches what the dedup check computes via
+      // stripCitationForTemplate before calling contentHashIndex.has().
       if (this.contentHashIndex) {
-        this.contentHashIndex.add(fact.content);
+        const canonicalFactContent =
+          citationEnabled &&
+          hasCitationForTemplate(fact.content, citationTemplate)
+            ? stripCitationForTemplate(fact.content, citationTemplate)
+            : fact.content;
+        this.contentHashIndex.add(canonicalFactContent);
       }
     }
 

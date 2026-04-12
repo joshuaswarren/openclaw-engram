@@ -161,20 +161,23 @@ test("rebuild from disk: fact written without contentHashSource uses body hash v
 });
 
 test(
-  "rebuild from disk (Finding 1 — Uhol): truly legacy fact with NO contentHash in frontmatter is SKIPPED rather than guessed",
+  "rebuild from disk (Thread 4 fix): legacy fact with unknown custom citation and no contentHash is indexed by its full body",
   async () => {
     // Simulate a memory file written before contentHash was added to the
-    // frontmatter schema.  The file is crafted manually without contentHash
-    // so that the rebuild path hits the else-branch.
+    // frontmatter schema and using a custom citation template.  The file is
+    // crafted manually without contentHash so that the rebuild path hits the
+    // else-branch.
     //
-    // The correct behaviour (Finding 1 fix): when contentHash is absent, log a
-    // warning and SKIP — do NOT call stripCitation(content) because that only
-    // handles the default [Source: ...] format and would produce the wrong hash
-    // for memories annotated with a custom citation template.
+    // Thread 4 fix: the old `endsWith("]")` heuristic was too broad and
+    // caused legitimate facts like "User prefers [dark mode]" to be skipped.
+    // The fix replaces it with `hasCitation(content)` (default-format check
+    // only).  For content that has no recognisable default-format citation
+    // marker, the fact is indexed as-is even when it ends with `]`.
     //
-    // Observable: hasFactContentHash(rawBody) returns FALSE after rebuild
-    // (the fact is not in the rebuilt index).  This is a false-negative miss,
-    // which is preferable to indexing a wrong hash.
+    // Observable: hasFactContentHash(citedBody) returns TRUE after rebuild
+    // (the fact IS indexed under its full body since the custom citation
+    // cannot be stripped without knowing the template).  The raw body is NOT
+    // in the index because only the full cited body was indexed.
     const dir = await mkdtemp(path.join(os.tmpdir(), "engram-fact-hash-truly-legacy-"));
     try {
       const rawBody = "Truly legacy fact with a custom citation";
@@ -212,21 +215,19 @@ test(
 
       const storage = new StorageManager(dir);
 
-      // The rebuild must SKIP this memory (no contentHash) rather than indexing
-      // a wrong hash via stripCitation.  hasFactContentHash returns false.
+      // The raw body is NOT in the index (only the cited body was indexed).
       assert.equal(
         await storage.hasFactContentHash(rawBody),
         false,
-        "truly legacy fact without contentHash must be SKIPPED during rebuild — hash not added to index (Finding 1 — Uhol)",
+        "raw body without citation should not be in the index (only cited body was indexed)",
       );
 
-      // Also confirm that the wrong hash (from the old stripCitation approach)
-      // is NOT in the index.  stripCitation is a no-op for the custom format,
-      // so it would have indexed citedBody — which must NOT match rawBody.
+      // The cited body IS in the index: hasCitation returns false for the
+      // custom template, so the fact is indexed as-is (Thread 4 fix).
       assert.equal(
         await storage.hasFactContentHash(citedBody),
-        false,
-        "cited body must also not be in the index after rebuild skip",
+        true,
+        "cited body should be in the index after rebuild (Thread 4 fix: indexed as-is when no default citation is detected)",
       );
 
       void customTemplate; // suppress unused-variable warning

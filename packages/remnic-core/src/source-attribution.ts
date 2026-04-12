@@ -398,6 +398,16 @@ export function hasCitationForTemplate(text: string, template: string): boolean 
   // configuration change are not double-tagged on reprocessing.
   if (hasCitation(text)) return true;
   // If the configured template matches the default, we're done.
+  //
+  // Known limitation (Thread 2 — Codex P2): this fast path exits without
+  // checking whether the content carries a citation from a DIFFERENT custom
+  // template that was active before the config was changed back to the default.
+  // Such a fact would be detected by `hasCitation` above only if the prior
+  // custom template happened to match the default `[Source: ...]` pattern.
+  // In practice, template changes mid-stream are rare, and the false-negative
+  // (missing an old custom citation) produces a benign duplicate citation rather
+  // than data loss. A full fix would require storing the citation template used
+  // at write time in the frontmatter and checking that here.
   if (template === DEFAULT_CITATION_FORMAT) return false;
 
   // Fully-literal template (no placeholders): exact inclusion check.
