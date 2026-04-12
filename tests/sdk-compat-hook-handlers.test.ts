@@ -83,6 +83,8 @@ interface HandlerCapturingApi {
   handlers: Map<string, Function>;
   _memoryPromptSection?: (params: { sessionKey?: string }) => string[] | null;
   _memoryCapability?: { promptBuilder?: (params: { sessionKey?: string }) => string[] | null };
+  _registeredServiceStart?: (() => Promise<void>) | null;
+  _registeredServiceStop?: (() => Promise<void>) | null;
 }
 
 function buildHandlerCapturingApi(
@@ -98,7 +100,10 @@ function buildHandlerCapturingApi(
     handlers,
     registerTool(_spec: unknown) {},
     registerCli(_spec: unknown) {},
-    registerService(_spec) {},
+    registerService(spec) {
+      api._registeredServiceStart = spec.start;
+      api._registeredServiceStop = spec.stop;
+    },
     on(event: string, handler: Function) {
       handlers.set(event, handler);
     },
@@ -108,6 +113,8 @@ function buildHandlerCapturingApi(
     registerMemoryPromptSection(spec: unknown) {
       api._memoryPromptSection = spec as (params: { sessionKey?: string }) => string[] | null;
     },
+    _registeredServiceStart: null,
+    _registeredServiceStop: null,
   };
   if (opts?.includeMemoryCapability) {
     api.runtime = { version: "2026.4.9" };
@@ -769,6 +776,51 @@ test("before_prompt_build gates normal recall during heartbeat runs and injects 
   assert.match(String(result?.prependSystemContext ?? ""), /## Previous Runs/);
   assert.match(String(result?.prependSystemContext ?? ""), /two new failures/);
   assert.doesNotMatch(String(result?.prependSystemContext ?? ""), /## Memory Context \(Remnic\)/);
+});
+
+test("gateway_start heartbeat sync does not clear prior heartbeat links when the journal is missing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-startup-missing-"));
+  const { StorageManager } = await import("../packages/remnic-core/src/storage.ts");
+  const storage = new StorageManager(root);
+  const memoryId = await storage.writeMemory(
+    "fact",
+    "Last run found two new failures in the flaky integration suite.",
+    {
+      source: "test",
+      tags: ["heartbeat", "ci", "heartbeat:check-test-suite"],
+      structuredAttributes: {
+        relatedHeartbeatSlug: "check-test-suite",
+      },
+    },
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("heartbeat-startup-missing-journal");
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    heartbeat: {
+      enabled: true,
+      journalPath: "HEARTBEAT.md",
+      watchFile: false,
+    },
+  };
+  plugin.register(api as any);
+
+  assert.ok(api._registeredServiceStart, "service start should be registered");
+
+  try {
+    await api._registeredServiceStart?.();
+    const allMemories = await storage.readAllMemories();
+    const memory = allMemories.find((entry) => entry.frontmatter.id === memoryId);
+    assert.equal(
+      memory?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+      "check-test-suite",
+    );
+    assert.deepEqual(memory?.frontmatter.tags, ["heartbeat", "ci", "heartbeat:check-test-suite"]);
+  } finally {
+    await api._registeredServiceStop?.();
+  }
 });
 
 test("before_prompt_build reads previous heartbeat runs from the caller namespace", async () => {

@@ -376,10 +376,41 @@ test("active recall transcript persistence sanitizes agent and session path segm
   assert.ok(result.transcriptPath, "expected transcript file path");
   const relativePath = path.relative(transcriptDir, result.transcriptPath ?? "");
   assert.equal(relativePath.startsWith(".."), false);
-  assert.match(relativePath, /^agents\/\.\.%2F\.\.%2Fetc\//);
-  assert.match(relativePath, /session%2F\.\.%2F\.\.%2Fescape\.jsonl$/);
+  assert.match(relativePath, /^agents\/%2E%2E%2F%2E%2E%2Fetc\//);
+  assert.match(relativePath, /session%2F%2E%2E%2F%2E%2E%2Fescape\.jsonl$/);
 
   const raw = await readFile(result.transcriptPath ?? "", "utf8");
   assert.match(raw, /"agentId":"\.\.\/\.\.\/etc"/);
   assert.match(raw, /"sessionKey":"session\/\.\.\/\.\.\/escape"/);
+});
+
+test("active recall transcript persistence encodes bare dot path segments", async () => {
+  const transcriptDir = await mkdtemp(path.join(os.tmpdir(), "active-recall-transcript-"));
+  const engine = createActiveRecallEngine(
+    {
+      async recall() {
+        return "Primary recall";
+      },
+      async generateSummary() {
+        return { text: "useful summary", modelUsed: "gpt-5.2-mini" };
+      },
+    },
+    baseConfig({
+      persistTranscripts: true,
+      transcriptDir,
+    }),
+  );
+
+  const result = await engine.run(
+    baseInput({
+      agentId: "..",
+      sessionKey: ".",
+    }),
+  );
+
+  assert.ok(result.transcriptPath, "expected transcript file path");
+  const relativePath = path.relative(transcriptDir, result.transcriptPath ?? "");
+  assert.equal(relativePath.startsWith(".."), false);
+  assert.match(relativePath, /^agents\/%2E%2E\//);
+  assert.match(relativePath, /\/%2E\.jsonl$/);
 });

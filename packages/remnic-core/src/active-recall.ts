@@ -236,7 +236,10 @@ export function normalizeActiveRecallSummary(value: string | null, maxChars: num
 
 function sanitizeTranscriptPathSegment(value: string): string {
   const normalized = collapseWhitespace(value);
-  return encodeURIComponent(normalized.length > 0 ? normalized : "unknown");
+  return encodeURIComponent(normalized.length > 0 ? normalized : "unknown").replaceAll(
+    ".",
+    "%2E",
+  );
 }
 
 export function buildActiveRecallPrompt(params: {

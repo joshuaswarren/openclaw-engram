@@ -593,6 +593,9 @@ const pluginDefinition = {
         .then(async () => {
           const journalPath = resolveHeartbeatJournalPath(runtimeWorkspaceDir);
           const entries = await heartbeatSurface.read(journalPath);
+          if (entries.length === 0) {
+            return;
+          }
           await forEachRuntimeSurfaceStorage({
             config: cfg,
             storage: orchestrator.storage,
