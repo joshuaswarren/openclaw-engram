@@ -593,9 +593,12 @@ function cmdDoctor(): void {
       !Array.isArray(plugins.entries)
         ? plugins.entries as Record<string, unknown>
         : null;
-    const slots = plugins.slots && typeof plugins.slots === "object"
-      ? plugins.slots as Record<string, unknown>
-      : null;
+    const slots =
+      plugins.slots &&
+      typeof plugins.slots === "object" &&
+      !Array.isArray(plugins.slots)
+        ? plugins.slots as Record<string, unknown>
+        : null;
 
     const entriesIsArray = Array.isArray(plugins.entries);
     checks.push({
