@@ -863,6 +863,81 @@ test("before_prompt_build falls back to heuristic heartbeat detection when runti
   assert.doesNotMatch(String(result?.prependSystemContext ?? ""), /## Memory Context \(Remnic\)/);
 });
 
+test("before_prompt_build does not inject heartbeat context when multiple heartbeat tasks match the prompt", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-ambiguous-"));
+  await writeFile(
+    path.join(root, "HEARTBEAT.md"),
+    [
+      "# Heartbeat Tasks",
+      "",
+      "## check-test-suite",
+      "",
+      "Every hour, run the test suite and flag any new failures.",
+      "",
+      "Schedule: hourly",
+      "Tags: #ci #tests",
+      "",
+      "## sync-secrets",
+      "",
+      "Every day, refresh secrets from the vault.",
+      "",
+      "Schedule: daily",
+      "Tags: #ops #secrets",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-heartbeat-ambiguous-test");
+  delete api.registerMemoryPromptSection;
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    heartbeat: {
+      enabled: true,
+      journalPath: "HEARTBEAT.md",
+      maxPreviousRuns: 3,
+      detectionMode: "runtime-signal",
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+
+  let recallCalls = 0;
+  orchestrator.recall = async () => {
+    recallCalls++;
+    return "normal recall stays active when heartbeat selection is ambiguous";
+  };
+
+  const result = await beforePromptBuild(
+    {
+      prompt:
+        "Run the following periodic tasks: check-test-suite and sync-secrets. Summarize what changed.",
+    },
+    {
+      sessionKey: "session-heartbeat-ambiguous-a",
+      agentId: "main",
+      workspaceDir: root,
+      trigger: "heartbeat",
+    },
+  );
+
+  assert.equal(recallCalls, 1);
+  assert.match(String(result?.prependSystemContext ?? ""), /## Memory Context \(Remnic\)/);
+  assert.match(
+    String(result?.prependSystemContext ?? ""),
+    /normal recall stays active when heartbeat selection is ambiguous/,
+  );
+  assert.doesNotMatch(String(result?.prependSystemContext ?? ""), /## Active Heartbeat \(Remnic\)/);
+});
+
 test("before_prompt_build does not relink heartbeat outcomes on non-heartbeat prompts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-normal-prompt-"));
   await writeFile(

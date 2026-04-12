@@ -42,6 +42,7 @@ import {
   buildMemorySearchTool,
 } from "../packages/plugin-openclaw/src/openclaw-tools/index.js";
 import {
+  matchesDelimitedPhrase,
   parseDreamNarrativeResponse,
   planDreamEntryFromConsolidation,
   syncDreamSurfaceEntries,
@@ -843,15 +844,25 @@ const pluginDefinition = {
       if (entries.length === 0) return null;
       const lowered = prompt.toLowerCase();
       const tokenSet = new Set(resolveHeartbeatPromptCandidates(prompt));
-      for (const entry of entries) {
-        if (lowered.includes(entry.slug.toLowerCase())) return entry;
-        if (lowered.includes(entry.title.toLowerCase())) return entry;
+      const phraseMatches = entries.filter((entry) => {
+        if (matchesDelimitedPhrase(lowered, entry.slug)) return true;
+        return matchesDelimitedPhrase(lowered, entry.title);
+      });
+      if (phraseMatches.length === 1) {
+        return phraseMatches[0] ?? null;
       }
-      for (const entry of entries) {
+      if (phraseMatches.length > 1) {
+        return null;
+      }
+      const tokenMatches = entries.filter((entry) => {
         const slugTokens = entry.slug.toLowerCase().split("-").filter(Boolean);
-        if (slugTokens.length > 0 && slugTokens.every((token) => tokenSet.has(token))) {
-          return entry;
-        }
+        return slugTokens.length > 0 && slugTokens.every((token) => tokenSet.has(token));
+      });
+      if (tokenMatches.length === 1) {
+        return tokenMatches[0] ?? null;
+      }
+      if (tokenMatches.length > 1) {
+        return null;
       }
       return entries.length === 1 ? entries[0] ?? null : null;
     }

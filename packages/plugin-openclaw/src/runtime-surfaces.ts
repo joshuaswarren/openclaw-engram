@@ -339,11 +339,21 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function matchesDelimitedPhrase(haystack: string, value: string): boolean {
+export function matchesDelimitedPhrase(haystack: string, value: string): boolean {
+  const normalizedHaystack = haystack.toLowerCase();
   const normalized = value.trim().toLowerCase();
   if (normalized.length === 0) return false;
   const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalized)}([^a-z0-9]|$)`);
-  return pattern.test(haystack);
+  return pattern.test(normalizedHaystack);
+}
+
+function findLastNonEmptyLineIndex(lines: string[], afterIndex: number): number {
+  for (let index = lines.length - 1; index > afterIndex; index--) {
+    if ((lines[index] ?? "").trim().length > 0) {
+      return index;
+    }
+  }
+  return -1;
 }
 
 function detectHeartbeatSlug(
@@ -514,20 +524,19 @@ export function parseDreamNarrativeResponse(
       }
     }
 
-    let trailingTagsIndex = -1;
-    for (let index = lines.length - 1; index > explicitBodyIndex; index--) {
-      const line = lines[index] ?? "";
-      if (line.trim().length === 0) continue;
-      const tagsMatch = line.match(/^Tags:\s*(.+)$/i);
-      if (tagsMatch && parsedTags.length === 0) {
+    let consumedTrailingTags = false;
+    const trailingTagsIndex = findLastNonEmptyLineIndex(lines, explicitBodyIndex);
+    if (trailingTagsIndex > explicitBodyIndex && parsedTags.length === 0) {
+      const trailingLine = lines[trailingTagsIndex] ?? "";
+      const tagsMatch = trailingLine.match(/^Tags:\s*(.+)$/i);
+      if (tagsMatch) {
+        consumedTrailingTags = true;
         parsedTags =
           tagsMatch[1]
             ?.split(/\s+/)
             .map((tag) => tag.replace(/^#/, "").trim())
             .filter(Boolean) ?? [];
-        trailingTagsIndex = index;
       }
-      break;
     }
 
     const explicitBodyLine = lines[explicitBodyIndex] ?? "";
@@ -536,7 +545,7 @@ export function parseDreamNarrativeResponse(
       bodyLines.push(inlineBody);
     }
 
-    const bodyEnd = trailingTagsIndex >= 0 ? trailingTagsIndex : lines.length;
+    const bodyEnd = consumedTrailingTags ? trailingTagsIndex : lines.length;
     bodyLines.push(...lines.slice(explicitBodyIndex + 1, bodyEnd));
   } else {
     let bodyStarted = false;
