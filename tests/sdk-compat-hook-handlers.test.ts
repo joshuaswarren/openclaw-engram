@@ -694,10 +694,11 @@ test("before_prompt_build suppresses auxiliary memory injection when planner mod
   const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
   orchestrator.maybeRunFileHygiene = async () => undefined;
   orchestrator.config.compactionResetEnabled = false;
-  orchestrator.recall = async (query: string) =>
-    query.startsWith("current:")
-      ? "remembered context from Remnic"
-      : null;
+  let recallCalls = 0;
+  orchestrator.recall = async () => {
+    recallCalls++;
+    return null;
+  };
   orchestrator.getLastRecall = () => ({
     memoryIds: [],
     plannerMode: "no_recall",
@@ -715,6 +716,11 @@ test("before_prompt_build suppresses auxiliary memory injection when planner mod
     result,
     undefined,
     "planner no_recall should suppress active-recall-only prompt injection",
+  );
+  assert.equal(
+    recallCalls,
+    0,
+    "planner no_recall should skip chained active-recall work before any recall lookup runs",
   );
 });
 

@@ -58,6 +58,7 @@ import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src
 import { createFileToggleStore } from "../packages/remnic-core/src/session-toggles.js";
 import { appendRecallAuditEntry, pruneRecallAuditEntries } from "../packages/remnic-core/src/recall-audit.js";
 import { createActiveRecallEngine } from "../packages/remnic-core/src/active-recall.js";
+import { planRecallMode } from "../packages/remnic-core/src/intent.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
@@ -1128,22 +1129,28 @@ const pluginDefinition = {
             orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
           }
         }
-        const activeRecallResult = await activeRecallEngine
-          .run({
-            sessionKey,
-            agentId,
-            chatType: resolveActiveRecallChatType(ctx),
-            recentTurns: extractRecentTurnsForActiveRecall(
-              Array.isArray(event.messages)
-                ? (event.messages as Array<Record<string, unknown>>)
-                : undefined,
-            ),
-            currentMessage: prompt,
-          })
-          .catch((error) => {
-            log.debug(`active recall fallback failed: ${String(error)}`);
-            return null;
-          });
+        const plannerPreflightMode = planRecallMode(prompt);
+        const shouldSkipChainedActiveRecall =
+          cfg.activeRecallAllowChainedActiveMemory &&
+          plannerPreflightMode === "no_recall";
+        const activeRecallResult = shouldSkipChainedActiveRecall
+          ? null
+          : await activeRecallEngine
+              .run({
+                sessionKey,
+                agentId,
+                chatType: resolveActiveRecallChatType(ctx),
+                recentTurns: extractRecentTurnsForActiveRecall(
+                  Array.isArray(event.messages)
+                    ? (event.messages as Array<Record<string, unknown>>)
+                    : undefined,
+                ),
+                currentMessage: prompt,
+              })
+              .catch((error) => {
+                log.debug(`active recall fallback failed: ${String(error)}`);
+                return null;
+              });
         const activeRecallLines =
           activeRecallResult?.summary && activeRecallResult.summary.length > 0
             ? ["## Active Recall (Remnic)", "", activeRecallResult.summary, ""]
