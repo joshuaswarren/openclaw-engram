@@ -8,6 +8,7 @@ import {
   coerceInstallExtension,
   installCodexMemoryExtension,
   installConnector,
+  loadRegistry,
   locatePluginCodexExtensionSource,
   removeConnector,
   resolveCodexMemoryExtensionPaths,
@@ -1340,6 +1341,134 @@ test(
           "token" in saved,
           false,
           "claude-code connector.json must NOT contain a 'token' field",
+        );
+      },
+    );
+  },
+);
+
+// ── PRRT_kwDORJXyws56VRJ4 (Cursor High): loadRegistry built-in precedence ──
+//
+// Regression test: stale registry.json entries for built-in connectors (written
+// by an older version without requiresToken: true) must NOT shadow the current
+// built-in manifests. loadRegistry() must always return the built-in manifest
+// for any connector ID that appears in BUILTIN_CONNECTORS, regardless of what
+// is persisted in registry.json. User-added custom connectors (unknown IDs)
+// must still be preserved from the persisted file.
+
+test(
+  "loadRegistry returns built-in manifest for claude-code even when stale entry lacks requiresToken (PRRT_kwDORJXyws56VRJ4 regression)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      },
+      () => {
+        // Write a stale registry.json that mimics an older version's output:
+        // claude-code, replit, and generic-mcp entries all lack requiresToken.
+        // Also include a custom connector that should be preserved.
+        const staleRegistry = {
+          connectors: [
+            {
+              id: "claude-code",
+              name: "Claude Code",
+              version: "0.9.0",
+              description: "Old version without requiresToken",
+              capabilities: {
+                observe: true,
+                recall: true,
+                store: true,
+                search: true,
+                entities: false,
+                realtimeSync: false,
+                batch: false,
+                maxBudgetChars: 8000,
+                connectionType: "mcp",
+              },
+              configSchema: {},
+              // requiresToken intentionally absent — simulates stale entry
+            },
+            {
+              id: "replit",
+              name: "Replit Agent",
+              version: "0.9.0",
+              description: "Old version without requiresToken",
+              capabilities: {
+                observe: true,
+                recall: true,
+                store: true,
+                search: false,
+                entities: false,
+                realtimeSync: false,
+                batch: false,
+                maxBudgetChars: 4000,
+                connectionType: "http",
+              },
+              configSchema: {},
+              // requiresToken intentionally absent
+            },
+            {
+              id: "my-custom-agent",
+              name: "My Custom Agent",
+              version: "1.0.0",
+              description: "A user-added custom connector that must be preserved",
+              capabilities: {
+                observe: false,
+                recall: true,
+                store: false,
+                search: false,
+                entities: false,
+                realtimeSync: false,
+                batch: false,
+                maxBudgetChars: 4000,
+                connectionType: "http",
+              },
+              configSchema: {},
+            },
+          ],
+        };
+
+        // Write the stale registry to the expected path under our sandbox HOME.
+        const regDir = path.join(sandbox.xdgConfigHome, "engram", ".engram-connectors");
+        fs.mkdirSync(regDir, { recursive: true });
+        const regPath = path.join(regDir, "registry.json");
+        fs.writeFileSync(regPath, JSON.stringify(staleRegistry, null, 2));
+
+        // Load the registry — built-ins must win for known IDs.
+        const registry = loadRegistry();
+
+        // claude-code must come from the built-in (has requiresToken: true).
+        const ccManifest = registry.connectors.find((c) => c.id === "claude-code");
+        assert.ok(ccManifest !== undefined, "claude-code must be present in loaded registry");
+        assert.equal(
+          ccManifest!.requiresToken,
+          true,
+          "claude-code manifest from loadRegistry must have requiresToken: true (not the stale entry)",
+        );
+
+        // replit must also come from the built-in (has requiresToken: true).
+        const replitManifest = registry.connectors.find((c) => c.id === "replit");
+        assert.ok(replitManifest !== undefined, "replit must be present in loaded registry");
+        assert.equal(
+          replitManifest!.requiresToken,
+          true,
+          "replit manifest from loadRegistry must have requiresToken: true (not the stale entry)",
+        );
+
+        // The custom connector must still be present (it's not a built-in).
+        const customManifest = registry.connectors.find((c) => c.id === "my-custom-agent");
+        assert.ok(
+          customManifest !== undefined,
+          "user-added custom connector (my-custom-agent) must be preserved by loadRegistry",
+        );
+        assert.equal(
+          customManifest!.name,
+          "My Custom Agent",
+          "custom connector name must be preserved",
         );
       },
     );

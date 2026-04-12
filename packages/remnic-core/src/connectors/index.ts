@@ -476,12 +476,14 @@ export function loadRegistry(): ConnectorRegistry {
   const raw = fs.readFileSync(regPath, "utf8");
   try {
     const parsed = JSON.parse(raw);
-    // Merge built-ins with any custom connectors
-    const customIds = new Set((parsed.connectors ?? []).map((c: ConnectorManifest) => c.id));
-    const merged = [
-      ...BUILTIN_CONNECTORS.filter((b) => !customIds.has(b.id)),
-      ...(parsed.connectors ?? []),
-    ];
+    // Built-ins always take precedence over persisted entries with the same ID.
+    // This ensures that upgraded manifests (e.g. newly-added requiresToken: true)
+    // are never shadowed by stale registry.json entries from an older version.
+    // Only connectors whose IDs are NOT in BUILTIN_CONNECTORS are preserved from
+    // the persisted file — those are genuine user-added custom connectors.
+    const builtinIds = new Set(BUILTIN_CONNECTORS.map((b) => b.id));
+    const customOnly = (parsed.connectors ?? []).filter((c: ConnectorManifest) => !builtinIds.has(c.id));
+    const merged = [...BUILTIN_CONNECTORS, ...customOnly];
     return {
       connectors: merged,
       registryPath: regPath,
@@ -1029,9 +1031,23 @@ export function installConnector(options: InstallOptions): InstallResult {
     notes.push(`Updated Hermes config: ${yamlResult.configPath}`);
 
     // Clean up the old profile's remnic: block if the profile changed.
-    if (hermesSavedProfile !== undefined && hermesSavedProfile !== hermesProfile) {
+    // Compare resolved config paths (not raw strings) so that case-insensitive
+    // filesystems (macOS default) don't treat "Research" and "research" as
+    // different profiles — resolving both would yield the same config.yaml,
+    // and removing it would strip the block we just wrote (PRRT_kwDORJXyws56VQ76).
+    let oldProfileResolvesToDifferentFile = false;
+    if (hermesSavedProfile !== undefined) {
       try {
-        const oldCleanResult = removeHermesConfig({ profile: hermesSavedProfile });
+        oldProfileResolvesToDifferentFile =
+          hermesConfigPath(hermesSavedProfile) !== hermesConfigPath(hermesProfile);
+      } catch {
+        // If either profile fails sanitization the comparison is moot; skip cleanup.
+        oldProfileResolvesToDifferentFile = false;
+      }
+    }
+    if (oldProfileResolvesToDifferentFile) {
+      try {
+        const oldCleanResult = removeHermesConfig({ profile: hermesSavedProfile! });
         if (oldCleanResult.updated) {
           notes.push(`Cleaned stale remnic: block from previous profile: ${oldCleanResult.configPath}`);
         }
