@@ -8485,10 +8485,19 @@ export class Orchestrator {
         // check entirely and allowing the same logical fact to be promoted
         // repeatedly.
         //
-        // The fix: always hash `options.content` (the pre-citation raw fact)
-        // as the dedup key.  The write still uses the cited variant so the
-        // persisted copy carries correct provenance.
-        const rawContent = options.content;
+        // Additionally, both promotion call sites pass `fact.content`, which
+        // can already carry an inline citation (e.g. a relayed or reprocessed
+        // fact). Strip any pre-existing citation so the dedup key matches the
+        // hash stored from the original un-cited write (Codex P2 — issue #369).
+        //
+        // The fix: canonicalize `options.content` by stripping any citation
+        // first, then hash the clean body.  The write still applies a fresh
+        // citation so the persisted copy carries correct provenance.
+        const rawContent =
+          citationEnabled &&
+          hasCitationForTemplate(options.content, citationTemplate)
+            ? stripCitationForTemplate(options.content, citationTemplate)
+            : options.content;
         const citedContent = applyInlineCitation(rawContent);
         if (
           options.category === "fact" &&
