@@ -773,6 +773,19 @@ export function installConnector(options: InstallOptions): InstallResult {
   // else: connector does not require token auth — tokenEntry stays null and
   // tokens.json is never touched for this connector.
 
+  // Thread 2 (PRRT_kwDORJXyws56VYwM): if the connector requires token auth but
+  // generateToken threw (tokenEntry is still null), abort now instead of
+  // continuing with a broken install that returns "success" without a valid token.
+  if (options.connectorId !== "hermes" && manifest.requiresToken && tokenEntry === null) {
+    return {
+      connectorId: options.connectorId,
+      status: "error",
+      message:
+        `${manifest.name} install aborted: token generation failed. ` +
+        `Run \`remnic token generate ${options.connectorId}\` to create the token, then reinstall.`,
+    };
+  }
+
   // Build config from schema defaults + user overrides.
   // Codex P1 (PRRT_kwDORJXyws56U9U0): tokens MUST NOT be written into
   // connector.json. The authoritative store is tokens.json (0o600). Writing the
@@ -1241,11 +1254,13 @@ export function installConnector(options: InstallOptions): InstallResult {
         );
       }
     }
-    // Only include a token-rollback suffix for connectors that have a token
-    // to roll back. Non-token connectors (requiresToken !== true) never
-    // generated a token entry, so no rollback occurred and the message must
-    // not claim otherwise.
-    const configWriteTokenSuffix = manifest.requiresToken
+    // Only include a token-rollback suffix for connectors that actually had a
+    // token to roll back. Non-token connectors (requiresToken !== true) never
+    // generated a token entry. For requiresToken connectors where generateToken
+    // threw (tokenEntry === null), no token was written to tokens.json so no
+    // rollback occurred — avoid a misleading "Token rollback FAILED" message
+    // (Thread 1, PRRT_kwDORJXyws56VVnB).
+    const configWriteTokenSuffix = manifest.requiresToken && tokenEntry !== null
       ? configWriteTokenRolledBack
         ? " Token has been rolled back."
         : ` Token rollback FAILED (${configWriteTokenRollbackMsg}) — tokens.json may contain an orphaned entry. ` +
