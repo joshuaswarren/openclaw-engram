@@ -7,6 +7,7 @@ import { getCachedEntities, setCachedEntities } from "./memory-cache.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import {
+  hasCitation,
   hasCitationForTemplate,
   stripCitationForTemplate,
   DEFAULT_CITATION_FORMAT,
@@ -948,19 +949,44 @@ export class StorageManager {
           continue;
         }
         // Legacy fact written before contentHash was introduced (Finding 1 —
-        // Uhol). Skip it rather than guessing a hash via stripCitation.
+        // Uhol). Apply nuanced handling based on whether the citation can be
+        // reliably stripped:
         //
-        // Rationale: for facts annotated with a custom citation template,
-        // stripCitationForTemplate cannot reliably detect the inline marker
-        // and would hash the cited body — producing a hash that never matches
-        // what hasFactContentHash(rawContent) computes. A false-negative miss
-        // (the fact is not in the index) is preferable to a wrong index entry
-        // that permanently suppresses legitimate duplicate writes.
+        //  1. Default citation present → strip it and index the raw body.
+        //  2. No citation at all → index the raw body as-is.
+        //  3. Unknown/custom citation template → skip with a warning.
+        //
+        // Rationale for (3): for facts annotated with a custom citation
+        // template, stripCitationForTemplate cannot reliably detect the inline
+        // marker and would hash the cited body — producing a hash that never
+        // matches what hasFactContentHash(rawContent) computes. A
+        // false-negative miss (the fact is not in the index) is preferable to
+        // a wrong index entry that permanently suppresses legitimate duplicate
+        // writes.
         //
         // Limitation (Thread 2 — stale hash): even when contentHash IS present
         // it may be stale if updateMemory() rewrote the body without updating
         // the frontmatter hash. The hash is trusted as-is here; a future
         // migration pass can recompute it from the current content.
+        const content = memory.content;
+        const stripped = stripCitationForTemplate(content, DEFAULT_CITATION_FORMAT);
+        if (stripped !== content) {
+          // Default-format citation was stripped — index the bare body.
+          factHashIndex.addByHash(
+            ContentHashIndex.computeHash(sanitizeMemoryContent(stripped).text),
+          );
+          continue;
+        }
+        // No default citation was removed. Decide whether to index or skip.
+        if (!hasCitation(content) && !content.trimEnd().endsWith("]")) {
+          // Content has no recognisable citation marker — index raw body.
+          factHashIndex.addByHash(
+            ContentHashIndex.computeHash(sanitizeMemoryContent(content).text),
+          );
+          continue;
+        }
+        // Content appears to carry a citation from an unknown/custom template
+        // that we cannot safely strip. Skip rather than index a wrong hash.
         legacyRecovered++;
         continue;
       }
