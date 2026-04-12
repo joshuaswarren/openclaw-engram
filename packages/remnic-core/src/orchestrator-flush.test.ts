@@ -33,6 +33,7 @@ test("flushSession queues extraction for the targeted buffered session", async (
     options?: Record<string, unknown>,
   ) => {
     queued = { turns: queuedTurns, reason, options };
+    (options?.onTaskSettled as ((error?: unknown) => void) | undefined)?.();
   };
 
   await orchestrator.flushSession("thread-a", { reason: "before_reset" });
@@ -84,6 +85,7 @@ test("flushSession forwards abort signals into the queued extraction", async () 
     options?: Record<string, unknown>,
   ) => {
     queuedOptions = options;
+    (options?.onTaskSettled as ((error?: unknown) => void) | undefined)?.();
   };
 
   await orchestrator.flushSession("thread-a", {
