@@ -659,8 +659,16 @@ function cmdDoctor(): void {
           : undefined,
       });
 
-      // Check memoryDir exists on disk
-      const entryToCheck = (entries[REMNIC_OPENCLAW_PLUGIN_ID] ?? entries[REMNIC_OPENCLAW_LEGACY_PLUGIN_ID]) as Record<string, unknown> | undefined;
+      // Check memoryDir for the slot-selected (active) entry — the slot determines
+      // which plugin OpenClaw loads, so checking the wrong entry misdiagnoses the
+      // configuration. Fall back to the canonical id when the slot is unset or
+      // points to a non-OpenClaw entry.
+      const activeSlotEntry = slotValue ? entries[slotValue] : undefined;
+      const entryToCheck = (
+        activeSlotEntry ??
+        entries[REMNIC_OPENCLAW_PLUGIN_ID] ??
+        entries[REMNIC_OPENCLAW_LEGACY_PLUGIN_ID]
+      ) as Record<string, unknown> | undefined;
       const entryConfig = entryToCheck?.config && typeof entryToCheck.config === "object"
         ? entryToCheck.config as Record<string, unknown>
         : null;
