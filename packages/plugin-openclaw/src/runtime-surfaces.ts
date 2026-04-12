@@ -339,12 +339,20 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function compileDelimitedPhrasePattern(value: string): RegExp | null {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) return null;
+  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalized)}([^a-z0-9]|$)`);
+}
+
+function matchesDelimitedPattern(haystack: string, pattern: RegExp | null): boolean {
+  if (!pattern) return false;
+  return pattern.test(haystack);
+}
+
 export function matchesDelimitedPhrase(haystack: string, value: string): boolean {
   const normalizedHaystack = haystack.toLowerCase();
-  const normalized = value.trim().toLowerCase();
-  if (normalized.length === 0) return false;
-  const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalized)}([^a-z0-9]|$)`);
-  return pattern.test(normalizedHaystack);
+  return matchesDelimitedPattern(normalizedHaystack, compileDelimitedPhrasePattern(value));
 }
 
 function findLastNonEmptyLineIndex(lines: string[], afterIndex: number): number {
@@ -358,15 +366,19 @@ function findLastNonEmptyLineIndex(lines: string[], afterIndex: number): number 
 
 function detectHeartbeatSlug(
   memory: MemoryFile,
-  entries: HeartbeatEntry[],
+  entries: Array<{
+    slug: string;
+    titlePattern: RegExp | null;
+    slugPattern: RegExp | null;
+  }>,
 ): string | null {
   const searchableTags = (memory.frontmatter.tags ?? []).filter(
     (tag) => !tag.startsWith("heartbeat:"),
   );
-  const haystack = `${memory.content}\n${searchableTags.join(" ")}`;
+  const haystack = `${memory.content}\n${searchableTags.join(" ")}`.toLowerCase();
   const matches = entries.filter((entry) => {
-    if (matchesDelimitedPhrase(haystack, entry.title)) return true;
-    return matchesDelimitedPhrase(haystack, entry.slug);
+    if (matchesDelimitedPattern(haystack, entry.titlePattern)) return true;
+    return matchesDelimitedPattern(haystack, entry.slugPattern);
   });
   return matches.length === 1 ? (matches[0]?.slug ?? null) : null;
 }
@@ -379,12 +391,17 @@ export async function syncHeartbeatOutcomeLinks(params: {
 }): Promise<SurfaceSyncResult> {
   const { storage, entries, reindexMemory, logger } = params;
   const memories = await storage.readAllMemories();
+  const matchEntries = entries.map((entry) => ({
+    slug: entry.slug,
+    titlePattern: compileDelimitedPhrasePattern(entry.title),
+    slugPattern: compileDelimitedPhrasePattern(entry.slug),
+  }));
   let linked = 0;
 
   for (const memory of memories) {
     if (isSurfaceMemory(memory, HEARTBEAT_SURFACE_TYPE)) continue;
     const existingSlug = memory.frontmatter.structuredAttributes?.[HEARTBEAT_SLUG_KEY];
-    const detectedSlug = detectHeartbeatSlug(memory, entries);
+    const detectedSlug = detectHeartbeatSlug(memory, matchEntries);
     const baseAttributes = { ...(memory.frontmatter.structuredAttributes ?? {}) };
     delete baseAttributes[HEARTBEAT_SLUG_KEY];
     const baseTags = (memory.frontmatter.tags ?? []).filter(

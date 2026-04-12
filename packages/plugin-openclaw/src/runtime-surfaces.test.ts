@@ -710,6 +710,47 @@ test("syncHeartbeatOutcomeLinks does not treat empty heartbeat slugs as universa
   );
 });
 
+test("syncHeartbeatOutcomeLinks still resolves mixed empty-title entries by slug without false positives", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "fact-1",
+      content: "The check-test-suite follow-up needs attention before rollout.",
+      tags: ["ops"],
+    }),
+  ]);
+
+  const result = await syncHeartbeatOutcomeLinks({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-a",
+        slug: "check-test-suite",
+        title: "",
+        body: "Run the suite and report new failures.",
+        schedule: "hourly",
+        tags: ["ci"],
+        sourceOffset: 0,
+      },
+      {
+        id: "heartbeat-b",
+        slug: "sync-secrets",
+        title: "Sync secrets",
+        body: "Verify sync timing before deployment.",
+        schedule: "hourly",
+        tags: ["ops"],
+        sourceOffset: 1,
+      },
+    ],
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 0, linked: 1 });
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    "check-test-suite",
+  );
+  assert.deepEqual(storage.memories[0]?.frontmatter.tags, ["ops", "heartbeat:check-test-suite"]);
+});
+
 test("syncHeartbeatOutcomeLinks does not false-match heartbeat titles inside larger words", async () => {
   const storage = makeStorage([
     makeMemory({
