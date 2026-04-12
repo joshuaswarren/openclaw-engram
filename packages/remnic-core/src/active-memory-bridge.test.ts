@@ -156,6 +156,48 @@ test("recallForActiveMemory marks results truncated when the underlying recall e
   assert.equal(result.truncated, true);
 });
 
+test("recallForActiveMemory excludes artifact-backed hits before applying the visible result cap", async () => {
+  const orchestrator = {
+    resolveSelfNamespace: () => "session-namespace",
+    searchAcrossNamespaces: async () => [
+      {
+        id: "artifact-1",
+        score: 0.99,
+        path: "/tmp/memory/default/artifacts/artifact-1.md",
+        snippet: "artifact snippet should stay isolated",
+      },
+      {
+        id: "mem-1",
+        score: 0.88,
+        path: "/tmp/memory/default/facts/mem-1.md",
+        snippet: "first visible memory",
+      },
+      {
+        id: "mem-2",
+        score: 0.77,
+        path: "/tmp/memory/default/facts/mem-2.md",
+        snippet: "second visible memory",
+      },
+    ],
+  };
+
+  const result = await recallForActiveMemory(orchestrator as never, {
+    query: "infra outage",
+    limit: 2,
+    sessionKey: "session-b",
+  });
+
+  assert.deepEqual(
+    result.results.map((entry) => entry.id),
+    ["mem-1", "mem-2"],
+  );
+  assert.equal(result.truncated, false);
+  assert.equal(
+    result.results.some((entry) => /artifact snippet/i.test(entry.text)),
+    false,
+  );
+});
+
 test("getMemoryForActiveMemory returns not_found instead of throwing", async () => {
   const orchestrator = {
     resolveSelfNamespace: () => "readable-session",

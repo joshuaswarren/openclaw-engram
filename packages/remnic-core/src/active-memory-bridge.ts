@@ -51,6 +51,10 @@ type ActiveMemorySearchCandidate = {
   metadata?: Record<string, unknown>;
 };
 
+function isArtifactPath(value: string | undefined): boolean {
+  return typeof value === "string" && /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(value);
+}
+
 function clampLimit(value: number | undefined): number {
   if (typeof value !== "number" || !Number.isFinite(value)) return 8;
   return Math.max(1, Math.min(50, Math.floor(value)));
@@ -128,6 +132,7 @@ export async function recallForActiveMemory(
   params: ActiveMemoryRecallParams,
 ): Promise<ActiveMemorySearchOutput> {
   const limit = clampLimit(params.limit);
+  const requestedResults = Math.min(200, limit + 20);
   const snippetMaxChars =
     typeof params.snippetMaxChars === "number" && Number.isFinite(params.snippetMaxChars)
       ? Math.max(1, Math.min(4000, Math.floor(params.snippetMaxChars)))
@@ -140,19 +145,20 @@ export async function recallForActiveMemory(
 
   const raw = await orchestrator.searchAcrossNamespaces({
     query: params.query,
-    maxResults: limit + 1,
+    maxResults: requestedResults,
     namespaces: [namespace],
     mode: "search",
   });
+  const visible = raw.filter((candidate) => !isArtifactPath(candidate.path));
 
   return {
-    results: raw.slice(0, limit).map((candidate, index) => ({
+    results: visible.slice(0, limit).map((candidate, index) => ({
       id: candidate.id ?? candidate.path ?? `memory-${index + 1}`,
       score: typeof candidate.score === "number" ? candidate.score : 0,
       text: truncateSnippet(candidate.snippet ?? candidate.text ?? "", snippetMaxChars),
       metadata: pickMetadata(candidate.metadata),
     })),
-    truncated: raw.length > limit,
+    truncated: visible.length > limit,
   };
 }
 
