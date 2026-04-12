@@ -81,7 +81,7 @@
   "scripts": {
     "sync:openclaw-plugin": "node scripts/sync-openclaw-plugin.mjs",
     "check:openclaw-plugin-sync": "node scripts/check-openclaw-plugin-sync.mjs",
-    "build": "npm run check:openclaw-plugin-sync && tsup && node scripts/copy-admin-console.mjs",
+    "build": "pnpm run check:openclaw-plugin-sync && tsup && node scripts/copy-admin-console.mjs",
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "check-config-contract": "tsx scripts/validate-config-contract.ts",
