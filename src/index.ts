@@ -1638,6 +1638,11 @@ const pluginDefinition = {
             // that the next register() may re-register CLI. A secondary completing init
             // after a full stop must leave GUARD=false so that signal is preserved.
             log.info("engram memory system ready");
+            // Operator-visible confirmation that gateway_start fired successfully.
+            // Used by `remnic doctor` and install docs to verify hooks are active.
+            log.info(
+              `gateway_start fired — Remnic memory plugin is active (id=${pluginDefinition.id}, memoryDir=${cfg.memoryDir})`,
+            );
           } catch (err) {
             // Unsubscribe Opik exporter if it was subscribed before the failure so
             // a retry from another registry doesn't accumulate multiple subscribers.

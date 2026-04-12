@@ -1,6 +1,7 @@
 {
   "id": "openclaw-engram",
   "kind": "memory",
+  "description": "Legacy compatibility shim for the openclaw-engram plugin id. This id has been renamed to openclaw-remnic — install @remnic/plugin-openclaw for the current release. Requires plugins.slots.memory set to this plugin id for hooks to fire.",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

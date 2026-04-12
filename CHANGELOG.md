@@ -4,6 +4,37 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`remnic openclaw install` CLI command** — configures OpenClaw to use Remnic
+  as the memory provider. Writes `plugins.entries["openclaw-remnic"]` and
+  `plugins.slots.memory = "openclaw-remnic"` to `~/.openclaw/openclaw.json`.
+  Supports `--yes` / `-y` / `--force` (skip prompts), `--dry-run` (preview
+  without writing), `--memory-dir <path>`, and `--config <path>` flags.
+  Detects legacy `openclaw-engram` entries and interactively offers migration.
+- **Expanded `remnic doctor` OpenClaw config checks** — new checks verify the
+  OpenClaw config file exists and is valid JSON, `plugins.entries` is present,
+  an `openclaw-remnic` (or legacy `openclaw-engram`) entry exists, the memory
+  slot is set and points to a known entry, and `config.memoryDir` exists on
+  disk. Each failing check surfaces a remediation hint pointing to
+  `remnic openclaw install`.
+- **`gateway_start` log line** — the plugin's `start()` handler now emits
+  `[remnic] gateway_start fired — Remnic memory plugin is active (id=…, memoryDir=…)`
+  so operators can confirm hooks are firing without parsing the full log.
+- **Slot hint in plugin manifests** — `openclaw.plugin.json` (root and
+  `packages/plugin-openclaw`) now include a `description` field with a slot
+  requirement hint. The shim manifest's description points operators to the
+  rename.
+- **`docs/integration/plugin-id-and-memory-namespaces.md`** — design note
+  explaining the `openclaw-remnic` vs `openclaw-engram` split, how
+  `plugins.slots.memory` gating works, the expected operator workflow, memory
+  namespace conventions, and a forward-compat note for multi-kind slots.
+- **Quick install section in README** — shows `remnic openclaw install` as the
+  recommended path for OpenClaw operators.
+- **Troubleshooting: hooks aren't firing section in README** — explains the
+  slot gating root cause, points at `remnic doctor` and `remnic openclaw install`,
+  and shows the expected `gateway_start fired` log line.
+
 ## [v9.3.0] — 2026-04-12
 
 ### Fixed
@@ -24,6 +55,12 @@ All notable changes to this project will be documented in this file.
   `globalThis.__openclawEngramOrchestrator` mirror is still maintained as a
   "last registered Remnic orchestrator" pointer for cross-plugin observers
   that don't know the `serviceId`. (#403)
+
+### Changed
+
+- `docs/integration/sample-openclaw-config.json` updated to use the
+  `openclaw-remnic` entry name and include `plugins.slots.memory` with migration
+  comments.
 
 ## [1.0.0] — The Remnic Release — 2026-04-10
 

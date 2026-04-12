@@ -48,6 +48,26 @@ Remnic is the **universal memory layer for AI agents**. It works natively with *
 | Default OpenClaw memory doesn't scale | Hybrid search, lifecycle management, namespaces, and governance |
 | Third-party memory services cost money and share your data | Everything stays local — your filesystem, your rules |
 
+## Quick install (OpenClaw)
+
+If you have OpenClaw installed, the fastest path to working Remnic memory is:
+
+```bash
+# 1. Install the plugin package
+openclaw plugins install @remnic/plugin-openclaw --pin
+
+# 2. Wire up the memory slot automatically
+remnic openclaw install
+
+# 3. Restart the gateway
+launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway
+
+# 4. Verify everything is working
+remnic doctor
+```
+
+`remnic openclaw install` writes `plugins.entries["openclaw-remnic"]` and `plugins.slots.memory = "openclaw-remnic"` to `~/.openclaw/openclaw.json`. Without the slot, hooks never fire — see [Troubleshooting: hooks aren't firing](#troubleshooting-hooks-arent-firing) for details.
+
 ## Installation
 
 ### Option 1: Install from the CLI
@@ -248,6 +268,71 @@ openclaw engram setup --json         # Validates config, scaffolds directories
 openclaw engram doctor --json        # Health diagnostics with remediation hints
 openclaw engram config-review --json # Opinionated config tuning recommendations
 ```
+
+## Troubleshooting: hooks aren't firing
+
+**Symptom:** Remnic appears installed but no memories are created. The gateway log shows no `[remnic]` lines after conversations.
+
+**Root cause:** OpenClaw gates memory plugins on `plugins.slots.memory`. If this slot is not set to the plugin's id, OpenClaw skips `register(api)` entirely — no hooks fire, no memory is stored or recalled.
+
+### Quick fix
+
+```bash
+remnic openclaw install   # Sets plugins.slots.memory = "openclaw-remnic"
+```
+
+Restart the gateway after running this command.
+
+### How to verify hooks are firing
+
+After restarting, check the gateway log for this line:
+
+```
+[remnic] gateway_start fired — Remnic memory plugin is active (id=openclaw-engram, memoryDir=~/.openclaw/workspace/memory/local)
+```
+
+On macOS:
+```bash
+grep "gateway_start fired" ~/.openclaw/logs/gateway.log
+```
+
+If the line is absent, run `remnic doctor` to see which check is failing:
+
+```
+remnic doctor
+```
+
+The doctor output will show:
+- `OpenClaw config file` — whether `openclaw.json` exists and is valid JSON
+- `OpenClaw plugins.entries` — whether the entries object is present
+- `OpenClaw plugin entry` — whether `openclaw-remnic` (or legacy `openclaw-engram`) entry exists
+- `OpenClaw plugins.slots.memory` — whether the slot is set and points to an entry
+- `OpenClaw memoryDir` — whether the configured memory directory exists on disk
+
+Each failing check includes a remediation hint pointing to `remnic openclaw install`.
+
+### Manual fix
+
+If you prefer to edit `~/.openclaw/openclaw.json` directly:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "memoryDir": "~/.openclaw/workspace/memory/local"
+        }
+      }
+    },
+    "slots": {
+      "memory": "openclaw-remnic"
+    }
+  }
+}
+```
+
+Both `entries["openclaw-remnic"]` and `slots.memory = "openclaw-remnic"` are required. See [docs/integration/plugin-id-and-memory-namespaces.md](docs/integration/plugin-id-and-memory-namespaces.md) for the full design note.
 
 ## Using Remnic with Codex CLI
 

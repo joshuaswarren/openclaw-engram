@@ -162,6 +162,48 @@ test("published OpenClaw packages require openclaw 2026.4.8 or greater", () => {
   }
 });
 
+test("non-shim openclaw.plugin.json manifests carry the slot hint phrase", () => {
+  const SLOT_HINT = "plugins.slots.memory";
+  for (const manifestPath of [
+    path.join(ROOT, "openclaw.plugin.json"),
+    path.join(PACKAGES_DIR, "plugin-openclaw", "openclaw.plugin.json"),
+  ]) {
+    assert.ok(fs.existsSync(manifestPath), `${path.relative(ROOT, manifestPath)} must exist`);
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    assert.ok(
+      typeof manifest.description === "string" && manifest.description.includes(SLOT_HINT),
+      `${path.relative(ROOT, manifestPath)} description must mention "${SLOT_HINT}" (got: ${JSON.stringify(manifest.description)})`,
+    );
+  }
+});
+
+test("sample-openclaw-config.json uses openclaw-remnic entry and slot", () => {
+  const samplePath = path.join(ROOT, "docs", "integration", "sample-openclaw-config.json");
+  assert.ok(fs.existsSync(samplePath), "sample-openclaw-config.json must exist");
+  const raw = fs.readFileSync(samplePath, "utf-8");
+  const cfg = JSON.parse(raw);
+  assert.ok(
+    cfg.plugins?.entries?.["openclaw-remnic"],
+    "sample config must have plugins.entries[\"openclaw-remnic\"]",
+  );
+  assert.equal(
+    cfg.plugins?.slots?.memory,
+    "openclaw-remnic",
+    "sample config must have plugins.slots.memory = \"openclaw-remnic\"",
+  );
+});
+
+test("design note docs/integration/plugin-id-and-memory-namespaces.md exists and mentions key concepts", () => {
+  const docPath = path.join(ROOT, "docs", "integration", "plugin-id-and-memory-namespaces.md");
+  assert.ok(fs.existsSync(docPath), "plugin-id-and-memory-namespaces.md must exist");
+  const content = fs.readFileSync(docPath, "utf-8");
+  assert.ok(content.includes("plugins.slots.memory"), "design doc must mention plugins.slots.memory");
+  assert.ok(content.includes("openclaw-remnic"), "design doc must mention openclaw-remnic");
+  assert.ok(content.includes("openclaw-engram"), "design doc must mention openclaw-engram for migration context");
+  assert.ok(content.includes("memoryDir"), "design doc must mention memoryDir");
+  assert.ok(content.includes("remnic openclaw install"), "design doc must mention remnic openclaw install");
+});
+
 test("packages that depend on LanceDB declare apache-arrow explicitly", () => {
   for (const pkgJsonPath of [
     path.join(ROOT, "package.json"),
