@@ -18,21 +18,23 @@ export interface HeartbeatSurface {
   findBySlug(entries: HeartbeatEntry[], slug: string): HeartbeatEntry | null;
 }
 
-function stableHeartbeatId(entry: Omit<HeartbeatEntry, "id" | "sourceOffset">): string {
+function stableHeartbeatId(params: {
+  slug: string;
+  occurrence: number;
+}): string {
   const digest = createHash("sha1")
     .update(
       JSON.stringify({
-        slug: entry.slug,
-        title: entry.title,
-        body: entry.body,
-        schedule: entry.schedule,
-        tags: entry.tags,
+        slug: params.slug,
+        occurrence: params.occurrence,
       }),
     )
     .digest("hex")
     .slice(0, 12);
   return `heartbeat-${digest}`;
 }
+
+type ParsedHeartbeatEntry = Omit<HeartbeatEntry, "id">;
 
 function slugify(value: string): string {
   return value
@@ -59,23 +61,34 @@ function buildEntry(params: {
   schedule: string | null;
   tags: string[];
   sourceOffset: number;
-}): HeartbeatEntry {
-  const normalized: Omit<HeartbeatEntry, "id" | "sourceOffset"> = {
+}): ParsedHeartbeatEntry {
+  return {
     slug: params.slug,
     title: params.title.trim(),
     body: params.body.trim(),
     schedule: params.schedule?.trim() || null,
     tags: params.tags,
-  };
-  return {
-    id: stableHeartbeatId(normalized),
-    ...normalized,
     sourceOffset: params.sourceOffset,
   };
 }
 
-function parseSectionEntries(content: string): HeartbeatEntry[] {
-  const entries: HeartbeatEntry[] = [];
+function finalizeHeartbeatEntries(entries: ParsedHeartbeatEntry[]): HeartbeatEntry[] {
+  const seenBySlug = new Map<string, number>();
+  return entries.map((entry) => {
+    const occurrence = seenBySlug.get(entry.slug) ?? 0;
+    seenBySlug.set(entry.slug, occurrence + 1);
+    return {
+      ...entry,
+      id: stableHeartbeatId({
+        slug: entry.slug,
+        occurrence,
+      }),
+    };
+  });
+}
+
+function parseSectionEntries(content: string): ParsedHeartbeatEntry[] {
+  const entries: ParsedHeartbeatEntry[] = [];
   const regex = /^##\s+(.+)$/gm;
   const matches = [...content.matchAll(regex)];
   for (let index = 0; index < matches.length; index += 1) {
@@ -115,9 +128,9 @@ function parseSectionEntries(content: string): HeartbeatEntry[] {
   return entries;
 }
 
-function parseTaskBlock(content: string): HeartbeatEntry[] {
+function parseTaskBlock(content: string): ParsedHeartbeatEntry[] {
   const lines = content.split("\n");
-  const entries: HeartbeatEntry[] = [];
+  const entries: ParsedHeartbeatEntry[] = [];
   let inTasks = false;
   let offset = 0;
   for (let index = 0; index < lines.length; index += 1) {
@@ -165,8 +178,8 @@ function parseTaskBlock(content: string): HeartbeatEntry[] {
 function parseHeartbeatEntries(content: string): HeartbeatEntry[] {
   const normalized = content.replace(/\r\n/g, "\n");
   const sectionEntries = parseSectionEntries(normalized);
-  if (sectionEntries.length > 0) return sectionEntries;
-  return parseTaskBlock(normalized);
+  if (sectionEntries.length > 0) return finalizeHeartbeatEntries(sectionEntries);
+  return finalizeHeartbeatEntries(parseTaskBlock(normalized));
 }
 
 export function createHeartbeatSurface(): HeartbeatSurface {

@@ -337,6 +337,55 @@ test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and upda
   assert.deepEqual(reindexed, ["principle-1", "principle-1"]);
 });
 
+test("syncHeartbeatSurfaceEntries preserves the stored heartbeat entry id across content edits when identity is stable", async () => {
+  const storage = makeStorage();
+
+  const first = await syncHeartbeatSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-stable",
+        slug: "check-test-suite",
+        title: "check-test-suite",
+        body: "Run the suite and report new failures.",
+        schedule: "hourly",
+        tags: ["ci", "tests"],
+        sourceOffset: 20,
+      },
+    ],
+    journalPath: "/workspace/HEARTBEAT.md",
+  });
+
+  assert.deepEqual(first, { created: 1, updated: 0, linked: 0 });
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.remnicHeartbeatEntryId,
+    "heartbeat-stable",
+  );
+
+  const second = await syncHeartbeatSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-stable",
+        slug: "check-test-suite",
+        title: "check-test-suite",
+        body: "Run the suite, compare to the last run, and report new failures.",
+        schedule: "every 2 hours",
+        tags: ["ci", "tests", "diff"],
+        sourceOffset: 48,
+      },
+    ],
+    journalPath: "/workspace/HEARTBEAT.md",
+  });
+
+  assert.deepEqual(second, { created: 0, updated: 1, linked: 0 });
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.remnicHeartbeatEntryId,
+    "heartbeat-stable",
+  );
+  assert.match(storage.memories[0]?.content ?? "", /compare to the last run/);
+});
+
 test("syncHeartbeatSurfaceEntries reuses memories created earlier in the same batch", async () => {
   const storage = makeStorage();
 

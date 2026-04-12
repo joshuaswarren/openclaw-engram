@@ -102,6 +102,50 @@ test("heartbeat surface tracks source offsets for repeated task lines correctly"
   assert.equal(entries[0]?.sourceOffset, content.lastIndexOf("  - name: email-check"));
 });
 
+test("heartbeat surface keeps entry ids stable when body, schedule, or tags are edited in place", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-stable-id-"));
+  const heartbeatPath = path.join(root, "HEARTBEAT.md");
+  const surface = createHeartbeatSurface();
+
+  await writeFile(
+    heartbeatPath,
+    [
+      "## check-test-suite",
+      "",
+      "Run the suite and report new failures.",
+      "",
+      "Schedule: hourly",
+      "Tags: #ci #tests",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const first = await surface.read(heartbeatPath);
+
+  await writeFile(
+    heartbeatPath,
+    [
+      "## check-test-suite",
+      "",
+      "Run the suite, compare to the last run, and report new failures.",
+      "",
+      "Schedule: every 2 hours",
+      "Tags: #ci #tests #diff",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const second = await surface.read(heartbeatPath);
+
+  assert.equal(first.length, 1);
+  assert.equal(second.length, 1);
+  assert.equal(first[0]?.slug, "check-test-suite");
+  assert.equal(second[0]?.slug, "check-test-suite");
+  assert.equal(first[0]?.id, second[0]?.id);
+});
+
 test("heartbeat surface resolves entries by slug", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-find-"));
   const heartbeatPath = path.join(root, "HEARTBEAT.md");
