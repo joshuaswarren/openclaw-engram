@@ -36,6 +36,8 @@ const GLOBAL_KEYS = [
   // Unkeyed mirror that register() maintains for observers that don't know
   // the serviceId (currently only the orchestrator).
   "__openclawEngramOrchestrator",
+  // CLI dedupe guard — intentionally process-global (not per-serviceId).
+  "__openclawEngramCliRegistered",
   // Intentionally unkeyed.
   "__openclawEngramMigrationPromise",
 ];

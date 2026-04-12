@@ -21,6 +21,7 @@ const GLOBAL_KEYS = [
   `__openclawEngramServiceStarted::${SERVICE_ID}`,
   `__openclawEngramInitPromise::${SERVICE_ID}`,
   "__openclawEngramOrchestrator",
+  "__openclawEngramCliRegistered",
   "__openclawEngramMigrationPromise",
 ];
 

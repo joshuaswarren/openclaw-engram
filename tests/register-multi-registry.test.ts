@@ -108,6 +108,8 @@ function buildApi(label: string) {
 // (`__openclawEngramOrchestrator`) that cross-plugin observers read.  Tests
 // must save/restore BOTH slots or state leaks across test cases.
 const UNKEYED_ORCH_MIRROR_KEY = "__openclawEngramOrchestrator";
+// CLI dedupe guard — intentionally process-global (not per-serviceId).
+const CLI_REGISTERED_GUARD_KEY = "__openclawEngramCliRegistered";
 
 function saveAndResetGlobals() {
   const saved = {
@@ -115,6 +117,7 @@ function saveAndResetGlobals() {
     hookApis: (globalThis as any)[HOOK_APIS_KEY],
     orch: (globalThis as any)[ORCH_KEY],
     unkeyedOrchMirror: (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY],
+    cliRegistered: (globalThis as any)[CLI_REGISTERED_GUARD_KEY],
     accessSvc: (globalThis as any)[ACCESS_SVC_KEY],
     accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
     serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
@@ -125,6 +128,7 @@ function saveAndResetGlobals() {
   delete (globalThis as any)[HOOK_APIS_KEY];
   delete (globalThis as any)[ORCH_KEY];
   delete (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY];
+  delete (globalThis as any)[CLI_REGISTERED_GUARD_KEY];
   delete (globalThis as any)[ACCESS_SVC_KEY];
   delete (globalThis as any)[ACCESS_HTTP_KEY];
   delete (globalThis as any)[SERVICE_STARTED_KEY];
@@ -178,6 +182,9 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
   if (saved.unkeyedOrchMirror !== undefined) (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY] = saved.unkeyedOrchMirror;
   else delete (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY];
+
+  if (saved.cliRegistered !== undefined) (globalThis as any)[CLI_REGISTERED_GUARD_KEY] = saved.cliRegistered;
+  else delete (globalThis as any)[CLI_REGISTERED_GUARD_KEY];
 
   if (saved.accessSvc !== undefined) (globalThis as any)[ACCESS_SVC_KEY] = saved.accessSvc;
   else delete (globalThis as any)[ACCESS_SVC_KEY];
@@ -846,6 +853,19 @@ test("register() scopes runtime singletons per serviceId when two plugin ids sha
       legacy.getServiceIds(),
       ["openclaw-engram"],
       "legacy registry must register service id openclaw-engram",
+    );
+
+    // CLI must be registered only on the first plugin id — the global
+    // CLI_REGISTERED_GUARD prevents the second plugin from creating a
+    // duplicate command tree.
+    assert.ok(
+      canonical.getCliCount() > 0,
+      "canonical (first) plugin must have CLI registered",
+    );
+    assert.equal(
+      legacy!.getCliCount(),
+      0,
+      "legacy (second) plugin must NOT have CLI — global CLI_REGISTERED_GUARD prevents duplicate command trees across plugin ids",
     );
 
     // The unkeyed orchestrator mirror must point at whichever plugin

@@ -56,6 +56,18 @@ import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src
  */
 const ENGRAM_MIGRATION_PROMISE = "__openclawEngramMigrationPromise";
 
+/**
+ * CLI dedupe guard — intentionally **unkeyed** (not per-serviceId).
+ *
+ * CLI commands live in the gateway's central plugin registry, not in per-api
+ * state.  In migration installs where both `openclaw-remnic` and
+ * `openclaw-engram` plugin ids coexist in one process, the per-serviceId
+ * `REGISTERED_GUARD` would give each plugin its own "first registration" and
+ * both would call `registerCli()`, creating duplicate command trees.  This
+ * global guard ensures CLI registration happens exactly once per process.
+ */
+const CLI_REGISTERED_GUARD = "__openclawEngramCliRegistered";
+
 type ServiceKeys = {
   REGISTERED_GUARD: string;
   /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -1445,7 +1457,10 @@ const pluginDefinition = {
       );
     }
 
-    if (isFirstRegistration) {
+    // CLI guard is intentionally process-global (not per-serviceId) because CLI
+    // commands live in the gateway's central registry.  See CLI_REGISTERED_GUARD.
+    if (!(globalThis as any)[CLI_REGISTERED_GUARD]) {
+      (globalThis as any)[CLI_REGISTERED_GUARD] = true;
       registerCli(
         api as unknown as Parameters<typeof registerCli>[0],
         orchestrator,
@@ -1693,6 +1708,10 @@ const pluginDefinition = {
         let secondaryTookOver = false;
         if (!currentInitPromise) {
           (globalThis as any)[keys.REGISTERED_GUARD] = false;
+          // Clear global CLI guard so a fresh register() cycle can re-register
+          // CLI commands after stop/reload.  Same full-stop-only policy as
+          // REGISTERED_GUARD above.
+          (globalThis as any)[CLI_REGISTERED_GUARD] = false;
         } else {
           // Stop-during-init: leave GUARD as-is.
           // The CLI registered by the original register() call is still present

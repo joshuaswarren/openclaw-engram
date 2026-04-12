@@ -40,6 +40,8 @@ const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
 // itself).  Must be cleaned alongside the keyed slots so per-test state does
 // not leak across cases.
 const UNKEYED_ORCH_MIRROR_KEY = "__openclawEngramOrchestrator";
+// CLI dedupe guard — intentionally process-global (not per-serviceId).
+const CLI_REGISTERED_GUARD_KEY = "__openclawEngramCliRegistered";
 const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
 
 // ============================================================================
@@ -102,6 +104,7 @@ function resetGlobals() {
     HOOK_APIS_KEY,
     ORCH_KEY,
     UNKEYED_ORCH_MIRROR_KEY,
+    CLI_REGISTERED_GUARD_KEY,
     ACCESS_SVC_KEY,
     ACCESS_HTTP_KEY,
     SERVICE_STARTED_KEY,
