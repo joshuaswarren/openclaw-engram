@@ -1,7 +1,7 @@
 import {
   getMemoryForActiveMemory,
   type ActiveMemoryGetOutput,
-} from "../../../remnic-core/src/active-memory-bridge.js";
+} from "../../../remnic-core/src/index.js";
 import { MemoryGetInputSchema } from "./shapes.js";
 
 function toolJsonResult(value: unknown) {

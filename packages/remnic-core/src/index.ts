@@ -132,6 +132,20 @@ export {
 export { loadDaySummaryPrompt } from "./day-summary.js";
 
 // ---------------------------------------------------------------------------
+// Active memory bridge
+// ---------------------------------------------------------------------------
+
+export {
+  getMemoryForActiveMemory,
+  recallForActiveMemory,
+  type ActiveMemoryGetOutput,
+  type ActiveMemoryMetadata,
+  type ActiveMemoryRecallParams,
+  type ActiveMemorySearchOutput,
+  type ActiveMemorySearchResult,
+} from "./active-memory-bridge.js";
+
+// ---------------------------------------------------------------------------
 // Daily Context Briefing (#370)
 // ---------------------------------------------------------------------------
 

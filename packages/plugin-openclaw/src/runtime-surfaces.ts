@@ -52,7 +52,7 @@ const DREAM_ENTRY_ID_KEY = "remnicDreamEntryId";
 const HEARTBEAT_ENTRY_ID_KEY = "remnicHeartbeatEntryId";
 const HEARTBEAT_SLUG_KEY = "relatedHeartbeatSlug";
 const SURFACE_TYPE_KEY = "remnicSurfaceType";
-const HEARTBEAT_META_TAGS = new Set([
+const DREAM_REFLECTION_TAGS = new Set([
   "frustration",
   "recurring",
   "surprising",
@@ -142,7 +142,11 @@ export async function syncDreamSurfaceEntries(params: {
   reindexMemory?: (id: string) => Promise<void>;
 }): Promise<SurfaceSyncResult> {
   const { storage, journalPath, reindexMemory } = params;
-  const entries = params.entries.slice(-Math.max(0, params.maxEntries));
+  const maxEntries = Math.max(0, params.maxEntries);
+  if (maxEntries === 0) {
+    return { created: 0, updated: 0, linked: 0 };
+  }
+  const entries = params.entries.slice(-maxEntries);
   const memories = await storage.readAllMemories();
   let created = 0;
   let updated = 0;
@@ -339,7 +343,7 @@ export function planDreamEntryFromConsolidation(params: {
 
   const suggestedTags = uniqueTags(
     operationalMemories.flatMap((memory) =>
-      (memory.frontmatter.tags ?? []).filter((tag) => HEARTBEAT_META_TAGS.has(tag)),
+      (memory.frontmatter.tags ?? []).filter((tag) => DREAM_REFLECTION_TAGS.has(tag)),
     ),
   ).slice(0, 4);
   if (suggestedTags.length === 0) return null;

@@ -159,6 +159,34 @@ test("syncDreamSurfaceEntries imports dream entries once and updates existing me
   assert.equal(storage.memories.length, 1);
 });
 
+test("syncDreamSurfaceEntries treats maxEntries zero as a hard disable", async () => {
+  const storage = makeStorage();
+  const reindexed: string[] = [];
+
+  const result = await syncDreamSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "dream-zero",
+        timestamp: "2026-04-12T10:00:00Z",
+        title: "Should not import",
+        body: "maxEntries zero disables syncing.",
+        tags: ["debug"],
+        sourceOffset: 4,
+      },
+    ],
+    journalPath: "/workspace/DREAMS.md",
+    maxEntries: 0,
+    reindexMemory: async (id) => {
+      reindexed.push(id);
+    },
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 0, linked: 0 });
+  assert.equal(storage.memories.length, 0);
+  assert.deepEqual(reindexed, []);
+});
+
 test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and updates the same slug in place", async () => {
   const storage = makeStorage();
 

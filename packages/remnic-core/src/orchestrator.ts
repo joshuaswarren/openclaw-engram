@@ -7747,6 +7747,19 @@ export class Orchestrator {
       .then(async () => {
         const turns = this.buffer.getTurns(sessionKey);
         if (turns.length === 0) return;
+        const normalizedSessionKey = normalizeReplaySessionKey(sessionKey);
+        if (
+          turns.some(
+            (turn) =>
+              turn.sessionKey &&
+              normalizeReplaySessionKey(turn.sessionKey) !== normalizedSessionKey,
+          )
+        ) {
+          log.debug(
+            `heartbeat observer skipped: mixed-session buffer contents for ${sessionKey}`,
+          );
+          return;
+        }
         if (!this.shouldQueueExtraction(turns, { commit: false })) {
           log.debug(
             `heartbeat observer skipped: extraction dedupe for ${sessionKey}`,

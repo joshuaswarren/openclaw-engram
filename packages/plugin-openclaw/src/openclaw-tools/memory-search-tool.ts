@@ -1,7 +1,7 @@
 import {
   recallForActiveMemory,
   type ActiveMemorySearchOutput,
-} from "../../../remnic-core/src/active-memory-bridge.js";
+} from "../../../remnic-core/src/index.js";
 import { MemorySearchInputSchema } from "./shapes.js";
 
 function toolJsonResult(value: unknown) {
