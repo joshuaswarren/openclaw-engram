@@ -294,6 +294,21 @@ test("commands.list handler returns the remnic discovery descriptor", async () =
   }
 });
 
+test("commands.list handler is not registered when session toggles are disabled", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("commands-list-disabled-toggle-test");
+  api.pluginConfig = {
+    sessionTogglesEnabled: false,
+  };
+  plugin.register(api as any);
+
+  assert.equal(
+    api.handlers.has("commands.list"),
+    false,
+    "commands.list should stay hidden when session toggle commands are disabled",
+  );
+});
+
 test("before_prompt_build respects the primary session toggle store", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-toggle-hook-"));
   const { default: plugin } = await import("../src/index.js");

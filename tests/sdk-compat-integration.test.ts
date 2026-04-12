@@ -372,6 +372,35 @@ test("new SDK registers active-memory tool names and slash commands", async () =
   }
 });
 
+test("new SDK hides session command registration when session toggles are disabled", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("active-memory-tools-disabled-toggle-test");
+    api.pluginConfig = {
+      sessionTogglesEnabled: false,
+    };
+    plugin.register(api as any);
+
+    assert.equal(
+      api._registeredHooks.includes("commands.list"),
+      false,
+      "commands.list should not be registered when session toggle commands are disabled",
+    );
+    assert.equal(
+      api._registeredCommands.length,
+      0,
+      "registerCommand should not expose session toggle commands when the toggle system is disabled",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
 test("new SDK registerCommand is deduped across multi-registry registration", async () => {
   resetGlobals();
   const previousDisableMigration = disableRegisterMigrationForTest();

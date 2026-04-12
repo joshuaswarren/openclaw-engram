@@ -2017,7 +2017,11 @@ const pluginDefinition = {
     // These hooks are only available on the new SDK and provide richer
     // lifecycle, tool, LLM, and subagent observation capabilities.
     // ========================================================================
-    if (!passiveMode && cfg.commandsListEnabled) {
+    if (
+      !passiveMode &&
+      cfg.commandsListEnabled &&
+      cfg.sessionTogglesEnabled !== false
+    ) {
       try {
         api.on("commands.list", async () => sessionCommandDescriptors);
       } catch (error) {
