@@ -713,7 +713,10 @@ const pluginDefinition = {
     });
     const activeRecallEngine = createActiveRecallEngine(
       {
-        recall: async (query, sessionKey) => orchestrator.recall(query, sessionKey),
+        recall: async (query, sessionKey) =>
+          cfg.activeRecallAllowChainedActiveMemory
+            ? orchestrator.recall(query, sessionKey)
+            : null,
         getLastRecallSnapshot: (sessionKey) => orchestrator.getLastRecall(sessionKey),
         explainLastRecall:
           cfg.activeRecallAttachRecallExplain === true
@@ -1153,12 +1156,18 @@ const pluginDefinition = {
           `${hookLabel}: recall returned ${context?.length ?? 0} chars`,
         );
         const lastRecall = orchestrator.getLastRecall(sessionKey);
+        const plannerSuppressesAuxiliaryRecall =
+          lastRecall?.plannerMode === "no_recall";
+        const auxiliaryDreamLines = plannerSuppressesAuxiliaryRecall ? [] : dreamLines;
+        const auxiliaryActiveRecallLines = plannerSuppressesAuxiliaryRecall
+          ? []
+          : activeRecallLines;
         const memoryIds = lastRecall?.memoryIds ?? [];
         if (!context) {
           const auxiliarySummary =
             summarizeRecallTextForStatus(activeRecallResult?.summary ?? null) ??
             summarizeRecallTextForStatus(
-              [...dreamLines, ...activeRecallLines].join(" "),
+              [...auxiliaryDreamLines, ...auxiliaryActiveRecallLines].join(" "),
             ) ??
             (verboseRequested
               ? "Remnic recall metadata injected without matching memory context."
@@ -1174,7 +1183,11 @@ const pluginDefinition = {
                 summary: auxiliarySummary,
               })
             : [];
-          const mergedLines = [...verboseLines, ...dreamLines, ...activeRecallLines];
+          const mergedLines = [
+            ...verboseLines,
+            ...auxiliaryDreamLines,
+            ...auxiliaryActiveRecallLines,
+          ];
           const auxiliaryPrompt = mergedLines.join("\n").replace(/\n$/, "");
           lastRecallSummaryBySession.set(
             sessionKey,
@@ -1261,8 +1274,8 @@ const pluginDefinition = {
           : [];
         const auxiliaryLines = [
           ...verboseLines,
-          ...dreamLines,
-          ...activeRecallLines,
+          ...auxiliaryDreamLines,
+          ...auxiliaryActiveRecallLines,
         ];
         const memorySectionLines = buildMemoryContextLines(trimmed);
         const memoryLines = useMemoryPromptSection
