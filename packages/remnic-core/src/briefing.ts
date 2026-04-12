@@ -816,6 +816,10 @@ export async function buildBriefing(options: BuildBriefingOptions): Promise<Brie
 
   const activeThreads = buildActiveThreads(focusedMemories);
   const recentEntities = buildRecentEntities(allEntities, window, focus);
+  // TODO(#370): openCommitments only covers memories inside the lookback window.
+  // Still-open commitments (pending tag, commitment category) that pre-date the
+  // window are silently omitted. A separate query over allMemories filtered to
+  // open-status entries would surface these. Deferred to avoid scope creep here.
   const openCommitments = buildOpenCommitments(focusedMemories);
 
   const calendarLoadResult = options.calendarSource
