@@ -135,6 +135,7 @@ interface MockApi {
   registerCommand?: (spec: unknown) => void;
   _registeredHooks: string[];
   _registeredToolCount: number;
+  _registeredToolNames: string[];
   _registeredServiceIds: string[];
   _memoryPromptSectionRegistered: boolean;
   _registeredMemoryCapability?: any;
@@ -149,11 +150,15 @@ function buildNewSdkApi(label: string): MockApi {
     config: {},
     _registeredHooks: [],
     _registeredToolCount: 0,
+    _registeredToolNames: [],
     _registeredServiceIds: [],
     _memoryPromptSectionRegistered: false,
     _registeredCommands: [],
-    registerTool(_spec: unknown) {
+    registerTool(spec: unknown) {
       api._registeredToolCount++;
+      if (spec && typeof spec === "object" && typeof (spec as { name?: unknown }).name === "string") {
+        api._registeredToolNames.push((spec as { name: string }).name);
+      }
     },
     registerCommand(spec: unknown) {
       api._registeredCommands.push(spec);
@@ -183,11 +188,15 @@ function buildLegacySdkApi(label: string): MockApi {
     config: {},
     _registeredHooks: [],
     _registeredToolCount: 0,
+    _registeredToolNames: [],
     _registeredServiceIds: [],
     _memoryPromptSectionRegistered: false,
     _registeredCommands: [],
-    registerTool(_spec: unknown) {
+    registerTool(spec: unknown) {
       api._registeredToolCount++;
+      if (spec && typeof spec === "object" && typeof (spec as { name?: unknown }).name === "string") {
+        api._registeredToolNames.push((spec as { name: string }).name);
+      }
     },
     registerCli(_spec: unknown) {},
     registerService(spec) {
@@ -324,6 +333,34 @@ test("slot mismatch warn mode suppresses hook registration but still registers t
     assert.ok(
       api._registeredServiceIds.includes("openclaw-remnic"),
       "service should still register in passive mode",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("new SDK registers active-memory tool names and slash commands", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("active-memory-tools-test");
+    plugin.register(api as any);
+
+    assert.ok(
+      api._registeredToolNames.includes("memory_search"),
+      "memory_search should be registered for OpenClaw active-memory routing",
+    );
+    assert.ok(
+      api._registeredToolNames.includes("memory_get"),
+      "memory_get should be registered for OpenClaw active-memory routing",
+    );
+    assert.ok(
+      api._registeredCommands.length > 0,
+      "registerCommand should be used when available for session-scoped recall toggles",
     );
   } finally {
     await awaitPendingMigration();

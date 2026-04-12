@@ -37,7 +37,28 @@ for (const manifestPath of [
     assert.ok(properties.dreaming, "dreaming config block should exist");
     assert.deepEqual(
       Object.keys(properties.dreaming.properties ?? {}).sort(),
-      ["enabled", "injectRecentCount", "journalPath", "maxEntries"],
+      [
+        "enabled",
+        "injectRecentCount",
+        "journalPath",
+        "maxEntries",
+        "minIntervalMinutes",
+        "narrativeModel",
+        "narrativePromptStyle",
+        "watchFile",
+      ],
+    );
+    assert.ok(properties.heartbeat, "heartbeat config block should exist");
+    assert.deepEqual(
+      Object.keys(properties.heartbeat.properties ?? {}).sort(),
+      [
+        "detectionMode",
+        "enabled",
+        "gateExtractionDuringHeartbeat",
+        "journalPath",
+        "maxPreviousRuns",
+        "watchFile",
+      ],
     );
 
     assert.ok(properties.slotBehavior, "slotBehavior config block should exist");

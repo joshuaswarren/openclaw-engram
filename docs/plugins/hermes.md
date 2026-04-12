@@ -1,6 +1,13 @@
 # Hermes Agent Plugin
 
-Remnic MemoryProvider for [Hermes Agent](https://github.com/hermes-agent/hermes). Provides automatic memory recall on every LLM turn and automatic observation of every response via the Hermes MemoryProvider protocol. The deepest available integration — memory is structural, not optional.
+Remnic MemoryProvider for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Provides automatic memory recall on every LLM turn and automatic observation of every response via the Hermes MemoryProvider protocol. The deepest available integration — memory is structural, not optional.
+
+Hermes integration follows the same boundary as every other host: Remnic core owns memory semantics, while the Hermes package stays a thin adapter over Hermes' real plugin and MemoryProvider contracts.
+
+Canonical upstream references:
+
+- Hermes repository: <https://github.com/NousResearch/hermes-agent>
+- Hermes docs/site: <https://hermes-agent.nousresearch.com>
 
 ## Contents
 

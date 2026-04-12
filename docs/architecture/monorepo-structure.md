@@ -1,20 +1,22 @@
 # Monorepo Structure
 
+The monorepo is organized around a host-agnostic core. `@remnic/core`, `@remnic/server`, and `@remnic/cli` are the product center. OpenClaw, Hermes, Claude Code, Codex, and other integrations are adapters over that shared runtime and should not own core memory semantics.
+
 ## Package Map
 
 ```
-openclaw-engram/
+remnic/
 ├── packages/
-│   ├── engram-core/          @remnic/core          Memory engine (0 internal deps)
-│   ├── engram-server/        @remnic/server         HTTP + MCP server
-│   ├── engram-cli/           engram                 CLI binary (daemon, connectors, tokens)
-│   ├── plugin-openclaw/      openclaw-engram        OEO bridge (backward-compat npm name)
+│   ├── remnic-core/          @remnic/core                  Memory engine (0 host deps)
+│   ├── remnic-server/        @remnic/server                HTTP + MCP server
+│   ├── remnic-cli/           @remnic/cli                   CLI binary (daemon, connectors, tokens)
+│   ├── plugin-openclaw/      @remnic/plugin-openclaw       OpenClaw adapter
 │   ├── plugin-claude-code/   @remnic/plugin-claude-code    Claude Code native plugin
 │   ├── plugin-codex/         @remnic/plugin-codex          Codex CLI native plugin
-│   ├── plugin-hermes/        remnic-hermes (PyPI)   Hermes MemoryProvider (Python)
-│   ├── connector-replit/     @remnic/replit          Replit MCP connector
-│   └── bench/                @remnic/bench           Benchmarks
-├── src/                      Compatibility shims (re-exports from @remnic/core)
+│   ├── plugin-hermes/        remnic-hermes (PyPI)          Hermes MemoryProvider (Python)
+│   ├── connector-replit/     @remnic/replit                Replit MCP connector
+│   └── bench/                @remnic/bench                 Benchmarks
+├── src/                      OpenClaw runtime compatibility wiring and shims
 ├── tests/                    Cross-package integration tests
 ├── docs/                     All documentation
 └── evals/                    Evaluation harness
@@ -28,13 +30,13 @@ openclaw-engram/
 ├── @remnic/server ← depends on core
 ├── @remnic/cli ← depends on core, server
 ├── @remnic/bench ← depends on core
-├── openclaw-engram ← depends on core
+├── @remnic/plugin-openclaw ← depends on core
 ├── @remnic/plugin-claude-code ← depends on core (installer only)
 ├── @remnic/plugin-codex ← depends on core (installer only)
 └── @remnic/replit ← depends on core (installer only)
 
 @remnic/hermes-provider ← standalone TS HTTP client (0 internal deps)
-remnic-hermes (Python) ← standalone, HTTP to EMO (0 internal deps)
+remnic-hermes (Python) ← standalone, HTTP to Remnic server (0 internal deps)
 ```
 
 ## Build Order
@@ -42,7 +44,7 @@ remnic-hermes (Python) ← standalone, HTTP to EMO (0 internal deps)
 Turborepo handles this automatically via `turbo.json`:
 
 1. `@remnic/core` (foundation — everything depends on this)
-2. `@remnic/server`, `openclaw-engram`, `@remnic/bench` (depend on core)
+2. `@remnic/server`, `@remnic/plugin-openclaw`, `@remnic/bench` (depend on core)
 3. `@remnic/cli` (depends on core + server)
 4. `@remnic/plugin-claude-code`, `@remnic/plugin-codex`, `@remnic/replit` (depend on core for installers)
 5. `remnic-hermes` (Python — separate build pipeline)
@@ -53,25 +55,25 @@ Turborepo handles this automatically via `turbo.json`:
 
 The memory engine. Contains the Orchestrator, StorageManager, ExtractionEngine, all search backends, trust zones, namespace isolation, LCM, entity graph, compounding, shared context, work layer, and all supporting modules.
 
-**Zero OpenClaw imports.** Can be used by any host.
+**Zero OpenClaw or Hermes imports.** Can be used by any host.
 
 ### @remnic/server
 
-Standalone HTTP + MCP server. Wraps `@remnic/core` with `EngramAccessService`, `EngramAccessHttpServer`, and `EngramMcpServer`. Includes adapter registry for client identity resolution.
+Standalone HTTP + MCP server. Wraps `@remnic/core` with the shared access service and adapter registry for client identity resolution.
 
-### @remnic/cli (engram)
+### @remnic/cli
 
 CLI binary providing:
-- `engram daemon install|uninstall|start|stop|status` — daemon lifecycle
-- `engram connectors install|remove|doctor|list` — plugin management
-- `engram token generate|list|revoke` — auth token management
-- `engram init|status|query|doctor|config` — setup and diagnostics
-- `engram onboard|curate|review|sync|dedup` — memory operations
-- `engram spaces|tree|bench` — workspace and benchmarking
+- `remnic daemon install|uninstall|start|stop|status` — daemon lifecycle
+- `remnic connectors install|remove|doctor|list` — connector management
+- `remnic token generate|list|revoke` — auth token management
+- `remnic init|status|query|doctor|config` — setup and diagnostics
+- `remnic onboard|curate|review|sync|dedup` — memory operations
+- `remnic spaces|tree|bench` — workspace and benchmarking
 
-### openclaw-engram (plugin-openclaw)
+### @remnic/plugin-openclaw
 
-OEO bridge plugin. Publishes as `openclaw-engram` on npm for backward compatibility with OpenClaw's plugin loader. Depends on `@remnic/core`. Supports embedded and delegate modes.
+OpenClaw adapter. Depends on `@remnic/core` and maps Remnic behavior onto OpenClaw's current plugin SDK and runtime surfaces. Keep host-specific logic here or in the root `src/` compatibility wiring when the OpenClaw loader still requires it.
 
 ### @remnic/plugin-claude-code
 
@@ -80,7 +82,7 @@ Native Claude Code plugin. Contains:
 - `hooks/` — SessionStart, PostToolUse, UserPromptSubmit hooks
 - `skills/` — `/engram:remember`, `/engram:recall`, etc.
 - `agents/` — memory review agent
-- `.mcp.json` — MCP server pointing to EMO
+- `.mcp.json` — MCP server pointing to the Remnic daemon
 
 ### @remnic/plugin-codex
 
@@ -88,7 +90,7 @@ Native Codex CLI plugin. Contains:
 - `.codex-plugin/plugin.json` — plugin manifest
 - `hooks/` — SessionStart, PostToolUse, UserPromptSubmit, Stop hooks
 - `skills/` — memory workflow instructions
-- `.mcp.json` — MCP server pointing to EMO
+- `.mcp.json` — MCP server pointing to the Remnic daemon
 
 ### remnic-hermes (Python)
 
@@ -128,7 +130,7 @@ packages:
 
 ## Compatibility Shims
 
-After the core extraction, root `src/` contains one-line re-exports:
+Root `src/` currently exists for compatibility shims and OpenClaw runtime entrypoints that have not yet fully moved into `packages/plugin-openclaw`:
 
 ```typescript
 // src/orchestrator.ts
@@ -140,4 +142,4 @@ These ensure:
 - The root `tsup.config.ts` build still produces a valid `dist/index.js`
 - Any external code importing from the root package isn't broken
 
-Shims are removed once all consumers migrate to `@remnic/core`.
+Do not move new cross-platform semantics into root `src/`; put them in core and let adapters consume them.

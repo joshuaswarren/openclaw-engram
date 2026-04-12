@@ -1,6 +1,6 @@
 # remnic-hermes
 
-Remnic MemoryProvider plugin for [Hermes Agent](https://github.com/hermes-agent/hermes). Automatically injects memories into every LLM call and observes every conversation turn — no agent code changes required.
+Remnic MemoryProvider plugin for [Hermes Agent](https://github.com/NousResearch/hermes-agent). Automatically injects memories into every LLM call and observes every conversation turn — no agent code changes required.
 
 ## Why MemoryProvider
 
@@ -174,7 +174,7 @@ remnic connectors remove hermes
 
 - [Full reference: docs/plugins/hermes.md](../../docs/plugins/hermes.md) — complete config schema, recall/observe/extract internals, profile isolation examples, and migration notes from the Engram era.
 - [Remnic repository](https://github.com/joshuaswarren/remnic) — daemon installation and overall architecture.
-- [Hermes Agent](https://github.com/hermes-agent/hermes) — the agent framework this plugin extends.
+- [Hermes Agent](https://github.com/NousResearch/hermes-agent) — the agent framework this plugin extends.
 
 ## License
 

@@ -1,0 +1,239 @@
+import { createHash } from "node:crypto";
+import { watch, type FSWatcher } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+export interface DreamEntry {
+  id: string;
+  timestamp: string;
+  title: string | null;
+  body: string;
+  tags: string[];
+  sourceOffset: number;
+}
+
+export interface DreamsSurface {
+  read(path: string): Promise<DreamEntry[]>;
+  append(
+    path: string,
+    entry: Omit<DreamEntry, "id" | "sourceOffset">,
+  ): Promise<DreamEntry>;
+  watch(path: string, onChange: (entries: DreamEntry[]) => void): () => void;
+}
+
+const DIARY_START_MARKER = "<!-- openclaw:dreaming:diary:start -->";
+const DIARY_END_MARKER = "<!-- openclaw:dreaming:diary:end -->";
+
+function stableDreamId(params: {
+  timestamp: string;
+  title: string | null;
+  body: string;
+  tags: string[];
+}): string {
+  const digest = createHash("sha1")
+    .update(
+      JSON.stringify({
+        timestamp: params.timestamp,
+        title: params.title,
+        body: params.body,
+        tags: params.tags,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 12);
+  return `dream-${digest}`;
+}
+
+function normalizeBody(value: string): string {
+  return value.replace(/\r\n/g, "\n").trim();
+}
+
+function parseTagsLine(line: string): string[] {
+  const match = /^Tags:\s*(.*)$/i.exec(line.trim());
+  if (!match) return [];
+  return match[1]
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map((token) => token.replace(/^#/, ""));
+}
+
+function buildDreamEntry(params: {
+  timestamp: string;
+  title: string | null;
+  body: string;
+  tags: string[];
+  sourceOffset: number;
+}): DreamEntry {
+  const title = params.title?.trim() || null;
+  const body = normalizeBody(params.body);
+  return {
+    id: stableDreamId({
+      timestamp: params.timestamp.trim(),
+      title,
+      body,
+      tags: params.tags,
+    }),
+    timestamp: params.timestamp.trim(),
+    title,
+    body,
+    tags: params.tags,
+    sourceOffset: params.sourceOffset,
+  };
+}
+
+function splitDiaryBlocks(content: string): Array<{ block: string; sourceOffset: number }> {
+  const results: Array<{ block: string; sourceOffset: number }> = [];
+  const regex = /(^|\n)---\n([\s\S]*?)(?=(\n---\n)|$)/g;
+  for (const match of content.matchAll(regex)) {
+    const block = match[2]?.trim();
+    if (!block) continue;
+    const sourceOffset = (match.index ?? 0) + (match[1]?.length ?? 0);
+    results.push({ block, sourceOffset });
+  }
+  return results;
+}
+
+function parseDiaryBlock(block: string, sourceOffset: number): DreamEntry | null {
+  const lines = block.split("\n");
+  const first = lines.shift()?.trim() ?? "";
+  const italicMatch = /^\*(.+)\*$/.exec(first);
+  if (!italicMatch) return null;
+  const firstLine = italicMatch[1].trim();
+  const splitIndex = firstLine.indexOf(" — ");
+  const timestamp = splitIndex >= 0 ? firstLine.slice(0, splitIndex).trim() : firstLine;
+  const title = splitIndex >= 0 ? firstLine.slice(splitIndex + 3).trim() : null;
+  const tags = lines.length > 0 ? parseTagsLine(lines[lines.length - 1] ?? "") : [];
+  const bodyLines =
+    tags.length > 0
+      ? lines.slice(0, Math.max(0, lines.length - 1))
+      : lines;
+  return buildDreamEntry({
+    timestamp,
+    title,
+    body: bodyLines.join("\n"),
+    tags,
+    sourceOffset,
+  });
+}
+
+function parseLegacyHeadingEntries(content: string): DreamEntry[] {
+  const entries: DreamEntry[] = [];
+  const headingRegex = /^##\s+(.+)$/gm;
+  const matches = [...content.matchAll(headingRegex)];
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    const start = match.index ?? 0;
+    const end = index + 1 < matches.length ? (matches[index + 1]?.index ?? content.length) : content.length;
+    const heading = match[1]?.trim() ?? "";
+    const body = content.slice(start + match[0].length, end).replace(/^\s+/, "");
+    const dividerTrimmed = body.replace(/\n---\s*$/m, "").trim();
+    const bodyLines = dividerTrimmed.split("\n");
+    const tags = bodyLines.length > 0 ? parseTagsLine(bodyLines[bodyLines.length - 1] ?? "") : [];
+    const contentLines =
+      tags.length > 0
+        ? bodyLines.slice(0, Math.max(0, bodyLines.length - 1))
+        : bodyLines;
+    const splitIndex = heading.indexOf(" — ");
+    const timestamp = splitIndex >= 0 ? heading.slice(0, splitIndex).trim() : heading;
+    const title = splitIndex >= 0 ? heading.slice(splitIndex + 3).trim() : null;
+    entries.push(
+      buildDreamEntry({
+        timestamp,
+        title,
+        body: contentLines.join("\n"),
+        tags,
+        sourceOffset: start,
+      }),
+    );
+  }
+  return entries;
+}
+
+function parseDreamEntries(content: string): DreamEntry[] {
+  const normalized = content.replace(/\r\n/g, "\n");
+  const start = normalized.indexOf(DIARY_START_MARKER);
+  const end = normalized.indexOf(DIARY_END_MARKER);
+  if (start >= 0 && end > start) {
+    const inner = normalized.slice(start + DIARY_START_MARKER.length, end);
+    return splitDiaryBlocks(inner)
+      .map(({ block, sourceOffset }) =>
+        parseDiaryBlock(block, start + DIARY_START_MARKER.length + sourceOffset))
+      .filter((entry): entry is DreamEntry => entry !== null);
+  }
+  return parseLegacyHeadingEntries(normalized);
+}
+
+function ensureDiary(content: string): string {
+  if (content.includes(DIARY_START_MARKER) && content.includes(DIARY_END_MARKER)) {
+    return content;
+  }
+  const diary = `# Dream Diary\n\n${DIARY_START_MARKER}\n${DIARY_END_MARKER}\n`;
+  return content.trim() ? `${diary}\n${content.trim()}\n` : diary;
+}
+
+function renderAppendBlock(entry: Omit<DreamEntry, "id" | "sourceOffset">): string {
+  const titlePart = entry.title?.trim() ? ` — ${entry.title.trim()}` : "";
+  const tagsPart = entry.tags.length > 0 ? `\n\nTags: ${entry.tags.map((tag) => `#${tag}`).join(" ")}` : "";
+  return `---\n\n*${entry.timestamp}${titlePart}*\n\n${entry.body.trim()}${tagsPart}\n`;
+}
+
+export function createDreamsSurface(): DreamsSurface {
+  return {
+    async read(filePath: string): Promise<DreamEntry[]> {
+      try {
+        const content = await readFile(filePath, "utf8");
+        return parseDreamEntries(content);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+          return [];
+        }
+        throw error;
+      }
+    },
+
+    async append(
+      filePath: string,
+      entry: Omit<DreamEntry, "id" | "sourceOffset">,
+    ): Promise<DreamEntry> {
+      await mkdir(path.dirname(filePath), { recursive: true });
+      let content = "";
+      try {
+        content = await readFile(filePath, "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const ensured = ensureDiary(content);
+      const endIndex = ensured.indexOf(DIARY_END_MARKER);
+      const block = renderAppendBlock(entry);
+      const updated =
+        endIndex >= 0
+          ? `${ensured.slice(0, endIndex)}${block}\n${ensured.slice(endIndex)}`
+          : `${ensureDiary("")}${block}`;
+      await writeFile(filePath, updated.endsWith("\n") ? updated : `${updated}\n`, "utf8");
+      const entries = parseDreamEntries(updated);
+      return entries[entries.length - 1]!;
+    },
+
+    watch(filePath: string, onChange: (entries: DreamEntry[]) => void): () => void {
+      let watcher: FSWatcher | null = null;
+      let timer: NodeJS.Timeout | null = null;
+      const emit = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(async () => {
+          timer = null;
+          onChange(await this.read(filePath));
+        }, 25);
+      };
+      try {
+        watcher = watch(filePath, { persistent: false }, emit);
+      } catch {
+        watcher = null;
+      }
+      return () => {
+        if (timer) clearTimeout(timer);
+        watcher?.close();
+      };
+    },
+  };
+}

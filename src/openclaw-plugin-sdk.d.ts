@@ -211,6 +211,7 @@ declare module "openclaw/plugin-sdk" {
       start?: () => Promise<void> | void;
       stop?: () => Promise<void> | void;
     }) => void;
+    registerTool?: (spec: Record<string, unknown>) => void;
 
     // ---- New SDK methods (may not exist on older runtimes) ----
 
@@ -218,6 +219,9 @@ declare module "openclaw/plugin-sdk" {
      *  Gateway <=2026.3.22 expects a bare function; future versions may
      *  accept the structured MemoryPromptSectionBuilder object. */
     registerMemoryPromptSection?: (builder: MemoryPromptSectionBuilder | MemoryPromptSectionBuilder["build"]) => void;
+
+    /** Register slash commands when supported by the runtime. */
+    registerCommand?: (spec: Record<string, unknown>) => void;
 
     /** Register the full memory capability for this memory plugin (exclusive slot).
      *  New SDK >=2026.4.5. Replaces the deprecated split registration methods

@@ -14,6 +14,26 @@ export type MemoryOsPresetName = "conservative" | "balanced" | "research-max" | 
 export type ExtractionPassSource = "base" | "proactive";
 export type SlotMismatchMode = "error" | "warn" | "silent";
 export type CodexCompactionFlushMode = "signal" | "heuristic" | "auto";
+export type DreamingNarrativePromptStyle = "reflective" | "diary" | "analytical";
+export type HeartbeatDetectionMode = "runtime-signal" | "heuristic" | "auto";
+export type ActiveRecallQueryMode = "message" | "recent" | "full";
+export type ActiveRecallPromptStyle =
+  | "balanced"
+  | "strict"
+  | "contextual"
+  | "recall-heavy"
+  | "precision-heavy"
+  | "preference-only";
+export type ActiveRecallThinking =
+  | "off"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "adaptive";
+export type ActiveRecallChatType = "direct" | "group" | "channel";
+export type ActiveRecallModelFallbackPolicy = "default-remote" | "resolved-only";
 
 export interface RecallSectionConfig {
   id: string;
@@ -125,6 +145,19 @@ export interface DreamingConfig {
   journalPath: string;
   maxEntries: number;
   injectRecentCount: number;
+  minIntervalMinutes: number;
+  narrativeModel: string | null;
+  narrativePromptStyle: DreamingNarrativePromptStyle;
+  watchFile: boolean;
+}
+
+export interface HeartbeatConfig {
+  enabled: boolean;
+  journalPath: string;
+  maxPreviousRuns: number;
+  watchFile: boolean;
+  detectionMode: HeartbeatDetectionMode;
+  gateExtractionDuringHeartbeat: boolean;
 }
 
 export interface SlotBehaviorConfig {
@@ -280,7 +313,39 @@ export interface PluginConfig {
   beforeResetTimeoutMs: number;
   flushOnResetEnabled: boolean;
   commandsListEnabled: boolean;
+  openclawToolsEnabled: boolean;
+  openclawToolSnippetMaxChars: number;
+  sessionTogglesEnabled: boolean;
+  verboseRecallVisibility: boolean;
+  recallTranscriptsEnabled: boolean;
+  recallTranscriptRetentionDays: number;
+  respectBundledActiveMemoryToggle: boolean;
+  activeRecallEnabled: boolean;
+  activeRecallAgents: string[] | null;
+  activeRecallAllowedChatTypes: ActiveRecallChatType[];
+  activeRecallQueryMode: ActiveRecallQueryMode;
+  activeRecallPromptStyle: ActiveRecallPromptStyle;
+  activeRecallPromptOverride: string | null;
+  activeRecallPromptAppend: string | null;
+  activeRecallMaxSummaryChars: number;
+  activeRecallRecentUserTurns: number;
+  activeRecallRecentAssistantTurns: number;
+  activeRecallRecentUserChars: number;
+  activeRecallRecentAssistantChars: number;
+  activeRecallThinking: ActiveRecallThinking;
+  activeRecallTimeoutMs: number;
+  activeRecallCacheTtlMs: number;
+  activeRecallModel: string | null;
+  activeRecallModelFallbackPolicy: ActiveRecallModelFallbackPolicy;
+  activeRecallPersistTranscripts: boolean;
+  activeRecallTranscriptDir: string;
+  activeRecallEntityGraphDepth: number;
+  activeRecallIncludeCausalTrajectories: boolean;
+  activeRecallIncludeDaySummary: boolean;
+  activeRecallAttachRecallExplain: boolean;
+  activeRecallAllowChainedActiveMemory: boolean;
   dreaming: DreamingConfig;
+  heartbeat: HeartbeatConfig;
   slotBehavior: SlotBehaviorConfig;
   codexCompat: CodexCompatConfig;
   // Hourly summaries
@@ -1137,7 +1202,7 @@ export interface MemoryFrontmatter {
   sourceTurnId?: string;
   // v8.0 Phase 2B: HiMem episode/note classification
   /** episode = time-specific event; note = stable belief/preference/decision */
-  memoryKind?: "episode" | "note";
+  memoryKind?: "episode" | "note" | "box" | "dream" | "procedural";
   /** Structured key-value attributes extracted from the content (e.g., product attributes, dates, quantities). */
   structuredAttributes?: Record<string, string>;
   /**
@@ -1312,6 +1377,16 @@ export interface ConsolidationResult {
   items: ConsolidationItem[];
   profileUpdates: string[];
   entityUpdates: EntityMention[];
+}
+
+export interface ConsolidationObservation {
+  runAt: string;
+  recentMemories: MemoryFile[];
+  existingMemories: MemoryFile[];
+  profile: string;
+  result: ConsolidationResult;
+  merged: number;
+  invalidated: number;
 }
 
 export interface QmdSearchResult {

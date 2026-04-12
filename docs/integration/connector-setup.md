@@ -2,6 +2,8 @@
 
 Connect Remnic memory to your coding tools. All connectors use the same Remnic HTTP/MCP server — you just need to point your tool at it.
 
+Architecture rule: this server is the shared, host-agnostic Remnic runtime. OpenClaw, Hermes, Claude Code, Codex, and the other integrations are adapters over that shared core, not the place where core memory behavior should be implemented.
+
 ## Prerequisites
 
 Start the Remnic server (one of these):

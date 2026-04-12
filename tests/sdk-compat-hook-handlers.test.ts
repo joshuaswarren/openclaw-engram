@@ -8,6 +8,9 @@
  */
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import os from "node:os";
 
 // ============================================================================
 // Shared constants — must match src/index.ts
@@ -273,45 +276,470 @@ test("commands.list handler returns the remnic discovery descriptor", async () =
   assert.ok(handler, "commands.list handler should be registered");
 
   const result = await handler();
-  assert.deepEqual(result, [
+  assert.equal(Array.isArray(result), true);
+  const group = result?.[0];
+  assert.equal(group?.name, "remnic");
+  assert.equal(group?.category, "memory");
+  assert.equal(group?.pluginId, "openclaw-remnic");
+  assert.equal(Array.isArray(group?.subcommands), true);
+  for (const command of group?.subcommands ?? []) {
+    assert.equal(typeof command.handler, "function");
+  }
+});
+
+test("before_prompt_build respects the primary session toggle store", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-toggle-hook-"));
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-toggle-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const commandsList = api.handlers.get("commands.list");
+  const commandGroup = ((commandsList ? await commandsList() : []) ?? [])[0];
+  const offCommand = commandGroup?.subcommands?.find((entry: { name?: string }) => entry.name === "off");
+  assert.ok(offCommand?.handler, "off command should expose a handler");
+  await offCommand.handler({ sessionKey: "session-a", agentId: "main" });
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  let recallCalls = 0;
+  orchestrator.recall = async () => {
+    recallCalls++;
+    return "should never be injected";
+  };
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
+    { prompt: "Remember anything?" },
+    { sessionKey: "session-a", agentId: "main" },
+  );
+
+  assert.equal(recallCalls, 0);
+  assert.equal(result, undefined);
+  assert.equal(api._memoryCapability?.promptBuilder?.({ sessionKey: "session-a" }) ?? null, null);
+});
+
+test("before_prompt_build honors bundled active-memory toggle read-through and writes recall audit transcripts", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bundled-toggle-hook-"));
+  const bundledDir = path.join(root, "state", "plugins", "active-memory");
+  await mkdir(bundledDir, { recursive: true });
+  await writeFile(
+    path.join(bundledDir, "session-toggles.json"),
+    JSON.stringify(
+      {
+        version: 1,
+        entries: {
+          [`${encodeURIComponent("session-b")}::${encodeURIComponent("main")}`]: {
+            disabled: true,
+            updatedAt: "2026-04-12T12:00:00Z",
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-bundled-toggle-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    recallTranscriptsEnabled: true,
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "should not run";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
+    { prompt: "Remember anything?" },
+    { sessionKey: "session-b", agentId: "main" },
+  );
+  assert.equal(result, undefined);
+
+  const auditPath = path.join(
+    root,
+    "state",
+    "plugins",
+    "openclaw-remnic",
+    "transcripts",
+    new Date().toISOString().slice(0, 10),
+    `${encodeURIComponent("session-b")}.jsonl`,
+  );
+  const lines = (await readFile(auditPath, "utf8")).trim().split("\n");
+  assert.equal(lines.length, 1);
+  const parsed = JSON.parse(lines[0] ?? "{}") as { toggleState?: string };
+  assert.equal(parsed.toggleState, "disabled-secondary");
+});
+
+test("before_prompt_build prepends the active-recall fallback block when enabled", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-active-recall-hook-"));
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-active-recall-test");
+  delete api.registerMemoryPromptSection;
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    activeRecallEnabled: true,
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "remembered context from Remnic";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
+    { prompt: "What happened with CI?" },
+    { sessionKey: "session-c", agentId: "main" },
+  );
+  assert.match(String(result?.prependSystemContext ?? ""), /## Active Recall \(Remnic\)/);
+  assert.match(String(result?.prependSystemContext ?? ""), /remembered context from Remnic/);
+});
+
+test("before_prompt_build prepends recent dreams when dreaming injection is enabled", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreaming-hook-"));
+  await writeFile(
+    path.join(root, "DREAMS.md"),
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T08:00:00Z — First dream*",
+      "",
+      "The first dream body.",
+      "",
+      "---",
+      "",
+      "*2026-04-12T09:00:00Z — Second dream*",
+      "",
+      "The second dream body.",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-dreaming-test");
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    dreaming: {
+      enabled: true,
+      journalPath: "DREAMS.md",
+      injectRecentCount: 2,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "remembered context from Remnic";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
+    { prompt: "What happened this morning?" },
+    { sessionKey: "session-d", agentId: "main", workspaceDir: root },
+  );
+
+  assert.match(String(result?.prependSystemContext ?? ""), /## Recent Dreams \(Remnic\)/);
+  assert.match(String(result?.prependSystemContext ?? ""), /Second dream/);
+  assert.match(String(result?.prependSystemContext ?? ""), /The second dream body/);
+  assert.match(String(result?.prependSystemContext ?? ""), /First dream/);
+});
+
+test("runtime pluginConfig overrides file-backed config for dreaming surfaces", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreaming-config-precedence-"));
+  const configPath = path.join(root, "openclaw.json");
+  await writeFile(
+    path.join(root, "DREAMS.md"),
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T10:00:00Z — Runtime dream*",
+      "",
+      "The runtime-configured dream body.",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        plugins: {
+          entries: {
+            "openclaw-remnic": {
+              config: {
+                dreaming: {
+                  enabled: false,
+                  journalPath: "IGNORED.md",
+                  injectRecentCount: 0,
+                },
+              },
+            },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const previousConfigPath = process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = configPath;
+
+  try {
+    const { default: plugin } = await import("../src/index.js");
+    const api = buildHandlerCapturingApi("before-prompt-build-config-precedence-test");
+    api.pluginConfig = {
+      memoryDir: root,
+      workspaceDir: root,
+      dreaming: {
+        enabled: true,
+        journalPath: "DREAMS.md",
+        injectRecentCount: 1,
+      },
+    };
+    plugin.register(api as any);
+
+    const beforePromptBuild = api.handlers.get("before_prompt_build");
+    assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+    const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+    orchestrator.maybeRunFileHygiene = async () => undefined;
+    orchestrator.recall = async () => "remembered context from Remnic";
+    orchestrator.config.compactionResetEnabled = false;
+
+    const result = await beforePromptBuild(
+      { prompt: "What happened mid-morning?" },
+      { sessionKey: "session-e", agentId: "main", workspaceDir: root },
+    );
+
+    assert.match(String(result?.prependSystemContext ?? ""), /## Recent Dreams \(Remnic\)/);
+    assert.match(String(result?.prependSystemContext ?? ""), /Runtime dream/);
+  } finally {
+    if (previousConfigPath === undefined) {
+      delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+    } else {
+      process.env.OPENCLAW_ENGRAM_CONFIG_PATH = previousConfigPath;
+    }
+  }
+});
+
+test("before_prompt_build gates normal recall during heartbeat runs and injects heartbeat context", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-hook-"));
+  await writeFile(
+    path.join(root, "HEARTBEAT.md"),
+    [
+      "# Heartbeat Tasks",
+      "",
+      "## check-test-suite",
+      "",
+      "Every hour, run the test suite and flag any new failures.",
+      "",
+      "Schedule: hourly",
+      "Tags: #ci #tests",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { StorageManager } = await import("../packages/remnic-core/src/storage.ts");
+  const storage = new StorageManager(root);
+  await storage.writeMemory("fact", "Last run found two new failures in the flaky integration suite.", {
+    source: "test",
+    tags: ["heartbeat", "ci"],
+    structuredAttributes: {
+      relatedHeartbeatSlug: "check-test-suite",
+    },
+  });
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-heartbeat-test");
+  delete api.registerMemoryPromptSection;
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    heartbeat: {
+      enabled: true,
+      journalPath: "HEARTBEAT.md",
+      maxPreviousRuns: 5,
+      detectionMode: "runtime-signal",
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  let recallCalls = 0;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => {
+    recallCalls++;
+    return "normal recall should be gated during heartbeat runs";
+  };
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
     {
-      name: "remnic",
-      category: "memory",
-      pluginId: "openclaw-remnic",
-      subcommands: [
-        {
-          name: "off",
-          description: "Disable Remnic recall for this session",
-          args: [],
-        },
-        {
-          name: "on",
-          description: "Re-enable Remnic recall for this session",
-          args: [],
-        },
-        {
-          name: "status",
-          description: "Show Remnic recall status and last injected summary",
-          args: [],
-        },
-        {
-          name: "clear",
-          description: "Clear the session override and use global config again",
-          args: [],
-        },
-        {
-          name: "stats",
-          description: "Show Remnic extraction and recall stats for this session",
-          args: [],
-        },
-        {
-          name: "flush",
-          description: "Force-flush the extraction buffer now",
-          args: [],
-        },
+      prompt: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly.",
+    },
+    {
+      sessionKey: "session-heartbeat-a",
+      agentId: "main",
+      workspaceDir: root,
+      trigger: "heartbeat",
+    },
+  );
+
+  assert.equal(recallCalls, 0);
+  assert.match(String(result?.prependSystemContext ?? ""), /## Active Heartbeat \(Remnic\)/);
+  assert.match(String(result?.prependSystemContext ?? ""), /check-test-suite/);
+  assert.match(String(result?.prependSystemContext ?? ""), /## Previous Runs/);
+  assert.match(String(result?.prependSystemContext ?? ""), /two new failures/);
+  assert.doesNotMatch(String(result?.prependSystemContext ?? ""), /## Memory Context \(Remnic\)/);
+});
+
+test("before_prompt_build falls back to heuristic heartbeat detection when runtime signals are absent", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-heuristic-"));
+  await writeFile(
+    path.join(root, "HEARTBEAT.md"),
+    [
+      "# Heartbeat Tasks",
+      "",
+      "## check-test-suite",
+      "",
+      "Every hour, run the test suite and flag any new failures.",
+      "",
+      "Schedule: hourly",
+      "Tags: #ci #tests",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-heartbeat-heuristic-test");
+  delete api.registerMemoryPromptSection;
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    heartbeat: {
+      enabled: true,
+      journalPath: "HEARTBEAT.md",
+      maxPreviousRuns: 3,
+      detectionMode: "heuristic",
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  let recallCalls = 0;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => {
+    recallCalls++;
+    return "normal recall should be gated during heuristic heartbeat runs";
+  };
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
+    {
+      prompt: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly.",
+    },
+    {
+      sessionKey: "session-heartbeat-heuristic-a",
+      agentId: "main",
+      workspaceDir: root,
+    },
+  );
+
+  assert.equal(recallCalls, 0);
+  assert.match(String(result?.prependSystemContext ?? ""), /## Active Heartbeat \(Remnic\)/);
+  assert.match(String(result?.prependSystemContext ?? ""), /check-test-suite/);
+  assert.doesNotMatch(String(result?.prependSystemContext ?? ""), /## Memory Context \(Remnic\)/);
+});
+
+test("agent_end skips transcript persistence and extraction buffering for heartbeat runs by default", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-agent-end-"));
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("agent-end-heartbeat-test");
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    heartbeat: {
+      enabled: true,
+      gateExtractionDuringHeartbeat: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const agentEnd = api.handlers.get("agent_end");
+  assert.ok(agentEnd, "agent_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  let transcriptAppendCalls = 0;
+  let processTurnCalls = 0;
+  orchestrator.transcript.append = async () => {
+    transcriptAppendCalls++;
+  };
+  orchestrator.processTurn = async () => {
+    processTurnCalls++;
+  };
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        { role: "user", content: "Read HEARTBEAT.md if it exists (workspace context)." },
+        { role: "assistant", content: "HEARTBEAT_OK" },
       ],
     },
-  ]);
+    {
+      sessionKey: "session-heartbeat-b",
+      trigger: "heartbeat",
+    },
+  );
+
+  assert.equal(transcriptAppendCalls, 0);
+  assert.equal(processTurnCalls, 0);
 });
 
 test("before_reset flushes the session and clears the precomputed recall cache", async () => {

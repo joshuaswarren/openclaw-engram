@@ -52,7 +52,7 @@ This plugin hooks into the OpenClaw gateway lifecycle:
 - **`before_tool_call`** / **`after_tool_call`** -- tool usage observation for analytics
 - **`llm_output`** -- LLM token usage tracking
 - **`subagent_spawning`** / **`subagent_ended`** -- subagent lifecycle observation
-- **Tools** -- registers `memory_search`, `memory_stats`, and other agent tools
+- **Tools** -- registers `memory_search`, `memory_get`, `memory_stats`, and other agent tools
 - **Commands** -- provides CLI commands for memory management
 
 All memory processing uses [`@remnic/core`](https://www.npmjs.com/package/@remnic/core). Data stays on your local filesystem as plain markdown files.
@@ -146,6 +146,19 @@ The reset path clears per-session prompt caches and workspace override state.
 If `flushOnResetEnabled` is true, Remnic also attempts a bounded extraction
 flush before the reset completes.
 
+Session-scoped recall controls are exposed through OpenClaw's command
+discovery surface:
+
+- `remnic off` / `remnic on`
+- `remnic status`
+- `remnic clear`
+- `remnic stats`
+- `remnic flush`
+
+When verbose mode is enabled, Remnic prints its recall decision header inline
+and can optionally persist JSONL recall transcripts under
+`<memoryDir>/state/plugins/openclaw-remnic/transcripts/`.
+
 ### Observation Hooks
 
 | Feature | Status | Since |
@@ -159,7 +172,11 @@ flush before the reset completes.
 OpenClaw's dreaming feature (background memory consolidation) is handled by OpenClaw's built-in `memory-core` extension. Remnic implements its own consolidation pipeline (extraction, deduplication, graph maintenance, hourly summaries) that runs independently of OpenClaw's dreaming system. The two systems are complementary -- Remnic's consolidation handles the heavy memory extraction, while OpenClaw's dreaming (if enabled alongside Remnic) can further organize knowledge.
 
 The plugin manifest now accepts the OpenClaw `dreaming` config block directly
-so newer runtimes do not reject the config at validation time:
+so newer runtimes do not reject the config at validation time, and the OpenClaw
+adapter now injects recent diary entries as `## Recent Dreams (Remnic)` when
+the journal contains entries. The adapter also imports `DREAMS.md` entries into
+Remnic storage as `memoryKind: "dream"` with stable provenance so file-watch
+replays stay idempotent:
 
 ```jsonc
 {
@@ -171,7 +188,11 @@ so newer runtimes do not reject the config at validation time:
             "enabled": false,
             "journalPath": "DREAMS.md",
             "maxEntries": 500,
-            "injectRecentCount": 3
+            "injectRecentCount": 3,
+            "minIntervalMinutes": 120,
+            "narrativeModel": "gpt-5.2",
+            "narrativePromptStyle": "reflective",
+            "watchFile": true
           }
         }
       }
@@ -179,6 +200,18 @@ so newer runtimes do not reject the config at validation time:
   }
 }
 ```
+
+When Remnic's consolidation pass produces a reflective multi-session summary and
+the interval gate is satisfied, the OpenClaw adapter appends a new dream entry
+back to `DREAMS.md` through the shared writer using the OpenAI Responses API.
+
+The shared `@remnic/core` surface parsers also understand `HEARTBEAT.md`. The
+OpenClaw adapter imports those entries as `memoryKind: "procedural"`, gates
+normal recall during heartbeat-triggered runs, injects the active heartbeat plus
+`## Previous Runs`, and skips episodic buffering for heartbeat turns by default.
+Detection can use explicit runtime metadata, a documented heuristic fallback, or
+`auto` to prefer runtime metadata and fall back when needed. All of that logic
+stays in the OpenClaw adapter; standalone/core remains host-agnostic.
 
 ## Codex Compatibility
 

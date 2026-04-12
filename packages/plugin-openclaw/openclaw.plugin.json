@@ -198,6 +198,66 @@
             "minimum": 0,
             "maximum": 20,
             "default": 3
+          },
+          "minIntervalMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 120
+          },
+          "narrativeModel": {
+            "type": "string",
+            "default": ""
+          },
+          "narrativePromptStyle": {
+            "type": "string",
+            "enum": [
+              "reflective",
+              "diary",
+              "analytical"
+            ],
+            "default": "reflective"
+          },
+          "watchFile": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "heartbeat": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "journalPath": {
+            "type": "string",
+            "default": "HEARTBEAT.md"
+          },
+          "maxPreviousRuns": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 5
+          },
+          "watchFile": {
+            "type": "boolean",
+            "default": true
+          },
+          "detectionMode": {
+            "type": "string",
+            "enum": [
+              "runtime-signal",
+              "heuristic",
+              "auto"
+            ],
+            "default": "auto"
+          },
+          "gateExtractionDuringHeartbeat": {
+            "type": "boolean",
+            "default": true
           }
         }
       },

@@ -1,8 +1,41 @@
-# openclaw-engram - Agent Guide
+# Remnic - Agent Guide
 
-## What This Plugin Does (Simple Explanation)
+## Architecture Boundaries (Non-Negotiable)
 
-This plugin gives OpenClaw agents long-term memory that persists across conversations.
+Remnic is a multi-platform memory system. Keep these boundaries intact on every change:
+
+1. `@remnic/core`, `@remnic/server`, and `@remnic/cli` own Remnic's core behavior.
+   Core memory semantics, storage, retrieval, extraction, governance, and standalone operation must live there.
+2. Core and standalone paths must not depend on OpenClaw, Hermes, or any future host.
+   Host integrations may consume core. Core must not reach back into host SDKs, config shapes, or runtime lifecycles.
+3. Platform-specific behavior belongs in platform adapters only.
+   OpenClaw-specific code belongs in `packages/plugin-openclaw` plus the current root `src/` compatibility wiring that still hosts OpenClaw runtime entrypoints today. Hermes-specific code belongs in `packages/plugin-hermes`. Keep host logic thin and translation-focused.
+4. Do not reinvent host-native features.
+   If OpenClaw, Hermes, or another platform already provides a runtime capability, plugin hook, command surface, or extension primitive, use that real upstream contract instead of recreating a parallel Remnic abstraction.
+5. Verify host behavior against current upstream source and docs before implementing it.
+   Issue text, old local docs, or remembered APIs are not enough for host-facing work.
+
+## Upstream References
+
+Use these as the canonical starting points for adapter work:
+
+- OpenClaw repository: <https://github.com/openclaw/openclaw>
+- OpenClaw plugin docs: <https://github.com/openclaw/openclaw/tree/main/docs/plugins>
+- OpenClaw SDK overview: <https://github.com/openclaw/openclaw/blob/main/docs/plugins/sdk-overview.md>
+- OpenClaw SDK entrypoints: <https://github.com/openclaw/openclaw/blob/main/docs/plugins/sdk-entrypoints.md>
+- Hermes Agent repository: <https://github.com/NousResearch/hermes-agent>
+- Hermes Agent docs/site: <https://hermes-agent.nousresearch.com>
+
+## Adapter Implementation Rules
+
+- Start from the host's current upstream contracts, then adapt Remnic core into them.
+- Reuse upstream platform primitives when they exist; only add Remnic-owned glue where the host does not already solve the problem.
+- Keep standalone and shared-core behavior testable without booting OpenClaw, Hermes, or another host.
+- If a change touches both core semantics and a host adapter, land the core contract first and make the adapter consume it second.
+
+## What This Project Does (Simple Explanation)
+
+Remnic gives AI agents long-term memory that persists across conversations.
 
 ## PR Hardening Rule (All Agents)
 

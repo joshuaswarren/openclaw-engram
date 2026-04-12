@@ -246,6 +246,7 @@ import type {
   BootstrapResult,
   BufferTurn,
   ContinuityIncidentRecord,
+  ConsolidationObservation,
   EngramTraceEvent,
   ExtractionResult,
   IdentityInjectionMode,
@@ -1047,6 +1048,9 @@ export class Orchestrator {
   private nonZeroExtractionsSinceConsolidation = 0;
   private lastConsolidationRunAtMs = 0;
   private consolidationInFlight = false;
+  private readonly consolidationObservers = new Set<
+    (observation: ConsolidationObservation) => Promise<void> | void
+  >();
   private qmdMaintenanceTimer: NodeJS.Timeout | null = null;
   private qmdMaintenancePending = false;
   private qmdMaintenanceInFlight = false;
@@ -1975,6 +1979,19 @@ export class Orchestrator {
     invalidated: number;
   }> {
     return this.runConsolidation();
+  }
+
+  async reindexMemoryById(id: string): Promise<void> {
+    await this.indexPersistedMemory(this.storage, id);
+  }
+
+  registerConsolidationObserver(
+    observer: (observation: ConsolidationObservation) => Promise<void> | void,
+  ): () => void {
+    this.consolidationObservers.add(observer);
+    return () => {
+      this.consolidationObservers.delete(observer);
+    };
   }
 
   async runSemanticConsolidationNow(options?: {
@@ -10316,6 +10333,25 @@ export class Orchestrator {
       }
     }
 
+    if (this.consolidationObservers.size > 0) {
+      const observation: ConsolidationObservation = {
+        runAt: new Date().toISOString(),
+        recentMemories: recent,
+        existingMemories: older.slice(-50),
+        profile,
+        result,
+        merged,
+        invalidated,
+      };
+      for (const observer of this.consolidationObservers) {
+        try {
+          await observer(observation);
+        } catch (err) {
+          log.warn(`consolidation observer failed (ignored): ${err}`);
+        }
+      }
+    }
+
     log.info("consolidation complete");
     return { memoriesProcessed: allMemories.length, merged, invalidated };
   }
@@ -12139,6 +12175,7 @@ export class Orchestrator {
 
     let lifecycleFilteredCount = 0;
     let temporalSupersededFilteredCount = 0;
+    let dedicatedSurfaceFilteredCount = 0;
     const boosted: QmdSearchResult[] = [];
     const recencyWeight = this.effectiveRecencyWeight();
     for (const r of results) {
@@ -12171,6 +12208,14 @@ export class Orchestrator {
           })
         ) {
           temporalSupersededFilteredCount += 1;
+          continue;
+        }
+
+        if (
+          memory.frontmatter.memoryKind === "dream" ||
+          memory.frontmatter.memoryKind === "procedural"
+        ) {
+          dedicatedSurfaceFilteredCount += 1;
           continue;
         }
 
@@ -12299,6 +12344,11 @@ export class Orchestrator {
     if (temporalSupersededFilteredCount > 0) {
       log.debug(
         `temporal supersession filter removed ${temporalSupersededFilteredCount} superseded candidates`,
+      );
+    }
+    if (dedicatedSurfaceFilteredCount > 0) {
+      log.debug(
+        `dedicated surface filter removed ${dedicatedSurfaceFilteredCount} dream/procedural candidates from generic recall`,
       );
     }
 

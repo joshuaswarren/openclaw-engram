@@ -42,6 +42,7 @@ function buildHarness(overrides?: {
     config: {
       defaultNamespace: "default",
       workspaceDir: "/tmp/workspace",
+      openclawToolsEnabled: false,
       contextCompressionActionsEnabled: false,
       feedbackEnabled: false,
       negativeExamplesEnabled: false,

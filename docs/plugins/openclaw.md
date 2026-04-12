@@ -4,6 +4,16 @@
 canonical memory-slot plugin id `openclaw-remnic`; the older
 `openclaw-engram` id is now a compatibility shim.
 
+The OpenClaw plugin is Remnic's OpenClaw-specific adapter. It should stay thin: Remnic core owns memory behavior, while this package translates that behavior into OpenClaw's current plugin SDK and runtime contracts.
+
+Canonical upstream references for this adapter:
+
+- OpenClaw repository: <https://github.com/openclaw/openclaw>
+- OpenClaw plugin docs: <https://github.com/openclaw/openclaw/tree/main/docs/plugins>
+- OpenClaw SDK overview: <https://github.com/openclaw/openclaw/blob/main/docs/plugins/sdk-overview.md>
+- OpenClaw SDK entrypoints: <https://github.com/openclaw/openclaw/blob/main/docs/plugins/sdk-entrypoints.md>
+- OpenClaw SDK runtime guide: <https://github.com/openclaw/openclaw/blob/main/docs/plugins/sdk-runtime.md>
+
 ## Install
 
 ```bash
@@ -36,6 +46,10 @@ Minimal configuration:
 
 The plugin only runs actively when `plugins.slots.memory` points at its own
 plugin id.
+
+## Architecture Rule
+
+Do not move OpenClaw-specific contracts into `@remnic/core`. The OpenClaw adapter should consume core contracts and map them onto OpenClaw. When OpenClaw already has a native command surface, tool registration path, memory lifecycle hook, or plugin manifest feature, use that upstream primitive instead of inventing a duplicate Remnic abstraction.
 
 ## Slot Selection
 
@@ -132,14 +146,24 @@ descriptor group:
 - `remnic flush`
 
 This is discovery metadata for the command palette and help surfaces. The
-full session-toggle command workflow is tracked separately in the OpenClaw
-parity backlog; this runtime batch only makes the discovery contract explicit.
+handlers are live:
+
+- `remnic off` / `remnic on` write the session toggle store
+- `remnic status` reports current toggle source and the last recall summary
+- `remnic clear` removes the session override so global config wins again
+- `remnic stats` reports planner mode, latency, and memory count for the last recall
+- `remnic flush` forces a bounded session flush through Remnic's extraction buffer
 
 ## Dreaming and Heartbeat
 
 OpenClaw v2026.4.10 introduced slot-aware dreaming and heartbeat routing for
 memory plugins. Remnic now accepts the `dreaming` config block in its manifest
-schema so OpenClaw validation succeeds:
+schema, reads `DREAMS.md` diary entries through the shared surface parser, and
+injects the most recent entries as a distinct `## Recent Dreams (Remnic)` block
+ahead of the main memory context when dreaming is enabled. The OpenClaw adapter
+also round-trips those entries into Remnic storage as `memoryKind: "dream"` and
+preserves provenance metadata so a Remnic-written dream is re-read idempotently
+instead of being re-indexed as a fresh memory on the next watch cycle.
 
 ```jsonc
 {
@@ -151,7 +175,11 @@ schema so OpenClaw validation succeeds:
             "enabled": false,
             "journalPath": "DREAMS.md",
             "maxEntries": 500,
-            "injectRecentCount": 3
+            "injectRecentCount": 3,
+            "minIntervalMinutes": 120,
+            "narrativeModel": "gpt-5.2",
+            "narrativePromptStyle": "reflective",
+            "watchFile": true
           }
         }
       }
@@ -160,8 +188,37 @@ schema so OpenClaw validation succeeds:
 }
 ```
 
-This batch only lands the schema and capability advertisement. The deeper
-Dreams/heartbeat behavior remains a separate implementation track.
+When consolidation produces a cross-session reflective summary and the
+`minIntervalMinutes` gate is satisfied, Remnic now appends a new `DREAMS.md`
+entry through the shared surface writer using the OpenAI Responses API. This is
+adapter-only behavior; standalone/core still has no dependency on OpenClaw's
+journal files.
+
+Heartbeat support is also advertised in the manifest and now does more than
+schema validation. The shared `packages/remnic-core/src/surfaces/heartbeat.ts`
+parser reads `HEARTBEAT.md` task files and upstream-style `tasks:` sections,
+then the OpenClaw adapter imports them into storage as
+`memoryKind: "procedural"` with `source: "heartbeat.md"`. During heartbeat
+runs, Remnic gates normal recall, injects the active heartbeat entry, and adds a
+`## Previous Runs` block from memories tagged with the same
+`relatedHeartbeatSlug`. By default it also skips episodic buffering and active
+recall transcript writes for heartbeat-triggered turns.
+
+Detection mode is configurable:
+
+- `runtime-signal`: only trust explicit OpenClaw heartbeat routing metadata
+- `heuristic`: treat `Read HEARTBEAT.md ...` prompts as v1 heartbeat runs even
+  when the runtime does not expose a signal yet
+- `auto`: prefer runtime signals and fall back to the heuristic path
+
+The heuristic path is intentionally adapter-only and documented as a bridge for
+current OpenClaw runtime behavior, not a new core contract.
+
+Recent-dream injection respects session toggles and the new active-recall
+surface. When the OpenClaw runtime uses `registerMemoryPromptSection`, Remnic
+returns the dreams/verbose/active-recall context through `before_prompt_build`
+and keeps the structured memory section itself isolated in the prompt-section
+builder, so the gateway does not double-inject memory text.
 
 ## Codex Compatibility
 
