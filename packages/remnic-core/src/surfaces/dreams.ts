@@ -224,23 +224,53 @@ export function createDreamsSurface(): DreamsSurface {
     },
 
     watch(filePath: string, onChange: (entries: DreamEntry[]) => void): () => void {
-      let watcher: FSWatcher | null = null;
+      let fileWatcher: FSWatcher | null = null;
+      let parentWatcher: FSWatcher | null = null;
       let timer: NodeJS.Timeout | null = null;
+      const watchedName = path.basename(filePath);
+      const watchedDir = path.dirname(filePath);
+
+      const rearmFileWatcher = () => {
+        fileWatcher?.close();
+        fileWatcher = null;
+        try {
+          fileWatcher = watch(filePath, { persistent: false }, emit);
+        } catch {
+          fileWatcher = null;
+        }
+      };
+
+      const ensureParentWatcher = () => {
+        if (parentWatcher) return;
+        try {
+          parentWatcher = watch(
+            watchedDir,
+            { persistent: false },
+            (_eventType, changed) => {
+              if (changed && String(changed) !== watchedName) return;
+              rearmFileWatcher();
+              emit();
+            },
+          );
+        } catch {
+          parentWatcher = null;
+        }
+      };
+
       const emit = () => {
         if (timer) clearTimeout(timer);
         timer = setTimeout(async () => {
           timer = null;
+          rearmFileWatcher();
           onChange(await this.read(filePath));
         }, 25);
       };
-      try {
-        watcher = watch(filePath, { persistent: false }, emit);
-      } catch {
-        watcher = null;
-      }
+      rearmFileWatcher();
+      ensureParentWatcher();
       return () => {
         if (timer) clearTimeout(timer);
-        watcher?.close();
+        fileWatcher?.close();
+        parentWatcher?.close();
       };
     },
   };

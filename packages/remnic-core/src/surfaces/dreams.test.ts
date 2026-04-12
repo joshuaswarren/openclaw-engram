@@ -157,3 +157,44 @@ test("dream surface keeps entry ids stable when title, body, or tags are edited 
   assert.equal(secondRead[0]?.title, "Refined title");
   assert.deepEqual(secondRead[0]?.tags, ["reflection", "verification"]);
 });
+
+test("dreams surface watch reacts when DREAMS.md is created after startup", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-watch-create-"));
+  const dreamsPath = path.join(root, "DREAMS.md");
+  const surface = createDreamsSurface();
+
+  const entriesPromise = new Promise<Awaited<ReturnType<typeof surface.read>>>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      stop();
+      reject(new Error("dream watcher did not fire after file creation"));
+    }, 2000);
+    const stop = surface.watch(dreamsPath, (entries) => {
+      clearTimeout(timeout);
+      stop();
+      resolve(entries);
+    });
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await writeFile(
+    dreamsPath,
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T15:00:00Z — Fresh start*",
+      "",
+      "The file appeared after startup.",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const entries = await entriesPromise;
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.title, "Fresh start");
+});
