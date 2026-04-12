@@ -35,7 +35,8 @@ Use these as the canonical starting points for adapter work:
 
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
-These patterns were extracted from 50+ PRs across 2026-04-05 to 2026-04-12.
+These patterns were extracted from 50+ PRs across 2026-04-05 to 2026-04-12
+(including deep analysis of PRs #400, #405, #408 with 20+ review rounds).
 Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
 required a follow-up commit to fix. Follow these rules to ship clean on the first push.
 
@@ -318,6 +319,56 @@ extraction.
 - **Don't health-check with uncommitted tokens** — if `commitTokenEntry`
   fails or is skipped, `checkDaemonHealth` sends an unknown token, gets 401,
   waits 6 seconds on retry, and reports a misleading "not reachable" message.
+
+### 19. Architecture Boundary Naming — Core Must Be Host-Agnostic
+
+Reviewers caught host-prefixed files living in core packages, violating the
+stated architecture boundary that `@remnic/core` must not depend on any host.
+
+- **Never prefix core files with host names** — `openclaw-recall-audit.ts`
+  in `@remnic/core` violates the boundary rule even though the file itself
+  contains no OpenClaw-specific logic. The prefix creates confusion about
+  where host-specific code belongs and signals a wrong dependency direction.
+- **Generic audit/log modules belong in core without host prefixes** — rename
+  to `recall-audit.ts` or similar. If host-specific behavior is needed, the
+  host adapter extends or wraps the core module.
+- **When in doubt, check the architecture boundary rules** — Section 1 of this
+  document states: "Core and standalone paths must not depend on OpenClaw,
+  Hermes, or any future host." File names are part of this contract.
+
+### 20. Parser Position Tracking — Don't Use indexOf for Duplicate Lines
+
+Multiple parsers used `content.indexOf(line)` to compute source offsets, which
+returns the first occurrence rather than the current parsing position.
+
+- **Track character position during iteration** — when parsing structured text
+  (heartbeat blocks, task lists), maintain a running `offset` variable that
+  advances with each line/section processed, rather than re-searching from the
+  start with `indexOf`.
+- **`indexOf` on repeated content is wrong** — if the same line text appears
+  earlier in the content (e.g., a repeated indentation pattern or comment),
+  `indexOf` returns the position of the first occurrence, making the offset
+  point to the wrong location.
+- **This applies to all line-based parsers** — not just heartbeat parsing.
+  Any parser that needs error-reporting positions or source mapping must track
+  its own position during iteration.
+
+### 21. Test Mock Signature Fidelity — Mocks Must Match Production Signatures
+
+Reviewers caught test mocks that defined functions with fewer parameters than
+the production interface, making tests pass vacuously.
+
+- **Mock signatures must match the production interface exactly** — if the
+  production interface declares `getLastRecall(sessionKey: string)`, the test
+  mock must accept and use the `sessionKey` parameter, not define a zero-argument
+  function that ignores it.
+- **Verify mock parameter usage in assertions** — for per-session dispatch
+  (command handlers, keyed lookups), test that different session keys produce
+  different results. A mock that always returns the same value masks that
+  per-session dispatch is broken.
+- **Interface changes must propagate to test mocks** — when a production
+  function signature changes (e.g., adding a `sessionKey` parameter), grep
+  all test files for the old signature and update mocks to match.
 
 ---
 

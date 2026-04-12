@@ -2,7 +2,7 @@
 # check-review-patterns.sh — Catch common issues that reviewers (Cursor Bugbot,
 # Codex, CodeQL) repeatedly flagged across PRs #343-#408 (504+ review comments).
 # Run this before pushing. Zero exit = clean.
-# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3).
+# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -304,6 +304,67 @@ if [[ -n "$FLUSH_NO_SKIP" ]]; then
       fi
     fi
   done <<< "$FLUSH_NO_SKIP"
+fi
+
+# ---- 15. Host-prefixed files in core package (architecture boundary) ----
+echo "[check] Host-prefixed files in @remnic/core..."
+
+HOST_PREFIXED=$(find packages/remnic-core/src -name "openclaw-*" -o -name "hermes-*" 2>/dev/null || true)
+
+if [[ -n "$HOST_PREFIXED" ]]; then
+  while IFS= read -r file; do
+    warn "$file — host-prefixed file in @remnic/core violates architecture boundary. Use a generic name."
+  done <<< "$HOST_PREFIXED"
+fi
+
+# ---- 16. indexOf in line parsers (position tracking) ----
+echo "[check] indexOf usage in parser/position-tracking code..."
+
+INDEXOF_PARSER=$(grep -rn '\.indexOf(' \
+  --include="*.ts" \
+  packages/remnic-core/src/surfaces/ packages/remnic-core/src/parsers/ \
+  . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -i "offset\|position\|source\|line\|parse\|block" \
+  || true)
+
+if [[ -n "$INDEXOF_PARSER" ]]; then
+  COUNT=$(echo "$INDEXOF_PARSER" | wc -l | tr -d ' ')
+  if [[ "$COUNT" -gt 0 ]]; then
+    warn "$COUNT uses of indexOf in parser/position-tracking code — may return wrong position for duplicate lines. Track offset during iteration instead."
+    echo "$INDEXOF_PARSER" | head -5
+  fi
+fi
+
+# ---- 17. Test mocks with fewer parameters than production interface ----
+echo "[check] Test mock signature fidelity..."
+
+# Look for mock function definitions that might ignore parameters.
+# Pattern: jest.fn(() => ...) or vi.fn(() => ...) where the function
+# ignores its arguments in test files near interface implementations.
+MOCK_NO_ARGS=$(grep -rn 'fn(()\s*=>\s*{' \
+  --include="*.test.ts" \
+  . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v "_\s*:" \
+  || true)
+
+if [[ -n "$MOCK_NO_ARGS" ]]; then
+  # Only warn if the production interface nearby takes arguments
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    # Check if the same file references a runtime interface that takes arguments
+    if grep -q "getLastRecall\|getSession\|getBuffer\|getRecall" "$FILE" 2>/dev/null; then
+      # Check if any mock in the file accepts parameters
+      if ! grep -q 'fn((.*:.*)\s*=>' "$FILE" 2>/dev/null; then
+        warn "$FILE — contains zero-argument mocks for functions that take parameters in production. Verify mock signatures match."
+        break
+      fi
+    fi
+  done <<< "$MOCK_NO_ARGS"
 fi
 if [[ $ERRORS -gt 0 ]]; then
   echo "[check] FAILED — $ERRORS issue(s) found. Fix before pushing."

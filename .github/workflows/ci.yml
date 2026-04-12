@@ -39,6 +39,12 @@ jobs:
       - name: Typecheck
         run: pnpm run check-types
 
+      - name: Config contract check
+        run: pnpm run check-config-contract
+
+      - name: Review pattern check
+        run: bash scripts/check-review-patterns.sh
+
       - name: Tests
         run: pnpm test
 
