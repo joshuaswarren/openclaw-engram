@@ -608,6 +608,46 @@ test("syncHeartbeatOutcomeLinks repairs stale heartbeat slugs when the memory no
   assert.deepEqual(reindexed, ["fact-1"]);
 });
 
+test("syncHeartbeatOutcomeLinks clears stale heartbeat links when the memory no longer matches any entry", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "fact-1",
+      content: "The secrets were rotated manually and no recurring task owns this note now.",
+      tags: ["ops", "heartbeat:sync-secrets"],
+      structuredAttributes: {
+        relatedHeartbeatSlug: "sync-secrets",
+      },
+    }),
+  ]);
+  const reindexed: string[] = [];
+
+  const result = await syncHeartbeatOutcomeLinks({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-a",
+        slug: "check-test-suite",
+        title: "check-test-suite",
+        body: "Run the suite and report new failures.",
+        schedule: "hourly",
+        tags: ["ci"],
+        sourceOffset: 0,
+      },
+    ],
+    reindexMemory: async (id) => {
+      reindexed.push(id);
+    },
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 0, linked: 1 });
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    undefined,
+  );
+  assert.deepEqual(storage.memories[0]?.frontmatter.tags, ["ops"]);
+  assert.deepEqual(reindexed, ["fact-1"]);
+});
+
 test("syncHeartbeatOutcomeLinks does not treat empty heartbeat titles as universal matches", async () => {
   const storage = makeStorage([
     makeMemory({
@@ -794,5 +834,28 @@ test("parseDreamNarrativeResponse extracts title, body, and tags with fallback t
     title: "Signal drift",
     body: "Inline reflection from the model",
     tags: ["dream"],
+  });
+
+  const bodyMetadataWords = parseDreamNarrativeResponse(
+    [
+      "Title: Signal drift",
+      "Body:",
+      "This note keeps the literal markers for later discussion.",
+      "Title: A real body heading",
+      "Tags: should stay in the body here",
+      "Closing line keeps the prior Tags line inside the body.",
+    ].join("\n"),
+    ["fallback"],
+  );
+
+  assert.deepEqual(bodyMetadataWords, {
+    title: "Signal drift",
+    body: [
+      "This note keeps the literal markers for later discussion.",
+      "Title: A real body heading",
+      "Tags: should stay in the body here",
+      "Closing line keeps the prior Tags line inside the body.",
+    ].join("\n"),
+    tags: ["fallback"],
   });
 });

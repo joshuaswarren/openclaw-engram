@@ -375,17 +375,33 @@ export async function syncHeartbeatOutcomeLinks(params: {
     if (isSurfaceMemory(memory, HEARTBEAT_SURFACE_TYPE)) continue;
     const existingSlug = memory.frontmatter.structuredAttributes?.[HEARTBEAT_SLUG_KEY];
     const detectedSlug = detectHeartbeatSlug(memory, entries);
-    if (!detectedSlug && existingSlug) continue;
-    if (!detectedSlug) continue;
+    const baseAttributes = { ...(memory.frontmatter.structuredAttributes ?? {}) };
+    delete baseAttributes[HEARTBEAT_SLUG_KEY];
+    const baseTags = (memory.frontmatter.tags ?? []).filter(
+      (tag) => !tag.startsWith("heartbeat:"),
+    );
+    if (!detectedSlug) {
+      if (!existingSlug) continue;
+      const wrote = await storage.writeMemoryFrontmatter(memory, {
+        structuredAttributes: baseAttributes,
+        tags: uniqueTags(baseTags),
+        updated: new Date().toISOString(),
+      });
+      if (wrote) {
+        await reindexMemory?.(memory.frontmatter.id);
+        linked += 1;
+        logger?.debug?.(
+          `cleared stale heartbeat link for memory ${memory.frontmatter.id}`,
+        );
+      }
+      continue;
+    }
     if (existingSlug === detectedSlug) continue;
     const nextAttributes = {
-      ...(memory.frontmatter.structuredAttributes ?? {}),
+      ...baseAttributes,
       [HEARTBEAT_SLUG_KEY]: detectedSlug,
     };
-    const nextTags = uniqueTags([
-      ...(memory.frontmatter.tags ?? []).filter((tag) => !tag.startsWith("heartbeat:")),
-      `heartbeat:${detectedSlug}`,
-    ]);
+    const nextTags = uniqueTags([...baseTags, `heartbeat:${detectedSlug}`]);
     const wrote = await storage.writeMemoryFrontmatter(memory, {
       structuredAttributes: nextAttributes,
       tags: nextTags,
@@ -473,31 +489,84 @@ export function parseDreamNarrativeResponse(
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
 
-  const titleMatch = trimmed.match(/^Title:\s*(.+)$/im);
-  const bodyMatch = trimmed.match(/^Body:\s*(.*)$/im);
-  const tagsMatch = trimmed.match(/^Tags:\s*(.+)$/im);
-  const title = titleMatch?.[1]?.trim() || null;
-  let body: string;
-  if (bodyMatch && bodyMatch.index !== undefined) {
-    const inlineBody = bodyMatch[1]?.trim() ?? "";
-    const remainder = trimmed
-      .slice(bodyMatch.index + bodyMatch[0].length)
-      .replace(/^Title:.*$/gim, "")
-      .replace(/^Tags:.*$/gim, "")
-      .trim();
-    body = [inlineBody, remainder].filter((value) => value.length > 0).join("\n").trim();
+  const lines = trimmed.split(/\r?\n/);
+  const explicitBodyIndex = lines.findIndex((line) => /^Body:\s*/i.test(line));
+
+  let title: string | null = null;
+  let parsedTags: string[] = [];
+  let bodyLines: string[] = [];
+
+  if (explicitBodyIndex >= 0) {
+    for (let index = 0; index < explicitBodyIndex; index++) {
+      const line = lines[index] ?? "";
+      const titleMatch = line.match(/^Title:\s*(.+)$/i);
+      if (titleMatch && title === null) {
+        title = titleMatch[1]?.trim() || null;
+        continue;
+      }
+      const tagsMatch = line.match(/^Tags:\s*(.+)$/i);
+      if (tagsMatch && parsedTags.length === 0) {
+        parsedTags =
+          tagsMatch[1]
+            ?.split(/\s+/)
+            .map((tag) => tag.replace(/^#/, "").trim())
+            .filter(Boolean) ?? [];
+      }
+    }
+
+    let trailingTagsIndex = -1;
+    for (let index = lines.length - 1; index > explicitBodyIndex; index--) {
+      const line = lines[index] ?? "";
+      if (line.trim().length === 0) continue;
+      const tagsMatch = line.match(/^Tags:\s*(.+)$/i);
+      if (tagsMatch && parsedTags.length === 0) {
+        parsedTags =
+          tagsMatch[1]
+            ?.split(/\s+/)
+            .map((tag) => tag.replace(/^#/, "").trim())
+            .filter(Boolean) ?? [];
+        trailingTagsIndex = index;
+      }
+      break;
+    }
+
+    const explicitBodyLine = lines[explicitBodyIndex] ?? "";
+    const inlineBody = explicitBodyLine.replace(/^Body:\s*/i, "").trim();
+    if (inlineBody.length > 0) {
+      bodyLines.push(inlineBody);
+    }
+
+    const bodyEnd = trailingTagsIndex >= 0 ? trailingTagsIndex : lines.length;
+    bodyLines.push(...lines.slice(explicitBodyIndex + 1, bodyEnd));
   } else {
-    body = trimmed
-      .replace(/^Title:.*$/im, "")
-      .replace(/^Tags:.*$/im, "")
-      .trim();
+    let bodyStarted = false;
+    for (const line of lines) {
+      if (!bodyStarted) {
+        const titleMatch = line.match(/^Title:\s*(.+)$/i);
+        if (titleMatch && title === null) {
+          title = titleMatch[1]?.trim() || null;
+          continue;
+        }
+        const tagsMatch = line.match(/^Tags:\s*(.+)$/i);
+        if (tagsMatch && parsedTags.length === 0) {
+          parsedTags =
+            tagsMatch[1]
+              ?.split(/\s+/)
+              .map((tag) => tag.replace(/^#/, "").trim())
+              .filter(Boolean) ?? [];
+          continue;
+        }
+        if (line.trim().length === 0 && (title !== null || parsedTags.length > 0)) {
+          continue;
+        }
+        bodyStarted = true;
+      }
+      bodyLines.push(line);
+    }
   }
+
+  const body = bodyLines.join("\n").trim();
   if (body.length === 0) return null;
-  const parsedTags =
-    tagsMatch?.[1]
-      ?.split(/\s+/)
-      .map((tag) => tag.replace(/^#/, "").trim())
-      .filter(Boolean) ?? [];
   return {
     title,
     body,
