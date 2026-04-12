@@ -925,6 +925,7 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? Math.min(1000, Math.max(40, Math.floor(cfg.activeRecallRecentAssistantChars)))
         : 400,
     activeRecallThinking:
+      cfg.activeRecallThinking === "low" ||
       cfg.activeRecallThinking === "off" ||
       cfg.activeRecallThinking === "minimal" ||
       cfg.activeRecallThinking === "medium" ||

@@ -70,6 +70,12 @@ export function createFileToggleStore(
 ): SessionToggleStore {
   let writeChain = Promise.resolve();
 
+  async function queueWrite(operation: () => Promise<void>): Promise<void> {
+    const run = writeChain.catch(() => undefined).then(operation);
+    writeChain = run.catch(() => undefined);
+    await run;
+  }
+
   async function writeToggleFile(next: ToggleFile): Promise<void> {
     await mkdir(path.dirname(filePath), { recursive: true });
     await writeFile(filePath, JSON.stringify(next, null, 2), "utf8");
@@ -113,7 +119,7 @@ export function createFileToggleStore(
 
     async setDisabled(sessionKey: string, agentId: string, disabled: boolean): Promise<void> {
       const key = encodeToggleKey(sessionKey, agentId);
-      writeChain = writeChain.then(async () => {
+      await queueWrite(async () => {
         const current = await readPrimary();
         current.entries[key] = {
           disabled,
@@ -121,17 +127,15 @@ export function createFileToggleStore(
         };
         await writeToggleFile(current);
       });
-      await writeChain;
     },
 
     async clear(sessionKey: string, agentId: string): Promise<void> {
       const key = encodeToggleKey(sessionKey, agentId);
-      writeChain = writeChain.then(async () => {
+      await queueWrite(async () => {
         const current = await readPrimary();
         delete current.entries[key];
         await writeToggleFile(current);
       });
-      await writeChain;
     },
 
     async list() {

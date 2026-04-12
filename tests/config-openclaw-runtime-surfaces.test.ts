@@ -199,3 +199,12 @@ test("parseConfig preserves explicit disables and clamps timeout and dreaming bo
     fingerprintDedup: false,
   });
 });
+
+test("parseConfig preserves explicit low active recall thinking mode", () => {
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    activeRecallThinking: "low",
+  });
+
+  assert.equal(cfg.activeRecallThinking, "low");
+});

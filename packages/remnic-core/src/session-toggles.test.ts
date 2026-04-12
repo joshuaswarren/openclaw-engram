@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import test from "node:test";
@@ -76,4 +76,21 @@ test("createFileToggleStore honors read-through bundled active-memory toggles", 
   await store.clear("session-a", "agent-a");
   assert.equal(await store.isDisabled("session-a", "agent-a"), true);
   assert.equal((await store.resolve("session-a", "agent-a")).source, "secondary");
+});
+
+test("createFileToggleStore recovers queued writes after a prior write failure", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-toggle-store-recover-"));
+  const filePath = path.join(root, "session-toggles.json");
+  const store = createFileToggleStore(filePath);
+
+  await chmod(root, 0o555);
+  await assert.rejects(
+    store.setDisabled("session-a", "agent-a", true),
+    /EACCES|EPERM/,
+  );
+
+  await chmod(root, 0o755);
+  await store.setDisabled("session-a", "agent-a", true);
+
+  assert.equal(await store.isDisabled("session-a", "agent-a"), true);
 });
