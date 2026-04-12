@@ -178,6 +178,48 @@ test("heartbeat surface keeps entry ids stable when body, schedule, or tags are 
   assert.equal(first[0]?.id, second[0]?.id);
 });
 
+test("heartbeat surface keeps entry ids stable when a title is renamed in place", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-title-rename-"));
+  const heartbeatPath = path.join(root, "HEARTBEAT.md");
+  const surface = createHeartbeatSurface();
+
+  await writeFile(
+    heartbeatPath,
+    [
+      "## check-test-suite",
+      "",
+      "Run the suite and report new failures.",
+      "",
+      "Schedule: hourly",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const first = await surface.read(heartbeatPath);
+
+  await writeFile(
+    heartbeatPath,
+    [
+      "## check-smoke-suite",
+      "",
+      "Run the suite and report new failures.",
+      "",
+      "Schedule: hourly",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const second = await surface.read(heartbeatPath);
+
+  assert.equal(first.length, 1);
+  assert.equal(second.length, 1);
+  assert.equal(first[0]?.slug, "check-test-suite");
+  assert.equal(second[0]?.slug, "check-smoke-suite");
+  assert.equal(first[0]?.id, second[0]?.id);
+});
+
 test("heartbeat surface derives non-empty stable slugs from emoji-only titles", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-emoji-slug-"));
   const heartbeatPath = path.join(root, "HEARTBEAT.md");

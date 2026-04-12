@@ -20,14 +20,12 @@ export interface HeartbeatSurface {
 }
 
 function stableHeartbeatId(params: {
-  slug: string;
-  occurrence: number;
+  sourceOffset: number;
 }): string {
   const digest = createHash("sha1")
     .update(
       JSON.stringify({
-        slug: params.slug,
-        occurrence: params.occurrence,
+        sourceOffset: params.sourceOffset,
       }),
     )
     .digest("hex")
@@ -78,15 +76,11 @@ function buildEntry(params: {
 }
 
 function finalizeHeartbeatEntries(entries: ParsedHeartbeatEntry[]): HeartbeatEntry[] {
-  const seenBySlug = new Map<string, number>();
   return entries.map((entry) => {
-    const occurrence = seenBySlug.get(entry.slug) ?? 0;
-    seenBySlug.set(entry.slug, occurrence + 1);
     return {
       ...entry,
       id: stableHeartbeatId({
-        slug: entry.slug,
-        occurrence,
+        sourceOffset: entry.sourceOffset,
       }),
     };
   });

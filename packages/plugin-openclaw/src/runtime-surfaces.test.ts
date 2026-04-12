@@ -484,6 +484,52 @@ test("syncHeartbeatSurfaceEntries prefers stable heartbeat entry ids over matchi
   assert.equal(storage.memories[0]?.content, "Old heartbeat body.");
 });
 
+test("syncHeartbeatSurfaceEntries updates the existing memory when a heartbeat title rename changes the slug but not the entry id", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "principle-stable-id",
+      category: "principle",
+      content: "Existing heartbeat body.",
+      tags: ["heartbeat", "procedural", "check-test-suite"],
+      source: "heartbeat.md",
+      memoryKind: "procedural",
+      structuredAttributes: {
+        remnicSurfaceType: "heartbeat",
+        remnicHeartbeatEntryId: "heartbeat-stable",
+        relatedHeartbeatSlug: "check-test-suite",
+      },
+    }),
+  ]);
+
+  const result = await syncHeartbeatSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-stable",
+        slug: "check-smoke-suite",
+        title: "check-smoke-suite",
+        body: "Run the smoke suite and report new failures.",
+        schedule: "hourly",
+        tags: ["ci", "tests"],
+        sourceOffset: 20,
+      },
+    ],
+    journalPath: "/workspace/HEARTBEAT.md",
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 1, linked: 0 });
+  assert.equal(storage.memories.length, 1);
+  assert.match(storage.memories[0]?.content ?? "", /check-smoke-suite/);
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.remnicHeartbeatEntryId,
+    "heartbeat-stable",
+  );
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    "check-smoke-suite",
+  );
+});
+
 test("syncHeartbeatSurfaceEntries never overwrites non-surface memories through slug fallback", async () => {
   const storage = makeStorage([
     makeMemory({
