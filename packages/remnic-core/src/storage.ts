@@ -947,36 +947,26 @@ export class StorageManager {
           factHashIndex.addByHash(memory.frontmatter.contentHash);
           continue;
         }
-        // Legacy fact written before contentHash was introduced.
-        // Attempt to recover a stable hash by stripping any inline citation
-        // from the persisted body, then hashing the canonical (un-cited) text.
+        // Legacy fact written before contentHash was introduced (Finding 1 —
+        // Uhol). Skip it rather than guessing a hash via stripCitation.
         //
-        // Strategy:
-        //   1. Try template-aware stripping using the current citation format.
-        //      If the template is all-placeholder (matcher returns null), fall
-        //      through to step 2 rather than storing a wrong hash.
-        //   2. Try default-format stripping via hasCitationForTemplate with
-        //      the default template.
-        //   3. If no citation is detected at all, hash the raw body.
+        // Rationale: for facts annotated with a custom citation template,
+        // stripCitationForTemplate cannot reliably detect the inline marker
+        // and would hash the cited body — producing a hash that never matches
+        // what hasFactContentHash(rawContent) computes. A false-negative miss
+        // (the fact is not in the index) is preferable to a wrong index entry
+        // that permanently suppresses legitimate duplicate writes.
         //
-        // This is safe for truly pre-#369 facts because they could only carry
-        // default-format citations at most. Custom templates were introduced
-        // WITH #369, so a legacy fact (no contentHash) with a custom-template
-        // citation is only possible in very unusual edge cases.
-        const template = this.citationTemplate;
-        // Strip any inline citation to recover the canonical body used at
-        // hash-index write time. stripCitationForTemplate handles both the
-        // default and configured custom template formats. For all-placeholder
-        // templates it returns the text unchanged (no citation detectable) —
-        // in that case we still hash the raw body, which is better than
-        // skipping.
-        const canonicalContent = stripCitationForTemplate(memory.content, template);
-        factHashIndex.add(canonicalContent);
+        // Limitation (Thread 2 — stale hash): even when contentHash IS present
+        // it may be stale if updateMemory() rewrote the body without updating
+        // the frontmatter hash. The hash is trusted as-is here; a future
+        // migration pass can recompute it from the current content.
         legacyRecovered++;
+        continue;
       }
       if (legacyRecovered > 0) {
         log.info(
-          `ensureFactHashIndexAuthoritative: recovered ${legacyRecovered} legacy fact hash(es) via content stripping`,
+          `ensureFactHashIndexAuthoritative: skipped ${legacyRecovered} legacy fact(s) with no contentHash in frontmatter`,
         );
       }
       await factHashIndex.save();

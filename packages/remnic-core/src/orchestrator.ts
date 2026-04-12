@@ -8944,7 +8944,18 @@ export class Orchestrator {
           // back, leaving a dangling deindex with no replacement reference.
           // Child chunks intentionally do NOT carry supersedes; only the
           // parent represents the logical memory unit.
-          const citedChunkedContent = applyInlineCitation(fact.content);
+          //
+          // Canonicalize contentHashSource before writing (Thread 3 — Codex P2,
+          // issue #369). If fact.content already carries an inline citation
+          // (e.g. re-processed or relayed fact), strip it so contentHashSource
+          // records the raw un-cited body — matching what the dedup check hashes
+          // via stripCitationForTemplate before calling hasFactContentHash.
+          const rawChunkedContent =
+            citationEnabled &&
+            hasCitationForTemplate(fact.content, citationTemplate)
+              ? stripCitationForTemplate(fact.content, citationTemplate)
+              : fact.content;
+          const citedChunkedContent = applyInlineCitation(rawChunkedContent);
           const parentId = await targetStorage.writeMemory(
             writeCategory,
             citedChunkedContent,
@@ -8961,7 +8972,7 @@ export class Orchestrator {
               intentEntityTypes: inferredIntent?.entityTypes,
               memoryKind,
               structuredAttributes: fact.structuredAttributes,
-              contentHashSource: fact.content,
+              contentHashSource: rawChunkedContent,
             },
           );
 
