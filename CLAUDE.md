@@ -97,3 +97,11 @@ grep "\[engram\]" ~/.openclaw/logs/gateway.log
 6. **profile.md injected everywhere** — keep under 600 lines or consolidation triggers
 7. **QMD `query` is intentional** — DO NOT change from `query` to `search` or `vsearch`. The `query` command provides LLM expansion + reranking that Remnic relies on. Remnic's own reranking was disabled because `qmd query` handles it.
 8. **QMD local patches** — PRs #166, #112, #117 are applied locally to `~/.bun/install/global/node_modules/qmd/`. These will be overwritten by `bun install -g github:tobi/qmd` — reapply if needed until merged upstream.
+9. **Legacy env var fallback chains** — always try `REMNIC_*` first, then fall back to `ENGRAM_*`. This applies to config parsing, hook scripts, and daemon label lookups.
+10. **Never interpolate unsanitized values into shell scripts** — pass host/port/config values via environment variables, never via string interpolation into script command strings.
+11. **Scope globals per plugin ID** — runtime orchestrator mirrors, CLI dedupe guards, and capability caches must be keyed by `serviceId` when multiple instances can coexist.
+12. **Write rollback data before success markers** — if a migration writes `.migrated-from-engram`, the `.rollback.json` must be written first so failures don't leave a false success marker.
+13. **Wrap external service calls in try-catch** — token generation, daemon health probes, and filesystem writes must not crash the primary install/remove/config flow. Fail gracefully and surface a user-facing note instead.
+14. **Validate CLI flag arguments exist** — `--format`, `--focus`, `--since` without a following value must throw an error, not silently default.
+15. **Sync lock files after dependency changes** — changing `workspace:*` specifiers or adding/removing packages requires `pnpm install` to update `pnpm-lock.yaml` and any nested `package-lock.json` files.
+16. **Clean up ALL test globals in teardown** — include unkeyed globals like `__openclawEngramOrchestrator` in `resetGlobals()` helpers, not just the keyed ones.

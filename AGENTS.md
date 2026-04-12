@@ -33,6 +33,129 @@ Use these as the canonical starting points for adapter work:
 - Keep standalone and shared-core behavior testable without booting OpenClaw, Hermes, or another host.
 - If a change touches both core semantics and a host adapter, land the core contract first and make the adapter consume it second.
 
+## Review Prevention Checklist (All Agents — Read Before Every PR)
+
+These patterns were extracted from 37 PRs across 2026-04-05 to 2026-04-12.
+Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
+required a follow-up commit to fix. Follow these rules to ship clean on the first push.
+
+### 1. Input Validation — Reject Invalid Inputs Explicitly
+
+Reviewers repeatedly caught silent defaulting on invalid inputs. Never silently
+accept and reinterpret bad values.
+
+- **CLI flags must validate their argument exists** — `--format json` where
+  `--format` has no value must throw, not silently default.
+- **Enum/config values must be validated against an explicit allow-list** — when
+  adding a new accepted value (e.g., `"low"` for `activeRecallThinking`), add it
+  to the validation schema AND the config parser.
+- **Numeric inputs must be type-checked** — port values must be finite integers
+  in [1, 65535]; reject `"abc"` and `3.7` rather than truncating.
+- **Date/timestamp parsing must guard overflow** — reject inputs that would
+  overflow `Date` bounds instead of producing `Invalid Date`.
+
+### 2. Rename Completeness — Always Add Legacy Fallbacks
+
+The Engram→Remnic rename touched every surface. Every rename PR required
+follow-up fixes for missed references.
+
+- **Search the entire codebase when renaming anything** — `grep -ri oldname`
+  across all files including docs, tests, lock files, changesets, hooks, and
+  CI configs.
+- **Always add a legacy fallback chain** — env vars: `REMNIC_FOO` → `ENGRAM_FOO`;
+  config keys: try `remnic` block first, fall back to `engram` block.
+- **Update lock files when changing workspace dependencies** — changing
+  `workspace:*` specifiers or package names without running `pnpm install`
+  breaks the lock file.
+- **Changeset files must reference current package names** — stale package IDs
+  in `.changeset/` will cause release failures.
+- **Hook scripts must use the current plugin name in error messages and paths.**
+
+### 3. Security — Sanitize at System Boundaries
+
+CodeQL and Bugbot repeatedly flagged these patterns.
+
+- **Never interpolate unsanitized values into shell commands** — pass host/port
+  via environment variables, never via string interpolation into script strings.
+- **Restrict file permissions on auth tokens** — config files containing tokens
+  should use `0600` permissions.
+- **Block symlink traversal in directory scans** — when scanning `artifacts/` or
+  memory directories, reject symlinks that resolve outside the allowed root.
+  Reject symlinked root directories entirely.
+- **Validate external inputs at system boundaries** — profile values, connector
+  IDs, and config paths must be sanitized before filesystem operations.
+
+### 4. Error Handling — Never Let Side Effects Crash the Main Flow
+
+Token store failures, daemon unavailability, and filesystem errors must not
+block the primary operation.
+
+- **Wrap token/external-service operations in try-catch** — if `generateToken()`
+  fails, the install should still complete with a note to run token generation
+  manually later.
+- **Write rollback manifests BEFORE migration markers** — if rollback metadata
+  write fails, the system must not think migration succeeded.
+- **Use AbortController for timeout-able async operations** — timed-out
+  `before_reset` flushes must abort the in-flight extraction before buffer
+  clearing, so late flushes cannot clear turns buffered after reset proceeds.
+- **Guard refcount operations against double-decrement** — track whether
+  increment happened before decrementing; use a `didCountStart` flag.
+
+### 5. State Scoping — Don't Share What Shouldn't Be Shared
+
+Multiple plugin instances can coexist; globals must be scoped.
+
+- **Scope singletons per plugin ID** — runtime orchestrator mirrors, CLI dedupe
+  guards, and capability caches must be keyed by `serviceId`, not stored as
+  bare globals.
+- **Scope extraction deduplication by session/buffer key** — `shouldQueueExtraction`
+  must fingerprint `bufferKey + normalizedTurnText`, not just turn text, so
+  parallel sessions don't suppress each other's extractions.
+- **Cache writes and reads must use consistent formats** — if the hook path
+  writes `{version, data}` and the section path reads `data` directly, they will
+  diverge.
+
+### 6. Test Quality — Tests Must Actually Verify Behavior
+
+Reviewers caught multiple tests that passed vacuously.
+
+- **Never write assertions on empty arrays** — `expect(result).toEqual([])` passes
+  trivially; assert on non-empty expected data or assert the function was called.
+- **Don't assume filesystem ordering** — `readdir` is not guaranteed to be
+  alphabetical; sort explicitly before comparing.
+- **Clean up ALL global state in test teardown** — including unkeyed globals
+  like `__openclawEngramOrchestrator` mirror keys in `resetGlobals()`.
+- **Test error paths** — for every `try/catch` added in production code, add a
+  test that forces the error path and asserts recovery behavior.
+- **Don't use fragile CWD-relative paths** — use `import.meta.dirname` or
+  `path.resolve(__dirname, ...)` instead of assuming CWD.
+
+### 7. Documentation Accuracy — Examples Must Be Copy-Pasteable
+
+Every doc PR required follow-up fixes for stale references.
+
+- **Code examples must reference current variable names** — after a rename,
+  search all code blocks in docs for the old name.
+- **CLI command examples must use current commands** — `remnic connectors install`,
+  not `engram connectors install`.
+- **Hook templates must use current env var chains** — match the real hook
+  scripts' `REMNIC_* → ENGRAM_*` fallback precedence.
+- **Architecture diagrams must use current labels** — "Remnic Orchestrator",
+  not "Engram Orchestrator".
+
+### 8. Dead Code — Remove What You Don't Need
+
+Reviewers flagged unreachable branches and unused exports.
+
+- **Remove unreachable branches** — if a non-recursive flag makes a branch
+  unreachable, delete it rather than leaving dead code.
+- **Don't duplicate helpers across packages** — if `toolJsonResult` exists in
+  two tool files, extract to a shared utility.
+- **Remove dead switch cases** — after normalizing tool names, remove the old
+  case rather than leaving it to silently never match.
+
+---
+
 ## What This Project Does (Simple Explanation)
 
 Remnic gives AI agents long-term memory that persists across conversations.
