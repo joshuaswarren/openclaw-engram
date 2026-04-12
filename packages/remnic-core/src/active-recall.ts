@@ -131,6 +131,16 @@ function buildCacheKey(input: ActiveRecallInput, config: ActiveRecallConfig, que
     agentId: input.agentId,
     queryMode: config.queryMode,
     promptStyle: config.promptStyle,
+    promptOverride: config.promptOverride,
+    promptAppend: config.promptAppend,
+    maxSummaryChars: config.maxSummaryChars,
+    entityGraphDepth: config.entityGraphDepth,
+    includeCausalTrajectories: config.includeCausalTrajectories,
+    includeDaySummary: config.includeDaySummary,
+    attachRecallExplain: config.attachRecallExplain,
+    modelOverride: config.modelOverride,
+    modelFallbackPolicy: config.modelFallbackPolicy,
+    thinking: config.thinking,
     queryBundle,
   });
 }

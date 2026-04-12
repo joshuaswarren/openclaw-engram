@@ -227,6 +227,45 @@ test("active recall cache stores an isolated snapshot instead of a mutable calle
   assert.deepEqual(second.citations, []);
 });
 
+test("active recall cache key includes output-shaping config so config changes do not reuse stale summaries", async () => {
+  let generateCalls = 0;
+  const deps = {
+    async recall() {
+      return "CI worker drain after Redis reconnect storm.";
+    },
+    async generateSummary() {
+      generateCalls += 1;
+      return {
+        text:
+          generateCalls === 1
+            ? "This summary is intentionally long enough to show truncation drift."
+            : "Short summary",
+      };
+    },
+    now: (() => {
+      let tick = 30_000;
+      return () => tick++;
+    })(),
+  };
+
+  const longEngine = createActiveRecallEngine(
+    deps,
+    baseConfig({ cacheTtlMs: 5000, maxSummaryChars: 12 }),
+  );
+  const shortEngine = createActiveRecallEngine(
+    deps,
+    baseConfig({ cacheTtlMs: 5000, maxSummaryChars: 80 }),
+  );
+
+  const first = await longEngine.run(baseInput());
+  const second = await shortEngine.run(baseInput());
+
+  assert.equal(generateCalls, 2);
+  assert.equal(first.summary, "This summary");
+  assert.equal(second.summary, "Short summary");
+  assert.equal(second.cacheHit, false);
+});
+
 test("active recall engine evicts expired cache entries before reusing them", async () => {
   let nowValue = 10_000;
   let generateCalls = 0;

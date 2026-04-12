@@ -829,6 +829,37 @@ test("syncHeartbeatOutcomeLinks does not false-match heartbeat titles inside lar
   );
 });
 
+test("syncHeartbeatOutcomeLinks does not false-match hyphenated slugs inside larger hyphenated tokens", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "fact-1",
+      content: "The pre-check-test-suite-run note belongs to a different workflow.",
+      tags: ["ops"],
+    }),
+  ]);
+
+  const result = await syncHeartbeatOutcomeLinks({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-a",
+        slug: "check-test-suite",
+        title: "check-test-suite",
+        body: "Run the suite and report new failures.",
+        schedule: "hourly",
+        tags: ["ci"],
+        sourceOffset: 0,
+      },
+    ],
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 0, linked: 0 });
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    undefined,
+  );
+});
+
 test("planDreamEntryFromConsolidation requires enough session-like spread, meta tags, and interval headroom", () => {
   const observation: ConsolidationObservation = {
     runAt: "2026-04-12T15:00:00.000Z",

@@ -346,10 +346,21 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function buildDelimitedBoundaryClass(value: string): string {
+  const parts = ["a-z0-9"];
+  if (value.includes("-")) {
+    parts.push("-");
+  }
+  return parts.join("");
+}
+
 function compileDelimitedPhrasePattern(value: string): RegExp | null {
   const normalized = value.trim().toLowerCase();
   if (normalized.length === 0) return null;
-  return new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalized)}([^a-z0-9]|$)`);
+  const boundaryClass = buildDelimitedBoundaryClass(normalized);
+  return new RegExp(
+    `(^|[^${boundaryClass}])${escapeRegExp(normalized)}([^${boundaryClass}]|$)`,
+  );
 }
 
 function matchesDelimitedPattern(haystack: string, pattern: RegExp | null): boolean {
