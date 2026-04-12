@@ -1628,12 +1628,21 @@ async function promptYesNo(question: string, defaultYes = true): Promise<boolean
   process.stdout.write(question + " ");
   return new Promise((resolve) => {
     let buf = "";
+    const cleanup = () => {
+      process.stdin.removeListener("data", onData);
+      process.stdin.removeListener("end", onEnd);
+      process.stdin.removeListener("close", onEnd);
+      process.stdin.pause();
+    };
+    const onEnd = () => {
+      cleanup();
+      resolve(defaultYes);
+    };
     const onData = (chunk: Buffer) => {
       buf += chunk.toString();
       const nl = buf.indexOf("\n");
       if (nl >= 0) {
-        process.stdin.removeListener("data", onData);
-        process.stdin.pause();
+        cleanup();
         const answer = buf.slice(0, nl).trim().toLowerCase();
         if (answer === "" || answer === "y" || answer === "yes") {
           resolve(defaultYes || answer !== "");
@@ -1646,6 +1655,8 @@ async function promptYesNo(question: string, defaultYes = true): Promise<boolean
     };
     process.stdin.resume();
     process.stdin.on("data", onData);
+    process.stdin.on("end", onEnd);
+    process.stdin.on("close", onEnd);
   });
 }
 
@@ -1748,14 +1759,20 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   // - Spread the existing new entry on top so its policy takes precedence.
   // - Finally, overwrite config with the merged result.
   const legacyNonConfigFields: Record<string, unknown> = {};
-  if (migrateLegacy && legacyEntry) {
+  if (migrateLegacy && legacyEntry && typeof legacyEntry === "object" && !Array.isArray(legacyEntry)) {
     for (const [k, v] of Object.entries(legacyEntry)) {
       if (k !== "config") legacyNonConfigFields[k] = v;
     }
   }
+  // Guard: only spread existingNewEntry if it's a plain object — a scalar/array
+  // value would cause character-index keys to be silently merged in.
+  const existingNewEntryFields =
+    existingNewEntry && typeof existingNewEntry === "object" && !Array.isArray(existingNewEntry)
+      ? existingNewEntry
+      : {};
   const newEntry: Record<string, unknown> = {
     ...legacyNonConfigFields,
-    ...(existingNewEntry ?? {}),
+    ...existingNewEntryFields,
     config: {
       ...legacyConfigToMerge,
       ...existingNewEntryConfig,
