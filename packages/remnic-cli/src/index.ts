@@ -650,8 +650,8 @@ function cmdDoctor(): void {
       const slotIsPreferred = slotMatchesEntry && slotValue === REMNIC_OPENCLAW_PLUGIN_ID;
       checks.push({
         name: "OpenClaw plugins.slots.memory",
-        ok: slotIsPreferred,
-        warn: slotIsLegacy,
+        ok: slotMatchesEntry,
+        warn: slotMatchesEntry && !slotIsPreferred,
         detail: slotMissing
           ? "(unset)"
           : slotMismatch
@@ -715,9 +715,11 @@ function cmdDoctor(): void {
   }
 
   for (const check of checks) {
-    const icon = check.ok ? "✓" : check.warn ? "⚠" : "✗";
+    const icon = check.ok
+      ? check.warn ? "⚠" : "✓"
+      : check.warn ? "⚠" : "✗";
     console.log(`  ${icon} ${check.name}: ${check.detail}`);
-    if (!check.ok && check.remediation) {
+    if ((!check.ok || check.warn) && check.remediation) {
       console.log(`      → ${check.remediation}`);
     }
   }
