@@ -68,6 +68,20 @@ const ENGRAM_MIGRATION_PROMISE = "__openclawEngramMigrationPromise";
  */
 const CLI_REGISTERED_GUARD = "__openclawEngramCliRegistered";
 
+/**
+ * Process-global count of Remnic plugin services whose `start()` has
+ * successfully run (i.e., `didCountStart === true`).  Incremented in
+ * `start()`, decremented in `stop()`.  When the count drops to zero, the
+ * global `CLI_REGISTERED_GUARD` is cleared so a subsequent `register()`
+ * in a fresh reload cycle can re-register CLI commands.
+ *
+ * This prevents the bug where one of two coexisting plugin ids stops and
+ * clears the CLI guard while the other is still running (Codex P2
+ * PRRT_kwDORJXyws56WHTe), while still allowing CLI re-registration after
+ * a true full stop where the gateway rebuilds its command registry.
+ */
+const CLI_ACTIVE_SERVICE_COUNT = "__openclawEngramCliActiveServiceCount";
+
 type ServiceKeys = {
   REGISTERED_GUARD: string;
   /** Tracks which api objects have already had hooks bound to prevent duplicate handlers. */
@@ -1545,6 +1559,8 @@ const pluginDefinition = {
         }
         // We are the first — claim ownership and drive initialization.
         didCountStart = true;
+        (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] =
+          ((globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] || 0) + 1;
         // IMPORTANT: Do NOT put a `finally` inside the IIFE to clear INIT_PROMISE.
         // If anything in the try block throws synchronously (before the first `await`),
         // the IIFE's finally would run before the outer assignment, and the outer line
@@ -1633,6 +1649,10 @@ const pluginDefinition = {
             // SERVICE_STARTED was not set yet (only set on success above), but
             // clear it defensively in case another code path set it.
             didCountStart = false;
+            (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] = Math.max(
+              0,
+              ((globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] || 0) - 1,
+            );
             (globalThis as any)[keys.SERVICE_STARTED] = false;
             // Do NOT clear REGISTERED_GUARD here. On an ordinary startup
             // failure (no preceding stop/reload) the CLI registered during register()
@@ -1671,6 +1691,14 @@ const pluginDefinition = {
         // and skip all cleanup — including Opik — to avoid detaching a live exporter.
         if (!didCountStart) return;
         didCountStart = false;
+        // Decrement the process-global active-service count.  When it reaches
+        // zero, all Remnic services have stopped and it's safe to clear the CLI
+        // guard so a subsequent reload cycle can re-register CLI commands.
+        const remainingServices = Math.max(
+          0,
+          ((globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] || 0) - 1,
+        );
+        (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] = remainingServices;
         // Opik cleanup: placed after the guard so secondary stop()s never detach
         // the process-wide exporter while Engram is still running.
         // Wrapped in try-catch (like accessHttpServer.stop()) so a throwing
@@ -1708,17 +1736,14 @@ const pluginDefinition = {
         let secondaryTookOver = false;
         if (!currentInitPromise) {
           (globalThis as any)[keys.REGISTERED_GUARD] = false;
-          // Note: CLI_REGISTERED_GUARD is intentionally NOT cleared here.
-          // stop() does not unregister CLI commands from the gateway's central
-          // registry — they remain live.  Clearing the guard would let a
-          // subsequent register() call registerCli() again, duplicating the
-          // command tree on top of the still-live registration.  In multi-plugin
-          // installs (openclaw-remnic + openclaw-engram), one plugin stopping
-          // must not open the door for the other to re-register CLI.
-          //
-          // CLI_REGISTERED_GUARD is only reset when globalThis is reset (full
-          // process restart), at which point the gateway's CLI registry is also
-          // clean and re-registration is correct.
+          // Clear CLI guard only when ALL Remnic services have stopped.
+          // In multi-plugin installs, one plugin stopping must not clear the
+          // guard while the other is still running — that would let a
+          // subsequent register() duplicate CLI commands.  When the refcount
+          // reaches zero, the gateway's reload cycle can safely re-register.
+          if (remainingServices === 0) {
+            (globalThis as any)[CLI_REGISTERED_GUARD] = false;
+          }
         } else {
           // Stop-during-init: leave GUARD as-is.
           // The CLI registered by the original register() call is still present

@@ -38,6 +38,8 @@ const GLOBAL_KEYS = [
   "__openclawEngramOrchestrator",
   // CLI dedupe guard — intentionally process-global (not per-serviceId).
   "__openclawEngramCliRegistered",
+  // CLI active-service refcount.
+  "__openclawEngramCliActiveServiceCount",
   // Intentionally unkeyed.
   "__openclawEngramMigrationPromise",
 ];

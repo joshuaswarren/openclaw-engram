@@ -110,6 +110,8 @@ function buildApi(label: string) {
 const UNKEYED_ORCH_MIRROR_KEY = "__openclawEngramOrchestrator";
 // CLI dedupe guard — intentionally process-global (not per-serviceId).
 const CLI_REGISTERED_GUARD_KEY = "__openclawEngramCliRegistered";
+// Active-service refcount for CLI guard lifecycle.
+const CLI_ACTIVE_SERVICE_COUNT_KEY = "__openclawEngramCliActiveServiceCount";
 
 function saveAndResetGlobals() {
   const saved = {
@@ -118,6 +120,7 @@ function saveAndResetGlobals() {
     orch: (globalThis as any)[ORCH_KEY],
     unkeyedOrchMirror: (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY],
     cliRegistered: (globalThis as any)[CLI_REGISTERED_GUARD_KEY],
+    cliActiveCount: (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT_KEY],
     accessSvc: (globalThis as any)[ACCESS_SVC_KEY],
     accessHttp: (globalThis as any)[ACCESS_HTTP_KEY],
     serviceStarted: (globalThis as any)[SERVICE_STARTED_KEY],
@@ -129,6 +132,7 @@ function saveAndResetGlobals() {
   delete (globalThis as any)[ORCH_KEY];
   delete (globalThis as any)[UNKEYED_ORCH_MIRROR_KEY];
   delete (globalThis as any)[CLI_REGISTERED_GUARD_KEY];
+  delete (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT_KEY];
   delete (globalThis as any)[ACCESS_SVC_KEY];
   delete (globalThis as any)[ACCESS_HTTP_KEY];
   delete (globalThis as any)[SERVICE_STARTED_KEY];
@@ -185,6 +189,9 @@ function restoreGlobals(saved: ReturnType<typeof saveAndResetGlobals>) {
 
   if (saved.cliRegistered !== undefined) (globalThis as any)[CLI_REGISTERED_GUARD_KEY] = saved.cliRegistered;
   else delete (globalThis as any)[CLI_REGISTERED_GUARD_KEY];
+
+  if (saved.cliActiveCount !== undefined) (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT_KEY] = saved.cliActiveCount;
+  else delete (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT_KEY];
 
   if (saved.accessSvc !== undefined) (globalThis as any)[ACCESS_SVC_KEY] = saved.accessSvc;
   else delete (globalThis as any)[ACCESS_SVC_KEY];
