@@ -63,18 +63,56 @@ test("buildActiveRecallQueryBundle respects message/recent/full modes", () => {
     buildActiveRecallQueryBundle(input, baseConfig({ queryMode: "message" })),
     "What happened with CI?",
   );
-  const recent = buildActiveRecallQueryBundle(
-    input,
-    baseConfig({ queryMode: "recent" }),
+  assert.equal(
+    buildActiveRecallQueryBundle(input, baseConfig({ queryMode: "recent" })),
+    [
+      "current: What happened with CI?",
+      "user: We fixed the CI worker drain yesterday.",
+      "assistant: I noted the flaky Redis worker.",
+      "user: Please remember the root cause.",
+    ].join("\n"),
   );
-  assert.match(recent, /current: What happened with CI\?/);
-  assert.match(recent, /user:/);
-  const full = buildActiveRecallQueryBundle(
-    input,
-    baseConfig({ queryMode: "full" }),
+  assert.equal(
+    buildActiveRecallQueryBundle(input, baseConfig({ queryMode: "full" })),
+    [
+      "user: We fixed the CI worker drain yesterday.",
+      "assistant: I noted the flaky Redis worker.",
+      "user: Please remember the root cause.",
+      "current: What happened with CI?",
+    ].join("\n"),
   );
-  assert.match(full, /assistant:/);
-  assert.match(full, /current: What happened with CI\?/);
+});
+
+test("buildActiveRecallQueryBundle preserves chronological order with per-role caps", () => {
+  const input = baseInput({
+    recentTurns: [
+      { role: "user", content: "u0" },
+      { role: "assistant", content: "a0" },
+      { role: "user", content: "u1" },
+      { role: "assistant", content: "a1" },
+      { role: "user", content: "u2" },
+      { role: "assistant", content: "a2" },
+    ],
+    currentMessage: "What is next?",
+  });
+
+  const query = buildActiveRecallQueryBundle(
+    input,
+    baseConfig({
+      queryMode: "recent",
+      recentUserTurns: 2,
+      recentAssistantTurns: 1,
+      recentUserChars: 20,
+      recentAssistantChars: 20,
+    }),
+  );
+
+  assert.equal(query, [
+    "current: What is next?",
+    "user: u1",
+    "user: u2",
+    "assistant: a2",
+  ].join("\n"));
 });
 
 test("buildActiveRecallPrompt varies by prompt style and optional sections", () => {
@@ -126,6 +164,91 @@ test("active recall engine caches results and short-circuits repeated calls", as
   assert.equal(generateCalls, 1);
   assert.equal(first.summary, "Redis reconnect storm caused the worker drain.");
   assert.equal(second.summary, first.summary);
+});
+
+test("active recall engine evicts expired cache entries before reusing them", async () => {
+  let nowValue = 10_000;
+  let generateCalls = 0;
+  const engine = createActiveRecallEngine(
+    {
+      async recall() {
+        return "CI worker drain after Redis reconnect storm.";
+      },
+      async generateSummary() {
+        generateCalls++;
+        return { text: `summary ${generateCalls}` };
+      },
+      now: () => nowValue,
+    },
+    baseConfig({ cacheTtlMs: 50 }),
+  );
+
+  const first = await engine.run(baseInput({ currentMessage: "first query" }));
+  assert.equal(first.summary, "summary 1");
+  assert.equal(generateCalls, 1);
+
+  nowValue += 100;
+  const second = await engine.run(baseInput({ currentMessage: "first query" }));
+  assert.equal(second.summary, "summary 2");
+  assert.equal(generateCalls, 2);
+});
+
+test("active recall engine bounds cache growth by evicting oldest entries", async () => {
+  let generateCalls = 0;
+  const engine = createActiveRecallEngine(
+    {
+      async recall(query) {
+        return `recall ${query}`;
+      },
+      async generateSummary({ prompt }) {
+        generateCalls++;
+        return { text: prompt.slice(0, 24) };
+      },
+      now: (() => {
+        let tick = 1_000;
+        return () => tick++;
+      })(),
+    },
+    baseConfig({ cacheTtlMs: 10_000 }),
+  );
+
+  for (let index = 0; index < 270; index += 1) {
+    await engine.run(baseInput({ currentMessage: `query ${index}` }));
+  }
+  assert.equal(generateCalls, 270);
+
+  await engine.run(baseInput({ currentMessage: "query 0" }));
+  assert.equal(generateCalls, 271);
+});
+
+test("active recall cache evicts stale entries and rebuilds", async () => {
+  let now = 0;
+  let generateCalls = 0;
+  const engine = createActiveRecallEngine(
+    {
+      async recall() {
+        return "recalled";
+      },
+      async generateSummary() {
+        generateCalls += 1;
+        return {
+          text: generateCalls === 1 ? "first summary" : "second summary",
+        };
+      },
+      now: () => {
+        return now++;
+      },
+    },
+    baseConfig({ cacheTtlMs: 1 }),
+  );
+
+  const first = await engine.run(baseInput());
+  now = 3;
+  const second = await engine.run(baseInput());
+
+  assert.equal(generateCalls, 2);
+  assert.equal(first.summary, "first summary");
+  assert.equal(second.summary, "second summary");
 });
 
 test("active recall engine walks graph/day-summary/explain hooks when enabled", async () => {

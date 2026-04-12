@@ -1,5 +1,5 @@
 import type { Dirent } from "node:fs";
-import { mkdir, readdir, rm, writeFile, appendFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 
 export interface RecallAuditEntry {
@@ -69,20 +69,4 @@ export async function pruneRecallAuditEntries(
   }
 
   return removed;
-}
-
-export async function overwriteRecallAuditFile(
-  rootDir: string,
-  ts: string,
-  sessionKey: string,
-  entries: RecallAuditEntry[],
-): Promise<string> {
-  const filePath = buildRecallAuditPath(rootDir, ts, sessionKey);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(
-    filePath,
-    entries.map((entry) => JSON.stringify(entry)).join("\n") + (entries.length > 0 ? "\n" : ""),
-    "utf8",
-  );
-  return filePath;
 }

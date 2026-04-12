@@ -87,6 +87,14 @@ interface CachedRecallResult {
   value: ActiveRecallResult;
 }
 
+interface ActiveRecallTurnWithIndex {
+  index: number;
+  role: ActiveRecallTurn["role"];
+  content: string;
+}
+
+const ACTIVE_RECALL_CACHE_MAX_ENTRIES = 256;
+
 const NONE_SET = new Set([
   "",
   "none",
@@ -113,8 +121,16 @@ function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function cloneRecallResult(value: ActiveRecallResult): ActiveRecallResult {
+  return {
+    ...value,
+    citations: [...value.citations],
+  };
+}
+
 function truncateCodePointSafe(value: string, maxChars: number): string {
   const glyphs = Array.from(value);
+  if (maxChars <= 0) return "";
   if (glyphs.length <= maxChars) return value;
   return glyphs.slice(0, Math.max(1, maxChars)).join("").trimEnd();
 }
@@ -129,14 +145,59 @@ function buildCacheKey(input: ActiveRecallInput, config: ActiveRecallConfig, que
   });
 }
 
+function pruneExpiredCache(
+  cache: Map<string, CachedRecallResult>,
+  currentTime: number,
+): void {
+  for (const [key, entry] of cache.entries()) {
+    if (entry.expiresAt <= currentTime) {
+      cache.delete(key);
+    }
+  }
+}
+
+function enforceCacheLimit(cache: Map<string, CachedRecallResult>): void {
+  while (cache.size > ACTIVE_RECALL_CACHE_MAX_ENTRIES) {
+    const oldestKey = cache.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    cache.delete(oldestKey);
+  }
+}
+
 function cropTurns(
   turns: ActiveRecallTurn[],
   role: "user" | "assistant",
   maxTurns: number,
   maxChars: number,
-): string[] {
-  const selected = turns.filter((turn) => turn.role === role).slice(-maxTurns);
-  return selected.map((turn) => `${role}: ${truncateCodePointSafe(compactWhitespace(turn.content), maxChars)}`);
+): ActiveRecallTurnWithIndex[] {
+  if (maxTurns <= 0) {
+    return [];
+  }
+
+  const selected: ActiveRecallTurnWithIndex[] = [];
+  for (let index = turns.length - 1; index >= 0 && selected.length < maxTurns; index -= 1) {
+    const turn = turns[index];
+    if (turn?.role === role) {
+      selected.push({
+        index,
+        role: turn.role,
+        content: compactWhitespace(truncateCodePointSafe(turn.content, maxChars)),
+      });
+    }
+  }
+
+  return selected.reverse();
+}
+
+function mergeChronologicalTurns(
+  userTurns: ActiveRecallTurnWithIndex[],
+  assistantTurns: ActiveRecallTurnWithIndex[],
+): ActiveRecallTurnWithIndex[] {
+  return [...userTurns, ...assistantTurns]
+    .sort((left, right) => left.index - right.index)
+    .filter((value) => value.content.length > 0);
 }
 
 export function buildActiveRecallQueryBundle(
@@ -147,14 +208,22 @@ export function buildActiveRecallQueryBundle(
     return compactWhitespace(input.currentMessage);
   }
 
+  const userTurns = cropTurns(
+    input.recentTurns,
+    "user",
+    config.recentUserTurns,
+    config.recentUserChars,
+  );
+  const assistantTurns = cropTurns(
+    input.recentTurns,
+    "assistant",
+    config.recentAssistantTurns,
+    config.recentAssistantChars,
+  );
+  const mergedTurns = mergeChronologicalTurns(userTurns, assistantTurns);
+
   const parts = [
-    ...cropTurns(input.recentTurns, "user", config.recentUserTurns, config.recentUserChars),
-    ...cropTurns(
-      input.recentTurns,
-      "assistant",
-      config.recentAssistantTurns,
-      config.recentAssistantChars,
-    ),
+    ...mergedTurns.map((turn) => `${turn.role}: ${turn.content}`),
   ];
 
   if (config.queryMode === "full") {
@@ -276,10 +345,17 @@ export function createActiveRecallEngine(
 
       const queryBundle = buildActiveRecallQueryBundle(input, config);
       const cacheKey = buildCacheKey(input, config, queryBundle);
-      const cached = cache.get(cacheKey);
       const currentTime = now();
-      if (cached && cached.expiresAt > currentTime) {
-        return { ...cached.value, cacheHit: true };
+      const cacheEnabled = config.cacheTtlMs > 0;
+      if (cacheEnabled) {
+        pruneExpiredCache(cache, currentTime);
+      }
+      const cached = cache.get(cacheKey);
+      if (cacheEnabled && cached) {
+        return {
+          ...cloneRecallResult(cached.value),
+          cacheHit: true,
+        };
       }
 
       const start = currentTime;
@@ -359,10 +435,14 @@ export function createActiveRecallEngine(
         );
       }
 
-      cache.set(cacheKey, {
-        expiresAt: now() + config.cacheTtlMs,
-        value: result,
-      });
+      if (cacheEnabled) {
+        const completedAt = now();
+        cache.set(cacheKey, {
+          expiresAt: completedAt + config.cacheTtlMs,
+          value: result,
+        });
+        enforceCacheLimit(cache);
+      }
       return result;
     },
   };
