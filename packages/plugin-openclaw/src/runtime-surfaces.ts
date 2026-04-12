@@ -350,7 +350,9 @@ function detectHeartbeatSlug(
   const matches = entries.filter((entry) => {
     const title = entry.title.trim().toLowerCase();
     if (title.length > 0 && haystack.includes(title)) return true;
-    const slugPattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(entry.slug.toLowerCase())}([^a-z0-9]|$)`);
+    const slug = entry.slug.trim().toLowerCase();
+    if (slug.length === 0) return false;
+    const slugPattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(slug)}([^a-z0-9]|$)`);
     return slugPattern.test(haystack);
   });
   return matches.length === 1 ? (matches[0]?.slug ?? null) : null;

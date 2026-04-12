@@ -80,23 +80,73 @@ test("SmartBuffer read-only accessors do not persist phantom entries for unknown
 });
 
 test("SmartBuffer prunes stale logical session buffers to a bounded entry set", async () => {
+  const entries = Object.fromEntries(
+    Array.from({ length: 205 }, (_, index) => [
+      `thread-${index}`,
+      {
+        turns: [],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+    ]),
+  );
   const storage = new FakeStorage({
     turns: [],
     lastExtractionAt: null,
     extractionCount: 0,
+    entries: {
+      default: {
+        turns: [],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+      ...entries,
+    },
   });
   const buffer = new SmartBuffer(parseConfig({}), storage as any);
 
-  for (let index = 0; index < 210; index += 1) {
-    await buffer.addTurn(
-      `thread-${index}`,
-      makeTurn(`thread-${index}`, `memory ${index}`),
-    );
-  }
+  await buffer.addTurn("active-thread", makeTurn("active-thread", "pending memory"));
 
   const persistedKeys = Object.keys(storage.saved?.entries ?? {});
   assert.equal(persistedKeys.length, 200);
   assert.ok(persistedKeys.includes("default"));
-  assert.ok(persistedKeys.includes("thread-209"));
+  assert.ok(persistedKeys.includes("active-thread"));
+  assert.ok(persistedKeys.includes("thread-204"));
   assert.ok(!persistedKeys.includes("thread-0"));
+});
+
+test("SmartBuffer never prunes logical session buffers that still have pending turns", async () => {
+  const entries = Object.fromEntries(
+    Array.from({ length: 205 }, (_, index) => [
+      `thread-${index}`,
+      {
+        turns: [makeTurn(`thread-${index}`, `memory ${index}`)],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+    ]),
+  );
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+    entries: {
+      default: {
+        turns: [],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+      ...entries,
+    },
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  await buffer.addTurn("active-thread", makeTurn("active-thread", "pending memory"));
+
+  const persistedKeys = Object.keys(storage.saved?.entries ?? {});
+  assert.equal(persistedKeys.length, 207);
+  assert.ok(persistedKeys.includes("default"));
+  assert.ok(persistedKeys.includes("active-thread"));
+  assert.ok(persistedKeys.includes("thread-0"));
+  assert.ok(persistedKeys.includes("thread-204"));
 });

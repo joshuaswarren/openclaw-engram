@@ -88,34 +88,28 @@ export class SmartBuffer {
     const keys = Object.keys(entries);
     if (keys.length <= MAX_BUFFER_ENTRY_COUNT) return;
 
-    const keep = new Set(["default", ...retainKeys]);
     const insertionOrder = new Map(keys.map((key, index) => [key, index]));
-    const ranked = keys
-      .filter((key) => !keep.has(key))
+    const removable = keys
+      .filter((key) => key !== "default" && !retainKeys.includes(key))
+      .filter((key) => (entries[key]?.turns.length ?? 0) === 0)
       .sort((left, right) => {
-        const rightAt = this.entryActivityAt(entries[right] ?? {
-          turns: [],
-          lastExtractionAt: null,
-          extractionCount: 0,
-        });
         const leftAt = this.entryActivityAt(entries[left] ?? {
           turns: [],
           lastExtractionAt: null,
           extractionCount: 0,
         });
-        if (rightAt !== leftAt) return rightAt - leftAt;
-        return (insertionOrder.get(right) ?? 0) - (insertionOrder.get(left) ?? 0);
+        const rightAt = this.entryActivityAt(entries[right] ?? {
+          turns: [],
+          lastExtractionAt: null,
+          extractionCount: 0,
+        });
+        if (leftAt !== rightAt) return leftAt - rightAt;
+        return (insertionOrder.get(left) ?? 0) - (insertionOrder.get(right) ?? 0);
       });
 
-    for (const key of ranked) {
-      if (keep.size >= MAX_BUFFER_ENTRY_COUNT) break;
-      keep.add(key);
-    }
-
-    for (const key of keys) {
-      if (!keep.has(key)) {
-        delete entries[key];
-      }
+    const removableCount = Math.max(0, keys.length - MAX_BUFFER_ENTRY_COUNT);
+    for (const key of removable.slice(0, removableCount)) {
+      delete entries[key];
     }
   }
 
