@@ -671,6 +671,37 @@ test("syncHeartbeatOutcomeLinks does not treat empty heartbeat slugs as universa
   );
 });
 
+test("syncHeartbeatOutcomeLinks does not false-match heartbeat titles inside larger words", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "fact-1",
+      content: "We are still testing the adapter boundaries before rollout.",
+      tags: ["ops"],
+    }),
+  ]);
+
+  const result = await syncHeartbeatOutcomeLinks({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-a",
+        slug: "heartbeat-test",
+        title: "test",
+        body: "Run the focused test checklist.",
+        schedule: "hourly",
+        tags: ["ci"],
+        sourceOffset: 0,
+      },
+    ],
+  });
+
+  assert.deepEqual(result, { created: 0, updated: 0, linked: 0 });
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    undefined,
+  );
+});
+
 test("planDreamEntryFromConsolidation requires enough session-like spread, meta tags, and interval headroom", () => {
   const observation: ConsolidationObservation = {
     runAt: "2026-04-12T15:00:00.000Z",
@@ -754,5 +785,15 @@ test("parseDreamNarrativeResponse extracts title, body, and tags with fallback t
     title: null,
     body: "A quieter reflection.",
     tags: ["fallback"],
+  });
+
+  const inlineBody = parseDreamNarrativeResponse(
+    "Title: Signal drift\nBody: Inline reflection from the model\nTags: #dream",
+    ["fallback"],
+  );
+  assert.deepEqual(inlineBody, {
+    title: "Signal drift",
+    body: "Inline reflection from the model",
+    tags: ["dream"],
   });
 });

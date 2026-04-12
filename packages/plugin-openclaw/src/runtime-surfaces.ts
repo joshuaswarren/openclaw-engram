@@ -339,6 +339,13 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+function matchesDelimitedPhrase(haystack: string, value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.length === 0) return false;
+  const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(normalized)}([^a-z0-9]|$)`);
+  return pattern.test(haystack);
+}
+
 function detectHeartbeatSlug(
   memory: MemoryFile,
   entries: HeartbeatEntry[],
@@ -348,12 +355,8 @@ function detectHeartbeatSlug(
   );
   const haystack = `${memory.content}\n${searchableTags.join(" ")}`.toLowerCase();
   const matches = entries.filter((entry) => {
-    const title = entry.title.trim().toLowerCase();
-    if (title.length > 0 && haystack.includes(title)) return true;
-    const slug = entry.slug.trim().toLowerCase();
-    if (slug.length === 0) return false;
-    const slugPattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(slug)}([^a-z0-9]|$)`);
-    return slugPattern.test(haystack);
+    if (matchesDelimitedPhrase(haystack, entry.title)) return true;
+    return matchesDelimitedPhrase(haystack, entry.slug);
   });
   return matches.length === 1 ? (matches[0]?.slug ?? null) : null;
 }
@@ -471,13 +474,24 @@ export function parseDreamNarrativeResponse(
   if (trimmed.length === 0) return null;
 
   const titleMatch = trimmed.match(/^Title:\s*(.+)$/im);
-  const bodyMatch = trimmed.match(/^Body:\s*$/im);
+  const bodyMatch = trimmed.match(/^Body:\s*(.*)$/im);
   const tagsMatch = trimmed.match(/^Tags:\s*(.+)$/im);
   const title = titleMatch?.[1]?.trim() || null;
-  const body =
-    bodyMatch && bodyMatch.index !== undefined
-      ? trimmed.slice(bodyMatch.index + bodyMatch[0].length).trim()
-      : trimmed.replace(/^Title:.*$/im, "").replace(/^Tags:.*$/im, "").trim();
+  let body: string;
+  if (bodyMatch && bodyMatch.index !== undefined) {
+    const inlineBody = bodyMatch[1]?.trim() ?? "";
+    const remainder = trimmed
+      .slice(bodyMatch.index + bodyMatch[0].length)
+      .replace(/^Title:.*$/gim, "")
+      .replace(/^Tags:.*$/gim, "")
+      .trim();
+    body = [inlineBody, remainder].filter((value) => value.length > 0).join("\n").trim();
+  } else {
+    body = trimmed
+      .replace(/^Title:.*$/im, "")
+      .replace(/^Tags:.*$/im, "")
+      .trim();
+  }
   if (body.length === 0) return null;
   const parsedTags =
     tagsMatch?.[1]
