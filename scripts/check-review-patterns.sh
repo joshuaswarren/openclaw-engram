@@ -2,7 +2,7 @@
 # check-review-patterns.sh — Catch common issues that reviewers (Cursor Bugbot,
 # Codex, CodeQL) repeatedly flagged across PRs #343-#408 (504+ review comments).
 # Run this before pushing. Zero exit = clean.
-# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4).
+# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4, 18-21 from iteration 5).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -366,6 +366,93 @@ if [[ -n "$MOCK_NO_ARGS" ]]; then
     fi
   done <<< "$MOCK_NO_ARGS"
 fi
+
+# ---- 18. Time-range filters with inclusive upper bounds ----
+echo "[check] Time-range filters using inclusive upper bounds (<=)..."
+
+INCLUSIVE_TIME=$(grep -rn '<= .*[Tt]ime\|<= .*[Tt]s\|<= .*[Mm]s\|<= .*[Dd]ate\|<= .*now\|<= .*stamp' \
+  --include="*.ts" \
+  packages/ src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  | grep -i "filter\|window\|range\|between\|briefing\|recall" \
+  || true)
+
+if [[ -n "$INCLUSIVE_TIME" ]]; then
+  COUNT=$(echo "$INCLUSIVE_TIME" | wc -l | tr -d ' ')
+  warn "$COUNT time-range filters using <= on timestamp values in filter/window/range code. Verify these use exclusive upper bound (<) for half-open intervals:"
+  echo "$INCLUSIVE_TIME" | head -5
+fi
+
+# ---- 19. String "false" used as boolean gate ----
+echo "[check] Boolean config gates using !== false..."
+
+STRICT_BOOL_GATE=$(grep -rn '!== false\|!= false' \
+  --include="*.ts" \
+  packages/ src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  | grep -i "config\|option\|setting\|flag\|enabled\|install" \
+  || true)
+
+if [[ -n "$STRICT_BOOL_GATE" ]]; then
+  COUNT=$(echo "$STRICT_BOOL_GATE" | wc -l | tr -d ' ')
+  warn "$COUNT boolean gates using !== false on config/option values. String 'false' is truthy with this check. Use explicit boolean coercion:"
+  echo "$STRICT_BOOL_GATE" | head -5
+fi
+
+# ---- 20. Object.entries in hash/dedup without key sorting ----
+echo "[check] Object.entries in hash/dedup without key sorting..."
+
+UNSORTED_ENTRIES=$(grep -rn 'Object.entries(' \
+  --include="*.ts" \
+  packages/ src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  | grep -i "hash\|dedup\|serial\|finger\|content.*hash\|hash.*content\|digest" \
+  || true)
+
+if [[ -n "$UNSORTED_ENTRIES" ]]; then
+  COUNT=$(echo "$UNSORTED_ENTRIES" | wc -l | tr -d ' ')
+  warn "$COUNT Object.entries() calls in hash/dedup/serialization code without visible key sorting. Insertion order is non-deterministic — sort keys first:"
+  echo "$UNSORTED_ENTRIES" | head -5
+fi
+
+# ---- 21. invalidateAll* that doesn't clear all cache layers ----
+echo "[check] Cache invalidation naming accuracy..."
+
+CACHE_INVALIDATE=$(grep -rn 'invalidateAll\|clearAll\|resetAll\|flushAll' \
+  --include="*.ts" \
+  packages/ src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  || true)
+
+if [[ -n "$CACHE_INVALIDATE" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    # Check if the file also has other cache variables not mentioned in the invalidation function
+    OTHER_CACHES=$(grep -c "Cache\|cache\b" "$FILE" 2>/dev/null || echo "0")
+    INVALIDATE_LINES=$(grep -c "invalidateAll\|clearAll\|resetAll" "$FILE" 2>/dev/null || echo "0")
+    if [[ "$OTHER_CACHES" -gt 5 ]] && [[ "$INVALIDATE_LINES" -lt 2 ]]; then
+      warn "$FILE — has $OTHER_CACHES cache references but only $INVALIDATE_LINES invalidateAll call(s). Verify all cache layers are cleared."
+      break
+    fi
+  done <<< "$CACHE_INVALIDATE"
+fi
+
 if [[ $ERRORS -gt 0 ]]; then
   echo "[check] FAILED — $ERRORS issue(s) found. Fix before pushing."
   exit 1

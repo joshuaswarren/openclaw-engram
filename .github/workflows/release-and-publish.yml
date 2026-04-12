@@ -252,7 +252,7 @@ jobs:
             echo "new_version=${NEXT_VERSION}"
           } >> "$GITHUB_OUTPUT"
           pnpm version "${NEXT_VERSION}" --no-git-tag-version --allow-same-version
-          git add package.json pnpm-lock.yaml package-lock.json 2>/dev/null || true
+          git add package.json pnpm-lock.yaml 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "::notice title=Release commit skipped::Version already matches v${NEXT_VERSION}; no package files changed."
           else

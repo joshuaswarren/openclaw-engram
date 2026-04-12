@@ -36,7 +36,7 @@ Use these as the canonical starting points for adapter work:
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
 These patterns were extracted from 50+ PRs across 2026-04-05 to 2026-04-12
-(including deep analysis of PRs #400, #405, #408 with 20+ review rounds).
+(including deep analysis of PRs #393-#408 with 640+ review comments).
 Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
 required a follow-up commit to fix. Follow these rules to ship clean on the first push.
 
@@ -369,6 +369,102 @@ the production interface, making tests pass vacuously.
 - **Interface changes must propagate to test mocks** — when a production
   function signature changes (e.g., adding a `sessionKey` parameter), grep
   all test files for the old signature and update mocks to match.
+
+### 22. Error-Result Conflation — Distinguish Empty Results from Backend Failures
+
+When a backend call returns an empty result (e.g., no matching embeddings) versus
+when it fails (timeout, error, 5xx), the code must NOT conflate both cases into
+the same return path. Reviewers caught 5+ instances in PR #399 alone.
+
+- **Return distinct sentinel values for "empty" vs "failed"** — if `search()` returns
+  `[]` for both "index is empty" and "embedding endpoint returned 5xx", callers
+  cannot short-circuit on genuine failures. Use a result object like
+  `{ok: true, results: []}` vs `{ok: false, error: "backend_unavailable"}`.
+- **Batch operations need failure detection** — when processing many items, a single
+  backend failure should be distinguishable from "no candidates found" so the batch
+  can stop paying timeouts on every subsequent item.
+- **Telemetry and dashboards depend on correct categorization** — `reason: "no_candidates"`
+  from a genuinely empty index is a healthy signal. `reason: "backend_unavailable"`
+  from a timeout is an alert. Conflating them masks outages.
+
+### 23. Timestamp Boundary Semantics — Use Inclusive-Start, Exclusive-End Intervals
+
+When filtering data by time ranges, code must consistently use `[start, end)`
+(half-open) interval semantics. Reviewers caught 6+ instances of inclusive upper
+bounds causing double-counting at exact boundaries in PR #396.
+
+- **Upper bounds must be exclusive (`<`) not inclusive (`<=`)** — a memory timestamped
+  at exactly midnight should appear in only one day's briefing, not both yesterday's
+  and today's. When `to` is documented as exclusive, the filter must use `ts < toMs`.
+- **Date-only comparisons need careful handling** — a "floating" event with `endDate`
+  as a date string (no time component) must not be treated as active on the end date
+  itself when the contract says `[start, end)`. Convert date-only values to the start
+  of the next day for exclusive-end comparisons.
+- **Test boundary conditions explicitly** — include test cases with timestamps at exact
+  boundary values (midnight, start-of-day, end-of-day) to catch inclusive/exclusive
+  confusion.
+
+### 24. String Coercion at Config Boundaries — Handle "false", "0", "no" as Falsy
+
+CLI flags pass values as strings: `--config installExtension=false` produces the
+string `"false"`, not the boolean `false`. Code that checks `!== false` treats
+`"false"` as truthy, silently ignoring the user's explicit opt-out. Reviewers
+caught 4+ instances across PRs #394 and #397.
+
+- **Coerce boolean-like strings at config-read boundaries** — `"false"`, `"0"`,
+  `"no"`, `"off"` must be treated as falsy. Use a shared `coerceBool()` helper
+  that normalizes these string representations.
+- **`!== false` is NOT a boolean gate** — when config values come from CLI or
+  persisted JSON, they may be strings. Use explicit coercion or a Zod boolean
+  transform rather than relying on JavaScript truthiness.
+- **Test with string-typed config values** — every config gate test should include
+  cases where the value is the string `"false"` and `"0"`, not just the boolean
+  `false`.
+
+### 25. Cache Invalidation Completeness — Clear ALL Cache Layers
+
+When a storage manager maintains multiple caches (hot memory, cold tier, hash
+index), the invalidation function must clear ALL of them. Reviewers caught cases
+where `invalidateAllMemoriesCache()` only cleared the hot cache but left the cold
+cache stale, despite comments claiming it cleared both (PR #402).
+
+- **Name invalidation functions precisely** — if a function only clears one cache
+  layer, name it `invalidateHotCache()`, not `invalidateAllMemoriesCache()`.
+- **Verify invalidation covers all layers** — when adding a new cache layer,
+  grep for all invalidation functions and add the new cache to each one.
+- **Don't invalidate before reads that need the cache** — calling invalidation
+  before a read that populates the cache defeats the caching purpose. Invalidation
+  should happen after writes, not before reads.
+
+### 26. Object Key Order in Hash/Serialization — Sort Before Serializing
+
+When building a hash or serialized string from object properties, `Object.entries()`
+preserves insertion order. Two semantically identical objects constructed differently
+produce different hash strings, silently bypassing deduplication (PR #402).
+
+- **Sort object keys before serializing for hashing** — use
+  `Object.keys(obj).sort().map(k => ...)` or `JSON.stringify(obj, Object.keys(obj).sort())`
+  to ensure deterministic serialization regardless of insertion order.
+- **This affects all dedup/content-hash operations** — if structured attributes
+  like `{city: "NYC", country: "US"}` vs `{country: "US", city: "NYC"}` produce
+  different hash strings, deduplication silently fails.
+- **Test with different key orderings** — when testing dedup, include test cases
+  where the same data is represented with keys in different orders.
+
+### 27. Feature Gate Consistency — Apply Gates Uniformly Across All Code Paths
+
+When a feature flag (e.g., `temporalSupersessionEnabled`) controls behavior, ALL
+recall paths (QMD search, recent-scan fallback, cold fallback) must implement
+the gate identically. Reviewers caught divergent gating across code paths in
+PR #402 (4 instances).
+
+- **Enumerate every code path when adding a feature gate** — list all recall/search
+  paths and verify each one checks the same flag in the same way.
+- **Enable-then-disable must revert cleanly** — if a user enables a feature, runs
+  for a while, then disables it, all paths must behave as if the feature never
+  existed. Partial gating leaves stale artifacts that only appear on some paths.
+- **Test each path independently with the flag on AND off** — don't just test the
+  primary path. Each fallback path should have explicit tests for both flag states.
 
 ---
 
