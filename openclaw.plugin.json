@@ -991,7 +991,7 @@
           },
           "authToken": {
             "type": "string",
-            "description": "Bearer token for the local Engram HTTP API. Supports ${ENV_VAR} expansion. If omitted, OPENCLAW_ENGRAM_ACCESS_TOKEN is used."
+            "description": "Bearer token for the local Remnic HTTP API. Supports ${ENV_VAR} expansion. If omitted, OPENCLAW_ENGRAM_ACCESS_TOKEN is used."
           },
           "principal": {
             "type": "string",
@@ -1000,7 +1000,7 @@
           "maxBodyBytes": {
             "type": "number",
             "default": 131072,
-            "description": "Maximum accepted JSON request body size for the local Engram HTTP API."
+            "description": "Maximum accepted JSON request body size for the local Remnic HTTP API."
           }
         },
         "required": [
@@ -1065,7 +1065,7 @@
       "recallPlannerShadowMode": {
         "type": "boolean",
         "default": false,
-        "description": "Run recall planner in shadow mode \u2014 evaluate but do not apply results."
+        "description": "Run recall planner in shadow mode — evaluate but do not apply results."
       },
       "recallPlannerTelemetryEnabled": {
         "type": "boolean",
@@ -1140,7 +1140,7 @@
       "boxTopicShiftThreshold": {
         "type": "number",
         "default": 0.35,
-        "description": "Jaccard overlap threshold below which a topic shift seals the current box (0\u20131)."
+        "description": "Jaccard overlap threshold below which a topic shift seals the current box (0–1)."
       },
       "boxTimeGapMs": {
         "type": "number",
@@ -1165,7 +1165,7 @@
       "traceWeaverOverlapThreshold": {
         "type": "number",
         "default": 0.4,
-        "description": "Minimum Jaccard topic overlap to assign the same traceId (0\u20131)."
+        "description": "Minimum Jaccard topic overlap to assign the same traceId (0–1)."
       },
       "boxRecallDays": {
         "type": "number",
@@ -1265,7 +1265,7 @@
       "graphRecallShadowEnabled": {
         "type": "boolean",
         "default": false,
-        "description": "Run graph recall in shadow mode \u2014 evaluate but do not inject results."
+        "description": "Run graph recall in shadow mode — evaluate but do not inject results."
       },
       "graphRecallSnapshotEnabled": {
         "type": "boolean",
@@ -1639,6 +1639,16 @@
         "default": true,
         "description": "Automatically supersede contradicted memories"
       },
+      "temporalSupersessionEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Mark older facts superseded when a new fact writes a conflicting value for the same entityRef + structuredAttribute key (issue #375)"
+      },
+      "temporalSupersessionIncludeInRecall": {
+        "type": "boolean",
+        "default": false,
+        "description": "If true, include temporally-superseded facts in recall results (for audit/history). Default: exclude."
+      },
       "memoryLinkingEnabled": {
         "type": "boolean",
         "default": false,
@@ -1783,7 +1793,10 @@
       },
       "modelSource": {
         "type": "string",
-        "enum": ["plugin", "gateway"],
+        "enum": [
+          "plugin",
+          "gateway"
+        ],
         "default": "plugin",
         "description": "LLM source: 'plugin' uses Engram's own openai/localLlm config; 'gateway' delegates to a gateway agent's model chain (agents.list[])."
       },
@@ -1863,7 +1876,7 @@
       "traceRecallContent": {
         "type": "boolean",
         "default": false,
-        "description": "If true, include the full recalled memory text in RecallTraceEvent.recalledContent emitted to __openclawEngramTrace subscribers (e.g. Langfuse). Disabled by default \u2014 only enable when you want external trace collectors to capture injected memory context."
+        "description": "If true, include the full recalled memory text in RecallTraceEvent.recalledContent emitted to __openclawEngramTrace subscribers (e.g. Langfuse). Disabled by default — only enable when you want external trace collectors to capture injected memory context."
       },
       "profilingEnabled": {
         "type": "boolean",
@@ -1897,19 +1910,15 @@
       },
       "extractionMinImportanceLevel": {
         "type": "string",
-        "enum": ["trivial", "low", "normal", "high", "critical"],
+        "enum": [
+          "trivial",
+          "low",
+          "normal",
+          "high",
+          "critical"
+        ],
         "default": "low",
         "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
-      },
-      "inlineSourceAttributionEnabled": {
-        "type": "boolean",
-        "default": false,
-        "description": "Inline source attribution protocol (issue #369). When true, extracted facts carry a compact provenance tag inline in the fact body (agent, session, timestamp) so the citation survives prompt injection, copy/paste, and LLM quoting. Off by default to preserve backwards compatibility with downstream consumers that expect raw fact text."
-      },
-      "inlineSourceAttributionFormat": {
-        "type": "string",
-        "default": "[Source: agent={agent}, session={sessionId}, ts={ts}]",
-        "description": "Template used when injecting inline source citations. Placeholders: {agent}, {session}, {sessionId}, {ts}, {date}. Only used when inlineSourceAttributionEnabled is true."
       },
       "extractionMinUserTurns": {
         "type": "number",
@@ -2290,8 +2299,13 @@
       },
       "semanticConsolidationExcludeCategories": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["correction", "commitment"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "correction",
+          "commitment"
+        ],
         "description": "Memory categories excluded from semantic consolidation."
       },
       "semanticConsolidationIntervalHours": {
@@ -3292,7 +3306,7 @@
       "parallelAgentWeights": {
         "type": "object",
         "default": {
-          "direct": 1.0,
+          "direct": 1,
           "contextual": 0.7,
           "temporal": 0.85
         },
@@ -3316,56 +3330,6 @@
           "llmFollowups": true
         },
         "description": "Daily Context Briefing (#370). Knobs: enabled, defaultWindow ('yesterday', '3d', '1w', '24h', ...), defaultFormat (markdown|json), maxFollowups (0-10), calendarSource (path to ICS/JSON file, null = off), saveByDefault, saveDir (null = $REMNIC_HOME/briefings/), llmFollowups (disable to skip Responses API calls)."
-      },
-      "codex": {
-        "type": "object",
-        "description": "Codex CLI connector settings (install-time).",
-        "additionalProperties": false,
-        "properties": {
-          "installExtension": {
-            "type": "boolean",
-            "default": true,
-            "description": "When true, `remnic connectors install codex-cli` also drops memories_extensions/remnic/instructions.md into the Codex home so the phase-2 consolidation sub-agent auto-discovers Remnic."
-          },
-          "codexHome": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "default": null,
-            "description": "Override for the Codex home directory. When null, uses $CODEX_HOME or ~/.codex."
-          }
-        }
-      },
-      "codexMaterializeMemories": {
-        "type": "boolean",
-        "default": true,
-        "description": "Materialize Remnic memories into Codex's native ~/.codex/memories/ layout so Codex's phase-2 read path picks up Remnic content without MCP roundtrips. Respects a .remnic-managed sentinel to honor user hand-edits."
-      },
-      "codexMaterializeNamespace": {
-        "type": "string",
-        "default": "auto",
-        "description": "Namespace to materialize into the Codex memories layout. 'auto' derives the namespace from the connector context."
-      },
-      "codexMaterializeMaxSummaryTokens": {
-        "type": "number",
-        "default": 4500,
-        "description": "Maximum whitespace-tokenized size of the materialized memory_summary.md. Default 4500 leaves headroom under Codex's 5000-token summary budget."
-      },
-      "codexMaterializeRolloutRetentionDays": {
-        "type": "number",
-        "default": 30,
-        "description": "Number of days to retain files under rollout_summaries/ before pruning during materialization."
-      },
-      "codexMaterializeOnConsolidation": {
-        "type": "boolean",
-        "default": true,
-        "description": "Trigger Codex materialization after semantic or causal consolidation completes for a namespace."
-      },
-      "codexMaterializeOnSessionEnd": {
-        "type": "boolean",
-        "default": true,
-        "description": "Trigger Codex materialization from the plugin-codex session-end hook."
       }
     }
   },
@@ -3641,6 +3605,15 @@
     "contradictionAutoResolve": {
       "label": "Auto-Resolve Contradictions",
       "help": "Automatically supersede old memories when contradiction is confirmed"
+    },
+    "temporalSupersessionEnabled": {
+      "label": "Temporal Supersession",
+      "help": "Mark older facts superseded when a newer fact writes a conflicting value for the same entityRef + structured attribute (issue #375)"
+    },
+    "temporalSupersessionIncludeInRecall": {
+      "label": "Include Superseded Facts In Recall",
+      "advanced": true,
+      "help": "If enabled, superseded facts still surface in recall (audit/history mode)."
     },
     "memoryLinkingEnabled": {
       "label": "Memory Linking",

@@ -550,6 +550,7 @@ export function parseDreamNarrativeResponse(
 
   let title: string | null = null;
   let parsedTags: string[] = [];
+  let trailingTags: string[] = [];
   let bodyLines: string[] = [];
 
   if (explicitBodyIndex >= 0) {
@@ -577,12 +578,13 @@ export function parseDreamNarrativeResponse(
       const tagsMatch = trailingLine.match(/^Tags:\s*(.+)$/i);
       if (tagsMatch) {
         consumedTrailingTags = true;
+        trailingTags =
+          tagsMatch[1]
+            ?.split(/\s+/)
+            .map((tag) => tag.replace(/^#/, "").trim())
+            .filter(Boolean) ?? [];
         if (parsedTags.length === 0) {
-          parsedTags =
-            tagsMatch[1]
-              ?.split(/\s+/)
-              .map((tag) => tag.replace(/^#/, "").trim())
-              .filter(Boolean) ?? [];
+          parsedTags = trailingTags;
         }
       }
     }
@@ -627,6 +629,10 @@ export function parseDreamNarrativeResponse(
   return {
     title,
     body,
-    tags: uniqueTags(parsedTags.length > 0 ? parsedTags : fallbackTags),
+    tags: uniqueTags(
+      parsedTags.length > 0
+        ? [...parsedTags, ...trailingTags]
+        : fallbackTags,
+    ),
   };
 }

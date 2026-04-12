@@ -7955,8 +7955,10 @@ export class Orchestrator {
     const throwIfAborted = (stage: string): void => {
       throwIfRecallAborted(options.abortSignal, `extraction aborted (${stage})`);
     };
-    const clearBuffer = async () => {
-      throwIfAborted("before_clear_buffer");
+    const clearBuffer = async (options?: { ignoreAbort?: boolean }) => {
+      if (options?.ignoreAbort !== true) {
+        throwIfAborted("before_clear_buffer");
+      }
       if (clearBufferAfterExtraction) {
         await this.buffer.clearAfterExtraction(bufferKey);
       }
@@ -8064,7 +8066,7 @@ export class Orchestrator {
       threadIdForExtraction,
       { sessionKey, principal },
     );
-    await clearBuffer();
+    await clearBuffer({ ignoreAbort: true });
 
     // Build memory box from this extraction (v8.0 Phase 2A)
     // Topics are derived from the current extraction's facts and entities only —

@@ -91,6 +91,8 @@ const ENGRAM_MIGRATION_PROMISE = "__openclawEngramMigrationPromise";
  * global guard ensures CLI registration happens exactly once per process.
  */
 const CLI_REGISTERED_GUARD = "__openclawEngramCliRegistered";
+const SESSION_COMMANDS_REGISTERED_GUARD =
+  "__openclawEngramSessionCommandsRegistered";
 
 /**
  * Process-global count of Remnic plugin services whose `start()` has
@@ -2305,8 +2307,10 @@ const pluginDefinition = {
 
     if (
       cfg.sessionTogglesEnabled !== false &&
-      typeof (api as { registerCommand?: (spec: unknown) => void }).registerCommand === "function"
+      typeof (api as { registerCommand?: (spec: unknown) => void }).registerCommand === "function" &&
+      !(globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD]
     ) {
+      (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = true;
       for (const descriptor of sessionCommandDescriptors) {
         (api as { registerCommand: (spec: unknown) => void }).registerCommand(descriptor);
       }
@@ -2651,6 +2655,7 @@ const pluginDefinition = {
           // reaches zero, the gateway's reload cycle can safely re-register.
           if (remainingServices === 0) {
             (globalThis as any)[CLI_REGISTERED_GUARD] = false;
+            (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = false;
           }
         } else {
           // Stop-during-init: leave GUARD as-is.

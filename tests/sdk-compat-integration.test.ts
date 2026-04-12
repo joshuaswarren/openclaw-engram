@@ -42,6 +42,8 @@ const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
 const UNKEYED_ORCH_MIRROR_KEY = "__openclawEngramOrchestrator";
 // CLI dedupe guard — intentionally process-global (not per-serviceId).
 const CLI_REGISTERED_GUARD_KEY = "__openclawEngramCliRegistered";
+const SESSION_COMMANDS_REGISTERED_GUARD_KEY =
+  "__openclawEngramSessionCommandsRegistered";
 // CLI active-service refcount.
 const CLI_ACTIVE_SERVICE_COUNT_KEY = "__openclawEngramCliActiveServiceCount";
 const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
@@ -107,6 +109,7 @@ function resetGlobals() {
     ORCH_KEY,
     UNKEYED_ORCH_MIRROR_KEY,
     CLI_REGISTERED_GUARD_KEY,
+    SESSION_COMMANDS_REGISTERED_GUARD_KEY,
     CLI_ACTIVE_SERVICE_COUNT_KEY,
     ACCESS_SVC_KEY,
     ACCESS_HTTP_KEY,
@@ -361,6 +364,34 @@ test("new SDK registers active-memory tool names and slash commands", async () =
     assert.ok(
       api._registeredCommands.length > 0,
       "registerCommand should be used when available for session-scoped recall toggles",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("new SDK registerCommand is deduped across multi-registry registration", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const first = buildNewSdkApi("new-sdk-register-command-first");
+    const second = buildNewSdkApi("new-sdk-register-command-second");
+
+    plugin.register(first as any);
+    plugin.register(second as any);
+
+    assert.ok(
+      first._registeredCommands.length > 0,
+      "first registry should register session command descriptors",
+    );
+    assert.equal(
+      second._registeredCommands.length,
+      0,
+      "secondary registries must not duplicate process-global session command trees",
     );
   } finally {
     await awaitPendingMigration();

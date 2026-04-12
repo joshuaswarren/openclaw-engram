@@ -151,3 +151,16 @@ for (const manifestPath of [
     );
   });
 }
+
+test("root and package OpenClaw manifests stay byte-identical", () => {
+  const root = JSON.stringify(readManifest("openclaw.plugin.json"));
+  const packaged = JSON.stringify(
+    readManifest("packages/plugin-openclaw/openclaw.plugin.json"),
+  );
+
+  assert.equal(
+    root,
+    packaged,
+    "root openclaw.plugin.json must be synced from packages/plugin-openclaw/openclaw.plugin.json to prevent schema drift",
+  );
+});

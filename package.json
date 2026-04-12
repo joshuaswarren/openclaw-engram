@@ -79,7 +79,8 @@
     ]
   },
   "scripts": {
-    "build": "tsup && node scripts/copy-admin-console.mjs",
+    "sync:openclaw-plugin": "node scripts/sync-openclaw-plugin.mjs",
+    "build": "npm run sync:openclaw-plugin && tsup && node scripts/copy-admin-console.mjs",
     "dev": "tsup --watch",
     "check-types": "tsc --noEmit",
     "check-config-contract": "tsx scripts/validate-config-contract.ts",

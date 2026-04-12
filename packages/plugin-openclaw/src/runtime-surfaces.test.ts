@@ -995,6 +995,6 @@ test("parseDreamNarrativeResponse extracts title, body, and tags with fallback t
       "Inline reflection from the model",
       "Closing line keeps the note in the body.",
     ].join("\n"),
-    tags: ["header-tag"],
+    tags: ["header-tag", "trailing-tag"],
   });
 });

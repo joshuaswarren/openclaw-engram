@@ -187,6 +187,13 @@ test("runExtraction aborts before late buffer clearing when the caller cancels",
   orchestrator.storageRouter = {
     storageFor: async () => ({
       listEntityNames: async () => [],
+      loadMeta: async () => ({
+        extractionCount: 0,
+        lastExtractionAt: null,
+        totalMemories: 0,
+        totalEntities: 0,
+      }),
+      saveMeta: async () => undefined,
     }),
   };
   orchestrator.extraction = {
@@ -219,4 +226,68 @@ test("runExtraction aborts before late buffer clearing when the caller cancels",
 
   assert.equal(clearCalls, 0);
   assert.equal(persistCalls, 0);
+});
+
+test("runExtraction still clears the session buffer after persistence even if reset abort fires late", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+
+  let clearCalls = 0;
+  const abortController = new AbortController();
+
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => ({
+        extractionCount: 0,
+        lastExtractionAt: null,
+        totalMemories: 0,
+        totalEntities: 0,
+      }),
+      saveMeta: async () => undefined,
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => ({
+      facts: [
+        {
+          category: "fact",
+          content: "Remember alpha",
+          confidence: 0.9,
+          tags: [],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    }),
+  };
+  orchestrator.persistExtraction = async () => {
+    abortController.abort();
+    return ["fact-1"];
+  };
+  orchestrator.maybeScheduleConsolidation = () => undefined;
+  orchestrator.requestQmdMaintenance = () => undefined;
+  orchestrator.nonZeroExtractionsSinceConsolidation = 0;
+
+  await assert.doesNotReject(async () => {
+    await orchestrator.runExtraction([makeTurn("thread-a", "remember alpha")], {
+      bufferKey: "thread-a",
+      abortSignal: abortController.signal,
+    });
+  });
+
+  assert.equal(
+    clearCalls,
+    1,
+    "persisted reset flushes must still clear the session buffer even when the reset timeout aborts after persistence",
+  );
 });
