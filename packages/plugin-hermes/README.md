@@ -26,7 +26,7 @@ MCP tools give an agent the ability to call memory functions, but only when the 
    pip install remnic-hermes
    ```
 
-2. Wire Hermes to Remnic (starts the daemon if needed, generates an auth token, and writes the Hermes config entry):
+2. Wire Hermes to Remnic (generates an auth token, writes the Hermes config entry, and checks daemon health):
    ```bash
    remnic connectors install hermes
    ```
@@ -74,11 +74,12 @@ The auth token is not read from an environment variable. It is either set inline
 
 `remnic connectors install hermes` is the recommended way to get a token into place. It:
 
-1. Starts the Remnic daemon if it is not already running.
+1. Validates the Hermes profile directory and config structure.
 2. Generates a dedicated per-connector auth token scoped to Hermes.
-3. Writes the token to `~/.remnic/tokens.json`.
-4. Adds the `remnic:` block to your Hermes `config.yaml`.
-5. Runs a health check against the daemon.
+3. Adds the `remnic:` block to your Hermes `config.yaml` (with rollback on failure).
+4. Commits the token to `~/.remnic/tokens.json`.
+5. Writes the connector config file.
+6. Runs a health check against the daemon (does not start it — prints `remnic daemon start` if unreachable).
 
 If you provision tokens manually, write a JSON file at `~/.remnic/tokens.json` in the format:
 
