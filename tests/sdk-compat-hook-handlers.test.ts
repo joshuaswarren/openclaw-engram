@@ -475,6 +475,70 @@ test("before_prompt_build prepends recent dreams when dreaming injection is enab
   assert.match(String(result?.prependSystemContext ?? ""), /First dream/);
 });
 
+test("before_prompt_build avoids double-injecting auxiliary no-recall context when memory prompt sections are enabled", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-no-recall-aux-section-"));
+  await writeFile(
+    path.join(root, "DREAMS.md"),
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T10:00:00Z — First dream*",
+      "",
+      "The second dream body.",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-no-recall-section-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    dreaming: {
+      enabled: true,
+      injectRecentCount: 2,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(api._memoryCapability?.promptBuilder, "memory capability promptBuilder should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => null;
+  orchestrator.config.compactionResetEnabled = false;
+
+  const result = await beforePromptBuild(
+    { prompt: "No ordinary recall should land here." },
+    { sessionKey: "session-no-recall", agentId: "main" },
+  );
+
+  assert.equal(
+    result,
+    undefined,
+    "auxiliary no-recall context should stay in the memory section cache when memory prompt sections are enabled",
+  );
+  assert.deepEqual(
+    api._memoryCapability?.promptBuilder?.({ sessionKey: "session-no-recall" }),
+    [
+      "## Recent Dreams (Remnic)",
+      "",
+      "- 2026-04-12T10:00:00Z — First dream: The second dream body.",
+      "",
+    ],
+  );
+});
+
 test("runtime pluginConfig overrides file-backed config for dreaming surfaces", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreaming-config-precedence-"));
   const configPath = path.join(root, "openclaw.json");

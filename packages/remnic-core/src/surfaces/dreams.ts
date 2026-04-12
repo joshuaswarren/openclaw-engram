@@ -172,12 +172,40 @@ function parseDreamEntries(content: string): DreamEntry[] {
   return finalizeDreamEntries(parseLegacyHeadingEntries(normalized));
 }
 
+function renderDiary(entries: Array<Omit<DreamEntry, "id" | "sourceOffset">>): string {
+  const blocks = entries
+    .map((entry) => renderAppendBlock(entry))
+    .join("\n")
+    .trimEnd();
+  return [
+    "# Dream Diary",
+    "",
+    DIARY_START_MARKER,
+    blocks,
+    "",
+    DIARY_END_MARKER,
+    "",
+  ]
+    .filter((line, index, lines) => !(line === "" && lines[index - 1] === ""))
+    .join("\n");
+}
+
 function ensureDiary(content: string): string {
   if (content.includes(DIARY_START_MARKER) && content.includes(DIARY_END_MARKER)) {
     return content;
   }
-  const diary = `# Dream Diary\n\n${DIARY_START_MARKER}\n${DIARY_END_MARKER}\n`;
-  return content.trim() ? `${diary}\n${content.trim()}\n` : diary;
+  const legacyEntries = parseLegacyHeadingEntries(content.replace(/\r\n/g, "\n"));
+  if (legacyEntries.length > 0) {
+    return renderDiary(
+      legacyEntries.map((entry) => ({
+        timestamp: entry.timestamp,
+        title: entry.title,
+        body: entry.body,
+        tags: entry.tags,
+      })),
+    );
+  }
+  return renderDiary([]);
 }
 
 function renderAppendBlock(entry: Omit<DreamEntry, "id" | "sourceOffset">): string {

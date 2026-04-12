@@ -1056,13 +1056,16 @@ const pluginDefinition = {
           summary: null,
         });
         const verbosePrompt = verboseLines.join("\n").replace(/\n$/, "");
-        return hookLabel === "before_prompt_build"
-          ? { prependSystemContext: verbosePrompt, memoryLines: verboseLines }
-          : {
-              prependSystemContext: verbosePrompt,
-              prependContext: verbosePrompt,
-              memoryLines: verboseLines,
-            };
+        if (hookLabel === "before_prompt_build") {
+          return useMemoryPromptSection
+            ? { memoryLines: verboseLines }
+            : { prependSystemContext: verbosePrompt, memoryLines: verboseLines };
+        }
+        return {
+          prependSystemContext: verbosePrompt,
+          prependContext: verbosePrompt,
+          memoryLines: verboseLines,
+        };
       }
 
       try {
@@ -1090,13 +1093,16 @@ const pluginDefinition = {
             : [];
           const mergedLines = [...verboseLines, ...heartbeatLines];
           const heartbeatPrompt = mergedLines.join("\n").replace(/\n$/, "");
-          return hookLabel === "before_prompt_build"
-            ? { prependSystemContext: heartbeatPrompt, memoryLines: mergedLines }
-            : {
-                prependSystemContext: heartbeatPrompt,
-                prependContext: heartbeatPrompt,
-                memoryLines: mergedLines,
-              };
+          if (hookLabel === "before_prompt_build") {
+            return useMemoryPromptSection
+              ? { memoryLines: mergedLines }
+              : { prependSystemContext: heartbeatPrompt, memoryLines: mergedLines };
+          }
+          return {
+            prependSystemContext: heartbeatPrompt,
+            prependContext: heartbeatPrompt,
+            memoryLines: mergedLines,
+          };
         }
 
         if (orchestrator.config.compactionResetEnabled) {
@@ -1172,13 +1178,16 @@ const pluginDefinition = {
             : [];
           const mergedLines = [...verboseLines, ...dreamLines, ...activeRecallLines];
           const verbosePrompt = mergedLines.join("\n").replace(/\n$/, "");
-          return hookLabel === "before_prompt_build"
-            ? { prependSystemContext: verbosePrompt, memoryLines: mergedLines }
-            : {
-                prependSystemContext: verbosePrompt,
-                prependContext: verbosePrompt,
-                memoryLines: mergedLines,
-              };
+          if (hookLabel === "before_prompt_build") {
+            return useMemoryPromptSection
+              ? { memoryLines: mergedLines }
+              : { prependSystemContext: verbosePrompt, memoryLines: mergedLines };
+          }
+          return {
+            prependSystemContext: verbosePrompt,
+            prependContext: verbosePrompt,
+            memoryLines: mergedLines,
+          };
         }
 
         const maxChars = cfg.recallBudgetChars;

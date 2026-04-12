@@ -78,6 +78,48 @@ test("dreams surface reads legacy heading entries with title and tags", async ()
   assert.match(entries[1]?.body ?? "", /Untitled entry body/);
 });
 
+test("dreams surface append migrates legacy heading entries into the diary markers", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-legacy-migrate-"));
+  const dreamsPath = path.join(root, "dreams.md");
+  await writeFile(
+    dreamsPath,
+    [
+      "# Dreams",
+      "",
+      "## 2026-04-11T03:22:14Z — Patterns in today's debugging",
+      "",
+      "I kept seeing the same flaky test from three angles.",
+      "",
+      "Tags: #debug #recurring #frustration",
+      "",
+      "---",
+      "",
+      "## 2026-04-11T01:05:02Z",
+      "",
+      "Untitled entry body with no trailing newline.",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const surface = createDreamsSurface();
+  await surface.append(dreamsPath, {
+    timestamp: "2026-04-12T15:00:00Z",
+    title: "A useful reflective note",
+    body: "Today the adapter stopped pretending and started verifying.",
+    tags: ["reflection", "verification"],
+  });
+
+  const content = await readFile(dreamsPath, "utf8");
+  assert.match(content, /openclaw:dreaming:diary:start/);
+  assert.match(content, /Patterns in today's debugging/);
+  assert.match(content, /A useful reflective note/);
+
+  const reread = await surface.read(dreamsPath);
+  assert.equal(reread.length, 3);
+  assert.equal(reread[0]?.title, "Patterns in today's debugging");
+  assert.equal(reread[2]?.title, "A useful reflective note");
+});
+
 test("dreams surface appends a new OpenClaw diary entry and round-trips cleanly", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-append-"));
   const dreamsPath = path.join(root, "DREAMS.md");
