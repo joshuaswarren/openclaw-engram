@@ -565,23 +565,24 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
       config: parseConnectorConfig(rest),
       force: rest.includes("--force"),
     });
+    if (result.status === "error") {
+      console.error(result.message);
+      process.exit(1);
+    }
     console.log(result.message);
     if (result.configPath) console.log(`  Config: ${result.configPath}`);
     if (result.status === "already_installed") console.log("Use --force to reinstall.");
     if (result.status === "config_required") console.log("Set config with --config <key>=<value>");
-    if (result.status === "error") {
-      // installConnector now returns `status: "error"` instead of throwing on
-      // filesystem failures (e.g. EISDIR/EPERM writing <connector>.json). Without
-      // a non-zero exit the shell sees success and scripts silently move on.
-      console.error(`Error: ${result.message}`);
-      process.exit(1);
-    }
   } else if (action === "remove") {
     if (!connectorId) {
       console.error("Usage: remnic connectors remove <id>");
       process.exit(1);
     }
     const result = removeConnector(connectorId);
+    if (result.status === "error") {
+      console.error(result.message);
+      process.exit(1);
+    }
     console.log(result.message);
     if (result.status === "skipped" && result.reason === "config-parse-failed") {
       // A malformed codex-cli.json means we could not verify or complete removal.

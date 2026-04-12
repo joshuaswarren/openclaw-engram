@@ -8,10 +8,12 @@ import {
   coerceInstallExtension,
   installCodexMemoryExtension,
   installConnector,
+  loadRegistry,
   locatePluginCodexExtensionSource,
   removeConnector,
   resolveCodexMemoryExtensionPaths,
 } from "./index.js";
+import { loadTokenStore } from "../tokens.js";
 
 /**
  * Build a fresh tmp sandbox with its own HOME / XDG_CONFIG_HOME / CODEX_HOME
@@ -1194,6 +1196,279 @@ test(
           fs.existsSync(configPath),
           false,
           "codex-cli.json must NOT exist after a failed install",
+        );
+      },
+    );
+  },
+);
+
+// ── PR #400 PRRT_kwDORJXyws56U9U0 round 6: non-token connectors must not write to tokens.json ──
+//
+// Regression test: installing a connector that does NOT require token auth
+// (e.g. "codex-cli", connectionType "mcp") must leave tokens.json with NO
+// entry for that connector. Only connectors with requiresToken:true may write
+// to the token store.
+
+test(
+  "installConnector does NOT write a token entry for connectors that do not require token auth (PRRT_kwDORJXyws56U9U0 r6)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+        CODEX_HOME: sandbox.codexHome,
+      },
+      () => {
+        // codex-cli is an MCP connector with requiresToken: false (default).
+        const result = installConnector({
+          connectorId: "codex-cli",
+          config: { installExtension: false },
+        });
+
+        assert.equal(result.status, "installed", `expected status "installed", got: "${result.status}"`);
+
+        // tokens.json must contain NO entry for codex-cli.
+        const store = loadTokenStore();
+        const codexEntry = store.tokens.find((e) => e.connector === "codex-cli");
+        assert.equal(
+          codexEntry,
+          undefined,
+          "tokens.json must NOT contain an entry for a non-token-auth connector (codex-cli)",
+        );
+
+        // The saved connector.json must also not contain a token field.
+        assert.ok(result.configPath, "configPath should be set");
+        const saved = JSON.parse(fs.readFileSync(result.configPath as string, "utf8")) as Record<string, unknown>;
+        assert.equal(
+          "token" in saved,
+          false,
+          "connector.json must NOT contain a 'token' field",
+        );
+      },
+    );
+  },
+);
+
+test(
+  "installConnector does NOT write a token entry for cursor connector (embedded, no token auth)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+        CODEX_HOME: sandbox.codexHome,
+      },
+      () => {
+        const result = installConnector({ connectorId: "cursor" });
+
+        assert.equal(result.status, "installed", `expected status "installed", got: "${result.status}"`);
+
+        // tokens.json must contain NO entry for cursor.
+        const store = loadTokenStore();
+        const cursorEntry = store.tokens.find((e) => e.connector === "cursor");
+        assert.equal(
+          cursorEntry,
+          undefined,
+          "tokens.json must NOT contain an entry for the cursor connector (embedded transport, no token auth)",
+        );
+
+        // The saved connector.json must also not contain a token field.
+        assert.ok(result.configPath, "configPath should be set");
+        const saved = JSON.parse(fs.readFileSync(result.configPath as string, "utf8")) as Record<string, unknown>;
+        assert.equal(
+          "token" in saved,
+          false,
+          "cursor connector.json must NOT contain a 'token' field",
+        );
+      },
+    );
+  },
+);
+
+// ── Codex PRRT_kwDORJXyws56VJRa (P1): claude-code must write a token entry on install ──
+//
+// Regression test: installing the claude-code connector MUST write a token entry
+// to tokens.json. The session-start.sh, user-prompt-recall.sh, and post-tool-observe.sh
+// hooks in plugin-claude-code read this entry for Bearer auth when calling the
+// recall/observe HTTP endpoints. Without requiresToken: true on the claude-code manifest
+// the round-17 token-gating change caused fresh installs to skip the token write,
+// silently disabling authenticated memory recall for all Claude Code hook users.
+
+test(
+  "installConnector writes a remnic_cc_ token entry for claude-code connector (PRRT_kwDORJXyws56VJRa P1 regression)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+        CODEX_HOME: sandbox.codexHome,
+      },
+      () => {
+        const result = installConnector({ connectorId: "claude-code" });
+
+        assert.equal(result.status, "installed", `expected status "installed", got: "${result.status}"`);
+
+        // tokens.json MUST contain a claude-code entry.
+        const store = loadTokenStore();
+        const ccEntry = store.tokens.find((e) => e.connector === "claude-code");
+        assert.ok(
+          ccEntry !== undefined,
+          "tokens.json must contain a token entry for claude-code after install",
+        );
+
+        // The token must carry the recognizable remnic_cc_ prefix so the
+        // session-start.sh / user-prompt-recall.sh / post-tool-observe.sh hooks
+        // can use it as a Bearer credential.
+        assert.ok(
+          ccEntry!.token.startsWith("remnic_cc_"),
+          `claude-code token must start with "remnic_cc_", got: "${ccEntry!.token.slice(0, 20)}..."`,
+        );
+
+        // The saved connector.json must NOT contain a token field (security: tokens
+        // live only in the 0o600 tokens.json, never in the connector config).
+        assert.ok(result.configPath, "configPath should be set");
+        const saved = JSON.parse(fs.readFileSync(result.configPath as string, "utf8")) as Record<string, unknown>;
+        assert.equal(
+          "token" in saved,
+          false,
+          "claude-code connector.json must NOT contain a 'token' field",
+        );
+      },
+    );
+  },
+);
+
+// ── PRRT_kwDORJXyws56VRJ4 (Cursor High): loadRegistry built-in precedence ──
+//
+// Regression test: stale registry.json entries for built-in connectors (written
+// by an older version without requiresToken: true) must NOT shadow the current
+// built-in manifests. loadRegistry() must always return the built-in manifest
+// for any connector ID that appears in BUILTIN_CONNECTORS, regardless of what
+// is persisted in registry.json. User-added custom connectors (unknown IDs)
+// must still be preserved from the persisted file.
+
+test(
+  "loadRegistry returns built-in manifest for claude-code even when stale entry lacks requiresToken (PRRT_kwDORJXyws56VRJ4 regression)",
+  async (t) => {
+    const sandbox = makeSandbox(t);
+
+    await withEnv(
+      {
+        HOME: sandbox.home,
+        USERPROFILE: sandbox.home,
+        XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      },
+      () => {
+        // Write a stale registry.json that mimics an older version's output:
+        // claude-code, replit, and generic-mcp entries all lack requiresToken.
+        // Also include a custom connector that should be preserved.
+        const staleRegistry = {
+          connectors: [
+            {
+              id: "claude-code",
+              name: "Claude Code",
+              version: "0.9.0",
+              description: "Old version without requiresToken",
+              capabilities: {
+                observe: true,
+                recall: true,
+                store: true,
+                search: true,
+                entities: false,
+                realtimeSync: false,
+                batch: false,
+                maxBudgetChars: 8000,
+                connectionType: "mcp",
+              },
+              configSchema: {},
+              // requiresToken intentionally absent — simulates stale entry
+            },
+            {
+              id: "replit",
+              name: "Replit Agent",
+              version: "0.9.0",
+              description: "Old version without requiresToken",
+              capabilities: {
+                observe: true,
+                recall: true,
+                store: true,
+                search: false,
+                entities: false,
+                realtimeSync: false,
+                batch: false,
+                maxBudgetChars: 4000,
+                connectionType: "http",
+              },
+              configSchema: {},
+              // requiresToken intentionally absent
+            },
+            {
+              id: "my-custom-agent",
+              name: "My Custom Agent",
+              version: "1.0.0",
+              description: "A user-added custom connector that must be preserved",
+              capabilities: {
+                observe: false,
+                recall: true,
+                store: false,
+                search: false,
+                entities: false,
+                realtimeSync: false,
+                batch: false,
+                maxBudgetChars: 4000,
+                connectionType: "http",
+              },
+              configSchema: {},
+            },
+          ],
+        };
+
+        // Write the stale registry to the expected path under our sandbox HOME.
+        const regDir = path.join(sandbox.xdgConfigHome, "engram", ".engram-connectors");
+        fs.mkdirSync(regDir, { recursive: true });
+        const regPath = path.join(regDir, "registry.json");
+        fs.writeFileSync(regPath, JSON.stringify(staleRegistry, null, 2));
+
+        // Load the registry — built-ins must win for known IDs.
+        const registry = loadRegistry();
+
+        // claude-code must come from the built-in (has requiresToken: true).
+        const ccManifest = registry.connectors.find((c) => c.id === "claude-code");
+        assert.ok(ccManifest !== undefined, "claude-code must be present in loaded registry");
+        assert.equal(
+          ccManifest!.requiresToken,
+          true,
+          "claude-code manifest from loadRegistry must have requiresToken: true (not the stale entry)",
+        );
+
+        // replit must also come from the built-in (has requiresToken: true).
+        const replitManifest = registry.connectors.find((c) => c.id === "replit");
+        assert.ok(replitManifest !== undefined, "replit must be present in loaded registry");
+        assert.equal(
+          replitManifest!.requiresToken,
+          true,
+          "replit manifest from loadRegistry must have requiresToken: true (not the stale entry)",
+        );
+
+        // The custom connector must still be present (it's not a built-in).
+        const customManifest = registry.connectors.find((c) => c.id === "my-custom-agent");
+        assert.ok(
+          customManifest !== undefined,
+          "user-added custom connector (my-custom-agent) must be preserved by loadRegistry",
+        );
+        assert.equal(
+          customManifest!.name,
+          "My Custom Agent",
+          "custom connector name must be preserved",
         );
       },
     );

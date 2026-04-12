@@ -96,19 +96,48 @@ export function saveTokenStore(store: TokenStore, tokensPath?: string): void {
   try { fs.chmodSync(p, 0o600); } catch { /* ignore on platforms without chmod */ }
 }
 
+/**
+ * Build a TokenEntry candidate WITHOUT saving it to the store.
+ * Callers use this when they need to defer the save until after a
+ * dependent write (e.g. Hermes config.yaml) succeeds — see
+ * commitTokenEntry() to persist the candidate.
+ */
+export function buildTokenEntry(connector: string): TokenEntry {
+  const prefix = TOKEN_PREFIXES[connector] ?? "remnic_xx_";
+  const token = prefix + randomBytes(24).toString("hex");
+  return {
+    token,
+    connector,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Persist a pre-built TokenEntry into the store, replacing any existing
+ * entry for the same connector. Used together with buildTokenEntry() when
+ * the caller wants to defer the save until after a dependent write succeeds.
+ *
+ * For transactional rollback, callers should snapshot the full store via
+ * loadTokenStore() BEFORE calling commitTokenEntry() and restore it with
+ * saveTokenStore() on failure. A full-store snapshot handles partial writes
+ * of tokens.json atomically — single-entry restore via the return value is
+ * insufficient because if this function throws during saveTokenStore, the
+ * return statement never executes (UXJI/UXJT fix).
+ */
+export function commitTokenEntry(entry: TokenEntry, tokensPath?: string): void {
+  const store = loadTokenStore(tokensPath);
+  store.tokens = store.tokens.filter((t) => t.connector !== entry.connector);
+  store.tokens.push(entry);
+  saveTokenStore(store, tokensPath);
+}
+
 export function generateToken(connector: string, tokensPath?: string): TokenEntry {
   const store = loadTokenStore(tokensPath);
 
   // Remove existing token for this connector
   store.tokens = store.tokens.filter((t) => t.connector !== connector);
 
-  const prefix = TOKEN_PREFIXES[connector] ?? "remnic_xx_";
-  const token = prefix + randomBytes(24).toString("hex");
-  const entry: TokenEntry = {
-    token,
-    connector,
-    createdAt: new Date().toISOString(),
-  };
+  const entry = buildTokenEntry(connector);
   store.tokens.push(entry);
   saveTokenStore(store, tokensPath);
   return entry;

@@ -42,7 +42,9 @@ import {
   StorageManager,
   ContentHashIndex,
   normalizeEntityName,
+  normalizeAttributePairs,
 } from "./storage.js";
+import { sanitizeMemoryContent } from "./sanitize.js";
 import { ThreadingManager } from "./threading.js";
 import { extractTopics } from "./topics.js";
 import { TranscriptManager } from "./transcript.js";
@@ -61,6 +63,11 @@ import {
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
+import {
+  applyTemporalSupersession,
+  normalizeSupersessionKey,
+  shouldFilterSupersededFromRecall,
+} from "./temporal-supersession.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import {
@@ -7128,11 +7135,38 @@ export class Orchestrator {
         const memories =
           await this.readAllMemoriesForNamespaces(recallNamespaces);
         if (memories.length > 0) {
-          // Filter out non-active memories
+          // Filter out non-active memories.  Delegate to
+          // shouldFilterSupersededFromRecall for superseded-status logic so
+          // that the recent-scan path and the boostSearchResults (QMD) path
+          // have identical semantics:
+          //   • temporalSupersessionEnabled=false  → never filter superseded
+          //     (mirrors QMD path; user disabled the feature, so old marks
+          //     are ignored and all memories surface)
+          //   • temporalSupersessionIncludeInRecall=true → never filter (audit mode)
+          //   • enabled=true + includeInRecall=false → filter superseded
+          // Previously the recent-scan path checked `enabled && includeInRecall`
+          // directly, which disagreed with the QMD path when enabled=false
+          // (memories were still filtered, contrary to the kill-switch intent).
+          // Using the shared gate fixes both Finding 2 and Finding 3 from
+          // PR #402 (round 6).
+          const supersessionOptions = {
+            enabled: this.config.temporalSupersessionEnabled,
+            includeInRecall: this.config.temporalSupersessionIncludeInRecall,
+          };
           const activeMemories = memories.filter(
-            (m) =>
-              (!m.frontmatter.status || m.frontmatter.status === "active") &&
-              !isArtifactMemoryPath(m.path),
+            (m) => {
+              if (isArtifactMemoryPath(m.path)) return false;
+              const status = m.frontmatter.status;
+              if (!status || status === "active") return true;
+              if (status === "superseded") {
+                // Include superseded memory only if the canonical gate says
+                // NOT to filter it (kill switch off or audit mode on).
+                return !shouldFilterSupersededFromRecall(m.frontmatter, supersessionOptions);
+              }
+              // Other non-active statuses (archived, retired, etc.) are
+              // excluded from the recent-scan path by default.
+              return false;
+            },
           );
           // Convert all active memories to QmdSearchResult with recency-based
           // baseline score, then pass through boostSearchResults so temporal/tag
@@ -8456,6 +8490,7 @@ export class Orchestrator {
       confidence: number;
       tags: string[];
       entityRef?: string;
+      structuredAttributes?: Record<string, string>;
       sourceMemoryId: string;
       importance?: ReturnType<typeof scoreImportance>;
       intentGoal?: string;
@@ -8476,34 +8511,186 @@ export class Orchestrator {
         const sharedStorage = await this.storageRouter.storageFor(
           this.config.sharedNamespace,
         );
-        // Dedup gate: hash the RAW content before citation is applied.
+        // Dedup gate: canonicalize content before hashing.
         //
-        // When inline attribution is enabled, `applyInlineCitation` appends a
-        // timestamp-bearing marker (e.g. `[Source: ..., ts=2026-04-11T...]`).
-        // Because the timestamp changes on every call, hashing the cited
-        // content would produce a unique hash each time — defeating the dedup
-        // check entirely and allowing the same logical fact to be promoted
-        // repeatedly.
+        // Issue #369 (PR #401): When inline attribution is enabled,
+        // `applyInlineCitation` appends a timestamp-bearing marker (e.g.
+        // `[Source: ..., ts=2026-04-11T...]`).  Because the timestamp changes
+        // on every call, hashing cited content produces a unique hash each
+        // time — defeating dedup entirely and allowing the same logical fact to
+        // be promoted repeatedly.  Also, both promotion call sites pass
+        // `fact.content`, which can already carry an inline citation (e.g. a
+        // relayed or reprocessed fact).  Strip any pre-existing citation so the
+        // dedup key matches the hash stored from the original un-cited write.
         //
-        // Additionally, both promotion call sites pass `fact.content`, which
-        // can already carry an inline citation (e.g. a relayed or reprocessed
-        // fact). Strip any pre-existing citation so the dedup key matches the
-        // hash stored from the original un-cited write (Codex P2 — issue #369).
+        // PR #402 round-6 (Fix #2 / chatgpt-codex P1 PRRT_kwDORJXyws56U74n):
+        // Compute the enriched content before the hash-dedup check so the
+        // lookup uses the same content that writeMemory will actually store.
+        // When structuredAttributes are present, writeMemory appends an
+        // "[Attributes: ...]" suffix before hashing; hasFactContentHash must
+        // receive the same enriched body or the check is against a different
+        // hash and dedup fails to fire (letting duplicates through) or fires
+        // when it shouldn't (collapsing memories with different enrichments).
+        // Fix #1 (P2 PRRT_kwDORJXyws56VHZc): use normalizeAttributePairs so
+        // key order and casing are canonical — identical to the enrichment
+        // applied by storage.writeMemory — preventing spurious hash misses
+        // when attribute maps arrive with different insertion orders or casing.
         //
-        // The fix: canonicalize `options.content` by stripping any citation
-        // first, then hash the clean body.  The write still applies a fresh
-        // citation so the persisted copy carries correct provenance.
+        // Fix #4 (Low PRRT_kwDORJXyws56VHth): sanitize the base content before
+        // building dedupContent.  writeMemory runs sanitizeMemoryContent on the
+        // enriched body before hashing; if sanitization redacts the content to
+        // REDACTED_PLACEHOLDER the stored hash is for the redacted form, not
+        // the raw form.  Computing dedupContent from sanitized.text here ensures
+        // the hash lookup and the normalizedIncoming comparison both use the
+        // same content that writeMemory will actually store.
+        //
+        // Combined fix: strip any pre-existing citation FIRST to obtain
+        // rawContent (the canonical body), then sanitize rawContent (not
+        // options.content) when building dedupContent, so that citation
+        // stripping and sanitization are applied in a consistent order.
         const rawContent =
           citationEnabled &&
           hasCitationForTemplate(options.content, citationTemplate)
             ? stripCitationForTemplate(options.content, citationTemplate)
             : options.content;
         const citedContent = applyInlineCitation(rawContent);
+        const sanitizedBase = sanitizeMemoryContent(rawContent);
+        const dedupContent =
+          options.category === "fact" &&
+          options.structuredAttributes &&
+          Object.keys(options.structuredAttributes).length > 0
+            ? `${sanitizedBase.text}\n[Attributes: ${normalizeAttributePairs(options.structuredAttributes)}]`
+            : sanitizedBase.text;
         if (
           options.category === "fact" &&
-          (await sharedStorage.hasFactContentHash(rawContent))
+          (await sharedStorage.hasFactContentHash(dedupContent))
         ) {
-          return;
+          // Uj6H fix: shared-namespace temporal supersession must also run when
+          // the hash-dedup short-circuit fires.  Without this, an existing shared
+          // fact whose structuredAttributes are stale (or an older conflicting
+          // shared fact that is still active) never gets retired — supersession
+          // only ran in the post-writeMemory block which is unreachable here.
+          //
+          // Strategy: scan the shared namespace for the existing fact whose
+          // normalized content matches the incoming content, then run
+          // applyTemporalSupersession against it using the same logic that
+          // would have run post-writeMemory.  This is a best-effort / fail-open
+          // step — if the lookup fails we skip silently (same as the normal path).
+          if (
+            this.config.temporalSupersessionEnabled &&
+            options.entityRef &&
+            options.structuredAttributes &&
+            Object.keys(options.structuredAttributes).length > 0
+          ) {
+            // PR #402 round-7 (Fix #2 / Codex P1 PRRT_kwDORJXyws56VALC):
+            // Track whether matchingFact lookup completed before the try block
+            // so the catch block can distinguish an early-lookup failure (where
+            // we don't know if a duplicate exists) from a post-lookup supersession
+            // failure (where we confirmed a duplicate and must skip the write).
+            let hashDedupMatchingFact: MemoryFile | undefined;
+            let hashDedupLookupComplete = false;
+            try {
+              // Fix #2 (P2 PRRT_kwDORJXyws56VHZf): dedupContent is now built
+              // from sanitizedBase.text (see fix #4 above), so normalizedIncoming
+              // uses the same sanitized+normalized content that writeMemory hashes
+              // and that hasFactContentHash just matched.  Previously this used the
+              // raw options.content, which diverged from the stored hash when
+              // sanitization redacted the content, causing the candidate lookup to
+              // return undefined and leaving stale facts active.
+              const normalizedIncoming = ContentHashIndex.normalizeContent(dedupContent);
+              const allShared = await sharedStorage.readAllMemories();
+              // PR #402 round-12 (Finding Uybg): restrict hash-dedup matching to
+              // the SAME entity.  Content-hash equality alone can collide across
+              // entities when two entities share identical fact text.  Using an
+              // unrelated entity's existing fact as `newMemoryId` would anchor
+              // supersession to that entity's record and corrupt its
+              // `supersededBy` links.  Only consider facts whose normalized
+              // `entityRef` matches the incoming entity.
+              const incomingEntityNorm = normalizeSupersessionKey(options.entityRef);
+              hashDedupMatchingFact = allShared.find((m) => {
+                if (m.frontmatter.category !== "fact") return false;
+                if ((m.frontmatter.status ?? "active") !== "active") return false;
+                // Same-entity guard: skip if entity doesn't match.
+                if (!m.frontmatter.entityRef) return false;
+                if (normalizeSupersessionKey(m.frontmatter.entityRef) !== incomingEntityNorm) {
+                  log.debug(
+                    `persistExtraction: hash-dedup skipping cross-entity match (incoming="${incomingEntityNorm}" candidate="${normalizeSupersessionKey(m.frontmatter.entityRef)}")`,
+                  );
+                  return false;
+                }
+                // PR #402 round-7 (Fix #2): compare stored fact's full body
+                // (including any appended "[Attributes: ...]" suffix) against the
+                // enriched normalizedIncoming so the candidate selected is the one
+                // whose hash actually matched in hasFactContentHash.
+                return ContentHashIndex.normalizeContent(m.content ?? "") === normalizedIncoming;
+              });
+              hashDedupLookupComplete = true;
+              if (hashDedupMatchingFact) {
+                // Finding UvU1 (PR #402 round-11): anchor supersession to the
+                // CURRENT wall-clock time, not the existing fact's persisted
+                // `created`.  The matching fact may be an old shared copy whose
+                // `created` predates the incoming promotion event — using it as
+                // `createdAt` would make the new memory appear older than the
+                // existing one, preventing supersession from firing.
+                // PR #402 round-12 (Finding Uyui): the matching fact is an
+                // existing OLD memory — its persisted `frontmatter.created` is
+                // stale relative to the incoming promotion event.  Pass
+                // `useCallerTimestamp: true` so the function uses
+                // `createdAt` (current wall-clock) as the ordering anchor
+                // instead of the old fact's timestamp, ensuring supersession
+                // fires correctly even when the matching fact predates
+                // conflicting candidates.
+                await applyTemporalSupersession({
+                  storage: sharedStorage,
+                  newMemoryId: hashDedupMatchingFact.frontmatter.id,
+                  entityRef: options.entityRef,
+                  structuredAttributes: options.structuredAttributes,
+                  createdAt: new Date().toISOString(),
+                  enabled: true,
+                  useCallerTimestamp: true,
+                });
+                // Active matching fact exists — normal short-circuit is safe.
+                return;
+              }
+              // No active same-entity shared fact found with this content hash.
+              // This can happen when the previously-written shared fact has since
+              // been superseded (e.g. Austin → NYC → Austin reversion): the hash
+              // index still records the hash but the fact is no longer active.
+              // Fall through to the write path below so a new active shared
+              // memory is created, then supersession fires post-write as usual.
+              log.debug(
+                `persistExtraction: hash-dedup found no active same-entity shared fact for ${options.sourceMemoryId}; falling through to write`,
+              );
+            } catch (hashDedupSupersessionErr) {
+              log.warn(
+                `persistExtraction: shared-namespace supersession on hash-dedup path failed open for ${options.sourceMemoryId}: ${hashDedupSupersessionErr}`,
+              );
+              // PR #402 round-7 (Fix #1 / cursor Medium PRRT_kwDORJXyws56U_ig):
+              // Only skip the write if we CONFIRMED a matching active shared fact
+              // before the error occurred (hashDedupLookupComplete is true AND
+              // hashDedupMatchingFact is set).  If the error was thrown before
+              // matchingFact was resolved — e.g. readAllMemories() threw — we
+              // cannot assume a duplicate exists, and unconditionally returning
+              // would permanently lose the shared promotion.  Fall through to the
+              // write path so the fact is not silently dropped.
+              if (hashDedupLookupComplete && hashDedupMatchingFact) {
+                // A matching active shared fact was confirmed — skip the write to
+                // avoid duplicating content that is already present.  The existing
+                // fact remains active and the supersession failure is logged above.
+                return;
+              }
+              // Lookup did not complete or no candidate was found — we cannot
+              // confirm a duplicate.  Fall through to the write + post-write
+              // supersession path so the shared promotion is not lost.
+              log.debug(
+                `persistExtraction: hash-dedup catch: lookup incomplete or no candidate found for ${options.sourceMemoryId}; falling through to write`,
+              );
+            }
+          } else {
+            // temporalSupersessionEnabled is off or no entity/attributes — keep
+            // the original short-circuit behaviour.
+            return;
+          }
         }
         const promotedId = await sharedStorage.writeMemory(
           options.category as any,
@@ -8512,6 +8699,7 @@ export class Orchestrator {
             confidence: options.confidence,
             tags: [...options.tags, "shared-promotion"],
             entityRef: options.entityRef,
+            structuredAttributes: options.structuredAttributes,
             source: `${options.source}-shared-promotion`,
             importance: options.importance,
             lineage: [options.sourceMemoryId],
@@ -8527,6 +8715,33 @@ export class Orchestrator {
             contentHashSource: rawContent,
           },
         );
+        // PR #402 Finding 3 fix: run temporal supersession against the shared
+        // namespace after the promoted write lands so stale shared-namespace
+        // copies of the same entity attribute are retired.  Without this,
+        // source-namespace supersession leaves the shared copy active and
+        // shared recall continues returning the stale state.  Reuses the same
+        // applyTemporalSupersession helper — no logic duplication.
+        if (
+          this.config.temporalSupersessionEnabled &&
+          options.entityRef &&
+          options.structuredAttributes &&
+          Object.keys(options.structuredAttributes).length > 0
+        ) {
+          try {
+            await applyTemporalSupersession({
+              storage: sharedStorage,
+              newMemoryId: promotedId,
+              entityRef: options.entityRef,
+              structuredAttributes: options.structuredAttributes,
+              createdAt: new Date().toISOString(),
+              enabled: true,
+            });
+          } catch (sharedSupersessionErr) {
+            log.warn(
+              `persistExtraction: shared-namespace temporal supersession failed open for promoted ${promotedId}: ${sharedSupersessionErr}`,
+            );
+          }
+        }
         trackPersistedId(sharedStorage, promotedId, {
           includeReturnedIds: false,
         });
@@ -9036,6 +9251,25 @@ export class Orchestrator {
             threadEpisodeIdsForGraph.push(parentId);
           }
           await this.indexPersistedMemory(targetStorage, parentId);
+          // PR #402 Thread 1 fix: run source-namespace temporal supersession for
+          // chunked writes, matching the non-chunked path.  Without this the
+          // source namespace retains stale facts that should have been superseded.
+          try {
+            const supersessionEntityRef =
+              typeof (fact as any).entityRef === "string"
+                ? ((fact as any).entityRef as string)
+                : undefined;
+            await applyTemporalSupersession({
+              storage: targetStorage,
+              newMemoryId: parentId,
+              entityRef: supersessionEntityRef,
+              structuredAttributes: fact.structuredAttributes,
+              createdAt: new Date().toISOString(),
+              enabled: this.config.temporalSupersessionEnabled,
+            });
+          } catch (err) {
+            log.warn(`temporal-supersession (chunked): unexpected error: ${err}`);
+          }
           await promoteMemoryToShared({
             sourceStorage: targetStorage,
             category: writeCategory,
@@ -9043,6 +9277,7 @@ export class Orchestrator {
             confidence: fact.confidence,
             tags: fact.tags,
             entityRef: fact.entityRef,
+            structuredAttributes: fact.structuredAttributes,
             sourceMemoryId: parentId,
             importance,
             intentGoal: inferredIntent?.goal,
@@ -9206,6 +9441,25 @@ export class Orchestrator {
           `routing applied for memory ${memoryId}: rule=${routedRuleId} category=${writeCategory} storage=${targetStorage.dir}`,
         );
       }
+      // Temporal supersession (issue #375): when the new fact has structured
+      // attributes, retire any older fact with the same entity + attribute
+      // key that has a conflicting value.
+      try {
+        const supersessionEntityRef =
+          typeof (fact as any).entityRef === "string"
+            ? ((fact as any).entityRef as string)
+            : undefined;
+        await applyTemporalSupersession({
+          storage: targetStorage,
+          newMemoryId: memoryId,
+          entityRef: supersessionEntityRef,
+          structuredAttributes: fact.structuredAttributes,
+          createdAt: new Date().toISOString(),
+          enabled: this.config.temporalSupersessionEnabled,
+        });
+      } catch (err) {
+        log.warn(`temporal-supersession: unexpected error: ${err}`);
+      }
       trackBehaviorSignals(
         targetStorage,
         buildBehaviorSignalsForMemory({
@@ -9235,6 +9489,7 @@ export class Orchestrator {
           typeof (fact as any).entityRef === "string"
             ? (fact as any).entityRef
             : undefined,
+        structuredAttributes: fact.structuredAttributes,
         sourceMemoryId: memoryId,
         importance,
         intentGoal: inferredIntent?.goal,
@@ -11866,6 +12121,7 @@ export class Orchestrator {
     }
 
     let lifecycleFilteredCount = 0;
+    let temporalSupersededFilteredCount = 0;
     const boosted: QmdSearchResult[] = [];
     const recencyWeight = this.effectiveRecencyWeight();
     for (const r of results) {
@@ -11882,6 +12138,22 @@ export class Orchestrator {
           })
         ) {
           lifecycleFilteredCount += 1;
+          continue;
+        }
+
+        // Temporal supersession filter (issue #375): drop memories that a
+        // newer fact has retired, unless the caller opted in to history.
+        // NOTE: This check is intentionally independent of allowLifecycleFiltered
+        // (Finding A fix) — cold fallback sets allowLifecycleFiltered=true to
+        // include archived/retired candidates, but superseded memories must
+        // still be filtered unless temporalSupersessionIncludeInRecall is set.
+        if (
+          shouldFilterSupersededFromRecall(memory.frontmatter, {
+            enabled: this.config.temporalSupersessionEnabled,
+            includeInRecall: this.config.temporalSupersessionIncludeInRecall,
+          })
+        ) {
+          temporalSupersededFilteredCount += 1;
           continue;
         }
 
@@ -12005,6 +12277,11 @@ export class Orchestrator {
     if (lifecycleFilteredCount > 0) {
       log.debug(
         `lifecycle retrieval filter removed ${lifecycleFilteredCount} stale/archived candidates`,
+      );
+    }
+    if (temporalSupersededFilteredCount > 0) {
+      log.debug(
+        `temporal supersession filter removed ${temporalSupersededFilteredCount} superseded candidates`,
       );
     }
 
