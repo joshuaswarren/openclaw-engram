@@ -292,7 +292,10 @@ export async function createEngramAdapter(
         try {
           const bufferedTurns = orchestrator.buffer.getTurns(sessionId);
           if (bufferedTurns.length > 0) {
-            await (orchestrator as any).queueBufferedExtraction?.(bufferedTurns, "trigger_mode");
+            await (orchestrator as any).queueBufferedExtraction?.(bufferedTurns, "trigger_mode", {
+              bufferKey: sessionId,
+              clearBufferAfterExtraction: false,
+            });
             const idle = await orchestrator.waitForExtractionIdle(35_000);
             if (!idle) {
               extractionAvailable = false;

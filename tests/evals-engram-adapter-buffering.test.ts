@@ -20,6 +20,11 @@ test("eval adapter uses session-scoped buffer APIs", async () => {
   );
   assert.match(
     source,
+    /queueBufferedExtraction\?\.\(bufferedTurns,\s*"trigger_mode",\s*\{\s*bufferKey:\s*sessionId,\s*clearBufferAfterExtraction:\s*false,\s*\}\)/m,
+    "eval adapter should enqueue extraction with the session buffer key and keep buffer clearing under adapter control",
+  );
+  assert.match(
+    source,
     /await orchestrator\.buffer\.clearAfterExtraction\(sessionId\);/m,
     "eval adapter should clear only the session-specific smart buffer entry",
   );
