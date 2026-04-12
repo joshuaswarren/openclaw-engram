@@ -7711,7 +7711,7 @@ export class Orchestrator {
     }
 
     const replayTasks: Array<Promise<void>> = [];
-    for (const sessionTurns of bySession.values()) {
+    for (const [key, sessionTurns] of bySession.entries()) {
       if (sessionTurns.length === 0) continue;
       replayTasks.push(
         new Promise<void>((resolve, reject) => {
