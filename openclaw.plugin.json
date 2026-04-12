@@ -517,6 +517,54 @@
         "default": false,
         "description": "Allow active recall to chain into the bundled active-memory surface."
       },
+      "codex": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "installExtension": {
+            "type": "boolean",
+            "default": true,
+            "description": "Install the Remnic Codex memory extension during Codex connector setup."
+          },
+          "codexHome": {
+            "type": "string",
+            "description": "Optional Codex home directory override used for connector install and materialization."
+          }
+        }
+      },
+      "codexMaterializeMemories": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable Codex native memory materialization into the Codex memories directory."
+      },
+      "codexMaterializeNamespace": {
+        "type": "string",
+        "default": "auto",
+        "description": "Namespace to materialize for Codex. \"auto\" derives the namespace from the active connector context."
+      },
+      "codexMaterializeMaxSummaryTokens": {
+        "type": "number",
+        "minimum": 0,
+        "default": 4500,
+        "description": "Whitespace-token cap for Codex memory summary materialization."
+      },
+      "codexMaterializeRolloutRetentionDays": {
+        "type": "number",
+        "minimum": 0,
+        "default": 30,
+        "description": "Retention window in days for Codex rollout materialization artifacts."
+      },
+      "codexMaterializeOnConsolidation": {
+        "type": "boolean",
+        "default": true,
+        "description": "Run Codex memory materialization after semantic or causal consolidation completes."
+      },
+      "codexMaterializeOnSessionEnd": {
+        "type": "boolean",
+        "default": true,
+        "description": "Run Codex memory materialization from the Codex session-end hook."
+      },
       "codexCompat": {
         "type": "object",
         "additionalProperties": false,
@@ -1919,6 +1967,16 @@
         ],
         "default": "low",
         "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
+      },
+      "inlineSourceAttributionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable inline source attribution markers on persisted facts for downstream provenance tracking."
+      },
+      "inlineSourceAttributionFormat": {
+        "type": "string",
+        "default": "[Source: agent={agent}, session={sessionId}, ts={ts}]",
+        "description": "Template used when inline source attribution is enabled."
       },
       "extractionMinUserTurns": {
         "type": "number",

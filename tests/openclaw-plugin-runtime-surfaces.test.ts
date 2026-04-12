@@ -135,6 +135,24 @@ for (const manifestPath of [
       Object.keys(properties.codexCompat.properties ?? {}).sort(),
       ["compactionFlushMode", "enabled", "fingerprintDedup", "threadIdBufferKeying"],
     );
+    assert.ok(properties.codex, "legacy Codex connector config block should remain available");
+    assert.deepEqual(
+      Object.keys(properties.codex.properties ?? {}).sort(),
+      ["codexHome", "installExtension"],
+    );
+    assert.equal(properties.codexMaterializeMemories?.default, true);
+    assert.equal(properties.codexMaterializeNamespace?.default, "auto");
+    assert.equal(properties.codexMaterializeMaxSummaryTokens?.default, 4500);
+    assert.equal(properties.codexMaterializeMaxSummaryTokens?.minimum, 0);
+    assert.equal(properties.codexMaterializeRolloutRetentionDays?.default, 30);
+    assert.equal(properties.codexMaterializeRolloutRetentionDays?.minimum, 0);
+    assert.equal(properties.codexMaterializeOnConsolidation?.default, true);
+    assert.equal(properties.codexMaterializeOnSessionEnd?.default, true);
+    assert.equal(properties.inlineSourceAttributionEnabled?.default, false);
+    assert.equal(
+      properties.inlineSourceAttributionFormat?.default,
+      "[Source: agent={agent}, session={sessionId}, ts={ts}]",
+    );
 
     const maxEntries = properties.dreaming.properties?.maxEntries;
     assert.ok(
