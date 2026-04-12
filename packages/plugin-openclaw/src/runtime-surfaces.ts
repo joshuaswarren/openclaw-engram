@@ -282,7 +282,11 @@ export async function syncHeartbeatSurfaceEntries(params: {
     };
     const existing =
       findSurfaceMemoryByAttribute(memories, HEARTBEAT_ENTRY_ID_KEY, entry.id) ??
-      findSurfaceMemoryByAttribute(memories, HEARTBEAT_SLUG_KEY, entry.slug);
+      (memories.find(
+        (memory) =>
+          isSurfaceMemory(memory, HEARTBEAT_SURFACE_TYPE) &&
+          memory.frontmatter.structuredAttributes?.[HEARTBEAT_SLUG_KEY] === entry.slug,
+      ) ?? null);
 
     if (!existing) {
       const memoryId = await storage.writeMemory("principle", content, {

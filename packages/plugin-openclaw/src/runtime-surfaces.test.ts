@@ -441,6 +441,48 @@ test("syncHeartbeatSurfaceEntries prefers stable heartbeat entry ids over matchi
   assert.equal(storage.memories[0]?.content, "Old heartbeat body.");
 });
 
+test("syncHeartbeatSurfaceEntries never overwrites non-surface memories through slug fallback", async () => {
+  const storage = makeStorage([
+    makeMemory({
+      id: "fact-1",
+      content: "A regular fact linked to check-test-suite.",
+      tags: ["ops", "heartbeat:check-test-suite"],
+      structuredAttributes: {
+        relatedHeartbeatSlug: "check-test-suite",
+      },
+    }),
+  ]);
+
+  const result = await syncHeartbeatSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-new",
+        slug: "check-test-suite",
+        title: "check-test-suite",
+        body: "Run the test suite every hour.",
+        schedule: "hourly",
+        tags: ["ci"],
+        sourceOffset: 12,
+      },
+    ],
+    journalPath: "/workspace/HEARTBEAT.md",
+  });
+
+  assert.deepEqual(result, { created: 1, updated: 0, linked: 0 });
+  assert.equal(storage.memories.length, 2);
+  assert.equal(storage.memories[0]?.content, "A regular fact linked to check-test-suite.");
+  assert.equal(storage.memories[0]?.frontmatter.structuredAttributes?.remnicSurfaceType, undefined);
+  assert.equal(
+    storage.memories[1]?.frontmatter.structuredAttributes?.remnicSurfaceType,
+    "heartbeat",
+  );
+  assert.equal(
+    storage.memories[1]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
+    "check-test-suite",
+  );
+});
+
 test("syncHeartbeatSurfaceEntries reuses memories created earlier in the same batch", async () => {
   const storage = makeStorage();
 
