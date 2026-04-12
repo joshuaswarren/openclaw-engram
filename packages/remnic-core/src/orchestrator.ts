@@ -9121,6 +9121,25 @@ export class Orchestrator {
             threadEpisodeIdsForGraph.push(parentId);
           }
           await this.indexPersistedMemory(targetStorage, parentId);
+          // PR #402 Thread 1 fix: run source-namespace temporal supersession for
+          // chunked writes, matching the non-chunked path.  Without this the
+          // source namespace retains stale facts that should have been superseded.
+          try {
+            const supersessionEntityRef =
+              typeof (fact as any).entityRef === "string"
+                ? ((fact as any).entityRef as string)
+                : undefined;
+            await applyTemporalSupersession({
+              storage: targetStorage,
+              newMemoryId: parentId,
+              entityRef: supersessionEntityRef,
+              structuredAttributes: fact.structuredAttributes,
+              createdAt: new Date().toISOString(),
+              enabled: this.config.temporalSupersessionEnabled,
+            });
+          } catch (err) {
+            log.warn(`temporal-supersession (chunked): unexpected error: ${err}`);
+          }
           await promoteMemoryToShared({
             sourceStorage: targetStorage,
             category: writeCategory,
