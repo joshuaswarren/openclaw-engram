@@ -9,4 +9,6 @@ export const MemorySearchInputSchema = Type.Object({
 
 export const MemoryGetInputSchema = Type.Object({
   id: Type.String(),
+  sessionKey: Type.Optional(Type.String()),
+  namespace: Type.Optional(Type.String()),
 });

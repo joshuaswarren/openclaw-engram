@@ -8,7 +8,8 @@ import {
 
 test("recallForActiveMemory caps limit, truncates snippets, and strips internal scoring fields", async () => {
   const orchestrator = {
-    searchAcrossNamespaces: async () => [
+    resolveSelfNamespace: (_sessionKey?: string) => "resolved-namespace",
+    searchAcrossNamespaces: async (_params: unknown) => [
       {
         id: "mem-1",
         score: 0.91,
@@ -50,8 +51,49 @@ test("recallForActiveMemory caps limit, truncates snippets, and strips internal 
   assert.equal(result.truncated, false);
 });
 
+test("recallForActiveMemory defaults to the caller namespace derived from sessionKey", async () => {
+  let receivedNamespaces: string[] | undefined;
+  const orchestrator = {
+    resolveSelfNamespace: (sessionKey?: string) =>
+      sessionKey === "session-b" ? "session-b-namespace" : "fallback-namespace",
+    searchAcrossNamespaces: async (params: { namespaces?: string[] }) => {
+      receivedNamespaces = params.namespaces;
+      return [];
+    },
+  };
+
+  await recallForActiveMemory(orchestrator as never, {
+    query: "api docs",
+    sessionKey: "session-b",
+  });
+
+  assert.deepEqual(receivedNamespaces, ["session-b-namespace"]);
+});
+
+test("recallForActiveMemory prioritizes an explicit namespace filter over the session namespace", async () => {
+  let receivedNamespaces: string[] | undefined;
+  const orchestrator = {
+    resolveSelfNamespace: () => "session-namespace",
+    searchAcrossNamespaces: async (params: { namespaces?: string[] }) => {
+      receivedNamespaces = params.namespaces;
+      return [];
+    },
+  };
+
+  await recallForActiveMemory(orchestrator as never, {
+    query: "api docs",
+    sessionKey: "session-b",
+    filters: {
+      namespace: "explicit-namespace",
+    },
+  });
+
+  assert.deepEqual(receivedNamespaces, ["explicit-namespace"]);
+});
+
 test("recallForActiveMemory marks results truncated when the underlying recall exceeds the requested limit", async () => {
   const orchestrator = {
+    resolveSelfNamespace: () => "session-namespace",
     searchAcrossNamespaces: async () =>
       Array.from({ length: 3 }, (_, index) => ({
         id: `mem-${index + 1}`,
@@ -73,11 +115,61 @@ test("recallForActiveMemory marks results truncated when the underlying recall e
 
 test("getMemoryForActiveMemory returns not_found instead of throwing", async () => {
   const orchestrator = {
-    storage: {
+    resolveSelfNamespace: () => "readable-session",
+    getStorageForNamespace: async () => ({
       getMemoryById: async () => null,
-    },
+    }),
   };
 
   const result = await getMemoryForActiveMemory(orchestrator as never, "missing");
   assert.deepEqual(result, { error: "not_found" });
+});
+
+test("getMemoryForActiveMemory reads via the session-derived namespace storage", async () => {
+  let readNamespace: string | undefined;
+  const orchestrator = {
+    getStorageForNamespace: async (namespace: string) => {
+      readNamespace = namespace;
+      return {
+        getMemoryById: async (id: string) =>
+          id === "present" ? ({ content: "text", frontmatter: {} } as never) : null,
+      };
+    },
+    resolveSelfNamespace: (sessionKey?: string) =>
+      sessionKey === "session-x" ? "session-x-namespace" : "fallback-namespace",
+  };
+
+  const result = await getMemoryForActiveMemory(
+    orchestrator as never,
+    "present",
+    { sessionKey: "session-x" },
+  );
+
+  assert.equal(readNamespace, "session-x-namespace");
+  assert.equal(result.id, "present");
+  assert.equal(result.text, "text");
+});
+
+test("getMemoryForActiveMemory honors an explicit namespace override", async () => {
+  let readNamespace: string | undefined;
+  const orchestrator = {
+    getStorageForNamespace: async (namespace: string) => {
+      readNamespace = namespace;
+      return {
+        getMemoryById: async (id: string) =>
+          id === "shared-memory" ? ({ content: "shared text", frontmatter: {} } as never) : null,
+      };
+    },
+    resolveSelfNamespace: () => "session-namespace",
+  };
+
+  const result = await getMemoryForActiveMemory(
+    orchestrator as never,
+    "shared-memory",
+    { namespace: "shared" },
+  );
+
+  assert.equal(readNamespace, "shared");
+  assert.equal(result.id, "shared-memory");
+  assert.equal(result.text, "shared text");
 });

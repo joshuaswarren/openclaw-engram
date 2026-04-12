@@ -1,4 +1,5 @@
-import type { MemoryFile } from "./types.js";
+import { canReadNamespace, defaultNamespaceForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
+import type { MemoryFile, PluginConfig } from "./types.js";
 
 export interface ActiveMemoryMetadata {
   type?: "fact" | "preference";
@@ -32,6 +33,12 @@ export interface ActiveMemoryRecallParams {
   sessionKey: string;
   filters?: Record<string, unknown>;
   snippetMaxChars?: number;
+}
+
+interface ActiveMemoryScopedOrchestrator {
+  config?: PluginConfig;
+  resolvePrincipal?: (sessionKey?: string) => string;
+  resolveSelfNamespace?: (sessionKey?: string) => string;
 }
 
 type ActiveMemorySearchCandidate = {
@@ -68,8 +75,48 @@ function pickMetadata(value: Record<string, unknown> | undefined): ActiveMemoryM
   return Object.keys(metadata).length > 0 ? metadata : undefined;
 }
 
+function resolveActiveMemoryNamespace(
+  orchestrator: ActiveMemoryScopedOrchestrator,
+  sessionKey: string | undefined,
+  requestedNamespace: string | undefined,
+): string {
+  const explicitNamespace =
+    typeof requestedNamespace === "string" && requestedNamespace.trim().length > 0
+      ? requestedNamespace.trim()
+      : undefined;
+  const config = orchestrator.config;
+
+  if (!config?.namespacesEnabled) {
+    if (explicitNamespace) {
+      return explicitNamespace;
+    }
+    if (typeof orchestrator.resolveSelfNamespace === "function") {
+      return orchestrator.resolveSelfNamespace(sessionKey);
+    }
+    return "default";
+  }
+
+  const principal =
+    typeof orchestrator.resolvePrincipal === "function"
+      ? orchestrator.resolvePrincipal(sessionKey)
+      : resolvePrincipal(sessionKey, config);
+  if (explicitNamespace) {
+    if (!canReadNamespace(principal, explicitNamespace, config)) {
+      throw new Error(`namespace ${explicitNamespace} is not readable for principal ${principal}`);
+    }
+    return explicitNamespace;
+  }
+  if (typeof orchestrator.resolveSelfNamespace === "function") {
+    return orchestrator.resolveSelfNamespace(sessionKey);
+  }
+  return defaultNamespaceForPrincipal(principal, config);
+}
+
 export async function recallForActiveMemory(
   orchestrator: {
+    config?: PluginConfig;
+    resolvePrincipal?: (sessionKey?: string) => string;
+    resolveSelfNamespace?: (sessionKey?: string) => string;
     searchAcrossNamespaces: (params: {
       query: string;
       maxResults?: number;
@@ -84,15 +131,16 @@ export async function recallForActiveMemory(
     typeof params.snippetMaxChars === "number" && Number.isFinite(params.snippetMaxChars)
       ? Math.max(1, Math.min(4000, Math.floor(params.snippetMaxChars)))
       : 600;
-  const namespace =
-    typeof params.filters?.namespace === "string" && params.filters.namespace.trim().length > 0
-      ? params.filters.namespace.trim()
-      : undefined;
+  const namespace = resolveActiveMemoryNamespace(
+    orchestrator,
+    params.sessionKey,
+    typeof params.filters?.namespace === "string" ? params.filters.namespace : undefined,
+  );
 
   const raw = await orchestrator.searchAcrossNamespaces({
     query: params.query,
     maxResults: limit + 1,
-    namespaces: namespace ? [namespace] : undefined,
+    namespaces: [namespace],
     mode: "search",
   });
 
@@ -125,13 +173,34 @@ function buildActiveMemoryMetadataFromMemory(memory: MemoryFile): ActiveMemoryMe
 
 export async function getMemoryForActiveMemory(
   orchestrator: {
+    config?: PluginConfig;
+    resolvePrincipal?: (sessionKey?: string) => string;
+    resolveSelfNamespace?: (sessionKey?: string) => string;
+    getStorageForNamespace?: (namespace: string) => Promise<{
+      getMemoryById?: (id: string) => Promise<MemoryFile | null>;
+    }>;
     storage?: {
       getMemoryById?: (id: string) => Promise<MemoryFile | null>;
     };
   },
   id: string,
+  options: {
+    namespace?: string;
+    sessionKey?: string;
+  } = {},
 ): Promise<ActiveMemoryGetOutput> {
-  const memory = await orchestrator.storage?.getMemoryById?.(id);
+  const namespace = resolveActiveMemoryNamespace(
+    orchestrator,
+    options.sessionKey,
+    options.namespace,
+  );
+
+  const storage =
+    typeof orchestrator.getStorageForNamespace === "function"
+      ? await orchestrator.getStorageForNamespace(namespace)
+      : orchestrator.storage;
+
+  const memory = await storage?.getMemoryById?.(id);
   if (!memory) return { error: "not_found" };
   return {
     id,
