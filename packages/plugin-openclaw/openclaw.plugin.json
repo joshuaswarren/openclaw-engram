@@ -528,7 +528,8 @@
             "description": "Install the Remnic Codex memory extension during Codex connector setup."
           },
           "codexHome": {
-            "type": "string",
+            "type": ["string", "null"],
+            "default": null,
             "description": "Optional Codex home directory override used for connector install and materialization."
           }
         }

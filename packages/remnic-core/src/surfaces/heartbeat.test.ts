@@ -77,6 +77,38 @@ test("heartbeat surface reads tasks blocks from upstream-style HEARTBEAT.md", as
   assert.match(entries[1]?.body ?? "", /new failures/);
 });
 
+test("heartbeat surface reads multiline task prompts from YAML block scalars", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-multiline-prompt-"));
+  const heartbeatPath = path.join(root, "HEARTBEAT.md");
+  await writeFile(
+    heartbeatPath,
+    [
+      "tasks:",
+      "  - name: release-check",
+      "    interval: 1h",
+      "    prompt: |",
+      "      Check release readiness across CI, changelog, and open blockers.",
+      "      Summarize anything still stopping a ship call.",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const surface = createHeartbeatSurface();
+  const entries = await surface.read(heartbeatPath);
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.slug, "release-check");
+  assert.equal(entries[0]?.schedule, "1h");
+  assert.equal(
+    entries[0]?.body,
+    [
+      "Check release readiness across CI, changelog, and open blockers.",
+      "Summarize anything still stopping a ship call.",
+    ].join("\n"),
+  );
+});
+
 test("heartbeat surface tracks source offsets for repeated task lines correctly", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-offsets-"));
   const heartbeatPath = path.join(root, "HEARTBEAT.md");

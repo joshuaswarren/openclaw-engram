@@ -550,6 +550,7 @@ export function parseDreamNarrativeResponse(
 
   let title: string | null = null;
   let parsedTags: string[] = [];
+  let sawHeaderTags = false;
   let trailingTags: string[] = [];
   let bodyLines: string[] = [];
 
@@ -563,6 +564,7 @@ export function parseDreamNarrativeResponse(
       }
       const tagsMatch = line.match(/^Tags:\s*(.+)$/i);
       if (tagsMatch && parsedTags.length === 0) {
+        sawHeaderTags = true;
         parsedTags =
           tagsMatch[1]
             ?.split(/\s+/)
@@ -631,7 +633,9 @@ export function parseDreamNarrativeResponse(
     body,
     tags: uniqueTags(
       parsedTags.length > 0
-        ? [...parsedTags, ...trailingTags]
+        ? sawHeaderTags && trailingTags.length > 0
+          ? [...parsedTags, ...trailingTags]
+          : parsedTags
         : fallbackTags,
     ),
   };

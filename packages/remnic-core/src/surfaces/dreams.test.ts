@@ -200,6 +200,50 @@ test("dream surface keeps entry ids stable when title, body, or tags are edited 
   assert.deepEqual(secondRead[0]?.tags, ["reflection", "verification"]);
 });
 
+test("dreams surface preserves body dividers inside a single diary entry", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-body-divider-"));
+  const dreamsPath = path.join(root, "DREAMS.md");
+  await writeFile(
+    dreamsPath,
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T15:00:00Z — Divider dream*",
+      "",
+      "The reflection starts normally.",
+      "",
+      "---",
+      "",
+      "The divider is part of the body, not a new entry.",
+      "",
+      "Tags: #reflection",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const surface = createDreamsSurface();
+  const entries = await surface.read(dreamsPath);
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.title, "Divider dream");
+  assert.equal(
+    entries[0]?.body,
+    [
+      "The reflection starts normally.",
+      "",
+      "---",
+      "",
+      "The divider is part of the body, not a new entry.",
+    ].join("\n"),
+  );
+});
+
 test("dreams surface watch reacts when DREAMS.md is created after startup", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-watch-create-"));
   const dreamsPath = path.join(root, "DREAMS.md");

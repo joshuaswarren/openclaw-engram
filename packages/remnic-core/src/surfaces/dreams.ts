@@ -90,12 +90,19 @@ function finalizeDreamEntries(entries: ParsedDreamEntry[]): DreamEntry[] {
 
 function splitDiaryBlocks(content: string): Array<{ block: string; sourceOffset: number }> {
   const results: Array<{ block: string; sourceOffset: number }> = [];
-  const regex = /(^|\n)---\n([\s\S]*?)(?=(\n---\n)|$)/g;
-  for (const match of content.matchAll(regex)) {
-    const block = match[2]?.trim();
+  const starts = [...content.matchAll(/(^|\n)---\n(?=\n\*)/g)].map((match) => ({
+    blockStart: (match.index ?? 0) + (match[1]?.length ?? 0),
+    contentStart:
+      (match.index ?? 0) + (match[1]?.length ?? 0) + "---\n".length,
+  }));
+
+  for (let index = 0; index < starts.length; index += 1) {
+    const start = starts[index];
+    if (!start) continue;
+    const end = starts[index + 1]?.blockStart ?? content.length;
+    const block = content.slice(start.contentStart, end).trim();
     if (!block) continue;
-    const sourceOffset = (match.index ?? 0) + (match[1]?.length ?? 0);
-    results.push({ block, sourceOffset });
+    results.push({ block, sourceOffset: start.contentStart });
   }
   return results;
 }

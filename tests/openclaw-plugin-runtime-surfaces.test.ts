@@ -140,6 +140,8 @@ for (const manifestPath of [
       Object.keys(properties.codex.properties ?? {}).sort(),
       ["codexHome", "installExtension"],
     );
+    assert.deepEqual(properties.codex.properties?.codexHome?.type, ["string", "null"]);
+    assert.equal(properties.codex.properties?.codexHome?.default, null);
     assert.equal(properties.codexMaterializeMemories?.default, true);
     assert.equal(properties.codexMaterializeNamespace?.default, "auto");
     assert.equal(properties.codexMaterializeMaxSummaryTokens?.default, 4500);

@@ -163,7 +163,43 @@ function parseTaskBlock(content: string): ParsedHeartbeatEntry[] {
           continue;
         }
         if (nextTrimmed.startsWith("prompt:")) {
-          body = nextTrimmed.replace(/^prompt:\s*/, "").replace(/^["']|["']$/g, "").trim();
+          const promptValue = nextTrimmed.replace(/^prompt:\s*/, "").trim();
+          if (promptValue === "|" || promptValue === ">") {
+            const scalarIndent = next.match(/^\s*/)?.[0].length ?? 0;
+            const collectedLines: string[] = [];
+            let scalarCursor = cursor + 1;
+            for (; scalarCursor < lines.length; scalarCursor += 1) {
+              const scalarLine = lines[scalarCursor] ?? "";
+              const scalarTrimmed = scalarLine.trim();
+              const scalarIndentation = scalarLine.match(/^\s*/)?.[0].length ?? 0;
+              if (scalarTrimmed.length > 0 && scalarIndentation <= scalarIndent) break;
+              if (scalarTrimmed.length === 0) {
+                collectedLines.push("");
+                continue;
+              }
+              collectedLines.push(scalarLine);
+            }
+            const meaningful = collectedLines.filter((line) => line.trim().length > 0);
+            const commonIndent =
+              meaningful.length > 0
+                ? Math.min(
+                    ...meaningful.map((line) => line.match(/^\s*/)?.[0].length ?? 0),
+                  )
+                : scalarIndent + 2;
+            const normalizedPromptLines = collectedLines.map((line) =>
+              line.trim().length > 0 ? line.slice(commonIndent) : "",
+            );
+            body =
+              promptValue === ">"
+                ? normalizedPromptLines
+                    .map((line) => line.trim())
+                    .filter((line) => line.length > 0)
+                    .join(" ")
+                : normalizedPromptLines.join("\n").trim();
+            cursor = Math.max(cursor, scalarCursor - 1);
+            continue;
+          }
+          body = promptValue.replace(/^["']|["']$/g, "").trim();
         }
       }
       entries.push(

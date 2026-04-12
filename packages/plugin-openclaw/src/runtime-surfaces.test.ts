@@ -997,4 +997,20 @@ test("parseDreamNarrativeResponse extracts title, body, and tags with fallback t
     ].join("\n"),
     tags: ["header-tag", "trailing-tag"],
   });
+
+  const trailingOnlyTags = parseDreamNarrativeResponse(
+    [
+      "Title: Signal drift",
+      "Body:",
+      "Only trailing metadata should become the returned tags once.",
+      "Tags: #trailing-tag",
+    ].join("\n"),
+    ["fallback"],
+  );
+
+  assert.deepEqual(trailingOnlyTags, {
+    title: "Signal drift",
+    body: "Only trailing metadata should become the returned tags once.",
+    tags: ["trailing-tag"],
+  });
 });
