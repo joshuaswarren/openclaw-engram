@@ -35,7 +35,7 @@ Use these as the canonical starting points for adapter work:
 
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
-These patterns were extracted from 37 PRs across 2026-04-05 to 2026-04-12.
+These patterns were extracted from 40+ PRs across 2026-04-05 to 2026-04-12.
 Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
 required a follow-up commit to fix. Follow these rules to ship clean on the first push.
 
@@ -153,6 +153,85 @@ Reviewers flagged unreachable branches and unused exports.
   two tool files, extract to a shared utility.
 - **Remove dead switch cases** — after normalizing tool names, remove the old
   case rather than leaving it to silently never match.
+
+### 9. Config Resolution — Deduplicate Shared Lookup Logic
+
+The slot-based config resolution pattern (`slot → PLUGIN_ID → LEGACY_PLUGIN_ID`)
+was independently reimplemented in 5+ locations with divergent guard styles,
+causing inconsistent behavior during migration.
+
+- **Extract config resolution into a single shared module** — `resolveRemnicPluginEntry`
+  must be the one source of truth; all callers (access-cli, operator-toolkit,
+  materialize.cjs, src/index.ts) must import from it.
+- **Validate that resolved plugin IDs belong to Remnic** — a foreign plugin's
+  config can be read and applied to Remnic when `slots.memory` points elsewhere.
+  Always check `resolvedId === PLUGIN_ID || resolvedId === LEGACY_PLUGIN_ID`.
+- **Maintain legacy flat-config fallback** — developer-mode configs where the
+  top-level object IS the plugin config must still resolve correctly.
+- **Keep env var priority consistent** — primary `REMNIC_*` / `OPENCLAW_*`
+  must be checked before legacy `ENGRAM_*` / `OPENCLAW_ENGRAM_*` everywhere.
+
+### 10. Path Handling — Expand Tildes and Validate Types
+
+Node.js `fs` functions do NOT expand `~`. Multiple PRs had path-related bugs.
+
+- **Expand `~` consistently with `expandTilde`** — never use ad-hoc regex like
+  `path.replace(/^~/, homedir())` which incorrectly matches `~user/` prefixes.
+  Use the shared `expandTilde()` for all user-facing path inputs: `memoryDir`,
+  `--config`, `OPENCLAW_CONFIG_PATH`, `--memory-dir`.
+- **Validate path type before using** — `existsSync` returns true for files too;
+  use `statSync().isDirectory()` when a directory is expected. Reject file paths
+  used as `memoryDir`.
+- **Fail fast on invalid JSON config** — when `openclaw.json` exists but cannot
+  be parsed (or parses to `null` / non-object), surface an error instead of
+  silently returning `{}` which then overwrites the file destroying all settings.
+- **Validate `plugins.entries` shape** — check it's a plain object, not `null`,
+  array, number, or string before using `in` operator or property access.
+
+### 11. Signature Changes — Propagate to All Call Sites
+
+Changing a function signature is a high-risk operation that consistently
+required follow-up fixes.
+
+- **Search ALL code including evals, tests, and adapters** — when changing
+  `addTurn(role, content)` to `addTurn(sessionId, turn)`, search not just `src/`
+  but `evals/`, `tests/`, and `packages/*/` for old-form call sites.
+- **Add a deprecation path for public APIs** — if the function is exported,
+  add a compatibility wrapper that maps old args to new with a deprecation log,
+  rather than breaking silently.
+- **Update test helpers to match production behavior** — if production code
+  gates on a `migrateLegacy` flag, the test helper must read the same flag
+  instead of unconditionally executing.
+
+### 12. Sort Stability — Comparators Must Return 0 for Equal Items
+
+Multiple sort comparators never returned `0`, causing non-deterministic
+ordering that broke diffs and automation.
+
+- **Sort comparators must be well-formed** — return `-1`, `0`, or `1`. Never
+  return `1` for both orderings of equal items. When `a.updatedAt === b.updatedAt`,
+  return `0` or use a stable secondary key (e.g., `id`).
+- **Non-deterministic output breaks downstream** — top-N slices from unstable
+  sorts produce different results across runs, making briefings, reports, and
+  diffs unreliable.
+- **Test sort stability explicitly** — sort a list with duplicate keys and
+  assert the output is identical across multiple invocations.
+
+### 13. Hash/Dedup Consistency — Use the Same Content Form Everywhere
+
+When content is transformed before persistence (e.g., citation injection,
+timestamp appending), hash operations must consistently use either raw or
+transformed form — never a mix.
+
+- **All hash-index operations must use the same content form** — if writes
+  hash `rawContent`, reads and dedup checks must also hash `rawContent`, not
+  `citedContent` (which includes timestamps).
+- **Beware of double-hashing** — if `contentHashIndex.remove()` internally
+  hashes its argument, passing an already-hashed value produces `hash(hash(x))`
+  which never matches stored entries.
+- **Don't mix `contentHashSource` and direct hashing** — if one write path
+  passes `contentHashSource: rawContent` and another omits it (causing the
+  index to hash the persisted form with timestamp), dedup breaks.
 
 ---
 

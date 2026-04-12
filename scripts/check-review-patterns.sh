@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check-review-patterns.sh — Catch common issues that reviewers (Cursor Bugbot,
-# Codex, CodeQL) repeatedly flagged across PRs #343-#408.
+# Codex, CodeQL) repeatedly flagged across PRs #343-#408 (504+ review comments).
 # Run this before pushing. Zero exit = clean.
+# Updated: 2026-04-12 (added checks 7-10 from iteration 2 deep analysis).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -132,7 +133,91 @@ if [[ -n "$ORCH_TEST" ]]; then
   done <<< "$ORCH_TEST"
 fi
 
-echo ""
+# ---- 7. Tilde path without expandTilde ----
+echo "[check] Tilde path expansion consistency..."
+
+# Look for .replace(/^~/ or similar ad-hoc tilde expansion that isn't expandTilde
+TILDE_HACK=$(grep -rn '\.replace(/\\^~/' \
+  --include="*.ts" --include="*.js" \
+  . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v expandTilde \
+  || true)
+
+if [[ -n "$TILDE_HACK" ]]; then
+  COUNT=$(echo "$TILDE_HACK" | wc -l | tr -d ' ')
+  warn "$COUNT ad-hoc tilde expansions (not using expandTilde) — use expandTilde() instead:"
+  echo "$TILDE_HACK" | head -5
+fi
+
+# ---- 8. Sort comparator never returns 0 ----
+echo "[check] Sort comparator stability..."
+
+# Look for comparators that return 1 for both directions (missing return 0)
+BAD_SORT=$(grep -rn 'return 1' --include="*.ts" . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -i "sort" \
+  || true)
+
+if [[ -n "$BAD_SORT" ]]; then
+  # Check if the file containing sort+return 1 ever returns 0 or -1
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    if ! grep -q "return 0\|return -1" "$FILE" 2>/dev/null; then
+      warn "$FILE has sort logic with 'return 1' but no 'return 0' or 'return -1' — likely violates comparator contract"
+    fi
+  done <<< "$BAD_SORT"
+fi
+
+# ---- 9. JSON.parse without type validation ----
+echo "[check] JSON.parse result validation..."
+
+# Look for JSON.parse without subsequent type check
+PARSE_NO_CHECK=$(grep -rn 'JSON.parse(' \
+  --include="*.ts" \
+  . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  || true)
+
+if [[ -n "$PARSE_NO_CHECK" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    LINENUM=$(echo "$line" | cut -d: -f2)
+    # Check if next few lines have typeof/null check
+    if ! sed -n "$((LINENUM)),$((LINENUM+5))p" "$FILE" 2>/dev/null | grep -q "typeof\|!== null\|=== null\|!== undefined\|isPlainObject\|isValid"; then
+      # Only warn for config/settings files
+      if echo "$FILE" | grep -qi "config\|setting\|install\|doctor"; then
+        warn "$FILE:$LINENUM — JSON.parse without subsequent type/null validation in config path"
+      fi
+    fi
+  done <<< "$PARSE_NO_CHECK"
+fi
+
+# ---- 10. Duplicated slot resolution logic ----
+echo "[check] Config resolution deduplication..."
+
+SLOT_RESOLVE=$(grep -rn "slots.*memory\|slots\.memory\|LEGACY_PLUGIN_ID\|resolveRemnicPluginEntry" \
+  --include="*.ts" --include="*.cjs" --include="*.mjs" \
+  . 2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "import.*from\|export" \
+  || true)
+
+RESOLVE_FILES=$(echo "$SLOT_RESOLVE" | cut -d: -f1 | sort -u 2>/dev/null || true)
+RESOLVE_COUNT=$(echo "$RESOLVE_FILES" | grep -c "." 2>/dev/null || echo "0")
+
+if [[ "$RESOLVE_COUNT" -gt 3 ]]; then
+  warn "Slot resolution logic found in $RESOLVE_COUNT files — should be deduplicated to single shared module:"
+  echo "$RESOLVE_FILES"
+fi
 if [[ $ERRORS -gt 0 ]]; then
   echo "[check] FAILED — $ERRORS issue(s) found. Fix before pushing."
   exit 1
