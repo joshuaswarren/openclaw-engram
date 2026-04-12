@@ -102,3 +102,58 @@ test("dreams surface appends a new OpenClaw diary entry and round-trips cleanly"
   assert.equal(reread[0]?.id, appended.id);
   assert.deepEqual(reread[0]?.tags, ["reflection", "verification"]);
 });
+
+test("dream surface keeps entry ids stable when title, body, or tags are edited in place", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreams-stable-id-"));
+  const dreamsPath = path.join(root, "DREAMS.md");
+  const surface = createDreamsSurface();
+
+  await writeFile(
+    dreamsPath,
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T15:00:00Z — First draft title*",
+      "",
+      "Initial body text.",
+      "",
+      "Tags: #reflection",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const firstRead = await surface.read(dreamsPath);
+  const originalId = firstRead[0]?.id;
+  assert.ok(originalId);
+
+  await writeFile(
+    dreamsPath,
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T15:00:00Z — Refined title*",
+      "",
+      "Updated body text with more detail.",
+      "",
+      "Tags: #reflection #verification",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const secondRead = await surface.read(dreamsPath);
+  assert.equal(secondRead[0]?.id, originalId);
+  assert.equal(secondRead[0]?.title, "Refined title");
+  assert.deepEqual(secondRead[0]?.tags, ["reflection", "verification"]);
+});

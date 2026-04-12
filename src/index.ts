@@ -841,12 +841,22 @@ const pluginDefinition = {
       ctx: Record<string, unknown>;
     }): Promise<string[] | null> {
       if (!cfg.heartbeat.enabled) return null;
+      const sessionKey =
+        typeof params.ctx?.sessionKey === "string" ? params.ctx.sessionKey : undefined;
+      const heartbeatNamespace =
+        typeof orchestrator.resolveSelfNamespace === "function"
+          ? orchestrator.resolveSelfNamespace(sessionKey)
+          : undefined;
+      const heartbeatStorage =
+        typeof orchestrator.getStorageForNamespace === "function"
+          ? await orchestrator.getStorageForNamespace(heartbeatNamespace)
+          : orchestrator.storage;
       const runtimeWorkspaceDir = params.ctx?.workspaceDir as string | undefined;
       const journalPath = resolveHeartbeatJournalPath(runtimeWorkspaceDir);
       const entries = await heartbeatSurface.read(journalPath);
       if (entries.length === 0) return null;
       await syncHeartbeatOutcomeLinks({
-        storage: orchestrator.storage,
+        storage: heartbeatStorage,
         entries,
         reindexMemory: async (id) => {
           await orchestrator.reindexMemoryById(id);
@@ -869,7 +879,7 @@ const pluginDefinition = {
       const activeEntry = matchHeartbeatEntry(entries, params.prompt);
       if (!activeEntry) return null;
 
-      const allMemories = await orchestrator.storage.readAllMemories().catch(() => []);
+      const allMemories = await heartbeatStorage.readAllMemories().catch(() => []);
       const previousRuns = allMemories
         .filter((memory) => {
           if (

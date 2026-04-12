@@ -26,23 +26,21 @@ const DIARY_END_MARKER = "<!-- openclaw:dreaming:diary:end -->";
 
 function stableDreamId(params: {
   timestamp: string;
-  title: string | null;
-  body: string;
-  tags: string[];
+  occurrence: number;
 }): string {
   const digest = createHash("sha1")
     .update(
       JSON.stringify({
         timestamp: params.timestamp,
-        title: params.title,
-        body: params.body,
-        tags: params.tags,
+        occurrence: params.occurrence,
       }),
     )
     .digest("hex")
     .slice(0, 12);
   return `dream-${digest}`;
 }
+
+type ParsedDreamEntry = Omit<DreamEntry, "id">;
 
 function normalizeBody(value: string): string {
   return value.replace(/\r\n/g, "\n").trim();
@@ -64,22 +62,30 @@ function buildDreamEntry(params: {
   body: string;
   tags: string[];
   sourceOffset: number;
-}): DreamEntry {
+}): ParsedDreamEntry {
   const title = params.title?.trim() || null;
-  const body = normalizeBody(params.body);
   return {
-    id: stableDreamId({
-      timestamp: params.timestamp.trim(),
-      title,
-      body,
-      tags: params.tags,
-    }),
     timestamp: params.timestamp.trim(),
     title,
-    body,
+    body: normalizeBody(params.body),
     tags: params.tags,
     sourceOffset: params.sourceOffset,
   };
+}
+
+function finalizeDreamEntries(entries: ParsedDreamEntry[]): DreamEntry[] {
+  const seenByTimestamp = new Map<string, number>();
+  return entries.map((entry) => {
+    const occurrence = seenByTimestamp.get(entry.timestamp) ?? 0;
+    seenByTimestamp.set(entry.timestamp, occurrence + 1);
+    return {
+      ...entry,
+      id: stableDreamId({
+        timestamp: entry.timestamp,
+        occurrence,
+      }),
+    };
+  });
 }
 
 function splitDiaryBlocks(content: string): Array<{ block: string; sourceOffset: number }> {
@@ -94,7 +100,7 @@ function splitDiaryBlocks(content: string): Array<{ block: string; sourceOffset:
   return results;
 }
 
-function parseDiaryBlock(block: string, sourceOffset: number): DreamEntry | null {
+function parseDiaryBlock(block: string, sourceOffset: number): ParsedDreamEntry | null {
   const lines = block.split("\n");
   const first = lines.shift()?.trim() ?? "";
   const italicMatch = /^\*(.+)\*$/.exec(first);
@@ -117,8 +123,8 @@ function parseDiaryBlock(block: string, sourceOffset: number): DreamEntry | null
   });
 }
 
-function parseLegacyHeadingEntries(content: string): DreamEntry[] {
-  const entries: DreamEntry[] = [];
+function parseLegacyHeadingEntries(content: string): ParsedDreamEntry[] {
+  const entries: ParsedDreamEntry[] = [];
   const headingRegex = /^##\s+(.+)$/gm;
   const matches = [...content.matchAll(headingRegex)];
   for (let index = 0; index < matches.length; index += 1) {
@@ -156,12 +162,14 @@ function parseDreamEntries(content: string): DreamEntry[] {
   const end = normalized.indexOf(DIARY_END_MARKER);
   if (start >= 0 && end > start) {
     const inner = normalized.slice(start + DIARY_START_MARKER.length, end);
-    return splitDiaryBlocks(inner)
+    return finalizeDreamEntries(
+      splitDiaryBlocks(inner)
       .map(({ block, sourceOffset }) =>
         parseDiaryBlock(block, start + DIARY_START_MARKER.length + sourceOffset))
-      .filter((entry): entry is DreamEntry => entry !== null);
+      .filter((entry): entry is ParsedDreamEntry => entry !== null),
+    );
   }
-  return parseLegacyHeadingEntries(normalized);
+  return finalizeDreamEntries(parseLegacyHeadingEntries(normalized));
 }
 
 function ensureDiary(content: string): string {

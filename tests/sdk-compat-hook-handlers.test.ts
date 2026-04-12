@@ -635,6 +635,108 @@ test("before_prompt_build gates normal recall during heartbeat runs and injects 
   assert.doesNotMatch(String(result?.prependSystemContext ?? ""), /## Memory Context \(Remnic\)/);
 });
 
+test("before_prompt_build reads previous heartbeat runs from the caller namespace", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-namespace-hook-"));
+  await writeFile(
+    path.join(root, "HEARTBEAT.md"),
+    [
+      "# Heartbeat Tasks",
+      "",
+      "## check-test-suite",
+      "",
+      "Every hour, run the test suite and flag any new failures.",
+      "",
+      "Schedule: hourly",
+      "Tags: #ci #tests",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-heartbeat-namespace-test");
+  delete api.registerMemoryPromptSection;
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    namespacePolicies: [
+      {
+        name: "team-alpha",
+        readPrincipals: ["team-alpha"],
+        writePrincipals: ["team-alpha"],
+        includeInRecallByDefault: false,
+      },
+    ],
+    heartbeat: {
+      enabled: true,
+      journalPath: "HEARTBEAT.md",
+      maxPreviousRuns: 5,
+      detectionMode: "runtime-signal",
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => {
+    throw new Error("normal recall should be gated during heartbeat runs");
+  };
+  orchestrator.config.compactionResetEnabled = false;
+
+  await orchestrator.storage.writeMemory(
+    "fact",
+    "Default namespace result should stay isolated from team-alpha.",
+    {
+      source: "test",
+      tags: ["heartbeat", "ci"],
+      structuredAttributes: {
+        relatedHeartbeatSlug: "check-test-suite",
+      },
+    },
+  );
+
+  const teamStorage = await orchestrator.getStorageForNamespace("team-alpha");
+  await teamStorage.writeMemory(
+    "fact",
+    "Team alpha run found the adapter-specific regression.",
+    {
+      source: "test",
+      tags: ["heartbeat", "ci"],
+      structuredAttributes: {
+        relatedHeartbeatSlug: "check-test-suite",
+      },
+    },
+  );
+
+  const result = await beforePromptBuild(
+    {
+      prompt: "Read HEARTBEAT.md if it exists (workspace context). Follow it strictly.",
+    },
+    {
+      sessionKey: "agent:team-alpha:main",
+      agentId: "main",
+      workspaceDir: root,
+      trigger: "heartbeat",
+    },
+  );
+
+  assert.match(String(result?.prependSystemContext ?? ""), /## Previous Runs/);
+  assert.match(
+    String(result?.prependSystemContext ?? ""),
+    /Team alpha run found the adapter-specific regression\./,
+  );
+  assert.doesNotMatch(
+    String(result?.prependSystemContext ?? ""),
+    /Default namespace result should stay isolated from team-alpha\./,
+  );
+});
+
 test("before_prompt_build falls back to heuristic heartbeat detection when runtime signals are absent", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-heuristic-"));
   await writeFile(

@@ -159,6 +159,61 @@ test("syncDreamSurfaceEntries imports dream entries once and updates existing me
   assert.equal(storage.memories.length, 1);
 });
 
+test("syncDreamSurfaceEntries updates an edited dream entry instead of duplicating it when the stable id is unchanged", async () => {
+  const storage = makeStorage();
+  const reindexed: string[] = [];
+
+  const first = await syncDreamSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "dream-stable",
+        timestamp: "2026-04-12T10:00:00Z",
+        title: "First title",
+        body: "Original body.",
+        tags: ["debug"],
+        sourceOffset: 12,
+      },
+    ],
+    journalPath: "/workspace/DREAMS.md",
+    maxEntries: 10,
+    reindexMemory: async (id) => {
+      reindexed.push(id);
+    },
+  });
+
+  assert.deepEqual(first, { created: 1, updated: 0, linked: 0 });
+
+  const second = await syncDreamSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "dream-stable",
+        timestamp: "2026-04-12T10:00:00Z",
+        title: "Refined title",
+        body: "Updated body with clearer wording.",
+        tags: ["debug", "verification"],
+        sourceOffset: 12,
+      },
+    ],
+    journalPath: "/workspace/DREAMS.md",
+    maxEntries: 10,
+    reindexMemory: async (id) => {
+      reindexed.push(id);
+    },
+  });
+
+  assert.deepEqual(second, { created: 0, updated: 1, linked: 0 });
+  assert.equal(storage.memories.length, 1);
+  assert.match(storage.memories[0]?.content ?? "", /Refined title/);
+  assert.match(storage.memories[0]?.content ?? "", /Updated body with clearer wording\./);
+  assert.equal(
+    storage.memories[0]?.frontmatter.structuredAttributes?.remnicDreamEntryId,
+    "dream-stable",
+  );
+  assert.deepEqual(reindexed, ["moment-1", "moment-1"]);
+});
+
 test("syncDreamSurfaceEntries treats maxEntries zero as a hard disable", async () => {
   const storage = makeStorage();
   const reindexed: string[] = [];
