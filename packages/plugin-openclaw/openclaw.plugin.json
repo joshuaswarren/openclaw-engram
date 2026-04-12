@@ -189,7 +189,7 @@
           },
           "maxEntries": {
             "type": "integer",
-            "minimum": 10,
+            "minimum": 0,
             "maximum": 10000,
             "default": 500
           },

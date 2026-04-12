@@ -76,5 +76,11 @@ for (const manifestPath of [
       Object.keys(properties.codexCompat.properties ?? {}).sort(),
       ["compactionFlushMode", "enabled", "fingerprintDedup", "threadIdBufferKeying"],
     );
+
+    assert.equal(
+      properties.dreaming.properties?.maxEntries?.minimum,
+      0,
+      "dreaming.maxEntries must allow 0 so the runtime hard-disable switch remains reachable",
+    );
   });
 }
