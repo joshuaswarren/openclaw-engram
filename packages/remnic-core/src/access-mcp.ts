@@ -719,6 +719,9 @@ export class EngramMcpServer {
         },
       },
       // ── Daily Context Briefing (#370) ───────────────────────────────────
+      // Uses the legacy "engram.*" prefix like every other tool in this array;
+      // withToolAliases (applied via .flatMap below) generates the canonical
+      // "remnic.briefing" alias automatically.
       ...(service.briefingEnabled ? [{
         name: "engram.briefing",
         description: "Generate a daily context briefing by cross-referencing active entities, recent facts, open commitments, and optional calendar events.",

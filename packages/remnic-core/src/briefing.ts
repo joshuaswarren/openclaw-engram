@@ -1056,7 +1056,13 @@ export function buildRecentEntities(
     });
   }
   return scored
-    .sort((a, b) => b.score - a.score || (a.updatedAt > b.updatedAt ? -1 : 1))
+    .sort((a, b) => {
+      const scoreDiff = b.score - a.score;
+      if (scoreDiff !== 0) return scoreDiff;
+      if (a.updatedAt > b.updatedAt) return -1;
+      if (a.updatedAt < b.updatedAt) return 1;
+      return 0;
+    })
     .slice(0, MAX_RECENT_ENTITIES);
 }
 
@@ -1086,7 +1092,15 @@ function buildOpenCommitments(memories: MemoryFile[]): BriefingOpenCommitment[] 
   }
 
   return commitments
-    .sort((a, b) => (a.createdAt && b.createdAt && a.createdAt > b.createdAt ? -1 : 1))
+    .sort((a, b) => {
+      // Missing timestamps sort last (highest comparator value).
+      if (!a.createdAt && !b.createdAt) return 0;
+      if (!a.createdAt) return 1;
+      if (!b.createdAt) return -1;
+      if (a.createdAt > b.createdAt) return -1;
+      if (a.createdAt < b.createdAt) return 1;
+      return 0;
+    })
     .slice(0, MAX_OPEN_COMMITMENTS);
 }
 
