@@ -1,6 +1,6 @@
 import { appendFile, mkdir } from "node:fs/promises";
 import path from "node:path";
-import { collapseWhitespace } from "./whitespace.js";
+import { collapseWhitespace, truncateCodePointSafe } from "./whitespace.js";
 import type {
   ActiveRecallChatType,
   ActiveRecallModelFallbackPolicy,
@@ -123,13 +123,6 @@ function cloneRecallResult(value: ActiveRecallResult): ActiveRecallResult {
     ...value,
     citations: [...value.citations],
   };
-}
-
-function truncateCodePointSafe(value: string, maxChars: number): string {
-  const glyphs = Array.from(value);
-  if (maxChars <= 0) return "";
-  if (glyphs.length <= maxChars) return value;
-  return glyphs.slice(0, Math.max(1, maxChars)).join("").trimEnd();
 }
 
 function buildCacheKey(input: ActiveRecallInput, config: ActiveRecallConfig, queryBundle: string): string {

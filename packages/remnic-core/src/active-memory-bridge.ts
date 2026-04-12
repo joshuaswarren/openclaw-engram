@@ -1,6 +1,6 @@
 import { canReadNamespace, defaultNamespaceForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
 import type { MemoryFile, PluginConfig } from "./types.js";
-import { collapseWhitespace } from "./whitespace.js";
+import { collapseWhitespace, truncateCodePointSafe } from "./whitespace.js";
 
 export interface ActiveMemoryMetadata {
   type?: "fact" | "preference";
@@ -58,9 +58,7 @@ function clampLimit(value: number | undefined): number {
 
 function truncateSnippet(value: string, maxChars: number): string {
   const compact = collapseWhitespace(value);
-  const glyphs = Array.from(compact);
-  if (glyphs.length <= maxChars) return compact;
-  return glyphs.slice(0, Math.max(1, maxChars)).join("").trimEnd();
+  return truncateCodePointSafe(compact, maxChars);
 }
 
 function pickMetadata(value: Record<string, unknown> | undefined): ActiveMemoryMetadata | undefined {
