@@ -584,6 +584,35 @@ export class ContentHashIndex {
 }
 
 // ---------------------------------------------------------------------------
+// Attribute normalization helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Render a structured-attributes map into a stable, canonical string fragment
+ * suitable for appending to enriched memory content before hashing.
+ *
+ * Normalization rules:
+ *   - Keys are trimmed and lowercased (values are trimmed but preserve case)
+ *   - Key-value pairs are sorted alphabetically by normalized key
+ *   - Pairs are joined with "; " and rendered as "key: value"
+ *
+ * Using this helper at BOTH the write path (enrichedContent) and the
+ * dedup-lookup path (dedupContent) guarantees identical output regardless of
+ * the insertion order or casing used by the caller.
+ *
+ * @example
+ *   normalizeAttributePairs({ foo: "bar", BAZ: "qux" })
+ *   // → "baz: qux; foo: bar"
+ */
+export function normalizeAttributePairs(pairs: Record<string, string>): string {
+  return Object.entries(pairs)
+    .map(([k, v]) => [k.trim().toLowerCase(), v.trim()] as [string, string])
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}: ${v}`)
+    .join("; ");
+}
+
+// ---------------------------------------------------------------------------
 // Entity file parsing / serialization (Knowledge Graph v7.0)
 // ---------------------------------------------------------------------------
 
@@ -734,6 +763,9 @@ export class StorageManager {
   private static readonly ARTIFACT_INDEX_CACHE_TTL_MS = 60_000; // 1 minute
   private static readonly artifactWriteVersionByDir = new Map<string, number>();
   private static readonly memoryStatusVersionByDir = new Map<string, number>();
+  // In-process fallback for the cold-write sentinel (used when the disk file
+  // is not accessible).  The canonical source of truth is state/cold-write.log.
+  private static readonly coldWriteVersionByDir = new Map<string, number>();
 
   // Module-level cache for readAllMemories() keyed by base directory.
   // Shared across all StorageManager instances to avoid duplicate I/O when
@@ -746,6 +778,29 @@ export class StorageManager {
   // refresh.  This eliminates the 13-60 s cold-scan penalty that would otherwise
   // block recall requests every 5 minutes on large memory collections (80k+ files).
   private static readonly allMemoriesInFlight = new Map<string, Promise<MemoryFile[]>>();
+
+  // Cache for readAllColdMemories() — keyed by cold root directory path.
+  // Prevents an uncached full-tree directory scan on every structured-attribute
+  // write (Finding UOGi, PR #402 round-6).  The cache is only invalidated when
+  // cold-tier content actually changes (via invalidateColdMemoriesCache), NOT
+  // on every hot-tier write.  It also expires after COLD_SCAN_CACHE_TTL_MS as
+  // a safety net.
+  //
+  // Finding UvUy (PR #402 round-11): cache entries now carry a `coldVersion`
+  // sentinel that is bumped (via a file-size counter in state/cold-write.log)
+  // on every write that modifies cold-tier content.  Before serving a cached
+  // result, readAllColdMemories() reads the sentinel from disk and compares.
+  // If they differ the entry is dropped and the cold tree is re-scanned.  This
+  // makes the cache correct across process boundaries (gateway + CLI): a second
+  // process that writes a new cold memory bumps the sentinel on disk, so the
+  // first process's next readAllColdMemories() sees the change within one call
+  // (rather than waiting up to 30s for TTL expiry).
+  //
+  // After Finding UTsP broadened readAllColdMemories to scan the entire cold/
+  // subtree (not just facts/+corrections/), amortizing this I/O across
+  // back-to-back writes in the same burst is even more important.
+  private static readonly COLD_SCAN_CACHE_TTL_MS = 30_000; // 30 seconds
+  private static readonly coldMemoriesCache = new Map<string, { memories: MemoryFile[]; loadedAt: number; coldVersion: number }>();
 
   // Cache for readQuestions() — avoids serially re-reading tens of thousands of
   // question files on every recall.  60-second TTL is intentionally short so that
@@ -785,14 +840,18 @@ export class StorageManager {
     return path.join(workspaceDir, `IDENTITY.${safeNamespace}.md`);
   }
 
-  private versionFilePath(kind: "memory-status" | "artifact-write"): string {
+  private versionFilePath(kind: "memory-status" | "artifact-write" | "cold-write"): string {
     const fileName =
-      kind === "memory-status" ? ".memory-status-version.log" : ".artifact-write-version.log";
+      kind === "memory-status"
+        ? ".memory-status-version.log"
+        : kind === "artifact-write"
+          ? ".artifact-write-version.log"
+          : ".cold-write-version.log";
     return path.join(this.stateDir, fileName);
   }
 
   private bumpSharedVersion(
-    kind: "memory-status" | "artifact-write",
+    kind: "memory-status" | "artifact-write" | "cold-write",
     fallbackMap: Map<string, number>,
   ): number {
     const filePath = this.versionFilePath(kind);
@@ -810,7 +869,7 @@ export class StorageManager {
   }
 
   private readSharedVersion(
-    kind: "memory-status" | "artifact-write",
+    kind: "memory-status" | "artifact-write" | "cold-write",
     fallbackMap: Map<string, number>,
   ): number {
     const filePath = this.versionFilePath(kind);
@@ -1059,13 +1118,14 @@ export class StorageManager {
       structuredAttributes: options.structuredAttributes,
     };
 
-    // Append structured attributes as searchable suffix so QMD indexes them
+    // Append structured attributes as searchable suffix so QMD indexes them.
+    // normalizeAttributePairs sorts and lowercases keys so the enriched content
+    // is stable regardless of the insertion order or key casing supplied by the
+    // caller — this must stay in sync with the dedupContent built in the
+    // orchestrator's hash-dedup path.
     let enrichedContent = content;
     if (options.structuredAttributes && Object.keys(options.structuredAttributes).length > 0) {
-      const attrLines = Object.entries(options.structuredAttributes)
-        .map(([k, v]) => `${k}: ${v}`)
-        .join("; ");
-      enrichedContent = `${content}\n[Attributes: ${attrLines}]`;
+      enrichedContent = `${content}\n[Attributes: ${normalizeAttributePairs(options.structuredAttributes)}]`;
     }
 
     const sanitized = sanitizeMemoryContent(enrichedContent);
@@ -1429,12 +1489,54 @@ export class StorageManager {
   static clearAllStaticCaches(): void {
     StorageManager.allMemoriesInFlight.clear();
     StorageManager.questionsCache.clear();
+    StorageManager.coldMemoriesCache.clear(); // also wipe the cold-scan TTL cache
   }
 
   /** Cancel any in-flight concurrent read so the next readAllMemories()
-   *  starts a fresh disk scan and sees the just-written data. */
+   *  starts a fresh disk scan and sees the just-written data.
+   *
+   *  Finding UvBq (PR #402 round-11): this method intentionally does NOT
+   *  invalidate the cold-scan cache.  Ordinary hot-tier writes (writeMemory)
+   *  do not change cold-tier content, so evicting the cold cache on every hot
+   *  write was defeating the burst-dedup optimisation — the cold cache was
+   *  cleared before applyTemporalSupersession ran, causing a full cold-tree
+   *  disk scan on every write in a burst.  Cold cache invalidation is handled
+   *  exclusively by invalidateColdMemoriesCache(), which is called only when
+   *  cold content actually changes (hot→cold demotions, writeMemoryFileAtomic
+   *  inside cold/, archiveMemory, etc.). */
   private invalidateAllMemoriesCache(): void {
     StorageManager.allMemoriesInFlight.delete(this.baseDir);
+  }
+
+  /**
+   * Invalidate the cold-scan cache for this storage root and bump the
+   * on-disk cold-version sentinel so that other processes (gateway, CLI) see
+   * the change immediately on their next readAllColdMemories() call.
+   *
+   * Must be called whenever a memory is written INTO the cold tier — hot→cold
+   * demotion, atomic writes inside cold/, archiving a cold memory, etc.
+   * NOT called on ordinary hot-tier writes (those don't change cold contents).
+   *
+   * Finding UvUy (PR #402 round-11): bumping the sentinel here makes the
+   * per-process in-memory cache safe across process boundaries.
+   */
+  private invalidateColdMemoriesCache(): void {
+    const coldRoot = path.join(this.baseDir, "cold");
+    StorageManager.coldMemoriesCache.delete(coldRoot);
+    this.bumpColdWriteVersion();
+  }
+
+  /** Return the current cold-write version counter for this storage root.
+   *  Reads the on-disk sentinel (state/cold-write.log) so it reflects writes
+   *  made by other processes. */
+  private readColdWriteVersion(): number {
+    return this.readSharedVersion("cold-write", StorageManager.coldWriteVersionByDir);
+  }
+
+  /** Bump the on-disk cold-write version sentinel and update the in-process
+   *  fallback map.  Called by invalidateColdMemoriesCache(). */
+  private bumpColdWriteVersion(): void {
+    this.bumpSharedVersion("cold-write", StorageManager.coldWriteVersionByDir);
   }
 
   private normalizeMemoryReadBatchSize(batchSize?: number): number {
@@ -1662,6 +1764,86 @@ export class StorageManager {
   }
 
   /**
+   * Read all memories from the cold tier by scanning the entire cold/ root
+   * tree.  Previously this only scanned cold/facts/ and cold/corrections/, but
+   * structuredAttributes can appear on any MemoryCategory (preference, decision,
+   * entity, etc.).  Although buildTierMemoryPath currently routes all
+   * non-correction, non-artifact memories to cold/facts/, scanning the full
+   * coldRoot ensures correctness if that routing ever changes and guards against
+   * files placed in unexpected subdirectories during manual operations or future
+   * refactors.
+   *
+   * Broadened in PR #402 round-6 (Finding UTsP): scanning only facts/ and
+   * corrections/ was a narrower-than-necessary subset of the cold directory
+   * tree.  Correctness trumps the minor performance difference — cold scans
+   * already happen at most once per supersession write.
+   *
+   * Used by applyTemporalSupersession so that memories already demoted to
+   * cold/ can still be marked superseded when a newer hot fact arrives.
+   *
+   * Cached with a TTL (Finding UOGi, PR #402 round-6): back-to-back
+   * structured-attribute writes in the same burst reuse the cached result
+   * instead of re-scanning the cold tree on every call.  The cache is
+   * invalidated whenever a write calls invalidateAllMemoriesCache() (which
+   * covers any hot→cold demotion that changes cold-tier contents) and
+   * expires after COLD_SCAN_CACHE_TTL_MS as a safety net.
+   */
+  async readAllColdMemories(): Promise<MemoryFile[]> {
+    const coldRoot = this.resolveTierRootDir("cold");
+
+    // Read the on-disk cold-version sentinel BEFORE checking the cache so that
+    // writes made by other processes (gateway + CLI) are detected immediately.
+    // Finding UvUy (PR #402 round-11): without this check the cache served
+    // stale data for up to 30s when another process wrote a new cold memory.
+    const currentColdVersion = this.readColdWriteVersion();
+
+    // Return cached result if still valid by both TTL and sentinel version.
+    const cached = StorageManager.coldMemoriesCache.get(coldRoot);
+    if (
+      cached &&
+      Date.now() - cached.loadedAt < StorageManager.COLD_SCAN_CACHE_TTL_MS &&
+      cached.coldVersion === currentColdVersion
+    ) {
+      return cached.memories;
+    }
+
+    const filePaths: string[] = [];
+
+    const collectPaths = async (dir: string) => {
+      try {
+        const entries = await readdir(dir, { withFileTypes: true });
+        const subdirs: string[] = [];
+        for (const entry of entries) {
+          const fullPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            subdirs.push(fullPath);
+          } else if (entry.name.endsWith(".md")) {
+            filePaths.push(fullPath);
+          }
+        }
+        for (const subdir of subdirs) {
+          await collectPaths(subdir);
+        }
+      } catch {
+        // Directory does not exist yet — cold tier may be empty.
+      }
+    };
+
+    // Scan the entire cold root so that memories in any subdirectory (facts/,
+    // corrections/, artifacts/, or any future category-specific subdirectory)
+    // are included.  This is broader than the previous facts/+corrections/ scan
+    // and ensures that any memory with structuredAttributes is found regardless
+    // of which category it was written with.
+    await collectPaths(coldRoot);
+    const memories = await this.readParsedMemoriesFromPaths(filePaths, 50);
+
+    // Store in cache with the sentinel version captured above so that any
+    // subsequent cold-version bump (by this or another process) invalidates it.
+    StorageManager.coldMemoriesCache.set(coldRoot, { memories, loadedAt: Date.now(), coldVersion: currentColdVersion });
+    return memories;
+  }
+
+  /**
    * Read archived memory markdown files under archive/.
    * Used by long-term recall fallback when hot recall has no hits.
    */
@@ -1853,6 +2035,11 @@ export class StorageManager {
 
     await this.moveMemoryToPath(memory, targetPath);
     this.invalidateAllMemoriesCache();
+    // If moving to cold, also invalidate the cold-scan cache so the next
+    // readAllColdMemories() call sees the newly-demoted file (Finding UOGi fix).
+    if (targetTier === "cold") {
+      this.invalidateColdMemoriesCache();
+    }
     this.bumpMemoryStatusVersion();
     return { changed: true, targetPath };
   }
@@ -2076,6 +2263,12 @@ export class StorageManager {
     const fileContent = `${serializeFrontmatter(updated)}\n\n${memory.content}\n`;
     await writeFile(memory.path, fileContent, "utf-8");
     this.invalidateAllMemoriesCache();
+    // If the target file lives in cold/, bump the cold-version sentinel so
+    // other processes detect the change on their next readAllColdMemories()
+    // call (Finding UvUy fix).
+    if (memory.path.includes(`${path.sep}cold${path.sep}`)) {
+      this.invalidateColdMemoriesCache();
+    }
     await this.appendGeneratedMemoryLifecycleEventFailOpen(
       "storage.writeMemoryFrontmatter",
       {

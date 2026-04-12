@@ -21,6 +21,7 @@ Remnic Core is the engine that powers persistent memory across AI agent sessions
 - **Trust zones** -- namespace isolation and access control for multi-agent setups
 - **Entity tracking** -- people, projects, tools, and their relationships
 - **Consolidation** -- periodic merging, deduplication, and summarization
+- **Temporal supersession** -- when a new fact writes a conflicting value for the same `entityRef + structuredAttribute` key, the older fact is marked `status: "superseded"` and excluded from recall by default. Opt in to audit/history via `temporalSupersessionIncludeInRecall: true`. Controlled by `temporalSupersessionEnabled` (default `true`). See issue #375.
 
 ## Usage
 
