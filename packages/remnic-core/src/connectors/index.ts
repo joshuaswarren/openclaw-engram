@@ -1430,13 +1430,15 @@ export function removeConnector(connectorId: string): RemoveResult {
   // Non-fatal: if the token store is read-only or missing, connector removal
   // should still succeed. Stale tokens will be rejected by the daemon when the
   // token file is later accessible.
+  const notes: string[] = [];
   try {
     revokeToken(connectorId);
-  } catch {
-    // Best-effort: log nothing here; caller sees the config removal succeed.
+  } catch (revokeErr) {
+    // Surface the failure so callers know the token was not cleaned up.
+    // The connector config has already been removed at this point.
+    const revokeMsg = revokeErr instanceof Error ? revokeErr.message : String(revokeErr);
+    notes.push(`Warning: token revocation failed — ${revokeMsg}. The token for ${connectorId} may still be present in tokens.json.`);
   }
-
-  const notes: string[] = [];
 
   // Hermes-specific: strip the remnic: block from config.yaml.
   // Only attempted after successful file removal so that config.yaml cleanup
@@ -1514,7 +1516,9 @@ function sanitizeHermesProfile(profile: string): string {
 
 function hermesConfigPath(profile: string): string {
   const safeProfile = sanitizeHermesProfile(profile);
-  const profilesRoot = path.resolve(os.homedir(), ".hermes", "profiles");
+  // Use process.env.HOME consistent with getConnectorsDir() and tokens.ts
+  // defaultTokensPath(); fall back to os.homedir() for robustness.
+  const profilesRoot = path.resolve(process.env.HOME ?? os.homedir(), ".hermes", "profiles");
   const cfgPath = path.resolve(profilesRoot, safeProfile, "config.yaml");
   // Defense in depth: ensure the resolved path is still under profilesRoot.
   const rel = path.relative(profilesRoot, cfgPath);
