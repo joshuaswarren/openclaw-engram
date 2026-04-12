@@ -2,6 +2,14 @@
   "id": "openclaw-remnic",
   "kind": "memory",
   "description": "Local semantic memory for OpenClaw. Requires plugins.slots.memory set to this plugin id for hooks to fire.",
+  "supports": {
+    "memorySlot": true,
+    "dreamingSlot": true,
+    "activeMemory": true,
+    "heartbeat": true,
+    "commandsList": true,
+    "beforeReset": true
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
@@ -165,6 +173,426 @@
       "memoryDir": {
         "type": "string",
         "description": "Override memory storage directory"
+      },
+      "dreaming": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "journalPath": {
+            "type": "string",
+            "default": "DREAMS.md"
+          },
+          "maxEntries": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "const": 0
+              },
+              {
+                "type": "integer",
+                "minimum": 10,
+                "maximum": 10000
+              }
+            ],
+            "default": 500
+          },
+          "injectRecentCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 3
+          },
+          "minIntervalMinutes": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 120
+          },
+          "narrativeModel": {
+            "type": "string",
+            "default": ""
+          },
+          "narrativePromptStyle": {
+            "type": "string",
+            "enum": [
+              "reflective",
+              "diary",
+              "analytical"
+            ],
+            "default": "reflective"
+          },
+          "watchFile": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "heartbeat": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false
+          },
+          "journalPath": {
+            "type": "string",
+            "default": "HEARTBEAT.md"
+          },
+          "maxPreviousRuns": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 5
+          },
+          "watchFile": {
+            "type": "boolean",
+            "default": true
+          },
+          "detectionMode": {
+            "type": "string",
+            "enum": [
+              "runtime-signal",
+              "heuristic",
+              "auto"
+            ],
+            "default": "auto"
+          },
+          "gateExtractionDuringHeartbeat": {
+            "type": "boolean",
+            "default": true
+          }
+        }
+      },
+      "slotBehavior": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "requireExclusiveMemorySlot": {
+            "type": "boolean",
+            "default": true
+          },
+          "onSlotMismatch": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warn",
+              "silent"
+            ],
+            "default": "error"
+          }
+        }
+      },
+      "beforeResetTimeoutMs": {
+        "type": "integer",
+        "minimum": 100,
+        "maximum": 30000,
+        "default": 2000,
+        "description": "Maximum time to wait for a reset-triggered flush before returning control to OpenClaw."
+      },
+      "flushOnResetEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Flush buffered turns through extraction when OpenClaw resets a session."
+      },
+      "commandsListEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Advertise Remnic slash-command descriptors through the commands.list runtime surface."
+      },
+      "openclawToolsEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Register the OpenClaw memory.search and memory.get tool adapters."
+      },
+      "openclawToolSnippetMaxChars": {
+        "type": "integer",
+        "minimum": 80,
+        "maximum": 4000,
+        "default": 600,
+        "description": "Maximum snippet size returned by the OpenClaw memory tool adapters."
+      },
+      "sessionTogglesEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable per-session recall toggle state for OpenClaw runtime surfaces."
+      },
+      "verboseRecallVisibility": {
+        "type": "boolean",
+        "default": true,
+        "description": "Allow verbose recall headers to surface runtime recall diagnostics in prompts."
+      },
+      "recallTranscriptsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Write JSONL recall audit transcripts for runtime-surface injections."
+      },
+      "recallTranscriptRetentionDays": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 365,
+        "default": 30,
+        "description": "Days of runtime recall audit transcripts to retain before pruning."
+      },
+      "respectBundledActiveMemoryToggle": {
+        "type": "boolean",
+        "default": true,
+        "description": "Honor the bundled active-memory session toggle file when resolving Remnic recall toggles."
+      },
+      "activeRecallEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the OpenClaw active-recall prompt surface."
+      },
+      "activeRecallAgents": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Optional allowlist of OpenClaw agent ids that may use active recall."
+      },
+      "activeRecallAllowedChatTypes": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "direct",
+            "group",
+            "channel"
+          ]
+        },
+        "default": [
+          "direct",
+          "group",
+          "channel"
+        ],
+        "description": "OpenClaw chat types eligible for active recall."
+      },
+      "activeRecallQueryMode": {
+        "type": "string",
+        "enum": [
+          "recent",
+          "message",
+          "full"
+        ],
+        "default": "recent",
+        "description": "How much recent OpenClaw conversation context is fed into the active-recall query builder."
+      },
+      "activeRecallPromptStyle": {
+        "type": "string",
+        "enum": [
+          "balanced",
+          "strict",
+          "contextual",
+          "recall-heavy",
+          "precision-heavy",
+          "preference-only"
+        ],
+        "default": "balanced",
+        "description": "Prompt assembly style for the active-recall surface."
+      },
+      "activeRecallPromptOverride": {
+        "type": "string",
+        "description": "Optional full prompt override for the active-recall surface."
+      },
+      "activeRecallPromptAppend": {
+        "type": "string",
+        "description": "Optional prompt suffix appended to the active-recall system prompt."
+      },
+      "activeRecallMaxSummaryChars": {
+        "type": "integer",
+        "minimum": 40,
+        "maximum": 1000,
+        "default": 220,
+        "description": "Maximum summary size produced by the active-recall surface."
+      },
+      "activeRecallRecentUserTurns": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 4,
+        "default": 2,
+        "description": "How many recent user turns to include in the active-recall query context."
+      },
+      "activeRecallRecentAssistantTurns": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 3,
+        "default": 1,
+        "description": "How many recent assistant turns to include in the active-recall query context."
+      },
+      "activeRecallRecentUserChars": {
+        "type": "integer",
+        "minimum": 40,
+        "maximum": 1000,
+        "default": 600,
+        "description": "Per-user-turn character cap for active-recall context assembly."
+      },
+      "activeRecallRecentAssistantChars": {
+        "type": "integer",
+        "minimum": 40,
+        "maximum": 1000,
+        "default": 400,
+        "description": "Per-assistant-turn character cap for active-recall context assembly."
+      },
+      "activeRecallThinking": {
+        "type": "string",
+        "enum": [
+          "off",
+          "minimal",
+          "low",
+          "medium",
+          "high",
+          "xhigh",
+          "adaptive"
+        ],
+        "default": "low",
+        "description": "Reasoning effort used by the active-recall engine."
+      },
+      "activeRecallTimeoutMs": {
+        "type": "integer",
+        "minimum": 250,
+        "default": 15000,
+        "description": "Timeout for an active-recall run."
+      },
+      "activeRecallCacheTtlMs": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 120000,
+        "default": 15000,
+        "description": "Cache TTL for active-recall summaries; 0 disables the cache."
+      },
+      "activeRecallModel": {
+        "type": "string",
+        "description": "Optional model override for active recall."
+      },
+      "activeRecallModelFallbackPolicy": {
+        "type": "string",
+        "enum": [
+          "default-remote",
+          "resolved-only"
+        ],
+        "default": "default-remote",
+        "description": "How active recall falls back when an explicit model cannot be resolved."
+      },
+      "activeRecallPersistTranscripts": {
+        "type": "boolean",
+        "default": false,
+        "description": "Persist full active-recall request and response transcripts."
+      },
+      "activeRecallTranscriptDir": {
+        "type": "string",
+        "default": "active-recall",
+        "description": "Memory-relative directory for active-recall transcripts."
+      },
+      "activeRecallEntityGraphDepth": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 3,
+        "default": 1,
+        "description": "Entity-graph traversal depth used by active recall."
+      },
+      "activeRecallIncludeCausalTrajectories": {
+        "type": "boolean",
+        "default": false,
+        "description": "Include causal trajectory recall evidence in active-recall summaries."
+      },
+      "activeRecallIncludeDaySummary": {
+        "type": "boolean",
+        "default": false,
+        "description": "Include the latest day summary in active-recall context."
+      },
+      "activeRecallAttachRecallExplain": {
+        "type": "boolean",
+        "default": false,
+        "description": "Attach recall explain output to active-recall diagnostics."
+      },
+      "activeRecallAllowChainedActiveMemory": {
+        "type": "boolean",
+        "default": false,
+        "description": "Allow active recall to chain into the bundled active-memory surface."
+      },
+      "codex": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "installExtension": {
+            "type": "boolean",
+            "default": true,
+            "description": "Install the Remnic Codex memory extension during Codex connector setup."
+          },
+          "codexHome": {
+            "type": ["string", "null"],
+            "default": null,
+            "description": "Optional Codex home directory override used for connector install and materialization."
+          }
+        }
+      },
+      "codexMaterializeMemories": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable Codex native memory materialization into the Codex memories directory."
+      },
+      "codexMaterializeNamespace": {
+        "type": "string",
+        "default": "auto",
+        "description": "Namespace to materialize for Codex. \"auto\" derives the namespace from the active connector context."
+      },
+      "codexMaterializeMaxSummaryTokens": {
+        "type": "number",
+        "minimum": 0,
+        "default": 4500,
+        "description": "Whitespace-token cap for Codex memory summary materialization."
+      },
+      "codexMaterializeRolloutRetentionDays": {
+        "type": "number",
+        "minimum": 0,
+        "default": 30,
+        "description": "Retention window in days for Codex rollout materialization artifacts."
+      },
+      "codexMaterializeOnConsolidation": {
+        "type": "boolean",
+        "default": true,
+        "description": "Run Codex memory materialization after semantic or causal consolidation completes."
+      },
+      "codexMaterializeOnSessionEnd": {
+        "type": "boolean",
+        "default": true,
+        "description": "Run Codex memory materialization from the Codex session-end hook."
+      },
+      "codexCompat": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "threadIdBufferKeying": {
+            "type": "boolean",
+            "default": true
+          },
+          "compactionFlushMode": {
+            "type": "string",
+            "enum": [
+              "signal",
+              "heuristic",
+              "auto"
+            ],
+            "default": "auto"
+          },
+          "fingerprintDedup": {
+            "type": "boolean",
+            "default": true
+          }
+        }
       },
       "debug": {
         "type": "boolean",
@@ -1531,6 +1959,16 @@
         "enum": ["trivial", "low", "normal", "high", "critical"],
         "default": "low",
         "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
+      },
+      "inlineSourceAttributionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable inline source attribution markers on persisted facts for downstream provenance tracking."
+      },
+      "inlineSourceAttributionFormat": {
+        "type": "string",
+        "default": "[Source: agent={agent}, session={sessionId}, ts={ts}]",
+        "description": "Template used when inline source attribution is enabled."
       },
       "extractionMinUserTurns": {
         "type": "number",

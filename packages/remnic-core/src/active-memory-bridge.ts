@@ -1,0 +1,217 @@
+import { canReadNamespace, defaultNamespaceForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
+import type { MemoryFile, PluginConfig } from "./types.js";
+import { collapseWhitespace, truncateCodePointSafe } from "./whitespace.js";
+
+export interface ActiveMemoryMetadata {
+  type?: "fact" | "preference";
+  topic?: string;
+  updatedAt?: string;
+  sourceUri?: string;
+}
+
+export interface ActiveMemorySearchResult {
+  id: string;
+  score: number;
+  text: string;
+  metadata?: ActiveMemoryMetadata;
+}
+
+export interface ActiveMemorySearchOutput {
+  results: ActiveMemorySearchResult[];
+  truncated: boolean;
+}
+
+export interface ActiveMemoryGetOutput {
+  id?: string;
+  text?: string;
+  metadata?: ActiveMemoryMetadata;
+  error?: "not_found";
+}
+
+export interface ActiveMemoryRecallParams {
+  query: string;
+  limit?: number;
+  sessionKey: string;
+  filters?: Record<string, unknown>;
+  snippetMaxChars?: number;
+}
+
+interface ActiveMemoryScopedOrchestrator {
+  config?: PluginConfig;
+  resolvePrincipal?: (sessionKey?: string) => string;
+  resolveSelfNamespace?: (sessionKey?: string) => string;
+}
+
+type ActiveMemorySearchCandidate = {
+  id?: string;
+  score?: number;
+  snippet?: string;
+  text?: string;
+  path?: string;
+  metadata?: Record<string, unknown>;
+};
+
+function isArtifactPath(value: string | undefined): boolean {
+  return typeof value === "string" && /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(value);
+}
+
+function clampLimit(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 8;
+  return Math.max(1, Math.min(50, Math.floor(value)));
+}
+
+function truncateSnippet(value: string, maxChars: number): string {
+  const compact = collapseWhitespace(value);
+  return truncateCodePointSafe(compact, maxChars);
+}
+
+function pickMetadata(value: Record<string, unknown> | undefined): ActiveMemoryMetadata | undefined {
+  if (!value) return undefined;
+  const metadata: ActiveMemoryMetadata = {};
+  if (typeof value.type === "string") metadata.type = value.type as ActiveMemoryMetadata["type"];
+  if (typeof value.topic === "string") metadata.topic = value.topic;
+  if (typeof value.updatedAt === "string") metadata.updatedAt = value.updatedAt;
+  if (typeof value.sourceUri === "string") metadata.sourceUri = value.sourceUri;
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function resolveActiveMemoryNamespace(
+  orchestrator: ActiveMemoryScopedOrchestrator,
+  sessionKey: string | undefined,
+  requestedNamespace: string | undefined,
+): string {
+  const explicitNamespace =
+    typeof requestedNamespace === "string" && requestedNamespace.trim().length > 0
+      ? requestedNamespace.trim()
+      : undefined;
+  const config = orchestrator.config;
+
+  if (config?.namespacesEnabled === false) {
+    if (typeof orchestrator.resolveSelfNamespace === "function") {
+      return orchestrator.resolveSelfNamespace(sessionKey);
+    }
+    return "default";
+  }
+
+  if (!config) {
+    if (explicitNamespace) return explicitNamespace;
+    if (typeof orchestrator.resolveSelfNamespace === "function") {
+      return orchestrator.resolveSelfNamespace(sessionKey);
+    }
+    return "default";
+  }
+
+  const principal =
+    typeof orchestrator.resolvePrincipal === "function"
+      ? orchestrator.resolvePrincipal(sessionKey)
+      : resolvePrincipal(sessionKey, config);
+  if (explicitNamespace) {
+    if (!canReadNamespace(principal, explicitNamespace, config)) {
+      throw new Error(`namespace ${explicitNamespace} is not readable for principal ${principal}`);
+    }
+    return explicitNamespace;
+  }
+  if (typeof orchestrator.resolveSelfNamespace === "function") {
+    return orchestrator.resolveSelfNamespace(sessionKey);
+  }
+  return defaultNamespaceForPrincipal(principal, config);
+}
+
+export async function recallForActiveMemory(
+  orchestrator: {
+    config?: PluginConfig;
+    resolvePrincipal?: (sessionKey?: string) => string;
+    resolveSelfNamespace?: (sessionKey?: string) => string;
+    searchAcrossNamespaces: (params: {
+      query: string;
+      maxResults?: number;
+      namespaces?: string[];
+      mode?: string;
+    }) => Promise<ActiveMemorySearchCandidate[]>;
+  },
+  params: ActiveMemoryRecallParams,
+): Promise<ActiveMemorySearchOutput> {
+  const limit = clampLimit(params.limit);
+  const requestedResults = Math.min(200, limit + 20);
+  const snippetMaxChars =
+    typeof params.snippetMaxChars === "number" && Number.isFinite(params.snippetMaxChars)
+      ? Math.max(1, Math.min(4000, Math.floor(params.snippetMaxChars)))
+      : 600;
+  const namespace = resolveActiveMemoryNamespace(
+    orchestrator,
+    params.sessionKey,
+    typeof params.filters?.namespace === "string" ? params.filters.namespace : undefined,
+  );
+
+  const raw = await orchestrator.searchAcrossNamespaces({
+    query: params.query,
+    maxResults: requestedResults,
+    namespaces: [namespace],
+    mode: "search",
+  });
+  const visible = raw.filter((candidate) => !isArtifactPath(candidate.path));
+
+  return {
+    results: visible.slice(0, limit).map((candidate, index) => ({
+      id: candidate.id ?? candidate.path ?? `memory-${index + 1}`,
+      score: typeof candidate.score === "number" ? candidate.score : 0,
+      text: truncateSnippet(candidate.snippet ?? candidate.text ?? "", snippetMaxChars),
+      metadata: pickMetadata(candidate.metadata),
+    })),
+    truncated: visible.length > limit,
+  };
+}
+
+function buildActiveMemoryMetadataFromMemory(memory: MemoryFile): ActiveMemoryMetadata | undefined {
+  const metadata: ActiveMemoryMetadata = {};
+  if (typeof memory.frontmatter.category === "string") {
+    const category = memory.frontmatter.category;
+    if (category === "fact" || category === "preference") {
+      metadata.type = category;
+    }
+  }
+  if (Array.isArray(memory.frontmatter.tags) && memory.frontmatter.tags.length > 0) {
+    metadata.topic = memory.frontmatter.tags[0];
+  }
+  if (typeof memory.frontmatter.updated === "string") metadata.updatedAt = memory.frontmatter.updated;
+  if (typeof memory.frontmatter.source === "string") metadata.sourceUri = memory.frontmatter.source;
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+export async function getMemoryForActiveMemory(
+  orchestrator: {
+    config?: PluginConfig;
+    resolvePrincipal?: (sessionKey?: string) => string;
+    resolveSelfNamespace?: (sessionKey?: string) => string;
+    getStorageForNamespace?: (namespace: string) => Promise<{
+      getMemoryById?: (id: string) => Promise<MemoryFile | null>;
+    }>;
+    storage?: {
+      getMemoryById?: (id: string) => Promise<MemoryFile | null>;
+    };
+  },
+  id: string,
+  options: {
+    namespace?: string;
+    sessionKey?: string;
+  } = {},
+): Promise<ActiveMemoryGetOutput> {
+  const namespace = resolveActiveMemoryNamespace(
+    orchestrator,
+    options.sessionKey,
+    options.namespace,
+  );
+
+  const storage =
+    typeof orchestrator.getStorageForNamespace === "function"
+      ? await orchestrator.getStorageForNamespace(namespace)
+      : orchestrator.storage;
+
+  const memory = await storage?.getMemoryById?.(id);
+  if (!memory) return { error: "not_found" };
+  return {
+    id,
+    text: collapseWhitespace(memory.content),
+    metadata: buildActiveMemoryMetadataFromMemory(memory),
+  };
+}

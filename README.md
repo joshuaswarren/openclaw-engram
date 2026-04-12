@@ -36,7 +36,9 @@ OpenClaw's built-in memory works for simple cases, but it doesn't scale. It lack
 
 Remnic is an open-source, local-first memory system that replaces OpenClaw's default memory with something much more capable — while keeping everything on your machine. It watches your agent conversations, extracts durable knowledge, and injects the right memories back at the start of every session. Use OpenAI or a **local LLM** (Ollama, LM Studio, etc.) for extraction — your choice.
 
-Remnic is the **universal memory layer for AI agents**. It works natively with **[OpenClaw](https://github.com/openclaw/openclaw)**, **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)**, **[Codex CLI](https://github.com/openai/codex)**, **[Hermes Agent](https://github.com/hermes-agent/hermes)**, and any **MCP-compatible client** (Replit, Cursor, etc.). When you tell any agent a preference, every agent knows it — they share one memory store.
+Remnic is the **universal memory layer for AI agents**. It works natively with **[OpenClaw](https://github.com/openclaw/openclaw)**, **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)**, **[Codex CLI](https://github.com/openai/codex)**, **[Hermes Agent](https://github.com/NousResearch/hermes-agent)**, and any **MCP-compatible client** (Replit, Cursor, etc.). When you tell any agent a preference, every agent knows it — they share one memory store.
+
+Architecture rule: standalone Remnic is first-class. `@remnic/core`, `@remnic/server`, and `@remnic/cli` own the memory engine and must stay host-agnostic. OpenClaw, Hermes, Codex, Claude Code, and future integrations are thin adapters over that shared core, and adapter work should always follow the host's current upstream SDK and documentation instead of recreating host-native behavior inside Remnic.
 
 | Without Remnic | With Remnic |
 |---|---|

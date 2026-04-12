@@ -1,5 +1,6 @@
 export { loadDaySummaryPrompt } from "./day-summary.js";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
+import OpenAI from "openai";
 import { createRequire } from "node:module";
 import { parseConfig } from "./config.js";
 import { initLogger } from "./logger.js";
@@ -36,7 +37,31 @@ import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import { migrateFromEngram } from "./migrate/from-engram.js";
 import { cleanUserMessage } from "./user-message-cleaning.js";
 import { listRemnicPublicArtifacts } from "../packages/plugin-openclaw/src/public-artifacts.js";
+import {
+  buildMemoryGetTool,
+  buildMemorySearchTool,
+} from "../packages/plugin-openclaw/src/openclaw-tools/index.js";
+import {
+  matchesDelimitedPhrase,
+  parseDreamNarrativeResponse,
+  planDreamEntryFromConsolidation,
+  syncDreamSurfaceEntries,
+  syncHeartbeatOutcomeLinks,
+  syncHeartbeatSurfaceEntries,
+} from "../packages/plugin-openclaw/src/runtime-surfaces.js";
+import {
+  forEachRuntimeSurfaceStorage,
+} from "../packages/plugin-openclaw/src/runtime-surface-namespaces.js";
+import { buildSessionCommandDescriptors } from "../packages/plugin-openclaw/src/session-command-descriptors.js";
+import { validateSlotSelection } from "../packages/plugin-openclaw/src/slot-validator.js";
 import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src/plugin-id.js";
+import { createFileToggleStore } from "../packages/remnic-core/src/session-toggles.js";
+import { appendRecallAuditEntry, pruneRecallAuditEntries } from "../packages/remnic-core/src/recall-audit.js";
+import { createActiveRecallEngine } from "../packages/remnic-core/src/active-recall.js";
+import { planRecallMode } from "../packages/remnic-core/src/intent.js";
+import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
+import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
+import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
 
 /**
  * Per-plugin runtime state is scoped by `serviceId` so a single process can host
@@ -67,6 +92,8 @@ const ENGRAM_MIGRATION_PROMISE = "__openclawEngramMigrationPromise";
  * global guard ensures CLI registration happens exactly once per process.
  */
 const CLI_REGISTERED_GUARD = "__openclawEngramCliRegistered";
+const SESSION_COMMANDS_REGISTERED_GUARD =
+  "__openclawEngramSessionCommandsRegistered";
 
 /**
  * Process-global count of Remnic plugin services whose `start()` has
@@ -149,6 +176,27 @@ function loadPluginConfigFromFile(pluginId?: string): Record<string, unknown> | 
     | undefined;
 }
 
+function loadRawConfigFromFile(): Record<string, unknown> | undefined {
+  try {
+    const explicitConfigPath =
+      readEnvVar("OPENCLAW_ENGRAM_CONFIG_PATH") ||
+      readEnvVar("OPENCLAW_CONFIG_PATH");
+    const homeDir = resolveHomeDir();
+    const configPath =
+      explicitConfigPath && explicitConfigPath.length > 0
+        ? explicitConfigPath
+        : path.join(homeDir, ".openclaw", "openclaw.json");
+    const content = readFileSync(configPath, "utf-8");
+    const config = JSON.parse(content);
+    return config && typeof config === "object"
+      ? (config as Record<string, unknown>)
+      : undefined;
+  } catch (err) {
+    log.warn(`Failed to load raw OpenClaw config from file: ${err}`);
+    return undefined;
+  }
+}
+
 /**
  * Read the plugin hooks policy from both the API config and the file-backed
  * config, since the gateway may not pass the full config to the plugin.
@@ -194,6 +242,90 @@ function shouldSkipRecallForSession(
       return false;
     }
   });
+}
+
+function isVerboseRecallRequested(
+  event: Record<string, unknown>,
+  ctx: Record<string, unknown>,
+): boolean {
+  const runtime = ctx.runtime as Record<string, unknown> | undefined;
+  return (
+    ctx.verbose === true ||
+    event.verbose === true ||
+    runtime?.verbose === true ||
+    (ctx.metadata as Record<string, unknown> | undefined)?.verbose === true
+  );
+}
+
+function summarizeRecallTextForStatus(value: string | null, maxChars: number = 220): string | null {
+  if (!value) return null;
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) return null;
+  if (compact.length <= maxChars) return compact;
+  return `${compact.slice(0, Math.max(1, maxChars)).trimEnd()}...`;
+}
+
+function buildVerboseRecallHeader(params: {
+  sessionKey: string;
+  agentId: string;
+  latencyMs?: number;
+  memoryIds: string[];
+  plannerMode?: string;
+  toggleState: "enabled" | "disabled-primary" | "disabled-secondary";
+  summary: string | null;
+}): string[] {
+  const status =
+    params.toggleState === "enabled"
+      ? "enabled"
+      : params.toggleState === "disabled-secondary"
+        ? "disabled by bundled active-memory"
+        : "disabled by Remnic session toggle";
+  const summary = params.summary ?? "NONE - no relevant memory";
+  return [
+    `━━━ Remnic recall (${params.sessionKey}, agent ${params.agentId}) ━━━`,
+    `Status: ${status} · Planner: ${params.plannerMode ?? "unknown"} · Memories: ${params.memoryIds.length} · Latency: ${params.latencyMs ?? "?"}ms`,
+    summary,
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    "",
+  ];
+}
+
+function resolveActiveRecallChatType(
+  ctx: Record<string, unknown>,
+): "direct" | "group" | "channel" {
+  const provider = String(ctx.messageProvider ?? "").toLowerCase();
+  if (
+    provider.includes("discord") ||
+    provider.includes("slack") ||
+    provider.includes("channel")
+  ) {
+    return ctx.channelId ? "channel" : "group";
+  }
+  return "direct";
+}
+
+function extractRecentTurnsForActiveRecall(
+  messages: Array<Record<string, unknown>> | undefined,
+): Array<{ role: "user" | "assistant"; content: string }> {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .map((message) => {
+      const role =
+        message.role === "user" || message.role === "assistant"
+          ? message.role
+          : null;
+      const content = extractTextContent(message);
+      if (!role || content.length === 0) return null;
+      return { role, content };
+    })
+    .filter(
+      (
+        value,
+      ): value is {
+        role: "user" | "assistant";
+        content: string;
+      } => value !== null,
+    );
 }
 
 /**
@@ -276,8 +408,8 @@ const pluginDefinition = {
     // Pass serviceId so shim installs prefer their own entry (#403).
     const fileConfig = loadPluginConfigFromFile(serviceId);
     const cfg = parseConfig({
-      ...api.pluginConfig,
-      ...fileConfig, // Merge file config as workaround
+      ...fileConfig, // File-backed fallback for runtimes that omit pluginConfig
+      ...api.pluginConfig, // Runtime/plugin-supplied config must win
       gatewayConfig: api.config, // Pass gateway config for fallback AI
     });
     // Re-initialize with correct debug setting
@@ -288,6 +420,23 @@ const pluginDefinition = {
     log.debug(
       `init llm routing (modelSource=${cfg.modelSource}, localLlmEnabled=${cfg.localLlmEnabled}${cfg.localLlmFastEnabled ? `, fastLlm=${cfg.localLlmFastModel || "(primary)"}` : ""})`,
     );
+    const rawRuntimeConfig =
+      api.config && typeof api.config === "object"
+        ? (api.config as Record<string, unknown>)
+        : loadRawConfigFromFile();
+    const slotValidationMode = validateSlotSelection({
+      pluginId: serviceId,
+      runtimeConfig: rawRuntimeConfig,
+      requireExclusive: cfg.slotBehavior.requireExclusiveMemorySlot,
+      onMismatch: cfg.slotBehavior.onSlotMismatch,
+      logger: api.logger,
+    });
+    const passiveMode = slotValidationMode === "passive";
+    if (passiveMode) {
+      log.info(
+        `[remnic] memory slot not assigned to ${serviceId}; running passively`,
+      );
+    }
 
     // Singleton guard: the gateway calls register() once per agent (each with a
     // different plugin registry). Reuse the orchestrator (heavy object) but always
@@ -364,6 +513,250 @@ const pluginDefinition = {
           });
     (globalThis as any)[keys.ACCESS_HTTP_SERVER] = accessHttpServer;
 
+    const pluginStateDir = path.join(cfg.memoryDir, "state", "plugins", serviceId);
+    const togglePrimaryPath = path.join(pluginStateDir, "session-toggles.json");
+    const toggleSecondaryPath = cfg.respectBundledActiveMemoryToggle
+      ? path.join(cfg.memoryDir, "state", "plugins", "active-memory", "session-toggles.json")
+      : undefined;
+    const sessionToggleStore = createFileToggleStore(togglePrimaryPath, {
+      secondaryReadOnlyPath: toggleSecondaryPath,
+    });
+    const dreamsSurface = createDreamsSurface();
+    const heartbeatSurface = createHeartbeatSurface();
+    const dreamNarrativeClient = cfg.openaiApiKey
+      ? new OpenAI({
+          apiKey: cfg.openaiApiKey,
+          ...(cfg.openaiBaseUrl ? { baseURL: cfg.openaiBaseUrl } : {}),
+        })
+      : null;
+    let stopDreamWatcher: (() => void) | null = null;
+    let stopHeartbeatWatcher: (() => void) | null = null;
+    let removeDreamingObserver: (() => void) | null = null;
+    let dreamSurfaceSyncChain: Promise<void> = Promise.resolve();
+    let heartbeatSurfaceSyncChain: Promise<void> = Promise.resolve();
+    const recallAuditDir = pluginStateDir;
+    const lastRecallSummaryBySession = new Map<string, string | null>();
+
+    function resolveWorkspaceRoot(runtimeWorkspaceDir?: string): string {
+      return runtimeWorkspaceDir && runtimeWorkspaceDir.trim().length > 0
+        ? runtimeWorkspaceDir
+        : cfg.workspaceDir;
+    }
+
+    function resolveDreamJournalPath(runtimeWorkspaceDir?: string): string {
+      const workspaceRoot = resolveWorkspaceRoot(runtimeWorkspaceDir);
+      return path.isAbsolute(cfg.dreaming.journalPath)
+        ? cfg.dreaming.journalPath
+        : path.join(workspaceRoot, cfg.dreaming.journalPath);
+    }
+
+    function resolveHeartbeatJournalPath(runtimeWorkspaceDir?: string): string {
+      const workspaceRoot = resolveWorkspaceRoot(runtimeWorkspaceDir);
+      return path.isAbsolute(cfg.heartbeat.journalPath)
+        ? cfg.heartbeat.journalPath
+        : path.join(workspaceRoot, cfg.heartbeat.journalPath);
+    }
+
+    function queueDreamSurfaceSync(runtimeWorkspaceDir?: string): Promise<void> {
+      if (!cfg.dreaming.enabled) return Promise.resolve();
+      dreamSurfaceSyncChain = dreamSurfaceSyncChain
+        .catch(() => {})
+        .then(async () => {
+          const journalPath = resolveDreamJournalPath(runtimeWorkspaceDir);
+          const entries = await dreamsSurface.read(journalPath);
+          await forEachRuntimeSurfaceStorage({
+            config: cfg,
+            storage: orchestrator.storage,
+            getStorageForNamespace: (namespace) =>
+              typeof orchestrator.getStorageForNamespace === "function"
+                ? orchestrator.getStorageForNamespace(namespace)
+                : Promise.resolve(orchestrator.storage),
+            work: async (storage) => {
+              await syncDreamSurfaceEntries({
+                storage,
+                entries,
+                journalPath,
+                maxEntries: cfg.dreaming.maxEntries,
+                reindexMemory: async (id) => {
+                  await orchestrator.reindexMemoryById(id, {
+                    storage,
+                  });
+                },
+              });
+            },
+          });
+        });
+      return dreamSurfaceSyncChain;
+    }
+
+    function queueHeartbeatSurfaceSync(runtimeWorkspaceDir?: string): Promise<void> {
+      if (!cfg.heartbeat.enabled) return Promise.resolve();
+      heartbeatSurfaceSyncChain = heartbeatSurfaceSyncChain
+        .catch(() => {})
+        .then(async () => {
+          const journalPath = resolveHeartbeatJournalPath(runtimeWorkspaceDir);
+          const entries = await heartbeatSurface.read(journalPath);
+          if (entries.length === 0) {
+            return;
+          }
+          await forEachRuntimeSurfaceStorage({
+            config: cfg,
+            storage: orchestrator.storage,
+            getStorageForNamespace: (namespace) =>
+              typeof orchestrator.getStorageForNamespace === "function"
+                ? orchestrator.getStorageForNamespace(namespace)
+                : Promise.resolve(orchestrator.storage),
+            work: async (storage) => {
+              await syncHeartbeatSurfaceEntries({
+                storage,
+                entries,
+                journalPath,
+                reindexMemory: async (id) => {
+                  await orchestrator.reindexMemoryById(id, {
+                    storage,
+                  });
+                },
+              });
+              await syncHeartbeatOutcomeLinks({
+                storage,
+                entries,
+                reindexMemory: async (id) => {
+                  await orchestrator.reindexMemoryById(id, {
+                    storage,
+                  });
+                },
+                logger: {
+                  debug: (message) => log.debug(message),
+                },
+              });
+            },
+          });
+        });
+      return heartbeatSurfaceSyncChain;
+    }
+
+    async function maybeAppendDreamFromConsolidation(
+      observation: ConsolidationObservation,
+    ): Promise<void> {
+      if (!cfg.dreaming.enabled) return;
+      if (!dreamNarrativeClient) {
+        log.debug("dreaming narrative skipped: direct OpenAI Responses client unavailable");
+        return;
+      }
+      const journalPath = resolveDreamJournalPath();
+      const existingDreams = await dreamsSurface.read(journalPath);
+      const plan = planDreamEntryFromConsolidation({
+        observation,
+        existingDreams,
+        minIntervalMinutes: cfg.dreaming.minIntervalMinutes,
+      });
+      if (!plan) return;
+
+      const styleInstruction =
+        cfg.dreaming.narrativePromptStyle === "diary"
+          ? "Write like a compact private diary entry."
+          : cfg.dreaming.narrativePromptStyle === "analytical"
+            ? "Write like an analytical retrospective with explicit patterns."
+            : "Write like a reflective narrative that notices patterns and emotional tone.";
+      let rawNarrative = "";
+      try {
+        const response = await dreamNarrativeClient.responses.create({
+          model: cfg.dreaming.narrativeModel ?? cfg.model,
+          instructions:
+            "You write short reflective dream-journal entries for an AI memory system. " +
+            `${styleInstruction} Return exactly this structure:\n` +
+            "Title: <short title>\nTags: #tag #tag\nBody:\n<2-4 concise paragraphs>",
+          input:
+            `The last consolidation spanned ${plan.sessionLikeCount} session-like windows.\n` +
+            `Keep the reflection grounded in the evidence below.\n\n` +
+            plan.memoryContext.join("\n"),
+          temperature: 0.4,
+          max_output_tokens: 400,
+        });
+        rawNarrative =
+          typeof response.output_text === "string"
+            ? response.output_text
+            : JSON.stringify(response.output_text ?? "");
+      } catch (error) {
+        log.warn(`dreaming narrative generation failed: ${String(error)}`);
+        return;
+      }
+      const parsed = parseDreamNarrativeResponse(
+        rawNarrative,
+        plan.suggestedTags,
+      );
+      if (!parsed) return;
+      await dreamsSurface.append(journalPath, {
+        timestamp: plan.timestamp,
+        title: parsed.title,
+        body: parsed.body,
+        tags: parsed.tags,
+      });
+      await queueDreamSurfaceSync();
+    }
+
+    void pruneRecallAuditEntries(
+      recallAuditDir,
+      cfg.recallTranscriptRetentionDays,
+    ).catch((error) => {
+      log.debug(`recall audit prune failed: ${String(error)}`);
+    });
+    const sessionCommandDescriptors = buildSessionCommandDescriptors(serviceId, {
+      toggles: sessionToggleStore,
+      getLastRecall: (sessionKey) => orchestrator.getLastRecall(sessionKey),
+      getLastRecallSummary: (sessionKey) =>
+        lastRecallSummaryBySession.get(sessionKey) ?? null,
+      flushSession: async (sessionKey) => {
+        await orchestrator.flushSession(sessionKey, {
+          reason: "session-command",
+        });
+      },
+    });
+    const activeRecallEngine = createActiveRecallEngine(
+      {
+        recall: async (query, sessionKey) =>
+          cfg.activeRecallAllowChainedActiveMemory
+            ? orchestrator.recall(query, sessionKey)
+            : null,
+        getLastRecallSnapshot: (sessionKey) => orchestrator.getLastRecall(sessionKey),
+        explainLastRecall:
+          cfg.activeRecallAttachRecallExplain === true
+            ? async () =>
+                await orchestrator
+                  .explainLastQmdRecall()
+                  .catch(() => null)
+            : undefined,
+      },
+      {
+        enabled: cfg.activeRecallEnabled,
+        agents: cfg.activeRecallAgents,
+        allowedChatTypes: cfg.activeRecallAllowedChatTypes,
+        queryMode: cfg.activeRecallQueryMode,
+        promptStyle: cfg.activeRecallPromptStyle,
+        promptOverride: cfg.activeRecallPromptOverride,
+        promptAppend: cfg.activeRecallPromptAppend,
+        maxSummaryChars: cfg.activeRecallMaxSummaryChars,
+        recentUserTurns: cfg.activeRecallRecentUserTurns,
+        recentAssistantTurns: cfg.activeRecallRecentAssistantTurns,
+        recentUserChars: cfg.activeRecallRecentUserChars,
+        recentAssistantChars: cfg.activeRecallRecentAssistantChars,
+        thinking: cfg.activeRecallThinking,
+        timeoutMs: cfg.activeRecallTimeoutMs,
+        cacheTtlMs: cfg.activeRecallCacheTtlMs,
+        persistTranscripts: cfg.activeRecallPersistTranscripts,
+        transcriptDir: path.isAbsolute(cfg.activeRecallTranscriptDir)
+          ? cfg.activeRecallTranscriptDir
+          : path.join(pluginStateDir, cfg.activeRecallTranscriptDir),
+        entityGraphDepth: cfg.activeRecallEntityGraphDepth,
+        includeCausalTrajectories: cfg.activeRecallIncludeCausalTrajectories,
+        includeDaySummary: cfg.activeRecallIncludeDaySummary,
+        attachRecallExplain: cfg.activeRecallAttachRecallExplain,
+        modelOverride: cfg.activeRecallModel,
+        modelFallbackPolicy: cfg.activeRecallModelFallbackPolicy,
+      },
+    );
+
+    if (!passiveMode) {
     // ========================================================================
     // HOOK: before_prompt_build / before_agent_start — Inject memory context
     // ========================================================================
@@ -416,6 +809,176 @@ const pluginDefinition = {
       return buildMemoryContextLines(trimmed).join("\n").replace(/\n$/, "");
     }
 
+    async function loadRecentDreamLines(runtimeWorkspaceDir?: string): Promise<string[]> {
+      if (!cfg.dreaming.enabled || cfg.dreaming.injectRecentCount <= 0) return [];
+      const journalPath = resolveDreamJournalPath(runtimeWorkspaceDir);
+      const dreams = await dreamsSurface.read(journalPath);
+      if (dreams.length === 0) return [];
+      const entries = dreams.slice(-cfg.dreaming.injectRecentCount).reverse();
+      return [
+        "## Recent Dreams (Remnic)",
+        "",
+        ...entries.map((entry) => {
+          const header = entry.title
+            ? `${entry.timestamp} — ${entry.title}`
+            : entry.timestamp;
+          const preview = entry.body.replace(/\s+/g, " ").trim();
+          const compactPreview =
+            preview.length > 180 ? `${preview.slice(0, 180).trimEnd()}...` : preview;
+          return `- ${header}: ${compactPreview}`;
+        }),
+        "",
+      ];
+    }
+
+    function isHeartbeatTrigger(
+      event: Record<string, unknown>,
+      ctx: Record<string, unknown>,
+    ): boolean {
+      return event.trigger === "heartbeat" || ctx.trigger === "heartbeat";
+    }
+
+    function resolveHeartbeatPromptCandidates(prompt: string): string[] {
+      const normalized = prompt.toLowerCase();
+      return normalized
+        .split(/[^a-z0-9-]+/g)
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0);
+    }
+
+    function matchHeartbeatEntry(
+      entries: HeartbeatEntry[],
+      prompt: string,
+    ): HeartbeatEntry | null {
+      if (entries.length === 0) return null;
+      const lowered = prompt.toLowerCase();
+      const tokenSet = new Set(resolveHeartbeatPromptCandidates(prompt));
+      const phraseMatches = entries.filter((entry) => {
+        if (matchesDelimitedPhrase(lowered, entry.slug)) return true;
+        return matchesDelimitedPhrase(lowered, entry.title);
+      });
+      if (phraseMatches.length === 1) {
+        return phraseMatches[0] ?? null;
+      }
+      if (phraseMatches.length > 1) {
+        return null;
+      }
+      const tokenMatches = entries.filter((entry) => {
+        const slugTokens = entry.slug.toLowerCase().split("-").filter(Boolean);
+        return slugTokens.length > 0 && slugTokens.every((token) => tokenSet.has(token));
+      });
+      if (tokenMatches.length === 1) {
+        return tokenMatches[0] ?? null;
+      }
+      if (tokenMatches.length > 1) {
+        return null;
+      }
+      return entries.length === 1 ? entries[0] ?? null : null;
+    }
+
+    function looksLikeHeartbeatPrompt(prompt: string): boolean {
+      const lowered = prompt.trim().toLowerCase();
+      return (
+        lowered.startsWith("read heartbeat.md") ||
+        lowered.startsWith("run the following periodic tasks")
+      );
+    }
+
+    async function loadHeartbeatContextLines(params: {
+      prompt: string;
+      event: Record<string, unknown>;
+      ctx: Record<string, unknown>;
+    }): Promise<string[] | null> {
+      if (!cfg.heartbeat.enabled) return null;
+      const sessionKey =
+        typeof params.ctx?.sessionKey === "string" ? params.ctx.sessionKey : undefined;
+      const heartbeatNamespace =
+        typeof orchestrator.resolveSelfNamespace === "function"
+          ? orchestrator.resolveSelfNamespace(sessionKey)
+          : undefined;
+      const heartbeatStorage =
+        typeof orchestrator.getStorageForNamespace === "function"
+          ? await orchestrator.getStorageForNamespace(heartbeatNamespace)
+          : orchestrator.storage;
+      const runtimeWorkspaceDir = params.ctx?.workspaceDir as string | undefined;
+      const journalPath = resolveHeartbeatJournalPath(runtimeWorkspaceDir);
+      const entries = await heartbeatSurface.read(journalPath);
+      if (entries.length === 0) return null;
+
+      const runtimeSignal = isHeartbeatTrigger(params.event, params.ctx);
+      const useRuntimeSignal =
+        cfg.heartbeat.detectionMode === "runtime-signal" ||
+        (cfg.heartbeat.detectionMode === "auto" && runtimeSignal);
+      const useHeuristic =
+        cfg.heartbeat.detectionMode === "heuristic" ||
+        (cfg.heartbeat.detectionMode === "auto" && !runtimeSignal);
+      if (!useRuntimeSignal && !useHeuristic) return null;
+      if (!runtimeSignal && useRuntimeSignal) return null;
+      if (!runtimeSignal && useHeuristic && !looksLikeHeartbeatPrompt(params.prompt)) {
+        return null;
+      }
+
+      const activeEntry = matchHeartbeatEntry(entries, params.prompt);
+      if (!activeEntry) return null;
+      await syncHeartbeatOutcomeLinks({
+        storage: heartbeatStorage,
+        entries,
+        reindexMemory: async (id) => {
+          await orchestrator.reindexMemoryById(id, {
+            storage: heartbeatStorage,
+          });
+        },
+      });
+
+      const allMemories = await heartbeatStorage.readAllMemories().catch(() => []);
+      const previousRuns = allMemories
+        .filter((memory) => {
+          if (
+            memory.frontmatter.structuredAttributes?.remnicSurfaceType ===
+            "heartbeat"
+          ) {
+            return false;
+          }
+          const relatedSlug =
+            memory.frontmatter.structuredAttributes?.relatedHeartbeatSlug;
+          if (relatedSlug === activeEntry.slug) return true;
+          return (memory.frontmatter.tags ?? []).some(
+            (tag) => tag === `heartbeat:${activeEntry.slug}`,
+          );
+        })
+        .sort((a, b) =>
+          (b.frontmatter.updated ?? b.frontmatter.created).localeCompare(
+            a.frontmatter.updated ?? a.frontmatter.created,
+          ),
+        )
+        .slice(0, cfg.heartbeat.maxPreviousRuns);
+
+      const lines = [
+        "## Active Heartbeat (Remnic)",
+        "",
+        `- Slug: ${activeEntry.slug}`,
+        `- Title: ${activeEntry.title}`,
+      ];
+      if (activeEntry.schedule) {
+        lines.push(`- Schedule: ${activeEntry.schedule}`);
+      }
+      if (activeEntry.tags.length > 0) {
+        lines.push(`- Tags: ${activeEntry.tags.join(", ")}`);
+      }
+      lines.push("", activeEntry.body, "");
+      if (previousRuns.length > 0) {
+        lines.push("## Previous Runs", "");
+        for (const memory of previousRuns) {
+          const preview = memory.content.replace(/\s+/g, " ").trim();
+          const compactPreview =
+            preview.length > 220 ? `${preview.slice(0, 220).trimEnd()}...` : preview;
+          lines.push(`- ${compactPreview}`);
+        }
+        lines.push("");
+      }
+      return lines;
+    }
+
     async function recallHookHandler(
       hookLabel: string,
       event: Record<string, unknown>,
@@ -440,6 +1003,14 @@ const pluginDefinition = {
       if (!prompt || prompt.length < 5) return;
 
       const sessionKey = (ctx?.sessionKey as string) ?? "default";
+      const runtimeAgent = (ctx.runtime as Record<string, unknown> | undefined)
+        ?.agent as Record<string, unknown> | undefined;
+      const agentId =
+        (ctx?.agentId as string | undefined) ??
+        (runtimeAgent?.id as string | undefined) ??
+        "main";
+      const verboseRequested = cfg.verboseRecallVisibility !== false &&
+        isVerboseRecallRequested(event, ctx);
       log.debug(
         `${hookLabel}: sessionKey=${sessionKey}, promptLen=${prompt.length}`,
       );
@@ -463,8 +1034,94 @@ const pluginDefinition = {
         return;
       }
 
+      const toggleState =
+        cfg.sessionTogglesEnabled !== false
+          ? await sessionToggleStore.resolve(sessionKey, agentId)
+          : {
+              disabled: false,
+              source: "none" as const,
+            };
+      const auditToggleState =
+        toggleState.disabled === true
+          ? toggleState.source === "secondary"
+            ? "disabled-secondary"
+            : "disabled-primary"
+          : "enabled";
+      if (toggleState.disabled) {
+        lastRecallSummaryBySession.set(sessionKey, null);
+        if (cfg.recallTranscriptsEnabled) {
+          await appendRecallAuditEntry(recallAuditDir, {
+            ts: new Date().toISOString(),
+            sessionKey,
+            agentId,
+            trigger: hookLabel,
+            queryText: prompt.slice(0, 2000),
+            candidateMemoryIds: [],
+            summary: null,
+            injectedChars: 0,
+            toggleState: auditToggleState,
+          }).catch((error) => {
+            log.debug(`recall audit append failed: ${String(error)}`);
+          });
+        }
+        if (!verboseRequested) return;
+        const verboseLines = buildVerboseRecallHeader({
+          sessionKey,
+          agentId,
+          memoryIds: [],
+          plannerMode: "disabled",
+          toggleState: auditToggleState,
+          summary: null,
+        });
+        const verbosePrompt = verboseLines.join("\n").replace(/\n$/, "");
+        if (hookLabel === "before_prompt_build") {
+          return useMemoryPromptSection
+            ? { memoryLines: verboseLines }
+            : { prependSystemContext: verbosePrompt, memoryLines: verboseLines };
+        }
+        return {
+          prependSystemContext: verbosePrompt,
+          prependContext: verbosePrompt,
+          memoryLines: verboseLines,
+        };
+      }
+
       try {
         await orchestrator.maybeRunFileHygiene().catch(() => undefined);
+
+        const heartbeatLines = await loadHeartbeatContextLines({
+          prompt,
+          event,
+          ctx,
+        }).catch(() => null);
+        if (heartbeatLines && heartbeatLines.length > 0) {
+          lastRecallSummaryBySession.set(
+            sessionKey,
+            summarizeRecallTextForStatus(heartbeatLines.join(" ")),
+          );
+          const verboseLines = verboseRequested
+            ? buildVerboseRecallHeader({
+                sessionKey,
+                agentId,
+                memoryIds: [],
+                plannerMode: "heartbeat",
+                toggleState: auditToggleState,
+                summary: summarizeRecallTextForStatus(heartbeatLines.join(" ")),
+              })
+            : [];
+          const mergedLines = [...verboseLines, ...heartbeatLines];
+          const heartbeatPrompt = mergedLines.join("\n").replace(/\n$/, "");
+          if (hookLabel === "before_prompt_build") {
+            return useMemoryPromptSection
+              ? { memoryLines: mergedLines }
+              : { prependSystemContext: heartbeatPrompt, memoryLines: mergedLines };
+          }
+          return {
+            prependSystemContext: heartbeatPrompt,
+            prependContext: heartbeatPrompt,
+            memoryLines: mergedLines,
+          };
+        }
 
         if (orchestrator.config.compactionResetEnabled) {
           const agentWorkspace = ctx?.workspaceDir as string | undefined;
@@ -472,11 +1129,108 @@ const pluginDefinition = {
             orchestrator.setRecallWorkspaceOverride(sessionKey, agentWorkspace);
           }
         }
+        const plannerPreflightMode = planRecallMode(prompt);
+        const shouldSkipChainedActiveRecall =
+          cfg.activeRecallAllowChainedActiveMemory &&
+          plannerPreflightMode === "no_recall";
+        const activeRecallResult = shouldSkipChainedActiveRecall
+          ? null
+          : await activeRecallEngine
+              .run({
+                sessionKey,
+                agentId,
+                chatType: resolveActiveRecallChatType(ctx),
+                recentTurns: extractRecentTurnsForActiveRecall(
+                  Array.isArray(event.messages)
+                    ? (event.messages as Array<Record<string, unknown>>)
+                    : undefined,
+                ),
+                currentMessage: prompt,
+              })
+              .catch((error) => {
+                log.debug(`active recall fallback failed: ${String(error)}`);
+                return null;
+              });
+        const activeRecallLines =
+          activeRecallResult?.summary && activeRecallResult.summary.length > 0
+            ? ["## Active Recall (Remnic)", "", activeRecallResult.summary, ""]
+            : [];
+        const dreamLines = await loadRecentDreamLines(
+          ctx?.workspaceDir as string | undefined,
+        ).catch(() => []);
         const context = await orchestrator.recall(prompt, sessionKey);
         log.debug(
           `${hookLabel}: recall returned ${context?.length ?? 0} chars`,
         );
-        if (!context) return;
+        const lastRecall = orchestrator.getLastRecall(sessionKey);
+        const plannerSuppressesAuxiliaryRecall =
+          lastRecall?.plannerMode === "no_recall";
+        const auxiliaryDreamLines = plannerSuppressesAuxiliaryRecall ? [] : dreamLines;
+        const auxiliaryActiveRecallLines = plannerSuppressesAuxiliaryRecall
+          ? []
+          : activeRecallLines;
+        const memoryIds = lastRecall?.memoryIds ?? [];
+        if (!context) {
+          const auxiliarySummary =
+            summarizeRecallTextForStatus(activeRecallResult?.summary ?? null) ??
+            summarizeRecallTextForStatus(
+              [...auxiliaryDreamLines, ...auxiliaryActiveRecallLines].join(" "),
+            ) ??
+            (verboseRequested
+              ? "Remnic recall metadata injected without matching memory context."
+              : null);
+          const verboseLines = verboseRequested
+            ? buildVerboseRecallHeader({
+                sessionKey,
+                agentId,
+                latencyMs: lastRecall?.latencyMs,
+                memoryIds,
+                plannerMode: lastRecall?.plannerMode,
+                toggleState: auditToggleState,
+                summary: auxiliarySummary,
+              })
+            : [];
+          const mergedLines = [
+            ...verboseLines,
+            ...auxiliaryDreamLines,
+            ...auxiliaryActiveRecallLines,
+          ];
+          const auxiliaryPrompt = mergedLines.join("\n").replace(/\n$/, "");
+          lastRecallSummaryBySession.set(
+            sessionKey,
+            auxiliarySummary,
+          );
+          if (cfg.recallTranscriptsEnabled) {
+            await appendRecallAuditEntry(recallAuditDir, {
+              ts: new Date().toISOString(),
+              sessionKey,
+              agentId,
+              trigger: hookLabel,
+              queryText: prompt.slice(0, 2000),
+              candidateMemoryIds: memoryIds,
+              summary: auxiliarySummary,
+              injectedChars: auxiliaryPrompt.length,
+              toggleState: auditToggleState,
+              latencyMs: lastRecall?.latencyMs,
+              plannerMode: lastRecall?.plannerMode,
+              requestedMode: lastRecall?.requestedMode,
+              fallbackUsed: lastRecall?.fallbackUsed,
+            }).catch((error) => {
+              log.debug(`recall audit append failed: ${String(error)}`);
+            });
+          }
+          if (mergedLines.length === 0) return;
+          if (hookLabel === "before_prompt_build") {
+            return useMemoryPromptSection
+              ? { memoryLines: mergedLines }
+              : { prependSystemContext: auxiliaryPrompt, memoryLines: mergedLines };
+          }
+          return {
+            prependSystemContext: auxiliaryPrompt,
+            prependContext: auxiliaryPrompt,
+            memoryLines: mergedLines,
+          };
+        }
 
         const maxChars = cfg.recallBudgetChars;
         if (maxChars === 0) return;
@@ -484,6 +1238,29 @@ const pluginDefinition = {
           context.length > maxChars
             ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
             : context;
+        const summaryText =
+          summarizeRecallTextForStatus(activeRecallResult?.summary ?? null) ??
+          summarizeRecallTextForStatus(trimmed);
+        lastRecallSummaryBySession.set(sessionKey, summaryText);
+        if (cfg.recallTranscriptsEnabled) {
+          await appendRecallAuditEntry(recallAuditDir, {
+            ts: new Date().toISOString(),
+            sessionKey,
+            agentId,
+            trigger: hookLabel,
+            queryText: prompt.slice(0, 2000),
+            candidateMemoryIds: memoryIds,
+            summary: summaryText,
+            injectedChars: trimmed.length,
+            toggleState: auditToggleState,
+            latencyMs: lastRecall?.latencyMs,
+            plannerMode: lastRecall?.plannerMode,
+            requestedMode: lastRecall?.requestedMode,
+            fallbackUsed: lastRecall?.fallbackUsed,
+          }).catch((error) => {
+            log.debug(`recall audit append failed: ${String(error)}`);
+          });
+        }
 
         // Build the structured line array for the capability cache fallback,
         // then derive the flat `prependSystemContext` string from the same
@@ -491,8 +1268,34 @@ const pluginDefinition = {
         // paths can never drift. `memoryLines` is an internal return field
         // consumed by the wrapping closure and MUST be stripped before the
         // hook result is passed back to the gateway.
-        const memoryLines = buildMemoryContextLines(trimmed);
-        const memoryContextPrompt = renderMemoryContextPrompt(trimmed);
+        const verboseLines = verboseRequested
+          ? buildVerboseRecallHeader({
+              sessionKey,
+              agentId,
+              latencyMs: lastRecall?.latencyMs,
+              memoryIds,
+              plannerMode: lastRecall?.plannerMode,
+              toggleState: auditToggleState,
+              summary: summaryText,
+            })
+          : [];
+        const auxiliaryLines = [
+          ...verboseLines,
+          ...auxiliaryDreamLines,
+          ...auxiliaryActiveRecallLines,
+        ];
+        const memorySectionLines = buildMemoryContextLines(trimmed);
+        const memoryLines = useMemoryPromptSection
+          ? memorySectionLines
+          : [...auxiliaryLines, ...memorySectionLines];
+        const promptWithVerbose =
+          useMemoryPromptSection
+            ? (auxiliaryLines.length > 0
+                ? auxiliaryLines.join("\n").replace(/\n$/, "")
+                : undefined)
+            : auxiliaryLines.length > 0
+              ? [...auxiliaryLines, ...memorySectionLines].join("\n").replace(/\n$/, "")
+              : renderMemoryContextPrompt(trimmed);
 
         log.debug(
           `${hookLabel}: returning system prompt with ${trimmed.length} chars`,
@@ -502,15 +1305,20 @@ const pluginDefinition = {
         // Legacy (before_agent_start): return both for backward compat with
         // older gateways that may consume either field.
         if (hookLabel === "before_prompt_build") {
-          return { prependSystemContext: memoryContextPrompt, memoryLines };
+          return promptWithVerbose
+            ? { prependSystemContext: promptWithVerbose, memoryLines }
+            : { memoryLines };
         }
-        return {
-          prependSystemContext: memoryContextPrompt,
-          prependContext: memoryContextPrompt,
-          memoryLines,
-        };
+        return promptWithVerbose
+          ? {
+              prependSystemContext: promptWithVerbose,
+              prependContext: promptWithVerbose,
+              memoryLines,
+            }
+          : { memoryLines };
       } catch (err) {
         log.error("recall failed", err);
+        lastRecallSummaryBySession.set(sessionKey, null);
         if (orchestrator.config.compactionResetEnabled) {
           orchestrator.clearRecallWorkspaceOverride(sessionKey);
         }
@@ -567,7 +1375,7 @@ const pluginDefinition = {
             // and is not part of the hook contract.
             if (result && "memoryLines" in result) {
               const { memoryLines: _ml, ...gatewayResult } = result;
-              return gatewayResult;
+              return Object.keys(gatewayResult).length > 0 ? gatewayResult : undefined;
             }
             return result;
           },
@@ -588,7 +1396,7 @@ const pluginDefinition = {
             // and is not part of the hook contract.
             if (result && "memoryLines" in result) {
               const { memoryLines: _ml, ...gatewayResult } = result;
-              return gatewayResult;
+              return Object.keys(gatewayResult).length > 0 ? gatewayResult : undefined;
             }
             return result;
           },
@@ -628,52 +1436,15 @@ const pluginDefinition = {
         ) => {
           const sessionKey = (ctx?.sessionKey as string) ?? "default";
           cachedMemoryBySession.set(sessionKey, null); // reset each turn
-          let prompt = event.prompt as string | undefined;
-          if ((!prompt || prompt.length < 5) && Array.isArray(event.messages)) {
-            const msgs = event.messages as Array<Record<string, unknown>>;
-            for (let i = msgs.length - 1; i >= 0; i--) {
-              if (msgs[i]?.role === "user") {
-                const text = extractTextContent(
-                  msgs[i] as Record<string, unknown>,
-                );
-                if (text.length >= 5) {
-                  prompt = text;
-                  break;
-                }
-              }
-            }
+          const result = await recallHookHandler("before_prompt_build", event, ctx);
+          if (result?.memoryLines) {
+            cachedMemoryBySession.set(sessionKey, result.memoryLines);
           }
-          if (!prompt || prompt.length < 5) return;
-          if (shouldSkipRecallForSession(sessionKey, cfg)) return;
-          try {
-            await orchestrator.maybeRunFileHygiene().catch(() => undefined);
-
-            // Match the workspace override logic from recallHookHandler
-            if (orchestrator.config.compactionResetEnabled) {
-              const agentWorkspace = ctx?.workspaceDir as string | undefined;
-              if (agentWorkspace) {
-                orchestrator.setRecallWorkspaceOverride(
-                  sessionKey,
-                  agentWorkspace,
-                );
-              }
-            }
-
-            const context = await orchestrator.recall(prompt, sessionKey);
-            if (!context) return;
-            const maxChars = cfg.recallBudgetChars;
-            if (maxChars === 0) return;
-            const trimmed =
-              context.length > maxChars
-                ? context.slice(0, maxChars) + "\n\n...(memory context trimmed)"
-                : context;
-            cachedMemoryBySession.set(sessionKey, buildMemoryContextLines(trimmed));
-          } catch (err) {
-            log.error("registerMemoryPromptSection pre-compute failed", err);
-            if (orchestrator.config.compactionResetEnabled) {
-              orchestrator.clearRecallWorkspaceOverride(sessionKey);
-            }
+          if (result && "memoryLines" in result) {
+            const { memoryLines: _ml, ...gatewayResult } = result;
+            return Object.keys(gatewayResult).length > 0 ? gatewayResult : undefined;
           }
+          return result;
         },
       );
 
@@ -795,6 +1566,17 @@ const pluginDefinition = {
       ) => {
         if (!event.success || !Array.isArray(event.messages)) return;
         if (event.messages.length === 0) return;
+
+        if (
+          cfg.heartbeat.enabled &&
+          cfg.heartbeat.gateExtractionDuringHeartbeat &&
+          isHeartbeatTrigger(event as Record<string, unknown>, ctx as Record<string, unknown>)
+        ) {
+          log.debug(
+            `agent_end: skipping transcript/extraction buffering during heartbeat run for ${(ctx?.sessionKey as string) ?? "default"}`,
+          );
+          return;
+        }
 
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
 
@@ -1172,12 +1954,91 @@ const pluginDefinition = {
       },
     );
 
+    try {
+      api.on(
+        "before_reset",
+        async (
+          event: import("openclaw/plugin-sdk").PluginHookBeforeResetEvent &
+            Record<string, unknown>,
+          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+            Record<string, unknown>,
+        ) => {
+          const sessionKey =
+            (ctx?.sessionKey as string) ??
+            (event?.sessionKey as string) ??
+            "default";
+          const flushEnabled =
+            cfg.flushOnResetEnabled &&
+            typeof (orchestrator as any).flushSession === "function";
+          const flushAbort = new AbortController();
+          let flushTimedOut = false;
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          const flushPromise = flushEnabled
+            ? Promise.resolve(
+                (orchestrator as any).flushSession(sessionKey, {
+                  reason: "before_reset",
+                  abortSignal: flushAbort.signal,
+                }),
+              ).catch((error) => {
+                if (!flushAbort.signal.aborted) {
+                  log.warn(`before_reset flush failed: ${String(error)}`);
+                }
+              })
+            : Promise.resolve();
+          const boundedFlush = flushEnabled
+            ? Promise.race([
+                flushPromise,
+                new Promise<void>((resolve) => {
+                  timeoutId = setTimeout(() => {
+                    flushTimedOut = true;
+                    flushAbort.abort();
+                    resolve();
+                  }, cfg.beforeResetTimeoutMs);
+                }),
+              ])
+            : flushPromise;
+          await boundedFlush;
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
+          if (flushTimedOut) {
+            log.warn(
+              `before_reset flush timed out after ${cfg.beforeResetTimeoutMs}ms`,
+            );
+          }
+          cachedMemoryBySession.delete(sessionKey);
+          if (
+            typeof (orchestrator as any).clearRecallWorkspaceOverride === "function"
+          ) {
+            (orchestrator as any).clearRecallWorkspaceOverride(sessionKey);
+          }
+        },
+      );
+    } catch (error) {
+      log.debug(`before_reset hook unavailable on this runtime: ${String(error)}`);
+    }
+    }
+
     // ========================================================================
     // NEW SDK HOOKS (≥2026.3.22 only)
     // These hooks are only available on the new SDK and provide richer
     // lifecycle, tool, LLM, and subagent observation capabilities.
     // ========================================================================
-    if (sdkCaps.hasBeforePromptBuild) {
+    if (
+      !passiveMode &&
+      cfg.commandsListEnabled &&
+      cfg.sessionTogglesEnabled !== false
+    ) {
+      try {
+        api.on("commands.list", async () => sessionCommandDescriptors);
+      } catch (error) {
+        log.debug(
+          `commands.list unavailable on this runtime: ${String(error)}`,
+        );
+      }
+    }
+
+    if (!passiveMode && sdkCaps.hasBeforePromptBuild) {
       // ---- Session lifecycle ----
       api.on(
         "session_start",
@@ -1294,7 +2155,7 @@ const pluginDefinition = {
           );
         },
       );
-    } else {
+    } else if (!passiveMode) {
       // Legacy runtime: restore heartbeat observer for sessionObserverEnabled.
       // On new SDK, session_start/session_end hooks replace this.
       // Two paths: registerHook for runtimes that emit event-style heartbeats,
@@ -1459,6 +2320,26 @@ const pluginDefinition = {
     // CLI commands, by contrast, live in the central plugin registry (not in
     // per-registry api state), so registering them more than once would create
     // duplicate engram command trees. CLI registration stays behind the guard.
+    if (cfg.openclawToolsEnabled !== false && typeof api.registerTool === "function") {
+      api.registerTool(
+        buildMemorySearchTool(orchestrator, {
+          snippetMaxChars: cfg.openclawToolSnippetMaxChars,
+        }) as Record<string, unknown>,
+      );
+      api.registerTool(buildMemoryGetTool(orchestrator) as Record<string, unknown>);
+    }
+
+    if (
+      cfg.sessionTogglesEnabled !== false &&
+      typeof (api as { registerCommand?: (spec: unknown) => void }).registerCommand === "function" &&
+      !(globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD]
+    ) {
+      (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = true;
+      for (const descriptor of sessionCommandDescriptors) {
+        (api as { registerCommand: (spec: unknown) => void }).registerCommand(descriptor);
+      }
+    }
+
     registerTools(
       api as unknown as Parameters<typeof registerTools>[0],
       orchestrator,
@@ -1607,6 +2488,42 @@ const pluginDefinition = {
               );
             }
 
+            if (cfg.dreaming.enabled) {
+              await queueDreamSurfaceSync();
+              if (cfg.dreaming.watchFile) {
+                stopDreamWatcher?.();
+                stopDreamWatcher = dreamsSurface.watch(
+                  resolveDreamJournalPath(),
+                  () => {
+                    void queueDreamSurfaceSync().catch((error) => {
+                      log.debug(`dream surface watch sync failed: ${String(error)}`);
+                    });
+                  },
+                );
+              }
+              removeDreamingObserver?.();
+              removeDreamingObserver = orchestrator.registerConsolidationObserver(
+                async (observation) => {
+                  await maybeAppendDreamFromConsolidation(observation);
+                },
+              );
+            }
+
+            if (cfg.heartbeat.enabled) {
+              await queueHeartbeatSurfaceSync();
+              if (cfg.heartbeat.watchFile) {
+                stopHeartbeatWatcher?.();
+                stopHeartbeatWatcher = heartbeatSurface.watch(
+                  resolveHeartbeatJournalPath(),
+                  () => {
+                    void queueHeartbeatSurfaceSync().catch((error) => {
+                      log.debug(`heartbeat surface watch sync failed: ${String(error)}`);
+                    });
+                  },
+                );
+              }
+            }
+
             if (cfg.agentAccessHttp.enabled) {
               // Abort if stop() was called before starting the HTTP server.
               if (!didCountStart) return;
@@ -1727,6 +2644,12 @@ const pluginDefinition = {
         } catch (err) {
           log.debug(`engram access HTTP stop failed: ${err}`);
         }
+        stopDreamWatcher?.();
+        stopDreamWatcher = null;
+        stopHeartbeatWatcher?.();
+        stopHeartbeatWatcher = null;
+        removeDreamingObserver?.();
+        removeDreamingObserver = null;
         delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
         delete (globalThis as any)[keys.ACCESS_SERVICE];
         // REGISTERED_GUARD policy:
@@ -1756,6 +2679,7 @@ const pluginDefinition = {
           // reaches zero, the gateway's reload cycle can safely re-register.
           if (remainingServices === 0) {
             (globalThis as any)[CLI_REGISTERED_GUARD] = false;
+            (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = false;
           }
         } else {
           // Stop-during-init: leave GUARD as-is.

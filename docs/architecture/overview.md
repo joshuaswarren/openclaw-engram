@@ -2,7 +2,9 @@
 
 ## System Design
 
-Engram is a **local-first, plugin-based memory system** that runs inside the OpenClaw gateway. All data stays on disk as plain markdown files. Outbound API calls occur for: (1) LLM extraction/consolidation, (2) embedding fallback recall when QMD is unavailable and an OpenAI key is present, and (3) hourly summaries when enabled (`hourlySummariesEnabled`, default on).
+Remnic is a **local-first, multi-platform memory system** built around a host-agnostic core. `@remnic/core` owns memory semantics, `@remnic/server` exposes the shared HTTP/MCP runtime, and host adapters such as OpenClaw and Hermes translate that shared behavior into each platform's native integration model. All data stays on disk as plain markdown files. Outbound API calls occur for: (1) LLM extraction/consolidation, (2) embedding fallback recall when QMD is unavailable and an OpenAI key is present, and (3) hourly summaries when enabled (`hourlySummariesEnabled`, default on).
+
+OpenClaw is one adapter, not the architectural center. Standalone Remnic and shared-core behavior must remain correct without OpenClaw, Hermes, or any future host process.
 
 ### Three-Phase Flow
 
@@ -16,26 +18,21 @@ Periodically:          Extract  → LLM call to extract + store new memories
 
 | Component | File | Role |
 |-----------|------|------|
-| Orchestrator | `src/orchestrator.ts` | Coordinates all phases; main entry point |
-| Storage | `src/storage.ts` | Read/write markdown files with YAML frontmatter |
-| Buffer | `src/buffer.ts` | Smart turn accumulation with signal-based triggers |
-| Extraction | `src/extraction.ts` | LLM-powered extraction engine (OpenAI Responses API) |
-| Search port | `src/search/port.ts` | Pluggable search backend interface (v9.0) |
-| Search factory | `src/search/factory.ts` | Config-driven backend selection (v9.0) |
-| QMD client | `src/qmd.ts` | Hybrid search client (BM25 + vector + reranking) |
-| LanceDB backend | `src/search/lancedb-backend.ts` | Embedded hybrid search with Arrow bindings (v9.0) |
-| Meilisearch backend | `src/search/meilisearch-backend.ts` | Server-based search via SDK (v9.0) |
-| Orama backend | `src/search/orama-backend.ts` | Embedded pure JS hybrid search (v9.0) |
-| Importance | `src/importance.ts` | Zero-LLM local heuristic importance scoring |
-| Chunking | `src/chunking.ts` | Sentence-boundary splitting for long memories |
-| Threading | `src/threading.ts` | Conversation thread detection |
-| Topics | `src/topics.ts` | TF-IDF topic extraction |
-| HiMem | `src/himem.ts` | Episode/Note classification (v8.0) |
-| Boxes | `src/boxes.ts` | Memory Box builder and Trace Weaver (v8.0) |
-| Tools | `src/tools.ts` | Agent-callable memory tools |
-| CLI | `src/cli.ts` | Command-line interface |
+| Orchestrator | `packages/remnic-core/src/orchestrator.ts` | Coordinates all phases; main core entry point |
+| Storage | `packages/remnic-core/src/storage.ts` | Read/write markdown files with YAML frontmatter |
+| Buffer | `packages/remnic-core/src/buffer.ts` | Smart turn accumulation with signal-based triggers |
+| Extraction | `packages/remnic-core/src/extraction.ts` | LLM-powered extraction engine |
+| Search port | `packages/remnic-core/src/search/port.ts` | Pluggable search backend interface |
+| Search factory | `packages/remnic-core/src/search/factory.ts` | Config-driven backend selection |
+| QMD client | `packages/remnic-core/src/qmd.ts` | Hybrid search client (BM25 + vector + reranking) |
+| Tools | `packages/remnic-core/src/tools.ts` | Core memory tools and service helpers |
+| Shared server | `packages/remnic-server/src/*` | Host-agnostic HTTP + MCP runtime |
+| OpenClaw adapter | `packages/plugin-openclaw/` plus root `src/` wiring | Maps core behavior onto OpenClaw's plugin SDK/runtime |
+| Hermes adapter | `packages/plugin-hermes/` | Maps core behavior onto Hermes' MemoryProvider/plugin contracts |
 
 ## Storage Layout
+
+OpenClaw-hosted installs commonly use the following memory layout:
 
 ```
 ~/.openclaw/workspace/memory/local/
@@ -71,6 +68,8 @@ Periodically:          Extract  → LLM call to extract + store new memories
     ├── fact-hashes.txt         # Content-hash dedup index (v6.0)
     └── traces.json             # Trace Weaver index (v8.0)
 ```
+
+Standalone installs use the same logical structure under the configured Remnic memory directory.
 
 ## Memory File Format
 

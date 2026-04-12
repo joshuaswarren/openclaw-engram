@@ -7,6 +7,8 @@ See:
 - **[Hermes plugin reference](../plugins/hermes.md)** — full setup, configuration, and troubleshooting
 - **[remnic-hermes README](https://github.com/joshuaswarren/remnic/blob/main/packages/plugin-hermes/README.md)** — quick-start on GitHub
 - **[remnic-hermes on PyPI](https://pypi.org/project/remnic-hermes/)** — package install
+- **[Hermes Agent upstream repo](https://github.com/NousResearch/hermes-agent)** — canonical host runtime
+- **[Hermes Agent docs](https://hermes-agent.nousresearch.com)** — current upstream documentation
 
 ## Quick install
 

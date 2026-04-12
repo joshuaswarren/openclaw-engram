@@ -1,5 +1,9 @@
 import path from "node:path";
 import type {
+  CodexCompactionFlushMode,
+  CodexCompatConfig,
+  DreamingConfig,
+  HeartbeatConfig,
   IdentityInjectionMode,
   MemoryOsPresetName,
   PluginConfig,
@@ -8,6 +12,8 @@ import type {
   RecallSectionConfig,
   ReasoningEffort,
   SessionObserverBandConfig,
+  SlotBehaviorConfig,
+  SlotMismatchMode,
   TriggerMode,
 } from "./types.js";
 import { log } from "./logger.js";
@@ -100,6 +106,8 @@ const VALID_MEMORY_OS_PRESETS: MemoryOsPresetName[] = [
   "research-max",
   "local-llm-heavy",
 ];
+const VALID_SLOT_MISMATCH_MODES: SlotMismatchMode[] = ["error", "warn", "silent"];
+const VALID_CODEX_COMPACTION_FLUSH_MODES: CodexCompactionFlushMode[] = ["signal", "heuristic", "auto"];
 export const VALID_MEMORY_CATEGORIES = new Set([
   "fact",
   "preference",
@@ -271,6 +279,99 @@ export function parseConfig(raw: unknown): PluginConfig {
     rawTrigger && VALID_TRIGGERS.includes(rawTrigger as TriggerMode)
       ? (rawTrigger as TriggerMode)
       : "smart";
+  const rawSlotBehavior =
+    cfg.slotBehavior && typeof cfg.slotBehavior === "object" && !Array.isArray(cfg.slotBehavior)
+      ? (cfg.slotBehavior as Record<string, unknown>)
+      : {};
+  const slotBehavior: SlotBehaviorConfig = {
+    requireExclusiveMemorySlot:
+      rawSlotBehavior.requireExclusiveMemorySlot !== false,
+    onSlotMismatch:
+      typeof rawSlotBehavior.onSlotMismatch === "string" &&
+      VALID_SLOT_MISMATCH_MODES.includes(
+        rawSlotBehavior.onSlotMismatch as SlotMismatchMode,
+      )
+        ? (rawSlotBehavior.onSlotMismatch as SlotMismatchMode)
+        : "error",
+  };
+  const rawDreaming =
+    cfg.dreaming && typeof cfg.dreaming === "object" && !Array.isArray(cfg.dreaming)
+      ? (cfg.dreaming as Record<string, unknown>)
+      : {};
+  const dreaming: DreamingConfig = {
+    enabled: rawDreaming.enabled === true,
+    journalPath:
+      typeof rawDreaming.journalPath === "string" && rawDreaming.journalPath.trim().length > 0
+        ? rawDreaming.journalPath.trim()
+        : "DREAMS.md",
+    maxEntries:
+      typeof rawDreaming.maxEntries === "number"
+        ? rawDreaming.maxEntries === 0
+          ? 0
+          : rawDreaming.maxEntries < 0
+            ? 500
+          : rawDreaming.maxEntries < 10
+            ? 500
+            : Math.min(10000, Math.floor(rawDreaming.maxEntries))
+        : 500,
+    injectRecentCount:
+      typeof rawDreaming.injectRecentCount === "number"
+        ? Math.min(20, Math.max(0, Math.floor(rawDreaming.injectRecentCount)))
+        : 3,
+    minIntervalMinutes:
+      typeof rawDreaming.minIntervalMinutes === "number"
+        ? Math.max(1, Math.floor(rawDreaming.minIntervalMinutes))
+        : 120,
+    narrativeModel:
+      typeof rawDreaming.narrativeModel === "string" && rawDreaming.narrativeModel.trim().length > 0
+        ? rawDreaming.narrativeModel.trim()
+        : null,
+    narrativePromptStyle:
+      rawDreaming.narrativePromptStyle === "diary" ||
+      rawDreaming.narrativePromptStyle === "analytical"
+        ? rawDreaming.narrativePromptStyle
+        : "reflective",
+    watchFile: rawDreaming.watchFile !== false,
+  };
+  const rawHeartbeat =
+    cfg.heartbeat && typeof cfg.heartbeat === "object" && !Array.isArray(cfg.heartbeat)
+      ? (cfg.heartbeat as Record<string, unknown>)
+      : {};
+  const heartbeat: HeartbeatConfig = {
+    enabled: rawHeartbeat.enabled === true,
+    journalPath:
+      typeof rawHeartbeat.journalPath === "string" && rawHeartbeat.journalPath.trim().length > 0
+        ? rawHeartbeat.journalPath.trim()
+        : "HEARTBEAT.md",
+    maxPreviousRuns:
+      typeof rawHeartbeat.maxPreviousRuns === "number"
+        ? Math.min(20, Math.max(0, Math.floor(rawHeartbeat.maxPreviousRuns)))
+        : 5,
+    watchFile: rawHeartbeat.watchFile !== false,
+    detectionMode:
+      rawHeartbeat.detectionMode === "runtime-signal" ||
+      rawHeartbeat.detectionMode === "heuristic"
+        ? rawHeartbeat.detectionMode
+        : "auto",
+    gateExtractionDuringHeartbeat:
+      rawHeartbeat.gateExtractionDuringHeartbeat !== false,
+  };
+  const rawCodexCompat =
+    cfg.codexCompat && typeof cfg.codexCompat === "object" && !Array.isArray(cfg.codexCompat)
+      ? (cfg.codexCompat as Record<string, unknown>)
+      : {};
+  const codexCompat: CodexCompatConfig = {
+    enabled: rawCodexCompat.enabled !== false,
+    threadIdBufferKeying: rawCodexCompat.threadIdBufferKeying !== false,
+    compactionFlushMode:
+      typeof rawCodexCompat.compactionFlushMode === "string" &&
+      VALID_CODEX_COMPACTION_FLUSH_MODES.includes(
+        rawCodexCompat.compactionFlushMode as CodexCompactionFlushMode,
+      )
+        ? (rawCodexCompat.compactionFlushMode as CodexCompactionFlushMode)
+        : "auto",
+    fingerprintDedup: rawCodexCompat.fingerprintDedup !== false,
+  };
 
   const memoryDir =
     typeof cfg.memoryDir === "string" && cfg.memoryDir.length > 0
@@ -751,6 +852,137 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.checkpointTurns === "number" ? cfg.checkpointTurns : 15,
     // Compaction reset (opt-in, default: false)
     compactionResetEnabled: cfg.compactionResetEnabled === true,
+    beforeResetTimeoutMs:
+      typeof cfg.beforeResetTimeoutMs === "number"
+        ? Math.min(30_000, Math.max(100, Math.floor(cfg.beforeResetTimeoutMs)))
+        : 2_000,
+    flushOnResetEnabled: cfg.flushOnResetEnabled !== false,
+    commandsListEnabled: cfg.commandsListEnabled !== false,
+    openclawToolsEnabled: cfg.openclawToolsEnabled !== false,
+    openclawToolSnippetMaxChars:
+      typeof cfg.openclawToolSnippetMaxChars === "number"
+        ? Math.min(4_000, Math.max(80, Math.floor(cfg.openclawToolSnippetMaxChars)))
+        : 600,
+    sessionTogglesEnabled: cfg.sessionTogglesEnabled !== false,
+    verboseRecallVisibility: cfg.verboseRecallVisibility !== false,
+    recallTranscriptsEnabled: cfg.recallTranscriptsEnabled === true,
+    recallTranscriptRetentionDays:
+      typeof cfg.recallTranscriptRetentionDays === "number"
+        ? Math.min(365, Math.max(1, Math.floor(cfg.recallTranscriptRetentionDays)))
+        : 30,
+    respectBundledActiveMemoryToggle:
+      cfg.respectBundledActiveMemoryToggle !== false,
+    activeRecallEnabled: cfg.activeRecallEnabled === true,
+    activeRecallAgents:
+      Array.isArray(cfg.activeRecallAgents) && cfg.activeRecallAgents.length > 0
+        ? cfg.activeRecallAgents
+            .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+            .map((value) => value.trim())
+        : null,
+    activeRecallAllowedChatTypes:
+      Array.isArray(cfg.activeRecallAllowedChatTypes) &&
+      cfg.activeRecallAllowedChatTypes.length > 0
+        ? cfg.activeRecallAllowedChatTypes.filter(
+            (value): value is "direct" | "group" | "channel" =>
+              value === "direct" || value === "group" || value === "channel",
+          )
+        : ["direct", "group", "channel"],
+    activeRecallQueryMode:
+      cfg.activeRecallQueryMode === "message" ||
+      cfg.activeRecallQueryMode === "full"
+        ? cfg.activeRecallQueryMode
+        : "recent",
+    activeRecallPromptStyle:
+      cfg.activeRecallPromptStyle === "strict" ||
+      cfg.activeRecallPromptStyle === "contextual" ||
+      cfg.activeRecallPromptStyle === "recall-heavy" ||
+      cfg.activeRecallPromptStyle === "precision-heavy" ||
+      cfg.activeRecallPromptStyle === "preference-only"
+        ? cfg.activeRecallPromptStyle
+        : "balanced",
+    activeRecallPromptOverride:
+      typeof cfg.activeRecallPromptOverride === "string" &&
+      cfg.activeRecallPromptOverride.trim().length > 0
+        ? cfg.activeRecallPromptOverride.trim()
+        : null,
+    activeRecallPromptAppend:
+      typeof cfg.activeRecallPromptAppend === "string" &&
+      cfg.activeRecallPromptAppend.trim().length > 0
+        ? cfg.activeRecallPromptAppend.trim()
+        : null,
+    activeRecallMaxSummaryChars:
+      typeof cfg.activeRecallMaxSummaryChars === "number"
+        ? Math.min(1000, Math.max(40, Math.floor(cfg.activeRecallMaxSummaryChars)))
+        : 220,
+    activeRecallRecentUserTurns:
+      typeof cfg.activeRecallRecentUserTurns === "number"
+        ? Math.min(4, Math.max(0, Math.floor(cfg.activeRecallRecentUserTurns)))
+        : 2,
+    activeRecallRecentAssistantTurns:
+      typeof cfg.activeRecallRecentAssistantTurns === "number"
+        ? Math.min(3, Math.max(0, Math.floor(cfg.activeRecallRecentAssistantTurns)))
+        : 1,
+    activeRecallRecentUserChars:
+      typeof cfg.activeRecallRecentUserChars === "number"
+        ? Math.min(1000, Math.max(40, Math.floor(cfg.activeRecallRecentUserChars)))
+        : 600,
+    activeRecallRecentAssistantChars:
+      typeof cfg.activeRecallRecentAssistantChars === "number"
+        ? Math.min(1000, Math.max(40, Math.floor(cfg.activeRecallRecentAssistantChars)))
+        : 400,
+    activeRecallThinking:
+      cfg.activeRecallThinking === "low" ||
+      cfg.activeRecallThinking === "off" ||
+      cfg.activeRecallThinking === "minimal" ||
+      cfg.activeRecallThinking === "medium" ||
+      cfg.activeRecallThinking === "high" ||
+      cfg.activeRecallThinking === "xhigh" ||
+      cfg.activeRecallThinking === "adaptive"
+        ? cfg.activeRecallThinking
+        : "low",
+    activeRecallTimeoutMs:
+      typeof cfg.activeRecallTimeoutMs === "number"
+        ? Math.max(250, Math.floor(cfg.activeRecallTimeoutMs))
+        : 15_000,
+    activeRecallCacheTtlMs:
+      typeof cfg.activeRecallCacheTtlMs === "number"
+        ? cfg.activeRecallCacheTtlMs === 0
+          ? 0
+          : cfg.activeRecallCacheTtlMs < 0
+            ? 15_000
+          : Math.min(
+              120_000,
+              Math.max(1, Math.floor(cfg.activeRecallCacheTtlMs)),
+            )
+        : 15_000,
+    activeRecallModel:
+      typeof cfg.activeRecallModel === "string" && cfg.activeRecallModel.trim().length > 0
+        ? cfg.activeRecallModel.trim()
+        : null,
+    activeRecallModelFallbackPolicy:
+      cfg.activeRecallModelFallbackPolicy === "resolved-only"
+        ? "resolved-only"
+        : "default-remote",
+    activeRecallPersistTranscripts: cfg.activeRecallPersistTranscripts === true,
+    activeRecallTranscriptDir:
+      typeof cfg.activeRecallTranscriptDir === "string" &&
+      cfg.activeRecallTranscriptDir.trim().length > 0
+        ? cfg.activeRecallTranscriptDir.trim()
+        : "active-recall",
+    activeRecallEntityGraphDepth:
+      typeof cfg.activeRecallEntityGraphDepth === "number"
+        ? Math.min(3, Math.max(0, Math.floor(cfg.activeRecallEntityGraphDepth)))
+        : 1,
+    activeRecallIncludeCausalTrajectories:
+      cfg.activeRecallIncludeCausalTrajectories === true,
+    activeRecallIncludeDaySummary: cfg.activeRecallIncludeDaySummary === true,
+    activeRecallAttachRecallExplain: cfg.activeRecallAttachRecallExplain === true,
+    activeRecallAllowChainedActiveMemory:
+      cfg.activeRecallAllowChainedActiveMemory === true,
+    dreaming,
+    heartbeat,
+    slotBehavior,
+    codexCompat,
     // Hourly summaries
     hourlySummariesEnabled: cfg.hourlySummariesEnabled !== false, // default: true
     daySummaryEnabled: cfg.daySummaryEnabled !== false, // default: true

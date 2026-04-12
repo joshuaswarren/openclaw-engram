@@ -21,6 +21,11 @@ test("ingestReplayBatch enqueues replay slices without clearing shared buffer", 
   );
   assert.match(
     source,
+    /skipDedupeCheck:\s*true,\s*clearBufferAfterExtraction:\s*false,\s*skipCharThreshold:\s*true,\s*bufferKey:\s*key,/m,
+    "replay ingestion should clear the session-specific buffer key after extraction, not the default buffer",
+  );
+  assert.match(
+    source,
     /const settled = await Promise\.allSettled\(replayTasks\);[\s\S]*firstRejected[\s\S]*throw firstRejected\.reason;/m,
     "replay ingestion should drain all per-session tasks before surfacing a batch failure",
   );
@@ -70,7 +75,7 @@ test("queueBufferedExtraction settles task callbacks on dedupe skip", () => {
 
   assert.match(
     source,
-    /if \(\s*!options\.skipDedupeCheck\s*&&\s*!this\.shouldQueueExtraction\(turnsToExtract\)\s*\) \{[\s\S]*options\.onTaskSettled\?\.\(\);[\s\S]*return;/m,
+    /if \(\s*!options\.skipDedupeCheck\s*&&\s*!this\.shouldQueueExtraction\(turnsToExtract,\s*\{\s*bufferKey\s*\}\)\s*\) \{[\s\S]*options\.onTaskSettled\?\.\(\);[\s\S]*return;/m,
     "dedupe skip path should settle any task callback to avoid hanging replay promises",
   );
 });

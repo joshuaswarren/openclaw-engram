@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- OpenClaw plugin manifests (`openclaw.plugin.json` at root and
+  `packages/plugin-openclaw/`) now advertise the v2026.4.10 runtime support
+  block for memory-slot routing, dreaming-slot routing, active-memory,
+  heartbeat, `commands.list`, and `before_reset`.
+- OpenClaw plugin manifests now explicitly accept the `dreaming`,
+  `slotBehavior`, reset-flush, and `codexCompat` config blocks so newer
+  OpenClaw runtimes validate Remnic's config surface without dropping keys.
+
+### Changed
+
+- `before_reset` now clears per-session recall workspace overrides in addition
+  to the precomputed recall cache, preventing stale session-scoped state from
+  surviving a reset.
+- OpenClaw plugin docs now document canonical `openclaw-remnic` configuration,
+  slot-selection behavior, reset-flush semantics, command discovery, and the
+  extraction-auth clarification for bundled Codex compatibility work.
+
 ## [v9.3.1] — 2026-04-12
 
 ### Added

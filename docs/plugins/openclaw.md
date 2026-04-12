@@ -1,93 +1,281 @@
-# OpenClaw Plugin (OEO)
+# OpenClaw Plugin
 
-The OpenClaw Remnic bridge is a memory-slot plugin that bridges OpenClaw to the Remnic memory engine.
+`@remnic/plugin-openclaw` is the OpenClaw bridge for Remnic. It is the
+canonical memory-slot plugin id `openclaw-remnic`; the older
+`openclaw-engram` id is now a compatibility shim.
 
-## Installation
+The OpenClaw plugin is Remnic's OpenClaw-specific adapter. It should stay thin: Remnic core owns memory behavior, while this package translates that behavior into OpenClaw's current plugin SDK and runtime contracts.
 
-OEO is the original OpenClaw memory integration. If you're already using Engram or Remnic with OpenClaw, this is the bridge plugin.
+Canonical upstream references for this adapter:
+
+- OpenClaw repository: <https://github.com/openclaw/openclaw>
+- OpenClaw plugin docs: <https://github.com/openclaw/openclaw/tree/main/docs/plugins>
+- OpenClaw SDK overview: <https://github.com/openclaw/openclaw/blob/main/docs/plugins/sdk-overview.md>
+- OpenClaw SDK entrypoints: <https://github.com/openclaw/openclaw/blob/main/docs/plugins/sdk-entrypoints.md>
+- OpenClaw SDK runtime guide: <https://github.com/openclaw/openclaw/blob/main/docs/plugins/sdk-runtime.md>
+
+## Install
 
 ```bash
 openclaw plugins install @remnic/plugin-openclaw --pin
 ```
 
-Or via the Remnic CLI:
+Or use the Remnic installer:
 
 ```bash
-remnic connectors install openclaw
+remnic openclaw install
 ```
 
-## What It Does
+## Configure
 
-### Memory Slot Integration
+Minimal configuration:
 
-OEO registers with OpenClaw's exclusive memory slot:
-
-| API | What It Does |
-|-----|-------------|
-| `registerMemoryPromptSection(builder)` | Injects recalled memories into every agent prompt |
-| `registerMemoryFlushPlan(resolver)` | Automatically persists memories after conversations |
-| `registerMemoryRuntime(runtime)` | Provides the full memory runtime to OpenClaw |
-
-### 43+ Tools
-
-All Remnic tools are registered with OpenClaw's tool system — recall, observe, governance, work tracking, shared context, identity continuity, etc.
-
-### HTTP Server for External Agents
-
-**Even in embedded mode**, OEO starts an HTTP server on `:4318`. This lets Claude Code, Codex, Hermes, and Replit connect to the same memory store OpenClaw uses.
-
-## Modes
-
-See [embedded-vs-delegate.md](../architecture/embedded-vs-delegate.md) for details.
-
-### Embedded (Default)
-
-OEO runs the Orchestrator in-process + exposes `:4318`.
-
-### Delegate
-
-OEO proxies to a running EMO daemon. Set in config:
-
-```json
-{ "engram": { "mode": "delegate" } }
+```jsonc
+{
+  "plugins": {
+    "allow": ["openclaw-remnic"],
+    "slots": { "memory": "openclaw-remnic" },
+    "entries": {
+      "openclaw-remnic": {
+        "package": "@remnic/plugin-openclaw"
+      }
+    }
+  }
+}
 ```
 
-## Memory Store Location
+The plugin only runs actively when `plugins.slots.memory` points at its own
+plugin id.
 
-OEO stores memories at `~/.openclaw/workspace/memory/local/` — the standard OpenClaw path. This ensures:
+## Architecture Rule
 
-- Ops Dashboard memory views work
-- Conductor reads memory for approval context
-- Cron jobs (morning report, self-improvement) access memory
-- Agents share context through the memory directory
+Do not move OpenClaw-specific contracts into `@remnic/core`. The OpenClaw adapter should consume core contracts and map them onto OpenClaw. When OpenClaw already has a native command surface, tool registration path, memory lifecycle hook, or plugin manifest feature, use that upstream primitive instead of inventing a duplicate Remnic abstraction.
 
-## Upgrade Guide
+## Slot Selection
 
-If you're upgrading from the monolithic Engram plugin to the new EMO/OEO architecture:
+Remnic now validates the OpenClaw memory-slot selection at registration time.
+The behavior is controlled by `slotBehavior`:
 
-1. The bridge package is now `@remnic/plugin-openclaw`
-2. Memory files stay at `~/.openclaw/workspace/memory/local/` — no migration needed
-3. All OpenClaw tools keep working — same names, same behavior
-4. **New:** `:4318` is now exposed for external agents (Claude Code, Codex, etc.)
-
-To connect other agents after upgrading:
-
-```bash
-remnic connectors install claude-code   # now shares memory with OpenClaw
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "slotBehavior": {
+            "requireExclusiveMemorySlot": true,
+            "onSlotMismatch": "error"
+          }
+        }
+      }
+    }
+  }
+}
 ```
+
+- `onSlotMismatch: "error"` throws an actionable startup error.
+- `onSlotMismatch: "warn"` loads passively and logs one warning.
+- `onSlotMismatch: "silent"` loads passively with no warning.
+
+Passive mode still registers tools and the service surface, but it skips
+prompt-injection and extraction hooks so Remnic does not compete with the
+selected memory plugin.
+
+## Runtime Surfaces
+
+OpenClaw runtime surfaces currently wired by the plugin:
+
+- `before_prompt_build` / `before_agent_start` for memory injection
+- `agent_end` for buffered extraction
+- `before_compaction` / `after_compaction` for checkpoint and reset flows
+- `before_reset` for reset-time bounded buffer flush and session cleanup
+- `commands.list` for slash-command discovery metadata
+- `session_start` / `session_end`
+- `before_tool_call` / `after_tool_call`
+- `llm_output`
+- `subagent_spawning` / `subagent_ended`
+
+The plugin manifest now advertises these capabilities through its `supports`
+block so newer OpenClaw runtimes can route slot- and runtime-specific behavior
+without guessing.
+
+## Reset Flush Contract
+
+When OpenClaw resets a session (`/new`, `/reset`, or programmatic reset),
+Remnic attempts to flush that session's buffered turns before the runtime
+discards them.
+
+Relevant settings:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "flushOnResetEnabled": true,
+          "beforeResetTimeoutMs": 2000
+        }
+      }
+    }
+  }
+}
+```
+
+- `flushOnResetEnabled=false` skips extraction flush but still clears
+  session-scoped caches.
+- `beforeResetTimeoutMs` bounds how long Remnic will wait before returning
+  control to OpenClaw. Timeout is fail-open: reset continues even if the flush
+  path is slow.
+
+Reset cleanup currently clears:
+
+- precomputed prompt-section recall cache for the session
+- per-session recall workspace override state
+
+## Command Discovery
+
+Remnic responds to OpenClaw's `commands.list` surface with the current command
+descriptor group:
+
+- `remnic off`
+- `remnic on`
+- `remnic status`
+- `remnic clear`
+- `remnic stats`
+- `remnic flush`
+
+This is discovery metadata for the command palette and help surfaces. The
+handlers are live:
+
+- `remnic off` / `remnic on` write the session toggle store
+- `remnic status` reports current toggle source and the last recall summary
+- `remnic clear` removes the session override so global config wins again
+- `remnic stats` reports planner mode, latency, and memory count for the last recall
+- `remnic flush` forces a bounded session flush through Remnic's extraction buffer
+
+## Dreaming and Heartbeat
+
+OpenClaw v2026.4.10 introduced slot-aware dreaming and heartbeat routing for
+memory plugins. Remnic now accepts the `dreaming` config block in its manifest
+schema, reads `DREAMS.md` diary entries through the shared surface parser, and
+injects the most recent entries as a distinct `## Recent Dreams (Remnic)` block
+ahead of the main memory context when dreaming is enabled. The OpenClaw adapter
+also round-trips those entries into Remnic storage as `memoryKind: "dream"` and
+preserves provenance metadata so a Remnic-written dream is re-read idempotently
+instead of being re-indexed as a fresh memory on the next watch cycle.
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "dreaming": {
+            "enabled": false,
+            "journalPath": "DREAMS.md",
+            "maxEntries": 500,
+            "injectRecentCount": 3,
+            "minIntervalMinutes": 120,
+            "narrativeModel": "gpt-5.2",
+            "narrativePromptStyle": "reflective",
+            "watchFile": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+When consolidation produces a cross-session reflective summary and the
+`minIntervalMinutes` gate is satisfied, Remnic now appends a new `DREAMS.md`
+entry through the shared surface writer using the OpenAI Responses API. This is
+adapter-only behavior; standalone/core still has no dependency on OpenClaw's
+journal files.
+
+Heartbeat support is also advertised in the manifest and now does more than
+schema validation. The shared `packages/remnic-core/src/surfaces/heartbeat.ts`
+parser reads `HEARTBEAT.md` task files and upstream-style `tasks:` sections,
+then the OpenClaw adapter imports them into storage as
+`memoryKind: "procedural"` with `source: "heartbeat.md"`. During heartbeat
+runs, Remnic gates normal recall, injects the active heartbeat entry, and adds a
+`## Previous Runs` block from memories tagged with the same
+`relatedHeartbeatSlug`. By default it also skips episodic buffering and active
+recall transcript writes for heartbeat-triggered turns.
+
+Detection mode is configurable:
+
+- `runtime-signal`: only trust explicit OpenClaw heartbeat routing metadata
+- `heuristic`: treat `Read HEARTBEAT.md ...` prompts as v1 heartbeat runs even
+  when the runtime does not expose a signal yet
+- `auto`: prefer runtime signals and fall back to the heuristic path
+
+The heuristic path is intentionally adapter-only and documented as a bridge for
+current OpenClaw runtime behavior, not a new core contract.
+
+Recent-dream injection respects session toggles and the new active-recall
+surface. When the OpenClaw runtime uses `registerMemoryPromptSection`, Remnic
+returns the dreams/verbose/active-recall context through `before_prompt_build`
+and keeps the structured memory section itself isolated in the prompt-section
+builder, so the gateway does not double-inject memory text.
+
+## Codex Compatibility
+
+The plugin now exposes a dedicated `codexCompat` config block:
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "codexCompat": {
+            "enabled": true,
+            "threadIdBufferKeying": true,
+            "compactionFlushMode": "auto",
+            "fingerprintDedup": true
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+The intent of this block is to make Remnic's extraction buffering safe under
+Codex-managed threads and compaction without changing non-Codex provider
+behavior.
+
+Important clarification: Remnic's extraction pipeline still uses its own
+Responses API auth path. Bundled Codex provider auth in OpenClaw does not
+replace or proxy Remnic's extraction credentials.
+
+## Public Artifacts
+
+When `registerMemoryCapability()` is available, Remnic publishes a
+`publicArtifacts` provider so OpenClaw and memory-wiki surfaces can enumerate
+safe memory files such as:
+
+- `facts/`
+- `entities/`
+- `corrections/`
+- `artifacts/`
+- `profile.md`
+
+Private runtime state is excluded.
 
 ## Troubleshooting
 
-### Port 4318 already in use
+If hooks are not firing:
 
-Another EMO instance or service is on `:4318`. OEO auto-switches to delegate mode.
-
-To resolve: stop the conflicting process, or set `mode: "delegate"` to use the existing daemon.
-
-### Memory not appearing in OpenClaw
-
-Check the plugin is loaded:
+1. Confirm the plugin is installed under `openclaw-remnic`.
+2. Confirm `plugins.slots.memory` points to `openclaw-remnic`.
+3. Check the gateway log for a slot-selection error or passive-mode warning.
 
 ```bash
-tail -20 ~/.openclaw/logs/gateway.log | grep -i engram
+grep -i remnic ~/.openclaw/logs/gateway.log | tail -50
 ```
+
+If you are migrating from the older `openclaw-engram` id, install the
+canonical package and keep the shim only as a temporary compatibility layer.

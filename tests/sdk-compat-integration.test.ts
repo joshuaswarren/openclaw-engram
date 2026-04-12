@@ -42,6 +42,8 @@ const MIGRATION_PROMISE_KEY = "__openclawEngramMigrationPromise";
 const UNKEYED_ORCH_MIRROR_KEY = "__openclawEngramOrchestrator";
 // CLI dedupe guard — intentionally process-global (not per-serviceId).
 const CLI_REGISTERED_GUARD_KEY = "__openclawEngramCliRegistered";
+const SESSION_COMMANDS_REGISTERED_GUARD_KEY =
+  "__openclawEngramSessionCommandsRegistered";
 // CLI active-service refcount.
 const CLI_ACTIVE_SERVICE_COUNT_KEY = "__openclawEngramCliActiveServiceCount";
 const DISABLE_REGISTER_MIGRATION_ENV = "REMNIC_DISABLE_REGISTER_MIGRATION";
@@ -107,6 +109,7 @@ function resetGlobals() {
     ORCH_KEY,
     UNKEYED_ORCH_MIRROR_KEY,
     CLI_REGISTERED_GUARD_KEY,
+    SESSION_COMMANDS_REGISTERED_GUARD_KEY,
     CLI_ACTIVE_SERVICE_COUNT_KEY,
     ACCESS_SVC_KEY,
     ACCESS_HTTP_KEY,
@@ -132,11 +135,14 @@ interface MockApi {
   registrationMode?: string;
   registerMemoryPromptSection?: (spec: unknown) => void;
   registerMemoryCapability?: (spec: unknown) => void;
+  registerCommand?: (spec: unknown) => void;
   _registeredHooks: string[];
   _registeredToolCount: number;
+  _registeredToolNames: string[];
   _registeredServiceIds: string[];
   _memoryPromptSectionRegistered: boolean;
   _registeredMemoryCapability?: any;
+  _registeredCommands: unknown[];
 }
 
 function buildNewSdkApi(label: string): MockApi {
@@ -147,10 +153,18 @@ function buildNewSdkApi(label: string): MockApi {
     config: {},
     _registeredHooks: [],
     _registeredToolCount: 0,
+    _registeredToolNames: [],
     _registeredServiceIds: [],
     _memoryPromptSectionRegistered: false,
-    registerTool(_spec: unknown) {
+    _registeredCommands: [],
+    registerTool(spec: unknown) {
       api._registeredToolCount++;
+      if (spec && typeof spec === "object" && typeof (spec as { name?: unknown }).name === "string") {
+        api._registeredToolNames.push((spec as { name: string }).name);
+      }
+    },
+    registerCommand(spec: unknown) {
+      api._registeredCommands.push(spec);
     },
     registerCli(_spec: unknown) {},
     registerService(spec) {
@@ -177,10 +191,15 @@ function buildLegacySdkApi(label: string): MockApi {
     config: {},
     _registeredHooks: [],
     _registeredToolCount: 0,
+    _registeredToolNames: [],
     _registeredServiceIds: [],
     _memoryPromptSectionRegistered: false,
-    registerTool(_spec: unknown) {
+    _registeredCommands: [],
+    registerTool(spec: unknown) {
       api._registeredToolCount++;
+      if (spec && typeof spec === "object" && typeof (spec as { name?: unknown }).name === "string") {
+        api._registeredToolNames.push((spec as { name: string }).name);
+      }
     },
     registerCli(_spec: unknown) {},
     registerService(spec) {
@@ -233,6 +252,14 @@ test("new SDK api gets all new hooks + memory section", async () => {
       api._registeredHooks.includes("after_compaction"),
       "after_compaction should be registered",
     );
+    assert.ok(
+      api._registeredHooks.includes("before_reset"),
+      "before_reset should be registered on new SDK",
+    );
+    assert.ok(
+      api._registeredHooks.includes("commands.list"),
+      "commands.list should be registered on new SDK",
+    );
 
     // New SDK-only hooks
     assert.ok(
@@ -274,6 +301,126 @@ test("new SDK api gets all new hooks + memory section", async () => {
     assert.ok(
       api._registeredServiceIds.includes("openclaw-remnic"),
       "service should be registered",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("slot mismatch warn mode suppresses hook registration but still registers tools and service", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("slot-mismatch-passive");
+    api.config = {
+      plugins: {
+        slots: {
+          memory: "other-memory-plugin",
+        },
+      },
+    };
+    api.pluginConfig = {
+      slotBehavior: {
+        onSlotMismatch: "warn",
+      },
+    };
+
+    plugin.register(api as any);
+
+    assert.equal(api._registeredHooks.length, 0, "passive mode should not register hooks");
+    assert.ok(api._registeredToolCount > 0, "tools should still register in passive mode");
+    assert.ok(
+      api._registeredServiceIds.includes("openclaw-remnic"),
+      "service should still register in passive mode",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("new SDK registers active-memory tool names and slash commands", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("active-memory-tools-test");
+    plugin.register(api as any);
+
+    assert.ok(
+      api._registeredToolNames.includes("memory_search"),
+      "memory_search should be registered for OpenClaw active-memory routing",
+    );
+    assert.ok(
+      api._registeredToolNames.includes("memory_get"),
+      "memory_get should be registered for OpenClaw active-memory routing",
+    );
+    assert.ok(
+      api._registeredCommands.length > 0,
+      "registerCommand should be used when available for session-scoped recall toggles",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("new SDK hides session command registration when session toggles are disabled", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("active-memory-tools-disabled-toggle-test");
+    api.pluginConfig = {
+      sessionTogglesEnabled: false,
+    };
+    plugin.register(api as any);
+
+    assert.equal(
+      api._registeredHooks.includes("commands.list"),
+      false,
+      "commands.list should not be registered when session toggle commands are disabled",
+    );
+    assert.equal(
+      api._registeredCommands.length,
+      0,
+      "registerCommand should not expose session toggle commands when the toggle system is disabled",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("new SDK registerCommand is deduped across multi-registry registration", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const first = buildNewSdkApi("new-sdk-register-command-first");
+    const second = buildNewSdkApi("new-sdk-register-command-second");
+
+    plugin.register(first as any);
+    plugin.register(second as any);
+
+    assert.ok(
+      first._registeredCommands.length > 0,
+      "first registry should register session command descriptors",
+    );
+    assert.equal(
+      second._registeredCommands.length,
+      0,
+      "secondary registries must not duplicate process-global session command trees",
     );
   } finally {
     await awaitPendingMigration();

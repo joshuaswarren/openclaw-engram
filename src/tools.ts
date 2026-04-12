@@ -293,6 +293,8 @@ function formatContinuityLoopSummary(loop: ContinuityImprovementLoop): string {
 }
 
 export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
+  const useDedicatedOpenClawMemoryTools =
+    orchestrator.config.openclawToolsEnabled !== false;
   const actionTypes: MemoryActionType[] = [
     "store_episode",
     "store_note",
@@ -406,11 +408,12 @@ export function registerTools(api: ToolApi, orchestrator: Orchestrator): void {
     }
   }
 
-  api.registerTool(
-    {
-      name: "memory_search",
-      label: "Search Memory",
-      description: `Search local memory files using QMD's semantic index. Returns matching memories with snippets and relevance scores.
+  if (!useDedicatedOpenClawMemoryTools) {
+    api.registerTool(
+      {
+        name: "memory_search",
+        label: "Search Memory",
+        description: `Search local memory files using QMD's semantic index. Returns matching memories with snippets and relevance scores.
 
 Returns: Matching memory entries ranked by relevance
 Cost: Free (local index query)
@@ -444,7 +447,7 @@ Best for:
           }),
         ),
       }),
-      async execute(_toolCallId, params) {
+        async execute(_toolCallId, params) {
         const { query, maxResults, collection, namespace } = params as {
           query: string;
           maxResults?: number;
@@ -485,10 +488,11 @@ Best for:
         return toolResult(
           `## Memory Search: "${query}"\n\n${filtered.length} result(s)\n\n${formatted}`,
         );
+        },
       },
-    },
-    { name: "memory_search" },
-  );
+      { name: "memory_search" },
+    );
+  }
 
   api.registerTool(
     {

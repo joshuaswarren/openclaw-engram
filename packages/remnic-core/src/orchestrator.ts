@@ -246,6 +246,7 @@ import type {
   BootstrapResult,
   BufferTurn,
   ContinuityIncidentRecord,
+  ConsolidationObservation,
   EngramTraceEvent,
   ExtractionResult,
   IdentityInjectionMode,
@@ -1047,6 +1048,9 @@ export class Orchestrator {
   private nonZeroExtractionsSinceConsolidation = 0;
   private lastConsolidationRunAtMs = 0;
   private consolidationInFlight = false;
+  private readonly consolidationObservers = new Set<
+    (observation: ConsolidationObservation) => Promise<void> | void
+  >();
   private qmdMaintenanceTimer: NodeJS.Timeout | null = null;
   private qmdMaintenancePending = false;
   private qmdMaintenanceInFlight = false;
@@ -1975,6 +1979,23 @@ export class Orchestrator {
     invalidated: number;
   }> {
     return this.runConsolidation();
+  }
+
+  async reindexMemoryById(
+    id: string,
+    options?: { storage?: StorageManager },
+  ): Promise<void> {
+    await this.indexPersistedMemory(options?.storage ?? this.storage, id);
+    this.requestQmdMaintenance();
+  }
+
+  registerConsolidationObserver(
+    observer: (observation: ConsolidationObservation) => Promise<void> | void,
+  ): () => void {
+    this.consolidationObservers.add(observer);
+    return () => {
+      this.consolidationObservers.delete(observer);
+    };
   }
 
   async runSemanticConsolidationNow(options?: {
@@ -7632,6 +7653,10 @@ export class Orchestrator {
       return;
     }
 
+    const bufferKey =
+      typeof sessionKey === "string" && sessionKey.length > 0
+        ? sessionKey
+        : "default";
     const turn: BufferTurn = {
       role,
       content,
@@ -7639,10 +7664,37 @@ export class Orchestrator {
       sessionKey,
     };
 
-    const decision = await this.buffer.addTurn(turn);
+    const decision = await this.buffer.addTurn(bufferKey, turn);
 
     if (decision === "keep_buffering") return;
-    await this.queueBufferedExtraction(this.buffer.getTurns(), "trigger_mode");
+    await this.queueBufferedExtraction(
+      this.buffer.getTurns(bufferKey),
+      "trigger_mode",
+      { bufferKey },
+    );
+  }
+
+  async flushSession(
+    sessionKey: string,
+    options: { reason: string; abortSignal?: AbortSignal },
+  ): Promise<void> {
+    const bufferKey =
+      typeof sessionKey === "string" && sessionKey.length > 0
+        ? sessionKey
+        : "default";
+    const turns = this.buffer.getTurns(bufferKey);
+    if (turns.length === 0) return;
+    await new Promise<void>((resolve, reject) => {
+      void this
+        .queueBufferedExtraction(turns, "trigger_mode", {
+          bufferKey,
+          clearBufferAfterExtraction: true,
+          skipDedupeCheck: true,
+          abortSignal: options.abortSignal,
+          onTaskSettled: (error) => (error ? reject(error) : resolve()),
+        })
+        .catch(reject);
+    });
   }
 
   async ingestReplayBatch(
@@ -7672,7 +7724,7 @@ export class Orchestrator {
     }
 
     const replayTasks: Array<Promise<void>> = [];
-    for (const sessionTurns of bySession.values()) {
+    for (const [key, sessionTurns] of bySession.entries()) {
       if (sessionTurns.length === 0) continue;
       replayTasks.push(
         new Promise<void>((resolve, reject) => {
@@ -7680,6 +7732,7 @@ export class Orchestrator {
             skipDedupeCheck: true,
             clearBufferAfterExtraction: false,
             skipCharThreshold: true,
+            bufferKey: key,
             extractionDeadlineMs: options.deadlineMs,
             onTaskSettled: (err) => (err ? reject(err) : resolve()),
           }).catch(reject);
@@ -7707,18 +7760,25 @@ export class Orchestrator {
     const next = previous
       .catch(() => undefined)
       .then(async () => {
-        const turns = this.buffer.getTurns();
+        const turns = this.buffer.getTurns(sessionKey);
         if (turns.length === 0) return;
-        const mixedSessionTurns = turns.some(
-          (turn) => turn.sessionKey !== sessionKey,
-        );
-        if (mixedSessionTurns) {
+        const normalizedSessionKey = normalizeReplaySessionKey(sessionKey);
+        if (
+          turns.some(
+            (turn) =>
+              turn.sessionKey &&
+              normalizeReplaySessionKey(turn.sessionKey) !== normalizedSessionKey,
+          )
+        ) {
           log.debug(
-            `heartbeat observer skipped: mixed session buffer for ${sessionKey}`,
+            `heartbeat observer skipped: mixed-session buffer contents for ${sessionKey}`,
           );
           return;
         }
-        if (!this.shouldQueueExtraction(turns, { commit: false })) {
+        if (!this.shouldQueueExtraction(turns, {
+          commit: false,
+          bufferKey: sessionKey,
+        })) {
           log.debug(
             `heartbeat observer skipped: extraction dedupe for ${sessionKey}`,
           );
@@ -7735,7 +7795,9 @@ export class Orchestrator {
         log.debug(
           `heartbeat observer trigger: session=${sessionKey} deltaBytes=${decision.deltaBytes} deltaTokens=${decision.deltaTokens}`,
         );
-        await this.queueBufferedExtraction(turns, "heartbeat_observer");
+        await this.queueBufferedExtraction(turns, "heartbeat_observer", {
+          bufferKey: sessionKey,
+        });
       });
 
     this.heartbeatObserverChains.set(sessionKey, next);
@@ -7757,11 +7819,14 @@ export class Orchestrator {
       skipCharThreshold?: boolean;
       extractionDeadlineMs?: number;
       onTaskSettled?: (error?: unknown) => void;
+      bufferKey?: string;
+      abortSignal?: AbortSignal;
     } = {},
   ): Promise<void> {
+    const bufferKey = options.bufferKey ?? turnsToExtract[0]?.sessionKey ?? "default";
     if (
       !options.skipDedupeCheck &&
-      !this.shouldQueueExtraction(turnsToExtract)
+      !this.shouldQueueExtraction(turnsToExtract, { bufferKey })
     ) {
       log.debug(`extraction dedupe skip: preserving buffer (${reason})`);
       options.onTaskSettled?.();
@@ -7775,6 +7840,8 @@ export class Orchestrator {
             options.clearBufferAfterExtraction ?? true,
           skipCharThreshold: options.skipCharThreshold ?? false,
           deadlineMs: options.extractionDeadlineMs,
+          bufferKey,
+          abortSignal: options.abortSignal,
         });
         options.onTaskSettled?.();
       } catch (err) {
@@ -7795,7 +7862,7 @@ export class Orchestrator {
 
   private shouldQueueExtraction(
     turns: BufferTurn[],
-    options: { commit?: boolean } = {},
+    options: { commit?: boolean; bufferKey?: string } = {},
   ): boolean {
     if (!this.config.extractionDedupeEnabled) return true;
     if (!Array.isArray(turns) || turns.length === 0) return false;
@@ -7810,7 +7877,10 @@ export class Orchestrator {
       .join("\n");
     if (!normalized) return false;
 
-    const fingerprint = createHash("sha256").update(normalized).digest("hex");
+    const bufferKey = options.bufferKey ?? turns[0]?.sessionKey ?? "default";
+    const fingerprint = createHash("sha256")
+      .update(`${bufferKey}\n${normalized}`)
+      .digest("hex");
     const now = Date.now();
     const seenAt = this.recentExtractionFingerprints.get(fingerprint);
     if (seenAt && now - seenAt < this.config.extractionDedupeWindowMs) {
@@ -7863,6 +7933,8 @@ export class Orchestrator {
       clearBufferAfterExtraction?: boolean;
       skipCharThreshold?: boolean;
       deadlineMs?: number;
+      bufferKey?: string;
+      abortSignal?: AbortSignal;
     } = {},
   ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
@@ -7874,14 +7946,21 @@ export class Orchestrator {
       Number.isFinite(options.deadlineMs)
         ? options.deadlineMs
         : undefined;
+    const bufferKey = options.bufferKey ?? turns[0]?.sessionKey ?? "default";
     const throwIfDeadlineExceeded = (stage: string): void => {
       if (typeof deadlineMs === "number" && Date.now() > deadlineMs) {
         throw new Error(`replay extraction deadline exceeded (${stage})`);
       }
     };
-    const clearBuffer = async () => {
+    const throwIfAborted = (stage: string): void => {
+      throwIfRecallAborted(options.abortSignal, `extraction aborted (${stage})`);
+    };
+    const clearBuffer = async (options?: { ignoreAbort?: boolean }) => {
+      if (options?.ignoreAbort !== true) {
+        throwIfAborted("before_clear_buffer");
+      }
       if (clearBufferAfterExtraction) {
-        await this.buffer.clearAfterExtraction();
+        await this.buffer.clearAfterExtraction(bufferKey);
       }
     };
 
@@ -7905,6 +7984,7 @@ export class Orchestrator {
       }))
       .filter((t) => t.content.length > 0);
     throwIfDeadlineExceeded("before_extract");
+    throwIfAborted("before_extract");
 
     const userTurns = normalizedTurns.filter((t) => t.role === "user");
     const totalChars = normalizedTurns.reduce(
@@ -7928,11 +8008,16 @@ export class Orchestrator {
 
     // Pass existing entity names so the LLM can reuse them instead of inventing variants
     const existingEntities = await storage.listEntityNames();
-    const result = await this.extraction.extract(
-      normalizedTurns,
-      existingEntities,
+    const result = await raceRecallAbort(
+      this.extraction.extract(
+        normalizedTurns,
+        existingEntities,
+      ),
+      options.abortSignal,
+      "extraction aborted (during_extract)",
     );
     throwIfDeadlineExceeded("before_persist");
+    throwIfAborted("before_persist");
 
     // Defensive: validate extraction result before processing
     if (!result) {
@@ -7981,7 +8066,7 @@ export class Orchestrator {
       threadIdForExtraction,
       { sessionKey, principal },
     );
-    await clearBuffer();
+    await clearBuffer({ ignoreAbort: true });
 
     // Build memory box from this extraction (v8.0 Phase 2A)
     // Topics are derived from the current extraction's facts and entities only —
@@ -10299,6 +10384,25 @@ export class Orchestrator {
       }
     }
 
+    if (this.consolidationObservers.size > 0) {
+      const observation: ConsolidationObservation = {
+        runAt: new Date().toISOString(),
+        recentMemories: recent,
+        existingMemories: older.slice(-50),
+        profile,
+        result,
+        merged,
+        invalidated,
+      };
+      for (const observer of this.consolidationObservers) {
+        try {
+          await observer(observation);
+        } catch (err) {
+          log.warn(`consolidation observer failed (ignored): ${err}`);
+        }
+      }
+    }
+
     log.info("consolidation complete");
     return { memoriesProcessed: allMemories.length, merged, invalidated };
   }
@@ -12052,6 +12156,7 @@ export class Orchestrator {
     preloadedMemoryMap?: Map<string, MemoryFile>,
     options?: {
       allowLifecycleFiltered?: boolean;
+      allowDedicatedSurface?: boolean;
     },
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
@@ -12122,6 +12227,7 @@ export class Orchestrator {
 
     let lifecycleFilteredCount = 0;
     let temporalSupersededFilteredCount = 0;
+    let dedicatedSurfaceFilteredCount = 0;
     const boosted: QmdSearchResult[] = [];
     const recencyWeight = this.effectiveRecencyWeight();
     for (const r of results) {
@@ -12154,6 +12260,15 @@ export class Orchestrator {
           })
         ) {
           temporalSupersededFilteredCount += 1;
+          continue;
+        }
+
+        if (
+          options?.allowDedicatedSurface !== true &&
+          (memory.frontmatter.memoryKind === "dream" ||
+            memory.frontmatter.memoryKind === "procedural")
+        ) {
+          dedicatedSurfaceFilteredCount += 1;
           continue;
         }
 
@@ -12282,6 +12397,11 @@ export class Orchestrator {
     if (temporalSupersededFilteredCount > 0) {
       log.debug(
         `temporal supersession filter removed ${temporalSupersededFilteredCount} superseded candidates`,
+      );
+    }
+    if (dedicatedSurfaceFilteredCount > 0) {
+      log.debug(
+        `dedicated surface filter removed ${dedicatedSurfaceFilteredCount} dream/procedural candidates from generic recall`,
       );
     }
 
