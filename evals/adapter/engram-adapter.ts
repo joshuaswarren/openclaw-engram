@@ -279,7 +279,7 @@ export async function createEngramAdapter(
       // Run extraction (facts, entities, questions) through the orchestrator's
       // buffer → extraction pipeline. We simulate agent_end hook behavior.
       for (const msg of messages) {
-        await orchestrator.buffer.addTurn({
+        await orchestrator.buffer.addTurn(sessionId, {
           role: msg.role,
           content: msg.content,
           timestamp: new Date().toISOString(),
@@ -290,7 +290,7 @@ export async function createEngramAdapter(
       // skip extraction for remaining questions to avoid N × 35s waits.
       if (extractionAvailable) {
         try {
-          const bufferedTurns = orchestrator.buffer.getTurns();
+          const bufferedTurns = orchestrator.buffer.getTurns(sessionId);
           if (bufferedTurns.length > 0) {
             await (orchestrator as any).queueBufferedExtraction?.(bufferedTurns, "trigger_mode");
             const idle = await orchestrator.waitForExtractionIdle(35_000);
@@ -298,17 +298,17 @@ export async function createEngramAdapter(
               extractionAvailable = false;
               console.warn("[eval] extraction timed out — disabling for remaining questions (LCM FTS + IRC still active)");
             }
-            await orchestrator.buffer.clearAfterExtraction();
+            await orchestrator.buffer.clearAfterExtraction(sessionId);
           }
         } catch (err) {
           extractionAvailable = false;
           console.warn("[eval] extraction failed — disabling:", (err as Error)?.message ?? err);
-          await orchestrator.buffer.clearAfterExtraction();
+          await orchestrator.buffer.clearAfterExtraction(sessionId);
         }
       } else {
         // Extraction disabled — clear buffer to prevent unbounded growth.
         // LCM FTS + IRC still have the conversation data.
-        await orchestrator.buffer.clearAfterExtraction();
+        await orchestrator.buffer.clearAfterExtraction(sessionId);
       }
     },
 
