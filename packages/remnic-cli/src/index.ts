@@ -681,7 +681,8 @@ function cmdDoctor(): void {
       const entryConfig = entryToCheck?.config && typeof entryToCheck.config === "object"
         ? entryToCheck.config as Record<string, unknown>
         : null;
-      const configuredMemoryDir = entryConfig?.memoryDir as string | undefined;
+      const rawMemoryDir = entryConfig?.memoryDir;
+      const configuredMemoryDir = typeof rawMemoryDir === "string" ? rawMemoryDir : undefined;
       if (configuredMemoryDir) {
         const resolvedMemDir = path.resolve(expandTilde(configuredMemoryDir));
         let memDirOk = false;
@@ -1749,9 +1750,9 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   // On reinstall (no --memory-dir flag), preserve the currently configured value
   // so running `remnic openclaw install` as a repair doesn't silently relocate
   // the memory namespace. Fall back to the default only when no prior value exists.
-  const existingMemoryDir =
-    (existingNewEntryConfig.memoryDir as string | undefined) ||
-    (migrateLegacy ? (legacyConfigToMerge.memoryDir as string | undefined) : undefined);
+  const existingMemoryDir: string | undefined =
+    (typeof existingNewEntryConfig.memoryDir === "string" ? existingNewEntryConfig.memoryDir : undefined) ||
+    (migrateLegacy && typeof legacyConfigToMerge.memoryDir === "string" ? legacyConfigToMerge.memoryDir : undefined);
   const memoryDir = opts.memoryDir
     ? path.resolve(expandTilde(opts.memoryDir))
     : existingMemoryDir
