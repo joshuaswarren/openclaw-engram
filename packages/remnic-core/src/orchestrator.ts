@@ -7719,6 +7719,7 @@ export class Orchestrator {
             skipDedupeCheck: true,
             clearBufferAfterExtraction: false,
             skipCharThreshold: true,
+            bufferKey: key,
             extractionDeadlineMs: options.deadlineMs,
             onTaskSettled: (err) => (err ? reject(err) : resolve()),
           }).catch(reject);
