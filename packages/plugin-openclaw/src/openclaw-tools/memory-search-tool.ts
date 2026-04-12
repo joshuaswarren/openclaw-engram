@@ -32,9 +32,10 @@ export function buildMemorySearchTool(
       }
       const limit = typeof params.limit === "number" ? params.limit : undefined;
       const sessionKey =
-        typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0
+        ctx?.sessionKey ??
+        (typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0
           ? params.sessionKey
-          : ctx?.sessionKey ?? "default";
+          : "default");
       const filters =
         params.filters && typeof params.filters === "object"
           ? (params.filters as Record<string, unknown>)

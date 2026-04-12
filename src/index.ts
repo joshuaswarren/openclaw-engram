@@ -2406,16 +2406,8 @@ const pluginDefinition = {
                 stopDreamWatcher?.();
                 stopDreamWatcher = dreamsSurface.watch(
                   resolveDreamJournalPath(),
-                  (entries) => {
-                    void syncDreamSurfaceEntries({
-                      storage: orchestrator.storage,
-                      entries,
-                      journalPath: resolveDreamJournalPath(),
-                      maxEntries: cfg.dreaming.maxEntries,
-                      reindexMemory: async (id) => {
-                        await orchestrator.reindexMemoryById(id);
-                      },
-                    }).catch((error) => {
+                  () => {
+                    void queueDreamSurfaceSync().catch((error) => {
                       log.debug(`dream surface watch sync failed: ${String(error)}`);
                     });
                   },

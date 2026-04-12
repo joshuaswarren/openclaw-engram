@@ -242,6 +242,38 @@ test("syncDreamSurfaceEntries treats maxEntries zero as a hard disable", async (
   assert.deepEqual(reindexed, []);
 });
 
+test("syncDreamSurfaceEntries reuses memories created earlier in the same batch", async () => {
+  const storage = makeStorage();
+
+  const result = await syncDreamSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "dream-batch",
+        timestamp: "2026-04-12T10:00:00Z",
+        title: "First draft",
+        body: "Original body.",
+        tags: ["debug"],
+        sourceOffset: 12,
+      },
+      {
+        id: "dream-batch",
+        timestamp: "2026-04-12T10:00:00Z",
+        title: "Refined draft",
+        body: "Updated body.",
+        tags: ["debug", "verification"],
+        sourceOffset: 12,
+      },
+    ],
+    journalPath: "/workspace/DREAMS.md",
+    maxEntries: 10,
+  });
+
+  assert.deepEqual(result, { created: 1, updated: 1, linked: 0 });
+  assert.equal(storage.memories.length, 1);
+  assert.match(storage.memories[0]?.content ?? "", /Refined draft/);
+});
+
 test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and updates the same slug in place", async () => {
   const storage = makeStorage();
   const reindexed: string[] = [];
@@ -303,6 +335,39 @@ test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and upda
     "check-test-suite",
   ]);
   assert.deepEqual(reindexed, ["principle-1", "principle-1"]);
+});
+
+test("syncHeartbeatSurfaceEntries reuses memories created earlier in the same batch", async () => {
+  const storage = makeStorage();
+
+  const result = await syncHeartbeatSurfaceEntries({
+    storage,
+    entries: [
+      {
+        id: "heartbeat-a",
+        slug: "check-test-suite",
+        title: "check-test-suite",
+        body: "Run the suite and report new failures.",
+        schedule: "hourly",
+        tags: ["ci", "tests"],
+        sourceOffset: 20,
+      },
+      {
+        id: "heartbeat-b",
+        slug: "check-test-suite",
+        title: "check-test-suite",
+        body: "Run the suite, compare to the last run, and report new failures.",
+        schedule: "hourly",
+        tags: ["ci", "tests", "diff"],
+        sourceOffset: 48,
+      },
+    ],
+    journalPath: "/workspace/HEARTBEAT.md",
+  });
+
+  assert.deepEqual(result, { created: 1, updated: 1, linked: 0 });
+  assert.equal(storage.memories.length, 1);
+  assert.match(storage.memories[0]?.content ?? "", /compare to the last run/);
 });
 
 test("syncHeartbeatOutcomeLinks annotates non-heartbeat memories that clearly reference one heartbeat slug", async () => {

@@ -32,7 +32,7 @@ test("memory-get tool returns the active-memory bridge payload without markdown 
   assert.equal(payload.metadata?.topic, "tone");
 });
 
-test("memory-get tool resolves session key from params and context", async () => {
+test("memory-get tool binds session key to runtime context and only falls back to params when context is absent", async () => {
   let sessionKeyFromTool: string | null = null;
   let namespaceFromTool: string | null = null;
 
@@ -58,7 +58,7 @@ test("memory-get tool resolves session key from params and context", async () =>
     { sessionKey: "ctx-session" },
   );
 
-  assert.equal(sessionKeyFromTool, "param-session");
+  assert.equal(sessionKeyFromTool, "ctx-session");
   assert.equal(namespaceFromTool, "shared");
   const payload = JSON.parse(result.content[0]?.text ?? "{}") as {
     id?: string;
@@ -69,12 +69,11 @@ test("memory-get tool resolves session key from params and context", async () =>
 
   const fallbackResult = await tool.execute(
     "tc-memory-get-ctx",
-    { id: "mem-4" },
+    { id: "mem-4", sessionKey: "param-session" },
     undefined,
-    { sessionKey: "ctx-session" },
   );
 
-  assert.equal(sessionKeyFromTool, "ctx-session");
+  assert.equal(sessionKeyFromTool, "param-session");
   assert.equal(namespaceFromTool, null);
   const fallbackPayload = JSON.parse(fallbackResult.content[0]?.text ?? "{}") as {
     id?: string;

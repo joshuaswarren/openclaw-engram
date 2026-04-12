@@ -28,9 +28,10 @@ export function buildMemoryGetTool(
         throw new Error("memory_get requires an id");
       }
       const sessionKey =
-        typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0
+        ctx?.sessionKey ??
+        (typeof params.sessionKey === "string" && params.sessionKey.trim().length > 0
           ? params.sessionKey
-          : ctx?.sessionKey ?? "default";
+          : "default");
       const namespace =
         typeof params.namespace === "string" && params.namespace.trim().length > 0
           ? params.namespace.trim()

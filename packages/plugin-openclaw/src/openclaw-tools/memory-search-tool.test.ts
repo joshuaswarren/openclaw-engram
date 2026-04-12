@@ -48,3 +48,35 @@ test("memory-search tool uses ctx session key and returns a structured JSON payl
   assert.equal(payload.results[0]?.id, "mem-1");
   assert.equal(payload.truncated, false);
 });
+
+test("memory-search tool ignores explicit sessionKey overrides when runtime context is present", async () => {
+  let received: Record<string, unknown> | null = null;
+  const tool = buildMemorySearchTool(
+    {} as never,
+    {
+      recallForActiveMemory: async (_orchestrator, params) => {
+        received = params as Record<string, unknown>;
+        return {
+          results: [],
+          truncated: false,
+        };
+      },
+    },
+  );
+
+  await tool.execute(
+    "tc-memory-search-ctx-wins",
+    { query: "preferences", sessionKey: "param-session" },
+    undefined,
+    { sessionKey: "ctx-session" },
+  );
+
+  assert.equal(received?.sessionKey, "ctx-session");
+
+  await tool.execute(
+    "tc-memory-search-param-fallback",
+    { query: "preferences", sessionKey: "param-session" },
+  );
+
+  assert.equal(received?.sessionKey, "param-session");
+});

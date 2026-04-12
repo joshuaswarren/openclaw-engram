@@ -134,6 +134,55 @@ async function patchMemory(
   return changed;
 }
 
+function makeSurfaceMemorySnapshot(params: {
+  id: string;
+  category: MemoryFrontmatter["category"];
+  content: string;
+  tags: string[];
+  source: string;
+  memoryKind: MemoryFrontmatter["memoryKind"];
+  structuredAttributes: Record<string, string>;
+}): MemoryFile {
+  const now = new Date().toISOString();
+  return {
+    path: params.id,
+    content: params.content,
+    frontmatter: {
+      id: params.id,
+      category: params.category,
+      created: now,
+      updated: now,
+      source: params.source,
+      confidence: 1,
+      confidenceTier: "explicit",
+      tags: params.tags,
+      memoryKind: params.memoryKind,
+      structuredAttributes: params.structuredAttributes,
+    },
+  };
+}
+
+function applySurfaceMemorySnapshot(
+  memory: MemoryFile,
+  params: {
+    content: string;
+    tags: string[];
+    source: string;
+    memoryKind: MemoryFrontmatter["memoryKind"];
+    structuredAttributes: Record<string, string>;
+  },
+): void {
+  memory.content = params.content;
+  memory.frontmatter = {
+    ...memory.frontmatter,
+    updated: new Date().toISOString(),
+    source: params.source,
+    tags: params.tags,
+    memoryKind: params.memoryKind,
+    structuredAttributes: params.structuredAttributes,
+  };
+}
+
 export async function syncDreamSurfaceEntries(params: {
   storage: RuntimeSurfaceStorage;
   entries: DreamEntry[];
@@ -171,6 +220,17 @@ export async function syncDreamSurfaceEntries(params: {
         memoryKind: "dream",
         structuredAttributes,
       });
+      memories.push(
+        makeSurfaceMemorySnapshot({
+          id: memoryId,
+          category: "moment",
+          content,
+          tags,
+          source: "dreams.md",
+          memoryKind: "dream",
+          structuredAttributes,
+        }),
+      );
       await reindexMemory?.(memoryId);
       created += 1;
       continue;
@@ -183,6 +243,13 @@ export async function syncDreamSurfaceEntries(params: {
         structuredAttributes,
       })
     ) {
+      applySurfaceMemorySnapshot(existing, {
+        content,
+        tags,
+        source: "dreams.md",
+        memoryKind: "dream",
+        structuredAttributes,
+      });
       await reindexMemory?.(existing.frontmatter.id);
       updated += 1;
     }
@@ -225,6 +292,17 @@ export async function syncHeartbeatSurfaceEntries(params: {
         memoryKind: "procedural",
         structuredAttributes,
       });
+      memories.push(
+        makeSurfaceMemorySnapshot({
+          id: memoryId,
+          category: "principle",
+          content,
+          tags,
+          source: "heartbeat.md",
+          memoryKind: "procedural",
+          structuredAttributes,
+        }),
+      );
       await reindexMemory?.(memoryId);
       created += 1;
       continue;
@@ -238,6 +316,13 @@ export async function syncHeartbeatSurfaceEntries(params: {
         structuredAttributes,
       })
     ) {
+      applySurfaceMemorySnapshot(existing, {
+        content,
+        tags,
+        source: "heartbeat.md",
+        memoryKind: "procedural",
+        structuredAttributes,
+      });
       await reindexMemory?.(existing.frontmatter.id);
       updated += 1;
     }
