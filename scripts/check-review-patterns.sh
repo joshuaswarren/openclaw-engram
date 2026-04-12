@@ -453,6 +453,54 @@ if [[ -n "$CACHE_INVALIDATE" ]]; then
   done <<< "$CACHE_INVALIDATE"
 fi
 
+# ---- 22. Serialized promise chains without catch recovery ----
+echo "[check] Serialized promise chains without rejection recovery..."
+
+POISON_CHAIN=$(grep -rn '\.then(' \
+  --include="*.ts" \
+  packages/ src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  | grep -E "chain\s*=\s*.*\.then\(" \
+  | grep -v "\.catch(" \
+  || true)
+
+if [[ -n "$POISON_CHAIN" ]]; then
+  COUNT=$(echo "$POISON_CHAIN" | wc -l | tr -d ' ')
+  warn "$COUNT serialized promise chains (x = x.then(...)) without .catch() recovery. A single rejection permanently breaks all subsequent chained operations:"
+  echo "$POISON_CHAIN" | head -5
+fi
+
+# ---- 23. Map/Set iteration using .values() but referencing key variables ----
+echo "[check] Loop destructuring mismatch (values() with key references)..."
+
+VALUES_KEY_MISMATCH=$(grep -rn 'for.*\.values()' \
+  --include="*.ts" \
+  packages/ src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  || true)
+
+if [[ -n "$VALUES_KEY_MISMATCH" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    LINE_NUM=$(echo "$line" | cut -d: -f2)
+    # Check if the file has a variable named "key" or "id" referenced after this values() loop
+    # that doesn't come from the loop destructuring
+    CONTEXT=$(awk "NR>$LINE_NUM && NR<=$LINE_NUM+10" "$FILE" 2>/dev/null | grep -E '\bkey\b.*:|\bid\b.*:' || true)
+    if [[ -n "$CONTEXT" ]]; then
+      warn "$FILE:$LINE_NUM — .values() loop but key/id referenced in body. Use .entries() to destructure both key and value."
+      break
+    fi
+  done <<< "$VALUES_KEY_MISMATCH"
+fi
+
 if [[ $ERRORS -gt 0 ]]; then
   echo "[check] FAILED — $ERRORS issue(s) found. Fix before pushing."
   exit 1

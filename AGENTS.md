@@ -36,7 +36,7 @@ Use these as the canonical starting points for adapter work:
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
 These patterns were extracted from 50+ PRs across 2026-04-05 to 2026-04-12
-(including deep analysis of PRs #393-#408 with 640+ review comments).
+(including deep analysis of PRs #393-#408 with 700+ review comments).
 Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
 required a follow-up commit to fix. Follow these rules to ship clean on the first push.
 
@@ -465,6 +465,68 @@ PR #402 (4 instances).
   existed. Partial gating leaves stale artifacts that only appear on some paths.
 - **Test each path independently with the flag on AND off** — don't just test the
   primary path. Each fallback path should have explicit tests for both flag states.
+
+### 28. Promise Chain Resilience — Serialized Chains Must Recover From Rejection
+
+The `writeChain = writeChain.then(async () => { ... })` serialization pattern in
+session-toggles.ts permanently broke all future writes after the first I/O error.
+A rejected promise in the chain prevents all subsequent `.then()` callbacks from
+executing for the process lifetime. PR #408.
+
+- **Always add `.catch()` recovery to serialized promise chains** — after
+  `writeChain = writeChain.then(...)`, ensure the chain resets to a resolved
+  state so a single failure doesn't poison all subsequent operations.
+- **Surface the failure to the current caller but unblock future callers** —
+  use a pattern like `writeChain = writeChain.then(fn).catch(err => { throw err; })`
+  or a dedicated `queueWrite()` wrapper that recovers the chain after rejection.
+- **Test serialization resilience explicitly** — force a write failure in a test,
+  then verify the next write on the same instance succeeds.
+
+### 29. Loop Collection Mismatch — Use Correct Iterator Method for Needed Data
+
+In `ingestReplayBatch`, the loop used `for (const sessionTurns of bySession.values())`
+but then referenced `bufferKey: key` where `key` was undefined. The loop needed
+`.entries()` to destructure both key and value. PR #408 (High Severity).
+
+- **Match the iterator method to the data you need** — `.keys()` for keys only,
+  `.values()` for values only, `.entries()` for both. Never reference a variable
+  from an outer scope when the loop doesn't bind it.
+- **TypeScript strict mode catches this** — ensure `noImplicitAny` and `strict`
+  are enabled so referencing an undefined variable in the block is a compile error.
+- **Grep the entire function body for variables used but not declared locally**
+  — if a loop body references `key` or `id` that isn't in its destructuring
+  pattern, it's either undefined or from an outer scope, both likely wrong.
+
+### 30. Namespace-Aware Read/Write Consistency — Storage Paths Must Match
+
+`recallForActiveMemory` searched across all namespaces (no namespace constraint)
+while `getMemoryForActiveMemory` read from default storage only. In multi-tenant
+deployments, search could return IDs from non-default namespaces that get operations
+would fail to resolve. PR #408 (P1 severity).
+
+- **Read and write paths must resolve through the same namespace layer** — if
+  search goes through namespace-aware resolution, get/delete must too.
+- **Cross-tenant data exposure is a security risk** — un-namespaced search in
+  multi-principal deployments can leak data between tenants. Always constrain
+  search scope via session-derived namespace resolution.
+- **Test with multiple namespaces** — create test fixtures with data in different
+  namespaces and verify each session only sees its own data.
+
+### 31. Post-Write Reindexing — Write Paths Must Trigger Index Updates
+
+The heartbeat import path wrote procedural memories directly to storage but
+didn't trigger any reindex step. Because active-memory search is QMD-backed,
+newly imported entries were not discoverable until unrelated maintenance happened.
+PR #408 (P2 severity).
+
+- **After writing data that needs to be searchable, trigger reindex** — direct
+  storage writes bypass the normal extraction→persist→index pipeline, so they
+  must explicitly call the reindex step.
+- **Verify discoverability in tests** — after writing data, perform a search
+  and assert the new data is findable. Tests that only check file existence
+  miss index staleness.
+- **Document all direct-write paths** — any code that bypasses the normal
+  write pipeline should be flagged as needing manual reindex triggers.
 
 ---
 
