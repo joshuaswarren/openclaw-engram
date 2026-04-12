@@ -11,6 +11,8 @@ import type {
 
 export type TriggerDecision = "extract_now" | "extract_batch" | "keep_buffering";
 
+const MAX_BUFFER_ENTRY_COUNT = 200;
+
 export class SmartBuffer {
   private state: BufferState;
   private loaded = false;
@@ -65,6 +67,58 @@ export class SmartBuffer {
     };
   }
 
+  private entryActivityAt(entry: BufferEntryState): number {
+    const lastTurnAt = entry.turns.reduce((latest, turn) => {
+      const parsed = Date.parse(turn.timestamp);
+      return Number.isFinite(parsed) ? Math.max(latest, parsed) : latest;
+    }, -1);
+    const lastExtractionAt =
+      typeof entry.lastExtractionAt === "string"
+        ? Date.parse(entry.lastExtractionAt)
+        : Number.NaN;
+    return Math.max(
+      lastTurnAt,
+      Number.isFinite(lastExtractionAt) ? lastExtractionAt : -1,
+    );
+  }
+
+  private pruneEntries(retainKeys: string[]): void {
+    const entries = this.state.entries;
+    if (!entries) return;
+    const keys = Object.keys(entries);
+    if (keys.length <= MAX_BUFFER_ENTRY_COUNT) return;
+
+    const keep = new Set(["default", ...retainKeys]);
+    const insertionOrder = new Map(keys.map((key, index) => [key, index]));
+    const ranked = keys
+      .filter((key) => !keep.has(key))
+      .sort((left, right) => {
+        const rightAt = this.entryActivityAt(entries[right] ?? {
+          turns: [],
+          lastExtractionAt: null,
+          extractionCount: 0,
+        });
+        const leftAt = this.entryActivityAt(entries[left] ?? {
+          turns: [],
+          lastExtractionAt: null,
+          extractionCount: 0,
+        });
+        if (rightAt !== leftAt) return rightAt - leftAt;
+        return (insertionOrder.get(right) ?? 0) - (insertionOrder.get(left) ?? 0);
+      });
+
+    for (const key of ranked) {
+      if (keep.size >= MAX_BUFFER_ENTRY_COUNT) break;
+      keep.add(key);
+    }
+
+    for (const key of keys) {
+      if (!keep.has(key)) {
+        delete entries[key];
+      }
+    }
+  }
+
   async load(): Promise<void> {
     if (this.loaded) return;
     this.state = this.normalizeState(await this.storage.loadBuffer());
@@ -90,6 +144,7 @@ export class SmartBuffer {
       `buffer[${bufferKey}]: ${entry.turns.length} turns, signal=${signal.level}, decision=${decision}`,
     );
 
+    this.pruneEntries([bufferKey]);
     await this.save();
     return decision;
   }
@@ -152,6 +207,7 @@ export class SmartBuffer {
       this.state.lastExtractionAt = entry.lastExtractionAt;
       this.state.extractionCount = entry.extractionCount;
     }
+    this.pruneEntries([bufferKey]);
     await this.save();
   }
 

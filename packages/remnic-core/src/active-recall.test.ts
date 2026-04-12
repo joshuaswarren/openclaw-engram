@@ -166,6 +166,38 @@ test("active recall engine caches results and short-circuits repeated calls", as
   assert.equal(second.summary, first.summary);
 });
 
+test("active recall cache hits report cache-hit latency instead of reusing generation latency", async () => {
+  let generateCalls = 0;
+  const nowValues = [100, 145, 150, 300, 301];
+  const engine = createActiveRecallEngine(
+    {
+      async recall() {
+        return "CI worker drain after Redis reconnect storm.";
+      },
+      async generateSummary() {
+        generateCalls++;
+        return { text: "Redis reconnect storm caused the worker drain." };
+      },
+      now() {
+        const value = nowValues.shift();
+        if (value === undefined) {
+          throw new Error("test clock exhausted");
+        }
+        return value;
+      },
+    },
+    baseConfig({ cacheTtlMs: 5000 }),
+  );
+
+  const first = await engine.run(baseInput());
+  const second = await engine.run(baseInput());
+
+  assert.equal(generateCalls, 1);
+  assert.equal(first.latencyMs, 45);
+  assert.equal(second.cacheHit, true);
+  assert.equal(second.latencyMs, 1);
+});
+
 test("active recall engine evicts expired cache entries before reusing them", async () => {
   let nowValue = 10_000;
   let generateCalls = 0;

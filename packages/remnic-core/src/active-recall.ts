@@ -354,6 +354,7 @@ export function createActiveRecallEngine(
       if (cacheEnabled && cached) {
         return {
           ...cloneRecallResult(cached.value),
+          latencyMs: Math.max(0, now() - currentTime),
           cacheHit: true,
         };
       }

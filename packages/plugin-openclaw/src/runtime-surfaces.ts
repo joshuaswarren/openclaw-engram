@@ -281,8 +281,8 @@ export async function syncHeartbeatSurfaceEntries(params: {
       ...(entry.schedule ? { remnicHeartbeatSchedule: entry.schedule } : {}),
     };
     const existing =
-      findSurfaceMemoryByAttribute(memories, HEARTBEAT_SLUG_KEY, entry.slug) ??
-      findSurfaceMemoryByAttribute(memories, HEARTBEAT_ENTRY_ID_KEY, entry.id);
+      findSurfaceMemoryByAttribute(memories, HEARTBEAT_ENTRY_ID_KEY, entry.id) ??
+      findSurfaceMemoryByAttribute(memories, HEARTBEAT_SLUG_KEY, entry.slug);
 
     if (!existing) {
       const memoryId = await storage.writeMemory("principle", content, {
@@ -339,7 +339,10 @@ function detectHeartbeatSlug(
   memory: MemoryFile,
   entries: HeartbeatEntry[],
 ): string | null {
-  const haystack = `${memory.content}\n${(memory.frontmatter.tags ?? []).join(" ")}`.toLowerCase();
+  const searchableTags = (memory.frontmatter.tags ?? []).filter(
+    (tag) => !tag.startsWith("heartbeat:"),
+  );
+  const haystack = `${memory.content}\n${searchableTags.join(" ")}`.toLowerCase();
   const matches = entries.filter((entry) => {
     const title = entry.title.trim().toLowerCase();
     if (title.length > 0 && haystack.includes(title)) return true;
@@ -362,9 +365,10 @@ export async function syncHeartbeatOutcomeLinks(params: {
   for (const memory of memories) {
     if (isSurfaceMemory(memory, HEARTBEAT_SURFACE_TYPE)) continue;
     const existingSlug = memory.frontmatter.structuredAttributes?.[HEARTBEAT_SLUG_KEY];
-    if (existingSlug) continue;
     const detectedSlug = detectHeartbeatSlug(memory, entries);
+    if (!detectedSlug && existingSlug) continue;
     if (!detectedSlug) continue;
+    if (existingSlug === detectedSlug) continue;
     const nextAttributes = {
       ...(memory.frontmatter.structuredAttributes ?? {}),
       [HEARTBEAT_SLUG_KEY]: detectedSlug,

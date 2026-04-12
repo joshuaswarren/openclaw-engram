@@ -69,7 +69,7 @@ test("parseConfig defaults the new OpenClaw runtime-surface settings", () => {
   });
 });
 
-test("parseConfig preserves explicit disables and clamps timeout and dreaming bounds", () => {
+test("parseConfig preserves explicit disables, rejects invalid dreaming minima, and clamps timeout bounds", () => {
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
     slotBehavior: {
@@ -177,7 +177,7 @@ test("parseConfig preserves explicit disables and clamps timeout and dreaming bo
   assert.deepEqual(cfg.dreaming, {
     enabled: true,
     journalPath: "notes/DREAMS.md",
-    maxEntries: 10,
+    maxEntries: 500,
     injectRecentCount: 20,
     minIntervalMinutes: 1,
     narrativeModel: "gpt-5.2-mini",

@@ -78,3 +78,25 @@ test("SmartBuffer read-only accessors do not persist phantom entries for unknown
   assert.ok(storage.saved);
   assert.deepEqual(Object.keys(storage.saved?.entries ?? {}).sort(), ["default", "thread-a"]);
 });
+
+test("SmartBuffer prunes stale logical session buffers to a bounded entry set", async () => {
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  for (let index = 0; index < 210; index += 1) {
+    await buffer.addTurn(
+      `thread-${index}`,
+      makeTurn(`thread-${index}`, `memory ${index}`),
+    );
+  }
+
+  const persistedKeys = Object.keys(storage.saved?.entries ?? {});
+  assert.equal(persistedKeys.length, 200);
+  assert.ok(persistedKeys.includes("default"));
+  assert.ok(persistedKeys.includes("thread-209"));
+  assert.ok(!persistedKeys.includes("thread-0"));
+});

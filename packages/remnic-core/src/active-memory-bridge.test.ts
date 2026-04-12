@@ -112,6 +112,28 @@ test("recallForActiveMemory prioritizes an explicit namespace filter over the se
   assert.deepEqual(receivedNamespaces, ["explicit-namespace"]);
 });
 
+test("recallForActiveMemory ignores explicit namespace filters when namespaces are disabled", async () => {
+  let receivedNamespaces: string[] | undefined;
+  const orchestrator = {
+    config: { namespacesEnabled: false },
+    resolveSelfNamespace: () => "self-namespace",
+    searchAcrossNamespaces: async (params: { namespaces?: string[] }) => {
+      receivedNamespaces = params.namespaces;
+      return [];
+    },
+  };
+
+  await recallForActiveMemory(orchestrator as never, {
+    query: "api docs",
+    sessionKey: "session-b",
+    filters: {
+      namespace: "explicit-namespace",
+    },
+  });
+
+  assert.deepEqual(receivedNamespaces, ["self-namespace"]);
+});
+
 test("recallForActiveMemory marks results truncated when the underlying recall exceeds the requested limit", async () => {
   const orchestrator = {
     resolveSelfNamespace: () => "session-namespace",
@@ -191,6 +213,31 @@ test("getMemoryForActiveMemory honors an explicit namespace override", async () 
   );
 
   assert.equal(readNamespace, "shared");
+  assert.equal(result.id, "shared-memory");
+  assert.equal(result.text, "shared text");
+});
+
+test("getMemoryForActiveMemory ignores explicit namespace overrides when namespaces are disabled", async () => {
+  let readNamespace: string | undefined;
+  const orchestrator = {
+    config: { namespacesEnabled: false },
+    getStorageForNamespace: async (namespace: string) => {
+      readNamespace = namespace;
+      return {
+        getMemoryById: async (id: string) =>
+          id === "shared-memory" ? ({ content: "shared text", frontmatter: {} } as never) : null,
+      };
+    },
+    resolveSelfNamespace: () => "self-namespace",
+  };
+
+  const result = await getMemoryForActiveMemory(
+    orchestrator as never,
+    "shared-memory",
+    { namespace: "shared" },
+  );
+
+  assert.equal(readNamespace, "self-namespace");
   assert.equal(result.id, "shared-memory");
   assert.equal(result.text, "shared text");
 });

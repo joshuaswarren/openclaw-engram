@@ -38,11 +38,15 @@ function stableHeartbeatId(params: {
 type ParsedHeartbeatEntry = Omit<HeartbeatEntry, "id">;
 
 function slugify(value: string): string {
-  return value
+  const normalized = value
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "");
+  if (normalized.length > 0) return normalized;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return "heartbeat-untitled";
+  return `heartbeat-${createHash("sha1").update(trimmed).digest("hex").slice(0, 8)}`;
 }
 
 function parseTags(line: string): string[] {
@@ -148,7 +152,8 @@ function parseTaskBlock(content: string): ParsedHeartbeatEntry[] {
       const title = trimmed.replace(/^- name:\s*/, "").replace(/^["']|["']$/g, "").trim();
       let schedule: string | null = null;
       let body = "";
-      for (let cursor = index + 1; cursor < lines.length; cursor += 1) {
+      let cursor = index + 1;
+      for (; cursor < lines.length; cursor += 1) {
         const next = lines[cursor] ?? "";
         const nextTrimmed = next.trim();
         if (nextTrimmed.startsWith("- name:")) break;
@@ -171,6 +176,7 @@ function parseTaskBlock(content: string): ParsedHeartbeatEntry[] {
           sourceOffset: lineOffset,
         }),
       );
+      index = Math.max(index, cursor - 1);
     }
   }
   return entries;

@@ -87,10 +87,15 @@ function resolveActiveMemoryNamespace(
       : undefined;
   const config = orchestrator.config;
 
-  if (!config?.namespacesEnabled) {
-    if (explicitNamespace) {
-      return explicitNamespace;
+  if (config?.namespacesEnabled === false) {
+    if (typeof orchestrator.resolveSelfNamespace === "function") {
+      return orchestrator.resolveSelfNamespace(sessionKey);
     }
+    return "default";
+  }
+
+  if (!config) {
+    if (explicitNamespace) return explicitNamespace;
     if (typeof orchestrator.resolveSelfNamespace === "function") {
       return orchestrator.resolveSelfNamespace(sessionKey);
     }

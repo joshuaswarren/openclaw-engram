@@ -146,6 +146,33 @@ test("heartbeat surface keeps entry ids stable when body, schedule, or tags are 
   assert.equal(first[0]?.id, second[0]?.id);
 });
 
+test("heartbeat surface derives non-empty stable slugs from emoji-only titles", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-emoji-slug-"));
+  const heartbeatPath = path.join(root, "HEARTBEAT.md");
+  const surface = createHeartbeatSurface();
+
+  await writeFile(
+    heartbeatPath,
+    [
+      "## 🔥🔥🔥",
+      "",
+      "Escalate hot incidents.",
+      "",
+      "Schedule: hourly",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const first = await surface.read(heartbeatPath);
+  const second = await surface.read(heartbeatPath);
+
+  assert.equal(first.length, 1);
+  assert.match(first[0]?.slug ?? "", /^heartbeat-[a-f0-9]{8}$/);
+  assert.equal(first[0]?.slug, second[0]?.slug);
+  assert.equal(first[0]?.id, second[0]?.id);
+});
+
 test("heartbeat surface resolves entries by slug", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-find-"));
   const heartbeatPath = path.join(root, "HEARTBEAT.md");

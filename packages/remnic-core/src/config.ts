@@ -308,7 +308,9 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof rawDreaming.maxEntries === "number"
         ? rawDreaming.maxEntries <= 0
           ? 0
-          : Math.min(10000, Math.max(10, Math.floor(rawDreaming.maxEntries)))
+          : rawDreaming.maxEntries < 10
+            ? 500
+            : Math.min(10000, Math.floor(rawDreaming.maxEntries))
         : 500,
     injectRecentCount:
       typeof rawDreaming.injectRecentCount === "number"
