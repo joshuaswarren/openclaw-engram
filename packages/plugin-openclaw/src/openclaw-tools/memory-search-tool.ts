@@ -3,13 +3,7 @@ import {
   type ActiveMemorySearchOutput,
 } from "../../../remnic-core/src/index.js";
 import { MemorySearchInputSchema } from "./shapes.js";
-
-function toolJsonResult(value: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
-    details: undefined,
-  };
-}
+import { toolJsonResult } from "./tool-json-result.js";
 
 export function buildMemorySearchTool(
   orchestrator: unknown,

@@ -77,6 +77,31 @@ test("heartbeat surface reads tasks blocks from upstream-style HEARTBEAT.md", as
   assert.match(entries[1]?.body ?? "", /new failures/);
 });
 
+test("heartbeat surface tracks source offsets for repeated task lines correctly", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-offsets-"));
+  const heartbeatPath = path.join(root, "HEARTBEAT.md");
+  const content = [
+    "# Notes",
+    "",
+    "Example repeated line:",
+    "  - name: email-check",
+    "",
+    "tasks:",
+    "  - name: email-check",
+    "    interval: 30m",
+    "    prompt: \"Check for urgent unread emails\"",
+    "",
+  ].join("\n");
+  await writeFile(heartbeatPath, content, "utf8");
+
+  const surface = createHeartbeatSurface();
+  const entries = await surface.read(heartbeatPath);
+
+  assert.equal(entries.length, 1);
+  assert.equal(entries[0]?.slug, "email-check");
+  assert.equal(entries[0]?.sourceOffset, content.lastIndexOf("  - name: email-check"));
+});
+
 test("heartbeat surface resolves entries by slug", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-heartbeat-find-"));
   const heartbeatPath = path.join(root, "HEARTBEAT.md");

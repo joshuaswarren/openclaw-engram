@@ -119,8 +119,11 @@ function parseTaskBlock(content: string): HeartbeatEntry[] {
   const lines = content.split("\n");
   const entries: HeartbeatEntry[] = [];
   let inTasks = false;
+  let offset = 0;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? "";
+    const lineOffset = offset;
+    offset += line.length + 1;
     const trimmed = line.trim();
     if (trimmed === "tasks:") {
       inTasks = true;
@@ -151,7 +154,7 @@ function parseTaskBlock(content: string): HeartbeatEntry[] {
           body,
           schedule,
           tags: [],
-          sourceOffset: content.indexOf(line),
+          sourceOffset: lineOffset,
         }),
       );
     }
