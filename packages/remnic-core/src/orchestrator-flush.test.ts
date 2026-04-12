@@ -45,6 +45,7 @@ test("flushSession queues extraction for the targeted buffered session", async (
   assert.equal(queuedCall.turns.length, 1);
   assert.equal(queuedCall.reason, "trigger_mode");
   assert.equal(queuedCall.options?.clearBufferAfterExtraction, true);
+  assert.equal(queuedCall.options?.skipDedupeCheck, true);
 });
 
 test("flushSession is a no-op when the targeted buffer is empty", async () => {

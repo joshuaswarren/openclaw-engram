@@ -581,6 +581,9 @@ const pluginDefinition = {
             storage: orchestrator.storage,
             entries,
             journalPath,
+            reindexMemory: async (id) => {
+              await orchestrator.reindexMemoryById(id);
+            },
           });
           await syncHeartbeatOutcomeLinks({
             storage: orchestrator.storage,

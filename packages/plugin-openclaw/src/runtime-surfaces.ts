@@ -195,8 +195,9 @@ export async function syncHeartbeatSurfaceEntries(params: {
   storage: RuntimeSurfaceStorage;
   entries: HeartbeatEntry[];
   journalPath: string;
+  reindexMemory?: (id: string) => Promise<void>;
 }): Promise<SurfaceSyncResult> {
-  const { storage, entries, journalPath } = params;
+  const { storage, entries, journalPath, reindexMemory } = params;
   const memories = await storage.readAllMemories();
   let created = 0;
   let updated = 0;
@@ -217,13 +218,14 @@ export async function syncHeartbeatSurfaceEntries(params: {
       findSurfaceMemoryByAttribute(memories, HEARTBEAT_ENTRY_ID_KEY, entry.id);
 
     if (!existing) {
-      await storage.writeMemory("principle", content, {
+      const memoryId = await storage.writeMemory("principle", content, {
         confidence: 0.95,
         tags,
         source: "heartbeat.md",
         memoryKind: "procedural",
         structuredAttributes,
       });
+      await reindexMemory?.(memoryId);
       created += 1;
       continue;
     }
@@ -236,6 +238,7 @@ export async function syncHeartbeatSurfaceEntries(params: {
         structuredAttributes,
       })
     ) {
+      await reindexMemory?.(existing.frontmatter.id);
       updated += 1;
     }
   }

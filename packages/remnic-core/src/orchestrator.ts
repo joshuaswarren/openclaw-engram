@@ -7680,6 +7680,7 @@ export class Orchestrator {
     await this.queueBufferedExtraction(turns, "trigger_mode", {
       bufferKey,
       clearBufferAfterExtraction: true,
+      skipDedupeCheck: true,
     });
   }
 

@@ -189,6 +189,7 @@ test("syncDreamSurfaceEntries treats maxEntries zero as a hard disable", async (
 
 test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and updates the same slug in place", async () => {
   const storage = makeStorage();
+  const reindexed: string[] = [];
 
   const first = await syncHeartbeatSurfaceEntries({
     storage,
@@ -204,6 +205,9 @@ test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and upda
       },
     ],
     journalPath: "/workspace/HEARTBEAT.md",
+    reindexMemory: async (id) => {
+      reindexed.push(id);
+    },
   });
 
   assert.deepEqual(first, { created: 1, updated: 0, linked: 0 });
@@ -212,6 +216,7 @@ test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and upda
     storage.memories[0]?.frontmatter.structuredAttributes?.relatedHeartbeatSlug,
     "check-test-suite",
   );
+  assert.deepEqual(reindexed, ["principle-1"]);
 
   const second = await syncHeartbeatSurfaceEntries({
     storage,
@@ -227,6 +232,9 @@ test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and upda
       },
     ],
     journalPath: "/workspace/HEARTBEAT.md",
+    reindexMemory: async (id) => {
+      reindexed.push(id);
+    },
   });
 
   assert.deepEqual(second, { created: 0, updated: 1, linked: 0 });
@@ -239,6 +247,7 @@ test("syncHeartbeatSurfaceEntries creates procedural heartbeat memories and upda
     "procedural",
     "check-test-suite",
   ]);
+  assert.deepEqual(reindexed, ["principle-1", "principle-1"]);
 });
 
 test("syncHeartbeatOutcomeLinks annotates non-heartbeat memories that clearly reference one heartbeat slug", async () => {
