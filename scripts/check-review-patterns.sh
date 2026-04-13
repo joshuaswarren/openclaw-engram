@@ -33,6 +33,7 @@ STALE=$(grep -ri "engram" \
   | grep -v "CLAUDE.md" \
   | grep -v "AGENTS.md" \
   | grep -v "engram-adapter" \
+  | grep -v "check-review-patterns.sh" \
   || true)
 
 if [[ -n "$STALE" ]]; then
@@ -106,7 +107,7 @@ if command -v pnpm &>/dev/null; then
   # Check if pnpm-lock.yaml is stale
   # Simple check: does running install change anything?
   DIFF=$(pnpm install --frozen-lockfile 2>&1 || true)
-  if echo "$DIFF" | grep -q "ERR_PNPM_FROZEN_LOCKFILE"; then
+  if echo "$DIFF" | grep -qE "ERR_PNPM_FROZEN_LOCKFILE|ERR_PNPM_OUTDATED_LOCKFILE"; then
     fail "pnpm-lock.yaml is out of sync — run 'pnpm install' and commit the updated lockfile"
   else
     echo "  OK: Lock file is in sync"
@@ -115,10 +116,6 @@ fi
 
 # ---- 6. Missing resetGlobals cleanup in test files ----
 echo "[check] Test teardown completeness..."
-
-TEST_FILES=$(grep -rl "resetGlobals" --include="*.test.ts" . 2>/dev/null \
-  | grep -v node_modules \
-  || true)
 
 # Check if any test file creates orchestrator instances but doesn't call resetGlobals
 ORCH_TEST=$(grep -rl "Orchestrator\|orchestrator" --include="*.test.ts" . 2>/dev/null \
@@ -322,7 +319,7 @@ echo "[check] indexOf usage in parser/position-tracking code..."
 
 INDEXOF_PARSER=$(grep -rn '\.indexOf(' \
   --include="*.ts" \
-  packages/remnic-core/src/surfaces/ packages/remnic-core/src/ \
+  packages/remnic-core/src/ \
   2>/dev/null \
   | grep -v node_modules \
   | grep -v dist \
@@ -536,8 +533,8 @@ SCHEMA_MINIMUM_ONE=$(grep -rn '"minimum":\s*1' \
 if [[ -n "$SCHEMA_MINIMUM_ONE" ]]; then
   while IFS= read -r line; do
     FILE=$(echo "$line" | cut -d: -f1)
-    # Check if docs or code mention "set to 0 to disable" for this field
-    if grep -rq "0.*disable\|disable.*0\|set to 0" --include="*.ts" --include="*.md" . 2>/dev/null; then
+    # Check if the same file mentions "set to 0 to disable" for this field
+    if grep -q "0.*disable\|disable.*0\|set to 0" "$FILE" 2>/dev/null; then
       # Only warn for known fields that should accept 0
       if echo "$line" | grep -qi "candidate\|limit\|max\|min\|threshold\|count"; then
         warn "$line — schema minimum is 1. If docs say 'set to 0 to disable', change minimum to 0 and handle the 0 case in code."
