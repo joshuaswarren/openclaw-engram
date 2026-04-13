@@ -852,6 +852,17 @@ function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
   )];
 }
 
+function dedupeStringArray(values: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
+  }
+  return result;
+}
+
 export function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
   let latestRaw: string | undefined;
   for (const entry of entity.timeline) {
@@ -4228,6 +4239,8 @@ export class StorageManager {
           type: "other",
           created: "",
           updated: "",
+          extraFrontmatterLines: [],
+          preSectionLines: [],
           facts: [],
           summary: undefined,
           synthesis: undefined,
@@ -4237,6 +4250,7 @@ export class StorageManager {
           relationships: [],
           activity: [],
           aliases: [],
+          extraSections: [],
         };
 
         for (const file of files) {
@@ -4298,6 +4312,14 @@ export class StorageManager {
 
             // Collect aliases
             mergedEntity.aliases.push(...parsed.aliases);
+
+            // Preserve custom metadata and user-authored freeform content from fragments.
+            mergedEntity.extraFrontmatterLines!.push(...(parsed.extraFrontmatterLines ?? []));
+            mergedEntity.preSectionLines!.push(...(parsed.preSectionLines ?? []));
+            mergedEntity.extraSections!.push(...(parsed.extraSections ?? []).map((section) => ({
+              title: section.title,
+              lines: [...section.lines],
+            })));
           } catch {
             // Skip unreadable
           }
@@ -4335,6 +4357,16 @@ export class StorageManager {
 
         // Deduplicate aliases
         mergedEntity.aliases = [...new Set(mergedEntity.aliases)];
+        mergedEntity.extraFrontmatterLines = dedupeStringArray(mergedEntity.extraFrontmatterLines ?? []);
+        mergedEntity.preSectionLines = dedupeStringArray(mergedEntity.preSectionLines ?? []);
+
+        const extraSectionKeys = new Set<string>();
+        mergedEntity.extraSections = (mergedEntity.extraSections ?? []).filter((section) => {
+          const key = `${section.title}::${section.lines.join("\n")}`;
+          if (extraSectionKeys.has(key)) return false;
+          extraSectionKeys.add(key);
+          return true;
+        });
 
         // Fallback name from canonical
         if (!mergedEntity.name) {

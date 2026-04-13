@@ -710,6 +710,84 @@ test("mergeFragmentedEntities prefers the freshest synthesis using parsed timest
   }
 });
 
+test("mergeFragmentedEntities preserves custom metadata and freeform sections from fragments", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-merge-metadata-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const fragmentA = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      "tags: [alpha]",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "Fragment A prose.",
+      "",
+      "## Synthesis",
+      "",
+      "Fragment A synthesis.",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T10:05:00.000Z] Fragment A evidence",
+      "",
+      "## Notes",
+      "",
+      "Fragment A notes.",
+      "",
+    ].join("\n");
+    const fragmentB = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T11:05:00.000Z",
+      "owner: ops",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T11:05:00.000Z",
+      "",
+      "Fragment B prose.",
+      "",
+      "## Synthesis",
+      "",
+      "Fragment B synthesis.",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T11:05:00.000Z] Fragment B evidence",
+      "",
+      "## Runbook",
+      "",
+      "Fragment B runbook notes.",
+      "",
+    ].join("\n");
+
+    await writeFile(path.join(dir, "entities", "person-jane doe.md"), fragmentA, "utf-8");
+    await writeFile(path.join(dir, "entities", "person-jane_doe.md"), fragmentB, "utf-8");
+
+    await storage.mergeFragmentedEntities();
+    const raw = await readFile(path.join(dir, "entities", "person-jane-doe.md"), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.deepEqual(parsed.extraFrontmatterLines, ["tags: [alpha]", "owner: ops"]);
+    assert.deepEqual(parsed.preSectionLines, ["Fragment A prose.", "", "Fragment B prose.", ""]);
+    assert.deepEqual(parsed.extraSections?.map((section) => section.title), ["Notes", "Runbook"]);
+    assert.match(raw, /## Notes/);
+    assert.match(raw, /## Runbook/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("refreshEntitySynthesisQueue orders stale entities by parsed latest timeline timestamps", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-queue-order-"));
   try {

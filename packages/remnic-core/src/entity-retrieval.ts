@@ -98,6 +98,18 @@ function compactLine(value: string, maxLength: number = 220): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+function dedupeHintSnippetsByText(snippets: EntityHintSnippet[]): EntityHintSnippet[] {
+  const seen = new Set<string>();
+  const result: EntityHintSnippet[] = [];
+  for (const snippet of snippets) {
+    const key = normalizeText(snippet.text);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(snippet);
+  }
+  return result;
+}
+
 function relationLine(entry: EntityMentionIndexEntry, relationship: { target: string; label: string }): string {
   const normalizedLabel = relationship.label.replace(/\s+/g, " ").trim();
   if (normalizedLabel.length === 0) return `${entry.name} is connected to ${relationship.target}`;
@@ -533,29 +545,32 @@ function formatEntityHintSection(
       }
     }
     if (mode !== "direct") {
-      const explicitTimeline = (candidate.entry.timeline ?? [])
-        .slice()
-        .sort(sortTimelineEntriesDesc)
-        .map((entry) => sanitizeEntityFact(entry.text))
-        .filter(Boolean)
-        .map((text) => scoreHintSnippet({
-          text: compactLine(text, 180),
-          score: 7,
-          kind: "activity" as const,
-        }, queryTokens))
-        .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
-        .filter((snippet) => !topSnippetTexts.has(normalizeText(snippet.text)))
-        .slice(0, 2);
-      const activityTimeline = snippets
-        .filter((snippet) => (snippet.kind === "activity" || snippet.kind === "memory") && !topSnippetTexts.has(normalizeText(snippet.text)))
-        .slice(0, 2);
+      const explicitTimeline = dedupeHintSnippetsByText(
+        (candidate.entry.timeline ?? [])
+          .slice()
+          .sort(sortTimelineEntriesDesc)
+          .map((entry) => sanitizeEntityFact(entry.text))
+          .filter(Boolean)
+          .map((text) => scoreHintSnippet({
+            text: compactLine(text, 180),
+            score: 7,
+            kind: "activity" as const,
+          }, queryTokens))
+          .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
+          .filter((snippet) => !topSnippetTexts.has(normalizeText(snippet.text))),
+      ).slice(0, 2);
+      const activityTimeline = dedupeHintSnippetsByText(
+        snippets
+          .filter((snippet) => (snippet.kind === "activity" || snippet.kind === "memory") && !topSnippetTexts.has(normalizeText(snippet.text))),
+      ).slice(0, 2);
       const fallbackTimeline = explicitTimeline.length > 0
         ? explicitTimeline
         : activityTimeline.length > 0
           ? activityTimeline
-          : snippets
-            .filter((snippet) => snippet.kind === "summary" && !topSnippetTexts.has(normalizeText(snippet.text)))
-            .slice(0, 2);
+          : dedupeHintSnippetsByText(
+            snippets
+              .filter((snippet) => snippet.kind === "summary" && !topSnippetTexts.has(normalizeText(snippet.text))),
+          ).slice(0, 2);
       if (fallbackTimeline.length > 0) {
         lines.push("- recent timeline:");
         for (const snippet of fallbackTimeline) {

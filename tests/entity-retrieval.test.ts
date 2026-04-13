@@ -413,6 +413,39 @@ test("entity retrieval orders recent timeline bullets by timestamp instead of fi
   assert.doesNotMatch(section!, /Alice Example investigated the flaky deploy\./);
 });
 
+test("entity retrieval deduplicates repeated explicit timeline hints before truncating", async () => {
+  const { config, storage } = await buildHarness("engram-entity-timeline-explicit-dedupe");
+  const canonical = await writeEntity(
+    storage,
+    "Alice Example",
+    "person",
+    ["Alice Example currently leads the launch review."],
+    "Alice Example currently leads the launch review.",
+  );
+  await storage.updateEntitySynthesis(canonical, "Alice Example currently leads the launch review.", {
+    updatedAt: "2026-04-13T09:00:00.000Z",
+  });
+  await storage.writeEntity("Alice Example", "person", ["Alice Example approved the launch checklist."], {
+    timestamp: "2026-04-13T12:00:00.000Z",
+    source: "extraction",
+  });
+  await storage.writeEntity("Alice Example", "person", ["Alice Example approved the launch checklist."], {
+    timestamp: "2026-04-13T11:00:00.000Z",
+    source: "extraction",
+  });
+  await storage.writeEntity("Alice Example", "person", ["Alice Example resolved the production alert."], {
+    timestamp: "2026-04-13T10:00:00.000Z",
+    source: "extraction",
+  });
+
+  const section = await buildSection(config, storage, "What happened with Alice Example?");
+
+  assert.ok(section);
+  const repeated = section!.match(/Alice Example approved the launch checklist\./g) ?? [];
+  assert.equal(repeated.length, 1);
+  assert.match(section!, /Alice Example resolved the production alert\./);
+});
+
 test("entity retrieval recent-turn helpers treat zero as disabled", async () => {
   const transcriptEntries: TranscriptEntry[] = [
     {
