@@ -13,6 +13,7 @@ run() {
 # Core mandatory gate from docs/ops/pr-review-hardening-playbook.md
 run npm run check-types
 run npm run check-config-contract
+run bash scripts/check-review-patterns.sh
 
 if [[ "$MODE" == "quick" ]]; then
   # Registration contract tests catch silent lifecycle breakage (issues #282, #285).

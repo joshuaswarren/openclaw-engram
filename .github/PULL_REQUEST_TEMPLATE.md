@@ -15,6 +15,7 @@
 - [ ] `npm run check-types`
 - [ ] `npm test`
 - [ ] `npm run build`
+- [ ] `bash scripts/check-review-patterns.sh`
 - [ ] Added/updated tests for behavior changes
 - [ ] For retrieval/planner/cache/config changes: ran `docs/ops/pr-review-hardening-playbook.md`
 
@@ -31,6 +32,19 @@
 - [ ] Zero-value semantics validated (`0` limits stay disabled, never coerced)
 - [ ] Flag symmetry validated (`enabled=false` disables both write and read-path effects)
 - [ ] Cache invalidation/coherency reviewed (cross-instance + concurrent updates)
+- [ ] Promise chain resilience verified (serialized `.then()` chains recover from rejection)
+- [ ] Loop iterator matches needed data (`.entries()` if key is used, not `.values()`)
+- [ ] Namespace consistency verified (read/write paths use same resolution layer)
+- [ ] Direct-write paths trigger reindex (bypassing extraction pipeline must update search index)
+- [ ] Index-only additions confirmed after persistence (no phantom entries for rejected content)
+- [ ] Config schema minimums honor documented disable-at-zero values
+- [ ] Template-derived regexes escape literal parts (no match-everything patterns)
+- [ ] Invalid user input rejected, not silently defaulted (CLI flags, MCP params, format values)
+- [ ] Validation allow-lists match handled code paths (no accepted-but-unhandled values)
+- [ ] Status filters cover ALL non-active states (superseded, archived, quarantined, rejected, pending_review)
+- [ ] File replace operations are atomic (write-to-temp then rename, not delete-then-write)
+- [ ] Documented config properties wired end-to-end (schema → provider → client → test)
+- [ ] CI publish workflows have branch protection on workflow_dispatch
 
 ## Notes for reviewers
 
