@@ -512,7 +512,7 @@ function formatEntityHintSection(
   if (candidates.length === 0) return null;
   const lines: string[] = ["## entity_answer_hints", ""];
   for (const { candidate, snippets, uncertainty } of candidates) {
-    const preferredTopSnippets = candidate.entry.summary || mode !== "direct"
+    const preferredTopSnippets = (candidate.entry.summary || mode !== "direct")
       ? snippets.filter((snippet) => snippet.kind !== "fact")
       : snippets;
     const topSnippets = (
