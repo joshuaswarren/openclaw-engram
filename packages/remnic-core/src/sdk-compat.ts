@@ -38,11 +38,13 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
     typeof (api as any).runtime === "object" && (api as any).runtime !== null;
   const hasRegistrationMode = typeof (api as any).registrationMode === "string";
 
-  const sdkVersion: string =
-    (hasRuntimeNamespace && typeof (api as any).runtime?.version === "string"
+  const runtimeVersion =
+    hasRuntimeNamespace && typeof (api as any).runtime?.version === "string"
       ? (api as any).runtime.version
-      : null) ??
-    readEnvVar("OPENCLAW_SERVICE_VERSION") ??
+      : null;
+  const sdkVersion: string =
+    runtimeVersion ??
+    (hasRuntimeNamespace ? readEnvVar("OPENCLAW_SERVICE_VERSION") : null) ??
     "legacy";
 
   // New SDK is indicated by any of the new API surfaces being present.

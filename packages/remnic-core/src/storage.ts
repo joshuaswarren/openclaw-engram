@@ -25,6 +25,7 @@ import type {
   EntityActivityEntry,
   EntityFile,
   EntityRelationship,
+  EntityTimelineEntry,
   ImportanceLevel,
   ImportanceScore,
   MemoryCategory,
@@ -420,14 +421,31 @@ function parseFrontmatter(
 }
 
 function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, pathRel: string): MemoryFrontmatter {
-  if (isArchivedMemoryPath(pathRel) && (!frontmatter.status || frontmatter.status === "active")) {
+  const normalizedPath = pathRel.split(path.sep).join("/");
+  let normalizedFrontmatter = frontmatter;
+
+  if (normalizedPath === "entities" || normalizedPath.startsWith("entities/") || normalizedPath.includes("/entities/")) {
+    const basename = path.basename(pathRel, ".md");
+    const inferredType = basename.includes("-") ? basename.split("-")[0] : "entity";
+    const existingTags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
+    normalizedFrontmatter = {
+      ...normalizedFrontmatter,
+      id: typeof normalizedFrontmatter.id === "string" && normalizedFrontmatter.id.trim().length > 0
+        ? normalizedFrontmatter.id
+        : basename,
+      category: "entity",
+      tags: existingTags.includes(inferredType) ? existingTags : [...existingTags, inferredType],
+    };
+  }
+
+  if (isArchivedMemoryPath(pathRel) && (!normalizedFrontmatter.status || normalizedFrontmatter.status === "active")) {
     return {
-      ...frontmatter,
+      ...normalizedFrontmatter,
       status: "archived",
     };
   }
 
-  return frontmatter;
+  return normalizedFrontmatter;
 }
 
 function inferCurrentStateStatus(
@@ -657,22 +675,158 @@ export function normalizeAttributePairs(pairs: Record<string, string>): string {
 // Entity file parsing / serialization (Knowledge Graph v7.0)
 // ---------------------------------------------------------------------------
 
+function parseEntityFrontmatter(
+  raw: string,
+): {
+  frontmatter: { synthesisUpdatedAt?: string; synthesisVersion?: number };
+  body: string;
+} {
+  const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+  if (!match) {
+    return { frontmatter: {}, body: raw };
+  }
+
+  const values: Record<string, string> = {};
+  for (const line of match[1].split("\n")) {
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) continue;
+    const key = line.slice(0, colonIdx).trim();
+    const value = line.slice(colonIdx + 1).trim().replace(/^"|"$/g, "");
+    values[key] = value;
+  }
+
+  const synthesisVersion = Number.parseInt(values.synthesis_version ?? "", 10);
+  return {
+    frontmatter: {
+      synthesisUpdatedAt: values.synthesis_updated_at || undefined,
+      synthesisVersion: Number.isFinite(synthesisVersion) ? synthesisVersion : undefined,
+    },
+    body: match[2],
+  };
+}
+
+function readEntitySectionText(lines: string[], sectionNames: string[]): string | undefined {
+  const normalizedSections = new Set(sectionNames.map((name) => name.toLowerCase()));
+  let section = "";
+  const sectionLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      const nextSection = line.slice(3).trim().toLowerCase();
+      if (section && !normalizedSections.has(nextSection)) break;
+      section = normalizedSections.has(nextSection) ? nextSection : "";
+      continue;
+    }
+    if (!section) continue;
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith("- ")) continue;
+    sectionLines.push(trimmed);
+  }
+  if (sectionLines.length === 0) return undefined;
+  return sectionLines.join(" ");
+}
+
+function parseEntityTimelineBullet(
+  bullet: string,
+  fallbackTimestamp: string,
+): EntityTimelineEntry | null {
+  const trimmed = bullet.trim();
+  if (!trimmed) return null;
+
+  let rest = trimmed;
+  const bracketTokens: string[] = [];
+  while (rest.startsWith("[")) {
+    const end = rest.indexOf("]");
+    if (end === -1) break;
+    bracketTokens.push(rest.slice(1, end).trim());
+    rest = rest.slice(end + 1).trimStart();
+  }
+
+  if (bracketTokens.length === 0) {
+    return {
+      timestamp: fallbackTimestamp,
+      text: trimmed,
+    };
+  }
+
+  const [timestampToken, ...metadataTokens] = bracketTokens;
+  const entry: EntityTimelineEntry = {
+    timestamp: timestampToken || fallbackTimestamp,
+    text: rest.trim(),
+  };
+
+  for (const token of metadataTokens) {
+    const equalsIdx = token.indexOf("=");
+    if (equalsIdx === -1) continue;
+    const key = token.slice(0, equalsIdx).trim().toLowerCase();
+    const value = token.slice(equalsIdx + 1).trim();
+    if (!value) continue;
+    switch (key) {
+      case "source":
+        entry.source = value;
+        break;
+      case "session":
+      case "sessionkey":
+        entry.sessionKey = value;
+        break;
+      case "principal":
+        entry.principal = value;
+        break;
+    }
+  }
+
+  if (!entry.text) return null;
+  return entry;
+}
+
+function serializeEntityTimelineEntry(entry: EntityTimelineEntry): string {
+  const tokens = [`[${entry.timestamp}]`];
+  if (entry.source) tokens.push(`[source=${entry.source}]`);
+  if (entry.sessionKey) tokens.push(`[session=${entry.sessionKey}]`);
+  if (entry.principal) tokens.push(`[principal=${entry.principal}]`);
+  return `- ${tokens.join(" ")} ${entry.text}`.trimEnd();
+}
+
+function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
+  return [...new Set(
+    timeline
+      .map((entry) => entry.text.trim())
+      .filter((entry) => entry.length > 0),
+  )];
+}
+
+export function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
+  return entity.timeline
+    .map((entry) => entry.timestamp)
+    .filter((timestamp) => timestamp.length > 0)
+    .sort((left, right) => right.localeCompare(left))[0];
+}
+
+export function isEntitySynthesisStale(entity: EntityFile): boolean {
+  const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
+  if (!latestTimelineTimestamp) return false;
+  if (!entity.synthesis?.trim()) return true;
+  if (!entity.synthesisUpdatedAt?.trim()) return true;
+  return latestTimelineTimestamp > entity.synthesisUpdatedAt;
+}
+
 /**
  * Parse an entity markdown file into a structured EntityFile.
  * Backward compatible: old files without new sections get empty arrays.
  */
 export function parseEntityFile(content: string): EntityFile {
-  const lines = content.split("\n");
+  const { frontmatter, body } = parseEntityFrontmatter(content);
+  const lines = body.split("\n");
 
   // Header
   let name = "";
   let type = "other";
   let updated = "";
-  let summary: string | undefined;
-  const facts: string[] = [];
+  const legacyFacts: string[] = [];
   const relationships: EntityRelationship[] = [];
   const activity: EntityActivityEntry[] = [];
   const aliases: string[] = [];
+  const timeline: EntityTimelineEntry[] = [];
 
   // Parse name from first heading
   const headingLine = lines.find((l) => l.startsWith("# "));
@@ -700,10 +854,19 @@ export function parseEntityFile(content: string): EntityFile {
 
     switch (section) {
       case "facts":
-        facts.push(bullet);
+        legacyFacts.push(bullet);
         break;
+      case "timeline": {
+        const parsed = parseEntityTimelineBullet(
+          bullet,
+          updated || new Date().toISOString(),
+        );
+        if (parsed) timeline.push(parsed);
+        break;
+      }
       case "summary":
-        // Summary is typically a single line after the heading, not a bullet
+      case "synthesis":
+        // Summary/synthesis is typically a paragraph after the heading, not a bullet.
         break;
       case "connected to": {
         // Format: [[target-entity]] — relationship label
@@ -727,27 +890,68 @@ export function parseEntityFile(content: string): EntityFile {
     }
   }
 
-  // Parse summary: text between ## Summary heading and next ## heading (not bulleted)
-  const summaryIdx = lines.findIndex((l) => l.startsWith("## Summary"));
-  if (summaryIdx !== -1) {
-    const summaryLines: string[] = [];
-    for (let i = summaryIdx + 1; i < lines.length; i++) {
-      if (lines[i].startsWith("## ")) break;
-      const trimmed = lines[i].trim();
-      if (trimmed) summaryLines.push(trimmed);
+  if (timeline.length === 0 && legacyFacts.length > 0) {
+    const fallbackTimestamp = updated || new Date().toISOString();
+    for (const fact of legacyFacts) {
+      timeline.push({
+        timestamp: fallbackTimestamp,
+        text: fact,
+        source: "migration",
+      });
     }
-    if (summaryLines.length > 0) summary = summaryLines.join(" ");
   }
 
-  return { name, type, updated, facts, summary, relationships, activity, aliases };
+  const synthesis =
+    readEntitySectionText(lines, ["Synthesis"])
+    ?? readEntitySectionText(lines, ["Summary"]);
+  const facts = dedupeEntityFacts(timeline.length > 0
+    ? timeline
+    : legacyFacts.map((fact) => ({
+      timestamp: updated || new Date().toISOString(),
+      text: fact,
+      source: "migration",
+    })));
+  const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || (synthesis ? (updated || undefined) : undefined);
+
+  return {
+    name,
+    type,
+    updated,
+    facts,
+    summary: synthesis,
+    synthesis,
+    synthesisUpdatedAt,
+    synthesisVersion: frontmatter.synthesisVersion,
+    timeline,
+    relationships,
+    activity,
+    aliases,
+  };
 }
 
 /**
  * Serialize an EntityFile back to markdown.
- * Only emits sections that have content (except Facts which is always emitted).
+ * Writes the compiled-truth + timeline format while remaining parse-compatible
+ * with the legacy in-memory `summary` and `facts` fields.
  */
 export function serializeEntityFile(entity: EntityFile): string {
+  const synthesis = entity.synthesis ?? entity.summary ?? "";
+  const timeline = entity.timeline.length > 0
+    ? entity.timeline
+    : entity.facts.map((fact) => ({
+      timestamp: entity.updated || new Date().toISOString(),
+      text: fact,
+      source: "migration",
+    }));
+  const synthesisUpdatedAt = entity.synthesisUpdatedAt ?? (synthesis ? entity.updated : "");
+  const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
+
   const lines: string[] = [
+    "---",
+    `synthesis_updated_at: "${synthesisUpdatedAt}"`,
+    `synthesis_version: ${synthesisVersion}`,
+    "---",
+    "",
     `# ${entity.name}`,
     "",
     `**Type:** ${entity.type}`,
@@ -755,15 +959,15 @@ export function serializeEntityFile(entity: EntityFile): string {
     "",
   ];
 
-  // Summary (optional)
-  if (entity.summary) {
-    lines.push("## Summary", "", entity.summary, "");
+  lines.push("## Synthesis", "");
+  if (synthesis) {
+    lines.push(synthesis);
   }
+  lines.push("");
 
-  // Facts (always emitted)
-  lines.push("## Facts", "");
-  for (const f of entity.facts) {
-    lines.push(`- ${f}`);
+  lines.push("## Timeline", "");
+  for (const entry of timeline) {
+    lines.push(serializeEntityTimelineEntry(entry));
   }
   lines.push("");
 
@@ -950,6 +1154,9 @@ export class StorageManager {
   }
   private get stateDir(): string {
     return path.join(this.baseDir, "state");
+  }
+  private get entitySynthesisQueuePath(): string {
+    return path.join(this.stateDir, "entity-synthesis-queue.json");
   }
   private get factHashIndexReadyPath(): string {
     return path.join(this.stateDir, "fact-hashes.ready");
@@ -1460,6 +1667,12 @@ export class StorageManager {
     name: string,
     type: string,
     facts: string[],
+    options: {
+      timestamp?: string;
+      source?: string;
+      sessionKey?: string;
+      principal?: string;
+    } = {},
   ): Promise<string> {
     await this.ensureDirectories();
     if (typeof name !== "string" || !name.trim() || typeof type !== "string" || !type.trim()) {
@@ -1469,7 +1682,14 @@ export class StorageManager {
       });
       return "";
     }
-    const safeFacts = Array.isArray(facts) ? facts.filter((f) => typeof f === "string") : [];
+    const safeFacts = Array.isArray(facts)
+      ? [...new Set(
+        facts
+          .filter((fact) => typeof fact === "string")
+          .map((fact) => fact.trim())
+          .filter((fact) => fact.length > 0),
+      )]
+      : [];
     let normalized = normalizeEntityName(name, type);
 
     // Check for fuzzy match against existing entities before creating a new file
@@ -1484,7 +1704,15 @@ export class StorageManager {
     // Parse existing file to preserve relationships/activity/aliases/summary
     let entity: EntityFile = {
       name, type, updated: new Date().toISOString(),
-      facts: [], summary: undefined, relationships: [], activity: [], aliases: [],
+      facts: [],
+      summary: undefined,
+      synthesis: undefined,
+      synthesisUpdatedAt: undefined,
+      synthesisVersion: undefined,
+      timeline: [],
+      relationships: [],
+      activity: [],
+      aliases: [],
     };
     try {
       const existing = await readFile(filePath, "utf-8");
@@ -1493,8 +1721,21 @@ export class StorageManager {
       // File doesn't exist yet
     }
 
-    // Merge facts (dedup)
-    entity.facts = [...new Set([...entity.facts, ...safeFacts])];
+    const timestamp = options.timestamp?.trim() || new Date().toISOString();
+    const source = options.source?.trim() || undefined;
+    const sessionKey = options.sessionKey?.trim() || undefined;
+    const principal = options.principal?.trim() || undefined;
+    for (const fact of safeFacts) {
+      entity.timeline.push({
+        timestamp,
+        text: fact,
+        ...(source ? { source } : {}),
+        ...(sessionKey ? { sessionKey } : {}),
+        ...(principal ? { principal } : {}),
+      });
+    }
+    entity.facts = dedupeEntityFacts(entity.timeline);
+    entity.summary = entity.synthesis ?? entity.summary;
     entity.name = name;
     entity.type = type;
     entity.updated = new Date().toISOString();
@@ -3481,24 +3722,128 @@ export class StorageManager {
   }
 
   /**
-   * Set or update the summary of an entity file.
+   * Set or rewrite the synthesis layer of an entity file.
    */
-  async updateEntitySummary(name: string, summary: string): Promise<void> {
+  async updateEntitySynthesis(
+    name: string,
+    synthesis: string,
+    options: {
+      updatedAt?: string;
+      incrementVersion?: boolean;
+    } = {},
+  ): Promise<void> {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
       const content = await readFile(filePath, "utf-8");
       entity = parseEntityFile(content);
     } catch {
-      log.debug(`updateEntitySummary: entity file ${name}.md not found`);
+      log.debug(`updateEntitySynthesis: entity file ${name}.md not found`);
       return;
     }
 
-    entity.summary = summary;
-    entity.updated = new Date().toISOString();
+    const updatedAt = options.updatedAt?.trim() || new Date().toISOString();
+    entity.synthesis = synthesis.trim();
+    entity.summary = entity.synthesis;
+    entity.synthesisUpdatedAt = updatedAt;
+    entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
+      + (options.incrementVersion === false ? 0 : 1);
+    entity.updated = updatedAt;
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    await this.removeEntitySynthesisQueueEntries([name]);
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
+  }
+
+  /**
+   * Backward-compatible alias for legacy callers/tests.
+   */
+  async updateEntitySummary(name: string, summary: string): Promise<void> {
+    await this.updateEntitySynthesis(name, summary);
+  }
+
+  async readEntitySynthesisQueue(): Promise<string[]> {
+    try {
+      const raw = await readFile(this.entitySynthesisQueuePath, "utf-8");
+      const parsed = JSON.parse(raw) as { entityNames?: unknown };
+      return Array.isArray(parsed.entityNames)
+        ? parsed.entityNames.filter((value): value is string => typeof value === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async refreshEntitySynthesisQueue(): Promise<string[]> {
+    const entityFiles = await this.readAllEntityFiles();
+    const staleEntityNames = entityFiles
+      .filter((entity) => isEntitySynthesisStale(entity))
+      .sort((left, right) => {
+        const leftTs = latestEntityTimelineTimestamp(left) ?? "";
+        const rightTs = latestEntityTimelineTimestamp(right) ?? "";
+        return rightTs.localeCompare(leftTs);
+      })
+      .map((entity) => normalizeEntityName(entity.name, entity.type));
+
+    await mkdir(this.stateDir, { recursive: true });
+    await writeFile(
+      this.entitySynthesisQueuePath,
+      JSON.stringify(
+        {
+          updatedAt: new Date().toISOString(),
+          entityNames: staleEntityNames,
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf-8",
+    );
+    return staleEntityNames;
+  }
+
+  async removeEntitySynthesisQueueEntries(entityNames: string[]): Promise<void> {
+    if (entityNames.length === 0) return;
+    const queue = await this.readEntitySynthesisQueue();
+    if (queue.length === 0) return;
+    const removals = new Set(entityNames);
+    const nextQueue = queue.filter((name) => !removals.has(name));
+    await mkdir(this.stateDir, { recursive: true });
+    await writeFile(
+      this.entitySynthesisQueuePath,
+      JSON.stringify(
+        {
+          updatedAt: new Date().toISOString(),
+          entityNames: nextQueue,
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf-8",
+    );
+  }
+
+  async migrateEntityFilesToCompiledTruthTimeline(): Promise<{
+    total: number;
+    migrated: number;
+  }> {
+    const entityNames = await this.listEntityNames();
+    let migrated = 0;
+    for (const entityName of entityNames) {
+      const raw = await this.readEntity(entityName);
+      if (!raw) continue;
+      const serialized = serializeEntityFile(parseEntityFile(raw));
+      if (raw.trimEnd() === serialized.trimEnd()) continue;
+      await writeFile(path.join(this.entitiesDir, `${entityName}.md`), serialized, "utf-8");
+      migrated += 1;
+    }
+    if (migrated > 0) {
+      this.invalidateKnowledgeIndexCache();
+      this.bumpMemoryStatusVersion();
+    }
+    return {
+      total: entityNames.length,
+      migrated,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -3617,7 +3962,7 @@ export class StorageManager {
       type: e.type,
       score: StorageManager.scoreEntity(e, now),
       factCount: e.facts.length,
-      summary: e.summary,
+      summary: e.synthesis ?? e.summary,
       topRelationships: e.relationships.slice(0, 3).map((r) => r.target),
     }));
 
@@ -3707,6 +4052,10 @@ export class StorageManager {
           updated: "",
           facts: [],
           summary: undefined,
+          synthesis: undefined,
+          synthesisUpdatedAt: undefined,
+          synthesisVersion: undefined,
+          timeline: [],
           relationships: [],
           activity: [],
           aliases: [],
@@ -3733,13 +4082,24 @@ export class StorageManager {
               mergedEntity.name = parsed.name;
             }
 
-            // Keep first non-empty summary
-            if (!mergedEntity.summary && parsed.summary) {
+            // Prefer the freshest synthesis/summary available.
+            if (
+              parsed.synthesis &&
+              (!mergedEntity.synthesis
+                || (parsed.synthesisUpdatedAt ?? parsed.updated) > (mergedEntity.synthesisUpdatedAt ?? mergedEntity.updated))
+            ) {
+              mergedEntity.synthesis = parsed.synthesis;
+              mergedEntity.summary = parsed.synthesis;
+              mergedEntity.synthesisUpdatedAt = parsed.synthesisUpdatedAt ?? parsed.updated;
+              mergedEntity.synthesisVersion = parsed.synthesisVersion;
+            } else if (!mergedEntity.summary && parsed.summary) {
               mergedEntity.summary = parsed.summary;
+              mergedEntity.synthesis = parsed.summary;
+              mergedEntity.synthesisUpdatedAt = parsed.updated;
             }
 
-            // Collect all facts
-            mergedEntity.facts.push(...parsed.facts);
+            // Collect all timeline evidence; facts are derived below.
+            mergedEntity.timeline.push(...parsed.timeline);
 
             // Collect relationships (dedup later)
             mergedEntity.relationships.push(...parsed.relationships);
@@ -3754,8 +4114,15 @@ export class StorageManager {
           }
         }
 
-        // Deduplicate facts
-        mergedEntity.facts = [...new Set(mergedEntity.facts)];
+        // Deduplicate timeline entries and derive facts from the timeline.
+        const timelineKeys = new Set<string>();
+        mergedEntity.timeline = mergedEntity.timeline.filter((entry) => {
+          const key = `${entry.timestamp}::${entry.source ?? ""}::${entry.sessionKey ?? ""}::${entry.principal ?? ""}::${entry.text}`;
+          if (timelineKeys.has(key)) return false;
+          timelineKeys.add(key);
+          return true;
+        });
+        mergedEntity.facts = dedupeEntityFacts(mergedEntity.timeline);
 
         // Deduplicate relationships by target+label
         const relKeys = new Set<string>();

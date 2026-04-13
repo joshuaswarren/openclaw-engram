@@ -5529,6 +5529,16 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("entities-migrate")
+        .description("Rewrite entity files into the compiled truth + timeline format")
+        .action(async () => {
+          const result = await orchestrator.storage.migrateEntityFilesToCompiledTruthTimeline();
+          console.log(
+            `Migrated ${result.migrated} of ${result.total} entity file(s) to the compiled truth + timeline format.`,
+          );
+        });
+
+      cmd
         .command("extract")
         .description("Force extraction of buffered turns")
         .action(async () => {

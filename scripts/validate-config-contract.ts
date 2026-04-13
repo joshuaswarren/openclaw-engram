@@ -54,7 +54,7 @@ function getPluginConfigKeys(source: ts.SourceFile): Set<string> {
     }
     return keys;
   }
-  throw new Error("Could not find interface PluginConfig in src/types.ts");
+  throw new Error("Could not find interface PluginConfig in packages/remnic-core/src/types.ts");
 }
 
 function getParseConfigReturnKeys(source: ts.SourceFile): Set<string> {
@@ -152,14 +152,14 @@ function main() {
   });
   const checker = program.getTypeChecker();
 
-  const typesPath = path.join(repoRoot, "src", "types.ts");
-  const configPath = path.join(repoRoot, "src", "config.ts");
+  const typesPath = path.join(repoRoot, "packages", "remnic-core", "src", "types.ts");
+  const configPath = path.join(repoRoot, "packages", "remnic-core", "src", "config.ts");
   const pluginJsonPath = path.join(repoRoot, "openclaw.plugin.json");
 
   const typesSf = program.getSourceFile(typesPath);
   const configSf = program.getSourceFile(configPath);
   if (!typesSf || !configSf) {
-    throw new Error("Could not load src/types.ts or src/config.ts from TypeScript program");
+    throw new Error("Could not load packages/remnic-core/src/types.ts or packages/remnic-core/src/config.ts from TypeScript program");
   }
 
   const pluginConfigKeys = getPluginConfigKeys(typesSf);

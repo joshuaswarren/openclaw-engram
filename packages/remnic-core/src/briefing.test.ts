@@ -54,6 +54,7 @@ function makeEntity(updated: string): EntityFile {
     type: "project",
     updated,
     facts: ["synthetic fact"],
+    timeline: [],
     relationships: [],
     activity: [],
     aliases: [],

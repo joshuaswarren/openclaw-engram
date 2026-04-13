@@ -1482,6 +1482,10 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.entityActivityLogMaxEntries === "number" ? cfg.entityActivityLogMaxEntries : 20,
     entityAliasesEnabled: cfg.entityAliasesEnabled !== false,
     entitySummaryEnabled: cfg.entitySummaryEnabled !== false,
+    entitySynthesisMaxTokens:
+      typeof cfg.entitySynthesisMaxTokens === "number" && Number.isFinite(cfg.entitySynthesisMaxTokens)
+        ? Math.max(0, Math.floor(cfg.entitySynthesisMaxTokens))
+        : 500,
 
     // Search backend abstraction
     searchBackend: (["qmd", "remote", "noop", "lancedb", "meilisearch", "orama"] as const).includes(cfg.searchBackend as any)

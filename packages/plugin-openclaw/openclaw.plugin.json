@@ -3088,6 +3088,11 @@
         "default": true,
         "description": "Generate LLM summaries for entities during consolidation"
       },
+      "entitySynthesisMaxTokens": {
+        "type": "number",
+        "default": 500,
+        "description": "Max tokens used when refreshing an entity synthesis from its timeline."
+      },
       "recallBudgetChars": {
         "type": "number",
         "description": "Hard character cap for total recall injection. Defaults to maxMemoryTokens * 4."
@@ -4292,6 +4297,12 @@
     "entitySummaryEnabled": {
       "label": "Entity Summaries",
       "help": "Generate LLM summaries for entities during consolidation"
+    },
+    "entitySynthesisMaxTokens": {
+      "label": "Entity Synthesis Max Tokens",
+      "advanced": true,
+      "placeholder": "500",
+      "help": "Max tokens used when refreshing an entity synthesis from its timeline."
     },
     "recallBudgetChars": {
       "label": "Recall Budget (Chars)",

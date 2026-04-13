@@ -1355,7 +1355,7 @@ export class EngramAccessService {
         const haystack = [
           entity.name,
           entity.type,
-          entity.summary ?? "",
+          entity.synthesis ?? entity.summary ?? "",
           ...entity.aliases,
           ...entity.facts,
         ].join("\n").toLowerCase();
@@ -1365,7 +1365,7 @@ export class EngramAccessService {
         name: entity.name,
         type: entity.type,
         updated: entity.updated,
-        summary: entity.summary,
+        summary: entity.synthesis ?? entity.summary,
         aliases: entity.aliases,
       });
     }
@@ -1592,6 +1592,15 @@ export class EngramAccessService {
           ? Math.max(1, Math.floor(request.batchSize))
           : undefined,
     });
+    await this.orchestrator.processEntitySynthesisQueue(
+      resolvedNamespace,
+      Math.min(
+        typeof request.batchSize === "number" && Number.isFinite(request.batchSize)
+          ? Math.max(1, Math.floor(request.batchSize))
+          : 5,
+        5,
+      ),
+    );
 
     return {
       namespace: resolvedNamespace,

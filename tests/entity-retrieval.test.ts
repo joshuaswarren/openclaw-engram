@@ -117,6 +117,36 @@ test("entity retrieval preserves mention-index updatedAt when entity state is un
   assert.equal(firstIndex.updatedAt, secondIndex.updatedAt);
 });
 
+test("entity retrieval prefers synthesis for direct questions and uses timeline for history questions", async () => {
+  const { config, storage } = await buildHarness("engram-entity-synthesis-preference");
+  const canonical = await writeEntity(
+    storage,
+    "Jane Example",
+    "person",
+    ["Jane Example leads the launch review."],
+    "Jane Example currently leads the launch review.",
+  );
+  await storage.writeEntity("Jane Example", "person", ["Jane Example now owns the release approvals."], {
+    timestamp: "2026-04-13T11:00:00.000Z",
+    sessionKey: "session-2",
+    source: "extraction",
+  });
+
+  const direct = await buildSection(config, storage, "Who is Jane Example?");
+  const timeline = await buildSection(config, storage, "What happened with Jane Example?");
+
+  assert.ok(direct);
+  assert.match(direct!, /Jane Example currently leads the launch review\./);
+  assert.doesNotMatch(direct!, /now owns the release approvals/i);
+  assert.doesNotMatch(direct!, /recent timeline:/i);
+
+  assert.ok(timeline);
+  assert.match(timeline!, /recent timeline:/i);
+  assert.match(timeline!, /now owns the release approvals/i);
+  assert.match(timeline!, /Jane Example currently leads the launch review\./);
+  assert.equal(canonical.length > 0, true);
+});
+
 test("entity retrieval respects small supporting-fact caps when ranking memory snippets", async () => {
   const { config, storage } = await buildHarness("engram-entity-memory-cap");
   const canonical = await writeEntity(

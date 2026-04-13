@@ -21,6 +21,13 @@ type EntityMentionIndexEntry = {
   aliases: string[];
   summary?: string;
   facts: string[];
+  timeline: Array<{
+    timestamp: string;
+    text: string;
+    source?: string;
+    sessionKey?: string;
+    principal?: string;
+  }>;
   relationships: Array<{ target: string; label: string }>;
   activity: Array<{ date: string; note: string }>;
   factCount: number;
@@ -217,6 +224,7 @@ function createPseudoNativeEntry(chunk: NativeKnowledgeChunk): EntityMentionInde
     type: chunk.sourceKind,
     aliases: uniqueStrings(chunk.aliases ?? []),
     facts: [],
+    timeline: [],
     relationships: [],
     activity: [],
     factCount: 0,
@@ -269,8 +277,9 @@ async function buildEntityMentionIndex(
       name: entity.name,
       type: entity.type,
       aliases: uniqueStrings(entity.aliases),
-      summary: entity.summary,
+      summary: entity.synthesis ?? entity.summary,
       facts: sanitizedFacts,
+      timeline: entity.timeline.map((entry) => ({ ...entry })),
       relationships: entity.relationships.map((relationship) => ({ ...relationship })),
       activity: entity.activity.map((activity) => ({ ...activity })),
       factCount: sanitizedFacts.length,
@@ -397,7 +406,7 @@ async function buildHintSnippets(
   }
 
   for (const fact of entry.facts) {
-    snippets.push({ text: fact, score: 7, kind: "fact" });
+    snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
   }
 
   for (const relationship of entry.relationships) {
@@ -479,7 +488,12 @@ function formatEntityHintSection(
   if (candidates.length === 0) return null;
   const lines: string[] = ["## entity_answer_hints", ""];
   for (const { candidate, snippets, uncertainty } of candidates) {
-    const topSnippets = snippets.slice(0, 3);
+    const preferredTopSnippets = candidate.entry.summary || mode !== "direct"
+      ? snippets.filter((snippet) => snippet.kind !== "fact")
+      : snippets;
+    const topSnippets = (
+      preferredTopSnippets.length > 0 ? preferredTopSnippets : snippets
+    ).slice(0, 3);
     const topSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
     lines.push(`- target: ${candidate.entry.name} (${candidate.entry.type})`);
     if (candidate.source === "recent_turn") {
@@ -494,15 +508,26 @@ function formatEntityHintSection(
         lines.push(`  - ${snippet.text}`);
       }
     }
-    if (mode !== "direct") {
-      const timeline = snippets
+    if (mode === "timeline") {
+      const explicitTimeline = candidate.entry.timeline
+        .slice(-2)
+        .reverse()
+        .map((entry) => ({
+          text: compactLine(entry.text, 180),
+          score: 0,
+          kind: "fact" as const,
+        }))
+        .filter((snippet) => !topSnippetTexts.has(normalizeText(snippet.text)));
+      const activityTimeline = snippets
         .filter((snippet) => (snippet.kind === "activity" || snippet.kind === "memory") && !topSnippetTexts.has(normalizeText(snippet.text)))
         .slice(0, 2);
-      const fallbackTimeline = timeline.length > 0
-        ? timeline
-        : snippets
-          .filter((snippet) => (snippet.kind === "fact" || snippet.kind === "summary") && !topSnippetTexts.has(normalizeText(snippet.text)))
-          .slice(0, 2);
+      const fallbackTimeline = explicitTimeline.length > 0
+        ? explicitTimeline
+        : activityTimeline.length > 0
+          ? activityTimeline
+          : snippets
+            .filter((snippet) => snippet.kind === "summary" && !topSnippetTexts.has(normalizeText(snippet.text)))
+            .slice(0, 2);
       if (fallbackTimeline.length > 0) {
         lines.push("- recent timeline:");
         for (const snippet of fallbackTimeline) {

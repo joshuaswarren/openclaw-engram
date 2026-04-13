@@ -669,6 +669,7 @@ export interface PluginConfig {
   entityActivityLogMaxEntries: number;
   entityAliasesEnabled: boolean;
   entitySummaryEnabled: boolean;
+  entitySynthesisMaxTokens: number;
 
   // v6.0 Fact deduplication & archival
   /** Enable content-hash deduplication to prevent storing semantically identical facts. */
@@ -1337,12 +1338,24 @@ export interface EntityActivityEntry {
   note: string;
 }
 
+export interface EntityTimelineEntry {
+  timestamp: string;
+  text: string;
+  source?: string;
+  sessionKey?: string;
+  principal?: string;
+}
+
 export interface EntityFile {
   name: string;
   type: string;
   updated: string;
   facts: string[];
   summary?: string;
+  synthesis?: string;
+  synthesisUpdatedAt?: string;
+  synthesisVersion?: number;
+  timeline: EntityTimelineEntry[];
   relationships: EntityRelationship[];
   activity: EntityActivityEntry[];
   aliases: string[];
