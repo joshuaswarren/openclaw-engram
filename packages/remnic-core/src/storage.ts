@@ -683,6 +683,7 @@ function parseEntityFrontmatter(
     updated?: string;
     synthesisUpdatedAt?: string;
     synthesisVersion?: number;
+    extraLines?: string[];
   };
   body: string;
 } {
@@ -692,10 +693,24 @@ function parseEntityFrontmatter(
   }
 
   const values: Record<string, string> = {};
+  const extraLines: string[] = [];
+  const recognizedKeys = new Set([
+    "created",
+    "updated",
+    "synthesis_updated_at",
+    "synthesis_version",
+  ]);
   for (const line of match[1].split(/\r?\n/)) {
     const colonIdx = line.indexOf(":");
-    if (colonIdx === -1) continue;
+    if (colonIdx === -1) {
+      extraLines.push(line);
+      continue;
+    }
     const key = line.slice(0, colonIdx).trim();
+    if (!recognizedKeys.has(key)) {
+      extraLines.push(line);
+      continue;
+    }
     const value = line.slice(colonIdx + 1).trim().replace(/^"|"$/g, "");
     values[key] = value;
   }
@@ -707,6 +722,7 @@ function parseEntityFrontmatter(
       updated: values.updated || undefined,
       synthesisUpdatedAt: values.synthesis_updated_at || undefined,
       synthesisVersion: Number.isFinite(synthesisVersion) ? synthesisVersion : undefined,
+      extraLines,
     },
     body: match[2],
   };
@@ -909,6 +925,23 @@ export function parseEntityFile(content: string): EntityFile {
   if (!updated) updated = frontmatter.updated ?? frontmatter.created ?? "";
   if (!created) created = updated;
 
+  const lastHeaderLineIndex = Math.max(
+    lines.findIndex((l) => l.startsWith("# ")),
+    lines.findIndex((l) => l.startsWith("**Type:**")),
+    lines.findIndex((l) => l.startsWith("**Updated:**")),
+  );
+  const firstSectionIndex = lines.findIndex((l) => l.startsWith("## "));
+  const preSectionLines = firstSectionIndex > -1
+    ? lines.slice(lastHeaderLineIndex + 1, firstSectionIndex)
+    : lines.slice(lastHeaderLineIndex + 1);
+  const normalizedPreSectionLines = [...preSectionLines];
+  while (normalizedPreSectionLines[0] === "") {
+    normalizedPreSectionLines.shift();
+  }
+  const preservedPreSectionLines = normalizedPreSectionLines.some((line) => line.trim().length > 0)
+    ? normalizedPreSectionLines
+    : [];
+
   // Detect which section we're in
   let section = "";
   let currentExtraSection: { title: string; lines: string[] } | null = null;
@@ -1002,6 +1035,8 @@ export function parseEntityFile(content: string): EntityFile {
     type,
     created,
     updated,
+    extraFrontmatterLines: frontmatter.extraLines ?? [],
+    preSectionLines: preservedPreSectionLines,
     facts,
     summary: synthesis,
     synthesis,
@@ -1040,6 +1075,7 @@ export function serializeEntityFile(entity: EntityFile): string {
     `updated: ${updated}`,
     `synthesis_updated_at: "${synthesisUpdatedAt}"`,
     `synthesis_version: ${synthesisVersion}`,
+    ...(entity.extraFrontmatterLines ?? []),
     "---",
     "",
     `# ${entity.name}`,
@@ -1048,6 +1084,13 @@ export function serializeEntityFile(entity: EntityFile): string {
     `**Updated:** ${updated}`,
     "",
   ];
+
+  if ((entity.preSectionLines ?? []).length > 0) {
+    lines.push(...(entity.preSectionLines ?? []));
+    if (entity.preSectionLines?.[entity.preSectionLines.length - 1] !== "") {
+      lines.push("");
+    }
+  }
 
   lines.push("## Synthesis", "");
   if (synthesis) {

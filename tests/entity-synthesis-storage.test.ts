@@ -182,6 +182,59 @@ test("entity migration preserves unmodeled user-authored sections", async () => 
   }
 });
 
+test("entity migration preserves unknown frontmatter keys and pre-section prose", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-migration-frontmatter-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonical = "person-jane-doe";
+    const legacy = [
+      "---",
+      "created: 2026-04-12T09:00:00.000Z",
+      "updated: 2026-04-12T10:00:00.000Z",
+      "tags: [roadmap, vip]",
+      "provenance: imported",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-12T10:00:00.000Z",
+      "",
+      "Legacy prose before sections must survive migration.",
+      "",
+      "## Summary",
+      "",
+      "Jane Doe leads roadmap work.",
+      "",
+      "## Facts",
+      "",
+      "- Leads roadmap work.",
+      "",
+    ].join("\n");
+    await writeFile(path.join(dir, "entities", `${canonical}.md`), legacy, "utf-8");
+
+    await storage.migrateEntityFilesToCompiledTruthTimeline();
+    const migratedRaw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(migratedRaw);
+
+    assert.match(migratedRaw, /tags: \[roadmap, vip\]/);
+    assert.match(migratedRaw, /provenance: imported/);
+    assert.match(migratedRaw, /Legacy prose before sections must survive migration\./);
+    assert.deepEqual(parsed.extraFrontmatterLines, [
+      "tags: [roadmap, vip]",
+      "provenance: imported",
+    ]);
+    assert.deepEqual(parsed.preSectionLines, [
+      "Legacy prose before sections must survive migration.",
+      "",
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("serializeEntityFile persists stable created and updated frontmatter for entity reads", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-frontmatter-stability-"));
   try {
@@ -280,6 +333,46 @@ test("parseEntityFile preserves unmodeled sections across round trips", () => {
     },
   ]);
   assert.match(serialized, /## Notes\n\nKeep this freeform context\.\n- Keep this checklist item too\./);
+});
+
+test("parseEntityFile preserves unknown frontmatter keys and pre-section prose across round trips", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    "tags: [roadmap, vip]",
+    "provenance: imported",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "Keep this pre-section context.",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] Leads roadmap work.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+
+  assert.deepEqual(parsed.extraFrontmatterLines, [
+    "tags: [roadmap, vip]",
+    "provenance: imported",
+  ]);
+  assert.deepEqual(parsed.preSectionLines, [
+    "Keep this pre-section context.",
+    "",
+  ]);
+  assert.match(serialized, /tags: \[roadmap, vip\]/);
+  assert.match(serialized, /provenance: imported/);
+  assert.match(serialized, /\*\*Updated:\*\* 2026-04-13T10:05:00.000Z\n\nKeep this pre-section context\./);
 });
 
 test("parseEntityFile preserves bracket-prefixed timeline facts", () => {

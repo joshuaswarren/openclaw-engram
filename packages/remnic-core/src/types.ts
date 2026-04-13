@@ -1351,6 +1351,8 @@ export interface EntityFile {
   type: string;
   created?: string;
   updated: string;
+  extraFrontmatterLines?: string[];
+  preSectionLines?: string[];
   facts: string[];
   summary?: string;
   synthesis?: string;
