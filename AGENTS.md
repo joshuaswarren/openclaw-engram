@@ -36,7 +36,7 @@ Use these as the canonical starting points for adapter work:
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
 These patterns were extracted from 60+ PRs across 2026-04-05 to 2026-04-12
-(including deep analysis of PRs #343-#408 with 850+ review comments).
+(including deep analysis of PRs #343-#408 with 980+ review comments).
 Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
 required a follow-up commit to fix. Follow these rules to ship clean on the first push.
 
@@ -649,6 +649,120 @@ were caught only by manual review.
   `|| true`, `continue-on-error: true`, and missing `set -e` in shell scripts.
   These should only exist on intentional tolerance (like cleanup steps), never
   on quality gates.
+
+### 39. Silent Acceptance of Invalid User Input — Reject Instead of Reinterpreting
+
+PR #396 had 10+ instances where invalid CLI flags (`--format jsno`), MCP
+parameters, briefing window tokens, and format values silently fell back to
+defaults instead of being rejected. While pattern #1 covers CLI flag validation,
+this pattern addresses the broader issue of accept-then-default behavior in
+ALL input surfaces (CLI, MCP, config, API).
+
+- **Invalid values must be rejected, not silently reinterpreted** — when
+  `--format jsno` is provided, throw an error listing valid formats. Don't
+  silently fall back to `config.briefing.defaultFormat`. The user explicitly
+  chose a value; ignoring it hides configuration mistakes.
+- **MCP/API surfaces must validate exactly like CLI surfaces** — when a tool
+  parameter is invalid, return a clear error, not a result computed with
+  default values. MCP callers (agents) cannot tell the difference between a
+  valid response and a silently-defaulted response.
+- **Missing flag arguments must fail, not default** — `--since` with no value
+  must error, not fall back to `config.briefing.defaultWindow`. The user's
+  intent is ambiguous, not "use the default".
+- **Briefing window tokens must reject unrecognized values** — when `since`
+  contains `garbage`, don't silently fall back to `yesterday`. The caller
+  should know their input was invalid.
+
+### 40. Validator-Implementation Consistency — Schemas Must Match Code Paths
+
+PR #396 had 3 instances where validation accepted values that downstream code
+never handled. `BRIEFING_FORMAT_ALLOWED` included `"text"` but the format
+resolution only handled `"markdown"` and `"json"`. Dead switch cases after
+name normalization. Legacy tool schemas inheriting updated descriptions.
+
+- **Validation allow-lists must exactly match handled values** — if a format
+  validator accepts `"text"`, `"markdown"`, and `"json"`, the downstream code
+  must handle ALL three. Any value accepted by validation but unhandled in
+  code produces undefined behavior (typically silent fallthrough to default).
+- **Dead switch cases after normalization must be removed** — if tool names
+  are normalized from `remnic.*` to `engram.*`, a `case "remnic.briefing":`
+  branch is dead code that can never match. Remove it rather than leaving it
+  to silently never execute.
+- **Legacy wrappers must override ALL inherited fields, not just names** —
+  when creating a legacy tool schema from a primary schema, override both
+  `name` AND `description`. Otherwise the legacy tool advertises the new
+  branding in its description while using the old name, confusing clients.
+- **Test that every accepted value produces correct behavior** — for each
+  value in an allow-list, write a test that passes it through the full
+  pipeline and verifies the output matches the expected behavior for that
+  specific value.
+
+### 41. Exhaustive Status/State Filtering — Cover All Non-Active States
+
+PR #396 had 3 instances where status-based filters only checked some non-active
+states (e.g., filtering `superseded` and `archived` but not `quarantined`,
+`rejected`, or `pending_review`). Incomplete filtering causes stale, rejected,
+or quarantined data to appear in user-facing outputs like briefings.
+
+- **When filtering by status, enumerate ALL non-active states** — if a filter
+  excludes `superseded` and `archived`, it must also exclude `quarantined`,
+  `rejected`, and `pending_review` unless explicitly intended. Use an
+  `isActive` helper that checks a single set, not an ad-hoc exclusion list.
+- **Define the "active" set explicitly, not the "inactive" set** — rather
+  than listing states to exclude, define the states to include:
+  `if (!ACTIVE_STATUSES.includes(memory.status)) continue;`. This prevents
+  new states from accidentally flowing through.
+- **Test with every known status value** — create a test fixture with memories
+  in each known status and verify the filter produces the correct subset.
+- **When adding a new status, update ALL filters** — grep for every status
+  filter in the codebase and add the new status to the appropriate inclusion
+  or exclusion set.
+
+### 42. Non-Atomic File Replace — Write New Before Deleting Old
+
+PR #394 had 2 instances where code deleted an existing file/directory before
+writing the replacement. If the write fails after the delete succeeds (e.g.,
+permissions, disk full, cross-device rename), the old data is permanently
+lost with no recovery path.
+
+- **Never `rmSync` then `renameSync` — use the reverse order** — write the
+  new content to a temp location first, then rename it over the target. On
+  most filesystems, `renameSync` is atomic, so the target always exists in
+  a valid state. If the write to temp fails, the original remains intact.
+- **Backup before destructive operations** — when replacing a config file,
+  copy the old content to a `.bak` file first. If the new write fails,
+  restore from backup. Clean up the backup after confirming success.
+- **Verify write success before cleanup** — if you must delete old data
+  (e.g., removing a temp directory after successful rename), verify the
+  rename succeeded before cleaning up the source. `renameSync` can fail on
+  cross-device moves.
+- **Test the failure path** — mock `renameSync` to throw after `rmSync`
+  succeeds and verify the error is handled and data is recoverable.
+
+### 43. Documentation-Code Contract — Documented Behavior Must Be Implemented
+
+PRs #397 and #398 had 3 instances where documentation claimed behavior that
+the code didn't implement. Docs said `remnic.timeout` applied to daemon calls
+but the provider never forwarded the timeout parameter. A publish workflow
+allowed dispatching from any branch without branch protection.
+
+- **Every documented behavior must have a corresponding test** — if docs
+  say "timeout is applied to all daemon calls", write a test that verifies
+  the timeout parameter reaches the daemon client constructor. Without a
+  test, documentation drifts from implementation silently.
+- **CI workflows must validate their trigger constraints** — if a publish
+  workflow should only run on `main`, add `if: github.ref == 'refs/heads/main'`
+  to the job, not just to the trigger. Manual `workflow_dispatch` can target
+  any branch, bypassing branch-only triggers.
+- **When adding a config property, wire it end-to-end** — adding `timeout`
+  to the config schema but not passing it through the provider to the client
+  means users set a value that has no effect. The `check-config-contract`
+  script should flag config properties that are defined in the schema but
+  never read in code.
+- **Test that documented config properties are consumed** — for each config
+  property in the schema, write a test that sets it and verifies it affects
+  the documented behavior. Missing tests mean the property may be silently
+  ignored.
 
 ---
 

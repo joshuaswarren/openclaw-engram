@@ -39,6 +39,12 @@
 - [ ] Index-only additions confirmed after persistence (no phantom entries for rejected content)
 - [ ] Config schema minimums honor documented disable-at-zero values
 - [ ] Template-derived regexes escape literal parts (no match-everything patterns)
+- [ ] Invalid user input rejected, not silently defaulted (CLI flags, MCP params, format values)
+- [ ] Validation allow-lists match handled code paths (no accepted-but-unhandled values)
+- [ ] Status filters cover ALL non-active states (superseded, archived, quarantined, rejected, pending_review)
+- [ ] File replace operations are atomic (write-to-temp then rename, not delete-then-write)
+- [ ] Documented config properties wired end-to-end (schema → provider → client → test)
+- [ ] CI publish workflows have branch protection on workflow_dispatch
 
 ## Notes for reviewers
 

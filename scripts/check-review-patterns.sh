@@ -2,7 +2,7 @@
 # check-review-patterns.sh — Catch common issues that reviewers (Cursor Bugbot,
 # Codex, CodeQL) repeatedly flagged across PRs #343-#408 (700+ review comments).
 # Run this before pushing. Zero exit = clean.
-# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4, 18-21 from iteration 5, 22-23 from iteration 7, 24-26 from iteration 8, 27-29 from iteration 10).
+# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4, 18-21 from iteration 5, 22-23 from iteration 7, 24-26 from iteration 8, 27-29 from iteration 10, 30-34 from iteration 12).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -646,6 +646,134 @@ if ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 >/d
     COUNT=$(echo "$SILENCED_GATES" | wc -l | tr -d ' ')
     warn "$COUNT CI quality gate steps silenced with '|| true' or 'continue-on-error: true'. Test/lint/type steps must fail the build:"
     echo "$SILENCED_GATES" | head -5
+  fi
+fi
+
+# ---- 30. Silent fallback on invalid input (accept-then-default pattern) ----
+echo "[check] Silent fallback patterns on invalid CLI/MCP input..."
+
+# Look for patterns where invalid values silently default instead of throwing
+SILENT_DEFAULT=$(grep -rn '|| config\.\|?? config\.\|\|\s*\.default\|??\s*\.default' \
+  --include="*.ts" \
+  packages/remnic-cli/src/ packages/remnic-core/src/access-mcp.ts packages/remnic-core/src/access-service.ts \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  | grep -i "format\|since\|focus\|window\|briefing\|recall\|search" \
+  || true)
+
+if [[ -n "$SILENT_DEFAULT" ]]; then
+  COUNT=$(echo "$SILENT_DEFAULT" | wc -l | tr -d ' ')
+  warn "$COUNT silent fallback patterns (|| config.*) on format/since/focus/window values. Invalid input should be rejected, not silently defaulted:"
+  echo "$SILENT_DEFAULT" | head -5
+fi
+
+# ---- 31. Validation allow-list vs code handling mismatch ----
+echo "[check] Validation allow-lists with unhandled values..."
+
+# Look for _ALLOWED or ALLOWED_VALUES arrays and check if switch/if-else handles all
+ALLOW_LISTS=$(grep -rn '_ALLOWED\|ALLOWED_VALUES\|VALID_FORMATS\|VALID_' \
+  --include="*.ts" \
+  packages/remnic-core/src/ packages/remnic-cli/src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep "const\|let\|=" \
+  || true)
+
+if [[ -n "$ALLOW_LISTS" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    # Extract the variable name
+    VAR_NAME=$(echo "$line" | grep -oE '[A-Z_]+_ALLOWED|[A-Z_]+_VALUES' | head -1 || true)
+    if [[ -n "$VAR_NAME" ]]; then
+      # Count values in the allow list
+      ALLOWED_VALUES=$(grep -A5 "$VAR_NAME" "$FILE" 2>/dev/null | grep -oE '"[^"]+"' | sort -u || true)
+      ALLOWED_COUNT=$(echo "$ALLOWED_VALUES" | grep -c '"' 2>/dev/null || echo "0")
+      if [[ "$ALLOWED_COUNT" -gt 2 ]]; then
+        # Check if there's a corresponding switch/if chain with same number of branches
+        HANDLED=$(grep -c "case\|===\|==" "$FILE" 2>/dev/null || echo "0")
+        if [[ "$HANDLED" -lt "$ALLOWED_COUNT" ]]; then
+          warn "$FILE — $VAR_NAME has $ALLOWED_COUNT values but file only has $HANDLED case/branch handlers. Validator may accept values that code doesn't handle."
+        fi
+      fi
+    fi
+  done <<< "$ALLOW_LISTS"
+fi
+
+# ---- 32. Incomplete status filtering ----
+echo "[check] Incomplete status/state filter coverage..."
+
+# Look for status filters that only check some non-active states
+STATUS_FILTERS=$(grep -rn 'status.*===\|status.*!==\|\.status\|status ==' \
+  --include="*.ts" \
+  packages/remnic-core/src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -i "superseded\|archived\|active\|rejected\|quarantined\|pending" \
+  || true)
+
+if [[ -n "$STATUS_FILTERS" ]]; then
+  # Check which statuses appear in filtering code
+  HAS_SUPERSEDED=$(echo "$STATUS_FILTERS" | grep -c "superseded" 2>/dev/null || echo "0")
+  HAS_ARCHIVED=$(echo "$STATUS_FILTERS" | grep -c "archived" 2>/dev/null || echo "0")
+  HAS_QUARANTINED=$(echo "$STATUS_FILTERS" | grep -c "quarantined" 2>/dev/null || echo "0")
+  HAS_REJECTED=$(echo "$STATUS_FILTERS" | grep -c "rejected" 2>/dev/null || echo "0")
+
+  # If filtering superseded/archived but not quarantined/rejected, flag it
+  if [[ "$HAS_SUPERSEDED" -gt 0 ]] && [[ "$HAS_ARCHIVED" -gt 0 ]] && [[ "$HAS_QUARANTINED" -eq 0 ]]; then
+    warn "Status filters mention superseded/archived but not quarantined. Consider using an explicit ACTIVE_STATUSES set to cover all non-active states."
+  fi
+  if [[ "$HAS_SUPERSEDED" -gt 0 ]] && [[ "$HAS_ARCHIVED" -gt 0 ]] && [[ "$HAS_REJECTED" -eq 0 ]]; then
+    warn "Status filters mention superseded/archived but not rejected. Consider using an explicit ACTIVE_STATUSES set to cover all non-active states."
+  fi
+fi
+
+# ---- 33. Non-atomic file replace (rmSync then renameSync) ----
+echo "[check] Non-atomic file replace patterns..."
+
+ATOMIC_ISSUE=$(grep -rn 'rmSync\|rm -rf\|unlinkSync\|removeSync' \
+  --include="*.ts" \
+  packages/remnic-core/src/ packages/remnic-cli/src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  || true)
+
+if [[ -n "$ATOMIC_ISSUE" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    LINENUM=$(echo "$line" | cut -d: -f2)
+    # Check if a renameSync follows within 5 lines of the rmSync
+    if sed -n "$((LINENUM)),$((LINENUM+5))p" "$FILE" 2>/dev/null | grep -q "renameSync\|rename(" ; then
+      warn "$FILE:$LINENUM — rmSync/removeSync followed by renameSync within 5 lines. This is non-atomic; use write-to-temp-then-rename instead."
+    fi
+  done <<< "$ATOMIC_ISSUE"
+fi
+
+# ---- 34. CI workflow dispatch without branch protection ----
+echo "[check] CI publish workflows missing branch protection..."
+
+if ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 >/dev/null 2>&1; then
+  PUBLISH_WORKFLOWS=$(grep -l 'workflow_dispatch\|publish\|deploy\|release' \
+    .github/workflows/*.yml .github/workflows/*.yaml \
+    2>/dev/null || true)
+
+  if [[ -n "$PUBLISH_WORKFLOWS" ]]; then
+    while IFS= read -r wf; do
+      HAS_DISPATCH=$(grep -c 'workflow_dispatch' "$wf" 2>/dev/null || echo "0")
+      HAS_BRANCH_CHECK=$(grep -c "github.ref\|github.base_ref\|'refs/heads/main'" "$wf" 2>/dev/null || echo "0")
+      if [[ "$HAS_DISPATCH" -gt 0 ]] && [[ "$HAS_BRANCH_CHECK" -eq 0 ]]; then
+        warn "$wf — has workflow_dispatch trigger but no github.ref branch check. Manual dispatch can target any branch, allowing unintended publishes."
+      fi
+    done <<< "$PUBLISH_WORKFLOWS"
   fi
 fi
 
