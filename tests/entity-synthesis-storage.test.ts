@@ -373,3 +373,30 @@ test("refreshEntitySynthesisQueue orders stale entities by parsed latest timelin
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("refreshEntitySynthesisQueue keeps canonical filenames when headings drift", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-queue-filename-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Leads roadmap work."], {
+      timestamp: "2026-04-13T10:00:00.000Z",
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe leads roadmap work.", {
+      updatedAt: "2026-04-13T10:01:00.000Z",
+    });
+    await storage.writeEntity("Jane Do", "person", ["Newest stale fact."], {
+      timestamp: "2026-04-13T10:02:00.000Z",
+      source: "extraction",
+    });
+
+    const queue = await storage.refreshEntitySynthesisQueue();
+
+    assert.deepEqual(queue, [canonical]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

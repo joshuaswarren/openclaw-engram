@@ -3847,15 +3847,26 @@ export class StorageManager {
   }
 
   async refreshEntitySynthesisQueue(): Promise<string[]> {
-    const entityFiles = await this.readAllEntityFiles();
-    const staleEntityNames = entityFiles
-      .filter((entity) => isEntitySynthesisStale(entity))
+    const entityNames = await this.listEntityNames();
+    const entityQueueEntries = await Promise.all(
+      entityNames.map(async (entityName) => {
+        const raw = await this.readEntity(entityName);
+        if (!raw) return null;
+        return {
+          entityName,
+          entity: parseEntityFile(raw),
+        };
+      }),
+    );
+    const staleEntityNames = entityQueueEntries
+      .filter((entry): entry is { entityName: string; entity: EntityFile } => entry !== null)
+      .filter(({ entity }) => isEntitySynthesisStale(entity))
       .sort((left, right) => {
-        const leftTs = latestEntityTimelineTimestamp(left) ?? "";
-        const rightTs = latestEntityTimelineTimestamp(right) ?? "";
+        const leftTs = latestEntityTimelineTimestamp(left.entity) ?? "";
+        const rightTs = latestEntityTimelineTimestamp(right.entity) ?? "";
         return compareEntityTimestamps(rightTs, leftTs);
       })
-      .map((entity) => normalizeEntityName(entity.name, entity.type));
+      .map(({ entityName }) => entityName);
 
     await mkdir(this.stateDir, { recursive: true });
     await writeFile(
