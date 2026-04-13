@@ -235,6 +235,56 @@ test("entity migration preserves unknown frontmatter keys and pre-section prose"
   }
 });
 
+test("entity migration preserves nested frontmatter without treating child keys as managed fields", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-migration-nested-frontmatter-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonical = "person-jane-doe";
+    const legacy = [
+      "---",
+      "created: 2026-04-12T09:00:00.000Z",
+      "updated: 2026-04-12T10:00:00.000Z",
+      "meta:",
+      "  created: nested-created-should-stay-verbatim",
+      "  updated: nested-updated-should-stay-verbatim",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-12T10:00:00.000Z",
+      "",
+      "## Summary",
+      "",
+      "Jane Doe leads roadmap work.",
+      "",
+      "## Facts",
+      "",
+      "- Leads roadmap work.",
+      "",
+    ].join("\n");
+    await writeFile(path.join(dir, "entities", `${canonical}.md`), legacy, "utf-8");
+
+    await storage.migrateEntityFilesToCompiledTruthTimeline();
+    const migratedRaw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(migratedRaw);
+
+    assert.match(migratedRaw, /^---\ncreated: 2026-04-12T09:00:00.000Z\nupdated: 2026-04-12T10:00:00.000Z/m);
+    assert.match(migratedRaw, /meta:\n  created: nested-created-should-stay-verbatim\n  updated: nested-updated-should-stay-verbatim/);
+    assert.deepEqual(parsed.extraFrontmatterLines, [
+      "meta:",
+      "  created: nested-created-should-stay-verbatim",
+      "  updated: nested-updated-should-stay-verbatim",
+    ]);
+    assert.equal(parsed.created, "2026-04-12T09:00:00.000Z");
+    assert.equal(parsed.updated, "2026-04-12T10:00:00.000Z");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("serializeEntityFile persists stable created and updated frontmatter for entity reads", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-frontmatter-stability-"));
   try {

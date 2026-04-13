@@ -701,6 +701,10 @@ function parseEntityFrontmatter(
     "synthesis_version",
   ]);
   for (const line of match[1].split(/\r?\n/)) {
+    if (/^\s/.test(line)) {
+      extraLines.push(line);
+      continue;
+    }
     const colonIdx = line.indexOf(":");
     if (colonIdx === -1) {
       extraLines.push(line);
