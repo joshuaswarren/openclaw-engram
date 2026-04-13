@@ -1360,6 +1360,10 @@ export interface EntityFile {
   relationships: EntityRelationship[];
   activity: EntityActivityEntry[];
   aliases: string[];
+  extraSections?: Array<{
+    title: string;
+    lines: string[];
+  }>;
 }
 
 export interface ScoredEntity {

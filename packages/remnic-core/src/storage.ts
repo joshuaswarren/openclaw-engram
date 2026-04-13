@@ -873,6 +873,15 @@ export function isEntitySynthesisStale(entity: EntityFile): boolean {
 export function parseEntityFile(content: string): EntityFile {
   const { frontmatter, body } = parseEntityFrontmatter(content);
   const lines = body.split("\n");
+  const recognizedSections = new Set([
+    "facts",
+    "timeline",
+    "summary",
+    "synthesis",
+    "connected to",
+    "activity",
+    "aliases",
+  ]);
 
   // Header
   let name = "";
@@ -884,6 +893,7 @@ export function parseEntityFile(content: string): EntityFile {
   const activity: EntityActivityEntry[] = [];
   const aliases: string[] = [];
   const timeline: EntityTimelineEntry[] = [];
+  const extraSections: Array<{ title: string; lines: string[] }> = [];
 
   // Parse name from first heading
   const headingLine = lines.find((l) => l.startsWith("# "));
@@ -901,10 +911,21 @@ export function parseEntityFile(content: string): EntityFile {
 
   // Detect which section we're in
   let section = "";
+  let currentExtraSection: { title: string; lines: string[] } | null = null;
   for (const line of lines) {
     if (line.startsWith("## ")) {
-      section = line.slice(3).trim().toLowerCase();
+      const heading = line.slice(3).trim();
+      section = heading.toLowerCase();
+      if (recognizedSections.has(section)) {
+        currentExtraSection = null;
+      } else {
+        currentExtraSection = { title: heading, lines: [] };
+        extraSections.push(currentExtraSection);
+      }
       continue;
+    }
+    if (currentExtraSection) {
+      currentExtraSection.lines.push(line);
     }
     if (!line.startsWith("- ")) continue;
 
@@ -990,6 +1011,7 @@ export function parseEntityFile(content: string): EntityFile {
     relationships,
     activity,
     aliases,
+    extraSections,
   };
 }
 
@@ -1064,6 +1086,14 @@ export function serializeEntityFile(entity: EntityFile): string {
       lines.push(`- ${alias}`);
     }
     lines.push("");
+  }
+
+  for (const section of entity.extraSections ?? []) {
+    lines.push(`## ${section.title}`);
+    lines.push(...section.lines);
+    if (section.lines[section.lines.length - 1] !== "") {
+      lines.push("");
+    }
   }
 
   return lines.join("\n");

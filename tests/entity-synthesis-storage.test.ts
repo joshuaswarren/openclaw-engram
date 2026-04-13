@@ -128,6 +128,60 @@ test("entity migration rewrites legacy summary plus facts files into synthesis p
   }
 });
 
+test("entity migration preserves unmodeled user-authored sections", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-migration-extra-sections-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonical = "person-jane-doe";
+    const legacy = [
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-12T10:00:00.000Z",
+      "",
+      "## Summary",
+      "",
+      "Jane Doe leads roadmap work.",
+      "",
+      "## Facts",
+      "",
+      "- Leads roadmap work.",
+      "",
+      "## Notes",
+      "",
+      "Freeform notes that are not part of the compiled timeline yet.",
+      "- Keep this checklist item too.",
+      "",
+    ].join("\n");
+    await writeFile(path.join(dir, "entities", `${canonical}.md`), legacy, "utf-8");
+
+    const result = await storage.migrateEntityFilesToCompiledTruthTimeline();
+    const migratedRaw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(migratedRaw);
+
+    assert.equal(result.total, 1);
+    assert.equal(result.migrated, 1);
+    assert.match(migratedRaw, /## Notes/);
+    assert.match(migratedRaw, /Freeform notes that are not part of the compiled timeline yet\./);
+    assert.match(migratedRaw, /- Keep this checklist item too\./);
+    assert.deepEqual(parsed.extraSections, [
+      {
+        title: "Notes",
+        lines: [
+          "",
+          "Freeform notes that are not part of the compiled timeline yet.",
+          "- Keep this checklist item too.",
+          "",
+        ],
+      },
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("serializeEntityFile persists stable created and updated frontmatter for entity reads", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-frontmatter-stability-"));
   try {
@@ -184,6 +238,48 @@ test("parseEntityFile preserves bulleted synthesis text across round trips", () 
 
   assert.equal(parsed.synthesis, "- Leads roadmap work.\n- Owns release approvals.");
   assert.match(serialized, /## Synthesis\n\n- Leads roadmap work\.\n- Owns release approvals\./);
+});
+
+test("parseEntityFile preserves unmodeled sections across round trips", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] Leads roadmap work.",
+    "",
+    "## Notes",
+    "",
+    "Keep this freeform context.",
+    "- Keep this checklist item too.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+
+  assert.deepEqual(parsed.extraSections, [
+    {
+      title: "Notes",
+      lines: [
+        "",
+        "Keep this freeform context.",
+        "- Keep this checklist item too.",
+        "",
+      ],
+    },
+  ]);
+  assert.match(serialized, /## Notes\n\nKeep this freeform context\.\n- Keep this checklist item too\./);
 });
 
 test("parseEntityFile preserves bracket-prefixed timeline facts", () => {
