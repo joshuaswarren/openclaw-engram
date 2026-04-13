@@ -797,7 +797,6 @@ function parseEntityTimelineBullet(
         entry.principal = value;
         break;
       default:
-        rest = trimmed.slice(firstEnd + 1).trimStart();
         entry.text = rest.trim();
         return entry.text ? entry : null;
     }

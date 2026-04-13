@@ -186,3 +186,29 @@ test("parseEntityFile preserves bracket-prefixed timeline facts", () => {
   assert.equal(parsed.timeline[0]?.text, "[Q2] launched rollout");
   assert.equal(parsed.timeline[0]?.source, "extraction");
 });
+
+test("parseEntityFile preserves unknown bracket tokens after known timeline metadata", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] [source=extraction] [custom=val] launched rollout",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+
+  assert.equal(parsed.timeline[0]?.source, "extraction");
+  assert.equal(parsed.timeline[0]?.text, "[custom=val] launched rollout");
+});
