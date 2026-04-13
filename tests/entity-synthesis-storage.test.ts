@@ -8,6 +8,7 @@ import {
   isEntitySynthesisStale,
   normalizeEntityName,
   parseEntityFile,
+  serializeEntityFile,
 } from "../packages/remnic-core/src/storage.js";
 
 test("writeEntity appends timeline evidence and marks older synthesis as stale", async () => {
@@ -122,4 +123,66 @@ test("serializeEntityFile persists stable created and updated frontmatter for en
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+});
+
+test("parseEntityFile preserves bulleted synthesis text across round trips", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 2",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "- Leads roadmap work.",
+    "- Owns release approvals.",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] Leads roadmap work.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+
+  assert.equal(parsed.synthesis, "- Leads roadmap work.\n- Owns release approvals.");
+  assert.match(serialized, /## Synthesis\n\n- Leads roadmap work\.\n- Owns release approvals\./);
+});
+
+test("parseEntityFile preserves bracket-prefixed timeline facts", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] [source=extraction] [Q2] launched rollout",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+
+  assert.equal(parsed.timeline[0]?.text, "[Q2] launched rollout");
+  assert.equal(parsed.timeline[0]?.source, "extraction");
 });

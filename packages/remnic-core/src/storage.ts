@@ -712,7 +712,13 @@ function parseEntityFrontmatter(
   };
 }
 
-function readEntitySectionText(lines: string[], sectionNames: string[]): string | undefined {
+function readEntitySectionText(
+  lines: string[],
+  sectionNames: string[],
+  options: {
+    preserveBullets?: boolean;
+  } = {},
+): string | undefined {
   const normalizedSections = new Set(sectionNames.map((name) => name.toLowerCase()));
   let section = "";
   const sectionLines: string[] = [];
@@ -726,11 +732,11 @@ function readEntitySectionText(lines: string[], sectionNames: string[]): string 
     if (!section) continue;
     const trimmed = line.trim();
     if (!trimmed) continue;
-    if (trimmed.startsWith("- ")) continue;
+    if (trimmed.startsWith("- ") && options.preserveBullets !== true) continue;
     sectionLines.push(trimmed);
   }
   if (sectionLines.length === 0) return undefined;
-  return sectionLines.join(" ");
+  return sectionLines.join(options.preserveBullets === true ? "\n" : " ");
 }
 
 function parseEntityTimelineBullet(
@@ -740,34 +746,45 @@ function parseEntityTimelineBullet(
   const trimmed = bullet.trim();
   if (!trimmed) return null;
 
-  let rest = trimmed;
-  const bracketTokens: string[] = [];
-  while (rest.startsWith("[")) {
-    const end = rest.indexOf("]");
-    if (end === -1) break;
-    bracketTokens.push(rest.slice(1, end).trim());
-    rest = rest.slice(end + 1).trimStart();
-  }
-
-  if (bracketTokens.length === 0) {
+  if (!trimmed.startsWith("[")) {
     return {
       timestamp: fallbackTimestamp,
       text: trimmed,
     };
   }
 
-  const [timestampToken, ...metadataTokens] = bracketTokens;
+  const firstEnd = trimmed.indexOf("]");
+  if (firstEnd === -1) {
+    return {
+      timestamp: fallbackTimestamp,
+      text: trimmed,
+    };
+  }
+
+  const timestampToken = trimmed.slice(1, firstEnd).trim();
+  const parsedTimestamp = Date.parse(timestampToken);
+  if (!Number.isFinite(parsedTimestamp)) {
+    return {
+      timestamp: fallbackTimestamp,
+      text: trimmed,
+    };
+  }
+
+  let rest = trimmed.slice(firstEnd + 1).trimStart();
   const entry: EntityTimelineEntry = {
     timestamp: timestampToken || fallbackTimestamp,
-    text: rest.trim(),
+    text: "",
   };
 
-  for (const token of metadataTokens) {
+  while (rest.startsWith("[")) {
+    const end = rest.indexOf("]");
+    if (end === -1) break;
+    const token = rest.slice(1, end).trim();
     const equalsIdx = token.indexOf("=");
-    if (equalsIdx === -1) continue;
+    if (equalsIdx === -1) break;
     const key = token.slice(0, equalsIdx).trim().toLowerCase();
     const value = token.slice(equalsIdx + 1).trim();
-    if (!value) continue;
+    if (!value) break;
     switch (key) {
       case "source":
         entry.source = value;
@@ -779,9 +796,15 @@ function parseEntityTimelineBullet(
       case "principal":
         entry.principal = value;
         break;
+      default:
+        rest = trimmed.slice(firstEnd + 1).trimStart();
+        entry.text = rest.trim();
+        return entry.text ? entry : null;
     }
+    rest = rest.slice(end + 1).trimStart();
   }
 
+  entry.text = rest.trim();
   if (!entry.text) return null;
   return entry;
 }
@@ -912,8 +935,8 @@ export function parseEntityFile(content: string): EntityFile {
   }
 
   const synthesis =
-    readEntitySectionText(lines, ["Synthesis"])
-    ?? readEntitySectionText(lines, ["Summary"]);
+    readEntitySectionText(lines, ["Synthesis"], { preserveBullets: true })
+    ?? readEntitySectionText(lines, ["Summary"], { preserveBullets: true });
   const facts = dedupeEntityFacts(timeline.length > 0
     ? timeline
     : legacyFacts.map((fact) => ({

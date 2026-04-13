@@ -76,3 +76,90 @@ test("processEntitySynthesisQueue refreshes stale entities in bounded batches", 
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
+
+test("processEntitySynthesisQueue sorts freshest evidence before truncating", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-sort-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-sort-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 120,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Newest event should survive truncation."], {
+      timestamp: "2026-04-13T18:00:00.000Z",
+      source: "extraction",
+    });
+    for (let hour = 10; hour <= 17; hour += 1) {
+      await storage.writeEntity("Jane Doe", "person", [`Older event ${hour}.`], {
+        timestamp: `2026-04-13T${String(hour).padStart(2, "0")}:00:00.000Z`,
+        source: "extraction",
+      });
+    }
+    await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
+      updatedAt: "2026-04-13T09:00:00.000Z",
+    });
+
+    let capturedPrompt = "";
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      return { content: "Jane Doe has refreshed synthesis." };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+
+    assert.equal(processed, 1);
+    assert.match(capturedPrompt, /Newest event should survive truncation\./);
+    assert.doesNotMatch(capturedPrompt, /Older event 10\./);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("processEntitySynthesisQueue treats zero max tokens as disabled", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-zero-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-zero-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 0,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    await storage.writeEntity("Jane Doe", "person", ["Leads roadmap work."], {
+      timestamp: "2026-04-13T10:00:00.000Z",
+      source: "extraction",
+    });
+
+    let completionCalls = 0;
+    orchestrator.fastChatCompletion = async () => {
+      completionCalls += 1;
+      return { content: "should not be called" };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+
+    assert.equal(processed, 0);
+    assert.equal(completionCalls, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});

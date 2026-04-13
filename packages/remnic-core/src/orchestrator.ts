@@ -2280,7 +2280,11 @@ export class Orchestrator {
     namespace?: string,
     maxEntities: number = 5,
   ): Promise<number> {
-    if (!this.config.entitySummaryEnabled || maxEntities <= 0) return 0;
+    if (
+      !this.config.entitySummaryEnabled
+      || maxEntities <= 0
+      || this.config.entitySynthesisMaxTokens <= 0
+    ) return 0;
     const storage = await this.getStorage(namespace);
     const queued = await storage.refreshEntitySynthesisQueue();
     const targets = queued.slice(0, maxEntities);
@@ -2292,13 +2296,18 @@ export class Orchestrator {
         if (!raw) continue;
         const entity = parseEntityFile(raw);
         const previousSynthesis = entity.synthesis ?? entity.summary ?? "";
-        const newTimelineEntries = entity.timeline.filter(
+        const sortedTimelineEntries = entity.timeline
+          .slice()
+          .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+        const newTimelineEntries = sortedTimelineEntries.filter(
           (entry) =>
             !entity.synthesisUpdatedAt || entry.timestamp > entity.synthesisUpdatedAt,
         );
         const evidenceEntries = (
-          newTimelineEntries.length > 0 ? newTimelineEntries : entity.timeline.slice(-8)
-        ).slice(-8);
+          newTimelineEntries.length > 0 ? newTimelineEntries : sortedTimelineEntries
+        )
+          .slice(0, 8)
+          .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
         if (evidenceEntries.length === 0) continue;
 
         const evidenceText = evidenceEntries

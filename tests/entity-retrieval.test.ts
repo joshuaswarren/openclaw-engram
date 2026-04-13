@@ -223,7 +223,8 @@ test("entity retrieval resolves pronoun follow-ups from recent transcript turns"
   assert.ok(section);
   assert.match(section!, /target: Alice Example \(person\)/);
   assert.match(section!, /resolution: carried forward from recent turns via alias "Alice Example"/);
-  assert.doesNotMatch(section!, /recent timeline:/);
+  assert.match(section!, /recent timeline:/);
+  assert.match(section!, /Alice Example coordinated last month's release freeze\./);
 });
 
 test('entity retrieval treats "what happened to her" as a pronoun follow-up', async () => {
@@ -275,6 +276,8 @@ test('entity retrieval treats "what happened to her" as a pronoun follow-up', as
   assert.ok(section);
   assert.match(section!, /target: Alice Example \(person\)/);
   assert.match(section!, /resolution: carried forward from recent turns via alias "Alice Example"/);
+  assert.match(section!, /recent timeline:/);
+  assert.match(section!, /Alice Example coordinated the release freeze rollback\./);
   assert.doesNotMatch(section!, /target: Bob Example \(person\)/);
 });
 

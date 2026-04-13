@@ -532,7 +532,7 @@ function formatEntityHintSection(
         lines.push(`  - ${snippet.text}`);
       }
     }
-    if (mode === "timeline") {
+    if (mode !== "direct") {
       const explicitTimeline = candidate.entry.timeline
         .slice()
         .sort(sortTimelineEntriesDesc)
