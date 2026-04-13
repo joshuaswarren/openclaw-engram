@@ -715,7 +715,7 @@ function parseEntityFrontmatter(
       extraLines.push(line);
       continue;
     }
-    const value = line.slice(colonIdx + 1).trim().replace(/^"|"$/g, "");
+    const value = line.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, "");
     values[key] = value;
   }
 

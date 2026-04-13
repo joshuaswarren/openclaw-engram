@@ -579,6 +579,37 @@ test("parseEntityFile preserves entity frontmatter from CRLF files", () => {
   assert.equal(parsed.synthesisVersion, 2);
 });
 
+test("parseEntityFile normalizes single-quoted managed frontmatter timestamps", () => {
+  const raw = [
+    "---",
+    "created: '2026-04-13T10:00:00.000Z'",
+    "updated: '2026-04-13T10:05:00.000Z'",
+    "synthesis_updated_at: '2026-04-13T10:05:00.000Z'",
+    "synthesis_version: 2",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] Leads roadmap work.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+
+  assert.equal(parsed.created, "2026-04-13T10:00:00.000Z");
+  assert.equal(parsed.updated, "2026-04-13T10:05:00.000Z");
+  assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T10:05:00.000Z");
+});
+
 test("compareEntityTimestamps treats equivalent parsed instants as equal", () => {
   assert.equal(compareEntityTimestamps("2026-04-13T15:00:00Z", "2026-04-13T10:00:00-05:00"), 0);
   assert.equal(compareEntityTimestamps("2026-04-13T10:00:00-05:00", "2026-04-13T15:00:00Z"), 0);
