@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import {
   StorageManager,
+  compareEntityTimestamps,
   isEntitySynthesisStale,
   latestEntityTimelineTimestamp,
   normalizeEntityName,
@@ -304,6 +305,11 @@ test("parseEntityFile preserves entity frontmatter from CRLF files", () => {
   assert.equal(parsed.updated, "2026-04-13T10:05:00.000Z");
   assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T10:05:00.000Z");
   assert.equal(parsed.synthesisVersion, 2);
+});
+
+test("compareEntityTimestamps treats equivalent parsed instants as equal", () => {
+  assert.equal(compareEntityTimestamps("2026-04-13T15:00:00Z", "2026-04-13T10:00:00-05:00"), 0);
+  assert.equal(compareEntityTimestamps("2026-04-13T10:00:00-05:00", "2026-04-13T15:00:00Z"), 0);
 });
 
 test("entity synthesis staleness uses parsed timestamps instead of raw string ordering", () => {

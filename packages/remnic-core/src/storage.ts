@@ -850,7 +850,7 @@ export function compareEntityTimestamps(left?: string, right?: string): number {
   const rightParsed = Number.isFinite(rightMs);
 
   if (leftParsed && rightParsed) {
-    if (leftMs === rightMs) return leftValue.localeCompare(rightValue);
+    if (leftMs === rightMs) return 0;
     return leftMs > rightMs ? 1 : -1;
   }
   if (leftParsed) return 1;
