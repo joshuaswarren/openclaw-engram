@@ -137,7 +137,7 @@ fi
 echo "[check] Tilde path expansion consistency..."
 
 # Look for .replace(/^~/ or similar ad-hoc tilde expansion that isn't expandTilde
-TILDE_HACK=$(grep -rn '\.replace(/\\^~/' \
+TILDE_HACK=$(grep -rn '\.replace(/\^~/' \
   --include="*.ts" --include="*.js" \
   . 2>/dev/null \
   | grep -v node_modules \
@@ -634,7 +634,7 @@ fi
 # ---- 29. CI quality gates silenced with || true ----
 echo "[check] CI quality gates silenced with || true..."
 
-if ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 >/dev/null 2>&1; then
+if compgen -G ".github/workflows/*.yml" >/dev/null 2>&1 || compgen -G ".github/workflows/*.yaml" >/dev/null 2>&1; then
   SILENCED_GATES=$(grep -rn '|| true\|continue-on-error: true' \
     .github/workflows/ \
     2>/dev/null \
@@ -652,7 +652,7 @@ fi
 echo "[check] Silent fallback patterns on invalid CLI/MCP input..."
 
 # Look for patterns where invalid values silently default instead of throwing
-SILENT_DEFAULT=$(grep -rn '|| config\.\|?? config\.\|\|\s*\.default\|??\s*\.default' \
+SILENT_DEFAULT=$(grep -rnE '\|\| config\.|&& config\.|\|\| \.default|\?\? \.default|\|\|\s*\w+\.\w+Default' \
   --include="*.ts" \
   packages/remnic-cli/src/ packages/remnic-core/src/access-mcp.ts packages/remnic-core/src/access-service.ts \
   2>/dev/null \
@@ -760,15 +760,17 @@ fi
 # ---- 34. CI workflow dispatch without branch protection ----
 echo "[check] CI publish workflows missing branch protection..."
 
-if ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 >/dev/null 2>&1; then
+if compgen -G ".github/workflows/*.yml" >/dev/null 2>&1 || compgen -G ".github/workflows/*.yaml" >/dev/null 2>&1; then
   PUBLISH_WORKFLOWS=$(grep -l 'workflow_dispatch\|publish\|deploy\|release' \
     .github/workflows/*.yml .github/workflows/*.yaml \
     2>/dev/null || true)
 
   if [[ -n "$PUBLISH_WORKFLOWS" ]]; then
     while IFS= read -r wf; do
-      HAS_DISPATCH=$(grep -c 'workflow_dispatch' "$wf" 2>/dev/null || echo "0")
-      HAS_BRANCH_CHECK=$(grep -c "github.ref\|github.base_ref\|'refs/heads/main'" "$wf" 2>/dev/null || echo "0")
+      HAS_DISPATCH=$(grep -c 'workflow_dispatch' "$wf" 2>/dev/null || true)
+      HAS_BRANCH_CHECK=$(grep -c "github.ref\|github.base_ref\|'refs/heads/main'" "$wf" 2>/dev/null || true)
+      HAS_DISPATCH=${HAS_DISPATCH:-0}
+      HAS_BRANCH_CHECK=${HAS_BRANCH_CHECK:-0}
       if [[ "$HAS_DISPATCH" -gt 0 ]] && [[ "$HAS_BRANCH_CHECK" -eq 0 ]]; then
         warn "$wf — has workflow_dispatch trigger but no github.ref branch check. Manual dispatch can target any branch, allowing unintended publishes."
       fi
