@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import {
   StorageManager,
   isEntitySynthesisStale,
+  latestEntityTimelineTimestamp,
   normalizeEntityName,
   parseEntityFile,
   serializeEntityFile,
@@ -211,4 +212,33 @@ test("parseEntityFile preserves unknown bracket tokens after known timeline meta
 
   assert.equal(parsed.timeline[0]?.source, "extraction");
   assert.equal(parsed.timeline[0]?.text, "[custom=val] launched rollout");
+});
+
+test("entity synthesis staleness uses parsed timestamps instead of raw string ordering", () => {
+  const parsed = parseEntityFile([
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T14:30:00Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T14:45:00Z] Reviewed rollout metrics",
+    "- [2026-04-13T10:00:00-05:00] Approved production rollout",
+    "",
+  ].join("\n"));
+
+  assert.equal(latestEntityTimelineTimestamp(parsed), "2026-04-13T10:00:00-05:00");
+  assert.equal(isEntitySynthesisStale(parsed), true);
 });

@@ -825,10 +825,30 @@ function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
 }
 
 export function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
-  return entity.timeline
-    .map((entry) => entry.timestamp)
-    .filter((timestamp) => timestamp.length > 0)
-    .sort((left, right) => right.localeCompare(left))[0];
+  let latestRaw: string | undefined;
+  let latestParsedMs = Number.NEGATIVE_INFINITY;
+  let foundParsedTimestamp = false;
+
+  for (const entry of entity.timeline) {
+    const timestamp = entry.timestamp.trim();
+    if (!timestamp) continue;
+
+    const parsedMs = Date.parse(timestamp);
+    if (Number.isFinite(parsedMs)) {
+      if (!foundParsedTimestamp || parsedMs > latestParsedMs) {
+        latestParsedMs = parsedMs;
+        latestRaw = timestamp;
+        foundParsedTimestamp = true;
+      }
+      continue;
+    }
+
+    if (!foundParsedTimestamp && (!latestRaw || timestamp.localeCompare(latestRaw) > 0)) {
+      latestRaw = timestamp;
+    }
+  }
+
+  return latestRaw;
 }
 
 export function isEntitySynthesisStale(entity: EntityFile): boolean {
@@ -836,6 +856,14 @@ export function isEntitySynthesisStale(entity: EntityFile): boolean {
   if (!latestTimelineTimestamp) return false;
   if (!entity.synthesis?.trim()) return true;
   if (!entity.synthesisUpdatedAt?.trim()) return true;
+
+  const latestTimelineMs = Date.parse(latestTimelineTimestamp);
+  const synthesisUpdatedMs = Date.parse(entity.synthesisUpdatedAt);
+  if (Number.isFinite(latestTimelineMs) && Number.isFinite(synthesisUpdatedMs)) {
+    return latestTimelineMs > synthesisUpdatedMs;
+  }
+  if (Number.isFinite(latestTimelineMs)) return true;
+  if (Number.isFinite(synthesisUpdatedMs)) return false;
   return latestTimelineTimestamp > entity.synthesisUpdatedAt;
 }
 
