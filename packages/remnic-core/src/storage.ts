@@ -949,27 +949,31 @@ export function parseEntityFile(content: string): EntityFile {
     }
   }
 
-  if (timeline.length === 0 && legacyFacts.length > 0) {
-    const fallbackTimestamp = updated || new Date().toISOString();
-    for (const fact of legacyFacts) {
-      timeline.push({
-        timestamp: fallbackTimestamp,
-        text: fact,
-        source: "migration",
-      });
+  const fallbackTimestamp = updated || new Date().toISOString();
+  const legacyFactTimelineEntries = legacyFacts.map((fact) => ({
+    timestamp: fallbackTimestamp,
+    text: fact,
+    source: "migration" as const,
+  }));
+
+  if (legacyFactTimelineEntries.length > 0) {
+    const existingTimelineFacts = new Set(
+      timeline
+        .map((entry) => entry.text.trim())
+        .filter((entry) => entry.length > 0),
+    );
+    for (const fact of legacyFactTimelineEntries) {
+      const normalizedFact = fact.text.trim();
+      if (!normalizedFact || existingTimelineFacts.has(normalizedFact)) continue;
+      timeline.push(fact);
+      existingTimelineFacts.add(normalizedFact);
     }
   }
 
   const synthesis =
     readEntitySectionText(lines, ["Synthesis"], { preserveBullets: true })
     ?? readEntitySectionText(lines, ["Summary"], { preserveBullets: true });
-  const facts = dedupeEntityFacts(timeline.length > 0
-    ? timeline
-    : legacyFacts.map((fact) => ({
-      timestamp: updated || new Date().toISOString(),
-      text: fact,
-      source: "migration",
-    })));
+  const facts = dedupeEntityFacts(timeline);
   const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || (synthesis ? (updated || undefined) : undefined);
 
   return {

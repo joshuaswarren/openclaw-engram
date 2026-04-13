@@ -214,6 +214,39 @@ test("parseEntityFile preserves unknown bracket tokens after known timeline meta
   assert.equal(parsed.timeline[0]?.text, "[custom=val] launched rollout");
 });
 
+test("parseEntityFile merges legacy facts into mixed timeline entities", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] Leads roadmap work.",
+    "",
+    "## Facts",
+    "",
+    "- Prefers short updates.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+
+  assert.deepEqual(parsed.facts, ["Leads roadmap work.", "Prefers short updates."]);
+  assert.match(serialized, /## Timeline/);
+  assert.match(serialized, /Leads roadmap work\./);
+  assert.match(serialized, /Prefers short updates\./);
+});
+
 test("entity synthesis staleness uses parsed timestamps instead of raw string ordering", () => {
   const parsed = parseEntityFile([
     "---",
