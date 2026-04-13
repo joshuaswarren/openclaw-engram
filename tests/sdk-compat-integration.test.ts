@@ -344,6 +344,34 @@ test("slot mismatch warn mode suppresses hook registration but still registers t
   }
 });
 
+test("new SDK tolerates unbound register(api) calls from cli metadata loaders", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("unbound-register");
+    const unboundRegister = plugin.register;
+
+    assert.doesNotThrow(
+      () => unboundRegister(api as any),
+      "register(api) should tolerate an unbound call and fall back to PLUGIN_ID",
+    );
+    assert.ok(
+      api._memoryPromptSectionRegistered,
+      "registerMemoryPromptSection should still be called for new SDK",
+    );
+    assert.ok(
+      api._registeredServiceIds.includes("openclaw-remnic"),
+      "service should still register under the canonical plugin id",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
 test("new SDK registers active-memory tool names and slash commands", async () => {
   resetGlobals();
   const previousDisableMigration = disableRegisterMigrationForTest();
