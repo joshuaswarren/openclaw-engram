@@ -104,7 +104,6 @@ echo "[check] Workspace dependency consistency..."
 
 if command -v pnpm &>/dev/null; then
   # Check if pnpm-lock.yaml is stale
-  LOCK_HASH=$(pnpm store files 2>/dev/null | head -1 || true)
   # Simple check: does running install change anything?
   DIFF=$(pnpm install --frozen-lockfile 2>&1 || true)
   if echo "$DIFF" | grep -q "ERR_PNPM_FROZEN_LOCKFILE"; then
@@ -323,8 +322,8 @@ echo "[check] indexOf usage in parser/position-tracking code..."
 
 INDEXOF_PARSER=$(grep -rn '\.indexOf(' \
   --include="*.ts" \
-  packages/remnic-core/src/surfaces/ packages/remnic-core/src/parsers/ \
-  . 2>/dev/null \
+  packages/remnic-core/src/surfaces/ packages/remnic-core/src/ \
+  2>/dev/null \
   | grep -v node_modules \
   | grep -v dist \
   | grep -v ".test." \
