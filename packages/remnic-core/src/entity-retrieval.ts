@@ -541,7 +541,7 @@ function formatEntityHintSection(
         .map((text) => scoreHintSnippet({
           text: compactLine(text, 180),
           score: 7,
-          kind: "fact" as const,
+          kind: "activity" as const,
         }, queryTokens))
         .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
         .filter((snippet) => !topSnippetTexts.has(normalizeText(snippet.text)))

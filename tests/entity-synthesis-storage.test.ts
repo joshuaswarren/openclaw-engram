@@ -56,6 +56,33 @@ test("writeEntity appends timeline evidence and marks older synthesis as stale",
   }
 });
 
+test("writeEntity skips duplicate timeline entries on repeated extraction writes", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-dedupe-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const options = {
+      timestamp: "2026-04-13T10:00:00.000Z",
+      source: "extraction",
+      sessionKey: "session-1",
+      principal: "agent:main",
+    } as const;
+
+    await storage.writeEntity("Jane Doe", "person", ["Leads the roadmap."], options);
+    await storage.writeEntity("Jane Doe", "person", ["Leads the roadmap."], options);
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    const raw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.equal(parsed.timeline.length, 1);
+    assert.equal(parsed.timeline[0]?.text, "Leads the roadmap.");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("entity migration rewrites legacy summary plus facts files into synthesis plus timeline", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-migration-"));
   try {

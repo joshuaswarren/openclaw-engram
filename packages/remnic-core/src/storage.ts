@@ -1797,13 +1797,22 @@ export class StorageManager {
     const sessionKey = options.sessionKey?.trim() || undefined;
     const principal = options.principal?.trim() || undefined;
     for (const fact of safeFacts) {
-      entity.timeline.push({
+      const nextEntry = {
         timestamp,
         text: fact,
         ...(source ? { source } : {}),
         ...(sessionKey ? { sessionKey } : {}),
         ...(principal ? { principal } : {}),
-      });
+      };
+      const alreadyPresent = entity.timeline.some((entry) =>
+        entry.timestamp === nextEntry.timestamp
+        && entry.text === nextEntry.text
+        && entry.source === nextEntry.source
+        && entry.sessionKey === nextEntry.sessionKey
+        && entry.principal === nextEntry.principal
+      );
+      if (alreadyPresent) continue;
+      entity.timeline.push(nextEntry);
     }
     entity.facts = dedupeEntityFacts(entity.timeline);
     entity.summary = entity.synthesis ?? entity.summary;
