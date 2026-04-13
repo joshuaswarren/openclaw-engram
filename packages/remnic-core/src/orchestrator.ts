@@ -39,6 +39,7 @@ import {
 } from "./search/factory.js";
 import { NoopSearchBackend } from "./search/noop-backend.js";
 import {
+  compareEntityTimestamps,
   StorageManager,
   ContentHashIndex,
   normalizeEntityName,
@@ -2298,16 +2299,17 @@ export class Orchestrator {
         const previousSynthesis = entity.synthesis ?? entity.summary ?? "";
         const sortedTimelineEntries = entity.timeline
           .slice()
-          .sort((left, right) => right.timestamp.localeCompare(left.timestamp));
+          .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
         const newTimelineEntries = sortedTimelineEntries.filter(
           (entry) =>
-            !entity.synthesisUpdatedAt || entry.timestamp > entity.synthesisUpdatedAt,
+            !entity.synthesisUpdatedAt
+            || compareEntityTimestamps(entry.timestamp, entity.synthesisUpdatedAt) > 0,
         );
         const evidenceEntries = (
           newTimelineEntries.length > 0 ? newTimelineEntries : sortedTimelineEntries
         )
           .slice(0, 8)
-          .sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+          .sort((left, right) => compareEntityTimestamps(left.timestamp, right.timestamp));
         if (evidenceEntries.length === 0) continue;
 
         const evidenceText = evidenceEntries

@@ -126,6 +126,53 @@ test("processEntitySynthesisQueue sorts freshest evidence before truncating", as
   }
 });
 
+test("processEntitySynthesisQueue treats offset timestamps as newer when filtering evidence", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-offset-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-offset-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 120,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Older event should stay filtered out."], {
+      timestamp: "2026-04-13T14:15:00Z",
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
+      updatedAt: "2026-04-13T14:30:00Z",
+    });
+    await storage.writeEntity("Jane Doe", "person", ["Offset timestamp should count as new evidence."], {
+      timestamp: "2026-04-13T10:00:00-05:00",
+      source: "extraction",
+    });
+
+    let capturedPrompt = "";
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      return { content: "Jane Doe has refreshed synthesis." };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+
+    assert.equal(processed, 1);
+    assert.match(capturedPrompt, /Offset timestamp should count as new evidence\./);
+    assert.doesNotMatch(capturedPrompt, /Older event should stay filtered out\./);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("processEntitySynthesisQueue treats zero max tokens as disabled", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-zero-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-zero-workspace-"));

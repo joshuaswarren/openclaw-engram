@@ -826,29 +826,36 @@ function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
 
 export function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
   let latestRaw: string | undefined;
-  let latestParsedMs = Number.NEGATIVE_INFINITY;
-  let foundParsedTimestamp = false;
-
   for (const entry of entity.timeline) {
     const timestamp = entry.timestamp.trim();
     if (!timestamp) continue;
-
-    const parsedMs = Date.parse(timestamp);
-    if (Number.isFinite(parsedMs)) {
-      if (!foundParsedTimestamp || parsedMs > latestParsedMs) {
-        latestParsedMs = parsedMs;
-        latestRaw = timestamp;
-        foundParsedTimestamp = true;
-      }
-      continue;
-    }
-
-    if (!foundParsedTimestamp && (!latestRaw || timestamp.localeCompare(latestRaw) > 0)) {
+    if (!latestRaw || compareEntityTimestamps(timestamp, latestRaw) > 0) {
       latestRaw = timestamp;
     }
   }
-
   return latestRaw;
+}
+
+export function compareEntityTimestamps(left?: string, right?: string): number {
+  const leftValue = left?.trim() ?? "";
+  const rightValue = right?.trim() ?? "";
+
+  if (!leftValue && !rightValue) return 0;
+  if (!leftValue) return -1;
+  if (!rightValue) return 1;
+
+  const leftMs = Date.parse(leftValue);
+  const rightMs = Date.parse(rightValue);
+  const leftParsed = Number.isFinite(leftMs);
+  const rightParsed = Number.isFinite(rightMs);
+
+  if (leftParsed && rightParsed) {
+    if (leftMs === rightMs) return leftValue.localeCompare(rightValue);
+    return leftMs > rightMs ? 1 : -1;
+  }
+  if (leftParsed) return 1;
+  if (rightParsed) return -1;
+  return leftValue.localeCompare(rightValue);
 }
 
 export function isEntitySynthesisStale(entity: EntityFile): boolean {
@@ -856,15 +863,7 @@ export function isEntitySynthesisStale(entity: EntityFile): boolean {
   if (!latestTimelineTimestamp) return false;
   if (!entity.synthesis?.trim()) return true;
   if (!entity.synthesisUpdatedAt?.trim()) return true;
-
-  const latestTimelineMs = Date.parse(latestTimelineTimestamp);
-  const synthesisUpdatedMs = Date.parse(entity.synthesisUpdatedAt);
-  if (Number.isFinite(latestTimelineMs) && Number.isFinite(synthesisUpdatedMs)) {
-    return latestTimelineMs > synthesisUpdatedMs;
-  }
-  if (Number.isFinite(latestTimelineMs)) return true;
-  if (Number.isFinite(synthesisUpdatedMs)) return false;
-  return latestTimelineTimestamp > entity.synthesisUpdatedAt;
+  return compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt) > 0;
 }
 
 /**
@@ -4143,12 +4142,15 @@ export class StorageManager {
             }
 
             // Keep latest update time
-            if (!mergedEntity.updated || parsed.updated > mergedEntity.updated) {
+            if (!mergedEntity.updated || compareEntityTimestamps(parsed.updated, mergedEntity.updated) > 0) {
               mergedEntity.updated = parsed.updated;
             }
 
             const parsedCreated = parsed.created || parsed.updated;
-            if (parsedCreated && (!mergedEntity.created || parsedCreated < mergedEntity.created)) {
+            if (
+              parsedCreated &&
+              (!mergedEntity.created || compareEntityTimestamps(parsedCreated, mergedEntity.created) < 0)
+            ) {
               mergedEntity.created = parsedCreated;
             }
 
@@ -4161,7 +4163,10 @@ export class StorageManager {
             if (
               parsed.synthesis &&
               (!mergedEntity.synthesis
-                || (parsed.synthesisUpdatedAt ?? parsed.updated) > (mergedEntity.synthesisUpdatedAt ?? mergedEntity.updated))
+                || compareEntityTimestamps(
+                  parsed.synthesisUpdatedAt ?? parsed.updated,
+                  mergedEntity.synthesisUpdatedAt ?? mergedEntity.updated,
+                ) > 0)
             ) {
               mergedEntity.synthesis = parsed.synthesis;
               mergedEntity.summary = parsed.synthesis;

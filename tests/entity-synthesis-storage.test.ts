@@ -242,3 +242,69 @@ test("entity synthesis staleness uses parsed timestamps instead of raw string or
   assert.equal(latestEntityTimelineTimestamp(parsed), "2026-04-13T10:00:00-05:00");
   assert.equal(isEntitySynthesisStale(parsed), true);
 });
+
+test("mergeFragmentedEntities prefers the freshest synthesis using parsed timestamps", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-merge-synthesis-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const fragmentA = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T14:45:00Z",
+      'synthesis_updated_at: "2026-04-13T14:45:00Z"',
+      "synthesis_version: 1",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T14:45:00Z",
+      "",
+      "## Synthesis",
+      "",
+      "Older synthesis should lose.",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T14:45:00Z] Older evidence",
+      "",
+    ].join("\n");
+    const fragmentB = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:00:00-05:00",
+      'synthesis_updated_at: "2026-04-13T10:00:00-05:00"',
+      "synthesis_version: 2",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:00:00-05:00",
+      "",
+      "## Synthesis",
+      "",
+      "Newest offset synthesis should win.",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T10:00:00-05:00] Newer evidence",
+      "",
+    ].join("\n");
+
+    await writeFile(path.join(dir, "entities", "person-jane doe.md"), fragmentA, "utf-8");
+    await writeFile(path.join(dir, "entities", "person-jane_doe.md"), fragmentB, "utf-8");
+
+    const merged = await storage.mergeFragmentedEntities();
+    const raw = await readFile(path.join(dir, "entities", "person-jane-doe.md"), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.equal(merged, 2);
+    assert.equal(parsed.synthesis, "Newest offset synthesis should win.");
+    assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T10:00:00-05:00");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
