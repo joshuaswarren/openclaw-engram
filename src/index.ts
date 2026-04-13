@@ -367,8 +367,18 @@ const pluginDefinition = {
     // Capture the id from the definition object so shim re-exports with
     // overridden ids (e.g. "openclaw-engram" in the backward-compat shim)
     // still register the service under the correct id (#403).
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const serviceId: string = (this as any).id ?? PLUGIN_ID;
+    // OpenClaw's cli-metadata loader currently invokes register(api) as an
+    // unbound function, so `this` can legitimately be undefined there.
+    // Guard that path and fall back to the canonical id when no bound entry
+    // object is available.
+    const registerThis =
+      typeof this === "object" && this !== null
+        ? (this as { id?: unknown })
+        : undefined;
+    const serviceId: string =
+      typeof registerThis?.id === "string" && registerThis.id.trim().length > 0
+        ? registerThis.id
+        : PLUGIN_ID;
     // Scope all per-plugin runtime singletons (orchestrator, start guards,
     // access service, HTTP server, etc.) by serviceId so a migration install
     // can host both `openclaw-remnic` and `openclaw-engram` without the second
