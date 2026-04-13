@@ -2,7 +2,7 @@
 # check-review-patterns.sh — Catch common issues that reviewers (Cursor Bugbot,
 # Codex, CodeQL) repeatedly flagged across PRs #343-#408 (700+ review comments).
 # Run this before pushing. Zero exit = clean.
-# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4, 18-21 from iteration 5, 22-23 from iteration 7, 24-26 from iteration 8).
+# Updated: 2026-04-12 (added checks 7-10 from iteration 2, 11-14 from iteration 3, 15-17 from iteration 4, 18-21 from iteration 5, 22-23 from iteration 7, 24-26 from iteration 8, 27-29 from iteration 10).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -565,6 +565,88 @@ if [[ -n "$TEMPLATE_REGEX" ]]; then
   COUNT=$(echo "$TEMPLATE_REGEX" | wc -l | tr -d ' ')
   warn "$COUNT new RegExp() calls from template/config values without escapeRegex(). Literal parts must be escaped:"
   echo "$TEMPLATE_REGEX" | head -5
+fi
+
+# ---- 27. Shared mutable state across connections (security) ----
+echo "[check] Shared mutable objects accessible across connections..."
+
+# Look for mutable objects that are set per-connection but stored on a shared instance
+SHARED_MUTABLE=$(grep -rn 'this\.\(clientInfo\|sessionInfo\|connectionInfo\|adapterInfo\)\s*=' \
+  --include="*.ts" \
+  packages/ src/ \
+  2>/dev/null \
+  | grep -v node_modules \
+  | grep -v dist \
+  | grep -v ".test." \
+  | grep -v "// " \
+  || true)
+
+if [[ -n "$SHARED_MUTABLE" ]]; then
+  while IFS= read -r line; do
+    FILE=$(echo "$line" | cut -d: -f1)
+    # Check if the class has connection/session methods that might share state
+    if grep -q "handleConnection\|onConnect\|newSession\|createSession\|handle" "$FILE" 2>/dev/null; then
+      warn "$line — mutable state set in a class that handles multiple connections. Verify each connection gets its own instance."
+      break
+    fi
+  done <<< "$SHARED_MUTABLE"
+fi
+
+# ---- 28. Enum defaults that silently approve/enable ----
+echo "[check] Unsafe enum defaults (silently approving/enabling)..."
+
+# Look for || "approved", || "enabled", || "active" fallback patterns
+# Use fixed-string matching to avoid regex escaping confusion
+UNSAFE_DEFAULTS=""
+for keyword in "approved" "enabled" "active"; do
+  MATCHES=$(grep -rn "|| \"${keyword}\"" \
+    --include="*.ts" \
+    packages/ src/ \
+    2>/dev/null \
+    | grep -v node_modules \
+    | grep -v dist \
+    | grep -v ".test." \
+    | grep -v "// " \
+    || true)
+  if [[ -n "$MATCHES" ]]; then
+    UNSAFE_DEFAULTS="${UNSAFE_DEFAULTS}${MATCHES}"$'\n'
+  fi
+  # Also check ?? "keyword" (nullish coalescing)
+  MATCHES2=$(grep -rn "?? \"${keyword}\"" \
+    --include="*.ts" \
+    packages/ src/ \
+    2>/dev/null \
+    | grep -v node_modules \
+    | grep -v dist \
+    | grep -v ".test." \
+    | grep -v "// " \
+    || true)
+  if [[ -n "$MATCHES2" ]]; then
+    UNSAFE_DEFAULTS="${UNSAFE_DEFAULTS}${MATCHES2}"$'\n'
+  fi
+done
+
+if [[ -n "$UNSAFE_DEFAULTS" ]]; then
+  COUNT=$(echo "$UNSAFE_DEFAULTS" | wc -l | tr -d ' ')
+  warn "$COUNT enum/default values that silently approve/enable. Missing values should default to least-privileged option (rejected/pending/disabled):"
+  echo "$UNSAFE_DEFAULTS" | head -5
+fi
+
+# ---- 29. CI quality gates silenced with || true ----
+echo "[check] CI quality gates silenced with || true..."
+
+if ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 >/dev/null 2>&1; then
+  SILENCED_GATES=$(grep -rn '|| true\|continue-on-error: true' \
+    .github/workflows/ \
+    2>/dev/null \
+    | grep -i "test\|check\|lint\|type\|validate\|verify\|pytest\|mypy\|ruff\|tsc\|eslint" \
+    || true)
+
+  if [[ -n "$SILENCED_GATES" ]]; then
+    COUNT=$(echo "$SILENCED_GATES" | wc -l | tr -d ' ')
+    warn "$COUNT CI quality gate steps silenced with '|| true' or 'continue-on-error: true'. Test/lint/type steps must fail the build:"
+    echo "$SILENCED_GATES" | head -5
+  fi
 fi
 
 if [[ $ERRORS -gt 0 ]]; then

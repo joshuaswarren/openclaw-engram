@@ -35,8 +35,8 @@ Use these as the canonical starting points for adapter work:
 
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
-These patterns were extracted from 50+ PRs across 2026-04-05 to 2026-04-12
-(including deep analysis of PRs #393-#408 with 750+ review comments).
+These patterns were extracted from 60+ PRs across 2026-04-05 to 2026-04-12
+(including deep analysis of PRs #343-#408 with 850+ review comments).
 Every item below was caught by a reviewer (Cursor Bugbot, Codex, or CodeQL) and
 required a follow-up commit to fix. Follow these rules to ship clean on the first push.
 
@@ -578,6 +578,77 @@ strings corrupted citation output.
 - **Escape `$` in replacement strings** — `String.replace` with a regex treats
   `$'`, `` $` ``, `$&`, `$1`, etc. as special in the replacement string. Use a
   replacement function or escape `$` → `$$` before passing to replace.
+
+### 35. Shared Mutable State Across Connections — No Cross-Session Data Leakage
+
+PR #347 had a single mutable `clientInfo` object shared across all MCP connections.
+When one connection set its `clientInfo`, the value bled into all other active
+connections. In multi-tenant deployments this is a cross-tenant data leak.
+
+- **Each connection/session must own its mutable state** — if `resolveAdapter()`
+  writes to a shared `clientInfo` object, two concurrent connections see each
+  other's adapter metadata. Use per-connection instances or deep-copy before
+  storing.
+- **Shared state is distinct from global singletons** — pattern #5 covers
+  singleton scoping by plugin ID. This pattern covers mutable objects shared
+  across connections within the same plugin instance. Both are needed.
+- **Test with concurrent connections** — create two sessions, set different
+  adapter data on each, and verify neither sees the other's data.
+
+### 36. Unsafe Enum Defaults — Missing Values Must Default to Least-Privileged Option
+
+In PRs #344 and #345, a feedback decision enum silently defaulted to
+`"approved"` when the value was `undefined` or missing. This means a missing
+rejection is treated as approval — a security vulnerability. PR #343 had a
+similar issue with `qmdDebug` passing an object instead of a string to a method
+that expected a string, silently producing wrong debug output.
+
+- **Enum defaults must be the safest option, not the most convenient** — when
+  a decision/status enum value is missing or unrecognized, default to
+  `"rejected"`, `"pending"`, `"disabled"`, or `"none"` — never `"approved"`,
+  `"enabled"`, or `"active"`.
+- **Never silently coerce unexpected types** — if `qmdDebug` receives an object
+  where a string is expected, throw or log a warning. Don't silently stringify
+  as `[object Object]`.
+- **Test with missing/undefined enum values** — every enum parser should have
+  test cases for `undefined`, `null`, `""`, and unrecognized string values, and
+  each must assert the default is the least-privileged option.
+
+### 37. Duplicate Identifiers in Batch Rename/Move Operations
+
+In PR #392, duplicate rollout slugs caused an ENOENT crash: the first rename
+moved the file, then the second rename tried to move the same (now non-existent)
+source. When processing batches of file operations, duplicate identifiers in
+the input cause the second operation to fail.
+
+- **Deduplicate batch operation inputs before execution** — before processing a
+  list of rename/move/delete operations, check for duplicate source or target
+  identifiers. Either deduplicate (keep the last) or fail fast with a clear
+  error.
+- **Verify source exists before each move** — in a batch loop, `statSync` the
+  source file before attempting to move it. If it was already moved by a
+  duplicate entry, skip or error rather than crashing.
+- **Test batch operations with duplicate inputs** — include test cases where
+  the input list contains duplicate identifiers and verify the behavior is
+  deterministic (not dependent on filesystem ordering).
+
+### 38. CI Pipelines Must Not Silence Test/Type Failures
+
+In PR #349, the Hermes Python CI workflow used patterns that hid test and type
+failures, making them invisible to reviewers. Broken tests that passed CI
+were caught only by manual review.
+
+- **Never use `|| true` on test/type-check commands in CI** — if `pytest`,
+  `mypy`, `tsc`, or equivalent commands fail, the CI step MUST fail. Silencing
+  failures with `|| true` or missing `set -e` means broken code passes CI.
+- **Each language's quality gate must be a separate CI step** — don't bundle
+  `ruff check && mypy && pytest` into a single script with `set -e` at the top
+  and then call it with `|| true`. Make each a distinct step so failures are
+  visible in the CI UI.
+- **Audit CI workflows for failure suppression** — grep all workflow files for
+  `|| true`, `continue-on-error: true`, and missing `set -e` in shell scripts.
+  These should only exist on intentional tolerance (like cleanup steps), never
+  on quality gates.
 
 ---
 
