@@ -126,6 +126,56 @@ test("processEntitySynthesisQueue sorts freshest evidence before truncating", as
   }
 });
 
+test("processEntitySynthesisQueue deduplicates repeated facts before truncating evidence", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-dedupe-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-dedupe-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 120,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
+      updatedAt: "2026-04-13T09:00:00.000Z",
+    });
+    for (let hour = 20; hour >= 13; hour -= 1) {
+      await storage.writeEntity("Jane Doe", "person", ["Repeated recent fact."], {
+        timestamp: `2026-04-13T${String(hour).padStart(2, "0")}:00:00.000Z`,
+        source: "extraction",
+      });
+    }
+    await storage.writeEntity("Jane Doe", "person", ["Unique older fact should still be included."], {
+      timestamp: "2026-04-13T12:00:00.000Z",
+      source: "extraction",
+    });
+
+    let capturedPrompt = "";
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      return { content: "Jane Doe has refreshed synthesis." };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+
+    assert.equal(processed, 1);
+    assert.match(capturedPrompt, /Repeated recent fact\./);
+    assert.match(capturedPrompt, /Unique older fact should still be included\./);
+    assert.equal((capturedPrompt.match(/Repeated recent fact\./g) ?? []).length, 1);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("processEntitySynthesisQueue treats offset timestamps as newer when filtering evidence", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-offset-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-offset-workspace-"));

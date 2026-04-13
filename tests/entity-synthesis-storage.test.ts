@@ -247,6 +247,38 @@ test("parseEntityFile merges legacy facts into mixed timeline entities", () => {
   assert.match(serialized, /Prefers short updates\./);
 });
 
+test("parseEntityFile preserves entity frontmatter from CRLF files", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 2",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] Leads roadmap work.",
+    "",
+  ].join("\r\n");
+
+  const parsed = parseEntityFile(raw);
+
+  assert.equal(parsed.created, "2026-04-13T10:00:00.000Z");
+  assert.equal(parsed.updated, "2026-04-13T10:05:00.000Z");
+  assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T10:05:00.000Z");
+  assert.equal(parsed.synthesisVersion, 2);
+});
+
 test("entity synthesis staleness uses parsed timestamps instead of raw string ordering", () => {
   const parsed = parseEntityFile([
     "---",

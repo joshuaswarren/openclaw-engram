@@ -2305,9 +2305,15 @@ export class Orchestrator {
             !entity.synthesisUpdatedAt
             || compareEntityTimestamps(entry.timestamp, entity.synthesisUpdatedAt) > 0,
         );
-        const evidenceEntries = (
-          newTimelineEntries.length > 0 ? newTimelineEntries : sortedTimelineEntries
-        )
+        const dedupedEvidenceEntries: typeof sortedTimelineEntries = [];
+        const seenEvidenceFacts = new Set<string>();
+        for (const entry of (newTimelineEntries.length > 0 ? newTimelineEntries : sortedTimelineEntries)) {
+          const normalizedFact = entry.text.trim();
+          if (!normalizedFact || seenEvidenceFacts.has(normalizedFact)) continue;
+          seenEvidenceFacts.add(normalizedFact);
+          dedupedEvidenceEntries.push(entry);
+        }
+        const evidenceEntries = dedupedEvidenceEntries
           .slice(0, 8)
           .sort((left, right) => compareEntityTimestamps(left.timestamp, right.timestamp));
         if (evidenceEntries.length === 0) continue;
