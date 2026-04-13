@@ -96,6 +96,7 @@
     "review:patterns": "bash scripts/check-review-patterns.sh",
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
+    "postinstall": "pnpm rebuild better-sqlite3",
     "prepack": "npm run build"
   },
   "devDependencies": {
