@@ -1051,7 +1051,7 @@ export function parseEntityFile(content: string): EntityFile {
     readEntitySectionText(lines, ["Synthesis"], { preserveBullets: true })
     ?? readEntitySectionText(lines, ["Summary"], { preserveBullets: true });
   const facts = dedupeEntityFacts(timeline);
-  const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || (synthesis ? (updated || undefined) : undefined);
+  const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
 
   return {
     name,

@@ -610,6 +610,29 @@ test("parseEntityFile normalizes single-quoted managed frontmatter timestamps", 
   assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T10:05:00.000Z");
 });
 
+test("parseEntityFile leaves legacy summary synthesis timestamp unset without explicit frontmatter", () => {
+  const raw = [
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Summary",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Facts",
+    "",
+    "- Leads roadmap work.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+
+  assert.equal(parsed.synthesisUpdatedAt, undefined);
+  assert.equal(isEntitySynthesisStale(parsed), true);
+});
+
 test("compareEntityTimestamps treats equivalent parsed instants as equal", () => {
   assert.equal(compareEntityTimestamps("2026-04-13T15:00:00Z", "2026-04-13T10:00:00-05:00"), 0);
   assert.equal(compareEntityTimestamps("2026-04-13T10:00:00-05:00", "2026-04-13T15:00:00Z"), 0);
