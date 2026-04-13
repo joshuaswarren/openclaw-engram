@@ -148,6 +148,35 @@ function sanitizeEntityFact(fact: string): string {
   return clean;
 }
 
+function scoreHintSnippet(snippet: EntityHintSnippet, queryTokens: string[]): EntityHintSnippet | null {
+  const normalized = normalizeText(snippet.text);
+  if (!normalized) return null;
+  const scored = { ...snippet };
+  if (isLikelyInstructionLike(scored.text) && scored.kind !== "summary") {
+    scored.score -= 3;
+  }
+  const overlap = queryTokens.filter((token) => normalized.includes(token)).length;
+  scored.score += overlap * 2;
+  if (METADATA_WRAPPER_RE.test(scored.text)) scored.score -= 2;
+  if (scored.text.length <= 160) scored.score += 1;
+  return scored.score > 0 ? scored : null;
+}
+
+function sortTimelineEntriesDesc(
+  left: EntityMentionIndexEntry["timeline"][number],
+  right: EntityMentionIndexEntry["timeline"][number],
+): number {
+  const leftTs = Date.parse(left.timestamp);
+  const rightTs = Date.parse(right.timestamp);
+  if (Number.isFinite(leftTs) && Number.isFinite(rightTs) && leftTs !== rightTs) {
+    return rightTs - leftTs;
+  }
+  if (left.timestamp !== right.timestamp) {
+    return right.timestamp.localeCompare(left.timestamp);
+  }
+  return right.text.localeCompare(left.text);
+}
+
 function jaccardSimilarity(a: string, b: string): number {
   const aTokens = new Set(tokenize(a));
   const bTokens = new Set(tokenize(b));
@@ -443,17 +472,11 @@ async function buildHintSnippets(
 
   const deduped = new Map<string, EntityHintSnippet>();
   for (const snippet of snippets) {
-    const normalized = normalizeText(snippet.text);
-    if (!normalized) continue;
-    if (isLikelyInstructionLike(snippet.text) && snippet.kind !== "summary") {
-      snippet.score -= 3;
-    }
-    const overlap = queryTokens.filter((token) => normalizeText(snippet.text).includes(token)).length;
-    snippet.score += overlap * 2;
-    if (METADATA_WRAPPER_RE.test(snippet.text)) snippet.score -= 2;
-    if (snippet.text.length <= 160) snippet.score += 1;
+    const scored = scoreHintSnippet(snippet, queryTokens);
+    if (!scored) continue;
+    const normalized = normalizeText(scored.text);
     const existing = deduped.get(normalized);
-    if (!existing || snippet.score > existing.score) deduped.set(normalized, snippet);
+    if (!existing || scored.score > existing.score) deduped.set(normalized, scored);
   }
 
   return [...deduped.values()]
@@ -481,6 +504,7 @@ function formatEntityHintSection(
     snippets: EntityHintSnippet[];
     uncertainty: string | null;
   }>,
+  queryTokens: string[],
   mode: EntityQueryMode,
   maxRelatedEntities: number,
   maxChars: number,
@@ -510,14 +534,18 @@ function formatEntityHintSection(
     }
     if (mode === "timeline") {
       const explicitTimeline = candidate.entry.timeline
-        .slice(-2)
-        .reverse()
-        .map((entry) => ({
-          text: compactLine(entry.text, 180),
-          score: 0,
+        .slice()
+        .sort(sortTimelineEntriesDesc)
+        .map((entry) => sanitizeEntityFact(entry.text))
+        .filter(Boolean)
+        .map((text) => scoreHintSnippet({
+          text: compactLine(text, 180),
+          score: 7,
           kind: "fact" as const,
-        }))
-        .filter((snippet) => !topSnippetTexts.has(normalizeText(snippet.text)));
+        }, queryTokens))
+        .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
+        .filter((snippet) => !topSnippetTexts.has(normalizeText(snippet.text)))
+        .slice(0, 2);
       const activityTimeline = snippets
         .filter((snippet) => (snippet.kind === "activity" || snippet.kind === "memory") && !topSnippetTexts.has(normalizeText(snippet.text)))
         .slice(0, 2);
@@ -585,7 +613,7 @@ export async function buildEntityRecallSection(options: BuildEntityRecallSection
     }),
   );
 
-  const section = formatEntityHintSection(enriched, mode, options.maxRelatedEntities, options.maxChars);
+  const section = formatEntityHintSection(enriched, queryTokens, mode, options.maxRelatedEntities, options.maxChars);
   if (!section) return null;
   return section;
 }
