@@ -144,6 +144,10 @@ test("processEntitySynthesisQueue deduplicates repeated facts before truncating 
     await storage.ensureDirectories();
 
     const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Seed fact before synthesis."], {
+      timestamp: "2026-04-13T08:00:00.000Z",
+      source: "extraction",
+    });
     await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
       updatedAt: "2026-04-13T09:00:00.000Z",
     });
@@ -169,6 +173,7 @@ test("processEntitySynthesisQueue deduplicates repeated facts before truncating 
     assert.equal(processed, 1);
     assert.match(capturedPrompt, /Repeated recent fact\./);
     assert.match(capturedPrompt, /Unique older fact should still be included\./);
+    assert.doesNotMatch(capturedPrompt, /Seed fact before synthesis\./);
     assert.equal((capturedPrompt.match(/Repeated recent fact\./g) ?? []).length, 1);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
