@@ -1349,6 +1349,7 @@ export interface EntityTimelineEntry {
 export interface EntityFile {
   name: string;
   type: string;
+  created?: string;
   updated: string;
   facts: string[];
   summary?: string;

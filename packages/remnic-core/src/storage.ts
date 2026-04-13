@@ -678,7 +678,12 @@ export function normalizeAttributePairs(pairs: Record<string, string>): string {
 function parseEntityFrontmatter(
   raw: string,
 ): {
-  frontmatter: { synthesisUpdatedAt?: string; synthesisVersion?: number };
+  frontmatter: {
+    created?: string;
+    updated?: string;
+    synthesisUpdatedAt?: string;
+    synthesisVersion?: number;
+  };
   body: string;
 } {
   const match = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
@@ -698,6 +703,8 @@ function parseEntityFrontmatter(
   const synthesisVersion = Number.parseInt(values.synthesis_version ?? "", 10);
   return {
     frontmatter: {
+      created: values.created || undefined,
+      updated: values.updated || undefined,
       synthesisUpdatedAt: values.synthesis_updated_at || undefined,
       synthesisVersion: Number.isFinite(synthesisVersion) ? synthesisVersion : undefined,
     },
@@ -821,6 +828,7 @@ export function parseEntityFile(content: string): EntityFile {
   // Header
   let name = "";
   let type = "other";
+  let created = frontmatter.created ?? "";
   let updated = "";
   const legacyFacts: string[] = [];
   const relationships: EntityRelationship[] = [];
@@ -839,6 +847,8 @@ export function parseEntityFile(content: string): EntityFile {
   // Parse updated
   const updatedLine = lines.find((l) => l.startsWith("**Updated:**"));
   if (updatedLine) updated = updatedLine.replace("**Updated:**", "").trim();
+  if (!updated) updated = frontmatter.updated ?? frontmatter.created ?? "";
+  if (!created) created = updated;
 
   // Detect which section we're in
   let section = "";
@@ -916,6 +926,7 @@ export function parseEntityFile(content: string): EntityFile {
   return {
     name,
     type,
+    created,
     updated,
     facts,
     summary: synthesis,
@@ -936,18 +947,22 @@ export function parseEntityFile(content: string): EntityFile {
  */
 export function serializeEntityFile(entity: EntityFile): string {
   const synthesis = entity.synthesis ?? entity.summary ?? "";
+  const created = entity.created?.trim() || entity.updated || new Date().toISOString();
+  const updated = entity.updated || created;
   const timeline = entity.timeline.length > 0
     ? entity.timeline
     : entity.facts.map((fact) => ({
-      timestamp: entity.updated || new Date().toISOString(),
+      timestamp: updated,
       text: fact,
       source: "migration",
     }));
-  const synthesisUpdatedAt = entity.synthesisUpdatedAt ?? (synthesis ? entity.updated : "");
+  const synthesisUpdatedAt = entity.synthesisUpdatedAt ?? (synthesis ? updated : "");
   const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
 
   const lines: string[] = [
     "---",
+    `created: ${created}`,
+    `updated: ${updated}`,
     `synthesis_updated_at: "${synthesisUpdatedAt}"`,
     `synthesis_version: ${synthesisVersion}`,
     "---",
@@ -955,7 +970,7 @@ export function serializeEntityFile(entity: EntityFile): string {
     `# ${entity.name}`,
     "",
     `**Type:** ${entity.type}`,
-    `**Updated:** ${entity.updated || new Date().toISOString()}`,
+    `**Updated:** ${updated}`,
     "",
   ];
 
@@ -1703,7 +1718,10 @@ export class StorageManager {
 
     // Parse existing file to preserve relationships/activity/aliases/summary
     let entity: EntityFile = {
-      name, type, updated: new Date().toISOString(),
+      name,
+      type,
+      created: "",
+      updated: new Date().toISOString(),
       facts: [],
       summary: undefined,
       synthesis: undefined,
@@ -1738,6 +1756,7 @@ export class StorageManager {
     entity.summary = entity.synthesis ?? entity.summary;
     entity.name = name;
     entity.type = type;
+    entity.created = entity.created || timestamp;
     entity.updated = new Date().toISOString();
 
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
@@ -4049,6 +4068,7 @@ export class StorageManager {
         const mergedEntity: EntityFile = {
           name: "",
           type: "other",
+          created: "",
           updated: "",
           facts: [],
           summary: undefined,
@@ -4075,6 +4095,11 @@ export class StorageManager {
             // Keep latest update time
             if (!mergedEntity.updated || parsed.updated > mergedEntity.updated) {
               mergedEntity.updated = parsed.updated;
+            }
+
+            const parsedCreated = parsed.created || parsed.updated;
+            if (parsedCreated && (!mergedEntity.created || parsedCreated < mergedEntity.created)) {
+              mergedEntity.created = parsedCreated;
             }
 
             // Keep longest/best name
@@ -4153,6 +4178,7 @@ export class StorageManager {
           mergedEntity.name = dashIdx !== -1 ? canonical.slice(dashIdx + 1) : canonical;
         }
 
+        mergedEntity.created = mergedEntity.created || mergedEntity.updated || new Date().toISOString();
         mergedEntity.updated = mergedEntity.updated || new Date().toISOString();
 
         const canonicalPath = path.join(this.entitiesDir, `${canonical}.md`);

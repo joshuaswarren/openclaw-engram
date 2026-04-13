@@ -97,3 +97,29 @@ test("entity migration rewrites legacy summary plus facts files into synthesis p
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("serializeEntityFile persists stable created and updated frontmatter for entity reads", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-frontmatter-stability-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Leads roadmap work."], {
+      timestamp: "2026-04-13T10:00:00.000Z",
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe leads roadmap work.", {
+      updatedAt: "2026-04-13T10:05:00.000Z",
+    });
+
+    const raw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.match(raw, /^---\ncreated: 2026-04-13T10:00:00.000Z\nupdated: 2026-04-13T10:05:00.000Z/m);
+    assert.equal(parsed.created, "2026-04-13T10:00:00.000Z");
+    assert.equal(parsed.updated, "2026-04-13T10:05:00.000Z");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

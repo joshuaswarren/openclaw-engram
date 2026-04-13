@@ -1576,9 +1576,14 @@ export class EngramAccessService {
       request.authenticatedPrincipal ?? principal,
     );
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const mode = request.mode === "apply" ? "apply" : "shadow";
+    const boundedBatchSize =
+      typeof request.batchSize === "number" && Number.isFinite(request.batchSize)
+        ? Math.max(1, Math.floor(request.batchSize))
+        : undefined;
     const result = await runMemoryGovernance({
       memoryDir: storage.dir,
-      mode: request.mode === "apply" ? "apply" : "shadow",
+      mode,
       recentDays:
         typeof request.recentDays === "number" && Number.isFinite(request.recentDays)
           ? Math.max(1, Math.floor(request.recentDays))
@@ -1587,20 +1592,18 @@ export class EngramAccessService {
         typeof request.maxMemories === "number" && Number.isFinite(request.maxMemories)
           ? Math.max(1, Math.floor(request.maxMemories))
           : undefined,
-      batchSize:
-        typeof request.batchSize === "number" && Number.isFinite(request.batchSize)
-          ? Math.max(1, Math.floor(request.batchSize))
-          : undefined,
+      batchSize: boundedBatchSize,
     });
-    await this.orchestrator.processEntitySynthesisQueue(
-      resolvedNamespace,
-      Math.min(
-        typeof request.batchSize === "number" && Number.isFinite(request.batchSize)
-          ? Math.max(1, Math.floor(request.batchSize))
-          : 5,
-        5,
-      ),
-    );
+    if (mode === "apply") {
+      try {
+        await this.orchestrator.processEntitySynthesisQueue(
+          resolvedNamespace,
+          Math.min(boundedBatchSize ?? 5, 5),
+        );
+      } catch (error) {
+        log.debug(`governanceRun: entity synthesis refresh failed after governance apply: ${error}`);
+      }
+    }
 
     return {
       namespace: resolvedNamespace,
