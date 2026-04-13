@@ -308,3 +308,35 @@ test("mergeFragmentedEntities prefers the freshest synthesis using parsed timest
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("refreshEntitySynthesisQueue orders stale entities by parsed latest timeline timestamps", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-queue-order-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const newerCanonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Newest offset entity should lead the queue."], {
+      timestamp: "2026-04-13T10:00:00-05:00",
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(newerCanonical, "Jane Doe had an older synthesis.", {
+      updatedAt: "2026-04-13T14:30:00Z",
+    });
+
+    const olderCanonical = normalizeEntityName("Project Beta", "project");
+    await storage.writeEntity("Project Beta", "project", ["Older UTC entity should come second."], {
+      timestamp: "2026-04-13T14:45:00Z",
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(olderCanonical, "Project Beta had an older synthesis.", {
+      updatedAt: "2026-04-13T14:40:00Z",
+    });
+
+    const queue = await storage.refreshEntitySynthesisQueue();
+
+    assert.deepEqual(queue, [newerCanonical, olderCanonical]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

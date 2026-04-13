@@ -3849,7 +3849,7 @@ export class StorageManager {
       .sort((left, right) => {
         const leftTs = latestEntityTimelineTimestamp(left) ?? "";
         const rightTs = latestEntityTimelineTimestamp(right) ?? "";
-        return rightTs.localeCompare(leftTs);
+        return compareEntityTimestamps(rightTs, leftTs);
       })
       .map((entity) => normalizeEntityName(entity.name, entity.type));
 
