@@ -64,7 +64,7 @@ SHELL_INJECT=$(grep -rn '\${' \
 
 if [[ -n "$SHELL_INJECT" ]]; then
   warn "Potential shell interpolation in command construction:"
-  echo "$SHELL_INJECT" | head -5
+  echo "$SHELL_INJECT" | head -5 || true
   echo "  → Use env vars instead of string interpolation for host/port/config values"
 fi
 
@@ -96,7 +96,7 @@ VACUOUS=$(grep -rn "toEqual(\[\])" --include="*.test.ts" . 2>/dev/null \
 if [[ -n "$VACUOUS" ]]; then
   COUNT=$(echo "$VACUOUS" | wc -l | tr -d ' ')
   warn "$COUNT tests assert .toEqual([]) — ensure these verify actual failure behavior, not vacuous passes:"
-  echo "$VACUOUS" | head -5
+  echo "$VACUOUS" | head -5 || true
 fi
 
 # ---- 5. Lock file sync check ----
@@ -149,7 +149,7 @@ TILDE_HACK=$(grep -rn '\.replace(/\\^~/' \
 if [[ -n "$TILDE_HACK" ]]; then
   COUNT=$(echo "$TILDE_HACK" | wc -l | tr -d ' ')
   warn "$COUNT ad-hoc tilde expansions (not using expandTilde) — use expandTilde() instead:"
-  echo "$TILDE_HACK" | head -5
+  echo "$TILDE_HACK" | head -5 || true
 fi
 
 # ---- 8. Sort comparator never returns 0 ----
@@ -235,7 +235,7 @@ CROSS_PKG=$(grep -rn 'from "\.\./\.\./\.\./\.\./' \
 if [[ -n "$CROSS_PKG" ]]; then
   COUNT=$(echo "$CROSS_PKG" | wc -l | tr -d ' ')
   warn "$COUNT deep relative imports (4+ levels) in packages/ — likely bypassing package boundaries. Use package name imports instead:"
-  echo "$CROSS_PKG" | head -10
+  echo "$CROSS_PKG" | head -10 || true
 fi
 
 # ---- 12. slice(-expr) without zero guard ----
@@ -278,7 +278,7 @@ TYPEOF_NUM=$(grep -rn 'typeof.*===.*"number"' \
 if [[ -n "$TYPEOF_NUM" ]]; then
   COUNT=$(echo "$TYPEOF_NUM" | wc -l | tr -d ' ')
   warn "$COUNT typeof === 'number' checks on config/port/prev values — CLI values arrive as strings. Consider coercing first:"
-  echo "$TYPEOF_NUM" | head -5
+  echo "$TYPEOF_NUM" | head -5 || true
 fi
 
 # ---- 14. Force flush / explicit operations missing skipDedupe ----
@@ -335,7 +335,7 @@ if [[ -n "$INDEXOF_PARSER" ]]; then
   COUNT=$(echo "$INDEXOF_PARSER" | wc -l | tr -d ' ')
   if [[ "$COUNT" -gt 0 ]]; then
     warn "$COUNT uses of indexOf in parser/position-tracking code — may return wrong position for duplicate lines. Track offset during iteration instead."
-    echo "$INDEXOF_PARSER" | head -5
+    echo "$INDEXOF_PARSER" | head -5 || true
   fi
 fi
 
@@ -385,7 +385,7 @@ INCLUSIVE_TIME=$(grep -rn '<= .*[Tt]ime\|<= .*[Tt]s\|<= .*[Mm]s\|<= .*[Dd]ate\|<
 if [[ -n "$INCLUSIVE_TIME" ]]; then
   COUNT=$(echo "$INCLUSIVE_TIME" | wc -l | tr -d ' ')
   warn "$COUNT time-range filters using <= on timestamp values in filter/window/range code. Verify these use exclusive upper bound (<) for half-open intervals:"
-  echo "$INCLUSIVE_TIME" | head -5
+  echo "$INCLUSIVE_TIME" | head -5 || true
 fi
 
 # ---- 19. String "false" used as boolean gate ----
@@ -405,7 +405,7 @@ STRICT_BOOL_GATE=$(grep -rn '!== false\|!= false' \
 if [[ -n "$STRICT_BOOL_GATE" ]]; then
   COUNT=$(echo "$STRICT_BOOL_GATE" | wc -l | tr -d ' ')
   warn "$COUNT boolean gates using !== false on config/option values. String 'false' is truthy with this check. Use explicit boolean coercion:"
-  echo "$STRICT_BOOL_GATE" | head -5
+  echo "$STRICT_BOOL_GATE" | head -5 || true
 fi
 
 # ---- 20. Object.entries in hash/dedup without key sorting ----
@@ -425,7 +425,7 @@ UNSORTED_ENTRIES=$(grep -rn 'Object.entries(' \
 if [[ -n "$UNSORTED_ENTRIES" ]]; then
   COUNT=$(echo "$UNSORTED_ENTRIES" | wc -l | tr -d ' ')
   warn "$COUNT Object.entries() calls in hash/dedup/serialization code without visible key sorting. Insertion order is non-deterministic — sort keys first:"
-  echo "$UNSORTED_ENTRIES" | head -5
+  echo "$UNSORTED_ENTRIES" | head -5 || true
 fi
 
 # ---- 21. invalidateAll* that doesn't clear all cache layers ----
@@ -472,7 +472,7 @@ POISON_CHAIN=$(grep -rn '\.then(' \
 if [[ -n "$POISON_CHAIN" ]]; then
   COUNT=$(echo "$POISON_CHAIN" | wc -l | tr -d ' ')
   warn "$COUNT serialized promise chains (x = x.then(...)) without .catch() recovery. A single rejection permanently breaks all subsequent chained operations:"
-  echo "$POISON_CHAIN" | head -5
+  echo "$POISON_CHAIN" | head -5 || true
 fi
 
 # ---- 23. Map/Set iteration using .values() but referencing key variables ----
@@ -519,7 +519,7 @@ if [[ -n "$INDEX_ADDS" ]]; then
   COUNT=$(echo "$INDEX_ADDS" | wc -l | tr -d ' ')
   if [[ "$COUNT" -gt 3 ]]; then
     warn "$COUNT contentHashIndex/hashIndex.add() calls in core — verify each is called AFTER successful persistence, not before:"
-    echo "$INDEX_ADDS" | head -5
+    echo "$INDEX_ADDS" | head -5 || true
   fi
 fi
 
@@ -564,7 +564,7 @@ TEMPLATE_REGEX=$(grep -rn 'new RegExp(' \
 if [[ -n "$TEMPLATE_REGEX" ]]; then
   COUNT=$(echo "$TEMPLATE_REGEX" | wc -l | tr -d ' ')
   warn "$COUNT new RegExp() calls from template/config values without escapeRegex(). Literal parts must be escaped:"
-  echo "$TEMPLATE_REGEX" | head -5
+  echo "$TEMPLATE_REGEX" | head -5 || true
 fi
 
 # ---- 27. Shared mutable state across connections (security) ----
@@ -629,7 +629,7 @@ done
 if [[ -n "$UNSAFE_DEFAULTS" ]]; then
   COUNT=$(echo "$UNSAFE_DEFAULTS" | wc -l | tr -d ' ')
   warn "$COUNT enum/default values that silently approve/enable. Missing values should default to least-privileged option (rejected/pending/disabled):"
-  echo "$UNSAFE_DEFAULTS" | head -5
+  echo "$UNSAFE_DEFAULTS" | head -5 || true
 fi
 
 # ---- 29. CI quality gates silenced with || true ----
@@ -645,7 +645,7 @@ if ls .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null | head -1 >/d
   if [[ -n "$SILENCED_GATES" ]]; then
     COUNT=$(echo "$SILENCED_GATES" | wc -l | tr -d ' ')
     warn "$COUNT CI quality gate steps silenced with '|| true' or 'continue-on-error: true'. Test/lint/type steps must fail the build:"
-    echo "$SILENCED_GATES" | head -5
+    echo "$SILENCED_GATES" | head -5 || true
   fi
 fi
 
@@ -667,7 +667,7 @@ SILENT_DEFAULT=$(grep -rn '|| config\.\|?? config\.\|\|\s*\.default\|??\s*\.defa
 if [[ -n "$SILENT_DEFAULT" ]]; then
   COUNT=$(echo "$SILENT_DEFAULT" | wc -l | tr -d ' ')
   warn "$COUNT silent fallback patterns (|| config.*) on format/since/focus/window values. Invalid input should be rejected, not silently defaulted:"
-  echo "$SILENT_DEFAULT" | head -5
+  echo "$SILENT_DEFAULT" | head -5 || true
 fi
 
 # ---- 31. Validation allow-list vs code handling mismatch ----
