@@ -293,6 +293,39 @@ test("parseEntityFile preserves bulleted synthesis text across round trips", () 
   assert.match(serialized, /## Synthesis\n\n- Leads roadmap work\.\n- Owns release approvals\./);
 });
 
+test("parseEntityFile preserves blank lines in multi-paragraph synthesis", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "She also owns release approvals.",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] Leads roadmap work.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+
+  assert.equal(parsed.synthesis, "Jane Doe leads roadmap work.\n\nShe also owns release approvals.");
+  assert.match(serialized, /Jane Doe leads roadmap work\.\n\nShe also owns release approvals\./);
+});
+
 test("parseEntityFile preserves unmodeled sections across round trips", () => {
   const raw = [
     "---",

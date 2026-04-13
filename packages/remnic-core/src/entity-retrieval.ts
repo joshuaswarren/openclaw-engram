@@ -6,7 +6,7 @@ import { collectNativeKnowledgeChunks, type NativeKnowledgeChunk } from "./nativ
 import { normalizeEntityName, type StorageManager } from "./storage.js";
 import type { MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
 
-const ENTITY_INDEX_VERSION = 1;
+const ENTITY_INDEX_VERSION = 2;
 const RECENT_TRANSCRIPT_LOOKBACK_HOURS = 24;
 const INSTRUCTION_LIKE_RE = /\b(always|never|must|should|remember to|do not|don't|process|workflow|template|checklist|instruction)\b/i;
 const METADATA_WRAPPER_RE = /^(source|context|metadata|notes?):/i;
@@ -533,7 +533,7 @@ function formatEntityHintSection(
       }
     }
     if (mode !== "direct") {
-      const explicitTimeline = candidate.entry.timeline
+      const explicitTimeline = (candidate.entry.timeline ?? [])
         .slice()
         .sort(sortTimelineEntriesDesc)
         .map((entry) => sanitizeEntityFact(entry.text))

@@ -117,6 +117,62 @@ test("entity retrieval preserves mention-index updatedAt when entity state is un
   assert.equal(firstIndex.updatedAt, secondIndex.updatedAt);
 });
 
+test("entity retrieval rebuilds stale mention indexes that predate timeline support", async () => {
+  const { memoryDir, config, storage } = await buildHarness("engram-entity-stale-index");
+  const canonical = await writeEntity(
+    storage,
+    "Alice Example",
+    "person",
+    ["Alice Example led the launch review last month."],
+    "Alice Example is the release lead for the launch review.",
+  );
+
+  const staleIndex = {
+    version: entityIndexVersion - 1,
+    updatedAt: "2026-04-13T10:00:00.000Z",
+    entities: [
+      {
+        canonicalId: canonical,
+        name: "Alice Example",
+        type: "person",
+        aliases: [],
+        summary: "stale cache",
+        facts: ["stale cache"],
+        relationships: [],
+        activity: [],
+        factCount: 1,
+        memorySnippets: [],
+        nativeChunks: [],
+      },
+    ],
+  };
+  await mkdir(path.join(memoryDir, "state"), { recursive: true });
+  await writeFile(
+    path.join(memoryDir, "state", "entity-mention-index.json"),
+    JSON.stringify(staleIndex, null, 2) + "\n",
+    "utf-8",
+  );
+
+  const section = await buildEntityRecallSection({
+    config,
+    storage,
+    query: "What happened to Alice Example?",
+    recentTurns: 6,
+    maxHints: 2,
+    maxSupportingFacts: 6,
+    maxRelatedEntities: 3,
+    maxChars: 2400,
+    transcriptEntries: [],
+  });
+  const rebuiltIndex = JSON.parse(
+    await readFile(path.join(memoryDir, "state", "entity-mention-index.json"), "utf-8"),
+  );
+
+  assert.ok(section);
+  assert.equal(rebuiltIndex.version, entityIndexVersion);
+  assert.ok(Array.isArray(rebuiltIndex.entities[0]?.timeline));
+});
+
 test("entity retrieval prefers synthesis for direct questions and uses timeline for history questions", async () => {
   const { config, storage } = await buildHarness("engram-entity-synthesis-preference");
   const canonical = await writeEntity(

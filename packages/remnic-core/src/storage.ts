@@ -747,9 +747,17 @@ function readEntitySectionText(
     }
     if (!section) continue;
     const trimmed = line.trim();
-    if (!trimmed) continue;
+    if (!trimmed) {
+      if (options.preserveBullets === true && sectionLines.length > 0 && sectionLines[sectionLines.length - 1] !== "") {
+        sectionLines.push("");
+      }
+      continue;
+    }
     if (trimmed.startsWith("- ") && options.preserveBullets !== true) continue;
     sectionLines.push(trimmed);
+  }
+  while (sectionLines[sectionLines.length - 1] === "") {
+    sectionLines.pop();
   }
   if (sectionLines.length === 0) return undefined;
   return sectionLines.join(options.preserveBullets === true ? "\n" : " ");
