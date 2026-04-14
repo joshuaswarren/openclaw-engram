@@ -39,10 +39,12 @@ import {
 } from "./search/factory.js";
 import { NoopSearchBackend } from "./search/noop-backend.js";
 import {
+  compareEntityTimestamps,
   StorageManager,
   ContentHashIndex,
   normalizeEntityName,
   normalizeAttributePairs,
+  parseEntityFile,
 } from "./storage.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { ThreadingManager } from "./threading.js";
@@ -2273,6 +2275,141 @@ export class Orchestrator {
         ? namespace
         : this.config.defaultNamespace;
     return this.storageRouter.storageFor(ns);
+  }
+
+  async processEntitySynthesisQueue(
+    namespace?: string,
+    maxEntities: number = 5,
+  ): Promise<number> {
+    if (
+      !this.config.entitySummaryEnabled
+      || maxEntities <= 0
+      || this.config.entitySynthesisMaxTokens <= 0
+    ) return 0;
+    const storage = await this.getStorage(namespace);
+    const queued = await storage.refreshEntitySynthesisQueue();
+    let processed = 0;
+    let attempted = 0;
+
+    for (const entityName of queued) {
+      if (attempted >= maxEntities) break;
+      attempted += 1;
+      try {
+        const raw = await storage.readEntity(entityName);
+        if (!raw) continue;
+        const entity = parseEntityFile(raw);
+        const previousSynthesis = entity.synthesis || entity.summary || "";
+        const sortedTimelineEntries = entity.timeline
+          .slice()
+          .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
+        const newerTimelineEntries = sortedTimelineEntries.filter(
+          (entry) =>
+            !entity.synthesisUpdatedAt
+            || compareEntityTimestamps(entry.timestamp, entity.synthesisUpdatedAt) > 0,
+        );
+        const appendedTimelineEntries = entity.synthesisTimelineCount === undefined
+          ? []
+          : entity.timeline.slice(Math.max(0, entity.synthesisTimelineCount));
+        const candidateEvidenceEntries = [
+          ...newerTimelineEntries,
+          ...appendedTimelineEntries,
+        ]
+          .slice()
+          .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
+        const dedupedEvidenceEntries: typeof sortedTimelineEntries = [];
+        const seenEvidenceFacts = new Set<string>();
+        for (const entry of (candidateEvidenceEntries.length > 0 ? candidateEvidenceEntries : sortedTimelineEntries)) {
+          const normalizedFact = entry.text.trim();
+          if (!normalizedFact || seenEvidenceFacts.has(normalizedFact)) continue;
+          seenEvidenceFacts.add(normalizedFact);
+          dedupedEvidenceEntries.push(entry);
+        }
+        const chronologicalEvidenceEntries = dedupedEvidenceEntries
+          .slice()
+          .sort((left, right) => compareEntityTimestamps(left.timestamp, right.timestamp));
+        if (chronologicalEvidenceEntries.length === 0) continue;
+        const latestEvidenceTimestamp = chronologicalEvidenceEntries
+          .slice()
+          .reverse()
+          .map((entry) => entry.timestamp?.trim() || undefined)
+          .find((timestamp) => Boolean(timestamp));
+        const previousSynthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || undefined;
+        const nextSynthesisUpdatedAt = compareEntityTimestamps(
+          latestEvidenceTimestamp,
+          previousSynthesisUpdatedAt,
+        ) >= 0
+          ? latestEvidenceTimestamp
+          : previousSynthesisUpdatedAt;
+        const evidenceBatches: typeof chronologicalEvidenceEntries[] = [];
+        for (let index = 0; index < chronologicalEvidenceEntries.length; index += 8) {
+          evidenceBatches.push(chronologicalEvidenceEntries.slice(index, index + 8));
+        }
+
+        let nextSynthesis = previousSynthesis;
+        let batchFailed = false;
+        for (const evidenceEntries of evidenceBatches) {
+          const evidenceText = evidenceEntries
+            .map((entry) => {
+              const metadata = [
+                `timestamp=${entry.timestamp}`,
+                entry.source ? `source=${entry.source}` : "",
+                entry.sessionKey ? `session=${entry.sessionKey}` : "",
+                entry.principal ? `principal=${entry.principal}` : "",
+              ]
+                .filter(Boolean)
+                .join(", ");
+              return `- ${metadata}: ${entry.text}`;
+            })
+            .join("\n");
+          const response = await this.fastChatCompletion(
+            [
+              {
+                role: "system",
+                content:
+                  "Rewrite the entity synthesis as compact current truth. Preserve uncertainty when evidence conflicts. Return plain text only.",
+              },
+              {
+                role: "user",
+                content: [
+                  `Entity: ${entity.name} (${entity.type})`,
+                  nextSynthesis ? `Previous synthesis:\n${nextSynthesis}` : "Previous synthesis: none",
+                  `New evidence:\n${evidenceText}`,
+                ].join("\n\n"),
+              },
+            ],
+            {
+              temperature: 0.2,
+              maxTokens: this.config.entitySynthesisMaxTokens,
+              operation: "entity_summary",
+              priority: "background",
+            },
+          );
+          const synthesis = response?.content?.trim().replace(/^["']|["']$/g, "");
+          if (!synthesis || synthesis.length < 10 || synthesis.length > 2_000) {
+            batchFailed = true;
+            break;
+          }
+          nextSynthesis = synthesis;
+        }
+        if (batchFailed || nextSynthesis.length === 0) continue;
+        const latestRaw = await storage.readEntity(entityName);
+        if (!latestRaw) continue;
+        const latestEntity = parseEntityFile(latestRaw);
+        if (latestEntity.timeline.length !== entity.timeline.length) {
+          continue;
+        }
+        await storage.updateEntitySynthesis(entityName, nextSynthesis, {
+          entityUpdatedAt: new Date().toISOString(),
+          synthesisTimelineCount: entity.timeline.length,
+          updatedAt: nextSynthesisUpdatedAt,
+        });
+        processed += 1;
+      } catch (err) {
+        log.debug(`entity synthesis refresh failed for ${entityName}: ${err}`);
+      }
+    }
+
+    return processed;
   }
 
   async generateDaySummary(
@@ -9669,7 +9806,11 @@ export class Orchestrator {
         const safeFacts = Array.isArray((entity as any)?.facts)
           ? (entity as any).facts.filter((f: any) => typeof f === "string")
           : [];
-        const id = await storage.writeEntity(name, type, safeFacts);
+        const id = await storage.writeEntity(name, type, safeFacts, {
+          source: typeof (entity as any)?.source === "string" ? (entity as any).source : "extraction",
+          sessionKey: sourceContext?.sessionKey,
+          principal: sourceContext?.principal,
+        });
         if (id) trackPersistedId(storage, id);
       } catch (err) {
         log.warn(`persistExtraction: entity write failed: ${err}`);
@@ -10090,7 +10231,9 @@ export class Orchestrator {
       const safeFacts = Array.isArray((entity as any)?.facts)
         ? (entity as any).facts.filter((f: any) => typeof f === "string")
         : [];
-      await this.storage.writeEntity(entity.name, entity.type, safeFacts);
+      await this.storage.writeEntity(entity.name, entity.type, safeFacts, {
+        source: "consolidation",
+      });
     }
 
     // Merge fragmented entity files
@@ -10099,59 +10242,17 @@ export class Orchestrator {
       log.info(`merged ${entitiesMerged} fragmented entity files`);
     }
 
-    // Generate entity summaries (v7.0)
     if (this.config.entitySummaryEnabled) {
       try {
-        const entityFiles = await this.storage.readAllEntityFiles();
-        const needsSummary = entityFiles.filter(
-          (e) => e.facts.length > 5 && !e.summary,
+        const synthesized = await this.processEntitySynthesisQueue(
+          this.config.defaultNamespace,
+          5,
         );
-        const toSummarize = needsSummary.slice(0, 5);
-        let summarized = 0;
-        for (const entity of toSummarize) {
-          try {
-            const factsText = entity.facts.slice(0, 10).join("; ");
-            const prompt = `Summarize this entity in one sentence. Entity: ${entity.name} (${entity.type}). Facts: ${factsText}`;
-            const response = await this.fastChatCompletion(
-              [
-                {
-                  role: "system",
-                  content:
-                    "Respond with a single concise sentence summarizing the entity. No JSON, just plain text.",
-                },
-                { role: "user", content: prompt },
-              ],
-              {
-                temperature: 0.3,
-                maxTokens: 100,
-                operation: "entity_summary",
-                priority: "background",
-              },
-            );
-            if (response?.content) {
-              const summary = response.content
-                .trim()
-                .replace(/^["']|["']$/g, "");
-              if (summary.length > 10 && summary.length < 500) {
-                const entityFileName = normalizeEntityName(
-                  entity.name,
-                  entity.type,
-                );
-                await this.storage.updateEntitySummary(entityFileName, summary);
-                summarized++;
-              }
-            }
-          } catch (err) {
-            log.debug(
-              `entity summary generation failed for ${entity.name}: ${err}`,
-            );
-          }
-        }
-        if (summarized > 0) {
-          log.info(`generated ${summarized} entity summaries`);
+        if (synthesized > 0) {
+          log.info(`refreshed ${synthesized} entity syntheses`);
         }
       } catch (err) {
-        log.debug(`entity summary pass failed: ${err}`);
+        log.debug(`entity synthesis pass failed: ${err}`);
       }
     }
 

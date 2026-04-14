@@ -180,6 +180,7 @@ function makeEntity(name: string): EntityFile {
     type: "person",
     updated: new Date().toISOString(),
     facts: [`${name} is a test entity`],
+    timeline: [],
     relationships: [],
     activity: [],
     aliases: [],

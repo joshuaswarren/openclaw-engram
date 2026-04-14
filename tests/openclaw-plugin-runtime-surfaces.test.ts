@@ -174,6 +174,21 @@ for (const manifestPath of [
       ],
       "dreaming.maxEntries must allow the runtime disable switch without advertising unsupported 1..9 values",
     );
+
+    const entitySynthesisMaxTokens = properties.entitySynthesisMaxTokens;
+    assert.ok(
+      Array.isArray(entitySynthesisMaxTokens?.anyOf),
+      "entitySynthesisMaxTokens should use an explicit 0-or-10+ schema",
+    );
+    assert.deepEqual(
+      entitySynthesisMaxTokens.anyOf,
+      [
+        { type: "integer", const: 0 },
+        { type: "integer", minimum: 10 },
+      ],
+      "entitySynthesisMaxTokens must keep 0 as a disable switch without advertising unusable 1..9 values",
+    );
+    assert.equal(entitySynthesisMaxTokens?.default, 500);
   });
 }
 

@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Entity files now support a two-layer "Compiled Truth + Timeline" format with
+  mutable `## Synthesis`, append-only `## Timeline`, and
+  `synthesis_updated_at` / `synthesis_version` metadata for stale-synthesis
+  detection and bounded rebuilds.
+- `remnic openclaw entities-migrate` converts legacy flat entity files into the
+  new synthesis-plus-timeline format, seeding timeline evidence from existing
+  entity content.
+
+### Changed
+
+- Recall and briefing surfaces now prefer entity synthesis by default while
+  reserving timeline snippets for explicit history-oriented questions.
+- Nightly governance now refreshes stale entity synthesis in bounded batches,
+  and OpenClaw plugin manifests expose the new `entitySynthesisMaxTokens`
+  configuration budget.
+
 ## [v9.3.2] — 2026-04-12
 
 ### Added

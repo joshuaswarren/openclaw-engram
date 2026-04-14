@@ -3,10 +3,10 @@ import { sanitizeMemoryContent } from "./sanitize.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { collectNativeKnowledgeChunks, type NativeKnowledgeChunk } from "./native-knowledge.js";
-import { normalizeEntityName, type StorageManager } from "./storage.js";
+import { compareEntityTimestamps, normalizeEntityName, type StorageManager } from "./storage.js";
 import type { MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
 
-const ENTITY_INDEX_VERSION = 1;
+const ENTITY_INDEX_VERSION = 2;
 const RECENT_TRANSCRIPT_LOOKBACK_HOURS = 24;
 const INSTRUCTION_LIKE_RE = /\b(always|never|must|should|remember to|do not|don't|process|workflow|template|checklist|instruction)\b/i;
 const METADATA_WRAPPER_RE = /^(source|context|metadata|notes?):/i;
@@ -21,6 +21,13 @@ type EntityMentionIndexEntry = {
   aliases: string[];
   summary?: string;
   facts: string[];
+  timeline: Array<{
+    timestamp: string;
+    text: string;
+    source?: string;
+    sessionKey?: string;
+    principal?: string;
+  }>;
   relationships: Array<{ target: string; label: string }>;
   activity: Array<{ date: string; note: string }>;
   factCount: number;
@@ -91,6 +98,25 @@ function compactLine(value: string, maxLength: number = 220): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+function preferNonEmptyText(primary?: string | null, fallback?: string | null): string | undefined {
+  const normalizedPrimary = primary?.trim();
+  if (normalizedPrimary) return normalizedPrimary;
+  const normalizedFallback = fallback?.trim();
+  return normalizedFallback || undefined;
+}
+
+function dedupeHintSnippetsByText(snippets: EntityHintSnippet[]): EntityHintSnippet[] {
+  const seen = new Set<string>();
+  const result: EntityHintSnippet[] = [];
+  for (const snippet of snippets) {
+    const key = normalizeText(snippet.text);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(snippet);
+  }
+  return result;
+}
+
 function relationLine(entry: EntityMentionIndexEntry, relationship: { target: string; label: string }): string {
   const normalizedLabel = relationship.label.replace(/\s+/g, " ").trim();
   if (normalizedLabel.length === 0) return `${entry.name} is connected to ${relationship.target}`;
@@ -139,6 +165,31 @@ function sanitizeEntityFact(fact: string): string {
   if (!clean) return "";
   if (INSTRUCTION_LIKE_RE.test(clean) && clean.length > 100) return "";
   return clean;
+}
+
+function scoreHintSnippet(snippet: EntityHintSnippet, queryTokens: string[]): EntityHintSnippet | null {
+  const normalized = normalizeText(snippet.text);
+  if (!normalized) return null;
+  const scored = { ...snippet };
+  if (isLikelyInstructionLike(scored.text) && scored.kind !== "summary") {
+    scored.score -= 3;
+  }
+  const overlap = queryTokens.filter((token) => normalized.includes(token)).length;
+  scored.score += overlap * 2;
+  if (METADATA_WRAPPER_RE.test(scored.text)) scored.score -= 2;
+  if (scored.text.length <= 160) scored.score += 1;
+  return scored.score > 0 ? scored : null;
+}
+
+function sortTimelineEntriesDesc(
+  left: EntityMentionIndexEntry["timeline"][number],
+  right: EntityMentionIndexEntry["timeline"][number],
+): number {
+  const timestampOrder = compareEntityTimestamps(right.timestamp, left.timestamp);
+  if (timestampOrder !== 0) {
+    return timestampOrder;
+  }
+  return right.text.localeCompare(left.text);
 }
 
 function jaccardSimilarity(a: string, b: string): number {
@@ -217,6 +268,7 @@ function createPseudoNativeEntry(chunk: NativeKnowledgeChunk): EntityMentionInde
     type: chunk.sourceKind,
     aliases: uniqueStrings(chunk.aliases ?? []),
     facts: [],
+    timeline: [],
     relationships: [],
     activity: [],
     factCount: 0,
@@ -269,8 +321,9 @@ async function buildEntityMentionIndex(
       name: entity.name,
       type: entity.type,
       aliases: uniqueStrings(entity.aliases),
-      summary: entity.summary,
+      summary: preferNonEmptyText(entity.synthesis, entity.summary),
       facts: sanitizedFacts,
+      timeline: entity.timeline.map((entry) => ({ ...entry })),
       relationships: entity.relationships.map((relationship) => ({ ...relationship })),
       activity: entity.activity.map((activity) => ({ ...activity })),
       factCount: sanitizedFacts.length,
@@ -397,7 +450,7 @@ async function buildHintSnippets(
   }
 
   for (const fact of entry.facts) {
-    snippets.push({ text: fact, score: 7, kind: "fact" });
+    snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
   }
 
   for (const relationship of entry.relationships) {
@@ -434,17 +487,11 @@ async function buildHintSnippets(
 
   const deduped = new Map<string, EntityHintSnippet>();
   for (const snippet of snippets) {
-    const normalized = normalizeText(snippet.text);
-    if (!normalized) continue;
-    if (isLikelyInstructionLike(snippet.text) && snippet.kind !== "summary") {
-      snippet.score -= 3;
-    }
-    const overlap = queryTokens.filter((token) => normalizeText(snippet.text).includes(token)).length;
-    snippet.score += overlap * 2;
-    if (METADATA_WRAPPER_RE.test(snippet.text)) snippet.score -= 2;
-    if (snippet.text.length <= 160) snippet.score += 1;
+    const scored = scoreHintSnippet(snippet, queryTokens);
+    if (!scored) continue;
+    const normalized = normalizeText(scored.text);
     const existing = deduped.get(normalized);
-    if (!existing || snippet.score > existing.score) deduped.set(normalized, snippet);
+    if (!existing || scored.score > existing.score) deduped.set(normalized, scored);
   }
 
   return [...deduped.values()]
@@ -472,6 +519,7 @@ function formatEntityHintSection(
     snippets: EntityHintSnippet[];
     uncertainty: string | null;
   }>,
+  queryTokens: string[],
   mode: EntityQueryMode,
   maxRelatedEntities: number,
   maxChars: number,
@@ -479,7 +527,52 @@ function formatEntityHintSection(
   if (candidates.length === 0) return null;
   const lines: string[] = ["## entity_answer_hints", ""];
   for (const { candidate, snippets, uncertainty } of candidates) {
-    const topSnippets = snippets.slice(0, 3);
+    const hasSummary = Boolean(candidate.entry.summary?.trim());
+    const preferredTopSnippets = hasSummary
+      ? snippets.filter((snippet) => snippet.kind !== "fact")
+      : snippets;
+    let topSnippets = (
+      preferredTopSnippets.length > 0 ? preferredTopSnippets : snippets
+    ).slice(0, 3);
+    const buildTimelineSnippets = (seedExcludedTexts: Set<string>): EntityHintSnippet[] => {
+      const explicitTimelinePool = dedupeHintSnippetsByText(
+        (candidate.entry.timeline ?? [])
+          .slice()
+          .sort(sortTimelineEntriesDesc)
+          .map((entry) => sanitizeEntityFact(entry.text))
+          .filter(Boolean)
+          .map((text) => scoreHintSnippet({
+            text: compactLine(text, 180),
+            score: 7,
+            kind: "activity" as const,
+          }, queryTokens))
+          .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
+          .filter((snippet) => !seedExcludedTexts.has(normalizeText(snippet.text))),
+      ).slice(0, 2);
+      const activityTimelinePool = dedupeHintSnippetsByText(
+        snippets
+          .filter((snippet) => (
+            snippet.kind === "activity" || snippet.kind === "memory"
+          ) && !seedExcludedTexts.has(normalizeText(snippet.text))),
+      ).slice(0, 2);
+      return explicitTimelinePool.length > 0
+        ? explicitTimelinePool
+        : activityTimelinePool.length > 0
+          ? activityTimelinePool
+          : dedupeHintSnippetsByText(
+            snippets
+              .filter((snippet) => (
+                snippet.kind === "fact" || snippet.kind === "summary"
+              ) && !seedExcludedTexts.has(normalizeText(snippet.text))),
+          ).slice(0, 2);
+    };
+    const baseTopSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
+    const timelinePool = mode !== "direct" ? buildTimelineSnippets(baseTopSnippetTexts) : [];
+    if (mode !== "direct" && hasSummary && topSnippets.length < 2) {
+      if (timelinePool.length > 0) {
+        topSnippets = [...topSnippets, timelinePool[0]!].slice(0, 3);
+      }
+    }
     const topSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
     lines.push(`- target: ${candidate.entry.name} (${candidate.entry.type})`);
     if (candidate.source === "recent_turn") {
@@ -495,14 +588,9 @@ function formatEntityHintSection(
       }
     }
     if (mode !== "direct") {
-      const timeline = snippets
-        .filter((snippet) => (snippet.kind === "activity" || snippet.kind === "memory") && !topSnippetTexts.has(normalizeText(snippet.text)))
-        .slice(0, 2);
-      const fallbackTimeline = timeline.length > 0
-        ? timeline
-        : snippets
-          .filter((snippet) => (snippet.kind === "fact" || snippet.kind === "summary") && !topSnippetTexts.has(normalizeText(snippet.text)))
-          .slice(0, 2);
+      const fallbackTimeline = timelinePool.filter(
+        (snippet) => !topSnippetTexts.has(normalizeText(snippet.text)),
+      );
       if (fallbackTimeline.length > 0) {
         lines.push("- recent timeline:");
         for (const snippet of fallbackTimeline) {
@@ -560,7 +648,7 @@ export async function buildEntityRecallSection(options: BuildEntityRecallSection
     }),
   );
 
-  const section = formatEntityHintSection(enriched, mode, options.maxRelatedEntities, options.maxChars);
+  const section = formatEntityHintSection(enriched, queryTokens, mode, options.maxRelatedEntities, options.maxChars);
   if (!section) return null;
   return section;
 }

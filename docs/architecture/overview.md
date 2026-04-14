@@ -63,6 +63,7 @@ OpenClaw-hosted installs commonly use the following memory layout:
 │   └── aliases.json            # Entity name aliases
 └── state/
     ├── buffer.json             # Unbatched turns (survives restarts)
+    ├── entity-synthesis-queue.json # Stale entity syntheses waiting for bounded rebuild
     ├── meta.json               # Extraction count, timestamps, totals
     ├── topics.json             # Extracted topics (v1.2)
     ├── fact-hashes.txt         # Content-hash dedup index (v6.0)
@@ -70,6 +71,38 @@ OpenClaw-hosted installs commonly use the following memory layout:
 ```
 
 Standalone installs use the same logical structure under the configured Remnic memory directory.
+
+## Entity File Format
+
+Entity files use a two-layer layout so recall can inject compact current truth
+while preserving append-only evidence:
+
+```md
+---
+synthesis_updated_at: "2026-04-13T11:04:55.000Z"
+synthesis_version: 3
+---
+
+# Jane Doe
+
+**Type:** person
+**Updated:** 2026-04-13T11:04:55.000Z
+
+## Synthesis
+
+Jane Doe leads roadmap work and now owns release approvals.
+
+## Timeline
+
+- [2026-04-13T09:00:00.000Z] [source=extraction] [session=session-1] Led roadmap work.
+- [2026-04-13T11:00:00.000Z] [source=extraction] [session=session-2] Now owns release approvals.
+```
+
+Rules:
+- `## Synthesis` is mutable current truth and is the default recall surface.
+- `## Timeline` is append-only evidence with timestamp and provenance metadata.
+- A synthesis is stale when any timeline entry is newer than `synthesis_updated_at`.
+- `openclaw engram entities-migrate` rewrites legacy `Summary`/`Facts` files into this format.
 
 ## Memory File Format
 

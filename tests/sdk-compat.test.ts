@@ -53,6 +53,8 @@ test("partial new api (only registerMemoryPromptSection, no runtime) → detects
     registerMemoryPromptSection: () => {},
   };
 
+  const prev = process.env.OPENCLAW_SERVICE_VERSION;
+  delete process.env.OPENCLAW_SERVICE_VERSION;
   const caps = detectSdkCapabilities(api);
 
   assert.equal(caps.hasBeforePromptBuild, true);
@@ -63,6 +65,10 @@ test("partial new api (only registerMemoryPromptSection, no runtime) → detects
   assert.equal(caps.hasTypedHooks, true);
   assert.equal(caps.sdkVersion, "legacy");
   assert.equal(caps.registrationMode, undefined);
+
+  if (prev !== undefined) {
+    process.env.OPENCLAW_SERVICE_VERSION = prev;
+  }
 });
 
 test("new api with registrationMode only → isNewSdk true even without registerMemoryPromptSection or runtime", () => {
@@ -132,6 +138,27 @@ test("sdkVersion falls back to OPENCLAW_SERVICE_VERSION env var when runtime.ver
   assert.equal(caps.sdkVersion, "2026.3.22-env");
 
   // Restore env
+  if (prev !== undefined) {
+    process.env.OPENCLAW_SERVICE_VERSION = prev;
+  } else {
+    delete process.env.OPENCLAW_SERVICE_VERSION;
+  }
+});
+
+test("sdkVersion falls back to OPENCLAW_SERVICE_VERSION env var even without runtime namespace", () => {
+  const api: Record<string, unknown> = {
+    on: () => {},
+    registerMemoryPromptSection: () => {},
+  };
+
+  const prev = process.env.OPENCLAW_SERVICE_VERSION;
+  process.env.OPENCLAW_SERVICE_VERSION = "2026.3.22-env";
+
+  const caps = detectSdkCapabilities(api);
+
+  assert.equal(caps.hasRuntimeNamespace, false);
+  assert.equal(caps.sdkVersion, "2026.3.22-env");
+
   if (prev !== undefined) {
     process.env.OPENCLAW_SERVICE_VERSION = prev;
   } else {

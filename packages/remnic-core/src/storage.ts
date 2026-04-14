@@ -25,6 +25,7 @@ import type {
   EntityActivityEntry,
   EntityFile,
   EntityRelationship,
+  EntityTimelineEntry,
   ImportanceLevel,
   ImportanceScore,
   MemoryCategory,
@@ -420,14 +421,31 @@ function parseFrontmatter(
 }
 
 function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, pathRel: string): MemoryFrontmatter {
-  if (isArchivedMemoryPath(pathRel) && (!frontmatter.status || frontmatter.status === "active")) {
+  const normalizedPath = pathRel.split(path.sep).join("/");
+  let normalizedFrontmatter = frontmatter;
+
+  if (normalizedPath === "entities" || normalizedPath.startsWith("entities/") || normalizedPath.includes("/entities/")) {
+    const basename = path.basename(pathRel, ".md");
+    const inferredType = basename.includes("-") ? basename.split("-")[0] : "entity";
+    const existingTags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
+    normalizedFrontmatter = {
+      ...normalizedFrontmatter,
+      id: typeof normalizedFrontmatter.id === "string" && normalizedFrontmatter.id.trim().length > 0
+        ? normalizedFrontmatter.id
+        : basename,
+      category: "entity",
+      tags: existingTags.includes(inferredType) ? existingTags : [...existingTags, inferredType],
+    };
+  }
+
+  if (isArchivedMemoryPath(pathRel) && (!normalizedFrontmatter.status || normalizedFrontmatter.status === "active")) {
     return {
-      ...frontmatter,
+      ...normalizedFrontmatter,
       status: "archived",
     };
   }
 
-  return frontmatter;
+  return normalizedFrontmatter;
 }
 
 function inferCurrentStateStatus(
@@ -657,22 +675,507 @@ export function normalizeAttributePairs(pairs: Record<string, string>): string {
 // Entity file parsing / serialization (Knowledge Graph v7.0)
 // ---------------------------------------------------------------------------
 
+function parseEntityFrontmatter(
+  raw: string,
+): {
+  frontmatter: {
+    created?: string;
+    updated?: string;
+    synthesisUpdatedAt?: string;
+    synthesisTimelineCount?: number;
+    synthesisVersion?: number;
+    extraLines?: string[];
+  };
+  body: string;
+} {
+  const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
+  if (!match) {
+    return { frontmatter: {}, body: raw };
+  }
+
+  const values: Record<string, string> = {};
+  const extraLines: string[] = [];
+  const recognizedKeys = new Set([
+    "created",
+    "updated",
+    "synthesis_updated_at",
+    "synthesis_timeline_count",
+    "synthesis_version",
+  ]);
+  for (const line of match[1].split(/\r?\n/)) {
+    if (/^\s/.test(line)) {
+      extraLines.push(line);
+      continue;
+    }
+    const colonIdx = line.indexOf(":");
+    if (colonIdx === -1) {
+      extraLines.push(line);
+      continue;
+    }
+    const key = line.slice(0, colonIdx).trim();
+    if (!recognizedKeys.has(key)) {
+      extraLines.push(line);
+      continue;
+    }
+    const value = parseManagedFrontmatterValue(line.slice(colonIdx + 1));
+    values[key] = value;
+  }
+
+  const synthesisTimelineCount = Number.parseInt(values.synthesis_timeline_count ?? "", 10);
+  const synthesisVersion = Number.parseInt(values.synthesis_version ?? "", 10);
+  return {
+    frontmatter: {
+      created: values.created || undefined,
+      updated: values.updated || undefined,
+      synthesisUpdatedAt: values.synthesis_updated_at || undefined,
+      synthesisTimelineCount: Number.isFinite(synthesisTimelineCount) ? synthesisTimelineCount : undefined,
+      synthesisVersion: Number.isFinite(synthesisVersion) ? synthesisVersion : undefined,
+      extraLines,
+    },
+    body: match[2],
+  };
+}
+
+function parseManagedFrontmatterValue(rawValue: string): string {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return "";
+
+  const openingQuote = trimmed[0];
+  if (openingQuote === '"' || openingQuote === "'") {
+    let escaped = false;
+    for (let index = 1; index < trimmed.length; index += 1) {
+      const char = trimmed[index];
+      if (openingQuote === '"' && !escaped && char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (!escaped && char === openingQuote) {
+        return trimmed.slice(1, index);
+      }
+      escaped = false;
+    }
+    return trimmed.slice(1).replace(new RegExp(`${openingQuote}$`), "");
+  }
+
+  for (let index = 0; index < trimmed.length; index += 1) {
+    if (trimmed[index] === "#" && (index === 0 || /\s/.test(trimmed[index - 1] ?? ""))) {
+      return trimmed.slice(0, index).trimEnd();
+    }
+  }
+
+  return trimmed;
+}
+
+function readEntitySectionText(
+  lines: string[],
+  sectionNames: string[],
+  options: {
+    preserveBullets?: boolean;
+    skipTimelineBullets?: boolean;
+  } = {},
+): string | undefined {
+  const normalizedSections = new Set(sectionNames.map((name) => name.toLowerCase()));
+  let section = "";
+  const sectionLines: string[] = [];
+  for (const line of lines) {
+    if (line.startsWith("## ")) {
+      const nextSection = line.slice(3).trim().toLowerCase();
+      if (section && !normalizedSections.has(nextSection)) break;
+      section = normalizedSections.has(nextSection) ? nextSection : "";
+      continue;
+    }
+    if (!section) continue;
+    const trimmed = line.trim();
+    if (!trimmed) {
+      if (options.preserveBullets === true && sectionLines.length > 0 && sectionLines[sectionLines.length - 1] !== "") {
+        sectionLines.push("");
+      }
+      continue;
+    }
+    if (
+      options.skipTimelineBullets === true
+      && trimmed.startsWith("- ")
+      && isEntitySynthesisTimelinePromotionBullet(trimmed.slice(2))
+    ) {
+      continue;
+    }
+    if (trimmed.startsWith("- ") && options.preserveBullets !== true) continue;
+    sectionLines.push(options.preserveBullets === true ? line.trimEnd() : trimmed);
+  }
+  while (sectionLines[sectionLines.length - 1] === "") {
+    sectionLines.pop();
+  }
+  if (sectionLines.length === 0) return undefined;
+  return sectionLines.join(options.preserveBullets === true ? "\n" : " ");
+}
+
+function parseEntityTimelineBullet(
+  bullet: string,
+  fallbackTimestamp: string,
+): EntityTimelineEntry | null {
+  const trimmed = bullet.trim();
+  if (!trimmed) return null;
+
+  let rest = trimmed;
+  const entry: EntityTimelineEntry = {
+    timestamp: trimmed.startsWith("[") ? "" : fallbackTimestamp,
+    text: "",
+  };
+  const consumedMetadataSegments: string[] = [];
+  let literalSingleSourceSegment: string | undefined;
+
+  if (!trimmed.startsWith("[")) {
+    entry.text = trimmed;
+    return entry.text ? entry : null;
+  }
+
+  const firstEnd = trimmed.indexOf("]");
+  if (firstEnd === -1) {
+    entry.text = trimmed;
+    return entry.text ? entry : null;
+  }
+
+  const firstToken = trimmed.slice(1, firstEnd).trim();
+  const parsedTimestamp = Date.parse(firstToken);
+  if (Number.isFinite(parsedTimestamp)) {
+    entry.timestamp = firstToken || fallbackTimestamp;
+    rest = trimmed.slice(firstEnd + 1).trimStart();
+  }
+
+  while (rest.startsWith("[")) {
+    const end = findEntityTimelineTokenEnd(rest);
+    if (end === -1) break;
+    const rawSegment = rest.slice(0, end + 1);
+    const token = rest.slice(1, end).trim();
+    const equalsIdx = token.indexOf("=");
+    if (equalsIdx === -1) {
+      if (rest === trimmed) {
+        entry.text = trimmed;
+        return entry.text ? entry : null;
+      }
+      break;
+    }
+    const key = token.slice(0, equalsIdx).trim().toLowerCase();
+    const value = unescapeEntityTimelineMetadataValue(token.slice(equalsIdx + 1).trim());
+    if (!value) break;
+    const nextRest = rest.slice(end + 1).trimStart();
+    switch (key) {
+      case "source_meta":
+        entry.source = value;
+        break;
+      case "source":
+        if (
+          consumedMetadataSegments.length === 0
+          && !nextRest.startsWith("[")
+          && nextRest.length > 0
+          && !isManagedEntityTimelineSource(value)
+        ) {
+          literalSingleSourceSegment = rawSegment;
+          rest = nextRest;
+          break;
+        }
+        entry.source = value;
+        break;
+      case "session":
+      case "sessionkey":
+        entry.sessionKey = value;
+        break;
+      case "principal":
+        entry.principal = value;
+        break;
+      default:
+        entry.text = rest.trim();
+        return entry.text ? entry : null;
+    }
+    if (literalSingleSourceSegment) break;
+    consumedMetadataSegments.push(rawSegment);
+    rest = nextRest;
+  }
+
+  if (literalSingleSourceSegment) {
+    return {
+      timestamp: entry.timestamp,
+      text: `${literalSingleSourceSegment} ${rest}`.trim(),
+    };
+  }
+
+  entry.text = rest.trim();
+  if (!entry.text) return null;
+  return entry;
+}
+
+function isEntityTimelineLikeBullet(bullet: string): boolean {
+  const trimmed = bullet.trim();
+  if (!trimmed.startsWith("[")) return false;
+
+  const firstEnd = findEntityTimelineTokenEnd(trimmed);
+  if (firstEnd === -1) return false;
+
+  const firstToken = trimmed.slice(1, firstEnd).trim();
+  if (!firstToken) return false;
+  if (looksLikeEntityTimelineTimestamp(firstToken)) return true;
+
+  const equalsIdx = firstToken.indexOf("=");
+  if (equalsIdx === -1) return false;
+
+  switch (firstToken.slice(0, equalsIdx).trim().toLowerCase()) {
+    case "source":
+    case "source_meta":
+    case "session":
+    case "sessionkey":
+    case "principal":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function isEntitySynthesisTimelinePromotionBullet(bullet: string): boolean {
+  const trimmed = bullet.trim();
+  if (!trimmed.startsWith("[")) return false;
+
+  const firstEnd = findEntityTimelineTokenEnd(trimmed);
+  if (firstEnd === -1) return false;
+
+  const firstToken = trimmed.slice(1, firstEnd).trim();
+  return looksLikeEntityTimelineTimestamp(firstToken);
+}
+
+function looksLikeEntityTimelineTimestamp(token: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(token)) return false;
+  return Number.isFinite(Date.parse(token));
+}
+
+function isManagedEntityTimelineSource(source: string): boolean {
+  switch (source.trim().toLowerCase()) {
+    case "artifact":
+    case "chunking":
+    case "cli-migrate":
+    case "compounding-promotion":
+    case "consolidation":
+    case "contradiction-detection":
+    case "entity_extraction":
+    case "explicit":
+    case "explicit-inline":
+    case "explicit-inline-review":
+    case "explicit-review":
+    case "extraction":
+    case "extraction-shared-promotion":
+    case "manual":
+    case "migration":
+    case "migration-rechunk":
+    case "proactive":
+    case "replay":
+    case "semantic-consolidation":
+    case "unknown":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function findEntityTimelineTokenEnd(input: string): number {
+  let escaped = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "]") return index;
+  }
+  return -1;
+}
+
+function escapeEntityTimelineMetadataValue(value: string): string {
+  let escaped = "";
+  for (const char of value) {
+    switch (char) {
+      case "\\":
+        escaped += "\\\\";
+        break;
+      case "]":
+        escaped += "\\]";
+        break;
+      case "\n":
+        escaped += "\\n";
+        break;
+      case "\r":
+        escaped += "\\r";
+        break;
+      case "\t":
+        escaped += "\\t";
+        break;
+      default: {
+        const codePoint = char.codePointAt(0) ?? 0;
+        if (codePoint < 0x20) {
+          escaped += `\\u${codePoint.toString(16).padStart(4, "0")}`;
+        } else {
+          escaped += char;
+        }
+      }
+    }
+  }
+  return escaped;
+}
+
+function unescapeEntityTimelineMetadataValue(value: string): string {
+  if (!value.includes("\\")) return value;
+
+  let result = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char !== "\\") {
+      result += char;
+      continue;
+    }
+
+    const next = value[index + 1];
+    if (!next) {
+      result += "\\";
+      break;
+    }
+
+    switch (next) {
+      case "n":
+        result += "\n";
+        index += 1;
+        break;
+      case "r":
+        result += "\r";
+        index += 1;
+        break;
+      case "t":
+        result += "\t";
+        index += 1;
+        break;
+      case "u": {
+        const hex = value.slice(index + 2, index + 6);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          result += String.fromCharCode(parseInt(hex, 16));
+          index += 5;
+          break;
+        }
+        result += "u";
+        index += 1;
+        break;
+      }
+      default:
+        result += next;
+        index += 1;
+        break;
+    }
+  }
+  return result;
+}
+
+function serializeEntityTimelineEntry(entry: EntityTimelineEntry): string {
+  const tokens: string[] = [];
+  if (entry.timestamp.trim().length > 0) {
+    tokens.push(`[${entry.timestamp}]`);
+  }
+  if (entry.source) {
+    const sourceKey = isManagedEntityTimelineSource(entry.source) ? "source" : "source_meta";
+    tokens.push(`[${sourceKey}=${escapeEntityTimelineMetadataValue(entry.source)}]`);
+  }
+  if (entry.sessionKey) {
+    tokens.push(`[session=${escapeEntityTimelineMetadataValue(entry.sessionKey)}]`);
+  }
+  if (entry.principal) {
+    tokens.push(`[principal=${escapeEntityTimelineMetadataValue(entry.principal)}]`);
+  }
+  const serializedMetadata = tokens.length > 0 ? `${tokens.join(" ")} ` : "";
+  return `- ${serializedMetadata}${entry.text}`.trimEnd();
+}
+
+function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
+  return [...new Set(
+    timeline
+      .map((entry) => entry.text.trim())
+      .filter((entry) => entry.length > 0),
+  )];
+}
+
+export function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
+  let latestRaw: string | undefined;
+  for (const entry of entity.timeline) {
+    const timestamp = entry.timestamp.trim();
+    if (!timestamp) continue;
+    if (!latestRaw || compareEntityTimestamps(timestamp, latestRaw) > 0) {
+      latestRaw = timestamp;
+    }
+  }
+  return latestRaw;
+}
+
+export function compareEntityTimestamps(left?: string, right?: string): number {
+  const leftValue = left?.trim() ?? "";
+  const rightValue = right?.trim() ?? "";
+
+  if (!leftValue && !rightValue) return 0;
+  if (!leftValue) return -1;
+  if (!rightValue) return 1;
+
+  const leftMs = Date.parse(leftValue);
+  const rightMs = Date.parse(rightValue);
+  const leftParsed = Number.isFinite(leftMs);
+  const rightParsed = Number.isFinite(rightMs);
+
+  if (leftParsed && rightParsed) {
+    if (leftMs === rightMs) return 0;
+    return leftMs > rightMs ? 1 : -1;
+  }
+  if (leftParsed) return 1;
+  if (rightParsed) return -1;
+  return leftValue.localeCompare(rightValue);
+}
+
+export function isEntitySynthesisStale(entity: EntityFile): boolean {
+  if (entity.timeline.length === 0) return false;
+  if (!entity.synthesis?.trim()) return true;
+  if (!entity.synthesisUpdatedAt?.trim()) return true;
+  if (entity.synthesisTimelineCount === undefined) return true;
+  const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
+  if (!latestTimelineTimestamp) {
+    return entity.timeline.length > entity.synthesisTimelineCount;
+  }
+  const timelineFreshness = compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt);
+  if (timelineFreshness > 0) return true;
+  return entity.timeline.length > entity.synthesisTimelineCount;
+}
+
 /**
  * Parse an entity markdown file into a structured EntityFile.
  * Backward compatible: old files without new sections get empty arrays.
  */
 export function parseEntityFile(content: string): EntityFile {
-  const lines = content.split("\n");
+  const { frontmatter, body } = parseEntityFrontmatter(content);
+  const lines = body.split("\n");
+  const recognizedSections = new Set([
+    "facts",
+    "timeline",
+    "summary",
+    "synthesis",
+    "connected to",
+    "activity",
+    "aliases",
+  ]);
 
   // Header
   let name = "";
   let type = "other";
+  let created = frontmatter.created ?? "";
   let updated = "";
-  let summary: string | undefined;
-  const facts: string[] = [];
+  const legacyFacts: string[] = [];
   const relationships: EntityRelationship[] = [];
   const activity: EntityActivityEntry[] = [];
   const aliases: string[] = [];
+  const timeline: EntityTimelineEntry[] = [];
+  const extraSections: Array<{ title: string; lines: string[] }> = [];
 
   // Parse name from first heading
   const headingLine = lines.find((l) => l.startsWith("# "));
@@ -685,13 +1188,45 @@ export function parseEntityFile(content: string): EntityFile {
   // Parse updated
   const updatedLine = lines.find((l) => l.startsWith("**Updated:**"));
   if (updatedLine) updated = updatedLine.replace("**Updated:**", "").trim();
+  if (!updated) updated = frontmatter.updated ?? frontmatter.created ?? "";
+  if (!created) created = updated;
+
+  const headingLineIndex = lines.findIndex((l) => l.startsWith("# "));
+  const firstSectionIndex = lines.findIndex((l) => l.startsWith("## "));
+  const preSectionStartIndex = headingLineIndex > -1 ? headingLineIndex + 1 : 0;
+  const preSectionCandidates = firstSectionIndex > -1
+    ? lines.slice(preSectionStartIndex, firstSectionIndex)
+    : lines.slice(preSectionStartIndex);
+  const preSectionLines = preSectionCandidates.filter(
+    (line) => !line.startsWith("**Type:**") && !line.startsWith("**Updated:**"),
+  );
+  const normalizedPreSectionLines = [...preSectionLines];
+  while (normalizedPreSectionLines[0] === "") {
+    normalizedPreSectionLines.shift();
+  }
+  const preservedPreSectionLines = normalizedPreSectionLines.some((line) => line.trim().length > 0)
+    ? normalizedPreSectionLines
+    : [];
+
+  const fallbackTimestamp = updated || created || "";
 
   // Detect which section we're in
   let section = "";
+  let currentExtraSection: { title: string; lines: string[] } | null = null;
   for (const line of lines) {
     if (line.startsWith("## ")) {
-      section = line.slice(3).trim().toLowerCase();
+      const heading = line.slice(3).trim();
+      section = heading.toLowerCase();
+      if (recognizedSections.has(section)) {
+        currentExtraSection = null;
+      } else {
+        currentExtraSection = { title: heading, lines: [] };
+        extraSections.push(currentExtraSection);
+      }
       continue;
+    }
+    if (currentExtraSection) {
+      currentExtraSection.lines.push(line);
     }
     if (!line.startsWith("- ")) continue;
 
@@ -700,10 +1235,26 @@ export function parseEntityFile(content: string): EntityFile {
 
     switch (section) {
       case "facts":
-        facts.push(bullet);
+        legacyFacts.push(bullet);
         break;
+      case "timeline": {
+        const parsed = parseEntityTimelineBullet(
+          bullet,
+          fallbackTimestamp,
+        );
+        if (parsed) timeline.push(parsed);
+        break;
+      }
       case "summary":
-        // Summary is typically a single line after the heading, not a bullet
+      case "synthesis":
+        if (isEntitySynthesisTimelinePromotionBullet(bullet)) {
+          const parsed = parseEntityTimelineBullet(
+            bullet,
+            fallbackTimestamp,
+          );
+          if (parsed) timeline.push(parsed);
+        }
+        // Summary/synthesis is typically a paragraph after the heading, not a bullet.
         break;
       case "connected to": {
         // Format: [[target-entity]] — relationship label
@@ -727,45 +1278,121 @@ export function parseEntityFile(content: string): EntityFile {
     }
   }
 
-  // Parse summary: text between ## Summary heading and next ## heading (not bulleted)
-  const summaryIdx = lines.findIndex((l) => l.startsWith("## Summary"));
-  if (summaryIdx !== -1) {
-    const summaryLines: string[] = [];
-    for (let i = summaryIdx + 1; i < lines.length; i++) {
-      if (lines[i].startsWith("## ")) break;
-      const trimmed = lines[i].trim();
-      if (trimmed) summaryLines.push(trimmed);
+  const legacyFactTimelineEntries = legacyFacts.map((fact) => ({
+    timestamp: fallbackTimestamp,
+    text: fact,
+    source: "migration" as const,
+  }));
+
+  if (legacyFactTimelineEntries.length > 0) {
+    const existingTimelineFacts = new Set(
+      timeline
+        .map((entry) => entry.text.trim())
+        .filter((entry) => entry.length > 0),
+    );
+    for (const fact of legacyFactTimelineEntries) {
+      const normalizedFact = fact.text.trim();
+      if (!normalizedFact || existingTimelineFacts.has(normalizedFact)) continue;
+      timeline.push(fact);
+      existingTimelineFacts.add(normalizedFact);
     }
-    if (summaryLines.length > 0) summary = summaryLines.join(" ");
   }
 
-  return { name, type, updated, facts, summary, relationships, activity, aliases };
+  const synthesis =
+    readEntitySectionText(lines, ["Synthesis"], { preserveBullets: true, skipTimelineBullets: true })
+    ?? readEntitySectionText(lines, ["Summary"], { preserveBullets: true, skipTimelineBullets: true });
+  const facts = dedupeEntityFacts(timeline);
+  const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
+  const synthesisTimelineCount = frontmatter.synthesisTimelineCount;
+
+  return {
+    name,
+    type,
+    created,
+    updated,
+    extraFrontmatterLines: frontmatter.extraLines ?? [],
+    preSectionLines: preservedPreSectionLines,
+    facts,
+    summary: synthesis,
+    synthesis,
+    synthesisUpdatedAt,
+    synthesisTimelineCount,
+    synthesisVersion: frontmatter.synthesisVersion,
+    timeline,
+    relationships,
+    activity,
+    aliases,
+    extraSections,
+  };
 }
 
 /**
  * Serialize an EntityFile back to markdown.
- * Only emits sections that have content (except Facts which is always emitted).
+ * Writes the compiled-truth + timeline format while remaining parse-compatible
+ * with the legacy in-memory `summary` and `facts` fields.
  */
 export function serializeEntityFile(entity: EntityFile): string {
+  const synthesis = entity.synthesis || entity.summary || "";
+  const created = entity.created?.trim() || entity.updated || new Date().toISOString();
+  const updated = entity.updated || created;
+  const timeline = entity.timeline;
+  const legacyFacts = timeline.length === 0 ? dedupeEntityFacts(
+    entity.facts.map((fact) => ({
+      timestamp: updated,
+      text: fact,
+    })),
+  ) : [];
+  const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
+  const synthesisTimelineCount = entity.synthesisTimelineCount;
+  const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
+
   const lines: string[] = [
+    "---",
+    `created: ${created}`,
+    `updated: ${updated}`,
+    `synthesis_updated_at: "${synthesisUpdatedAt}"`,
+    ...(synthesisTimelineCount === undefined
+      ? []
+      : [`synthesis_timeline_count: ${synthesisTimelineCount}`]),
+    `synthesis_version: ${synthesisVersion}`,
+    ...(entity.extraFrontmatterLines ?? []),
+    "---",
+    "",
     `# ${entity.name}`,
     "",
     `**Type:** ${entity.type}`,
-    `**Updated:** ${entity.updated || new Date().toISOString()}`,
+    `**Updated:** ${updated}`,
     "",
   ];
 
-  // Summary (optional)
-  if (entity.summary) {
-    lines.push("## Summary", "", entity.summary, "");
+  if ((entity.preSectionLines ?? []).length > 0) {
+    lines.push(...(entity.preSectionLines ?? []));
+    if (entity.preSectionLines?.[entity.preSectionLines.length - 1] !== "") {
+      lines.push("");
+    }
   }
 
-  // Facts (always emitted)
-  lines.push("## Facts", "");
-  for (const f of entity.facts) {
-    lines.push(`- ${f}`);
+  lines.push("## Synthesis", "");
+  if (synthesis) {
+    lines.push(synthesis);
   }
   lines.push("");
+
+  if (timeline.length > 0 || legacyFacts.length === 0) {
+    lines.push("## Timeline", "");
+    for (const entry of timeline) {
+      lines.push(serializeEntityTimelineEntry(entry));
+    }
+    lines.push("");
+  }
+
+  if (legacyFacts.length > 0) {
+    lines.push("## Facts", "");
+    for (const fact of legacyFacts) {
+      lines.push(`- ${fact}`);
+    }
+    lines.push("");
+  }
 
   // Connected to (optional)
   if (entity.relationships.length > 0) {
@@ -792,6 +1419,14 @@ export function serializeEntityFile(entity: EntityFile): string {
       lines.push(`- ${alias}`);
     }
     lines.push("");
+  }
+
+  for (const section of entity.extraSections ?? []) {
+    lines.push(`## ${section.title}`);
+    lines.push(...section.lines);
+    if (section.lines[section.lines.length - 1] !== "") {
+      lines.push("");
+    }
   }
 
   return lines.join("\n");
@@ -950,6 +1585,9 @@ export class StorageManager {
   }
   private get stateDir(): string {
     return path.join(this.baseDir, "state");
+  }
+  private get entitySynthesisQueuePath(): string {
+    return path.join(this.stateDir, "entity-synthesis-queue.json");
   }
   private get factHashIndexReadyPath(): string {
     return path.join(this.stateDir, "fact-hashes.ready");
@@ -1460,6 +2098,12 @@ export class StorageManager {
     name: string,
     type: string,
     facts: string[],
+    options: {
+      timestamp?: string;
+      source?: string;
+      sessionKey?: string;
+      principal?: string;
+    } = {},
   ): Promise<string> {
     await this.ensureDirectories();
     if (typeof name !== "string" || !name.trim() || typeof type !== "string" || !type.trim()) {
@@ -1469,7 +2113,14 @@ export class StorageManager {
       });
       return "";
     }
-    const safeFacts = Array.isArray(facts) ? facts.filter((f) => typeof f === "string") : [];
+    const safeFacts = Array.isArray(facts)
+      ? [...new Set(
+        facts
+          .filter((fact) => typeof fact === "string")
+          .map((fact) => fact.trim())
+          .filter((fact) => fact.length > 0),
+      )]
+      : [];
     let normalized = normalizeEntityName(name, type);
 
     // Check for fuzzy match against existing entities before creating a new file
@@ -1483,8 +2134,19 @@ export class StorageManager {
 
     // Parse existing file to preserve relationships/activity/aliases/summary
     let entity: EntityFile = {
-      name, type, updated: new Date().toISOString(),
-      facts: [], summary: undefined, relationships: [], activity: [], aliases: [],
+      name,
+      type,
+      created: "",
+      updated: new Date().toISOString(),
+      facts: [],
+      summary: undefined,
+      synthesis: undefined,
+      synthesisUpdatedAt: undefined,
+      synthesisVersion: undefined,
+      timeline: [],
+      relationships: [],
+      activity: [],
+      aliases: [],
     };
     try {
       const existing = await readFile(filePath, "utf-8");
@@ -1493,10 +2155,33 @@ export class StorageManager {
       // File doesn't exist yet
     }
 
-    // Merge facts (dedup)
-    entity.facts = [...new Set([...entity.facts, ...safeFacts])];
+    const timestamp = options.timestamp?.trim() || new Date().toISOString();
+    const source = options.source?.trim() || undefined;
+    const sessionKey = options.sessionKey?.trim() || undefined;
+    const principal = options.principal?.trim() || undefined;
+    for (const fact of safeFacts) {
+      const nextEntry = {
+        timestamp,
+        text: fact,
+        ...(source ? { source } : {}),
+        ...(sessionKey ? { sessionKey } : {}),
+        ...(principal ? { principal } : {}),
+      };
+      const alreadyPresent = entity.timeline.some((entry) =>
+        entry.timestamp === nextEntry.timestamp
+        && entry.text === nextEntry.text
+        && entry.source === nextEntry.source
+        && entry.sessionKey === nextEntry.sessionKey
+        && entry.principal === nextEntry.principal
+      );
+      if (alreadyPresent) continue;
+      entity.timeline.push(nextEntry);
+    }
+    entity.facts = dedupeEntityFacts(entity.timeline);
+    entity.summary = entity.synthesis || entity.summary;
     entity.name = name;
     entity.type = type;
+    entity.created = entity.created || timestamp;
     entity.updated = new Date().toISOString();
 
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
@@ -3481,24 +4166,160 @@ export class StorageManager {
   }
 
   /**
-   * Set or update the summary of an entity file.
+   * Set or rewrite the synthesis layer of an entity file.
    */
-  async updateEntitySummary(name: string, summary: string): Promise<void> {
+  async updateEntitySynthesis(
+    name: string,
+    synthesis: string,
+    options: {
+      entityUpdatedAt?: string;
+      synthesisTimelineCount?: number;
+      updatedAt?: string;
+      incrementVersion?: boolean;
+    } = {},
+  ): Promise<void> {
     const filePath = path.join(this.entitiesDir, `${name}.md`);
     let entity: EntityFile;
     try {
       const content = await readFile(filePath, "utf-8");
       entity = parseEntityFile(content);
     } catch {
-      log.debug(`updateEntitySummary: entity file ${name}.md not found`);
+      log.debug(`updateEntitySynthesis: entity file ${name}.md not found`);
       return;
     }
 
-    entity.summary = summary;
-    entity.updated = new Date().toISOString();
+    const updatedAt = options.updatedAt?.trim() || entity.synthesisUpdatedAt?.trim() || undefined;
+    const entityUpdatedAt = options.entityUpdatedAt?.trim() || updatedAt || entity.updated || new Date().toISOString();
+    const synthesisTimelineCount = Number.isInteger(options.synthesisTimelineCount)
+      && (options.synthesisTimelineCount ?? 0) >= 0
+      ? options.synthesisTimelineCount
+      : undefined;
+    entity.synthesis = synthesis.trim();
+    entity.summary = entity.synthesis;
+    entity.synthesisUpdatedAt = updatedAt;
+    entity.synthesisTimelineCount = synthesisTimelineCount;
+    entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
+      + (options.incrementVersion === false ? 0 : 1);
+    entity.updated = entityUpdatedAt;
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    await this.removeEntitySynthesisQueueEntries([name]);
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
+  }
+
+  /**
+   * Backward-compatible alias for legacy callers/tests.
+   */
+  async updateEntitySummary(name: string, summary: string): Promise<void> {
+    const updatedAt = new Date().toISOString();
+    let synthesisTimelineCount: number | undefined;
+    try {
+      const filePath = path.join(this.entitiesDir, `${name}.md`);
+      const content = await readFile(filePath, "utf-8");
+      synthesisTimelineCount = parseEntityFile(content).timeline.length;
+    } catch {
+      synthesisTimelineCount = undefined;
+    }
+    await this.updateEntitySynthesis(name, summary, {
+      entityUpdatedAt: updatedAt,
+      synthesisTimelineCount,
+      updatedAt,
+    });
+  }
+
+  async readEntitySynthesisQueue(): Promise<string[]> {
+    try {
+      const raw = await readFile(this.entitySynthesisQueuePath, "utf-8");
+      const parsed = JSON.parse(raw) as { entityNames?: unknown };
+      return Array.isArray(parsed.entityNames)
+        ? parsed.entityNames.filter((value): value is string => typeof value === "string")
+        : [];
+    } catch {
+      return [];
+    }
+  }
+
+  async refreshEntitySynthesisQueue(): Promise<string[]> {
+    const entityNames = await this.listEntityNames();
+    const entityQueueEntries = await Promise.all(
+      entityNames.map(async (entityName) => {
+        const raw = await this.readEntity(entityName);
+        if (!raw) return null;
+        return {
+          entityName,
+          entity: parseEntityFile(raw),
+        };
+      }),
+    );
+    const staleEntityNames = entityQueueEntries
+      .filter((entry): entry is { entityName: string; entity: EntityFile } => entry !== null)
+      .filter(({ entity }) => isEntitySynthesisStale(entity))
+      .sort((left, right) => {
+        const leftTs = latestEntityTimelineTimestamp(left.entity) ?? "";
+        const rightTs = latestEntityTimelineTimestamp(right.entity) ?? "";
+        return compareEntityTimestamps(rightTs, leftTs);
+      })
+      .map(({ entityName }) => entityName);
+
+    await mkdir(this.stateDir, { recursive: true });
+    await writeFile(
+      this.entitySynthesisQueuePath,
+      JSON.stringify(
+        {
+          updatedAt: new Date().toISOString(),
+          entityNames: staleEntityNames,
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf-8",
+    );
+    return staleEntityNames;
+  }
+
+  async removeEntitySynthesisQueueEntries(entityNames: string[]): Promise<void> {
+    if (entityNames.length === 0) return;
+    const queue = await this.readEntitySynthesisQueue();
+    if (queue.length === 0) return;
+    const removals = new Set(entityNames);
+    const nextQueue = queue.filter((name) => !removals.has(name));
+    await mkdir(this.stateDir, { recursive: true });
+    await writeFile(
+      this.entitySynthesisQueuePath,
+      JSON.stringify(
+        {
+          updatedAt: new Date().toISOString(),
+          entityNames: nextQueue,
+        },
+        null,
+        2,
+      ) + "\n",
+      "utf-8",
+    );
+  }
+
+  async migrateEntityFilesToCompiledTruthTimeline(): Promise<{
+    total: number;
+    migrated: number;
+  }> {
+    const entityNames = await this.listEntityNames();
+    let migrated = 0;
+    for (const entityName of entityNames) {
+      const raw = await this.readEntity(entityName);
+      if (!raw) continue;
+      const serialized = serializeEntityFile(parseEntityFile(raw));
+      if (raw.trimEnd() === serialized.trimEnd()) continue;
+      await writeFile(path.join(this.entitiesDir, `${entityName}.md`), serialized, "utf-8");
+      migrated += 1;
+    }
+    if (migrated > 0) {
+      this.invalidateKnowledgeIndexCache();
+      this.bumpMemoryStatusVersion();
+    }
+    return {
+      total: entityNames.length,
+      migrated,
+    };
   }
 
   // ---------------------------------------------------------------------------
@@ -3617,7 +4438,7 @@ export class StorageManager {
       type: e.type,
       score: StorageManager.scoreEntity(e, now),
       factCount: e.facts.length,
-      summary: e.summary,
+      summary: e.synthesis ?? e.summary,
       topRelationships: e.relationships.slice(0, 3).map((r) => r.target),
     }));
 
@@ -3704,12 +4525,21 @@ export class StorageManager {
         const mergedEntity: EntityFile = {
           name: "",
           type: "other",
+          created: "",
           updated: "",
+          extraFrontmatterLines: [],
+          preSectionLines: [],
           facts: [],
           summary: undefined,
+          synthesis: undefined,
+          synthesisUpdatedAt: undefined,
+          synthesisTimelineCount: undefined,
+          synthesisVersion: undefined,
+          timeline: [],
           relationships: [],
           activity: [],
           aliases: [],
+          extraSections: [],
         };
 
         for (const file of files) {
@@ -3724,8 +4554,34 @@ export class StorageManager {
             }
 
             // Keep latest update time
-            if (!mergedEntity.updated || parsed.updated > mergedEntity.updated) {
+            if (!mergedEntity.updated || compareEntityTimestamps(parsed.updated, mergedEntity.updated) > 0) {
               mergedEntity.updated = parsed.updated;
+            }
+
+            const parsedCreated = parsed.created || parsed.updated;
+            const mergedCreated = mergedEntity.created?.trim() || "";
+            const parsedCreatedMs = parsedCreated ? Date.parse(parsedCreated) : Number.NaN;
+            const mergedCreatedMs = mergedCreated ? Date.parse(mergedCreated) : Number.NaN;
+            const parsedCreatedIsValid = Number.isFinite(parsedCreatedMs);
+            const mergedCreatedIsValid = Number.isFinite(mergedCreatedMs);
+            if (
+              parsedCreated &&
+              (
+                !mergedCreated
+                || (parsedCreatedIsValid && !mergedCreatedIsValid)
+                || (
+                  parsedCreatedIsValid
+                  && mergedCreatedIsValid
+                  && parsedCreatedMs < mergedCreatedMs
+                )
+                || (
+                  !parsedCreatedIsValid
+                  && !mergedCreatedIsValid
+                  && compareEntityTimestamps(parsedCreated, mergedCreated) < 0
+                )
+              )
+            ) {
+              mergedEntity.created = parsedCreated;
             }
 
             // Keep longest/best name
@@ -3733,13 +4589,33 @@ export class StorageManager {
               mergedEntity.name = parsed.name;
             }
 
-            // Keep first non-empty summary
-            if (!mergedEntity.summary && parsed.summary) {
+            const parsedSynthesisUpdatedAt = parsed.synthesisUpdatedAt?.trim() || undefined;
+            const mergedSynthesisUpdatedAt = mergedEntity.synthesisUpdatedAt?.trim() || undefined;
+
+            // Prefer the freshest synthesis/summary available.
+            if (
+              parsed.synthesis &&
+              (!mergedEntity.synthesis
+                || (!mergedSynthesisUpdatedAt && Boolean(parsedSynthesisUpdatedAt))
+                || (Boolean(mergedSynthesisUpdatedAt)
+                  && Boolean(parsedSynthesisUpdatedAt)
+                  && compareEntityTimestamps(parsedSynthesisUpdatedAt, mergedSynthesisUpdatedAt) > 0))
+            ) {
+              mergedEntity.synthesis = parsed.synthesis;
+              mergedEntity.summary = parsed.synthesis;
+              mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
+              mergedEntity.synthesisTimelineCount = parsed.synthesisTimelineCount;
+              mergedEntity.synthesisVersion = parsed.synthesisVersion;
+            } else if (!mergedEntity.summary && parsed.summary) {
               mergedEntity.summary = parsed.summary;
+              mergedEntity.synthesis = parsed.summary;
+              mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
+              mergedEntity.synthesisTimelineCount = parsed.synthesisTimelineCount;
+              mergedEntity.synthesisVersion = parsed.synthesisVersion;
             }
 
-            // Collect all facts
-            mergedEntity.facts.push(...parsed.facts);
+            // Collect all timeline evidence; facts are derived below.
+            mergedEntity.timeline.push(...parsed.timeline);
 
             // Collect relationships (dedup later)
             mergedEntity.relationships.push(...parsed.relationships);
@@ -3749,13 +4625,34 @@ export class StorageManager {
 
             // Collect aliases
             mergedEntity.aliases.push(...parsed.aliases);
+
+            // Preserve custom metadata and user-authored freeform content from fragments.
+            mergedEntity.extraFrontmatterLines!.push(...(parsed.extraFrontmatterLines ?? []));
+            mergedEntity.preSectionLines!.push(...(parsed.preSectionLines ?? []));
+            mergedEntity.extraSections!.push(...(parsed.extraSections ?? []).map((section) => ({
+              title: section.title,
+              lines: [...section.lines],
+            })));
           } catch {
             // Skip unreadable
           }
         }
 
-        // Deduplicate facts
-        mergedEntity.facts = [...new Set(mergedEntity.facts)];
+        // Deduplicate timeline entries and derive facts from the timeline.
+        const timelineKeys = new Set<string>();
+        mergedEntity.timeline = mergedEntity.timeline.filter((entry) => {
+          const key = JSON.stringify([
+            entry.timestamp,
+            entry.source ?? "",
+            entry.sessionKey ?? "",
+            entry.principal ?? "",
+            entry.text,
+          ]);
+          if (timelineKeys.has(key)) return false;
+          timelineKeys.add(key);
+          return true;
+        });
+        mergedEntity.facts = dedupeEntityFacts(mergedEntity.timeline);
 
         // Deduplicate relationships by target+label
         const relKeys = new Set<string>();
@@ -3780,12 +4677,21 @@ export class StorageManager {
         // Deduplicate aliases
         mergedEntity.aliases = [...new Set(mergedEntity.aliases)];
 
+        const extraSectionKeys = new Set<string>();
+        mergedEntity.extraSections = (mergedEntity.extraSections ?? []).filter((section) => {
+          const key = `${section.title}::${section.lines.join("\n")}`;
+          if (extraSectionKeys.has(key)) return false;
+          extraSectionKeys.add(key);
+          return true;
+        });
+
         // Fallback name from canonical
         if (!mergedEntity.name) {
           const dashIdx = canonical.indexOf("-");
           mergedEntity.name = dashIdx !== -1 ? canonical.slice(dashIdx + 1) : canonical;
         }
 
+        mergedEntity.created = mergedEntity.created || mergedEntity.updated || new Date().toISOString();
         mergedEntity.updated = mergedEntity.updated || new Date().toISOString();
 
         const canonicalPath = path.join(this.entitiesDir, `${canonical}.md`);

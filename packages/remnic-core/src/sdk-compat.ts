@@ -38,17 +38,18 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
     typeof (api as any).runtime === "object" && (api as any).runtime !== null;
   const hasRegistrationMode = typeof (api as any).registrationMode === "string";
 
-  const sdkVersion: string =
-    (hasRuntimeNamespace && typeof (api as any).runtime?.version === "string"
+  const runtimeVersion =
+    hasRuntimeNamespace && typeof (api as any).runtime?.version === "string"
       ? (api as any).runtime.version
-      : null) ??
-    readEnvVar("OPENCLAW_SERVICE_VERSION") ??
+      : null;
+  const isNewSdk =
+    hasRegisterMemoryPromptSection || hasRegisterMemoryCapability || hasRuntimeNamespace || hasRegistrationMode;
+  const sdkVersion: string =
+    runtimeVersion ??
+    (isNewSdk ? readEnvVar("OPENCLAW_SERVICE_VERSION") : null) ??
     "legacy";
 
   // New SDK is indicated by any of the new API surfaces being present.
-  const isNewSdk =
-    hasRegisterMemoryPromptSection || hasRegisterMemoryCapability || hasRuntimeNamespace || hasRegistrationMode;
-
   // New hook system requires one of the authoritative new-SDK signals:
   //   - registerMemoryPromptSection (pre-capability new SDKs, ≥2026.3.22)
   //   - registerMemoryCapability   (capability-based SDKs, ≥2026.4.5; the

@@ -2148,6 +2148,79 @@ test("access service maintenance uses namespace-scoped health metadata", async (
   }
 });
 
+test("access service governanceRun skips entity synthesis refresh in shadow mode", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-shadow-synthesis-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    await storage.ensureDirectories();
+    let synthesisCalls = 0;
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "default",
+        searchBackend: "qmd",
+        qmdEnabled: false,
+        nativeKnowledge: undefined,
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [],
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+      processEntitySynthesisQueue: async () => {
+        synthesisCalls += 1;
+        throw new Error("shadow mode must not refresh synthesis");
+      },
+    } as any);
+
+    const result = await service.governanceRun({ mode: "shadow" });
+    assert.equal(result.mode, "shadow");
+    assert.equal(synthesisCalls, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
+test("access service governanceRun preserves apply result when entity synthesis refresh fails", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-governance-apply-synthesis-"));
+  try {
+    const storage = new StorageManager(memoryDir);
+    await storage.ensureDirectories();
+    let synthesisCalls = 0;
+    const service = new EngramAccessService({
+      config: {
+        memoryDir,
+        namespacesEnabled: false,
+        defaultNamespace: "default",
+        searchBackend: "qmd",
+        qmdEnabled: false,
+        nativeKnowledge: undefined,
+        sharedNamespace: "shared",
+        principalFromSessionKeyMode: "prefix",
+        principalFromSessionKeyRules: [],
+        namespacePolicies: [],
+      },
+      recall: async () => "ctx",
+      lastRecall: { get: () => null, getMostRecent: () => null },
+      getStorage: async () => storage,
+      processEntitySynthesisQueue: async () => {
+        synthesisCalls += 1;
+        throw new Error("synthetic refresh failure");
+      },
+    } as any);
+
+    const result = await service.governanceRun({ mode: "apply" });
+    assert.equal(result.mode, "apply");
+    assert.equal(synthesisCalls, 1);
+    assert.match(result.runId, /^gov-/);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
+});
+
 test("access service maps trust-zone promotion validation failures to input errors", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-trust-zone-promote-"));
   try {

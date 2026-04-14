@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { StorageManager, serializeEntityFile } from "../src/storage.js";
 import {
   buildBriefing,
+  focusMatchesEntity,
   parseBriefingWindow,
   parseBriefingFocus,
 } from "../src/briefing.js";
@@ -67,6 +68,26 @@ async function makeTempDir(): Promise<string> {
 
 // ──────────────────────────────────────────────────────────────────────────
 
+test("focusMatchesEntity falls back to summary when synthesis is empty", () => {
+  const entity: EntityFile = {
+    name: "Casey Example",
+    type: "person",
+    created: "2026-04-10T00:00:00.000Z",
+    updated: "2026-04-10T00:00:00.000Z",
+    facts: [],
+    summary: "Casey Example owns rollout coordination.",
+    synthesis: "",
+    synthesisUpdatedAt: undefined,
+    synthesisVersion: undefined,
+    timeline: [],
+    relationships: [],
+    activity: [],
+    aliases: [],
+  };
+
+  assert.equal(focusMatchesEntity(entity, { type: "person", value: "rollout coordination" }), true);
+});
+
 test("buildBriefing produces the five sections with deterministic fixtures", async () => {
   const dir = await makeTempDir();
   try {
@@ -118,6 +139,7 @@ test("buildBriefing produces the five sections with deterministic fixtures", asy
       updated: "2026-04-10T16:00:00.000Z",
       summary: "Shipping the retrieval overhaul",
       facts: ["Owned by alpha team"],
+      timeline: [],
       relationships: [],
       activity: [],
       aliases: [],
@@ -127,6 +149,7 @@ test("buildBriefing produces the five sections with deterministic fixtures", asy
       type: "project",
       updated: "2026-03-01T00:00:00.000Z",
       facts: [],
+      timeline: [],
       relationships: [],
       activity: [],
       aliases: [],
@@ -210,6 +233,7 @@ test("buildBriefing honours a focus filter by excluding unrelated memories", asy
       updated: "2026-04-10T11:00:00.000Z",
       summary: "Retrieval work",
       facts: [],
+      timeline: [],
       relationships: [],
       activity: [],
       aliases: [],
@@ -220,6 +244,7 @@ test("buildBriefing honours a focus filter by excluding unrelated memories", asy
       updated: "2026-04-10T11:00:00.000Z",
       summary: "Something else",
       facts: [],
+      timeline: [],
       relationships: [],
       activity: [],
       aliases: [],
