@@ -955,17 +955,6 @@ function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
   )];
 }
 
-function dedupeStringArray(values: string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of values) {
-    if (seen.has(value)) continue;
-    seen.add(value);
-    result.push(value);
-  }
-  return result;
-}
-
 export function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
   let latestRaw: string | undefined;
   for (const entry of entity.timeline) {
