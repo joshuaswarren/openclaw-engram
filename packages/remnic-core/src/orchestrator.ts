@@ -2317,6 +2317,7 @@ export class Orchestrator {
           .slice(0, 8)
           .sort((left, right) => compareEntityTimestamps(left.timestamp, right.timestamp));
         if (evidenceEntries.length === 0) continue;
+        const latestEvidenceTimestamp = evidenceEntries[evidenceEntries.length - 1]?.timestamp?.trim() || undefined;
 
         const evidenceText = evidenceEntries
           .map((entry) => {
@@ -2356,7 +2357,9 @@ export class Orchestrator {
         );
         const synthesis = response?.content?.trim().replace(/^["']|["']$/g, "");
         if (!synthesis || synthesis.length < 10 || synthesis.length > 2_000) continue;
-        await storage.updateEntitySynthesis(entityName, synthesis);
+        await storage.updateEntitySynthesis(entityName, synthesis, {
+          updatedAt: latestEvidenceTimestamp,
+        });
         processed += 1;
       } catch (err) {
         log.debug(`entity synthesis refresh failed for ${entityName}: ${err}`);

@@ -758,7 +758,7 @@ function readEntitySectionText(
       continue;
     }
     if (trimmed.startsWith("- ") && options.preserveBullets !== true) continue;
-    sectionLines.push(trimmed);
+    sectionLines.push(options.preserveBullets === true ? line.trimEnd() : trimmed);
   }
   while (sectionLines[sectionLines.length - 1] === "") {
     sectionLines.pop();

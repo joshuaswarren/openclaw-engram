@@ -67,6 +67,7 @@ test("processEntitySynthesisQueue refreshes stale entities in bounded batches", 
     assert.equal(processed, 1);
     assert.equal(primary.synthesis, "Jane Doe now owns release approvals and still leads roadmap work.");
     assert.equal(primary.synthesisVersion, 2);
+    assert.equal(primary.synthesisUpdatedAt, "2026-04-13T11:00:00.000Z");
     assert.match(capturedPrompt, /Previous synthesis:\nJane Doe led the roadmap\./);
     assert.match(capturedPrompt, /Now owns release approvals\./);
     assert.doesNotMatch(capturedPrompt, /Led the roadmap\.\n- timestamp=/);
