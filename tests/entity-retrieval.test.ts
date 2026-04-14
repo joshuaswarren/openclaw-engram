@@ -435,6 +435,49 @@ test("entity retrieval orders recent timeline bullets by timestamp instead of fi
   assert.doesNotMatch(section!, /Alice Example investigated the flaky deploy\./);
 });
 
+test("entity retrieval prioritizes parseable timeline timestamps over malformed values", async () => {
+  const { config, memoryDir } = await buildHarness("engram-entity-timeline-malformed-order");
+  await mkdir(path.join(memoryDir, "state"), { recursive: true });
+  const storage = {
+    dir: memoryDir,
+    readAllEntityFiles: async () => [
+      {
+        name: "Alice Example",
+        type: "person",
+        aliases: [],
+        synthesis: "Alice Example currently leads the launch review.",
+        summary: "Alice Example currently leads the launch review.",
+        facts: [],
+        timeline: [
+          {
+            timestamp: "zzzz-malformed",
+            text: "Alice Example malformed timeline entry should not outrank valid dates.",
+          },
+          {
+            timestamp: "2026-04-13T12:00:00.000Z",
+            text: "Alice Example approved the launch checklist.",
+          },
+          {
+            timestamp: "2026-04-13T11:00:00.000Z",
+            text: "Alice Example resolved the production alert.",
+          },
+        ],
+        relationships: [],
+        activity: [],
+        memorySnippets: [],
+      },
+    ],
+    readAllMemories: async () => [],
+  } as unknown as StorageManager;
+
+  const section = await buildSection(config, storage, "What happened with Alice Example?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example approved the launch checklist\./);
+  assert.match(section!, /Alice Example resolved the production alert\./);
+  assert.doesNotMatch(section!, /malformed timeline entry should not outrank valid dates/i);
+});
+
 test("entity retrieval deduplicates repeated explicit timeline hints before truncating", async () => {
   const { config, storage } = await buildHarness("engram-entity-timeline-explicit-dedupe");
   const canonical = await writeEntity(
@@ -466,6 +509,40 @@ test("entity retrieval deduplicates repeated explicit timeline hints before trun
   const repeated = section!.match(/Alice Example approved the launch checklist\./g) ?? [];
   assert.equal(repeated.length, 1);
   assert.match(section!, /Alice Example resolved the production alert\./);
+});
+
+test("entity retrieval falls back to fact snippets for timeline hints when legacy entities have no timeline entries", async () => {
+  const { config, memoryDir, storage } = await buildHarness("engram-entity-legacy-facts-fallback");
+  const canonical = normalizeEntityName("Casey Example", "person");
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T11:00:00.000Z",
+    "---",
+    "",
+    "# Casey Example",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T11:00:00.000Z",
+    "",
+    "## Summary",
+    "",
+    "Casey Example currently leads the launch review.",
+    "",
+    "## Facts",
+    "",
+    "- Casey Example handled the rollback during the outage.",
+    "- Casey Example coordinated follow-up remediation.",
+    "",
+  ].join("\n");
+  await writeFile(path.join(memoryDir, "entities", `${canonical}.md`), raw, "utf-8");
+
+  const section = await buildSection(config, storage, "What happened with Casey Example?");
+
+  assert.ok(section);
+  assert.match(section!, /recent timeline:/);
+  assert.match(section!, /Casey Example handled the rollback during the outage\./);
+  assert.match(section!, /Casey Example coordinated follow-up remediation\./);
 });
 
 test("entity retrieval recent-turn helpers treat zero as disabled", async () => {

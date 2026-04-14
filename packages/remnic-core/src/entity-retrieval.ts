@@ -3,7 +3,7 @@ import { sanitizeMemoryContent } from "./sanitize.js";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { collectNativeKnowledgeChunks, type NativeKnowledgeChunk } from "./native-knowledge.js";
-import { normalizeEntityName, type StorageManager } from "./storage.js";
+import { compareEntityTimestamps, normalizeEntityName, type StorageManager } from "./storage.js";
 import type { MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
 
 const ENTITY_INDEX_VERSION = 2;
@@ -185,13 +185,9 @@ function sortTimelineEntriesDesc(
   left: EntityMentionIndexEntry["timeline"][number],
   right: EntityMentionIndexEntry["timeline"][number],
 ): number {
-  const leftTs = Date.parse(left.timestamp);
-  const rightTs = Date.parse(right.timestamp);
-  if (Number.isFinite(leftTs) && Number.isFinite(rightTs) && leftTs !== rightTs) {
-    return rightTs - leftTs;
-  }
-  if (left.timestamp !== right.timestamp) {
-    return right.timestamp.localeCompare(left.timestamp);
+  const timestampOrder = compareEntityTimestamps(right.timestamp, left.timestamp);
+  if (timestampOrder !== 0) {
+    return timestampOrder;
   }
   return right.text.localeCompare(left.text);
 }
@@ -577,7 +573,9 @@ function formatEntityHintSection(
           ? activityTimeline
           : dedupeHintSnippetsByText(
             snippets
-              .filter((snippet) => snippet.kind === "summary" && !topSnippetTexts.has(normalizeText(snippet.text))),
+              .filter((snippet) => (
+                snippet.kind === "fact" || snippet.kind === "summary"
+              ) && !topSnippetTexts.has(normalizeText(snippet.text))),
           ).slice(0, 2);
       if (fallbackTimeline.length > 0) {
         lines.push("- recent timeline:");
