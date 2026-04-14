@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.3.6] — 2026-04-14
+
 ### Added
 
 - Entity files now support a two-layer "Compiled Truth + Timeline" format with
