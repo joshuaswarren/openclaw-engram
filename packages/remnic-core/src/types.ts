@@ -1357,6 +1357,7 @@ export interface EntityFile {
   summary?: string;
   synthesis?: string;
   synthesisUpdatedAt?: string;
+  synthesisTimelineCount?: number;
   synthesisVersion?: number;
   timeline: EntityTimelineEntry[];
   relationships: EntityRelationship[];

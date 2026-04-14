@@ -682,6 +682,7 @@ function parseEntityFrontmatter(
     created?: string;
     updated?: string;
     synthesisUpdatedAt?: string;
+    synthesisTimelineCount?: number;
     synthesisVersion?: number;
     extraLines?: string[];
   };
@@ -698,6 +699,7 @@ function parseEntityFrontmatter(
     "created",
     "updated",
     "synthesis_updated_at",
+    "synthesis_timeline_count",
     "synthesis_version",
   ]);
   for (const line of match[1].split(/\r?\n/)) {
@@ -719,12 +721,14 @@ function parseEntityFrontmatter(
     values[key] = value;
   }
 
+  const synthesisTimelineCount = Number.parseInt(values.synthesis_timeline_count ?? "", 10);
   const synthesisVersion = Number.parseInt(values.synthesis_version ?? "", 10);
   return {
     frontmatter: {
       created: values.created || undefined,
       updated: values.updated || undefined,
       synthesisUpdatedAt: values.synthesis_updated_at || undefined,
+      synthesisTimelineCount: Number.isFinite(synthesisTimelineCount) ? synthesisTimelineCount : undefined,
       synthesisVersion: Number.isFinite(synthesisVersion) ? synthesisVersion : undefined,
       extraLines,
     },
@@ -994,7 +998,11 @@ export function isEntitySynthesisStale(entity: EntityFile): boolean {
   if (!latestTimelineTimestamp) return false;
   if (!entity.synthesis?.trim()) return true;
   if (!entity.synthesisUpdatedAt?.trim()) return true;
-  return compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt) > 0;
+  const timelineFreshness = compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt);
+  if (timelineFreshness > 0) return true;
+  if (timelineFreshness < 0) return false;
+  if (entity.synthesisTimelineCount === undefined) return true;
+  return entity.timeline.length > entity.synthesisTimelineCount;
 }
 
 /**
@@ -1144,6 +1152,7 @@ export function parseEntityFile(content: string): EntityFile {
     ?? readEntitySectionText(lines, ["Summary"], { preserveBullets: true });
   const facts = dedupeEntityFacts(timeline);
   const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
+  const synthesisTimelineCount = frontmatter.synthesisTimelineCount;
 
   return {
     name,
@@ -1156,6 +1165,7 @@ export function parseEntityFile(content: string): EntityFile {
     summary: synthesis,
     synthesis,
     synthesisUpdatedAt,
+    synthesisTimelineCount,
     synthesisVersion: frontmatter.synthesisVersion,
     timeline,
     relationships,
@@ -1182,6 +1192,7 @@ export function serializeEntityFile(entity: EntityFile): string {
       source: "migration",
     }));
   const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
+  const synthesisTimelineCount = entity.synthesisTimelineCount ?? timeline.length;
   const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
 
   const lines: string[] = [
@@ -1189,6 +1200,7 @@ export function serializeEntityFile(entity: EntityFile): string {
     `created: ${created}`,
     `updated: ${updated}`,
     `synthesis_updated_at: "${synthesisUpdatedAt}"`,
+    `synthesis_timeline_count: ${synthesisTimelineCount}`,
     `synthesis_version: ${synthesisVersion}`,
     ...(entity.extraFrontmatterLines ?? []),
     "---",
@@ -4017,6 +4029,7 @@ export class StorageManager {
     entity.synthesis = synthesis.trim();
     entity.summary = entity.synthesis;
     entity.synthesisUpdatedAt = updatedAt;
+    entity.synthesisTimelineCount = entity.timeline.length;
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
@@ -4339,6 +4352,7 @@ export class StorageManager {
           summary: undefined,
           synthesis: undefined,
           synthesisUpdatedAt: undefined,
+          synthesisTimelineCount: undefined,
           synthesisVersion: undefined,
           timeline: [],
           relationships: [],
@@ -4391,11 +4405,13 @@ export class StorageManager {
               mergedEntity.synthesis = parsed.synthesis;
               mergedEntity.summary = parsed.synthesis;
               mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
+              mergedEntity.synthesisTimelineCount = parsed.synthesisTimelineCount;
               mergedEntity.synthesisVersion = parsed.synthesisVersion;
             } else if (!mergedEntity.summary && parsed.summary) {
               mergedEntity.summary = parsed.summary;
               mergedEntity.synthesis = parsed.summary;
               mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
+              mergedEntity.synthesisTimelineCount = parsed.synthesisTimelineCount;
               mergedEntity.synthesisVersion = parsed.synthesisVersion;
             }
 

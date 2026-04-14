@@ -57,6 +57,51 @@ test("writeEntity appends timeline evidence and marks older synthesis as stale",
   }
 });
 
+test("writeEntity marks same-timestamp appended evidence as stale after synthesis", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-same-ts-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const entityName = "Jane Doe";
+    const entityType = "person";
+    const canonical = normalizeEntityName(entityName, entityType);
+    const timestamp = "2026-04-13T10:00:00.000Z";
+
+    await storage.writeEntity(entityName, entityType, ["Initial fact at shared timestamp."], {
+      timestamp,
+      source: "extraction",
+      sessionKey: "session-1",
+      principal: "agent:main",
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe initial synthesis.", {
+      updatedAt: timestamp,
+    });
+
+    const afterSynthesisRaw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
+    const afterSynthesis = parseEntityFile(afterSynthesisRaw);
+    assert.equal(afterSynthesis.synthesisTimelineCount, 1);
+    assert.equal(isEntitySynthesisStale(afterSynthesis), false);
+
+    await storage.writeEntity(entityName, entityType, ["Second fact at the same shared timestamp."], {
+      timestamp,
+      source: "extraction",
+      sessionKey: "session-2",
+      principal: "agent:main",
+    });
+
+    const raw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.equal(parsed.timeline.length, 2);
+    assert.equal(parsed.synthesisUpdatedAt, timestamp);
+    assert.equal(parsed.synthesisTimelineCount, 1);
+    assert.equal(isEntitySynthesisStale(parsed), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeEntity skips duplicate timeline entries on repeated extraction writes", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-dedupe-"));
   try {
