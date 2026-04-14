@@ -2302,14 +2302,23 @@ export class Orchestrator {
         const sortedTimelineEntries = entity.timeline
           .slice()
           .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
-        const newTimelineEntries = sortedTimelineEntries.filter(
+        const newerTimelineEntries = sortedTimelineEntries.filter(
           (entry) =>
             !entity.synthesisUpdatedAt
             || compareEntityTimestamps(entry.timestamp, entity.synthesisUpdatedAt) > 0,
         );
+        const appendedTimelineEntries = entity.synthesisTimelineCount === undefined
+          ? []
+          : entity.timeline.slice(Math.max(0, entity.synthesisTimelineCount));
+        const candidateEvidenceEntries = [
+          ...newerTimelineEntries,
+          ...appendedTimelineEntries,
+        ]
+          .slice()
+          .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
         const dedupedEvidenceEntries: typeof sortedTimelineEntries = [];
         const seenEvidenceFacts = new Set<string>();
-        for (const entry of (newTimelineEntries.length > 0 ? newTimelineEntries : sortedTimelineEntries)) {
+        for (const entry of (candidateEvidenceEntries.length > 0 ? candidateEvidenceEntries : sortedTimelineEntries)) {
           const normalizedFact = entry.text.trim();
           if (!normalizedFact || seenEvidenceFacts.has(normalizedFact)) continue;
           seenEvidenceFacts.add(normalizedFact);

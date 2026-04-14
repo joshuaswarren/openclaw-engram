@@ -405,6 +405,61 @@ test("processEntitySynthesisQueue treats offset timestamps as newer when filteri
   }
 });
 
+test("processEntitySynthesisQueue includes backfilled appended entries alongside newer evidence", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-backfill-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-backfill-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 160,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Initial synthesis evidence."], {
+      timestamp: "2026-04-13T09:00:00.000Z",
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
+      updatedAt: "2026-04-13T10:00:00.000Z",
+    });
+    await storage.writeEntity("Jane Doe", "person", ["Newer post-synthesis evidence."], {
+      timestamp: "2026-04-13T11:00:00.000Z",
+      source: "extraction",
+    });
+    await storage.writeEntity("Jane Doe", "person", ["Backfilled older evidence."], {
+      timestamp: "2026-04-13T08:00:00.000Z",
+      source: "extraction",
+    });
+
+    let capturedPrompt = "";
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      return { content: "Jane Doe synthesis with backfilled evidence." };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const rawEntity = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(rawEntity);
+
+    assert.equal(processed, 1);
+    assert.match(capturedPrompt, /Newer post-synthesis evidence\./);
+    assert.match(capturedPrompt, /Backfilled older evidence\./);
+    assert.equal(parsed.synthesis, "Jane Doe synthesis with backfilled evidence.");
+    assert.equal(parsed.synthesisTimelineCount, parsed.timeline.length);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("processEntitySynthesisQueue treats zero max tokens as disabled", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-zero-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-zero-workspace-"));
