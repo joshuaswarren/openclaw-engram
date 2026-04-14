@@ -4329,23 +4329,27 @@ export class StorageManager {
               mergedEntity.name = parsed.name;
             }
 
+            const parsedSynthesisUpdatedAt = parsed.synthesisUpdatedAt?.trim() || undefined;
+            const mergedSynthesisUpdatedAt = mergedEntity.synthesisUpdatedAt?.trim() || undefined;
+
             // Prefer the freshest synthesis/summary available.
             if (
               parsed.synthesis &&
               (!mergedEntity.synthesis
-                || compareEntityTimestamps(
-                  parsed.synthesisUpdatedAt ?? parsed.updated,
-                  mergedEntity.synthesisUpdatedAt ?? mergedEntity.updated,
-                ) > 0)
+                || (!mergedSynthesisUpdatedAt && Boolean(parsedSynthesisUpdatedAt))
+                || (Boolean(mergedSynthesisUpdatedAt)
+                  && Boolean(parsedSynthesisUpdatedAt)
+                  && compareEntityTimestamps(parsedSynthesisUpdatedAt, mergedSynthesisUpdatedAt) > 0))
             ) {
               mergedEntity.synthesis = parsed.synthesis;
               mergedEntity.summary = parsed.synthesis;
-              mergedEntity.synthesisUpdatedAt = parsed.synthesisUpdatedAt ?? parsed.updated;
+              mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
               mergedEntity.synthesisVersion = parsed.synthesisVersion;
             } else if (!mergedEntity.summary && parsed.summary) {
               mergedEntity.summary = parsed.summary;
               mergedEntity.synthesis = parsed.summary;
-              mergedEntity.synthesisUpdatedAt = parsed.updated;
+              mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
+              mergedEntity.synthesisVersion = parsed.synthesisVersion;
             }
 
             // Collect all timeline evidence; facts are derived below.

@@ -776,6 +776,65 @@ test("mergeFragmentedEntities prefers the freshest synthesis using parsed timest
   }
 });
 
+test("mergeFragmentedEntities keeps legacy synthesis timestamps unset when freshness is unknown", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-merge-legacy-synthesis-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const legacySummaryFragment = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "## Summary",
+      "",
+      "Legacy summary should remain stale until refreshed.",
+      "",
+      "## Facts",
+      "",
+      "- [2026-04-13T10:05:00.000Z] Older fact",
+      "",
+    ].join("\n");
+    const newerTimelineFragment = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T11:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T11:05:00.000Z",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T11:05:00.000Z] Newer evidence",
+      "",
+    ].join("\n");
+
+    await writeFile(path.join(dir, "entities", "person-jane doe.md"), legacySummaryFragment, "utf-8");
+    await writeFile(path.join(dir, "entities", "person-jane_doe.md"), newerTimelineFragment, "utf-8");
+
+    const merged = await storage.mergeFragmentedEntities();
+    const raw = await readFile(path.join(dir, "entities", "person-jane-doe.md"), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.equal(merged, 2);
+    assert.equal(parsed.synthesis, "Legacy summary should remain stale until refreshed.");
+    assert.equal(parsed.synthesisUpdatedAt, undefined);
+    assert.equal(isEntitySynthesisStale(parsed), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("mergeFragmentedEntities preserves custom metadata and freeform sections from fragments", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-merge-metadata-"));
   try {
