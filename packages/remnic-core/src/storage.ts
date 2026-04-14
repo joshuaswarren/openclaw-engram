@@ -741,6 +741,7 @@ function readEntitySectionText(
   sectionNames: string[],
   options: {
     preserveBullets?: boolean;
+    skipTimelineBullets?: boolean;
   } = {},
 ): string | undefined {
   const normalizedSections = new Set(sectionNames.map((name) => name.toLowerCase()));
@@ -761,6 +762,7 @@ function readEntitySectionText(
       }
       continue;
     }
+    if (options.skipTimelineBullets === true && /^- \[[^\]]+\]/.test(trimmed)) continue;
     if (trimmed.startsWith("- ") && options.preserveBullets !== true) continue;
     sectionLines.push(options.preserveBullets === true ? line.trimEnd() : trimmed);
   }
@@ -1008,7 +1010,8 @@ function serializeEntityTimelineEntry(entry: EntityTimelineEntry): string {
   if (entry.principal) {
     tokens.push(`[principal=${escapeEntityTimelineMetadataValue(entry.principal)}]`);
   }
-  return `- ${tokens.join(" ")} ${entry.text}`.trimEnd();
+  const serializedMetadata = tokens.length > 0 ? `${tokens.join(" ")} ` : "";
+  return `- ${serializedMetadata}${entry.text}`.trimEnd();
 }
 
 function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
@@ -1166,6 +1169,13 @@ export function parseEntityFile(content: string): EntityFile {
       }
       case "summary":
       case "synthesis":
+        if (bullet.startsWith("[")) {
+          const parsed = parseEntityTimelineBullet(
+            bullet,
+            fallbackTimestamp,
+          );
+          if (parsed) timeline.push(parsed);
+        }
         // Summary/synthesis is typically a paragraph after the heading, not a bullet.
         break;
       case "connected to": {
@@ -1211,8 +1221,8 @@ export function parseEntityFile(content: string): EntityFile {
   }
 
   const synthesis =
-    readEntitySectionText(lines, ["Synthesis"], { preserveBullets: true })
-    ?? readEntitySectionText(lines, ["Summary"], { preserveBullets: true });
+    readEntitySectionText(lines, ["Synthesis"], { preserveBullets: true, skipTimelineBullets: true })
+    ?? readEntitySectionText(lines, ["Summary"], { preserveBullets: true, skipTimelineBullets: true });
   const facts = dedupeEntityFacts(timeline);
   const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
   const synthesisTimelineCount = frontmatter.synthesisTimelineCount;

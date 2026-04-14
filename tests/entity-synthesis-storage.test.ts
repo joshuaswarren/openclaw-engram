@@ -513,6 +513,42 @@ test("parseEntityFile preserves bulleted synthesis text across round trips", () 
   assert.match(serialized, /## Synthesis\n\n- Leads roadmap work\.\n- Owns release approvals\./);
 });
 
+test("parseEntityFile migrates timeline-style synthesis bullets into the timeline", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 2",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "- [2026-04-13T10:00:00.000Z] [source=extraction] Approved production rollout.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+  const reparsed = parseEntityFile(serialized);
+
+  assert.equal(parsed.synthesis, "Jane Doe leads roadmap work.");
+  assert.deepEqual(parsed.timeline, [{
+    timestamp: "2026-04-13T10:00:00.000Z",
+    text: "Approved production rollout.",
+    source: "extraction",
+  }]);
+  assert.match(serialized, /## Synthesis\n\nJane Doe leads roadmap work\.\n\n## Timeline\n\n- \[2026-04-13T10:00:00.000Z\] \[source=extraction\] Approved production rollout\./);
+  assert.equal(reparsed.synthesis, "Jane Doe leads roadmap work.");
+  assert.equal(reparsed.timeline[0]?.text, "Approved production rollout.");
+});
+
 test("parseEntityFile preserves blank lines in multi-paragraph synthesis", () => {
   const raw = [
     "---",
@@ -886,6 +922,32 @@ test("serializeEntityFile escapes newline characters in timeline metadata values
   assert.equal(reparsed.timeline[0]?.sessionKey, "session-42\nchild");
   assert.equal(reparsed.timeline[0]?.principal, "agent\r\nops");
   assert.equal(reparsed.timeline[0]?.text, "launched rollout");
+});
+
+test("serializeEntityFile avoids double spaces for tokenless timeline entries", () => {
+  const serialized = serializeEntityFile({
+    name: "Casey Example",
+    type: "person",
+    created: "2026-04-13T10:00:00.000Z",
+    updated: "2026-04-13T10:05:00.000Z",
+    facts: ["Owns rollout coordination."],
+    summary: "Casey Example keeps rollout coordination on track.",
+    synthesis: "Casey Example keeps rollout coordination on track.",
+    synthesisUpdatedAt: "2026-04-13T10:05:00.000Z",
+    synthesisTimelineCount: 1,
+    synthesisVersion: 1,
+    timeline: [
+      { timestamp: "", text: "Owns rollout coordination." },
+    ],
+    relationships: [],
+    activity: [],
+    aliases: [],
+  });
+  const reparsed = parseEntityFile(serialized);
+
+  assert.match(serialized, /## Timeline\n\n- Owns rollout coordination\./);
+  assert.doesNotMatch(serialized, /-  Owns rollout coordination\./);
+  assert.equal(reparsed.timeline[0]?.text, "Owns rollout coordination.");
 });
 
 test("parseEntityFile merges legacy facts into mixed timeline entities", () => {
