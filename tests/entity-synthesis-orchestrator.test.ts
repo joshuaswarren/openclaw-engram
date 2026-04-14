@@ -513,6 +513,79 @@ test("processEntitySynthesisQueue does not regress synthesisUpdatedAt for backfi
   }
 });
 
+test("processEntitySynthesisQueue skips writing synthesis from a stale timeline snapshot", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-concurrent-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-concurrent-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 160,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Initial synthesis evidence."], {
+      timestamp: "2026-04-13T09:00:00.000Z",
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
+      updatedAt: "2026-04-13T10:00:00.000Z",
+    });
+    await storage.writeEntity("Jane Doe", "person", ["Fresh evidence before synthesis."], {
+      timestamp: "2026-04-13T11:00:00.000Z",
+      source: "extraction",
+    });
+
+    let concurrentWriteDone = false;
+    let capturedPrompt = "";
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      if (!concurrentWriteDone) {
+        concurrentWriteDone = true;
+        await storage.writeEntity("Jane Doe", "person", ["Concurrent write during synthesis."], {
+          timestamp: "2026-04-13T08:00:00.000Z",
+          source: "extraction",
+        });
+      }
+      return { content: "Jane Doe synthesis built from a stale snapshot." };
+    };
+
+    const firstProcessed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const afterFirstRaw = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const afterFirst = parseEntityFile(afterFirstRaw);
+
+    assert.equal(firstProcessed, 0);
+    assert.match(capturedPrompt, /Fresh evidence before synthesis\./);
+    assert.doesNotMatch(capturedPrompt, /Concurrent write during synthesis\./);
+    assert.equal(afterFirst.synthesis, "Jane Doe had an earlier synthesis.");
+    assert.equal(afterFirst.synthesisTimelineCount, 1);
+
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      return { content: "Jane Doe synthesis after re-reading current evidence." };
+    };
+
+    const secondProcessed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const afterSecondRaw = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const afterSecond = parseEntityFile(afterSecondRaw);
+
+    assert.equal(secondProcessed, 1);
+    assert.match(capturedPrompt, /Concurrent write during synthesis\./);
+    assert.equal(afterSecond.synthesis, "Jane Doe synthesis after re-reading current evidence.");
+    assert.equal(afterSecond.synthesisTimelineCount, afterSecond.timeline.length);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("processEntitySynthesisQueue treats zero max tokens as disabled", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-zero-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-zero-workspace-"));

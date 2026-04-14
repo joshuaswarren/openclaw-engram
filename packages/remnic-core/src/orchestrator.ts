@@ -2389,6 +2389,12 @@ export class Orchestrator {
           nextSynthesis = synthesis;
         }
         if (batchFailed || nextSynthesis.length === 0) continue;
+        const latestRaw = await storage.readEntity(entityName);
+        if (!latestRaw) continue;
+        const latestEntity = parseEntityFile(latestRaw);
+        if (latestEntity.timeline.length !== entity.timeline.length) {
+          continue;
+        }
         await storage.updateEntitySynthesis(entityName, nextSynthesis, {
           entityUpdatedAt: new Date().toISOString(),
           synthesisTimelineCount: entity.timeline.length,

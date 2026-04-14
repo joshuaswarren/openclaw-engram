@@ -4458,9 +4458,27 @@ export class StorageManager {
             }
 
             const parsedCreated = parsed.created || parsed.updated;
+            const mergedCreated = mergedEntity.created?.trim() || "";
+            const parsedCreatedMs = parsedCreated ? Date.parse(parsedCreated) : Number.NaN;
+            const mergedCreatedMs = mergedCreated ? Date.parse(mergedCreated) : Number.NaN;
+            const parsedCreatedIsValid = Number.isFinite(parsedCreatedMs);
+            const mergedCreatedIsValid = Number.isFinite(mergedCreatedMs);
             if (
               parsedCreated &&
-              (!mergedEntity.created || compareEntityTimestamps(parsedCreated, mergedEntity.created) < 0)
+              (
+                !mergedCreated
+                || (parsedCreatedIsValid && !mergedCreatedIsValid)
+                || (
+                  parsedCreatedIsValid
+                  && mergedCreatedIsValid
+                  && parsedCreatedMs < mergedCreatedMs
+                )
+                || (
+                  !parsedCreatedIsValid
+                  && !mergedCreatedIsValid
+                  && compareEntityTimestamps(parsedCreated, mergedCreated) < 0
+                )
+              )
             ) {
               mergedEntity.created = parsedCreated;
             }

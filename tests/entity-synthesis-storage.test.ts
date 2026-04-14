@@ -1432,6 +1432,59 @@ test("mergeFragmentedEntities preserves duplicate lines in preserved metadata bl
   }
 });
 
+test("mergeFragmentedEntities prefers parseable created timestamps over malformed values", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-merge-created-validity-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const fragmentA = [
+      "---",
+      "created: not-a-date",
+      "updated: 2026-04-13T10:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T10:05:00.000Z] Fragment A evidence",
+      "",
+    ].join("\n");
+    const fragmentB = [
+      "---",
+      "created: 2026-04-13T09:00:00.000Z",
+      "updated: 2026-04-13T11:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T11:05:00.000Z",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T11:05:00.000Z] Fragment B evidence",
+      "",
+    ].join("\n");
+
+    await writeFile(path.join(dir, "entities", "person-jane doe.md"), fragmentA, "utf-8");
+    await writeFile(path.join(dir, "entities", "person-jane_doe.md"), fragmentB, "utf-8");
+
+    await storage.mergeFragmentedEntities();
+    const raw = await readFile(path.join(dir, "entities", "person-jane-doe.md"), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.equal(parsed.created, "2026-04-13T09:00:00.000Z");
+    assert.match(raw, /^---\ncreated: 2026-04-13T09:00:00.000Z/m);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("refreshEntitySynthesisQueue orders stale entities by parsed latest timeline timestamps", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-queue-order-"));
   try {
