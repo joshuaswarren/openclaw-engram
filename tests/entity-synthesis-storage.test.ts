@@ -13,6 +13,7 @@ import {
   serializeEntityFile,
 } from "../packages/remnic-core/src/storage.js";
 import { parseConfig } from "../packages/remnic-core/src/config.js";
+import { setConfiguredEntitySchemas } from "../packages/remnic-core/src/entity-schema.js";
 
 test("writeEntity appends timeline evidence and marks older synthesis as stale", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-"));
@@ -733,44 +734,48 @@ test("parseEntityFile preserves structured person sections across round trips", 
 });
 
 test("parseEntityFile honors configured custom entity schemas", () => {
-  parseConfig({
-    entitySchemas: {
-      person: {
-        sections: [
-          { key: "operating_principles", title: "Operating Principles" },
-        ],
+  try {
+    parseConfig({
+      entitySchemas: {
+        person: {
+          sections: [
+            { key: "operating_principles", title: "Operating Principles" },
+          ],
+        },
       },
-    },
-  });
+    });
 
-  const parsed = parseEntityFile([
-    "---",
-    "created: 2026-04-13T10:00:00.000Z",
-    "updated: 2026-04-13T10:05:00.000Z",
-    "---",
-    "",
-    "# Jane Doe",
-    "",
-    "**Type:** person",
-    "**Updated:** 2026-04-13T10:05:00.000Z",
-    "",
-    "## Synthesis",
-    "",
-    "Jane Doe leads roadmap work.",
-    "",
-    "## Operating Principles",
-    "",
-    "- Prefer boring infrastructure over clever infra.",
-    "",
-  ].join("\n")) as any;
+    const parsed = parseEntityFile([
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "## Synthesis",
+      "",
+      "Jane Doe leads roadmap work.",
+      "",
+      "## Operating Principles",
+      "",
+      "- Prefer boring infrastructure over clever infra.",
+      "",
+    ].join("\n")) as any;
 
-  assert.deepEqual(parsed.structuredSections, [
-    {
-      key: "operating_principles",
-      title: "Operating Principles",
-      facts: ["Prefer boring infrastructure over clever infra."],
-    },
-  ]);
+    assert.deepEqual(parsed.structuredSections, [
+      {
+        key: "operating_principles",
+        title: "Operating Principles",
+        facts: ["Prefer boring infrastructure over clever infra."],
+      },
+    ]);
+  } finally {
+    setConfiguredEntitySchemas(undefined);
+  }
 });
 
 test("parseEntityFile preserves blank lines in multi-paragraph synthesis", () => {
@@ -1660,6 +1665,86 @@ test("mergeFragmentedEntities preserves custom metadata and freeform sections fr
     assert.deepEqual(parsed.extraSections?.map((section) => section.title), ["Notes", "Runbook"]);
     assert.match(raw, /## Notes/);
     assert.match(raw, /## Runbook/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("mergeFragmentedEntities preserves structured sections from fragments", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-merge-structured-sections-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const fragmentA = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "## Beliefs",
+      "",
+      "- Small teams move faster than committees.",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T10:05:00.000Z] Fragment A evidence",
+      "",
+    ].join("\n");
+    const fragmentB = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T11:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T11:05:00.000Z",
+      "",
+      "## Beliefs",
+      "",
+      "- Roadmaps should stay legible to the team.",
+      "",
+      "## Communication Style",
+      "",
+      "- Prefers direct feedback without ceremony.",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T11:05:00.000Z] Fragment B evidence",
+      "",
+    ].join("\n");
+
+    await writeFile(path.join(dir, "entities", "person-jane doe.md"), fragmentA, "utf-8");
+    await writeFile(path.join(dir, "entities", "person-jane_doe.md"), fragmentB, "utf-8");
+
+    await storage.mergeFragmentedEntities();
+    const raw = await readFile(path.join(dir, "entities", "person-jane-doe.md"), "utf-8");
+    const parsed = parseEntityFile(raw) as any;
+
+    assert.deepEqual(parsed.structuredSections, [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: [
+          "Small teams move faster than committees.",
+          "Roadmaps should stay legible to the team.",
+        ],
+      },
+      {
+        key: "communication_style",
+        title: "Communication Style",
+        facts: ["Prefers direct feedback without ceremony."],
+      },
+    ]);
+    assert.match(raw, /## Beliefs/);
+    assert.match(raw, /## Communication Style/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

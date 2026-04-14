@@ -4660,6 +4660,7 @@ export class StorageManager {
           relationships: [],
           activity: [],
           aliases: [],
+          structuredSections: [],
           extraSections: [],
         };
 
@@ -4747,6 +4748,36 @@ export class StorageManager {
             // Collect aliases
             mergedEntity.aliases.push(...parsed.aliases);
 
+            const mergedStructuredSectionMap = new Map(
+              (mergedEntity.structuredSections ?? []).map((section) => [section.key, {
+                ...section,
+                facts: [...section.facts],
+              }]),
+            );
+            for (const section of parsed.structuredSections ?? []) {
+              const existingSection = mergedStructuredSectionMap.get(section.key);
+              if (!existingSection) {
+                mergedStructuredSectionMap.set(section.key, {
+                  key: section.key,
+                  title: section.title,
+                  facts: [...new Set(section.facts.map((fact) => fact.trim()).filter((fact) => fact.length > 0))],
+                });
+                continue;
+              }
+
+              const mergedFacts = new Set(existingSection.facts.map((fact) => fact.trim()));
+              for (const fact of section.facts) {
+                const trimmed = fact.trim();
+                if (!trimmed) continue;
+                mergedFacts.add(trimmed);
+              }
+              existingSection.facts = Array.from(mergedFacts);
+              if (!existingSection.title.trim() && section.title.trim()) {
+                existingSection.title = section.title;
+              }
+            }
+            mergedEntity.structuredSections = Array.from(mergedStructuredSectionMap.values());
+
             // Preserve custom metadata and user-authored freeform content from fragments.
             mergedEntity.extraFrontmatterLines!.push(...(parsed.extraFrontmatterLines ?? []));
             mergedEntity.preSectionLines!.push(...(parsed.preSectionLines ?? []));
@@ -4797,6 +4828,10 @@ export class StorageManager {
 
         // Deduplicate aliases
         mergedEntity.aliases = [...new Set(mergedEntity.aliases)];
+        mergedEntity.structuredSections = sortStructuredSectionsBySchema(
+          mergedEntity.type,
+          mergedEntity.structuredSections ?? [],
+        );
 
         const extraSectionKeys = new Set<string>();
         mergedEntity.extraSections = (mergedEntity.extraSections ?? []).filter((section) => {
