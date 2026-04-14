@@ -951,7 +951,37 @@ test("serializeEntityFile does not invent synthesis timeline count for unsynthes
   const reparsed = parseEntityFile(serialized);
 
   assert.doesNotMatch(serialized, /synthesis_timeline_count:/);
+  assert.match(serialized, /\[source=migration\] Leads roadmap work\./);
   assert.equal(reparsed.synthesisTimelineCount, undefined);
+  assert.equal(isEntitySynthesisStale(reparsed), true);
+});
+
+test("serializeEntityFile preserves facts-only entities as legacy facts instead of synthetic timeline entries", () => {
+  const serialized = serializeEntityFile({
+    name: "Casey Example",
+    type: "person",
+    created: "2026-04-13T10:00:00.000Z",
+    updated: "2026-04-13T10:05:00.000Z",
+    facts: ["Owns rollout coordination.", "Owns rollout coordination.", "Keeps release notes current."],
+    summary: "Casey Example keeps rollout coordination on track.",
+    synthesis: "Casey Example keeps rollout coordination on track.",
+    synthesisUpdatedAt: "2026-04-13T10:05:00.000Z",
+    synthesisTimelineCount: undefined,
+    synthesisVersion: 1,
+    timeline: [],
+    relationships: [],
+    activity: [],
+    aliases: [],
+  });
+
+  const reparsed = parseEntityFile(serialized);
+
+  assert.match(serialized, /## Facts\n\n- Owns rollout coordination\.\n- Keeps release notes current\./);
+  assert.doesNotMatch(serialized, /## Timeline/);
+  assert.doesNotMatch(serialized, /\[source=migration\]/);
+  assert.deepEqual(reparsed.facts, ["Owns rollout coordination.", "Keeps release notes current."]);
+  assert.equal(reparsed.timeline.length, 2);
+  assert.equal(reparsed.timeline[0]?.source, "migration");
   assert.equal(isEntitySynthesisStale(reparsed), true);
 });
 

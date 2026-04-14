@@ -1239,13 +1239,13 @@ export function serializeEntityFile(entity: EntityFile): string {
   const synthesis = entity.synthesis || entity.summary || "";
   const created = entity.created?.trim() || entity.updated || new Date().toISOString();
   const updated = entity.updated || created;
-  const timeline = entity.timeline.length > 0
-    ? entity.timeline
-    : entity.facts.map((fact) => ({
+  const timeline = entity.timeline;
+  const legacyFacts = timeline.length === 0 ? dedupeEntityFacts(
+    entity.facts.map((fact) => ({
       timestamp: updated,
       text: fact,
-      source: "migration",
-    }));
+    })),
+  ) : [];
   const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
   const synthesisTimelineCount = entity.synthesisTimelineCount
     ?? (synthesisUpdatedAt ? timeline.length : undefined);
@@ -1283,11 +1283,21 @@ export function serializeEntityFile(entity: EntityFile): string {
   }
   lines.push("");
 
-  lines.push("## Timeline", "");
-  for (const entry of timeline) {
-    lines.push(serializeEntityTimelineEntry(entry));
+  if (timeline.length > 0 || legacyFacts.length === 0) {
+    lines.push("## Timeline", "");
+    for (const entry of timeline) {
+      lines.push(serializeEntityTimelineEntry(entry));
+    }
+    lines.push("");
   }
-  lines.push("");
+
+  if (legacyFacts.length > 0) {
+    lines.push("## Facts", "");
+    for (const fact of legacyFacts) {
+      lines.push(`- ${fact}`);
+    }
+    lines.push("");
+  }
 
   // Connected to (optional)
   if (entity.relationships.length > 0) {
