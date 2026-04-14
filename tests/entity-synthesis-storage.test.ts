@@ -118,6 +118,8 @@ test("entity migration rewrites legacy summary plus facts files into synthesis p
     assert.match(migratedRaw, /## Synthesis/);
     assert.match(migratedRaw, /## Timeline/);
     assert.equal(parsed.synthesis, "Jane Doe leads roadmap work.");
+    assert.equal(parsed.synthesisUpdatedAt, undefined);
+    assert.equal(isEntitySynthesisStale(parsed), true);
     assert.equal(parsed.timeline.length, 2);
     assert.deepEqual(
       parsed.timeline.map((entry) => entry.text),

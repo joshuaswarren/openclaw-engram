@@ -1089,7 +1089,7 @@ export function serializeEntityFile(entity: EntityFile): string {
       text: fact,
       source: "migration",
     }));
-  const synthesisUpdatedAt = entity.synthesisUpdatedAt ?? (synthesis ? updated : "");
+  const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
   const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
 
   const lines: string[] = [
