@@ -2288,10 +2288,10 @@ export class Orchestrator {
     ) return 0;
     const storage = await this.getStorage(namespace);
     const queued = await storage.refreshEntitySynthesisQueue();
-    const targets = queued.slice(0, maxEntities);
     let processed = 0;
 
-    for (const entityName of targets) {
+    for (const entityName of queued) {
+      if (processed >= maxEntities) break;
       try {
         const raw = await storage.readEntity(entityName);
         if (!raw) continue;
