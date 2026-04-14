@@ -587,6 +587,47 @@ test("parseEntityFile keeps bracket-led synthesis bullets out of the timeline", 
   );
 });
 
+test("parseEntityFile keeps metadata-shaped synthesis bullets out of the timeline", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 2",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "- [source=qa] launch complete.",
+    "- [session=retro] follow-up drafted.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+  const reparsed = parseEntityFile(serialized);
+
+  assert.equal(
+    parsed.synthesis,
+    "- [source=qa] launch complete.\n- [session=retro] follow-up drafted.",
+  );
+  assert.deepEqual(parsed.timeline, []);
+  assert.match(
+    serialized,
+    /## Synthesis\n\n- \[source=qa\] launch complete\.\n- \[session=retro\] follow-up drafted\./,
+  );
+  assert.deepEqual(reparsed.timeline, []);
+  assert.equal(
+    reparsed.synthesis,
+    "- [source=qa] launch complete.\n- [session=retro] follow-up drafted.",
+  );
+});
+
 test("parseEntityFile preserves blank lines in multi-paragraph synthesis", () => {
   const raw = [
     "---",

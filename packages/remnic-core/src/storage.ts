@@ -795,7 +795,7 @@ function readEntitySectionText(
     if (
       options.skipTimelineBullets === true
       && trimmed.startsWith("- ")
-      && isEntityTimelineLikeBullet(trimmed.slice(2))
+      && isEntitySynthesisTimelinePromotionBullet(trimmed.slice(2))
     ) {
       continue;
     }
@@ -928,6 +928,17 @@ function isEntityTimelineLikeBullet(bullet: string): boolean {
     default:
       return false;
   }
+}
+
+function isEntitySynthesisTimelinePromotionBullet(bullet: string): boolean {
+  const trimmed = bullet.trim();
+  if (!trimmed.startsWith("[")) return false;
+
+  const firstEnd = findEntityTimelineTokenEnd(trimmed);
+  if (firstEnd === -1) return false;
+
+  const firstToken = trimmed.slice(1, firstEnd).trim();
+  return looksLikeEntityTimelineTimestamp(firstToken);
 }
 
 function looksLikeEntityTimelineTimestamp(token: string): boolean {
@@ -1236,7 +1247,7 @@ export function parseEntityFile(content: string): EntityFile {
       }
       case "summary":
       case "synthesis":
-        if (isEntityTimelineLikeBullet(bullet)) {
+        if (isEntitySynthesisTimelinePromotionBullet(bullet)) {
           const parsed = parseEntityTimelineBullet(
             bullet,
             fallbackTimestamp,
