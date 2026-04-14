@@ -1191,7 +1191,8 @@ export function serializeEntityFile(entity: EntityFile): string {
       source: "migration",
     }));
   const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
-  const synthesisTimelineCount = entity.synthesisTimelineCount ?? timeline.length;
+  const synthesisTimelineCount = entity.synthesisTimelineCount
+    ?? (synthesisUpdatedAt ? timeline.length : undefined);
   const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
 
   const lines: string[] = [
@@ -1199,7 +1200,9 @@ export function serializeEntityFile(entity: EntityFile): string {
     `created: ${created}`,
     `updated: ${updated}`,
     `synthesis_updated_at: "${synthesisUpdatedAt}"`,
-    `synthesis_timeline_count: ${synthesisTimelineCount}`,
+    ...(synthesisTimelineCount === undefined
+      ? []
+      : [`synthesis_timeline_count: ${synthesisTimelineCount}`]),
     `synthesis_version: ${synthesisVersion}`,
     ...(entity.extraFrontmatterLines ?? []),
     "---",

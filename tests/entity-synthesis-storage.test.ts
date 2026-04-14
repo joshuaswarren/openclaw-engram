@@ -879,6 +879,33 @@ test("parseEntityFile leaves legacy summary synthesis timestamp unset without ex
   assert.equal(isEntitySynthesisStale(parsed), true);
 });
 
+test("serializeEntityFile does not invent synthesis timeline count for unsynthesized legacy entities", () => {
+  const raw = [
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Summary",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Facts",
+    "",
+    "- Leads roadmap work.",
+    "- Prefers short updates.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+  const reparsed = parseEntityFile(serialized);
+
+  assert.doesNotMatch(serialized, /synthesis_timeline_count:/);
+  assert.equal(reparsed.synthesisTimelineCount, undefined);
+  assert.equal(isEntitySynthesisStale(reparsed), true);
+});
+
 test("compareEntityTimestamps treats equivalent parsed instants as equal", () => {
   assert.equal(compareEntityTimestamps("2026-04-13T15:00:00Z", "2026-04-13T10:00:00-05:00"), 0);
   assert.equal(compareEntityTimestamps("2026-04-13T10:00:00-05:00", "2026-04-13T15:00:00Z"), 0);
