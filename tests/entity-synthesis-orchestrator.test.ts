@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { parseConfig } from "../packages/remnic-core/src/config.js";
 import { Orchestrator } from "../packages/remnic-core/src/orchestrator.js";
 import {
+  isEntitySynthesisStale,
   normalizeEntityName,
   parseEntityFile,
 } from "../packages/remnic-core/src/storage.js";
@@ -580,6 +581,57 @@ test("processEntitySynthesisQueue skips writing synthesis from a stale timeline 
     assert.match(capturedPrompt, /Concurrent write during synthesis\./);
     assert.equal(afterSecond.synthesis, "Jane Doe synthesis after re-reading current evidence.");
     assert.equal(afterSecond.synthesisTimelineCount, afterSecond.timeline.length);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("processEntitySynthesisQueue keeps timestampless evidence stale after synthesis refresh", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-missing-ts-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-missing-ts-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 160,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    const legacyEntity = [
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "",
+      "## Facts",
+      "",
+      "- Legacy evidence without a timestamp.",
+      "",
+    ].join("\n");
+    await writeFile(path.join(memoryDir, "entities", `${canonical}.md`), legacyEntity, "utf-8");
+
+    let refreshCalls = 0;
+    orchestrator.fastChatCompletion = async () => {
+      refreshCalls += 1;
+      return { content: "Jane Doe synthesis rebuilt from timestampless evidence." };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const rawEntity = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(rawEntity);
+
+    assert.equal(processed, 1);
+    assert.equal(refreshCalls, 1);
+    assert.equal(parsed.synthesis, "Jane Doe synthesis rebuilt from timestampless evidence.");
+    assert.equal(parsed.synthesisUpdatedAt, undefined);
+    assert.equal(isEntitySynthesisStale(parsed), true);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });

@@ -4100,8 +4100,8 @@ export class StorageManager {
       return;
     }
 
-    const updatedAt = options.updatedAt?.trim() || new Date().toISOString();
-    const entityUpdatedAt = options.entityUpdatedAt?.trim() || updatedAt;
+    const updatedAt = options.updatedAt?.trim() || entity.synthesisUpdatedAt?.trim() || undefined;
+    const entityUpdatedAt = options.entityUpdatedAt?.trim() || updatedAt || entity.updated || new Date().toISOString();
     const synthesisTimelineCount = Number.isInteger(options.synthesisTimelineCount)
       && (options.synthesisTimelineCount ?? 0) >= 0
       ? options.synthesisTimelineCount

@@ -183,6 +183,25 @@ test("updateEntitySynthesis preserves the provided evidence snapshot count", asy
   }
 });
 
+test("updateEntitySynthesis preserves unknown freshness when updatedAt is omitted", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-unknown-updated-at-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonical = await storage.writeEntity("Jane Doe", "person", ["Legacy evidence without a timestamp."]);
+    await storage.updateEntitySynthesis(canonical, "Jane Doe synthesis rebuilt from timestampless evidence.");
+
+    const parsed = parseEntityFile(await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"));
+
+    assert.equal(parsed.synthesis, "Jane Doe synthesis rebuilt from timestampless evidence.");
+    assert.equal(parsed.synthesisUpdatedAt, undefined);
+    assert.equal(isEntitySynthesisStale(parsed), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeEntity skips duplicate timeline entries on repeated extraction writes", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-dedupe-"));
   try {
