@@ -965,6 +965,25 @@ test("parseEntityFile leaves legacy summary synthesis timestamp unset without ex
   assert.equal(isEntitySynthesisStale(parsed), true);
 });
 
+test("parseEntityFile preserves unknown timestamps for legacy facts without metadata", () => {
+  const raw = [
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "",
+    "## Facts",
+    "",
+    "- Leads roadmap work.",
+    "- Prefers short updates.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+
+  assert.deepEqual(parsed.timeline.map((entry) => entry.timestamp), ["", ""]);
+  assert.equal(latestEntityTimelineTimestamp(parsed), undefined);
+});
+
 test("serializeEntityFile does not invent synthesis timeline count for unsynthesized legacy entities", () => {
   const raw = [
     "# Jane Doe",

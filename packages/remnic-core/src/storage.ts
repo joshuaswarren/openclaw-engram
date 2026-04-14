@@ -1120,6 +1120,8 @@ export function parseEntityFile(content: string): EntityFile {
     ? normalizedPreSectionLines
     : [];
 
+  const fallbackTimestamp = updated || created || "";
+
   // Detect which section we're in
   let section = "";
   let currentExtraSection: { title: string; lines: string[] } | null = null;
@@ -1150,7 +1152,7 @@ export function parseEntityFile(content: string): EntityFile {
       case "timeline": {
         const parsed = parseEntityTimelineBullet(
           bullet,
-          updated || new Date().toISOString(),
+          fallbackTimestamp,
         );
         if (parsed) timeline.push(parsed);
         break;
@@ -1181,7 +1183,6 @@ export function parseEntityFile(content: string): EntityFile {
     }
   }
 
-  const fallbackTimestamp = updated || new Date().toISOString();
   const legacyFactTimelineEntries = legacyFacts.map((fact) => ({
     timestamp: fallbackTimestamp,
     text: fact,
