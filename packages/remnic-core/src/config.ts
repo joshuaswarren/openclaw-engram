@@ -1484,7 +1484,10 @@ export function parseConfig(raw: unknown): PluginConfig {
     entitySummaryEnabled: cfg.entitySummaryEnabled !== false,
     entitySynthesisMaxTokens:
       typeof cfg.entitySynthesisMaxTokens === "number" && Number.isFinite(cfg.entitySynthesisMaxTokens)
-        ? Math.max(0, Math.floor(cfg.entitySynthesisMaxTokens))
+        ? (() => {
+            const tokens = Math.max(0, Math.floor(cfg.entitySynthesisMaxTokens));
+            return tokens === 0 ? 0 : Math.max(10, tokens);
+          })()
         : 500,
 
     // Search backend abstraction

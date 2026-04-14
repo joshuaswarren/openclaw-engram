@@ -3089,7 +3089,16 @@
         "description": "Generate LLM summaries for entities during consolidation"
       },
       "entitySynthesisMaxTokens": {
-        "type": "number",
+        "anyOf": [
+          {
+            "type": "integer",
+            "const": 0
+          },
+          {
+            "type": "integer",
+            "minimum": 10
+          }
+        ],
         "default": 500,
         "description": "Max tokens used when refreshing an entity synthesis from its timeline."
       },

@@ -213,6 +213,25 @@ test("parseConfig keeps explicit small positive cache ttls and rejects negative 
   assert.equal(cfg.dreaming.maxEntries, 500);
 });
 
+test("parseConfig preserves disabled entity synthesis and clamps tiny positive budgets to the first usable range", () => {
+  const disabled = parseConfig({
+    openaiApiKey: "sk-test",
+    entitySynthesisMaxTokens: 0,
+  });
+  const clamped = parseConfig({
+    openaiApiKey: "sk-test",
+    entitySynthesisMaxTokens: 5,
+  });
+  const preserved = parseConfig({
+    openaiApiKey: "sk-test",
+    entitySynthesisMaxTokens: 120,
+  });
+
+  assert.equal(disabled.entitySynthesisMaxTokens, 0);
+  assert.equal(clamped.entitySynthesisMaxTokens, 10);
+  assert.equal(preserved.entitySynthesisMaxTokens, 120);
+});
+
 test("parseConfig preserves explicit low active recall thinking mode", () => {
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
