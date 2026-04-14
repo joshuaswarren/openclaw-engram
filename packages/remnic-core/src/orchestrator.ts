@@ -2358,6 +2358,7 @@ export class Orchestrator {
         const synthesis = response?.content?.trim().replace(/^["']|["']$/g, "");
         if (!synthesis || synthesis.length < 10 || synthesis.length > 2_000) continue;
         await storage.updateEntitySynthesis(entityName, synthesis, {
+          entityUpdatedAt: new Date().toISOString(),
           updatedAt: latestEvidenceTimestamp,
         });
         processed += 1;

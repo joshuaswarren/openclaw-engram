@@ -3997,6 +3997,7 @@ export class StorageManager {
     name: string,
     synthesis: string,
     options: {
+      entityUpdatedAt?: string;
       updatedAt?: string;
       incrementVersion?: boolean;
     } = {},
@@ -4012,12 +4013,13 @@ export class StorageManager {
     }
 
     const updatedAt = options.updatedAt?.trim() || new Date().toISOString();
+    const entityUpdatedAt = options.entityUpdatedAt?.trim() || updatedAt;
     entity.synthesis = synthesis.trim();
     entity.summary = entity.synthesis;
     entity.synthesisUpdatedAt = updatedAt;
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
-    entity.updated = updatedAt;
+    entity.updated = entityUpdatedAt;
     await writeFile(filePath, serializeEntityFile(entity), "utf-8");
     await this.removeEntitySynthesisQueueEntries([name]);
     this.invalidateKnowledgeIndexCache();
