@@ -184,7 +184,7 @@ test("processEntitySynthesisQueue batches overflow evidence before advancing fre
   }
 });
 
-test("processEntitySynthesisQueue skips failed targets and continues through the stale queue", async () => {
+test("processEntitySynthesisQueue skips failed targets and continues through the stale queue within the attempt budget", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-skip-fail-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-skip-fail-workspace-"));
   try {
@@ -225,7 +225,7 @@ test("processEntitySynthesisQueue skips failed targets and continues through the
       return { content: "Project Success has refreshed synthesis." };
     };
 
-    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 2);
     const rawSuccess = await readFile(
       path.join(memoryDir, "entities", `${succeedingCanonical}.md`),
       "utf-8",
@@ -237,6 +237,66 @@ test("processEntitySynthesisQueue skips failed targets and continues through the
     assert.equal(completionCalls, 2);
     assert.equal(success.synthesis, "Project Success has refreshed synthesis.");
     assert.deepEqual(queue, [failingCanonical]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("processEntitySynthesisQueue counts failed entities against the maxEntities budget", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-budget-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-budget-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 120,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    await storage.writeEntity("Alice Failure", "person", ["Newest entity keeps failing synthesis."], {
+      timestamp: "2026-04-13T18:00:00.000Z",
+      source: "extraction",
+    });
+
+    const succeedingName = "Project Success";
+    const succeedingCanonical = normalizeEntityName(succeedingName, "project");
+    await storage.writeEntity(succeedingName, "project", ["Second stale entity should wait for the next pass."], {
+      timestamp: "2026-04-13T17:00:00.000Z",
+      source: "extraction",
+    });
+
+    let completionCalls = 0;
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      completionCalls += 1;
+      const prompt = messages.map((message) => message.content).join("\n\n");
+      if (prompt.includes("Alice Failure")) {
+        throw new Error("simulated synthesis failure");
+      }
+      return { content: "Project Success has refreshed synthesis." };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const rawSuccess = await readFile(
+      path.join(memoryDir, "entities", `${succeedingCanonical}.md`),
+      "utf-8",
+    );
+    const success = parseEntityFile(rawSuccess);
+    const queue = await storage.readEntitySynthesisQueue();
+
+    assert.equal(processed, 0);
+    assert.equal(completionCalls, 1);
+    assert.equal(success.synthesis, undefined);
+    assert.deepEqual(queue, [
+      normalizeEntityName("Alice Failure", "person"),
+      succeedingCanonical,
+    ]);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });

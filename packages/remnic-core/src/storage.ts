@@ -1000,7 +1000,6 @@ export function isEntitySynthesisStale(entity: EntityFile): boolean {
   if (!entity.synthesisUpdatedAt?.trim()) return true;
   const timelineFreshness = compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt);
   if (timelineFreshness > 0) return true;
-  if (timelineFreshness < 0) return false;
   if (entity.synthesisTimelineCount === undefined) return true;
   return entity.timeline.length > entity.synthesisTimelineCount;
 }
