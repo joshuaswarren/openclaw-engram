@@ -982,6 +982,7 @@ test("parseEntityFile preserves unknown timestamps for legacy facts without meta
 
   assert.deepEqual(parsed.timeline.map((entry) => entry.timestamp), ["", ""]);
   assert.equal(latestEntityTimelineTimestamp(parsed), undefined);
+  assert.equal(isEntitySynthesisStale(parsed), true);
 });
 
 test("serializeEntityFile does not invent synthesis timeline count for unsynthesized legacy entities", () => {
@@ -1007,9 +1008,37 @@ test("serializeEntityFile does not invent synthesis timeline count for unsynthes
   const reparsed = parseEntityFile(serialized);
 
   assert.doesNotMatch(serialized, /synthesis_timeline_count:/);
+  assert.doesNotMatch(serialized, /\[\]/);
   assert.match(serialized, /\[source=migration\] Leads roadmap work\./);
+  assert.deepEqual(reparsed.timeline.map((entry) => entry.source), ["migration", "migration"]);
   assert.equal(reparsed.synthesisTimelineCount, undefined);
   assert.equal(isEntitySynthesisStale(reparsed), true);
+});
+
+test("timestamp-less synthesized legacy entities stay fresh when the evidence snapshot count matches", () => {
+  const reparsed = parseEntityFile(serializeEntityFile({
+    name: "Casey Example",
+    type: "person",
+    created: "2026-04-13T10:00:00.000Z",
+    updated: "2026-04-13T10:05:00.000Z",
+    facts: ["Owns rollout coordination.", "Keeps release notes current."],
+    summary: "Casey Example keeps rollout coordination on track.",
+    synthesis: "Casey Example keeps rollout coordination on track.",
+    synthesisUpdatedAt: "2026-04-13T10:05:00.000Z",
+    synthesisTimelineCount: 2,
+    synthesisVersion: 1,
+    timeline: [
+      { timestamp: "", text: "Owns rollout coordination.", source: "migration" },
+      { timestamp: "", text: "Keeps release notes current.", source: "migration" },
+    ],
+    relationships: [],
+    activity: [],
+    aliases: [],
+  }));
+
+  assert.deepEqual(reparsed.timeline.map((entry) => entry.timestamp), ["", ""]);
+  assert.equal(reparsed.synthesisTimelineCount, 2);
+  assert.equal(isEntitySynthesisStale(reparsed), false);
 });
 
 test("serializeEntityFile preserves facts-only entities as legacy facts instead of synthetic timeline entries", () => {

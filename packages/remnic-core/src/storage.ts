@@ -778,37 +778,31 @@ function parseEntityTimelineBullet(
   const trimmed = bullet.trim();
   if (!trimmed) return null;
 
-  if (!trimmed.startsWith("[")) {
-    return {
-      timestamp: fallbackTimestamp,
-      text: trimmed,
-    };
-  }
-
-  const firstEnd = trimmed.indexOf("]");
-  if (firstEnd === -1) {
-    return {
-      timestamp: fallbackTimestamp,
-      text: trimmed,
-    };
-  }
-
-  const timestampToken = trimmed.slice(1, firstEnd).trim();
-  const parsedTimestamp = Date.parse(timestampToken);
-  if (!Number.isFinite(parsedTimestamp)) {
-    return {
-      timestamp: fallbackTimestamp,
-      text: trimmed,
-    };
-  }
-
-  let rest = trimmed.slice(firstEnd + 1).trimStart();
+  let rest = trimmed;
   const entry: EntityTimelineEntry = {
-    timestamp: timestampToken || fallbackTimestamp,
+    timestamp: trimmed.startsWith("[") ? "" : fallbackTimestamp,
     text: "",
   };
   const consumedMetadataSegments: string[] = [];
   let literalSingleSourceSegment: string | undefined;
+
+  if (!trimmed.startsWith("[")) {
+    entry.text = trimmed;
+    return entry.text ? entry : null;
+  }
+
+  const firstEnd = trimmed.indexOf("]");
+  if (firstEnd === -1) {
+    entry.text = trimmed;
+    return entry.text ? entry : null;
+  }
+
+  const firstToken = trimmed.slice(1, firstEnd).trim();
+  const parsedTimestamp = Date.parse(firstToken);
+  if (Number.isFinite(parsedTimestamp)) {
+    entry.timestamp = firstToken || fallbackTimestamp;
+    rest = trimmed.slice(firstEnd + 1).trimStart();
+  }
 
   while (rest.startsWith("[")) {
     const end = findEntityTimelineTokenEnd(rest);
@@ -816,7 +810,13 @@ function parseEntityTimelineBullet(
     const rawSegment = rest.slice(0, end + 1);
     const token = rest.slice(1, end).trim();
     const equalsIdx = token.indexOf("=");
-    if (equalsIdx === -1) break;
+    if (equalsIdx === -1) {
+      if (rest === trimmed) {
+        entry.text = trimmed;
+        return entry.text ? entry : null;
+      }
+      break;
+    }
     const key = token.slice(0, equalsIdx).trim().toLowerCase();
     const value = unescapeEntityTimelineMetadataValue(token.slice(equalsIdx + 1).trim());
     if (!value) break;
@@ -993,7 +993,10 @@ function unescapeEntityTimelineMetadataValue(value: string): string {
 }
 
 function serializeEntityTimelineEntry(entry: EntityTimelineEntry): string {
-  const tokens = [`[${entry.timestamp}]`];
+  const tokens: string[] = [];
+  if (entry.timestamp.trim().length > 0) {
+    tokens.push(`[${entry.timestamp}]`);
+  }
   if (entry.source) {
     const sourceKey = isManagedEntityTimelineSource(entry.source) ? "source" : "source_meta";
     tokens.push(`[${sourceKey}=${escapeEntityTimelineMetadataValue(entry.source)}]`);
@@ -1050,13 +1053,16 @@ export function compareEntityTimestamps(left?: string, right?: string): number {
 }
 
 export function isEntitySynthesisStale(entity: EntityFile): boolean {
-  const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
-  if (!latestTimelineTimestamp) return false;
+  if (entity.timeline.length === 0) return false;
   if (!entity.synthesis?.trim()) return true;
   if (!entity.synthesisUpdatedAt?.trim()) return true;
+  if (entity.synthesisTimelineCount === undefined) return true;
+  const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
+  if (!latestTimelineTimestamp) {
+    return entity.timeline.length > entity.synthesisTimelineCount;
+  }
   const timelineFreshness = compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt);
   if (timelineFreshness > 0) return true;
-  if (entity.synthesisTimelineCount === undefined) return true;
   return entity.timeline.length > entity.synthesisTimelineCount;
 }
 
