@@ -13,7 +13,6 @@ import {
   serializeEntityFile,
 } from "../packages/remnic-core/src/storage.js";
 import { parseConfig } from "../packages/remnic-core/src/config.js";
-import { setConfiguredEntitySchemas } from "../packages/remnic-core/src/entity-schema.js";
 
 test("writeEntity appends timeline evidence and marks older synthesis as stale", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-"));
@@ -734,48 +733,132 @@ test("parseEntityFile preserves structured person sections across round trips", 
 });
 
 test("parseEntityFile honors configured custom entity schemas", () => {
-  try {
-    parseConfig({
-      entitySchemas: {
-        person: {
-          sections: [
-            { key: "operating_principles", title: "Operating Principles" },
-          ],
-        },
+  const config = parseConfig({
+    entitySchemas: {
+      person: {
+        sections: [
+          { key: "operating_principles", title: "Operating Principles" },
+        ],
       },
-    });
+    },
+  });
 
-    const parsed = parseEntityFile([
-      "---",
-      "created: 2026-04-13T10:00:00.000Z",
-      "updated: 2026-04-13T10:05:00.000Z",
-      "---",
-      "",
-      "# Jane Doe",
-      "",
-      "**Type:** person",
-      "**Updated:** 2026-04-13T10:05:00.000Z",
-      "",
-      "## Synthesis",
-      "",
-      "Jane Doe leads roadmap work.",
-      "",
-      "## Operating Principles",
-      "",
-      "- Prefer boring infrastructure over clever infra.",
-      "",
-    ].join("\n")) as any;
+  const parsed = parseEntityFile([
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Operating Principles",
+    "",
+    "- Prefer boring infrastructure over clever infra.",
+    "",
+  ].join("\n"), config.entitySchemas) as any;
 
-    assert.deepEqual(parsed.structuredSections, [
-      {
-        key: "operating_principles",
-        title: "Operating Principles",
-        facts: ["Prefer boring infrastructure over clever infra."],
+  assert.deepEqual(parsed.structuredSections, [
+    {
+      key: "operating_principles",
+      title: "Operating Principles",
+      facts: ["Prefer boring infrastructure over clever infra."],
+    },
+  ]);
+});
+
+test("parseEntityFile keeps caller-provided entity schemas isolated per parse", () => {
+  const principlesConfig = parseConfig({
+    entitySchemas: {
+      person: {
+        sections: [{ key: "operating_principles", title: "Operating Principles" }],
       },
-    ]);
-  } finally {
-    setConfiguredEntitySchemas(undefined);
-  }
+    },
+  });
+  const beliefsConfig = parseConfig({
+    entitySchemas: {
+      person: {
+        sections: [{ key: "beliefs", title: "Beliefs" }],
+      },
+    },
+  });
+
+  const parsedPrinciples = parseEntityFile([
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Operating Principles",
+    "",
+    "- Prefer boring infrastructure over clever infra.",
+    "",
+  ].join("\n"), principlesConfig.entitySchemas) as any;
+  const parsedBeliefs = parseEntityFile([
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Beliefs",
+    "",
+    "- Small teams move faster than committees.",
+    "",
+  ].join("\n"), beliefsConfig.entitySchemas) as any;
+  const parsedDefault = parseEntityFile([
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Beliefs",
+    "",
+    "- Default schemas still apply without caller overrides.",
+    "",
+  ].join("\n")) as any;
+
+  assert.deepEqual(parsedPrinciples.structuredSections, [
+    {
+      key: "operating_principles",
+      title: "Operating Principles",
+      facts: ["Prefer boring infrastructure over clever infra."],
+    },
+  ]);
+  assert.deepEqual(parsedBeliefs.structuredSections, [
+    {
+      key: "beliefs",
+      title: "Beliefs",
+      facts: ["Small teams move faster than committees."],
+    },
+  ]);
+  assert.deepEqual(parsedDefault.structuredSections, [
+    {
+      key: "beliefs",
+      title: "Beliefs",
+      facts: ["Default schemas still apply without caller overrides."],
+    },
+  ]);
 });
 
 test("parseEntityFile preserves blank lines in multi-paragraph synthesis", () => {

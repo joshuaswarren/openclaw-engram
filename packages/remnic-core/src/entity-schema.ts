@@ -42,8 +42,6 @@ const DEFAULT_ENTITY_SCHEMAS: Record<string, EntitySchemaDefinition> = {
   },
 };
 
-let runtimeEntitySchemas: Record<string, EntitySchemaDefinition> | undefined;
-
 function normalizeText(value: string): string {
   return value
     .toLowerCase()
@@ -99,19 +97,12 @@ export function normalizeEntitySchemas(raw: unknown): Record<string, EntitySchem
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
-export function setConfiguredEntitySchemas(
-  entitySchemas: Record<string, EntitySchemaDefinition> | undefined,
-): void {
-  runtimeEntitySchemas = entitySchemas;
-}
-
 export function getEntitySchema(
   entityType: string,
   entitySchemas?: Record<string, EntitySchemaDefinition>,
 ): EntitySchemaDefinition | undefined {
   const normalizedType = toSnakeCase(entityType);
   return entitySchemas?.[normalizedType]
-    ?? runtimeEntitySchemas?.[normalizedType]
     ?? DEFAULT_ENTITY_SCHEMAS[normalizedType];
 }
 

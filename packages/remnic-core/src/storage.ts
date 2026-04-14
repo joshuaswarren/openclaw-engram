@@ -1140,6 +1140,7 @@ function parseEntityStructuredSectionFacts(lines: string[]): string[] {
 function partitionEntityStructuredSections(
   entityType: string,
   extraSections: Array<{ title: string; lines: string[] }>,
+  entitySchemas?: PluginConfig["entitySchemas"],
 ): {
   structuredSections: EntityStructuredSection[];
   remainingExtraSections: Array<{ title: string; lines: string[] }>;
@@ -1149,7 +1150,7 @@ function partitionEntityStructuredSections(
   const structuredSectionIndex = new Map<string, EntityStructuredSection>();
 
   for (const section of extraSections) {
-    const matchedSection = matchEntitySchemaSection(entityType, section.title);
+    const matchedSection = matchEntitySchemaSection(entityType, section.title, entitySchemas);
     if (!matchedSection) {
       remainingExtraSections.push(section);
       continue;
@@ -1227,7 +1228,10 @@ export function isEntitySynthesisStale(entity: EntityFile): boolean {
  * Parse an entity markdown file into a structured EntityFile.
  * Backward compatible: old files without new sections get empty arrays.
  */
-export function parseEntityFile(content: string): EntityFile {
+export function parseEntityFile(
+  content: string,
+  entitySchemas?: PluginConfig["entitySchemas"],
+): EntityFile {
   const { frontmatter, body } = parseEntityFrontmatter(content);
   const lines = body.split("\n");
   const recognizedSections = new Set([
@@ -1379,7 +1383,11 @@ export function parseEntityFile(content: string): EntityFile {
   const facts = dedupeEntityFacts(timeline);
   const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
   const synthesisTimelineCount = frontmatter.synthesisTimelineCount;
-  const { structuredSections, remainingExtraSections } = partitionEntityStructuredSections(type, extraSections);
+  const { structuredSections, remainingExtraSections } = partitionEntityStructuredSections(
+    type,
+    extraSections,
+    entitySchemas,
+  );
 
   return {
     name,
@@ -1408,7 +1416,10 @@ export function parseEntityFile(content: string): EntityFile {
  * Writes the compiled-truth + timeline format while remaining parse-compatible
  * with the legacy in-memory `summary` and `facts` fields.
  */
-export function serializeEntityFile(entity: EntityFile): string {
+export function serializeEntityFile(
+  entity: EntityFile,
+  entitySchemas?: PluginConfig["entitySchemas"],
+): string {
   const synthesis = entity.synthesis || entity.summary || "";
   const created = entity.created?.trim() || entity.updated || new Date().toISOString();
   const updated = entity.updated || created;
@@ -1416,6 +1427,7 @@ export function serializeEntityFile(entity: EntityFile): string {
   const structuredSections = sortStructuredSectionsBySchema(
     entity.type,
     entity.structuredSections ?? [],
+    entitySchemas,
   );
   const legacyFacts = timeline.length === 0 ? dedupeEntityFacts(
     entity.facts.map((fact) => ({
@@ -1593,7 +1605,10 @@ export class StorageManager {
   /** Optional: set by the orchestrator after construction to enable template-aware citation stripping during legacy hash rebuild. */
   citationTemplate: string = DEFAULT_CITATION_FORMAT;
 
-  constructor(private readonly baseDir: string) {}
+  constructor(
+    private readonly baseDir: string,
+    private readonly entitySchemas?: PluginConfig["entitySchemas"],
+  ) {}
 
   /** The root directory of this storage instance. */
   get dir(): string {
@@ -2240,7 +2255,7 @@ export class StorageManager {
     };
     try {
       const existing = await readFile(filePath, "utf-8");
-      entity = parseEntityFile(existing);
+      entity = parseEntityFile(existing, this.entitySchemas);
     } catch {
       // File doesn't exist yet
     }
@@ -2299,13 +2314,14 @@ export class StorageManager {
     entity.structuredSections = sortStructuredSectionsBySchema(
       type,
       Array.from(structuredSectionMap.values()),
+      this.entitySchemas,
     );
     entity.name = name;
     entity.type = type;
     entity.created = entity.created || timestamp;
     entity.updated = new Date().toISOString();
 
-    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
     log.debug(`wrote entity ${normalized}`);
@@ -2856,7 +2872,7 @@ export class StorageManager {
       // tracking rather than being silently dropped.
       const normalizedPath = filePath.split(path.sep).join("/");
       if (normalizedPath.includes("/entities/") && filePath.endsWith(".md")) {
-        const entity = parseEntityFile(raw);
+        const entity = parseEntityFile(raw, this.entitySchemas);
         if (!entity.name) return null;
         const nameWithoutExt = path.basename(filePath, ".md");
         // Fall back to file mtime rather than new Date() so that entities without
@@ -4219,7 +4235,7 @@ export class StorageManager {
     let entity: EntityFile;
     try {
       const content = await readFile(filePath, "utf-8");
-      entity = parseEntityFile(content);
+      entity = parseEntityFile(content, this.entitySchemas);
     } catch {
       log.debug(`addEntityRelationship: entity file ${name}.md not found`);
       return;
@@ -4233,7 +4249,7 @@ export class StorageManager {
 
     entity.relationships.push(rel);
     entity.updated = new Date().toISOString();
-    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -4250,7 +4266,7 @@ export class StorageManager {
     let entity: EntityFile;
     try {
       const content = await readFile(filePath, "utf-8");
-      entity = parseEntityFile(content);
+      entity = parseEntityFile(content, this.entitySchemas);
     } catch {
       log.debug(`addEntityActivity: entity file ${name}.md not found`);
       return;
@@ -4261,7 +4277,7 @@ export class StorageManager {
       entity.activity = entity.activity.slice(0, maxEntries);
     }
     entity.updated = new Date().toISOString();
-    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -4273,7 +4289,7 @@ export class StorageManager {
     let entity: EntityFile;
     try {
       const content = await readFile(filePath, "utf-8");
-      entity = parseEntityFile(content);
+      entity = parseEntityFile(content, this.entitySchemas);
     } catch {
       log.debug(`addEntityAlias: entity file ${name}.md not found`);
       return;
@@ -4282,7 +4298,7 @@ export class StorageManager {
     if (entity.aliases.includes(alias)) return;
     entity.aliases.push(alias);
     entity.updated = new Date().toISOString();
-    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
     this.invalidateKnowledgeIndexCache();
   }
 
@@ -4303,7 +4319,7 @@ export class StorageManager {
     let entity: EntityFile;
     try {
       const content = await readFile(filePath, "utf-8");
-      entity = parseEntityFile(content);
+      entity = parseEntityFile(content, this.entitySchemas);
     } catch {
       log.debug(`updateEntitySynthesis: entity file ${name}.md not found`);
       return;
@@ -4322,7 +4338,7 @@ export class StorageManager {
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
-    await writeFile(filePath, serializeEntityFile(entity), "utf-8");
+    await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
     await this.removeEntitySynthesisQueueEntries([name]);
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
@@ -4337,7 +4353,7 @@ export class StorageManager {
     try {
       const filePath = path.join(this.entitiesDir, `${name}.md`);
       const content = await readFile(filePath, "utf-8");
-      synthesisTimelineCount = parseEntityFile(content).timeline.length;
+      synthesisTimelineCount = parseEntityFile(content, this.entitySchemas).timeline.length;
     } catch {
       synthesisTimelineCount = undefined;
     }
@@ -4368,7 +4384,7 @@ export class StorageManager {
         if (!raw) return null;
         return {
           entityName,
-          entity: parseEntityFile(raw),
+          entity: parseEntityFile(raw, this.entitySchemas),
         };
       }),
     );
@@ -4428,7 +4444,7 @@ export class StorageManager {
     for (const entityName of entityNames) {
       const raw = await this.readEntity(entityName);
       if (!raw) continue;
-      const serialized = serializeEntityFile(parseEntityFile(raw));
+      const serialized = serializeEntityFile(parseEntityFile(raw, this.entitySchemas), this.entitySchemas);
       if (raw.trimEnd() === serialized.trimEnd()) continue;
       await writeFile(path.join(this.entitiesDir, `${entityName}.md`), serialized, "utf-8");
       migrated += 1;
@@ -4474,7 +4490,7 @@ export class StorageManager {
           ),
         );
         for (const content of results) {
-          if (content !== null) entities.push(parseEntityFile(content));
+          if (content !== null) entities.push(parseEntityFile(content, this.entitySchemas));
         }
       }
 
@@ -4668,7 +4684,7 @@ export class StorageManager {
           const filePath = path.join(this.entitiesDir, file);
           try {
             const content = await readFile(filePath, "utf-8");
-            const parsed = parseEntityFile(content);
+            const parsed = parseEntityFile(content, this.entitySchemas);
 
             // Prefer specific types over "other"
             if (!mergedEntity.type || mergedEntity.type === "other") {
@@ -4831,6 +4847,7 @@ export class StorageManager {
         mergedEntity.structuredSections = sortStructuredSectionsBySchema(
           mergedEntity.type,
           mergedEntity.structuredSections ?? [],
+          this.entitySchemas,
         );
 
         const extraSectionKeys = new Set<string>();
@@ -4851,7 +4868,7 @@ export class StorageManager {
         mergedEntity.updated = mergedEntity.updated || new Date().toISOString();
 
         const canonicalPath = path.join(this.entitiesDir, `${canonical}.md`);
-        await writeFile(canonicalPath, serializeEntityFile(mergedEntity), "utf-8");
+        await writeFile(canonicalPath, serializeEntityFile(mergedEntity, this.entitySchemas), "utf-8");
 
         // Remove non-canonical files
         for (const file of files) {

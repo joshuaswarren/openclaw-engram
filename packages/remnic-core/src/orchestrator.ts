@@ -1216,7 +1216,7 @@ export class Orchestrator {
       config,
       this.storageRouter,
     );
-    this.storage = new StorageManager(config.memoryDir);
+    this.storage = new StorageManager(config.memoryDir, config.entitySchemas);
     // Propagate the inline-attribution template so the storage layer can strip
     // citations from legacy facts during the hash-index rebuild path.
     this.storage.citationTemplate = config.inlineSourceAttributionFormat;
@@ -2297,7 +2297,7 @@ export class Orchestrator {
       try {
         const raw = await storage.readEntity(entityName);
         if (!raw) continue;
-        const entity = parseEntityFile(raw);
+        const entity = parseEntityFile(raw, this.config.entitySchemas);
         const previousSynthesis = entity.synthesis || entity.summary || "";
         const sortedTimelineEntries = entity.timeline
           .slice()
@@ -2394,7 +2394,7 @@ export class Orchestrator {
         if (batchFailed || nextSynthesis.length === 0) continue;
         const latestRaw = await storage.readEntity(entityName);
         if (!latestRaw) continue;
-        const latestEntity = parseEntityFile(latestRaw);
+        const latestEntity = parseEntityFile(latestRaw, this.config.entitySchemas);
         if (latestEntity.timeline.length !== entity.timeline.length) {
           continue;
         }
