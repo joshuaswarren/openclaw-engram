@@ -516,6 +516,47 @@ test("parseEntityFile preserves unknown bracket tokens after known timeline meta
   assert.equal(parsed.timeline[0]?.text, "[custom=val] launched rollout");
 });
 
+test("serializeEntityFile escapes bracket characters in timeline metadata values", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] launched rollout",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  parsed.timeline = [{
+    timestamp: "2026-04-13T10:00:00.000Z",
+    text: "launched rollout",
+    source: "qa]team",
+    sessionKey: "session\\]42",
+    principal: "agent\\main]ops",
+  }];
+
+  const serialized = serializeEntityFile(parsed);
+  const reparsed = parseEntityFile(serialized);
+
+  assert.match(serialized, /\[source=qa\\\]team\]/);
+  assert.match(serialized, /\[session=session\\\\\\]42\]/);
+  assert.match(serialized, /\[principal=agent\\\\main\\\]ops\]/);
+  assert.equal(reparsed.timeline[0]?.source, "qa]team");
+  assert.equal(reparsed.timeline[0]?.sessionKey, "session\\]42");
+  assert.equal(reparsed.timeline[0]?.principal, "agent\\main]ops");
+  assert.equal(reparsed.timeline[0]?.text, "launched rollout");
+});
+
 test("parseEntityFile merges legacy facts into mixed timeline entities", () => {
   const raw = [
     "---",

@@ -805,13 +805,13 @@ function parseEntityTimelineBullet(
   };
 
   while (rest.startsWith("[")) {
-    const end = rest.indexOf("]");
+    const end = findEntityTimelineTokenEnd(rest);
     if (end === -1) break;
     const token = rest.slice(1, end).trim();
     const equalsIdx = token.indexOf("=");
     if (equalsIdx === -1) break;
     const key = token.slice(0, equalsIdx).trim().toLowerCase();
-    const value = token.slice(equalsIdx + 1).trim();
+    const value = unescapeEntityTimelineMetadataValue(token.slice(equalsIdx + 1).trim());
     if (!value) break;
     switch (key) {
       case "source":
@@ -836,11 +836,58 @@ function parseEntityTimelineBullet(
   return entry;
 }
 
+function findEntityTimelineTokenEnd(input: string): number {
+  let escaped = false;
+  for (let index = 0; index < input.length; index += 1) {
+    const char = input[index];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "]") return index;
+  }
+  return -1;
+}
+
+function escapeEntityTimelineMetadataValue(value: string): string {
+  return value.replaceAll("\\", "\\\\").replaceAll("]", "\\]");
+}
+
+function unescapeEntityTimelineMetadataValue(value: string): string {
+  if (!value.includes("\\")) return value;
+
+  let result = "";
+  let escaped = false;
+  for (const char of value) {
+    if (escaped) {
+      result += char;
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    result += char;
+  }
+
+  if (escaped) result += "\\";
+  return result;
+}
+
 function serializeEntityTimelineEntry(entry: EntityTimelineEntry): string {
   const tokens = [`[${entry.timestamp}]`];
-  if (entry.source) tokens.push(`[source=${entry.source}]`);
-  if (entry.sessionKey) tokens.push(`[session=${entry.sessionKey}]`);
-  if (entry.principal) tokens.push(`[principal=${entry.principal}]`);
+  if (entry.source) tokens.push(`[source=${escapeEntityTimelineMetadataValue(entry.source)}]`);
+  if (entry.sessionKey) {
+    tokens.push(`[session=${escapeEntityTimelineMetadataValue(entry.sessionKey)}]`);
+  }
+  if (entry.principal) {
+    tokens.push(`[principal=${escapeEntityTimelineMetadataValue(entry.principal)}]`);
+  }
   return `- ${tokens.join(" ")} ${entry.text}`.trimEnd();
 }
 
