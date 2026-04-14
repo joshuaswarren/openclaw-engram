@@ -833,6 +833,7 @@ function parseEntityTimelineBullet(
           && !isManagedEntityTimelineSource(value)
         ) {
           literalSingleSourceSegment = rawSegment;
+          rest = nextRest;
           break;
         }
         entry.source = value;
@@ -856,7 +857,7 @@ function parseEntityTimelineBullet(
   if (literalSingleSourceSegment) {
     return {
       timestamp: entry.timestamp,
-      text: `${literalSingleSourceSegment} ${rest.slice(literalSingleSourceSegment.length).trimStart()}`.trim(),
+      text: `${literalSingleSourceSegment} ${rest}`.trim(),
     };
   }
 
@@ -4122,7 +4123,20 @@ export class StorageManager {
    * Backward-compatible alias for legacy callers/tests.
    */
   async updateEntitySummary(name: string, summary: string): Promise<void> {
-    await this.updateEntitySynthesis(name, summary);
+    const updatedAt = new Date().toISOString();
+    let synthesisTimelineCount: number | undefined;
+    try {
+      const filePath = path.join(this.entitiesDir, `${name}.md`);
+      const content = await readFile(filePath, "utf-8");
+      synthesisTimelineCount = parseEntityFile(content).timeline.length;
+    } catch {
+      synthesisTimelineCount = undefined;
+    }
+    await this.updateEntitySynthesis(name, summary, {
+      entityUpdatedAt: updatedAt,
+      synthesisTimelineCount,
+      updatedAt,
+    });
   }
 
   async readEntitySynthesisQueue(): Promise<string[]> {

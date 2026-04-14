@@ -204,6 +204,27 @@ test("updateEntitySynthesis preserves unknown freshness when updatedAt is omitte
   }
 });
 
+test("updateEntitySummary preserves legacy fresh-summary semantics", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-summary-storage-legacy-freshness-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonical = await storage.writeEntity("Jane Doe", "person", ["Legacy evidence without a timestamp."]);
+    await storage.updateEntitySummary(canonical, "Jane Doe legacy summary.");
+
+    const parsed = parseEntityFile(await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"));
+
+    assert.equal(parsed.synthesis, "Jane Doe legacy summary.");
+    assert.equal(parsed.summary, "Jane Doe legacy summary.");
+    assert.ok(parsed.synthesisUpdatedAt);
+    assert.equal(parsed.updated, parsed.synthesisUpdatedAt);
+    assert.equal(isEntitySynthesisStale(parsed), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeEntity skips duplicate timeline entries on repeated extraction writes", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-dedupe-"));
   try {
