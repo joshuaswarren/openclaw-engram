@@ -146,6 +146,43 @@ test("writeEntity marks backfilled older evidence as stale after synthesis", asy
   }
 });
 
+test("updateEntitySynthesis preserves the provided evidence snapshot count", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-count-"));
+  try {
+    StorageManager.clearAllStaticCaches();
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonical = await storage.writeEntity("Jane Doe", "person", ["Initial synthesis evidence."], {
+      timestamp: "2026-04-13T09:00:00.000Z",
+      source: "extraction",
+    });
+    const beforeConcurrentAppend = parseEntityFile(await readFile(
+      path.join(dir, "entities", `${canonical}.md`),
+      "utf-8",
+    ));
+    assert.equal(beforeConcurrentAppend.timeline.length, 1);
+
+    await storage.writeEntity("Jane Doe", "person", ["Backfilled older evidence."], {
+      timestamp: "2026-04-13T08:00:00.000Z",
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe synthesis from the original evidence snapshot.", {
+      synthesisTimelineCount: beforeConcurrentAppend.timeline.length,
+      updatedAt: "2026-04-13T09:00:00.000Z",
+    });
+
+    const parsed = parseEntityFile(await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"));
+
+    assert.equal(parsed.timeline.length, 2);
+    assert.equal(parsed.synthesisTimelineCount, 1);
+    assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T09:00:00.000Z");
+    assert.equal(isEntitySynthesisStale(parsed), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeEntity skips duplicate timeline entries on repeated extraction writes", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-dedupe-"));
   try {

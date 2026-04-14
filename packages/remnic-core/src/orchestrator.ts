@@ -2384,6 +2384,7 @@ export class Orchestrator {
         if (batchFailed || nextSynthesis.length === 0) continue;
         await storage.updateEntitySynthesis(entityName, nextSynthesis, {
           entityUpdatedAt: new Date().toISOString(),
+          synthesisTimelineCount: entity.timeline.length,
           updatedAt: latestEvidenceTimestamp,
         });
         processed += 1;

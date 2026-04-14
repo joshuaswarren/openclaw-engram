@@ -4078,6 +4078,7 @@ export class StorageManager {
     synthesis: string,
     options: {
       entityUpdatedAt?: string;
+      synthesisTimelineCount?: number;
       updatedAt?: string;
       incrementVersion?: boolean;
     } = {},
@@ -4094,10 +4095,14 @@ export class StorageManager {
 
     const updatedAt = options.updatedAt?.trim() || new Date().toISOString();
     const entityUpdatedAt = options.entityUpdatedAt?.trim() || updatedAt;
+    const synthesisTimelineCount = Number.isInteger(options.synthesisTimelineCount)
+      && (options.synthesisTimelineCount ?? 0) >= 0
+      ? options.synthesisTimelineCount
+      : entity.timeline.length;
     entity.synthesis = synthesis.trim();
     entity.summary = entity.synthesis;
     entity.synthesisUpdatedAt = updatedAt;
-    entity.synthesisTimelineCount = entity.timeline.length;
+    entity.synthesisTimelineCount = synthesisTimelineCount;
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
