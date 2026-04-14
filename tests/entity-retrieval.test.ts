@@ -198,6 +198,7 @@ test("entity retrieval prefers synthesis for direct questions and uses timeline 
 
   assert.ok(timeline);
   assert.match(timeline!, /recent timeline:/i);
+  assert.match(timeline!, /- likely answer:\n  - Jane Example currently leads the launch review\.\n  - Jane Example leads the launch review\./);
   assert.match(timeline!, /now owns the release approvals/i);
   assert.match(timeline!, /Jane Example currently leads the launch review\./);
   assert.equal(canonical.length > 0, true);

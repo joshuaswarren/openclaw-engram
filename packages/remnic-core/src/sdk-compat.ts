@@ -42,15 +42,14 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
     hasRuntimeNamespace && typeof (api as any).runtime?.version === "string"
       ? (api as any).runtime.version
       : null;
+  const isNewSdk =
+    hasRegisterMemoryPromptSection || hasRegisterMemoryCapability || hasRuntimeNamespace || hasRegistrationMode;
   const sdkVersion: string =
     runtimeVersion ??
-    (hasRuntimeNamespace ? readEnvVar("OPENCLAW_SERVICE_VERSION") : null) ??
+    (isNewSdk ? readEnvVar("OPENCLAW_SERVICE_VERSION") : null) ??
     "legacy";
 
   // New SDK is indicated by any of the new API surfaces being present.
-  const isNewSdk =
-    hasRegisterMemoryPromptSection || hasRegisterMemoryCapability || hasRuntimeNamespace || hasRegistrationMode;
-
   // New hook system requires one of the authoritative new-SDK signals:
   //   - registerMemoryPromptSection (pre-capability new SDKs, ≥2026.3.22)
   //   - registerMemoryCapability   (capability-based SDKs, ≥2026.4.5; the

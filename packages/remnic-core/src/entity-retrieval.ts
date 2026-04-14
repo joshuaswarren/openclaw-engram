@@ -531,9 +531,48 @@ function formatEntityHintSection(
     const preferredTopSnippets = hasSummary
       ? snippets.filter((snippet) => snippet.kind !== "fact")
       : snippets;
-    const topSnippets = (
+    let topSnippets = (
       preferredTopSnippets.length > 0 ? preferredTopSnippets : snippets
     ).slice(0, 3);
+    const buildTimelineSnippets = (seedExcludedTexts: Set<string>): EntityHintSnippet[] => {
+      const explicitTimelinePool = dedupeHintSnippetsByText(
+        (candidate.entry.timeline ?? [])
+          .slice()
+          .sort(sortTimelineEntriesDesc)
+          .map((entry) => sanitizeEntityFact(entry.text))
+          .filter(Boolean)
+          .map((text) => scoreHintSnippet({
+            text: compactLine(text, 180),
+            score: 7,
+            kind: "activity" as const,
+          }, queryTokens))
+          .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
+          .filter((snippet) => !seedExcludedTexts.has(normalizeText(snippet.text))),
+      ).slice(0, 2);
+      const activityTimelinePool = dedupeHintSnippetsByText(
+        snippets
+          .filter((snippet) => (
+            snippet.kind === "activity" || snippet.kind === "memory"
+          ) && !seedExcludedTexts.has(normalizeText(snippet.text))),
+      ).slice(0, 2);
+      return explicitTimelinePool.length > 0
+        ? explicitTimelinePool
+        : activityTimelinePool.length > 0
+          ? activityTimelinePool
+          : dedupeHintSnippetsByText(
+            snippets
+              .filter((snippet) => (
+                snippet.kind === "fact" || snippet.kind === "summary"
+              ) && !seedExcludedTexts.has(normalizeText(snippet.text))),
+          ).slice(0, 2);
+    };
+    const baseTopSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
+    const timelinePool = mode !== "direct" ? buildTimelineSnippets(baseTopSnippetTexts) : [];
+    if (mode !== "direct" && hasSummary && topSnippets.length < 2) {
+      if (timelinePool.length > 0) {
+        topSnippets = [...topSnippets, timelinePool[0]!].slice(0, 3);
+      }
+    }
     const topSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
     lines.push(`- target: ${candidate.entry.name} (${candidate.entry.type})`);
     if (candidate.source === "recent_turn") {
@@ -549,34 +588,9 @@ function formatEntityHintSection(
       }
     }
     if (mode !== "direct") {
-      const explicitTimeline = dedupeHintSnippetsByText(
-        (candidate.entry.timeline ?? [])
-          .slice()
-          .sort(sortTimelineEntriesDesc)
-          .map((entry) => sanitizeEntityFact(entry.text))
-          .filter(Boolean)
-          .map((text) => scoreHintSnippet({
-            text: compactLine(text, 180),
-            score: 7,
-            kind: "activity" as const,
-          }, queryTokens))
-          .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
-          .filter((snippet) => !topSnippetTexts.has(normalizeText(snippet.text))),
-      ).slice(0, 2);
-      const activityTimeline = dedupeHintSnippetsByText(
-        snippets
-          .filter((snippet) => (snippet.kind === "activity" || snippet.kind === "memory") && !topSnippetTexts.has(normalizeText(snippet.text))),
-      ).slice(0, 2);
-      const fallbackTimeline = explicitTimeline.length > 0
-        ? explicitTimeline
-        : activityTimeline.length > 0
-          ? activityTimeline
-          : dedupeHintSnippetsByText(
-            snippets
-              .filter((snippet) => (
-                snippet.kind === "fact" || snippet.kind === "summary"
-              ) && !topSnippetTexts.has(normalizeText(snippet.text))),
-          ).slice(0, 2);
+      const fallbackTimeline = timelinePool.filter(
+        (snippet) => !topSnippetTexts.has(normalizeText(snippet.text)),
+      );
       if (fallbackTimeline.length > 0) {
         lines.push("- recent timeline:");
         for (const snippet of fallbackTimeline) {
