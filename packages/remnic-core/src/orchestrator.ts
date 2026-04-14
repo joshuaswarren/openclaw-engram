@@ -2330,6 +2330,13 @@ export class Orchestrator {
         if (chronologicalEvidenceEntries.length === 0) continue;
         const latestEvidenceTimestamp =
           chronologicalEvidenceEntries[chronologicalEvidenceEntries.length - 1]?.timestamp?.trim() || undefined;
+        const previousSynthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || undefined;
+        const nextSynthesisUpdatedAt = compareEntityTimestamps(
+          latestEvidenceTimestamp,
+          previousSynthesisUpdatedAt,
+        ) >= 0
+          ? latestEvidenceTimestamp
+          : previousSynthesisUpdatedAt;
         const evidenceBatches: typeof chronologicalEvidenceEntries[] = [];
         for (let index = 0; index < chronologicalEvidenceEntries.length; index += 8) {
           evidenceBatches.push(chronologicalEvidenceEntries.slice(index, index + 8));
@@ -2385,7 +2392,7 @@ export class Orchestrator {
         await storage.updateEntitySynthesis(entityName, nextSynthesis, {
           entityUpdatedAt: new Date().toISOString(),
           synthesisTimelineCount: entity.timeline.length,
-          updatedAt: latestEvidenceTimestamp,
+          updatedAt: nextSynthesisUpdatedAt,
         });
         processed += 1;
       } catch (err) {
