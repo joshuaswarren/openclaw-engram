@@ -557,6 +557,47 @@ test("serializeEntityFile escapes bracket characters in timeline metadata values
   assert.equal(reparsed.timeline[0]?.text, "launched rollout");
 });
 
+test("serializeEntityFile escapes newline characters in timeline metadata values", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] launched rollout",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  parsed.timeline = [{
+    timestamp: "2026-04-13T10:00:00.000Z",
+    text: "launched rollout",
+    source: "qa-team",
+    sessionKey: "session-42\nchild",
+    principal: "agent\r\nops",
+  }];
+
+  const serialized = serializeEntityFile(parsed);
+  const reparsed = parseEntityFile(serialized);
+
+  assert.doesNotMatch(serialized, /\[session=[^\]]*\n/);
+  assert.doesNotMatch(serialized, /\[principal=[^\]]*\n/);
+  assert.match(serialized, /\[session=session-42\\nchild\]/);
+  assert.match(serialized, /\[principal=agent\\r\\nops\]/);
+  assert.equal(reparsed.timeline[0]?.sessionKey, "session-42\nchild");
+  assert.equal(reparsed.timeline[0]?.principal, "agent\r\nops");
+  assert.equal(reparsed.timeline[0]?.text, "launched rollout");
+});
+
 test("parseEntityFile merges legacy facts into mixed timeline entities", () => {
   const raw = [
     "---",

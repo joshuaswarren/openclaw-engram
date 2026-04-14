@@ -854,28 +854,84 @@ function findEntityTimelineTokenEnd(input: string): number {
 }
 
 function escapeEntityTimelineMetadataValue(value: string): string {
-  return value.replaceAll("\\", "\\\\").replaceAll("]", "\\]");
+  let escaped = "";
+  for (const char of value) {
+    switch (char) {
+      case "\\":
+        escaped += "\\\\";
+        break;
+      case "]":
+        escaped += "\\]";
+        break;
+      case "\n":
+        escaped += "\\n";
+        break;
+      case "\r":
+        escaped += "\\r";
+        break;
+      case "\t":
+        escaped += "\\t";
+        break;
+      default: {
+        const codePoint = char.codePointAt(0) ?? 0;
+        if (codePoint < 0x20) {
+          escaped += `\\u${codePoint.toString(16).padStart(4, "0")}`;
+        } else {
+          escaped += char;
+        }
+      }
+    }
+  }
+  return escaped;
 }
 
 function unescapeEntityTimelineMetadataValue(value: string): string {
   if (!value.includes("\\")) return value;
 
   let result = "";
-  let escaped = false;
-  for (const char of value) {
-    if (escaped) {
+  for (let index = 0; index < value.length; index += 1) {
+    const char = value[index];
+    if (char !== "\\") {
       result += char;
-      escaped = false;
       continue;
     }
-    if (char === "\\") {
-      escaped = true;
-      continue;
-    }
-    result += char;
-  }
 
-  if (escaped) result += "\\";
+    const next = value[index + 1];
+    if (!next) {
+      result += "\\";
+      break;
+    }
+
+    switch (next) {
+      case "n":
+        result += "\n";
+        index += 1;
+        break;
+      case "r":
+        result += "\r";
+        index += 1;
+        break;
+      case "t":
+        result += "\t";
+        index += 1;
+        break;
+      case "u": {
+        const hex = value.slice(index + 2, index + 6);
+        if (/^[0-9a-fA-F]{4}$/.test(hex)) {
+          result += String.fromCharCode(parseInt(hex, 16));
+          index += 5;
+          break;
+        }
+        result += "u";
+        index += 1;
+        break;
+      }
+      default:
+        result += next;
+        index += 1;
+        break;
+    }
+  }
   return result;
 }
 
