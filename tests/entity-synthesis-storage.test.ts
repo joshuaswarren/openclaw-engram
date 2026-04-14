@@ -736,13 +736,36 @@ test("serializeEntityFile escapes bracket characters in timeline metadata values
   const serialized = serializeEntityFile(parsed);
   const reparsed = parseEntityFile(serialized);
 
-  assert.match(serialized, /\[source=qa\\\]team\]/);
+  assert.match(serialized, /\[source_meta=qa\\\]team\]/);
   assert.match(serialized, /\[session=session\\\\\\]42\]/);
   assert.match(serialized, /\[principal=agent\\\\main\\\]ops\]/);
   assert.equal(reparsed.timeline[0]?.source, "qa]team");
   assert.equal(reparsed.timeline[0]?.sessionKey, "session\\]42");
   assert.equal(reparsed.timeline[0]?.principal, "agent\\main]ops");
   assert.equal(reparsed.timeline[0]?.text, "launched rollout");
+});
+
+test("writeEntity preserves custom timeline source metadata without injecting it into text", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-custom-source-roundtrip-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    await storage.writeEntity("Jane Doe", "person", ["launch complete"], {
+      timestamp: "2026-04-13T10:00:00.000Z",
+      source: "qa",
+    });
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    const raw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.match(raw, /\[source_meta=qa\] launch complete/);
+    assert.equal(parsed.timeline[0]?.source, "qa");
+    assert.equal(parsed.timeline[0]?.text, "launch complete");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test("serializeEntityFile escapes newline characters in timeline metadata values", () => {

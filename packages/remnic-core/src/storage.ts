@@ -822,6 +822,9 @@ function parseEntityTimelineBullet(
     if (!value) break;
     const nextRest = rest.slice(end + 1).trimStart();
     switch (key) {
+      case "source_meta":
+        entry.source = value;
+        break;
       case "source":
         if (
           consumedMetadataSegments.length === 0
@@ -991,7 +994,10 @@ function unescapeEntityTimelineMetadataValue(value: string): string {
 
 function serializeEntityTimelineEntry(entry: EntityTimelineEntry): string {
   const tokens = [`[${entry.timestamp}]`];
-  if (entry.source) tokens.push(`[source=${escapeEntityTimelineMetadataValue(entry.source)}]`);
+  if (entry.source) {
+    const sourceKey = isManagedEntityTimelineSource(entry.source) ? "source" : "source_meta";
+    tokens.push(`[${sourceKey}=${escapeEntityTimelineMetadataValue(entry.source)}]`);
+  }
   if (entry.sessionKey) {
     tokens.push(`[session=${escapeEntityTimelineMetadataValue(entry.sessionKey)}]`);
   }
