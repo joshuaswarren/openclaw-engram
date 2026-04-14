@@ -807,18 +807,31 @@ function parseEntityTimelineBullet(
     timestamp: timestampToken || fallbackTimestamp,
     text: "",
   };
+  const consumedMetadataSegments: string[] = [];
+  let literalSingleSourceSegment: string | undefined;
 
   while (rest.startsWith("[")) {
     const end = findEntityTimelineTokenEnd(rest);
     if (end === -1) break;
+    const rawSegment = rest.slice(0, end + 1);
     const token = rest.slice(1, end).trim();
     const equalsIdx = token.indexOf("=");
     if (equalsIdx === -1) break;
     const key = token.slice(0, equalsIdx).trim().toLowerCase();
     const value = unescapeEntityTimelineMetadataValue(token.slice(equalsIdx + 1).trim());
     if (!value) break;
+    const nextRest = rest.slice(end + 1).trimStart();
     switch (key) {
       case "source":
+        if (
+          consumedMetadataSegments.length === 0
+          && !nextRest.startsWith("[")
+          && nextRest.length > 0
+          && !isManagedEntityTimelineSource(value)
+        ) {
+          literalSingleSourceSegment = rawSegment;
+          break;
+        }
         entry.source = value;
         break;
       case "session":
@@ -832,12 +845,49 @@ function parseEntityTimelineBullet(
         entry.text = rest.trim();
         return entry.text ? entry : null;
     }
-    rest = rest.slice(end + 1).trimStart();
+    if (literalSingleSourceSegment) break;
+    consumedMetadataSegments.push(rawSegment);
+    rest = nextRest;
+  }
+
+  if (literalSingleSourceSegment) {
+    return {
+      timestamp: entry.timestamp,
+      text: `${literalSingleSourceSegment} ${rest.slice(literalSingleSourceSegment.length).trimStart()}`.trim(),
+    };
   }
 
   entry.text = rest.trim();
   if (!entry.text) return null;
   return entry;
+}
+
+function isManagedEntityTimelineSource(source: string): boolean {
+  switch (source.trim().toLowerCase()) {
+    case "artifact":
+    case "chunking":
+    case "cli-migrate":
+    case "compounding-promotion":
+    case "consolidation":
+    case "contradiction-detection":
+    case "entity_extraction":
+    case "explicit":
+    case "explicit-inline":
+    case "explicit-inline-review":
+    case "explicit-review":
+    case "extraction":
+    case "extraction-shared-promotion":
+    case "manual":
+    case "migration":
+    case "migration-rechunk":
+    case "proactive":
+    case "replay":
+    case "semantic-consolidation":
+    case "unknown":
+      return true;
+    default:
+      return false;
+  }
 }
 
 function findEntityTimelineTokenEnd(input: string): number {

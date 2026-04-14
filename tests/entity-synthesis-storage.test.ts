@@ -678,6 +678,32 @@ test("parseEntityFile preserves unknown bracket tokens after known timeline meta
   assert.equal(parsed.timeline[0]?.text, "[custom=val] launched rollout");
 });
 
+test("parseEntityFile treats a single metadata-like token followed by text as literal timeline text", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] [source=qa] launch complete",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+
+  assert.equal(parsed.timeline[0]?.source, undefined);
+  assert.equal(parsed.timeline[0]?.text, "[source=qa] launch complete");
+});
+
 test("serializeEntityFile escapes bracket characters in timeline metadata values", () => {
   const raw = [
     "---",
