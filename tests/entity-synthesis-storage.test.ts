@@ -499,6 +499,40 @@ test("parseEntityFile preserves unknown frontmatter keys and pre-section prose a
   assert.match(serialized, /\*\*Updated:\*\* 2026-04-13T10:05:00.000Z\n\nKeep this pre-section context\./);
 });
 
+test("parseEntityFile preserves prose between type and updated headers", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 1",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "",
+    "Legacy prose between type and updated must survive round trips.",
+    "",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Timeline",
+    "",
+    "- [2026-04-13T10:00:00.000Z] Leads roadmap work.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+  const serialized = serializeEntityFile(parsed);
+
+  assert.deepEqual(parsed.preSectionLines, [
+    "Legacy prose between type and updated must survive round trips.",
+    "",
+    "",
+  ]);
+  assert.match(serialized, /Legacy prose between type and updated must survive round trips\./);
+});
+
 test("parseEntityFile preserves bracket-prefixed timeline facts", () => {
   const raw = [
     "---",

@@ -1040,15 +1040,15 @@ export function parseEntityFile(content: string): EntityFile {
   if (!updated) updated = frontmatter.updated ?? frontmatter.created ?? "";
   if (!created) created = updated;
 
-  const lastHeaderLineIndex = Math.max(
-    lines.findIndex((l) => l.startsWith("# ")),
-    lines.findIndex((l) => l.startsWith("**Type:**")),
-    lines.findIndex((l) => l.startsWith("**Updated:**")),
-  );
+  const headingLineIndex = lines.findIndex((l) => l.startsWith("# "));
   const firstSectionIndex = lines.findIndex((l) => l.startsWith("## "));
-  const preSectionLines = firstSectionIndex > -1
-    ? lines.slice(lastHeaderLineIndex + 1, firstSectionIndex)
-    : lines.slice(lastHeaderLineIndex + 1);
+  const preSectionStartIndex = headingLineIndex > -1 ? headingLineIndex + 1 : 0;
+  const preSectionCandidates = firstSectionIndex > -1
+    ? lines.slice(preSectionStartIndex, firstSectionIndex)
+    : lines.slice(preSectionStartIndex);
+  const preSectionLines = preSectionCandidates.filter(
+    (line) => !line.startsWith("**Type:**") && !line.startsWith("**Updated:**"),
+  );
   const normalizedPreSectionLines = [...preSectionLines];
   while (normalizedPreSectionLines[0] === "") {
     normalizedPreSectionLines.shift();
