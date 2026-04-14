@@ -954,6 +954,131 @@ test("mergeFragmentedEntities preserves custom metadata and freeform sections fr
   }
 });
 
+test("mergeFragmentedEntities uses a collision-safe timeline dedupe key", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-merge-timeline-key-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const fragmentA = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T10:05:00.000Z] [source=extraction] [session=foo::bar] preserved rollout evidence",
+      "",
+    ].join("\n");
+    const fragmentB = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:06:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:06:00.000Z",
+      "",
+      "## Timeline",
+      "",
+      "- [2026-04-13T10:05:00.000Z] [source=extraction] [session=foo] [principal=bar::] preserved rollout evidence",
+      "",
+    ].join("\n");
+
+    await writeFile(path.join(dir, "entities", "person-jane doe.md"), fragmentA, "utf-8");
+    await writeFile(path.join(dir, "entities", "person-jane_doe.md"), fragmentB, "utf-8");
+
+    await storage.mergeFragmentedEntities();
+    const raw = await readFile(path.join(dir, "entities", "person-jane-doe.md"), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.equal(parsed.timeline.length, 2);
+    assert.deepEqual(
+      parsed.timeline.map((entry) => ({
+        sessionKey: entry.sessionKey,
+        principal: entry.principal,
+        text: entry.text,
+      })),
+      [
+        {
+          sessionKey: "foo::bar",
+          principal: undefined,
+          text: "preserved rollout evidence",
+        },
+        {
+          sessionKey: "foo",
+          principal: "bar::",
+          text: "preserved rollout evidence",
+        },
+      ],
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("mergeFragmentedEntities preserves duplicate lines in preserved metadata blocks", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-merge-duplicate-lines-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const fragmentA = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      "labels:",
+      "- foo",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "Repeated line",
+      "",
+    ].join("\n");
+    const fragmentB = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:06:00.000Z",
+      "owners:",
+      "- foo",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:06:00.000Z",
+      "",
+      "Repeated line",
+      "",
+    ].join("\n");
+
+    await writeFile(path.join(dir, "entities", "person-jane doe.md"), fragmentA, "utf-8");
+    await writeFile(path.join(dir, "entities", "person-jane_doe.md"), fragmentB, "utf-8");
+
+    await storage.mergeFragmentedEntities();
+    const raw = await readFile(path.join(dir, "entities", "person-jane-doe.md"), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.deepEqual(parsed.extraFrontmatterLines, ["labels:", "- foo", "owners:", "- foo"]);
+    assert.deepEqual(parsed.preSectionLines, ["Repeated line", "", "Repeated line", ""]);
+    assert.match(raw, /labels:\n- foo\nowners:\n- foo/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("refreshEntitySynthesisQueue orders stale entities by parsed latest timeline timestamps", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-queue-order-"));
   try {

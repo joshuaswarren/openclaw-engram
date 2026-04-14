@@ -4435,7 +4435,13 @@ export class StorageManager {
         // Deduplicate timeline entries and derive facts from the timeline.
         const timelineKeys = new Set<string>();
         mergedEntity.timeline = mergedEntity.timeline.filter((entry) => {
-          const key = `${entry.timestamp}::${entry.source ?? ""}::${entry.sessionKey ?? ""}::${entry.principal ?? ""}::${entry.text}`;
+          const key = JSON.stringify([
+            entry.timestamp,
+            entry.source ?? "",
+            entry.sessionKey ?? "",
+            entry.principal ?? "",
+            entry.text,
+          ]);
           if (timelineKeys.has(key)) return false;
           timelineKeys.add(key);
           return true;
@@ -4464,8 +4470,6 @@ export class StorageManager {
 
         // Deduplicate aliases
         mergedEntity.aliases = [...new Set(mergedEntity.aliases)];
-        mergedEntity.extraFrontmatterLines = dedupeStringArray(mergedEntity.extraFrontmatterLines ?? []);
-        mergedEntity.preSectionLines = dedupeStringArray(mergedEntity.preSectionLines ?? []);
 
         const extraSectionKeys = new Set<string>();
         mergedEntity.extraSections = (mergedEntity.extraSections ?? []).filter((section) => {
