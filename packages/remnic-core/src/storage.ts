@@ -762,7 +762,13 @@ function readEntitySectionText(
       }
       continue;
     }
-    if (options.skipTimelineBullets === true && /^- \[[^\]]+\]/.test(trimmed)) continue;
+    if (
+      options.skipTimelineBullets === true
+      && trimmed.startsWith("- ")
+      && isEntityTimelineLikeBullet(trimmed.slice(2))
+    ) {
+      continue;
+    }
     if (trimmed.startsWith("- ") && options.preserveBullets !== true) continue;
     sectionLines.push(options.preserveBullets === true ? line.trimEnd() : trimmed);
   }
@@ -866,6 +872,37 @@ function parseEntityTimelineBullet(
   entry.text = rest.trim();
   if (!entry.text) return null;
   return entry;
+}
+
+function isEntityTimelineLikeBullet(bullet: string): boolean {
+  const trimmed = bullet.trim();
+  if (!trimmed.startsWith("[")) return false;
+
+  const firstEnd = findEntityTimelineTokenEnd(trimmed);
+  if (firstEnd === -1) return false;
+
+  const firstToken = trimmed.slice(1, firstEnd).trim();
+  if (!firstToken) return false;
+  if (looksLikeEntityTimelineTimestamp(firstToken)) return true;
+
+  const equalsIdx = firstToken.indexOf("=");
+  if (equalsIdx === -1) return false;
+
+  switch (firstToken.slice(0, equalsIdx).trim().toLowerCase()) {
+    case "source":
+    case "source_meta":
+    case "session":
+    case "sessionkey":
+    case "principal":
+      return true;
+    default:
+      return false;
+  }
+}
+
+function looksLikeEntityTimelineTimestamp(token: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(token)) return false;
+  return Number.isFinite(Date.parse(token));
 }
 
 function isManagedEntityTimelineSource(source: string): boolean {
@@ -1169,7 +1206,7 @@ export function parseEntityFile(content: string): EntityFile {
       }
       case "summary":
       case "synthesis":
-        if (bullet.startsWith("[")) {
+        if (isEntityTimelineLikeBullet(bullet)) {
           const parsed = parseEntityTimelineBullet(
             bullet,
             fallbackTimestamp,
