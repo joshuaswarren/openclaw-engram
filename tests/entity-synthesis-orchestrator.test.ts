@@ -132,6 +132,58 @@ test("processEntitySynthesisQueue sorts freshest evidence before truncating", as
   }
 });
 
+test("processEntitySynthesisQueue batches overflow evidence before advancing freshness", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-batch-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-batch-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 120,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
+      updatedAt: "2026-04-13T09:00:00.000Z",
+    });
+    for (let hour = 10; hour <= 18; hour += 1) {
+      const label = hour === 18 ? "Newest event should still be included." : `Overflow event ${hour}.`;
+      await storage.writeEntity("Jane Doe", "person", [label], {
+        timestamp: `2026-04-13T${String(hour).padStart(2, "0")}:00:00.000Z`,
+        source: "extraction",
+      });
+    }
+
+    const prompts: string[] = [];
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      const prompt = messages.map((message) => message.content).join("\n\n");
+      prompts.push(prompt);
+      return { content: `Jane Doe synthesis batch ${prompts.length}.` };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const rawEntity = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(rawEntity);
+
+    assert.equal(processed, 1);
+    assert.equal(prompts.length, 2);
+    assert.ok(prompts.some((prompt) => prompt.includes("Overflow event 10.")));
+    assert.ok(prompts.some((prompt) => prompt.includes("Newest event should still be included.")));
+    assert.equal(parsed.synthesis, "Jane Doe synthesis batch 2.");
+    assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T18:00:00.000Z");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("processEntitySynthesisQueue skips failed targets and continues through the stale queue", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-skip-fail-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-skip-fail-workspace-"));

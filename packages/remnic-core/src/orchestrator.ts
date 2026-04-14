@@ -2313,51 +2313,65 @@ export class Orchestrator {
           seenEvidenceFacts.add(normalizedFact);
           dedupedEvidenceEntries.push(entry);
         }
-        const evidenceEntries = dedupedEvidenceEntries
-          .slice(0, 8)
+        const chronologicalEvidenceEntries = dedupedEvidenceEntries
+          .slice()
           .sort((left, right) => compareEntityTimestamps(left.timestamp, right.timestamp));
-        if (evidenceEntries.length === 0) continue;
-        const latestEvidenceTimestamp = evidenceEntries[evidenceEntries.length - 1]?.timestamp?.trim() || undefined;
+        if (chronologicalEvidenceEntries.length === 0) continue;
+        const latestEvidenceTimestamp =
+          chronologicalEvidenceEntries[chronologicalEvidenceEntries.length - 1]?.timestamp?.trim() || undefined;
+        const evidenceBatches: typeof chronologicalEvidenceEntries[] = [];
+        for (let index = 0; index < chronologicalEvidenceEntries.length; index += 8) {
+          evidenceBatches.push(chronologicalEvidenceEntries.slice(index, index + 8));
+        }
 
-        const evidenceText = evidenceEntries
-          .map((entry) => {
-            const metadata = [
-              `timestamp=${entry.timestamp}`,
-              entry.source ? `source=${entry.source}` : "",
-              entry.sessionKey ? `session=${entry.sessionKey}` : "",
-              entry.principal ? `principal=${entry.principal}` : "",
-            ]
-              .filter(Boolean)
-              .join(", ");
-            return `- ${metadata}: ${entry.text}`;
-          })
-          .join("\n");
-        const response = await this.fastChatCompletion(
-          [
+        let nextSynthesis = previousSynthesis;
+        let batchFailed = false;
+        for (const evidenceEntries of evidenceBatches) {
+          const evidenceText = evidenceEntries
+            .map((entry) => {
+              const metadata = [
+                `timestamp=${entry.timestamp}`,
+                entry.source ? `source=${entry.source}` : "",
+                entry.sessionKey ? `session=${entry.sessionKey}` : "",
+                entry.principal ? `principal=${entry.principal}` : "",
+              ]
+                .filter(Boolean)
+                .join(", ");
+              return `- ${metadata}: ${entry.text}`;
+            })
+            .join("\n");
+          const response = await this.fastChatCompletion(
+            [
+              {
+                role: "system",
+                content:
+                  "Rewrite the entity synthesis as compact current truth. Preserve uncertainty when evidence conflicts. Return plain text only.",
+              },
+              {
+                role: "user",
+                content: [
+                  `Entity: ${entity.name} (${entity.type})`,
+                  nextSynthesis ? `Previous synthesis:\n${nextSynthesis}` : "Previous synthesis: none",
+                  `New evidence:\n${evidenceText}`,
+                ].join("\n\n"),
+              },
+            ],
             {
-              role: "system",
-              content:
-                "Rewrite the entity synthesis as compact current truth. Preserve uncertainty when evidence conflicts. Return plain text only.",
+              temperature: 0.2,
+              maxTokens: this.config.entitySynthesisMaxTokens,
+              operation: "entity_summary",
+              priority: "background",
             },
-            {
-              role: "user",
-              content: [
-                `Entity: ${entity.name} (${entity.type})`,
-                previousSynthesis ? `Previous synthesis:\n${previousSynthesis}` : "Previous synthesis: none",
-                `New evidence:\n${evidenceText}`,
-              ].join("\n\n"),
-            },
-          ],
-          {
-            temperature: 0.2,
-            maxTokens: this.config.entitySynthesisMaxTokens,
-            operation: "entity_summary",
-            priority: "background",
-          },
-        );
-        const synthesis = response?.content?.trim().replace(/^["']|["']$/g, "");
-        if (!synthesis || synthesis.length < 10 || synthesis.length > 2_000) continue;
-        await storage.updateEntitySynthesis(entityName, synthesis, {
+          );
+          const synthesis = response?.content?.trim().replace(/^["']|["']$/g, "");
+          if (!synthesis || synthesis.length < 10 || synthesis.length > 2_000) {
+            batchFailed = true;
+            break;
+          }
+          nextSynthesis = synthesis;
+        }
+        if (batchFailed || nextSynthesis.length === 0) continue;
+        await storage.updateEntitySynthesis(entityName, nextSynthesis, {
           entityUpdatedAt: new Date().toISOString(),
           updatedAt: latestEvidenceTimestamp,
         });
