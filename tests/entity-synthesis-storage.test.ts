@@ -76,6 +76,7 @@ test("writeEntity marks same-timestamp appended evidence as stale after synthesi
     });
     await storage.updateEntitySynthesis(canonical, "Jane Doe initial synthesis.", {
       updatedAt: timestamp,
+      synthesisTimelineCount: 1,
     });
 
     const afterSynthesisRaw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
@@ -120,6 +121,7 @@ test("writeEntity marks backfilled older evidence as stale after synthesis", asy
     });
     await storage.updateEntitySynthesis(canonical, "Jane Doe current synthesis.", {
       updatedAt: "2026-04-13T11:00:00.000Z",
+      synthesisTimelineCount: 1,
     });
 
     const afterSynthesisRaw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
@@ -1517,6 +1519,7 @@ test("refreshEntitySynthesisQueue orders stale entities by parsed latest timelin
     });
     await storage.updateEntitySynthesis(newerCanonical, "Jane Doe had an older synthesis.", {
       updatedAt: "2026-04-13T14:30:00Z",
+      synthesisTimelineCount: 1,
     });
 
     const olderCanonical = normalizeEntityName("Project Beta", "project");
@@ -1526,6 +1529,7 @@ test("refreshEntitySynthesisQueue orders stale entities by parsed latest timelin
     });
     await storage.updateEntitySynthesis(olderCanonical, "Project Beta had an older synthesis.", {
       updatedAt: "2026-04-13T14:40:00Z",
+      synthesisTimelineCount: 1,
     });
 
     const queue = await storage.refreshEntitySynthesisQueue();
@@ -1549,6 +1553,7 @@ test("refreshEntitySynthesisQueue keeps canonical filenames when headings drift"
     });
     await storage.updateEntitySynthesis(canonical, "Jane Doe leads roadmap work.", {
       updatedAt: "2026-04-13T10:01:00.000Z",
+      synthesisTimelineCount: 1,
     });
     await storage.writeEntity("Jane Do", "person", ["Newest stale fact."], {
       timestamp: "2026-04-13T10:02:00.000Z",

@@ -2328,8 +2328,11 @@ export class Orchestrator {
           .slice()
           .sort((left, right) => compareEntityTimestamps(left.timestamp, right.timestamp));
         if (chronologicalEvidenceEntries.length === 0) continue;
-        const latestEvidenceTimestamp =
-          chronologicalEvidenceEntries[chronologicalEvidenceEntries.length - 1]?.timestamp?.trim() || undefined;
+        const latestEvidenceTimestamp = chronologicalEvidenceEntries
+          .slice()
+          .reverse()
+          .map((entry) => entry.timestamp?.trim() || undefined)
+          .find((timestamp) => Boolean(timestamp));
         const previousSynthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || undefined;
         const nextSynthesisUpdatedAt = compareEntityTimestamps(
           latestEvidenceTimestamp,

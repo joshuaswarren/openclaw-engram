@@ -1254,8 +1254,7 @@ export function serializeEntityFile(entity: EntityFile): string {
     })),
   ) : [];
   const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
-  const synthesisTimelineCount = entity.synthesisTimelineCount
-    ?? (synthesisUpdatedAt ? timeline.length : undefined);
+  const synthesisTimelineCount = entity.synthesisTimelineCount;
   const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
 
   const lines: string[] = [
@@ -4105,7 +4104,7 @@ export class StorageManager {
     const synthesisTimelineCount = Number.isInteger(options.synthesisTimelineCount)
       && (options.synthesisTimelineCount ?? 0) >= 0
       ? options.synthesisTimelineCount
-      : entity.timeline.length;
+      : undefined;
     entity.synthesis = synthesis.trim();
     entity.summary = entity.synthesis;
     entity.synthesisUpdatedAt = updatedAt;

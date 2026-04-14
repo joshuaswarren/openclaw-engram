@@ -38,6 +38,7 @@ test("processEntitySynthesisQueue refreshes stale entities in bounded batches", 
     });
     await storage.updateEntitySynthesis(primaryCanonical, "Jane Doe led the roadmap.", {
       updatedAt: "2026-04-13T09:30:00.000Z",
+      synthesisTimelineCount: 1,
     });
     await storage.writeEntity(primaryName, "person", ["Now owns release approvals."], {
       timestamp: "2026-04-13T11:00:00.000Z",
@@ -114,6 +115,7 @@ test("processEntitySynthesisQueue sorts freshest evidence before truncating", as
     }
     await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
       updatedAt: "2026-04-13T09:00:00.000Z",
+      synthesisTimelineCount: 1,
     });
 
     let capturedPrompt = "";
@@ -153,6 +155,7 @@ test("processEntitySynthesisQueue batches overflow evidence before advancing fre
     const canonical = normalizeEntityName("Jane Doe", "person");
     await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
       updatedAt: "2026-04-13T09:00:00.000Z",
+      synthesisTimelineCount: 1,
     });
     for (let hour = 10; hour <= 18; hour += 1) {
       const label = hour === 18 ? "Newest event should still be included." : `Overflow event ${hour}.`;
@@ -328,6 +331,7 @@ test("processEntitySynthesisQueue deduplicates repeated facts before truncating 
     });
     await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
       updatedAt: "2026-04-13T09:00:00.000Z",
+      synthesisTimelineCount: 1,
     });
     for (let hour = 20; hour >= 13; hour -= 1) {
       await storage.writeEntity("Jane Doe", "person", ["Repeated recent fact."], {
@@ -383,6 +387,7 @@ test("processEntitySynthesisQueue treats offset timestamps as newer when filteri
     });
     await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
       updatedAt: "2026-04-13T14:30:00Z",
+      synthesisTimelineCount: 1,
     });
     await storage.writeEntity("Jane Doe", "person", ["Offset timestamp should count as new evidence."], {
       timestamp: "2026-04-13T10:00:00-05:00",
@@ -430,6 +435,7 @@ test("processEntitySynthesisQueue includes backfilled appended entries alongside
     });
     await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
       updatedAt: "2026-04-13T10:00:00.000Z",
+      synthesisTimelineCount: 1,
     });
     await storage.writeEntity("Jane Doe", "person", ["Newer post-synthesis evidence."], {
       timestamp: "2026-04-13T11:00:00.000Z",
@@ -485,6 +491,7 @@ test("processEntitySynthesisQueue does not regress synthesisUpdatedAt for backfi
     });
     await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
       updatedAt: "2026-04-13T10:00:00.000Z",
+      synthesisTimelineCount: 1,
     });
     await storage.writeEntity("Jane Doe", "person", ["Backfilled older evidence."], {
       timestamp: "2026-04-13T08:00:00.000Z",
@@ -538,6 +545,7 @@ test("processEntitySynthesisQueue skips writing synthesis from a stale timeline 
     });
     await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
       updatedAt: "2026-04-13T10:00:00.000Z",
+      synthesisTimelineCount: 1,
     });
     await storage.writeEntity("Jane Doe", "person", ["Fresh evidence before synthesis."], {
       timestamp: "2026-04-13T11:00:00.000Z",
@@ -632,6 +640,65 @@ test("processEntitySynthesisQueue keeps timestampless evidence stale after synth
     assert.equal(parsed.synthesis, "Jane Doe synthesis rebuilt from timestampless evidence.");
     assert.equal(parsed.synthesisUpdatedAt, undefined);
     assert.equal(isEntitySynthesisStale(parsed), true);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("processEntitySynthesisQueue advances freshness using the newest non-empty evidence timestamp", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-mixed-ts-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-mixed-ts-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 160,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    const rawEntity = [
+      "---",
+      'created: 2026-04-13T09:00:00.000Z',
+      'updated: 2026-04-13T09:00:00.000Z',
+      'synthesis_updated_at: "2026-04-13T09:30:00.000Z"',
+      'synthesis_timeline_count: 1',
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T09:00:00.000Z",
+      "",
+      "## Synthesis",
+      "",
+      "Jane Doe had an earlier synthesis.",
+      "",
+      "## Timeline",
+      "",
+      "- Legacy evidence without a timestamp.",
+      "- [2026-04-13T10:00:00.000Z] Newer timestamped evidence.",
+      "",
+    ].join("\n");
+    await writeFile(path.join(memoryDir, "entities", `${canonical}.md`), rawEntity, "utf-8");
+
+    orchestrator.fastChatCompletion = async () => ({ content: "Jane Doe synthesis after mixed evidence." });
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const parsed = parseEntityFile(await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8"));
+
+    assert.equal(processed, 1);
+    assert.equal(parsed.synthesis, "Jane Doe synthesis after mixed evidence.");
+    assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T10:00:00.000Z");
+    assert.equal(parsed.synthesisTimelineCount, 2);
+    assert.equal(isEntitySynthesisStale(parsed), false);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });
