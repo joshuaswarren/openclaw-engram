@@ -1084,6 +1084,36 @@ test("parseEntityFile normalizes single-quoted managed frontmatter timestamps", 
   assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T10:05:00.000Z");
 });
 
+test("parseEntityFile strips inline YAML comments from managed frontmatter values", () => {
+  const raw = [
+    "---",
+    'created: "2026-04-13T10:00:00.000Z" # imported',
+    "updated: 2026-04-13T10:05:00.000Z # regenerated",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z" # generated',
+    "synthesis_timeline_count: 2 # evidence snapshot",
+    "synthesis_version: 3 # schema version",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw);
+
+  assert.equal(parsed.created, "2026-04-13T10:00:00.000Z");
+  assert.equal(parsed.updated, "2026-04-13T10:05:00.000Z");
+  assert.equal(parsed.synthesisUpdatedAt, "2026-04-13T10:05:00.000Z");
+  assert.equal(parsed.synthesisTimelineCount, 2);
+  assert.equal(parsed.synthesisVersion, 3);
+});
+
 test("parseEntityFile leaves legacy summary synthesis timestamp unset without explicit frontmatter", () => {
   const raw = [
     "# Jane Doe",

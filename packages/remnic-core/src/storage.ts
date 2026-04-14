@@ -717,7 +717,7 @@ function parseEntityFrontmatter(
       extraLines.push(line);
       continue;
     }
-    const value = line.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, "");
+    const value = parseManagedFrontmatterValue(line.slice(colonIdx + 1));
     values[key] = value;
   }
 
@@ -734,6 +734,36 @@ function parseEntityFrontmatter(
     },
     body: match[2],
   };
+}
+
+function parseManagedFrontmatterValue(rawValue: string): string {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return "";
+
+  const openingQuote = trimmed[0];
+  if (openingQuote === '"' || openingQuote === "'") {
+    let escaped = false;
+    for (let index = 1; index < trimmed.length; index += 1) {
+      const char = trimmed[index];
+      if (openingQuote === '"' && !escaped && char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (!escaped && char === openingQuote) {
+        return trimmed.slice(1, index);
+      }
+      escaped = false;
+    }
+    return trimmed.slice(1).replace(new RegExp(`${openingQuote}$`), "");
+  }
+
+  for (let index = 0; index < trimmed.length; index += 1) {
+    if (trimmed[index] === "#" && (index === 0 || /\s/.test(trimmed[index - 1] ?? ""))) {
+      return trimmed.slice(0, index).trimEnd();
+    }
+  }
+
+  return trimmed;
 }
 
 function readEntitySectionText(
