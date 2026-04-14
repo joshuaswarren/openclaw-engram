@@ -220,7 +220,7 @@ export function focusMatchesEntity(entity: EntityFile, focus: BriefingFocus): bo
   if (focus.type === "project" && entity.type.toLowerCase() !== "project") return false;
   const haystack = [
     entity.name,
-    entity.synthesis ?? entity.summary ?? "",
+    entity.synthesis || entity.summary || "",
     ...entity.facts,
     ...(entity.aliases ?? []),
   ]
@@ -1056,7 +1056,7 @@ export function buildRecentEntities(
       type: entity.type,
       updatedAt: entity.updated,
       score: Number(score.toFixed(4)),
-      summary: entity.synthesis ?? entity.summary,
+      summary: entity.synthesis || entity.summary,
     });
   }
   return scored

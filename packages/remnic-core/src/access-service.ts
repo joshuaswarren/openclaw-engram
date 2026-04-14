@@ -1355,7 +1355,7 @@ export class EngramAccessService {
         const haystack = [
           entity.name,
           entity.type,
-          entity.synthesis ?? entity.summary ?? "",
+          entity.synthesis || entity.summary || "",
           ...entity.aliases,
           ...entity.facts,
         ].join("\n").toLowerCase();
@@ -1365,7 +1365,7 @@ export class EngramAccessService {
         name: entity.name,
         type: entity.type,
         updated: entity.updated,
-        summary: entity.synthesis ?? entity.summary,
+        summary: entity.synthesis || entity.summary,
         aliases: entity.aliases,
       });
     }

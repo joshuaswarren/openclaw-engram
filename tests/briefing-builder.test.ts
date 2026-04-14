@@ -6,6 +6,7 @@ import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { StorageManager, serializeEntityFile } from "../src/storage.js";
 import {
   buildBriefing,
+  focusMatchesEntity,
   parseBriefingWindow,
   parseBriefingFocus,
 } from "../src/briefing.js";
@@ -66,6 +67,26 @@ async function makeTempDir(): Promise<string> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+
+test("focusMatchesEntity falls back to summary when synthesis is empty", () => {
+  const entity: EntityFile = {
+    name: "Casey Example",
+    type: "person",
+    created: "2026-04-10T00:00:00.000Z",
+    updated: "2026-04-10T00:00:00.000Z",
+    facts: [],
+    summary: "Casey Example owns rollout coordination.",
+    synthesis: "",
+    synthesisUpdatedAt: undefined,
+    synthesisVersion: undefined,
+    timeline: [],
+    relationships: [],
+    activity: [],
+    aliases: [],
+  };
+
+  assert.equal(focusMatchesEntity(entity, { type: "person", value: "rollout coordination" }), true);
+});
 
 test("buildBriefing produces the five sections with deterministic fixtures", async () => {
   const dir = await makeTempDir();

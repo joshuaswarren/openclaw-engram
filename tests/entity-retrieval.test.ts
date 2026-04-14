@@ -203,6 +203,28 @@ test("entity retrieval prefers synthesis for direct questions and uses timeline 
   assert.equal(canonical.length > 0, true);
 });
 
+test("entity retrieval keeps fact snippets in likely answer for timeline queries without synthesis", async () => {
+  const { config, storage } = await buildHarness("engram-entity-timeline-no-summary");
+  await storage.writeEntity("Casey Example", "person", [
+    "Casey Example handled the rollback during the outage.",
+    "Casey Example coordinated follow-up remediation.",
+  ], {
+    timestamp: "2026-04-13T11:00:00.000Z",
+    source: "extraction",
+  });
+  const canonical = normalizeEntityName("Casey Example", "person");
+  await storage.addEntityRelationship(canonical, {
+    target: "Rollback Project",
+    label: "supports",
+  });
+
+  const timeline = await buildSection(config, storage, "What happened with Casey Example?");
+
+  assert.ok(timeline);
+  assert.match(timeline!, /- likely answer:\n  - Casey Example handled the rollback during the outage\./);
+  assert.match(timeline!, /related entities: Rollback Project/);
+});
+
 test("entity retrieval respects small supporting-fact caps when ranking memory snippets", async () => {
   const { config, storage } = await buildHarness("engram-entity-memory-cap");
   const canonical = await writeEntity(

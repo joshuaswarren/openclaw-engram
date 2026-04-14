@@ -98,6 +98,13 @@ function compactLine(value: string, maxLength: number = 220): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
+function preferNonEmptyText(primary?: string | null, fallback?: string | null): string | undefined {
+  const normalizedPrimary = primary?.trim();
+  if (normalizedPrimary) return normalizedPrimary;
+  const normalizedFallback = fallback?.trim();
+  return normalizedFallback || undefined;
+}
+
 function dedupeHintSnippetsByText(snippets: EntityHintSnippet[]): EntityHintSnippet[] {
   const seen = new Set<string>();
   const result: EntityHintSnippet[] = [];
@@ -318,7 +325,7 @@ async function buildEntityMentionIndex(
       name: entity.name,
       type: entity.type,
       aliases: uniqueStrings(entity.aliases),
-      summary: entity.synthesis ?? entity.summary,
+      summary: preferNonEmptyText(entity.synthesis, entity.summary),
       facts: sanitizedFacts,
       timeline: entity.timeline.map((entry) => ({ ...entry })),
       relationships: entity.relationships.map((relationship) => ({ ...relationship })),
@@ -524,7 +531,8 @@ function formatEntityHintSection(
   if (candidates.length === 0) return null;
   const lines: string[] = ["## entity_answer_hints", ""];
   for (const { candidate, snippets, uncertainty } of candidates) {
-    const preferredTopSnippets = (candidate.entry.summary || mode !== "direct")
+    const hasSummary = Boolean(candidate.entry.summary?.trim());
+    const preferredTopSnippets = hasSummary
       ? snippets.filter((snippet) => snippet.kind !== "fact")
       : snippets;
     const topSnippets = (

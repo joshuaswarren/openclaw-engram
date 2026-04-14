@@ -1079,7 +1079,7 @@ export function parseEntityFile(content: string): EntityFile {
  * with the legacy in-memory `summary` and `facts` fields.
  */
 export function serializeEntityFile(entity: EntityFile): string {
-  const synthesis = entity.synthesis ?? entity.summary ?? "";
+  const synthesis = entity.synthesis || entity.summary || "";
   const created = entity.created?.trim() || entity.updated || new Date().toISOString();
   const updated = entity.updated || created;
   const timeline = entity.timeline.length > 0
@@ -1911,7 +1911,7 @@ export class StorageManager {
       entity.timeline.push(nextEntry);
     }
     entity.facts = dedupeEntityFacts(entity.timeline);
-    entity.summary = entity.synthesis ?? entity.summary;
+    entity.summary = entity.synthesis || entity.summary;
     entity.name = name;
     entity.type = type;
     entity.created = entity.created || timestamp;

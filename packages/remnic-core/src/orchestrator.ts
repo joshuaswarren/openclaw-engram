@@ -2296,7 +2296,7 @@ export class Orchestrator {
         const raw = await storage.readEntity(entityName);
         if (!raw) continue;
         const entity = parseEntityFile(raw);
-        const previousSynthesis = entity.synthesis ?? entity.summary ?? "";
+        const previousSynthesis = entity.synthesis || entity.summary || "";
         const sortedTimelineEntries = entity.timeline
           .slice()
           .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
