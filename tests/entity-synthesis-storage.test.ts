@@ -12,6 +12,7 @@ import {
   parseEntityFile,
   serializeEntityFile,
 } from "../packages/remnic-core/src/storage.js";
+import { parseConfig } from "../packages/remnic-core/src/config.js";
 
 test("writeEntity appends timeline evidence and marks older synthesis as stale", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-"));
@@ -52,6 +53,60 @@ test("writeEntity appends timeline evidence and marks older synthesis as stale",
     assert.equal(parsed.timeline[1]?.sessionKey, "session-2");
     assert.equal(parsed.synthesis, "Jane Doe leads the roadmap.");
     assert.equal(isEntitySynthesisStale(parsed), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("writeEntity preserves structured sections alongside timeline evidence", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-structured-sections-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const entityName = "Jane Doe";
+    const entityType = "person";
+    const canonical = normalizeEntityName(entityName, entityType);
+
+    await storage.writeEntity(entityName, entityType, ["Leads the roadmap."], {
+      timestamp: "2026-04-13T10:00:00.000Z",
+      source: "extraction",
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Small teams move faster than committees."],
+        },
+      ],
+    });
+
+    await storage.writeEntity(entityName, entityType, ["Owns release approvals now."], {
+      timestamp: "2026-04-13T11:00:00.000Z",
+      source: "extraction",
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Roadmaps should stay legible to the team."],
+        },
+      ],
+    });
+
+    const parsed = parseEntityFile(
+      await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"),
+    ) as any;
+
+    assert.deepEqual(parsed.structuredSections, [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: [
+          "Small teams move faster than committees.",
+          "Roadmaps should stay legible to the team.",
+        ],
+      },
+    ]);
+    assert.equal(parsed.timeline.length, 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -626,6 +681,96 @@ test("parseEntityFile keeps metadata-shaped synthesis bullets out of the timelin
     reparsed.synthesis,
     "- [source=qa] launch complete.\n- [session=retro] follow-up drafted.",
   );
+});
+
+test("parseEntityFile preserves structured person sections across round trips", () => {
+  const raw = [
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+    "synthesis_version: 2",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Beliefs",
+    "",
+    "- Small teams move faster than committees.",
+    "",
+    "## Building / Working On",
+    "",
+    "- A retrieval-first memory system.",
+    "",
+  ].join("\n");
+
+  const parsed = parseEntityFile(raw) as any;
+  const serialized = serializeEntityFile(parsed);
+  const reparsed = parseEntityFile(serialized) as any;
+
+  assert.deepEqual(parsed.structuredSections, [
+    {
+      key: "beliefs",
+      title: "Beliefs",
+      facts: ["Small teams move faster than committees."],
+    },
+    {
+      key: "building",
+      title: "Building / Working On",
+      facts: ["A retrieval-first memory system."],
+    },
+  ]);
+  assert.match(serialized, /## Beliefs\n\n- Small teams move faster than committees\./);
+  assert.match(serialized, /## Building \/ Working On\n\n- A retrieval-first memory system\./);
+  assert.deepEqual(reparsed.structuredSections, parsed.structuredSections);
+});
+
+test("parseEntityFile honors configured custom entity schemas", () => {
+  parseConfig({
+    entitySchemas: {
+      person: {
+        sections: [
+          { key: "operating_principles", title: "Operating Principles" },
+        ],
+      },
+    },
+  });
+
+  const parsed = parseEntityFile([
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    "---",
+    "",
+    "# Jane Doe",
+    "",
+    "**Type:** person",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Synthesis",
+    "",
+    "Jane Doe leads roadmap work.",
+    "",
+    "## Operating Principles",
+    "",
+    "- Prefer boring infrastructure over clever infra.",
+    "",
+  ].join("\n")) as any;
+
+  assert.deepEqual(parsed.structuredSections, [
+    {
+      key: "operating_principles",
+      title: "Operating Principles",
+      facts: ["Prefer boring infrastructure over clever infra."],
+    },
+  ]);
 });
 
 test("parseEntityFile preserves blank lines in multi-paragraph synthesis", () => {

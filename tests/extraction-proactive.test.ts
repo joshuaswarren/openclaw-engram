@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ExtractionEngine } from "../src/extraction.ts";
 import { parseConfig } from "../src/config.ts";
-import { ProactiveExtractionResultSchema } from "../src/schemas.ts";
+import { ExtractionResultSchema, ProactiveExtractionResultSchema } from "../src/schemas.ts";
 import type { ExtractionResult } from "../src/types.ts";
 
 test("generateProactiveQuestions does not call cloud fallback when localLlmFallback is false", async () => {
@@ -155,6 +155,45 @@ test("normalizeExtractionResultPayload preserves proactive promptedByQuestion pr
   assert.equal(normalized.facts[0]?.promptedByQuestion, "What deadline did they commit to?");
   assert.equal(normalized.entities[0]?.promptedByQuestion, "Who owns the review timeline?");
   assert.equal(normalized.relationships?.[0]?.promptedByQuestion, "Who owns the review timeline?");
+});
+
+test("normalizeExtractionResultPayload preserves structured entity sections", () => {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+  });
+
+  const engine = new ExtractionEngine(config);
+  const parsed = ExtractionResultSchema.parse({
+    facts: [],
+    profileUpdates: [],
+    entities: [
+      {
+        name: "Alex",
+        type: "person",
+        facts: ["Owns the review timeline."],
+        structuredSections: [
+          {
+            key: "beliefs",
+            title: "Beliefs",
+            facts: ["Alex believes small teams should own whole systems."],
+          },
+        ],
+      },
+    ],
+    questions: [],
+    relationships: [],
+  });
+
+  const normalized = (engine as any).normalizeExtractionResultPayload(parsed) as ExtractionResult;
+  assert.deepEqual(normalized.entities[0]?.structuredSections, [
+    {
+      key: "beliefs",
+      title: "Beliefs",
+      facts: ["Alex believes small teams should own whole systems."],
+    },
+  ]);
 });
 
 test("applyProactiveQuestionPass filters proactive facts by allowlist and confidence", async () => {

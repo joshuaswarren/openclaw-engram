@@ -19,6 +19,7 @@ import type {
 import { log } from "./logger.js";
 import { cloneDefaultSessionObserverBands } from "./session-observer-bands.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
+import { normalizeEntitySchemas, setConfiguredEntitySchemas } from "./entity-schema.js";
 // Finding 4 (#394): use the shared coerce helper instead of inlining the same
 // boolean-coercion logic that connectors/index.ts already exports. The helper
 // lives in connectors/coerce.ts (a tiny, dependency-free module) so neither
@@ -407,6 +408,8 @@ export function parseConfig(raw: unknown): PluginConfig {
         principal: typeof r?.principal === "string" ? r.principal : "",
       })).filter((r) => r.match.length > 0 && r.principal.length > 0)
     : [];
+  const entitySchemas = normalizeEntitySchemas(cfg.entitySchemas);
+  setConfiguredEntitySchemas(entitySchemas);
 
   // Optional file hygiene (memory file limits / truncation risk mitigation)
   const rawHygiene =
@@ -1447,6 +1450,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.entityRetrievalMaxRelatedEntities === "number" ? cfg.entityRetrievalMaxRelatedEntities : 3,
     entityRetrievalRecentTurns:
       typeof cfg.entityRetrievalRecentTurns === "number" ? cfg.entityRetrievalRecentTurns : 6,
+    entitySchemas,
     recallBudgetChars: recallPipelineConfig.recallBudgetChars,
     recallOuterTimeoutMs:
       typeof cfg.recallOuterTimeoutMs === "number" ? Math.max(0, Math.floor(cfg.recallOuterTimeoutMs)) : 75_000,

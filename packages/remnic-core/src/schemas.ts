@@ -78,6 +78,15 @@ export const EntityMentionSchema = z.object({
     .optional()
     .nullable()
     .describe("Optional proactive follow-up question that surfaced this entity."),
+  structuredSections: z
+    .array(z.object({
+      key: z.string(),
+      title: z.string(),
+      facts: z.array(z.string()),
+    }))
+    .optional()
+    .nullable()
+    .describe("Optional named sections for entity-specific facts. Use when facts clearly belong under a durable heading such as Beliefs or Building / Working On."),
 });
 
 export const ExtractedQuestionSchema = z.object({
@@ -341,5 +350,4 @@ export type ConsolidationItemParsed = z.infer<typeof ConsolidationItemSchema>;
 export type ConsolidationResultParsed = z.infer<
   typeof ConsolidationResultSchema
 >;
-
 

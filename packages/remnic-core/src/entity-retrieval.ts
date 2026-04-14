@@ -4,7 +4,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { collectNativeKnowledgeChunks, type NativeKnowledgeChunk } from "./native-knowledge.js";
 import { compareEntityTimestamps, normalizeEntityName, type StorageManager } from "./storage.js";
-import type { MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
+import { resolveRequestedEntitySectionKeys } from "./entity-schema.js";
+import type { EntityStructuredSection, MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
 
 const ENTITY_INDEX_VERSION = 2;
 const RECENT_TRANSCRIPT_LOOKBACK_HOURS = 24;
@@ -21,6 +22,7 @@ type EntityMentionIndexEntry = {
   aliases: string[];
   summary?: string;
   facts: string[];
+  structuredSections: EntityStructuredSection[];
   timeline: Array<{
     timestamp: string;
     text: string;
@@ -58,7 +60,7 @@ type EntityCandidate = {
 type EntityHintSnippet = {
   text: string;
   score: number;
-  kind: "summary" | "fact" | "relationship" | "activity" | "memory" | "native";
+  kind: "summary" | "fact" | "section" | "relationship" | "activity" | "memory" | "native";
 };
 
 export interface BuildEntityRecallSectionOptions {
@@ -132,7 +134,7 @@ function detectEntityQueryMode(query: string): EntityQueryMode | null {
     return "follow_up";
   }
   if (
-    /^(who is|who s|what do we know about|tell me about|what can you tell me about|what s new with|what happened with|what happened to|status of|where is|how is)\b/.test(normalized)
+    /^(who is|who s|what do we know about|what does|tell me about|what can you tell me about|what s new with|what happened with|what happened to|status of|where is|how is)\b/.test(normalized)
   ) {
     return /what happened|what s new|status of|how is|where is/.test(normalized) ? "timeline" : "direct";
   }
@@ -268,6 +270,7 @@ function createPseudoNativeEntry(chunk: NativeKnowledgeChunk): EntityMentionInde
     type: chunk.sourceKind,
     aliases: uniqueStrings(chunk.aliases ?? []),
     facts: [],
+    structuredSections: [],
     timeline: [],
     relationships: [],
     activity: [],
@@ -323,6 +326,14 @@ async function buildEntityMentionIndex(
       aliases: uniqueStrings(entity.aliases),
       summary: preferNonEmptyText(entity.synthesis, entity.summary),
       facts: sanitizedFacts,
+      structuredSections: (entity.structuredSections ?? []).map((section) => ({
+        key: section.key,
+        title: section.title,
+        facts: section.facts
+          .map((fact) => sanitizeEntityFact(fact))
+          .filter(Boolean)
+          .map((fact) => compactLine(fact, 180)),
+      })).filter((section) => section.facts.length > 0),
       timeline: entity.timeline.map((entry) => ({ ...entry })),
       relationships: entity.relationships.map((relationship) => ({ ...relationship })),
       activity: entity.activity.map((activity) => ({ ...activity })),
@@ -443,46 +454,58 @@ async function buildHintSnippets(
   queryTokens: string[],
   mode: EntityQueryMode,
   maxSupportingFacts: number,
+  requestedSectionKeys: Set<string>,
 ): Promise<EntityHintSnippet[]> {
   const snippets: EntityHintSnippet[] = [];
   if (entry.summary) {
     snippets.push({ text: compactLine(entry.summary, 180), score: 10, kind: "summary" });
   }
 
-  for (const fact of entry.facts) {
-    snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+  if (requestedSectionKeys.size > 0) {
+    for (const section of entry.structuredSections) {
+      if (!requestedSectionKeys.has(normalizeText(section.key).replace(/\s+/g, "_"))) continue;
+      for (const fact of section.facts) {
+        snippets.push({ text: fact, score: mode === "direct" ? 8 : 9, kind: "section" });
+      }
+    }
+  } else {
+    for (const fact of entry.facts) {
+      snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+    }
   }
 
-  for (const relationship of entry.relationships) {
-    snippets.push({
-      text: compactLine(relationLine(entry, relationship), 180),
-      score: mode === "direct" && entry.type.toLowerCase() === "person" ? 6 : 4,
-      kind: "relationship",
-    });
-  }
+  if (requestedSectionKeys.size === 0) {
+    for (const relationship of entry.relationships) {
+      snippets.push({
+        text: compactLine(relationLine(entry, relationship), 180),
+        score: mode === "direct" && entry.type.toLowerCase() === "person" ? 6 : 4,
+        kind: "relationship",
+      });
+    }
 
-  for (const activity of entry.activity) {
-    snippets.push({
-      text: compactLine(`${activity.date}: ${activity.note}`, 180),
-      score: 4,
-      kind: "activity",
-    });
-  }
+    for (const activity of entry.activity) {
+      snippets.push({
+        text: compactLine(`${activity.date}: ${activity.note}`, 180),
+        score: 4,
+        kind: "activity",
+      });
+    }
 
-  for (const memorySnippet of entry.memorySnippets.slice(0, Math.min(maxSupportingFacts, 4))) {
-    snippets.push({
-      text: memorySnippet,
-      score: 5,
-      kind: "memory",
-    });
-  }
+    for (const memorySnippet of entry.memorySnippets.slice(0, Math.min(maxSupportingFacts, 4))) {
+      snippets.push({
+        text: memorySnippet,
+        score: 5,
+        kind: "memory",
+      });
+    }
 
-  for (const chunk of entry.nativeChunks) {
-    snippets.push({
-      text: compactLine(chunk.snippet, 180),
-      score: 3,
-      kind: "native",
-    });
+    for (const chunk of entry.nativeChunks) {
+      snippets.push({
+        text: compactLine(chunk.snippet, 180),
+        score: 3,
+        kind: "native",
+      });
+    }
   }
 
   const deduped = new Map<string, EntityHintSnippet>();
@@ -634,11 +657,20 @@ export async function buildEntityRecallSection(options: BuildEntityRecallSection
   const rankedCandidates = candidates.slice(0, candidateLimit);
   const enriched = await Promise.all(
     rankedCandidates.map(async (candidate) => {
+      const requestedSectionKeys = new Set(
+        resolveRequestedEntitySectionKeys(
+          options.query,
+          candidate.entry.type,
+          candidate.entry.structuredSections,
+          options.config.entitySchemas,
+        ),
+      );
       const snippets = await buildHintSnippets(
         candidate.entry,
         queryTokens,
         mode,
         options.maxSupportingFacts,
+        requestedSectionKeys,
       );
       return {
         candidate,

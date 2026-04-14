@@ -83,3 +83,21 @@ test("parseConfig activeRecallCacheTtlMs=-1 falls back to the default ttl", () =
   const result = parseConfig({ activeRecallCacheTtlMs: -1 });
   assert.equal(result.activeRecallCacheTtlMs, 15000);
 });
+
+test("parseConfig preserves custom entity schemas without code changes", () => {
+  const result = parseConfig({
+    entitySchemas: {
+      person: {
+        sections: [
+          { key: "beliefs", title: "Beliefs" },
+          { key: "working_on", title: "Working On" },
+        ],
+      },
+    },
+  });
+
+  assert.deepEqual((result as any).entitySchemas?.person?.sections, [
+    { key: "beliefs", title: "Beliefs", description: "" },
+    { key: "working_on", title: "Working On", description: "" },
+  ]);
+});

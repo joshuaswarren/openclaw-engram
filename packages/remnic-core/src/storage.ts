@@ -7,6 +7,10 @@ import { getCachedEntities, setCachedEntities } from "./memory-cache.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import {
+  matchEntitySchemaSection,
+  sortStructuredSectionsBySchema,
+} from "./entity-schema.js";
+import {
   hasCitation,
   hasCitationForTemplate,
   stripCitationForTemplate,
@@ -25,6 +29,7 @@ import type {
   EntityActivityEntry,
   EntityFile,
   EntityRelationship,
+  EntityStructuredSection,
   EntityTimelineEntry,
   ImportanceLevel,
   ImportanceScore,
@@ -1100,6 +1105,76 @@ function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
   )];
 }
 
+function normalizeEntitySectionFact(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function parseEntityStructuredSectionFacts(lines: string[]): string[] {
+  const facts: string[] = [];
+  let currentBlock: string[] = [];
+
+  const flushCurrentBlock = (): void => {
+    const normalized = normalizeEntitySectionFact(currentBlock.join(" "));
+    if (normalized.length > 0) facts.push(normalized);
+    currentBlock = [];
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) {
+      flushCurrentBlock();
+      continue;
+    }
+    if (line.startsWith("- ")) {
+      flushCurrentBlock();
+      currentBlock = [line.slice(2).trim()];
+      continue;
+    }
+    currentBlock.push(line);
+  }
+
+  flushCurrentBlock();
+  return [...new Set(facts)];
+}
+
+function partitionEntityStructuredSections(
+  entityType: string,
+  extraSections: Array<{ title: string; lines: string[] }>,
+): {
+  structuredSections: EntityStructuredSection[];
+  remainingExtraSections: Array<{ title: string; lines: string[] }>;
+} {
+  const structuredSections: EntityStructuredSection[] = [];
+  const remainingExtraSections: Array<{ title: string; lines: string[] }> = [];
+  const structuredSectionIndex = new Map<string, EntityStructuredSection>();
+
+  for (const section of extraSections) {
+    const matchedSection = matchEntitySchemaSection(entityType, section.title);
+    if (!matchedSection) {
+      remainingExtraSections.push(section);
+      continue;
+    }
+    const facts = parseEntityStructuredSectionFacts(section.lines);
+    const existing = structuredSectionIndex.get(matchedSection.key);
+    if (existing) {
+      existing.facts = [...new Set([...existing.facts, ...facts])];
+      continue;
+    }
+    const structuredSection: EntityStructuredSection = {
+      key: matchedSection.key,
+      title: matchedSection.title,
+      facts,
+    };
+    structuredSections.push(structuredSection);
+    structuredSectionIndex.set(matchedSection.key, structuredSection);
+  }
+
+  return {
+    structuredSections,
+    remainingExtraSections,
+  };
+}
+
 export function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
   let latestRaw: string | undefined;
   for (const entry of entity.timeline) {
@@ -1304,6 +1379,7 @@ export function parseEntityFile(content: string): EntityFile {
   const facts = dedupeEntityFacts(timeline);
   const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
   const synthesisTimelineCount = frontmatter.synthesisTimelineCount;
+  const { structuredSections, remainingExtraSections } = partitionEntityStructuredSections(type, extraSections);
 
   return {
     name,
@@ -1319,10 +1395,11 @@ export function parseEntityFile(content: string): EntityFile {
     synthesisTimelineCount,
     synthesisVersion: frontmatter.synthesisVersion,
     timeline,
+    structuredSections,
     relationships,
     activity,
     aliases,
-    extraSections,
+    extraSections: remainingExtraSections,
   };
 }
 
@@ -1336,6 +1413,10 @@ export function serializeEntityFile(entity: EntityFile): string {
   const created = entity.created?.trim() || entity.updated || new Date().toISOString();
   const updated = entity.updated || created;
   const timeline = entity.timeline;
+  const structuredSections = sortStructuredSectionsBySchema(
+    entity.type,
+    entity.structuredSections ?? [],
+  );
   const legacyFacts = timeline.length === 0 ? dedupeEntityFacts(
     entity.facts.map((fact) => ({
       timestamp: updated,
@@ -1389,6 +1470,14 @@ export function serializeEntityFile(entity: EntityFile): string {
   if (legacyFacts.length > 0) {
     lines.push("## Facts", "");
     for (const fact of legacyFacts) {
+      lines.push(`- ${fact}`);
+    }
+    lines.push("");
+  }
+
+  for (const section of structuredSections) {
+    lines.push(`## ${section.title}`, "");
+    for (const fact of section.facts) {
       lines.push(`- ${fact}`);
     }
     lines.push("");
@@ -2103,6 +2192,7 @@ export class StorageManager {
       source?: string;
       sessionKey?: string;
       principal?: string;
+      structuredSections?: EntityStructuredSection[];
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -2159,6 +2249,33 @@ export class StorageManager {
     const source = options.source?.trim() || undefined;
     const sessionKey = options.sessionKey?.trim() || undefined;
     const principal = options.principal?.trim() || undefined;
+    const structuredSectionMap = new Map(
+      (entity.structuredSections ?? []).map((section) => [section.key, {
+        ...section,
+        facts: [...section.facts],
+      }]),
+    );
+    for (const section of options.structuredSections ?? []) {
+      const existingSection = structuredSectionMap.get(section.key);
+      if (!existingSection) {
+        structuredSectionMap.set(section.key, {
+          key: section.key,
+          title: section.title,
+          facts: [...new Set(section.facts.map((fact) => fact.trim()).filter((fact) => fact.length > 0))],
+        });
+        continue;
+      }
+      const mergedFacts = new Set(existingSection.facts.map((fact) => fact.trim()));
+      for (const fact of section.facts) {
+        const trimmed = fact.trim();
+        if (!trimmed) continue;
+        mergedFacts.add(trimmed);
+      }
+      existingSection.facts = Array.from(mergedFacts);
+      if (!existingSection.title.trim() && section.title.trim()) {
+        existingSection.title = section.title;
+      }
+    }
     for (const fact of safeFacts) {
       const nextEntry = {
         timestamp,
@@ -2179,6 +2296,10 @@ export class StorageManager {
     }
     entity.facts = dedupeEntityFacts(entity.timeline);
     entity.summary = entity.synthesis || entity.summary;
+    entity.structuredSections = sortStructuredSectionsBySchema(
+      type,
+      Array.from(structuredSectionMap.values()),
+    );
     entity.name = name;
     entity.type = type;
     entity.created = entity.created || timestamp;

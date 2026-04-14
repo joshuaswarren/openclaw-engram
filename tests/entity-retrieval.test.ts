@@ -629,6 +629,47 @@ test("entity retrieval surfaces uncertainty when direct facts conflict", async (
   assert.match(section!, /uncertainty: Evidence is mixed across stored facts/);
 });
 
+test("entity retrieval scopes answer hints to requested structured sections", async () => {
+  const { config, storage } = await buildHarness("engram-entity-section-scope");
+  const canonical = normalizeEntityName("Alice Example", "person");
+  await writeFile(
+    path.join(config.memoryDir, "entities", `${canonical}.md`),
+    [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+      "synthesis_version: 1",
+      "---",
+      "",
+      "# Alice Example",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "## Synthesis",
+      "",
+      "Alice Example is a product leader with strong opinions and a direct writing style.",
+      "",
+      "## Beliefs",
+      "",
+      "- Alice Example believes small teams should own whole systems.",
+      "",
+      "## Communication Style",
+      "",
+      "- Alice Example writes blunt weekly updates in Slack.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const section = await buildSection(config, storage, "What does Alice Example believe?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example believes small teams should own whole systems\./);
+  assert.doesNotMatch(section!, /writes blunt weekly updates in Slack/i);
+});
+
 test("entity retrieval can answer from native knowledge titles and aliases without an entity file", async () => {
   const { workspaceDir, config, storage } = await buildHarness("engram-entity-native", {
     nativeKnowledge: {

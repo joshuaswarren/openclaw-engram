@@ -9810,6 +9810,9 @@ export class Orchestrator {
           source: typeof (entity as any)?.source === "string" ? (entity as any).source : "extraction",
           sessionKey: sourceContext?.sessionKey,
           principal: sourceContext?.principal,
+          structuredSections: Array.isArray((entity as any)?.structuredSections)
+            ? (entity as any).structuredSections
+            : undefined,
         });
         if (id) trackPersistedId(storage, id);
       } catch (err) {
@@ -10233,6 +10236,9 @@ export class Orchestrator {
         : [];
       await this.storage.writeEntity(entity.name, entity.type, safeFacts, {
         source: "consolidation",
+        structuredSections: Array.isArray((entity as any)?.structuredSections)
+          ? (entity as any).structuredSections
+          : undefined,
       });
     }
 

@@ -185,6 +185,21 @@ export class ExtractionEngine {
             facts: Array.isArray(e?.facts)
               ? e.facts.filter((f: any) => typeof f === "string")
               : [],
+            structuredSections: Array.isArray(e?.structuredSections)
+              ? e.structuredSections
+                  .map((section: any) => ({
+                    key: typeof section?.key === "string" ? section.key : "",
+                    title: typeof section?.title === "string" ? section.title : "",
+                    facts: Array.isArray(section?.facts)
+                      ? section.facts.filter((fact: any) => typeof fact === "string")
+                      : [],
+                  }))
+                  .filter((section: any) => (
+                    section.key.length > 0 &&
+                    section.title.length > 0 &&
+                    section.facts.length > 0
+                  ))
+              : undefined,
             promptedByQuestion:
               typeof e?.promptedByQuestion === "string" ? e.promptedByQuestion : undefined,
           }))
@@ -549,7 +564,7 @@ export class ExtractionEngine {
       `Return at most ${maxAdditional} additional high-confidence memory candidates that were omitted from the base extraction.`,
       "Only include information directly supported by the conversation. Do not speculate. Do not repeat the base extraction.",
       "Return only valid JSON with this shape:",
-      '{"facts":[{"category":"fact","content":"...","confidence":0.0,"tags":["..."],"entityRef":"optional","promptedByQuestion":"optional"}],"profileUpdates":["..."],"entities":[{"name":"...","type":"person","facts":["..."],"promptedByQuestion":"optional"}],"relationships":[{"source":"...","target":"...","label":"...","promptedByQuestion":"optional"}]}',
+      '{"facts":[{"category":"fact","content":"...","confidence":0.0,"tags":["..."],"entityRef":"optional","promptedByQuestion":"optional"}],"profileUpdates":["..."],"entities":[{"name":"...","type":"person","facts":["..."],"structuredSections":[{"key":"beliefs","title":"Beliefs","facts":["..."]}],"promptedByQuestion":"optional"}],"relationships":[{"source":"...","target":"...","label":"...","promptedByQuestion":"optional"}]}',
       "",
       "Base extracted facts (do not repeat):",
       factsPreview || "(none)",
@@ -647,6 +662,12 @@ export class ExtractionEngine {
     const mergedEntities = base.entities.map((entity) => ({
       ...entity,
       facts: [...entity.facts],
+      structuredSections: entity.structuredSections
+        ? entity.structuredSections.map((section) => ({
+            ...section,
+            facts: [...section.facts],
+          }))
+        : undefined,
     }));
     const entityIndex = new Map(mergedEntities.map((entity, index) => [normalizeEntityKey(entity), index]));
     for (const entity of proactive.entities) {
@@ -656,6 +677,12 @@ export class ExtractionEngine {
       if (typeof existingIndex === "number") {
         const existing = mergedEntities[existingIndex]!;
         const nextFacts = new Set(existing.facts.map((fact) => fact.trim()));
+        const nextSections = new Map(
+          (existing.structuredSections ?? []).map((section) => [section.key, {
+            ...section,
+            facts: [...section.facts],
+          }]),
+        );
         let changed = false;
         for (const fact of entity.facts) {
           const trimmed = fact.trim();
@@ -663,10 +690,31 @@ export class ExtractionEngine {
           nextFacts.add(trimmed);
           changed = true;
         }
+        for (const section of entity.structuredSections ?? []) {
+          const existingSection = nextSections.get(section.key);
+          if (!existingSection) {
+            nextSections.set(section.key, {
+              key: section.key,
+              title: section.title,
+              facts: [...section.facts],
+            });
+            changed = true;
+            continue;
+          }
+          const nextSectionFacts = new Set(existingSection.facts.map((fact) => fact.trim()));
+          for (const fact of section.facts) {
+            const trimmed = fact.trim();
+            if (!trimmed || nextSectionFacts.has(trimmed)) continue;
+            nextSectionFacts.add(trimmed);
+            changed = true;
+          }
+          existingSection.facts = Array.from(nextSectionFacts);
+        }
         if (changed) {
           mergedEntities[existingIndex] = {
             ...existing,
             facts: Array.from(nextFacts),
+            structuredSections: Array.from(nextSections.values()),
             source: "proactive",
             promptedByQuestion: existing.promptedByQuestion ?? entity.promptedByQuestion,
           };
@@ -674,7 +722,16 @@ export class ExtractionEngine {
         }
         continue;
       }
-      mergedEntities.push({ ...entity, source: "proactive" });
+      mergedEntities.push({
+        ...entity,
+        source: "proactive",
+        structuredSections: entity.structuredSections
+          ? entity.structuredSections.map((section) => ({
+              ...section,
+              facts: [...section.facts],
+            }))
+          : undefined,
+      });
       entityIndex.set(key, mergedEntities.length - 1);
       remainingBudget -= 1;
     }
@@ -1023,11 +1080,12 @@ Also generate:
 1. 1-3 genuine questions you're curious about from this conversation
 2. Profile updates about user patterns/behaviors (if any)
 3. Relationships between entities (max 5). Use normalized names like "person-jane-doe", "company-acme-corp".
+4. For entity facts that fit a durable named heading, include entity.structuredSections with {key, title, facts}.
 
 Output JSON:
 {
   "facts": [{"category": "decision", "content": "Chose PostgreSQL over MongoDB for the user service", "importance": 8, "confidence": 0.9, "structuredAttributes": {"chosen": "PostgreSQL", "rejected": "MongoDB"}}, {"category": "commitment", "content": "Must ship v2.0 API by end of March", "importance": 10, "confidence": 1.0, "structuredAttributes": {"deadline": "end of March", "deliverable": "v2.0 API"}}, {"category": "fact", "content": "The store backend uses Redis for session caching", "importance": 6, "confidence": 0.95, "entityRef": "project-acme-store"}, {"category": "principle", "content": "Always run migrations in a transaction to avoid partial schema updates", "importance": 8, "confidence": 0.9}],
-  "entities": [{"name": "person-jane-doe", "type": "person", "facts": ["Works at Acme Corp", "Prefers Python over JavaScript"]}, {"name": "project-acme-store", "type": "project", "facts": ["Built with Next.js", "Deployed on Vercel"]}],
+  "entities": [{"name": "person-jane-doe", "type": "person", "facts": ["Works at Acme Corp", "Prefers Python over JavaScript"], "structuredSections": [{"key": "beliefs", "title": "Beliefs", "facts": ["Python is a better fit than JavaScript for backend work."]}]}, {"name": "project-acme-store", "type": "project", "facts": ["Built with Next.js", "Deployed on Vercel"]}],
   "profileUpdates": ["User prefers dark mode in all editors"],
   "questions": [{"question": "Which cloud provider hosts the staging environment?", "context": "Came up during deployment discussion", "priority": 0.5}],
   "relationships": [{"source": "person-jane-doe", "target": "company-acme-corp", "label": "works at"}]
@@ -1121,7 +1179,7 @@ ${truncatedConversation}`;
             `\n\nRespond with valid JSON matching this schema:
 {
   "facts": [{"category": "decision", "content": "Chose React over Vue for the dashboard rewrite", "importance": 8, "confidence": 0.9, "tags": ["frontend"], "structuredAttributes": {"chosen": "React", "rejected": "Vue"}}, {"category": "fact", "content": "The API gateway uses rate limiting at 1000 req/min", "importance": 6, "confidence": 0.95, "tags": ["infra"], "entityRef": "project-dashboard", "structuredAttributes": {"rate_limit": "1000 req/min"}}],
-  "entities": [{"name": "person-sarah-chen", "type": "person", "facts": ["Leads the backend team", "Joined from Google in 2024"]}, {"name": "project-dashboard", "type": "project", "facts": ["React-based admin panel", "Deployed on AWS ECS"]}],
+  "entities": [{"name": "person-sarah-chen", "type": "person", "facts": ["Leads the backend team", "Joined from Google in 2024"], "structuredSections": [{"key": "beliefs", "title": "Beliefs", "facts": ["Small teams should own whole systems."]}]}, {"name": "project-dashboard", "type": "project", "facts": ["React-based admin panel", "Deployed on AWS ECS"]}],
   "profileUpdates": ["User prefers TypeScript over plain JavaScript"],
   "questions": [{"question": "What database does the analytics service use?", "context": "Came up during discussion of migration plan", "priority": 0.5}],
   "relationships": [{"source": "person-sarah-chen", "target": "project-dashboard", "label": "leads development of"}]
@@ -1246,6 +1304,7 @@ Rules:
 - Entity references should use normalized names (lowercase, hyphenated: "jane-doe", "acme-corp")
 - CRITICAL: Entity names must be CANONICAL. Always use the hyphenated multi-word form: "acme-corp" NOT "acmecorp" or "acme". "jane-doe" NOT "janedoe" or "jane". If unsure, prefer the most specific full name.
 - Avoid creating entities typed as "other" when a more specific type fits (company, project, tool, person, place)
+- When entity facts clearly belong under a durable named heading, add them to entity.structuredSections as {key, title, facts}. Example person headings: "Beliefs", "Communication Style", "Building / Working On". Leave structuredSections empty when no stable heading fits.
 - Tags should be concise and reusable (e.g., "coding-style", "personal", "tools")
 - When a fact contains measurable, categorical, or precisely valued data, include a "structuredAttributes" field with key-value string pairs (e.g., {"price": "29.99", "brand": "Sony"}, {"date": "2024-03-15", "location": "SF"}, {"chosen": "PostgreSQL", "rejected": "MongoDB"}). Only for concrete values, not narrative content.
 - Set confidence using these tiers:
@@ -1374,6 +1433,9 @@ Consolidate the new memories against existing ones.`,
       log.debug(`consolidation: ${fallbackResult.items.length} decisions via fallback`);
       const normalizedEntityUpdates = fallbackResult.entityUpdates.map((entity) => ({
         ...entity,
+        structuredSections: Array.isArray(entity.structuredSections)
+          ? entity.structuredSections
+          : undefined,
         promptedByQuestion:
           typeof entity.promptedByQuestion === "string" ? entity.promptedByQuestion : undefined,
       }));
@@ -1501,6 +1563,21 @@ Respond with valid JSON only, matching this schema:
                 facts: Array.isArray(entity?.facts)
                   ? entity.facts.filter((fact: any) => typeof fact === "string")
                   : [],
+                structuredSections: Array.isArray(entity?.structuredSections)
+                  ? entity.structuredSections
+                      .map((section: any) => ({
+                        key: typeof section?.key === "string" ? section.key : "",
+                        title: typeof section?.title === "string" ? section.title : "",
+                        facts: Array.isArray(section?.facts)
+                          ? section.facts.filter((fact: any) => typeof fact === "string")
+                          : [],
+                      }))
+                      .filter((section: any) => (
+                        section.key.length > 0 &&
+                        section.title.length > 0 &&
+                        section.facts.length > 0
+                      ))
+                  : undefined,
               }))
               .filter((entity: any) => entity.name.length > 0)
           : [];
