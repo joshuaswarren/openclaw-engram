@@ -54,6 +54,7 @@ After any change to this directory:
 npm run check-types           # TypeScript strict check
 npm run check-config-contract # Config schema alignment
 npm run preflight:quick       # Fast test gate
+npm run test:entity-hardening # Required for orchestrator/storage/intent/cache/retrieval/config edits
 npm test                      # Full suite
 ```
 

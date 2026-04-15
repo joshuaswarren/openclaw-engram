@@ -81,6 +81,55 @@ Run this before every push:
 4. Self-review staged diff for invariant classes below
 5. Add/adjust tests for each new invariant touched
 
+## PR Scope Discipline
+
+Default rule: one subsystem group per PR.
+
+If a change spans multiple groups, split it before review whenever possible.
+For memory-heavy work, the default split is:
+
+1. schema/surface contract changes
+2. storage/serialization/cache changes
+3. retrieval/planner/freshness behavior changes
+
+Large mixed-surface PRs are where adjacent invariants get rediscovered one review round at a time.
+
+## Review-Cycle Discipline
+
+1. Sync with `main` before requesting the first serious AI review.
+2. Re-scan unresolved comments and group them by subsystem.
+3. Apply one cohesive patch per subsystem group.
+4. Run verification once.
+5. Push once.
+
+Avoid serial micro-pushes that only expose the next nearby invariant.
+
+## High-Risk Path Gate
+
+If you touch any of these files, the hardening suite is mandatory:
+
+- `src/orchestrator.ts`
+- `src/storage.ts`
+- `src/intent.ts`
+- `src/memory-cache.ts`
+- `src/entity-retrieval.ts`
+- `src/config.ts`
+- `packages/remnic-core/src/orchestrator.ts`
+- `packages/remnic-core/src/storage.ts`
+- `packages/remnic-core/src/intent.ts`
+- `packages/remnic-core/src/memory-cache.ts`
+- `packages/remnic-core/src/entity-retrieval.ts`
+- `packages/remnic-core/src/config.ts`
+
+Command:
+
+1. `npm run test:entity-hardening`
+
+Enforcement:
+
+- local preflight runs the suite automatically when those paths are touched
+- CI runs a separate `entity-hardening` job when those paths change
+
 ## Mandatory Pre-Merge Cursor Gate
 
 Before merging any PR that uses Cursor/Bugbot review:
@@ -96,7 +145,17 @@ Repository automation:
 - `npm run hooks:install` configures git hooks that enforce this gate locally.
 - `pre-commit` runs `npm run preflight:quick`
 - `pre-push` runs `npm run preflight`
-- Optional AI pre-push signal: run `npm run review:cursor` manually before pushing.
+- Local AI pre-push signal: run `npm run review:cursor` before requesting external AI review when the CLI is available.
+
+## Stale AI Review Recovery
+
+If `Cursor Bugbot` is still pending after all other checks are green:
+
+1. Verify the current head SHA.
+2. Retrigger once.
+3. Stop pushing while waiting for the fresh verdict unless a real defect is found.
+
+Do not merge based on an older PASS that targeted a previous head.
 
 ## Invariant Classes (must be checked)
 
@@ -203,13 +262,3 @@ If multiple comments touch the same subsystem:
 3. Push once.
 
 Avoid serial micro-fixes unless comments are independent.
-
-## Review Loop Discipline
-
-Before every push in an active review loop:
-
-1. Re-scan all unresolved comments and group by subsystem.
-2. Apply one coherent patch per subsystem group.
-3. Run full verification.
-4. Run one manual “second-order regression” pass over touched paths.
-5. Push once and re-check.

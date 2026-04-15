@@ -144,3 +144,31 @@ grep "\[engram\]" ~/.openclaw/logs/gateway.log
 53. **Status filters must enumerate ALL non-active states** — filtering only `superseded` and `archived` but not `quarantined`, `rejected`, or `pending_review` causes stale data in user-facing outputs. Define an explicit `ACTIVE_STATUSES` set rather than an ad-hoc exclusion list. When adding a new status, grep ALL filters. PR #396.
 54. **Never delete before write in file replace operations** — `rmSync(target)` then `renameSync(tmp, target)` loses data permanently if rename fails. Write to temp first, then rename atomically. Verify rename success before cleanup. `renameSync` can fail on cross-device moves. PR #394.
 55. **Documented behavior must have a corresponding implementation and test** — if docs say "timeout is applied to all daemon calls", the provider must forward the timeout parameter AND a test must verify it. CI publish workflows must validate `github.ref == 'refs/heads/main'` on the job, not just the trigger. Config properties defined in schema must be wired end-to-end. PR #397, #398.
+
+## Cleaner PR Workflow
+
+Default workflow going forward:
+
+1. Keep each PR narrow.
+   - Prefer one subsystem group per PR.
+   - Split mixed work into separate PRs for schema/surface, storage/cache, and retrieval/planner behavior when possible.
+
+2. Sync `main` before review.
+   - Rebase or merge `main` before the first serious AI review cycle.
+   - Avoid mid-review base refreshes unless a conflict forces it.
+
+3. Batch fixes.
+   - Group unresolved comments by subsystem, fix the full group, verify once, then push once.
+   - Do not use review feedback as a micro-push loop.
+
+4. Run local review gates first.
+   - `npm run preflight:quick`
+   - `npm run test:entity-hardening` when touching `src/` or `packages/remnic-core/src/` `orchestrator.ts`, `storage.ts`, `intent.ts`, `memory-cache.ts`, `entity-retrieval.ts`, or `config.ts`
+   - `npm run review:cursor` when the local Cursor CLI is available
+
+5. Treat AI review freshness as a merge criterion.
+   - A stale positive verdict on an older head does not count.
+   - Merge-ready means green checks, zero unresolved review threads, and a fresh positive AI verdict on the current head.
+
+Reference:
+`docs/ops/pr-review-hardening-playbook.md`

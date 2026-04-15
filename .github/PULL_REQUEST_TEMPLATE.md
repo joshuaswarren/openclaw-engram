@@ -18,6 +18,8 @@
 - [ ] `bash scripts/check-review-patterns.sh`
 - [ ] Added/updated tests for behavior changes
 - [ ] For retrieval/planner/cache/config changes: ran `docs/ops/pr-review-hardening-playbook.md`
+- [ ] For high-risk memory/retrieval paths: ran `npm run test:entity-hardening`
+- [ ] Ran `npm run review:cursor` locally, or documented why it was unavailable
 
 ## Changelog
 
@@ -49,3 +51,9 @@
 ## Notes for reviewers
 
 <!-- Anything specific you want reviewed closely -->
+
+## PR workflow
+
+- [ ] PR scope is narrow, or the split justification is explained here
+- [ ] Synced with latest `main` before requesting AI review
+- [ ] Batched review fixes by subsystem instead of micro-pushing
