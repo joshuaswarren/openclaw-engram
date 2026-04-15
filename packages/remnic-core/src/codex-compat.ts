@@ -23,6 +23,8 @@ export function isCodexProvider(
   source: Record<string, unknown> | undefined,
 ): boolean {
   if (!source || typeof source !== "object") return false;
+  const messageProvider = source.messageProvider;
+  if (messageProvider === "codex") return true;
   const provider =
     source.provider && typeof source.provider === "object"
       ? (source.provider as Record<string, unknown>)

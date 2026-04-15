@@ -32,6 +32,13 @@ test("isCodexProvider detects bundled Codex provider metadata", () => {
   );
   assert.equal(
     isCodexProvider({
+      messageProvider: "codex",
+      providerThreadId: "thread-codex-2",
+    }),
+    true,
+  );
+  assert.equal(
+    isCodexProvider({
       provider: { id: "openai", thread: { id: "thread-openai-1" } },
     }),
     false,
