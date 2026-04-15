@@ -484,7 +484,7 @@ async function buildHintSnippets(
     if (entry.timelineFacts.length === 0 && entry.structuredSections.length === 0) {
       for (const fact of entry.facts) {
         if (!fact.trim()) continue;
-          snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+        snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
       }
     }
   }

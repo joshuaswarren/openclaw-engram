@@ -31,7 +31,7 @@ async function buildHarness(prefix: string, overrides: Record<string, unknown> =
     },
     ...overrides,
   });
-  const storage = new StorageManager(memoryDir);
+  const storage = new StorageManager(memoryDir, config.entitySchemas);
   await storage.ensureDirectories();
   return { memoryDir, workspaceDir, config, storage };
 }
@@ -929,7 +929,7 @@ test("orchestrator injects entity retrieval before the knowledge index", async (
     transcriptEnabled: false,
     hourlySummariesEnabled: false,
   });
-  const storage = new StorageManager(memoryDir);
+  const storage = new StorageManager(memoryDir, cfg.entitySchemas);
   await storage.ensureDirectories();
   await writeEntity(
     storage,
@@ -963,7 +963,7 @@ test("orchestrator preserves zero-limit semantics for entity retrieval", async (
     hourlySummariesEnabled: false,
     entityRetrievalMaxHints: 0,
   });
-  const storage = new StorageManager(memoryDir);
+  const storage = new StorageManager(memoryDir, cfg.entitySchemas);
   await storage.ensureDirectories();
   await writeEntity(
     storage,
