@@ -33,6 +33,37 @@ Use these as the canonical starting points for adapter work:
 - Keep standalone and shared-core behavior testable without booting OpenClaw, Hermes, or another host.
 - If a change touches both core semantics and a host adapter, land the core contract first and make the adapter consume it second.
 
+## Cleaner PR Workflow (Mandatory)
+
+These rules are the default workflow for all agents and contributors.
+
+1. Keep PR scope narrow.
+   - One subsystem group per PR whenever possible.
+   - If work spans multiple groups, split it before review. The default split for memory-heavy work is:
+     - schema/surface contract changes
+     - storage/serialization/cache changes
+     - retrieval/planner/freshness behavior changes
+
+2. Sync with `main` before the first serious review cycle.
+   - Rebase or merge `main` before requesting AI review.
+   - Do not let a PR drift for multiple review rounds and then merge `main` halfway through unless forced by a conflict.
+
+3. Batch review fixes by subsystem.
+   - Re-scan unresolved comments, fix the whole subsystem, run verification once, then push once.
+   - Avoid serial micro-pushes that only expose the next adjacent invariant.
+
+4. Run the local hardening gate before claiming review-clean.
+   - Always run `npm run preflight:quick`.
+   - If you touch `src/` or `packages/remnic-core/src/` `orchestrator.ts`, `storage.ts`, `intent.ts`, `memory-cache.ts`, `entity-retrieval.ts`, or `config.ts`, also run `npm run test:entity-hardening`.
+   - If Cursor CLI is available, run `npm run review:cursor` before requesting external AI review.
+
+5. Treat external AI review as stale unless it matches the current head.
+   - Do not call a PR clean if the latest positive AI verdict targets an older commit.
+   - A merge-ready PR needs green checks, zero unresolved review threads, and a fresh positive AI verdict on the current head.
+
+Reference workflow:
+`docs/ops/pr-review-hardening-playbook.md`
+
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
 These patterns were extracted from 60+ PRs across 2026-04-05 to 2026-04-12

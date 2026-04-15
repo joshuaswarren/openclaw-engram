@@ -9,9 +9,68 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  detect-risky-paths:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    outputs:
+      entity_hardening: ${{ steps.filter.outputs.entity_hardening }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect high-risk review surfaces
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            entity_hardening:
+              - 'src/orchestrator.ts'
+              - 'src/storage.ts'
+              - 'src/intent.ts'
+              - 'src/memory-cache.ts'
+              - 'src/entity-retrieval.ts'
+              - 'src/config.ts'
+              - 'packages/remnic-core/src/orchestrator.ts'
+              - 'packages/remnic-core/src/storage.ts'
+              - 'packages/remnic-core/src/intent.ts'
+              - 'packages/remnic-core/src/memory-cache.ts'
+              - 'packages/remnic-core/src/entity-retrieval.ts'
+              - 'packages/remnic-core/src/config.ts'
+
+  entity-hardening:
+    needs: detect-risky-paths
+    if: needs.detect-risky-paths.outputs.entity_hardening == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22.12.0'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild native modules
+        run: pnpm rebuild better-sqlite3
+
+      - name: Entity hardening suite
+        run: pnpm run test:entity-hardening
+
   quality:
+    needs: detect-risky-paths
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 20

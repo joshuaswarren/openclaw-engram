@@ -118,12 +118,16 @@ npx tsx --test tests/specific.test.ts  # one file
 ## Pull Request Process
 
 1. Create a feature branch from `main`
-2. Write documentation first (if adding new features)
-3. Write tests second
-4. Write implementation third
-5. Run `pnpm run build && pnpm test` — everything must pass
-6. Update `CHANGELOG.md` under `[Unreleased]`
-7. Create PR with description following the template
+2. Keep the PR narrow. Split mixed work before review whenever possible.
+3. Sync with latest `main` before requesting AI review.
+4. Write documentation first (if adding new features)
+5. Write tests second
+6. Write implementation third
+7. Run `pnpm run preflight:quick`
+8. If you touched `src/` or `packages/remnic-core/src/` `orchestrator.ts`, `storage.ts`, `intent.ts`, `memory-cache.ts`, `entity-retrieval.ts`, or `config.ts`, run `pnpm run test:entity-hardening`
+9. Run `pnpm run build && pnpm test` — everything must pass
+10. Update `CHANGELOG.md` under `[Unreleased]`
+11. Create PR with description following the template
 
 ### PR Checklist
 
@@ -133,6 +137,7 @@ npx tsx --test tests/specific.test.ts  # one file
 - [ ] Documentation updated (if behavior changed)
 - [ ] No secrets or credentials committed
 - [ ] PR diff <= 400 LOC (or justified)
+- [ ] Review fixes will be batched by subsystem, not pushed as micro-fixes
 
 ## Release Process
 
