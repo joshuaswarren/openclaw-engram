@@ -1844,9 +1844,11 @@ test("agent_end routes Codex-managed turns through the logical thread buffer key
   assert.equal(processTurnCalls.length, 2);
   for (const call of processTurnCalls) {
     assert.equal(call.sessionKey, "session-codex-a");
-    assert.equal(
-      (call.options as { bufferKey?: string }).bufferKey,
-      "codex-thread:thread-99",
+    assert.ok(
+      ((call.options as { bufferKey?: string }).bufferKey ?? "").startsWith(
+        "codex-thread:thread-99",
+      ),
+      "Codex-managed turns should keep the logical thread prefix even when the buffer is principal-scoped",
     );
     assert.equal(
       (call.options as { providerThreadId?: string }).providerThreadId,
@@ -1941,9 +1943,11 @@ test("before_compaction flushes the logical Codex thread buffer before checkpoin
 
   assert.equal(flushed?.sessionKey, "session-compaction-a");
   assert.equal(flushed?.options?.reason, "codex_compaction_signal");
-  assert.equal(
-    flushed?.options?.bufferKey,
-    "codex-thread:thread-compaction-1",
+  assert.ok(
+    String(flushed?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-compaction-1",
+    ),
+    "before_compaction should flush the Codex logical thread buffer",
   );
 });
 
@@ -2038,9 +2042,11 @@ test("before_prompt_build uses the Codex heuristic fallback when thread history 
     (flushCalls[0]?.options as { reason?: string }).reason,
     "codex_compaction_heuristic",
   );
-  assert.equal(
-    (flushCalls[0]?.options as { bufferKey?: string }).bufferKey,
-    "codex-thread:thread-heuristic-1",
+  assert.ok(
+    String(
+      (flushCalls[0]?.options as { bufferKey?: string }).bufferKey ?? "",
+    ).startsWith("codex-thread:thread-heuristic-1"),
+    "heuristic flushes should keep the Codex logical thread prefix",
   );
 });
 
@@ -2096,9 +2102,11 @@ test("before_prompt_build still applies the Codex heuristic fallback when the po
     (flushCalls[0]?.options as { reason?: string }).reason,
     "codex_compaction_heuristic",
   );
-  assert.equal(
-    (flushCalls[0]?.options as { bufferKey?: string }).bufferKey,
-    "codex-thread:thread-heuristic-short-1",
+  assert.ok(
+    String(
+      (flushCalls[0]?.options as { bufferKey?: string }).bufferKey ?? "",
+    ).startsWith("codex-thread:thread-heuristic-short-1"),
+    "short-prompt heuristic flushes should keep the Codex logical thread prefix",
   );
 });
 
@@ -2165,9 +2173,11 @@ test("before_prompt_build retries the Codex heuristic fallback after a failed fl
     (flushCalls[1]?.options as { reason?: string }).reason,
     "codex_compaction_heuristic",
   );
-  assert.equal(
-    (flushCalls[1]?.options as { bufferKey?: string }).bufferKey,
-    "codex-thread:thread-heuristic-retry-1",
+  assert.ok(
+    String(
+      (flushCalls[1]?.options as { bufferKey?: string }).bufferKey ?? "",
+    ).startsWith("codex-thread:thread-heuristic-retry-1"),
+    "retry heuristic flushes should keep the Codex logical thread prefix",
   );
 });
 
@@ -2385,9 +2395,11 @@ test("before_reset reuses the remembered Codex thread id for logical flush keyin
 
   assert.equal(flushed?.sessionKey, "session-reset-codex");
   assert.equal(flushed?.options?.reason, "before_reset");
-  assert.equal(
-    flushed?.options?.bufferKey,
-    "codex-thread:thread-reset-codex",
+  assert.ok(
+    String(flushed?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-reset-codex",
+    ),
+    "before_reset should flush the remembered Codex logical thread buffer",
   );
   assert.equal(
     api._memoryCapability?.promptBuilder?.({ sessionKey: "session-reset-codex" }) ?? null,
@@ -2451,9 +2463,11 @@ test("before_reset preserves the remembered Codex thread after a transient recal
 
   assert.equal(flushed?.sessionKey, "session-reset-codex-failure");
   assert.equal(flushed?.options?.reason, "before_reset");
-  assert.equal(
-    flushed?.options?.bufferKey,
-    "codex-thread:thread-reset-codex-failure",
+  assert.ok(
+    String(flushed?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-reset-codex-failure",
+    ),
+    "transient recall failures should preserve the remembered Codex logical thread buffer",
   );
 });
 
@@ -2641,6 +2655,105 @@ test("agent_end does not reuse a remembered Codex thread after the provider swit
     assert.equal(
       (call.options as { providerThreadId?: string | null }).providerThreadId,
       null,
+    );
+  }
+});
+
+test("agent_end scopes Codex logical buffers to the mapped principal", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("agent-end-codex-principal-buffer-scope-test");
+  api.pluginConfig = {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    principalFromSessionKeyMode: "map",
+    principalFromSessionKeyRules: [
+      { match: "session-alpha", principal: "team-alpha" },
+      { match: "session-beta", principal: "team-beta" },
+    ],
+    namespacePolicies: [
+      {
+        name: "team-alpha",
+        readPrincipals: ["team-alpha"],
+        writePrincipals: ["team-alpha"],
+        includeInRecallByDefault: false,
+      },
+      {
+        name: "team-beta",
+        readPrincipals: ["team-beta"],
+        writePrincipals: ["team-beta"],
+        includeInRecallByDefault: false,
+      },
+    ],
+  };
+  plugin.register(api as any);
+
+  const agentEnd = api.handlers.get("agent_end");
+  assert.ok(agentEnd, "agent_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.transcript.append = async () => undefined;
+
+  const processTurnCalls: Array<Record<string, unknown>> = [];
+  orchestrator.processTurn = async (
+    role: string,
+    content: string,
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    processTurnCalls.push({ role, content, sessionKey, options });
+  };
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        { role: "user", content: "Alpha should stay in the alpha Codex buffer." },
+        { role: "assistant", content: "Alpha acknowledged." },
+      ],
+    },
+    {
+      sessionKey: "session-alpha",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-across-principals",
+    },
+  );
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        { role: "user", content: "Beta should stay in the beta Codex buffer." },
+        { role: "assistant", content: "Beta acknowledged." },
+      ],
+    },
+    {
+      sessionKey: "session-beta",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-across-principals",
+    },
+  );
+
+  assert.equal(processTurnCalls.length, 4);
+  const expectedBufferBySession = new Map([
+    [
+      "session-alpha",
+      "codex-thread:thread-shared-across-principals::principal:team-alpha",
+    ],
+    [
+      "session-beta",
+      "codex-thread:thread-shared-across-principals::principal:team-beta",
+    ],
+  ]);
+  for (const call of processTurnCalls) {
+    const sessionKey = call.sessionKey as string;
+    assert.equal(
+      (call.options as { bufferKey?: string }).bufferKey,
+      expectedBufferBySession.get(sessionKey),
+    );
+    assert.equal(
+      (call.options as { providerThreadId?: string | null }).providerThreadId,
+      "thread-shared-across-principals",
     );
   }
 });

@@ -64,6 +64,7 @@ import {
   resolveCodexSessionIdentity,
 } from "../packages/remnic-core/src/codex-compat.js";
 import { planRecallMode } from "../packages/remnic-core/src/intent.js";
+import { resolvePrincipal } from "../packages/remnic-core/src/namespaces/principal.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
@@ -1026,6 +1027,20 @@ const pluginDefinition = {
       };
     }
 
+    function resolveExtractionBufferKey(
+      sessionKey: string,
+      logicalSessionKey: string,
+    ): string {
+      if (
+        !cfg.namespacesEnabled ||
+        !logicalSessionKey.startsWith("codex-thread:")
+      ) {
+        return logicalSessionKey;
+      }
+      const principal = resolvePrincipal(sessionKey, cfg);
+      return `${logicalSessionKey}::principal:${principal}`;
+    }
+
     // Single source of truth for the structured memory section: every code path
     // that populates `cachedMemoryBySession` MUST use this helper so the cache
     // format stays consistent regardless of which registration path produced it.
@@ -1274,7 +1289,10 @@ const pluginDefinition = {
           try {
             await orchestrator.flushSession(sessionKey, {
               reason: "codex_compaction_heuristic",
-              bufferKey: sessionIdentity.logicalSessionKey,
+              bufferKey: resolveExtractionBufferKey(
+                sessionKey,
+                sessionIdentity.logicalSessionKey,
+              ),
             });
             clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId);
             rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
@@ -2039,7 +2057,10 @@ const pluginDefinition = {
 
             if (stripped.length > 0) {
               await orchestrator.processTurn(role, stripped, sessionKey, {
-                bufferKey: sessionIdentity.logicalSessionKey,
+                bufferKey: resolveExtractionBufferKey(
+                  sessionKey,
+                  sessionIdentity.logicalSessionKey,
+                ),
                 providerThreadId: sessionIdentity.providerThreadId,
                 turnFingerprint: buildTurnFingerprint({
                   role,
@@ -2111,7 +2132,10 @@ const pluginDefinition = {
             try {
               await orchestrator.flushSession(sessionKey, {
                 reason: "codex_compaction_signal",
-                bufferKey: sessionIdentity.logicalSessionKey,
+                bufferKey: resolveExtractionBufferKey(
+                  sessionKey,
+                  sessionIdentity.logicalSessionKey,
+                ),
               });
               clearCodexCompatCaches(
                 sessionKey,
@@ -2345,11 +2369,13 @@ const pluginDefinition = {
             ? Promise.resolve(
                 (orchestrator as any).flushSession(sessionKey, {
                   reason: "before_reset",
-                  bufferKey:
+                  bufferKey: resolveExtractionBufferKey(
+                    sessionKey,
                     rememberedThreadId &&
-                    cfg.codexCompat.threadIdBufferKeying !== false
+                      cfg.codexCompat.threadIdBufferKeying !== false
                       ? codexLogicalSessionKey(rememberedThreadId)
                       : sessionIdentity.logicalSessionKey,
+                  ),
                   abortSignal: flushAbort.signal,
                 }),
               ).catch((error) => {
