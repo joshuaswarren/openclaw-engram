@@ -221,6 +221,16 @@ function isBundledActiveMemoryEnabledForAgent(
   fileBackedRuntimeConfig: unknown,
   agentId: string,
 ): boolean {
+  const readMemorySlot = (config: unknown): string | undefined => {
+    if (!config || typeof config !== "object") return undefined;
+    const plugins = (config as Record<string, unknown>).plugins;
+    if (!plugins || typeof plugins !== "object") return undefined;
+    const slots = (plugins as Record<string, unknown>).slots;
+    if (!slots || typeof slots !== "object") return undefined;
+    const memorySlot = (slots as Record<string, unknown>).memory;
+    return typeof memorySlot === "string" && memorySlot.length > 0 ? memorySlot : undefined;
+  };
+
   const readActiveMemoryEntry = (config: unknown): Record<string, unknown> | undefined => {
     if (!config || typeof config !== "object") return undefined;
     const plugins = (config as Record<string, unknown>).plugins;
@@ -232,6 +242,11 @@ function isBundledActiveMemoryEnabledForAgent(
       ? (activeMemoryEntry as Record<string, unknown>)
       : undefined;
   };
+
+  const runtimeMemorySlot = readMemorySlot(runtimeConfig);
+  const fileBackedMemorySlot = readMemorySlot(fileBackedRuntimeConfig);
+  const effectiveMemorySlot = runtimeMemorySlot ?? fileBackedMemorySlot;
+  if (effectiveMemorySlot !== "active-memory") return false;
 
   const runtimeEntry = readActiveMemoryEntry(runtimeConfig);
   const fileBackedEntry = readActiveMemoryEntry(fileBackedRuntimeConfig);
