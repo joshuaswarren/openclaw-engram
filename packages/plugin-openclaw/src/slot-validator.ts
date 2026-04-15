@@ -3,6 +3,7 @@ export type SlotValidationResult = "ok" | "passive";
 
 const CANONICAL_REMNIC_MEMORY_SLOT_ID = "openclaw-remnic";
 const LEGACY_REMNIC_MEMORY_SLOT_ID = "openclaw-engram";
+const MAX_SLOT_DISTANCE_INPUT_LENGTH = 256;
 
 export interface SlotValidationContext {
   pluginId: string;
@@ -56,6 +57,10 @@ function levenshteinDistance(a: string, b: string): number {
 }
 
 function suggestLikelyRemnicSlot(pluginId: string, actualSlot: string): string {
+  if (actualSlot.length > MAX_SLOT_DISTANCE_INPUT_LENGTH) {
+    return pluginId;
+  }
+
   if (
     actualSlot !== pluginId &&
     (actualSlot === CANONICAL_REMNIC_MEMORY_SLOT_ID ||

@@ -153,6 +153,34 @@ test("slot validator does not recommend the nearest alternate Remnic id as the a
   );
 });
 
+test("slot validator skips distance scoring for oversized slot values", () => {
+  const { logger } = buildLogger();
+  const oversizedSlot = "x".repeat(2048);
+
+  assert.throws(
+    () =>
+      validateSlotSelection({
+        pluginId: CANONICAL_PLUGIN_ID,
+        runtimeConfig: {
+          plugins: {
+            slots: {
+              memory: oversizedSlot,
+            },
+          },
+        },
+        requireExclusive: true,
+        onMismatch: "error",
+        logger,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, new RegExp(CANONICAL_PLUGIN_ID));
+      assert.doesNotMatch(error.message, new RegExp(LEGACY_PLUGIN_ID));
+      return true;
+    },
+  );
+});
+
 test("slot validator returns passive and warns on mismatch when configured to warn", () => {
   const { logger, warnings } = buildLogger();
   const result = validateSlotSelection({
