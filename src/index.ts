@@ -233,18 +233,42 @@ function isBundledActiveMemoryEnabledForAgent(
       : undefined;
   };
 
-  const activeMemoryEntry =
-    readActiveMemoryEntry(runtimeConfig) ?? readActiveMemoryEntry(fileBackedRuntimeConfig);
+  const runtimeEntry = readActiveMemoryEntry(runtimeConfig);
+  const fileBackedEntry = readActiveMemoryEntry(fileBackedRuntimeConfig);
+  const activeMemoryEntry = runtimeEntry ?? fileBackedEntry;
   if (!activeMemoryEntry || typeof activeMemoryEntry !== "object") return false;
-  if (activeMemoryEntry.enabled === false) return false;
+  if (runtimeEntry?.enabled === false || activeMemoryEntry.enabled === false) return false;
 
-  const entryConfig = activeMemoryEntry.config;
-  if (!entryConfig || typeof entryConfig !== "object") return true;
+  const resolveAgents = (
+    entry: Record<string, unknown> | undefined,
+  ): string[] | null | undefined => {
+    const entryConfig = entry?.config;
+    if (!entryConfig || typeof entryConfig !== "object") return undefined;
+    const agents = (entryConfig as Record<string, unknown>).agents;
+    if (!Array.isArray(agents)) return undefined;
+    const normalized = agents.filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+    return normalized.length > 0 ? normalized : null;
+  };
 
-  const agents = (entryConfig as Record<string, unknown>).agents;
-  if (!Array.isArray(agents) || agents.length === 0) return true;
+  const runtimeAgents = resolveAgents(runtimeEntry);
+  if (Array.isArray(runtimeAgents)) {
+    return runtimeAgents.includes(agentId);
+  }
+  if (runtimeAgents === null) {
+    return true;
+  }
 
-  return agents.some((value) => typeof value === "string" && value === agentId);
+  const fileBackedAgents = resolveAgents(fileBackedEntry);
+  if (Array.isArray(fileBackedAgents)) {
+    return fileBackedAgents.includes(agentId);
+  }
+  if (fileBackedAgents === null) {
+    return true;
+  }
+
+  return true;
 }
 
 function wildcardToRegExp(pattern: string): RegExp {
