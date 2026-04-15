@@ -2405,6 +2405,7 @@ export class Orchestrator {
           ? []
           : entity.timeline.slice(Math.max(0, entity.synthesisTimelineCount));
         const structuredEvidenceEntries = flattenStructuredSectionEvidence(entity.structuredSections);
+        const structuredEvidenceCount = structuredEvidenceEntries.length;
         const appendedStructuredEvidenceEntries = entity.synthesisStructuredFactCount === undefined
           ? structuredEvidenceEntries
           : structuredEvidenceEntries.slice(Math.max(0, entity.synthesisStructuredFactCount));
@@ -2495,8 +2496,6 @@ export class Orchestrator {
         const latestRaw = await storage.readEntity(entityName);
         if (!latestRaw) continue;
         const latestEntity = parseEntityFile(latestRaw, this.config.entitySchemas);
-        const latestStructuredFactCount = (latestEntity.structuredSections ?? [])
-          .reduce((count, section) => count + section.facts.length, 0);
         if (
           fingerprintEntitySynthesisEvidence(latestEntity)
           !== fingerprintEntitySynthesisEvidence(entity)
@@ -2505,8 +2504,8 @@ export class Orchestrator {
         }
         await storage.updateEntitySynthesis(entityName, nextSynthesis, {
           entityUpdatedAt: new Date().toISOString(),
-          synthesisStructuredFactCount: latestStructuredFactCount,
-          synthesisTimelineCount: latestEntity.timeline.length,
+          synthesisStructuredFactCount: structuredEvidenceCount,
+          synthesisTimelineCount: entity.timeline.length,
           updatedAt: nextSynthesisUpdatedAt,
         });
         processed += 1;
