@@ -42,6 +42,7 @@ import {
   compareEntityTimestamps,
   StorageManager,
   ContentHashIndex,
+  fingerprintEntityStructuredFacts,
   normalizeEntityName,
   normalizeAttributePairs,
   parseEntityFile,
@@ -2406,7 +2407,10 @@ export class Orchestrator {
           : entity.timeline.slice(Math.max(0, entity.synthesisTimelineCount));
         const structuredEvidenceEntries = flattenStructuredSectionEvidence(entity.structuredSections);
         const structuredEvidenceCount = structuredEvidenceEntries.length;
+        const structuredEvidenceDigest = fingerprintEntityStructuredFacts(entity);
+        const structuredEvidenceDrifted = structuredEvidenceDigest !== (entity.synthesisStructuredFactDigest?.trim() || undefined);
         const appendedStructuredEvidenceEntries = entity.synthesisStructuredFactCount === undefined
+          || structuredEvidenceDrifted
           ? structuredEvidenceEntries
           : structuredEvidenceEntries.slice(Math.max(0, entity.synthesisStructuredFactCount));
         const candidateEvidenceEntries = [
@@ -2504,6 +2508,7 @@ export class Orchestrator {
         }
         await storage.updateEntitySynthesis(entityName, nextSynthesis, {
           entityUpdatedAt: new Date().toISOString(),
+          synthesisStructuredFactDigest: structuredEvidenceDigest,
           synthesisStructuredFactCount: structuredEvidenceCount,
           synthesisTimelineCount: entity.timeline.length,
           updatedAt: nextSynthesisUpdatedAt,

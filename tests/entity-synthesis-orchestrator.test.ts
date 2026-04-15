@@ -9,6 +9,7 @@ import {
   isEntitySynthesisStale,
   normalizeEntityName,
   parseEntityFile,
+  serializeEntityFile,
 } from "../packages/remnic-core/src/storage.js";
 
 test("processEntitySynthesisQueue refreshes stale entities in bounded batches", async () => {
@@ -759,6 +760,84 @@ test("processEntitySynthesisQueue synthesizes section-only entities", async () =
     assert.equal(parsed.synthesisTimelineCount, 0);
     assert.equal(parsed.synthesisStructuredFactCount, 1);
     assert.equal(isEntitySynthesisStale(parsed), false);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
+test("processEntitySynthesisQueue includes changed same-count structured evidence when other evidence also changed", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-structured-digest-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-structured-digest-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 160,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    const entityPath = path.join(memoryDir, "entities", `${canonical}.md`);
+    await storage.writeEntity("Jane Doe", "person", ["Initial synthesis evidence."], {
+      timestamp: "2026-04-13T09:00:00.000Z",
+      source: "extraction",
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Small teams move faster than committees."],
+        },
+      ],
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
+      updatedAt: "2026-04-13T10:00:00.000Z",
+      synthesisTimelineCount: 1,
+      synthesisStructuredFactCount: 1,
+    });
+    await storage.writeEntity("Jane Doe", "person", ["Fresh evidence before synthesis."], {
+      timestamp: "2026-04-13T11:00:00.000Z",
+      source: "extraction",
+    });
+
+    const changedStructuredRaw = await readFile(entityPath, "utf-8");
+    const changedStructuredEntity = parseEntityFile(changedStructuredRaw);
+    changedStructuredEntity.structuredSections = [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Roadmaps should stay legible to the team."],
+      },
+    ];
+    changedStructuredEntity.facts = [
+      "Initial synthesis evidence.",
+      "Fresh evidence before synthesis.",
+      "Roadmaps should stay legible to the team.",
+    ];
+    await writeFile(entityPath, serializeEntityFile(changedStructuredEntity), "utf-8");
+
+    let capturedPrompt = "";
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      return { content: "Jane Doe synthesis rebuilt with the changed belief and fresh timeline evidence." };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const reparsed = parseEntityFile(await readFile(entityPath, "utf-8"));
+
+    assert.equal(processed, 1);
+    assert.match(capturedPrompt, /Fresh evidence before synthesis\./);
+    assert.match(capturedPrompt, /Roadmaps should stay legible to the team\./);
+    assert.equal(reparsed.synthesis, "Jane Doe synthesis rebuilt with the changed belief and fresh timeline evidence.");
+    assert.equal(reparsed.synthesisStructuredFactCount, 1);
+    assert.ok(reparsed.synthesisStructuredFactDigest);
+    assert.equal(isEntitySynthesisStale(reparsed), false);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });
