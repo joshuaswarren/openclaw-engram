@@ -1093,6 +1093,14 @@ function normalizeEntitySectionFact(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function normalizeStructuredSectionFacts(facts: string[]): string[] {
+  return [...new Set(
+    facts
+      .map((fact) => normalizeEntitySectionFact(fact))
+      .filter((fact) => fact.length > 0),
+  )];
+}
+
 function collectStructuredSectionFacts(structuredSections: EntityStructuredSection[]): string[] {
   const facts: string[] = [];
   for (const section of structuredSections) {
@@ -1152,6 +1160,11 @@ function parseEntityStructuredSectionFacts(lines: string[]): string[] {
   return [...new Set(facts)];
 }
 
+function looksLikeStructuredSectionFactList(lines: string[]): boolean {
+  const firstNonBlank = lines.find((line) => line.trim().length > 0)?.trim() ?? "";
+  return firstNonBlank.startsWith("- ");
+}
+
 function partitionEntityStructuredSections(
   entityType: string,
   extraSections: Array<{ title: string; lines: string[] }>,
@@ -1166,23 +1179,38 @@ function partitionEntityStructuredSections(
 
   for (const section of extraSections) {
     const matchedSection = matchEntitySchemaSection(entityType, section.title, entitySchemas);
-    if (!matchedSection) {
+    if (!matchedSection && !looksLikeStructuredSectionFactList(section.lines)) {
       remainingExtraSections.push(section);
       continue;
     }
     const facts = parseEntityStructuredSectionFacts(section.lines);
-    const existing = structuredSectionIndex.get(matchedSection.key);
+    if (!matchedSection && facts.length === 0) {
+      remainingExtraSections.push(section);
+      continue;
+    }
+    const normalizedSection = matchedSection
+      ? { key: matchedSection.key, title: matchedSection.title }
+      : normalizeEntityStructuredSection(
+        entityType,
+        { key: section.title, title: section.title },
+        entitySchemas,
+      );
+    if (facts.length === 0) {
+      remainingExtraSections.push(section);
+      continue;
+    }
+    const existing = structuredSectionIndex.get(normalizedSection.key);
     if (existing) {
-      existing.facts = [...new Set([...existing.facts, ...facts])];
+      existing.facts = normalizeStructuredSectionFacts([...existing.facts, ...facts]);
       continue;
     }
     const structuredSection: EntityStructuredSection = {
-      key: matchedSection.key,
-      title: matchedSection.title,
-      facts,
+      key: normalizedSection.key,
+      title: normalizedSection.title,
+      facts: normalizeStructuredSectionFacts(facts),
     };
     structuredSections.push(structuredSection);
-    structuredSectionIndex.set(matchedSection.key, structuredSection);
+    structuredSectionIndex.set(normalizedSection.key, structuredSection);
   }
 
   return {
@@ -1230,10 +1258,10 @@ function countEntityStructuredFacts(entity: EntityFile): number {
 }
 
 export function isEntitySynthesisStale(entity: EntityFile): boolean {
-  if (entity.timeline.length === 0) return false;
+  const structuredFactCount = countEntityStructuredFacts(entity);
+  if (entity.timeline.length === 0 && structuredFactCount === 0) return false;
   if (!entity.synthesis?.trim()) return true;
   if (entity.synthesisTimelineCount === undefined) return true;
-  const structuredFactCount = countEntityStructuredFacts(entity);
   if (structuredFactCount > 0 && entity.synthesisStructuredFactCount === undefined) return true;
   const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
   if (!latestTimelineTimestamp) {
@@ -1451,7 +1479,10 @@ export function serializeEntityFile(
   const timeline = entity.timeline;
   const structuredSections = sortStructuredSectionsBySchema(
     entity.type,
-    entity.structuredSections ?? [],
+    (entity.structuredSections ?? []).map((section) => ({
+      ...section,
+      facts: normalizeStructuredSectionFacts(section.facts),
+    })).filter((section) => section.facts.length > 0),
     entitySchemas,
   );
   const sectionFacts = new Set(collectStructuredSectionFacts(structuredSections));
@@ -1562,6 +1593,24 @@ export function serializeEntityFile(
   }
 
   return lines.join("\n");
+}
+
+function buildEntitySchemaCacheKey(entitySchemas?: PluginConfig["entitySchemas"]): string {
+  if (!entitySchemas) return "";
+  const normalized = Object.entries(entitySchemas)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([entityType, schema]) => [
+      entityType,
+      {
+        sections: schema.sections.map((section) => ({
+          key: section.key,
+          title: section.title,
+          description: section.description,
+          aliases: section.aliases ? [...section.aliases] : undefined,
+        })),
+      },
+    ]);
+  return JSON.stringify(normalized);
 }
 
 export class StorageManager {
@@ -2304,22 +2353,18 @@ export class StorageManager {
     );
     for (const section of options.structuredSections ?? []) {
       const normalizedSection = normalizeEntityStructuredSection(type, section, this.entitySchemas);
+      const normalizedFacts = normalizeStructuredSectionFacts(section.facts);
+      if (normalizedFacts.length === 0) continue;
       const existingSection = structuredSectionMap.get(normalizedSection.key);
       if (!existingSection) {
         structuredSectionMap.set(normalizedSection.key, {
           key: normalizedSection.key,
           title: normalizedSection.title,
-          facts: [...new Set(section.facts.map((fact) => fact.trim()).filter((fact) => fact.length > 0))],
+          facts: normalizedFacts,
         });
         continue;
       }
-      const mergedFacts = new Set(existingSection.facts.map((fact) => fact.trim()));
-      for (const fact of section.facts) {
-        const trimmed = fact.trim();
-        if (!trimmed) continue;
-        mergedFacts.add(trimmed);
-      }
-      existingSection.facts = Array.from(mergedFacts);
+      existingSection.facts = normalizeStructuredSectionFacts([...existingSection.facts, ...normalizedFacts]);
       if (!existingSection.title.trim() && normalizedSection.title.trim()) {
         existingSection.title = normalizedSection.title;
       }
@@ -2344,7 +2389,7 @@ export class StorageManager {
     }
     entity.structuredSections = sortStructuredSectionsBySchema(
       type,
-      Array.from(structuredSectionMap.values()),
+      Array.from(structuredSectionMap.values()).filter((section) => section.facts.length > 0),
       this.entitySchemas,
     );
     entity.facts = compileEntityFacts(entity.timeline, entity.structuredSections);
@@ -4515,7 +4560,8 @@ export class StorageManager {
    */
   async readAllEntityFiles(): Promise<EntityFile[]> {
     const currentVersion = this.getMemoryStatusVersion();
-    const cached = getCachedEntities(this.baseDir, currentVersion);
+    const schemaCacheKey = buildEntitySchemaCacheKey(this.entitySchemas);
+    const cached = getCachedEntities(this.baseDir, currentVersion, schemaCacheKey);
     if (cached) return cached;
 
     try {
@@ -4540,7 +4586,7 @@ export class StorageManager {
         }
       }
 
-      setCachedEntities(this.baseDir, entities, currentVersion);
+      setCachedEntities(this.baseDir, entities, currentVersion, schemaCacheKey);
       return entities;
     } catch {
       // Directory doesn't exist yet

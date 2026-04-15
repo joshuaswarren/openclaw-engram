@@ -1358,6 +1358,7 @@ export class EngramAccessService {
           entity.synthesis || entity.summary || "",
           ...entity.aliases,
           ...entity.facts,
+          ...(entity.structuredSections ?? []).flatMap((section) => [section.title, ...section.facts]),
         ].join("\n").toLowerCase();
         if (!haystack.includes(query)) continue;
       }

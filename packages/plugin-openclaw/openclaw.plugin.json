@@ -203,10 +203,17 @@
                     }
                   }
                 },
-                "required": [
-                  "key",
-                  "title",
-                  "description"
+                "anyOf": [
+                  {
+                    "required": [
+                      "key"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "title"
+                    ]
+                  }
                 ]
               }
             }

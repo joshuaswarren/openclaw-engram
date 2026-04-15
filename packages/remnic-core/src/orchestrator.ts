@@ -263,6 +263,7 @@ import type {
   QmdSearchResult,
   RecallPlanMode,
   RecallSectionConfig,
+  EntityStructuredSection,
   EntityTimelineEntry,
 } from "./types.js";
 
@@ -313,6 +314,49 @@ export function dedupeEntitySynthesisEvidenceEntries(
   }
 
   return dedupedEvidenceEntries;
+}
+
+function flattenStructuredSectionEvidence(
+  sections: EntityStructuredSection[] | undefined,
+): EntityTimelineEntry[] {
+  return (sections ?? []).flatMap((section) =>
+    section.facts
+      .map((fact) => fact.trim())
+      .filter((fact) => fact.length > 0)
+      .map((fact) => ({
+        timestamp: "",
+        text: fact,
+        source: `section:${section.title}`,
+      })),
+  );
+}
+
+function fingerprintEntitySynthesisEvidence(entity: {
+  timeline: EntityTimelineEntry[];
+  structuredSections?: EntityStructuredSection[];
+}): string {
+  const fingerprint = createHash("sha256");
+  const timelineEntries = entity.timeline
+    .map((entry) => [
+      entry.timestamp,
+      entry.source ?? "",
+      entry.sessionKey ?? "",
+      entry.principal ?? "",
+      entry.text,
+    ].join("\u0000"))
+    .sort();
+  const sectionEntries = (entity.structuredSections ?? [])
+    .flatMap((section) =>
+      section.facts
+        .map((fact) => fact.trim())
+        .filter((fact) => fact.length > 0)
+        .map((fact) => [section.key, section.title, fact].join("\u0000")),
+    )
+    .sort();
+  fingerprint.update(timelineEntries.join("\u0001"));
+  fingerprint.update("\u0002");
+  fingerprint.update(sectionEntries.join("\u0001"));
+  return fingerprint.digest("hex");
 }
 
 export interface GraphRecallSnapshot {
@@ -2360,14 +2404,21 @@ export class Orchestrator {
         const appendedTimelineEntries = entity.synthesisTimelineCount === undefined
           ? []
           : entity.timeline.slice(Math.max(0, entity.synthesisTimelineCount));
+        const structuredEvidenceEntries = flattenStructuredSectionEvidence(entity.structuredSections);
+        const appendedStructuredEvidenceEntries = entity.synthesisStructuredFactCount === undefined
+          ? structuredEvidenceEntries
+          : structuredEvidenceEntries.slice(Math.max(0, entity.synthesisStructuredFactCount));
         const candidateEvidenceEntries = [
           ...newerTimelineEntries,
           ...appendedTimelineEntries,
+          ...appendedStructuredEvidenceEntries,
         ]
           .slice()
           .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
         const dedupedEvidenceEntries = dedupeEntitySynthesisEvidenceEntries(
-          candidateEvidenceEntries.length > 0 ? candidateEvidenceEntries : sortedTimelineEntries,
+          candidateEvidenceEntries.length > 0
+            ? candidateEvidenceEntries
+            : [...sortedTimelineEntries, ...structuredEvidenceEntries],
         );
         const chronologicalEvidenceEntries = dedupedEvidenceEntries
           .slice()
@@ -2395,9 +2446,12 @@ export class Orchestrator {
         for (const evidenceEntries of evidenceBatches) {
           const evidenceText = evidenceEntries
             .map((entry) => {
+              const sectionTitle = entry.source?.startsWith("section:")
+                ? entry.source.slice("section:".length)
+                : "";
               const metadata = [
                 `timestamp=${entry.timestamp}`,
-                entry.source ? `source=${entry.source}` : "",
+                sectionTitle ? `section=${sectionTitle}` : entry.source ? `source=${entry.source}` : "",
                 entry.sessionKey ? `session=${entry.sessionKey}` : "",
                 entry.principal ? `principal=${entry.principal}` : "",
               ]
@@ -2441,14 +2495,12 @@ export class Orchestrator {
         const latestRaw = await storage.readEntity(entityName);
         if (!latestRaw) continue;
         const latestEntity = parseEntityFile(latestRaw, this.config.entitySchemas);
-        const entityStructuredFactCount = (entity.structuredSections ?? [])
-          .reduce((count, section) => count + section.facts.length, 0);
         const latestStructuredFactCount = (latestEntity.structuredSections ?? [])
           .reduce((count, section) => count + section.facts.length, 0);
-        if (latestEntity.timeline.length !== entity.timeline.length) {
-          continue;
-        }
-        if (latestStructuredFactCount !== entityStructuredFactCount) {
+        if (
+          fingerprintEntitySynthesisEvidence(latestEntity)
+          !== fingerprintEntitySynthesisEvidence(entity)
+        ) {
           continue;
         }
         await storage.updateEntitySynthesis(entityName, nextSynthesis, {

@@ -1048,6 +1048,88 @@ test("parseEntityFile keeps caller-provided entity schemas isolated per parse", 
   ]);
 });
 
+test("parseEntityFile preserves non-schema structured sections as structured facts", () => {
+  const parsed = parseEntityFile([
+    "---",
+    "created: 2026-04-13T10:00:00.000Z",
+    "updated: 2026-04-13T10:05:00.000Z",
+    "---",
+    "",
+    "# Acme Corp",
+    "",
+    "**Type:** company",
+    "**Updated:** 2026-04-13T10:05:00.000Z",
+    "",
+    "## Operating Principles",
+    "",
+    "- Prefer small, durable teams.",
+    "",
+  ].join("\n")) as any;
+
+  assert.deepEqual(parsed.structuredSections, [
+    {
+      key: "operating_principles",
+      title: "Operating Principles",
+      facts: ["Prefer small, durable teams."],
+    },
+  ]);
+  assert.deepEqual(parsed.facts, ["Prefer small, durable teams."]);
+});
+
+test("readAllEntityFiles keeps schema-aware cache entries isolated per storage manager", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-schema-cache-"));
+  try {
+    const bootstrapStorage = new StorageManager(dir);
+    await bootstrapStorage.ensureDirectories();
+    const raw = [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      "---",
+      "",
+      "# Jane Doe",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "## Operating Principles",
+      "",
+      "- Prefer boring infrastructure over clever infra.",
+      "",
+    ].join("\n");
+    await writeFile(path.join(dir, "entities", "person-jane-doe.md"), raw, "utf-8");
+
+    const principlesConfig = parseConfig({
+      entitySchemas: {
+        person: {
+          sections: [{ key: "operating_principles", title: "Operating Principles" }],
+        },
+      },
+    });
+    const aliasConfig = parseConfig({
+      entitySchemas: {
+        person: {
+          sections: [{ key: "principles", title: "Principles", aliases: ["Operating Principles"] }],
+        },
+      },
+    });
+
+    const firstStorage = new StorageManager(dir, principlesConfig.entitySchemas);
+    const secondStorage = new StorageManager(dir, aliasConfig.entitySchemas);
+    await firstStorage.ensureDirectories();
+    await secondStorage.ensureDirectories();
+
+    const firstEntity = (await firstStorage.readAllEntityFiles())[0] as any;
+    const secondEntity = (await secondStorage.readAllEntityFiles())[0] as any;
+
+    assert.equal(firstEntity.structuredSections?.[0]?.key, "operating_principles");
+    assert.equal(secondEntity.structuredSections?.[0]?.key, "principles");
+    assert.equal(secondEntity.structuredSections?.[0]?.title, "Principles");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("parseEntityFile preserves blank lines in multi-paragraph synthesis", () => {
   const raw = [
     "---",

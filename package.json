@@ -1,6 +1,6 @@
 {
   "name": "remnic-workspace",
-  "version": "9.3.4",
+  "version": "9.3.6",
   "private": true,
   "type": "module",
   "description": "Workspace root for the Remnic monorepo.",
@@ -96,6 +96,7 @@
     "review:patterns": "bash scripts/check-review-patterns.sh",
     "hooks:install": "bash scripts/install-git-hooks.sh",
     "migrate": "tsx scripts/migrate.ts",
+    "postinstall": "pnpm rebuild better-sqlite3",
     "prepack": "npm run build"
   },
   "devDependencies": {

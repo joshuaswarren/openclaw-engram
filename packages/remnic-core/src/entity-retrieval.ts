@@ -126,6 +126,17 @@ function detectEntityQueryMode(query: string): EntityQueryMode | null {
   if (
     /^(who is|who s|what do we know about|what does|tell me about|what can you tell me about|what s new with|what happened with|what happened to|status of|where is|how is)\b/.test(normalized)
   ) {
+    if (/^what does\b/.test(normalized)) {
+      if (/^what does (?:this|that|it|the|a|an|my|our|your|their)\b/.test(normalized)) {
+        return null;
+      }
+      if (
+        /^what does [a-z0-9-]+ (?:error|warning|exception|failure|stack|trace|code|message|log)\b/.test(normalized)
+        && /\b(mean|means|indicate|indicates|imply|implies)\b/.test(normalized)
+      ) {
+        return null;
+      }
+    }
     return /what happened|what s new|status of|how is|where is/.test(normalized) ? "timeline" : "direct";
   }
   if (ENTITY_PRONOUN_RE.test(normalized) && normalized.split(/\s+/).length <= 8) {

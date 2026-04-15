@@ -226,6 +226,29 @@ test("entity retrieval keeps fact snippets in likely answer for timeline queries
   assert.match(timeline!, /related entities: Rollback Project/);
 });
 
+test("entity retrieval ignores generic 'what does' technical questions without an entity-specific predicate", async () => {
+  const { config, storage } = await buildHarness("engram-entity-what-does");
+  await writeEntity(
+    storage,
+    "Jane Example",
+    "person",
+    ["Jane Example leads release reviews."],
+    "Jane Example leads release reviews.",
+  );
+
+  const section = await buildSection(
+    config,
+    storage,
+    "What does this error mean?",
+    [
+      { role: "user", content: "Jane Example handled the last rollout." },
+      { role: "assistant", content: "I can summarize Jane Example if needed." },
+    ],
+  );
+
+  assert.equal(section, null);
+});
+
 test("entity retrieval respects small supporting-fact caps when ranking memory snippets", async () => {
   const { config, storage } = await buildHarness("engram-entity-memory-cap");
   const canonical = await writeEntity(

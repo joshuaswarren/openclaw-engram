@@ -253,10 +253,12 @@ export class ExtractionEngine {
       structuredSections: Array.isArray(entity?.structuredSections)
         ? entity.structuredSections
             .map((section: any) => ({
-              key: typeof section?.key === "string" ? section.key : "",
-              title: typeof section?.title === "string" ? section.title : "",
+              key: typeof section?.key === "string" ? section.key.trim() : "",
+              title: typeof section?.title === "string" ? section.title.trim() : "",
               facts: Array.isArray(section?.facts)
                 ? section.facts.filter((fact: any) => typeof fact === "string")
+                    .map((fact: string) => fact.trim())
+                    .filter((fact: string) => fact.length > 0)
                 : [],
             }))
             .filter((section: any) => (

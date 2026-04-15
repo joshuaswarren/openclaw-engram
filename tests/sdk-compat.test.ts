@@ -10,8 +10,6 @@ test("legacy api (no new fields) → all capabilities false, sdkVersion 'legacy'
     registerService: () => {},
   };
 
-  const prev = process.env.OPENCLAW_SERVICE_VERSION;
-  delete process.env.OPENCLAW_SERVICE_VERSION;
   const caps = detectSdkCapabilities(api);
 
   assert.equal(caps.hasBeforePromptBuild, false);
@@ -23,10 +21,6 @@ test("legacy api (no new fields) → all capabilities false, sdkVersion 'legacy'
   assert.equal(caps.hasTypedHooks, false);
   assert.equal(caps.sdkVersion, "legacy");
   assert.equal(caps.registrationMode, undefined);
-
-  if (prev !== undefined) {
-    process.env.OPENCLAW_SERVICE_VERSION = prev;
-  }
 });
 
 test("new api (registerMemoryPromptSection, runtime, registrationMode) → capabilities true, sdkVersion from runtime.version", () => {
@@ -163,30 +157,6 @@ test("sdkVersion falls back to OPENCLAW_SERVICE_VERSION env var even without run
   const caps = detectSdkCapabilities(api);
 
   assert.equal(caps.hasRuntimeNamespace, false);
-  assert.equal(caps.sdkVersion, "2026.3.22-env");
-
-  if (prev !== undefined) {
-    process.env.OPENCLAW_SERVICE_VERSION = prev;
-  } else {
-    delete process.env.OPENCLAW_SERVICE_VERSION;
-  }
-});
-
-test("legacy sdkVersion still falls back to OPENCLAW_SERVICE_VERSION env var", () => {
-  const api: Record<string, unknown> = {
-    on: () => {},
-    registerTool: () => {},
-    registerCommand: () => {},
-    registerService: () => {},
-  };
-
-  const prev = process.env.OPENCLAW_SERVICE_VERSION;
-  process.env.OPENCLAW_SERVICE_VERSION = "2026.3.22-env";
-
-  const caps = detectSdkCapabilities(api);
-
-  assert.equal(caps.hasRuntimeNamespace, false);
-  assert.equal(caps.hasBeforePromptBuild, false);
   assert.equal(caps.sdkVersion, "2026.3.22-env");
 
   if (prev !== undefined) {

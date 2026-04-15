@@ -263,6 +263,50 @@ test("consolidate normalizes fallback entity updates with validated structured s
   ]);
 });
 
+test("normalizeExtractionResultPayload trims structured section fields before keeping them", () => {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+  });
+
+  const engine = new ExtractionEngine(config);
+  const parsed = ExtractionResultSchema.parse({
+    facts: [],
+    profileUpdates: [],
+    entities: [
+      {
+        name: "Alex",
+        type: "person",
+        facts: ["Owns the review timeline."],
+        structuredSections: [
+          {
+            key: "  beliefs  ",
+            title: "  Beliefs  ",
+            facts: ["  Small teams should own whole systems.  ", "   "],
+          },
+          {
+            key: "   ",
+            title: "   ",
+            facts: ["should drop"],
+          },
+        ],
+      },
+    ],
+    questions: [],
+    relationships: [],
+  });
+
+  const normalized = (engine as any).normalizeExtractionResultPayload(parsed) as ExtractionResult;
+  assert.deepEqual(normalized.entities[0]?.structuredSections, [
+    {
+      key: "beliefs",
+      title: "Beliefs",
+      facts: ["Small teams should own whole systems."],
+    },
+  ]);
+});
+
 test("applyProactiveQuestionPass filters proactive facts by allowlist and confidence", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",

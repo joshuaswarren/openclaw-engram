@@ -5532,7 +5532,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("entities-migrate")
         .description("Rewrite entity files into the compiled truth + timeline format")
         .action(async () => {
-          const result = await orchestrator.storage.migrateEntityFilesToCompiledTruthTimeline();
+          const storage = await orchestrator.getStorage(orchestrator.config.defaultNamespace);
+          const result = await storage.migrateEntityFilesToCompiledTruthTimeline();
           console.log(
             `Migrated ${result.migrated} of ${result.total} entity file(s) to the compiled truth + timeline format.`,
           );

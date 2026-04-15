@@ -713,6 +713,58 @@ test("processEntitySynthesisQueue skips writing synthesis when structured sectio
   }
 });
 
+test("processEntitySynthesisQueue synthesizes section-only entities", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-section-only-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-section-only-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 160,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Acme Corp", "company");
+    await storage.writeEntity("Acme Corp", "company", [], {
+      timestamp: "2026-04-13T09:00:00.000Z",
+      source: "extraction",
+      structuredSections: [
+        {
+          key: "operating_principles",
+          title: "Operating Principles",
+          facts: ["Prefer durable teams over frequent reorganizations."],
+        },
+      ],
+    });
+
+    let capturedPrompt = "";
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      return { content: "Acme Corp favors durable teams over frequent reorganizations." };
+    };
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const parsed = parseEntityFile(await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8"));
+
+    assert.equal(processed, 1);
+    assert.match(capturedPrompt, /section=Operating Principles/);
+    assert.match(capturedPrompt, /Prefer durable teams over frequent reorganizations\./);
+    assert.equal(parsed.synthesis, "Acme Corp favors durable teams over frequent reorganizations.");
+    assert.equal(parsed.synthesisTimelineCount, 0);
+    assert.equal(parsed.synthesisStructuredFactCount, 1);
+    assert.equal(isEntitySynthesisStale(parsed), false);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("processEntitySynthesisQueue does not resynthesize timestampless evidence once the snapshot count matches", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-missing-ts-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-missing-ts-workspace-"));
