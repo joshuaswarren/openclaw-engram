@@ -42,7 +42,7 @@ const DEFAULT_ENTITY_SCHEMAS: Record<string, EntitySchemaDefinition> = {
   },
 };
 
-function normalizeText(value: string): string {
+export function normalizeEntityText(value: string): string {
   return value
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
@@ -50,7 +50,7 @@ function normalizeText(value: string): string {
 }
 
 function toSnakeCase(value: string): string {
-  return normalizeText(value).replace(/\s+/g, "_");
+  return normalizeEntityText(value).replace(/\s+/g, "_");
 }
 
 function titleFromKey(key: string): string {
@@ -62,7 +62,7 @@ function titleFromKey(key: string): string {
 }
 
 function tokenizeNormalized(value: string): string[] {
-  return normalizeText(value).split(/\s+/).filter(Boolean);
+  return normalizeEntityText(value).split(/\s+/).filter(Boolean);
 }
 
 function normalizeSectionDefinition(raw: unknown): EntitySchemaSectionDefinition | null {
@@ -115,13 +115,13 @@ export function matchEntitySchemaSection(
   title: string,
   entitySchemas?: Record<string, EntitySchemaDefinition>,
 ): EntitySchemaSectionDefinition | null {
-  const normalizedTitle = normalizeText(title);
+  const normalizedTitle = normalizeEntityText(title);
   if (!normalizedTitle) return null;
   const schema = getEntitySchema(entityType, entitySchemas);
   if (!schema) return null;
   for (const section of schema.sections) {
     const aliases = [section.title, section.key, ...(section.aliases ?? [])];
-    if (aliases.some((alias) => normalizeText(alias) === normalizedTitle)) {
+    if (aliases.some((alias) => normalizeEntityText(alias) === normalizedTitle)) {
       return section;
     }
   }

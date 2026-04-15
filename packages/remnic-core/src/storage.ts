@@ -1549,7 +1549,7 @@ export function serializeEntityFile(
   for (const section of entity.extraSections ?? []) {
     lines.push(`## ${section.title}`);
     lines.push(...section.lines);
-    if (section.lines[section.lines.length - 1] !== "") {
+    if (section.lines.length > 0 && section.lines[section.lines.length - 1] !== "") {
       lines.push("");
     }
   }

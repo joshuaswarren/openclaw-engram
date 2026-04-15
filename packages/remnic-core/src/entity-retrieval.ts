@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { collectNativeKnowledgeChunks, type NativeKnowledgeChunk } from "./native-knowledge.js";
 import { compareEntityTimestamps, normalizeEntityName, type StorageManager } from "./storage.js";
-import { resolveRequestedEntitySectionKeys } from "./entity-schema.js";
+import { normalizeEntityText, resolveRequestedEntitySectionKeys } from "./entity-schema.js";
 import type { EntityStructuredSection, MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
 
 const ENTITY_INDEX_VERSION = 2;
@@ -76,12 +76,8 @@ export interface BuildEntityRecallSectionOptions {
   transcriptEntries: TranscriptEntry[];
 }
 
-function normalizeText(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
 function tokenize(value: string): string[] {
-  return normalizeText(value).split(/\s+/).filter((token) => token.length >= 2);
+  return normalizeEntityText(value).split(/\s+/).filter((token) => token.length >= 2);
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -111,7 +107,7 @@ function dedupeHintSnippetsByText(snippets: EntityHintSnippet[]): EntityHintSnip
   const seen = new Set<string>();
   const result: EntityHintSnippet[] = [];
   for (const snippet of snippets) {
-    const key = normalizeText(snippet.text);
+    const key = normalizeEntityText(snippet.text);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(snippet);
@@ -126,7 +122,7 @@ function relationLine(entry: EntityMentionIndexEntry, relationship: { target: st
 }
 
 function detectEntityQueryMode(query: string): EntityQueryMode | null {
-  const normalized = normalizeText(query);
+  const normalized = normalizeEntityText(query);
   if (!normalized) return null;
   if (
     /^(what about|and what about|how about|what happened (with|to) (he|him|his|she|her|they|them|their|it|its)|did (he|she|they|it)|is (he|she|they|it)|was (he|she|they|it))\b/.test(normalized)
@@ -145,8 +141,8 @@ function detectEntityQueryMode(query: string): EntityQueryMode | null {
 }
 
 function scoreAliasMatch(query: string, alias: string): number {
-  const normalizedQuery = normalizeText(query);
-  const normalizedAlias = normalizeText(alias);
+  const normalizedQuery = normalizeEntityText(query);
+  const normalizedAlias = normalizeEntityText(alias);
   if (!normalizedAlias) return 0;
   if (normalizedQuery === normalizedAlias) return 10;
   if (containsPhrase(normalizedQuery, normalizedAlias)) return 8 + Math.min(normalizedAlias.split(/\s+/).length, 3);
@@ -170,7 +166,7 @@ function sanitizeEntityFact(fact: string): string {
 }
 
 function scoreHintSnippet(snippet: EntityHintSnippet, queryTokens: string[]): EntityHintSnippet | null {
-  const normalized = normalizeText(snippet.text);
+  const normalized = normalizeEntityText(snippet.text);
   if (!normalized) return null;
   const scored = { ...snippet };
   if (isLikelyInstructionLike(scored.text) && scored.kind !== "summary") {
@@ -209,7 +205,7 @@ function jaccardSimilarity(a: string, b: string): number {
 function buildAliasIndex(entries: EntityMentionIndexEntry[]): Map<string, EntityMentionIndexEntry[]> {
   const index = new Map<string, EntityMentionIndexEntry[]>();
   for (const entry of entries) {
-    const aliases = uniqueStrings([entry.name, ...entry.aliases]).map(normalizeText).filter(Boolean);
+    const aliases = uniqueStrings([entry.name, ...entry.aliases]).map(normalizeEntityText).filter(Boolean);
     for (const alias of aliases) {
       const existing = index.get(alias) ?? [];
       existing.push(entry);
@@ -361,7 +357,7 @@ async function buildEntityMentionIndex(
       mergeNativeChunk(existingPseudo, chunk);
       continue;
     }
-    const candidateAliases = uniqueStrings([chunk.title, ...(chunk.aliases ?? [])]).map(normalizeText).filter(Boolean);
+    const candidateAliases = uniqueStrings([chunk.title, ...(chunk.aliases ?? [])]).map(normalizeEntityText).filter(Boolean);
     let matched = false;
     for (const alias of candidateAliases) {
       for (const entry of aliasIndex.get(alias) ?? []) {
@@ -463,7 +459,7 @@ async function buildHintSnippets(
 
   if (requestedSectionKeys.size > 0) {
     for (const section of entry.structuredSections) {
-      if (!requestedSectionKeys.has(normalizeText(section.key).replace(/\s+/g, "_"))) continue;
+      if (!requestedSectionKeys.has(normalizeEntityText(section.key).replace(/\s+/g, "_"))) continue;
       for (const fact of section.facts) {
         snippets.push({ text: fact, score: mode === "direct" ? 8 : 9, kind: "section" });
       }
@@ -519,7 +515,7 @@ async function buildHintSnippets(
   for (const snippet of snippets) {
     const scored = scoreHintSnippet(snippet, queryTokens);
     if (!scored) continue;
-    const normalized = normalizeText(scored.text);
+    const normalized = normalizeEntityText(scored.text);
     const existing = deduped.get(normalized);
     if (!existing || scored.score > existing.score) deduped.set(normalized, scored);
   }
@@ -582,13 +578,13 @@ function formatEntityHintSection(
             kind: "activity" as const,
           }, queryTokens))
           .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
-          .filter((snippet) => !seedExcludedTexts.has(normalizeText(snippet.text))),
+          .filter((snippet) => !seedExcludedTexts.has(normalizeEntityText(snippet.text))),
       ).slice(0, 2);
       const activityTimelinePool = dedupeHintSnippetsByText(
         snippets
           .filter((snippet) => (
             snippet.kind === "activity" || snippet.kind === "memory"
-          ) && !seedExcludedTexts.has(normalizeText(snippet.text))),
+          ) && !seedExcludedTexts.has(normalizeEntityText(snippet.text))),
       ).slice(0, 2);
       return explicitTimelinePool.length > 0
         ? explicitTimelinePool
@@ -598,17 +594,17 @@ function formatEntityHintSection(
             snippets
               .filter((snippet) => (
                 snippet.kind === "fact" || snippet.kind === "summary"
-              ) && !seedExcludedTexts.has(normalizeText(snippet.text))),
+              ) && !seedExcludedTexts.has(normalizeEntityText(snippet.text))),
           ).slice(0, 2);
     };
-    const baseTopSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
+    const baseTopSnippetTexts = new Set(topSnippets.map((snippet) => normalizeEntityText(snippet.text)));
     const timelinePool = mode !== "direct" ? buildTimelineSnippets(baseTopSnippetTexts) : [];
     if (mode !== "direct" && hasSummary && topSnippets.length < 2) {
       if (timelinePool.length > 0) {
         topSnippets = [...topSnippets, timelinePool[0]!].slice(0, 3);
       }
     }
-    const topSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
+    const topSnippetTexts = new Set(topSnippets.map((snippet) => normalizeEntityText(snippet.text)));
     lines.push(`- target: ${candidate.entry.name} (${candidate.entry.type})`);
     if (candidate.source === "recent_turn") {
       lines.push(`- resolution: carried forward from recent turns via alias "${candidate.alias}"`);
@@ -624,7 +620,7 @@ function formatEntityHintSection(
     }
     if (mode !== "direct") {
       const fallbackTimeline = timelinePool.filter(
-        (snippet) => !topSnippetTexts.has(normalizeText(snippet.text)),
+        (snippet) => !topSnippetTexts.has(normalizeEntityText(snippet.text)),
       );
       if (fallbackTimeline.length > 0) {
         lines.push("- recent timeline:");

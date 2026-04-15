@@ -46,7 +46,7 @@ export function detectSdkCapabilities(api: Record<string, unknown>): SdkCapabili
     hasRegisterMemoryPromptSection || hasRegisterMemoryCapability || hasRuntimeNamespace || hasRegistrationMode;
   const sdkVersion: string =
     runtimeVersion ??
-    (isNewSdk ? readEnvVar("OPENCLAW_SERVICE_VERSION") : null) ??
+    readEnvVar("OPENCLAW_SERVICE_VERSION") ??
     "legacy";
 
   // New SDK is indicated by any of the new API surfaces being present.

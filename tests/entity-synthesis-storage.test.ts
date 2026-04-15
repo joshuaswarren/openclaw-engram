@@ -1379,6 +1379,29 @@ test("serializeEntityFile avoids double spaces for tokenless timeline entries", 
   assert.equal(reparsed.timeline[0]?.text, "Owns rollout coordination.");
 });
 
+test("serializeEntityFile does not append a blank line for empty extra sections", () => {
+  const serialized = serializeEntityFile({
+    name: "Casey Example",
+    type: "person",
+    created: "2026-04-13T10:00:00.000Z",
+    updated: "2026-04-13T10:05:00.000Z",
+    facts: ["Owns rollout coordination."],
+    summary: "Casey Example keeps rollout coordination on track.",
+    synthesis: "Casey Example keeps rollout coordination on track.",
+    synthesisUpdatedAt: "2026-04-13T10:05:00.000Z",
+    synthesisTimelineCount: 1,
+    synthesisVersion: 1,
+    timeline: [{ timestamp: "", text: "Owns rollout coordination." }],
+    relationships: [],
+    activity: [],
+    aliases: [],
+    extraSections: [{ title: "Empty Notes", lines: [] }],
+  });
+
+  assert.match(serialized, /## Empty Notes$/);
+  assert.doesNotMatch(serialized, /## Empty Notes\n$/);
+});
+
 test("parseEntityFile merges legacy facts into mixed timeline entities", () => {
   const raw = [
     "---",
