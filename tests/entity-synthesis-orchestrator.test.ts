@@ -752,3 +752,45 @@ test("processEntitySynthesisQueue treats zero max tokens as disabled", async () 
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
+
+test("processEntitySynthesisQueue accepts long synthesis responses within the configured token budget", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-long-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-long-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 500,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Leads roadmap work."], {
+      timestamp: "2026-04-13T10:00:00.000Z",
+      source: "extraction",
+    });
+
+    const longSynthesis = "Jane Doe leads roadmap work. ".repeat(90).trim();
+    assert.ok(longSynthesis.length > 2_000);
+
+    orchestrator.fastChatCompletion = async () => ({ content: longSynthesis });
+
+    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const raw = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const parsed = parseEntityFile(raw);
+
+    assert.equal(processed, 1);
+    assert.equal(parsed.synthesis, longSynthesis);
+    assert.equal(parsed.synthesisTimelineCount, parsed.timeline.length);
+    assert.equal(isEntitySynthesisStale(parsed), false);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});

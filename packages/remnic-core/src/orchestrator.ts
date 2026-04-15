@@ -2385,7 +2385,8 @@ export class Orchestrator {
             },
           );
           const synthesis = response?.content?.trim().replace(/^["']|["']$/g, "");
-          if (!synthesis || synthesis.length < 10 || synthesis.length > 2_000) {
+          const maxSynthesisChars = Math.max(2_000, this.config.entitySynthesisMaxTokens * 8);
+          if (!synthesis || synthesis.length < 10 || synthesis.length > maxSynthesisChars) {
             batchFailed = true;
             break;
           }
