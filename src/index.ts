@@ -264,7 +264,6 @@ function isBundledActiveMemoryEnabledForAgent(
 
   const fileBackedEnabled = resolveEnabled(fileBackedEntry);
   if (runtimeEnabled === undefined && fileBackedEnabled === false) return false;
-  if (activeMemoryEntry.enabled === false) return false;
 
   const resolveAgents = (
     entry: Record<string, unknown> | undefined,
