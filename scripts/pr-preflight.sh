@@ -30,7 +30,7 @@ needs_entity_hardening() {
     return 1
   fi
 
-  if printf '%s\n' "$files" | rg -q '^(src|packages/remnic-core/src)/(orchestrator|storage|intent|memory-cache|entity-retrieval|config)\.ts$'; then
+  if printf '%s\n' "$files" | grep -Eq '^(src|packages/remnic-core/src)/(orchestrator|storage|intent|memory-cache|entity-retrieval|config)\.ts$'; then
     return 0
   fi
 
