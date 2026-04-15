@@ -216,6 +216,80 @@ function readPluginHooksPolicy(
     | undefined;
 }
 
+function isBundledActiveMemoryEnabledForAgent(
+  runtimeConfig: unknown,
+  fileBackedRuntimeConfig: unknown,
+  agentId: string,
+): boolean {
+  const readMemorySlot = (config: unknown): string | undefined => {
+    if (!config || typeof config !== "object") return undefined;
+    const plugins = (config as Record<string, unknown>).plugins;
+    if (!plugins || typeof plugins !== "object") return undefined;
+    const slots = (plugins as Record<string, unknown>).slots;
+    if (!slots || typeof slots !== "object") return undefined;
+    const memorySlot = (slots as Record<string, unknown>).memory;
+    return typeof memorySlot === "string" && memorySlot.length > 0 ? memorySlot : undefined;
+  };
+
+  const readActiveMemoryEntry = (config: unknown): Record<string, unknown> | undefined => {
+    if (!config || typeof config !== "object") return undefined;
+    const plugins = (config as Record<string, unknown>).plugins;
+    if (!plugins || typeof plugins !== "object") return undefined;
+    const entries = (plugins as Record<string, unknown>).entries;
+    if (!entries || typeof entries !== "object") return undefined;
+    const activeMemoryEntry = (entries as Record<string, unknown>)["active-memory"];
+    return activeMemoryEntry && typeof activeMemoryEntry === "object"
+      ? (activeMemoryEntry as Record<string, unknown>)
+      : undefined;
+  };
+
+  const runtimeMemorySlot = readMemorySlot(runtimeConfig);
+  const fileBackedMemorySlot = readMemorySlot(fileBackedRuntimeConfig);
+  const effectiveMemorySlot = runtimeMemorySlot ?? fileBackedMemorySlot;
+  if (effectiveMemorySlot !== "active-memory") return false;
+
+  const runtimeEntry = readActiveMemoryEntry(runtimeConfig);
+  const fileBackedEntry = readActiveMemoryEntry(fileBackedRuntimeConfig);
+  const activeMemoryEntry = runtimeEntry ?? fileBackedEntry;
+  if (!activeMemoryEntry || typeof activeMemoryEntry !== "object") return false;
+
+  const resolveEnabled = (
+    entry: Record<string, unknown> | undefined,
+  ): boolean | undefined => {
+    return typeof entry?.enabled === "boolean" ? (entry.enabled as boolean) : undefined;
+  };
+
+  const runtimeEnabled = resolveEnabled(runtimeEntry);
+  if (runtimeEnabled === false) return false;
+
+  const fileBackedEnabled = resolveEnabled(fileBackedEntry);
+  if (runtimeEnabled === undefined && fileBackedEnabled === false) return false;
+
+  const resolveAgents = (
+    entry: Record<string, unknown> | undefined,
+  ): string[] | undefined => {
+    const entryConfig = entry?.config;
+    if (!entryConfig || typeof entryConfig !== "object") return undefined;
+    const agents = (entryConfig as Record<string, unknown>).agents;
+    if (!Array.isArray(agents)) return undefined;
+    return agents.filter(
+      (value): value is string => typeof value === "string" && value.length > 0,
+    );
+  };
+
+  const runtimeAgents = resolveAgents(runtimeEntry);
+  if (Array.isArray(runtimeAgents)) {
+    return runtimeAgents.includes(agentId);
+  }
+
+  const fileBackedAgents = resolveAgents(fileBackedEntry);
+  if (Array.isArray(fileBackedAgents)) {
+    return fileBackedAgents.includes(agentId);
+  }
+
+  return true;
+}
+
 function wildcardToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
@@ -430,10 +504,11 @@ const pluginDefinition = {
     log.debug(
       `init llm routing (modelSource=${cfg.modelSource}, localLlmEnabled=${cfg.localLlmEnabled}${cfg.localLlmFastEnabled ? `, fastLlm=${cfg.localLlmFastModel || "(primary)"}` : ""})`,
     );
+    const fileBackedRawRuntimeConfig = loadRawConfigFromFile();
     const rawRuntimeConfig =
       api.config && typeof api.config === "object"
         ? (api.config as Record<string, unknown>)
-        : loadRawConfigFromFile();
+        : fileBackedRawRuntimeConfig;
     const slotValidationMode = validateSlotSelection({
       pluginId: serviceId,
       runtimeConfig: rawRuntimeConfig,
@@ -724,10 +799,7 @@ const pluginDefinition = {
     });
     const activeRecallEngine = createActiveRecallEngine(
       {
-        recall: async (query, sessionKey) =>
-          cfg.activeRecallAllowChainedActiveMemory
-            ? orchestrator.recall(query, sessionKey)
-            : null,
+        recall: async (query, sessionKey) => orchestrator.recall(query, sessionKey),
         getLastRecallSnapshot: (sessionKey) => orchestrator.getLastRecall(sessionKey),
         explainLastRecall:
           cfg.activeRecallAttachRecallExplain === true
@@ -787,6 +859,7 @@ const pluginDefinition = {
       sdkCaps.hasRegisterMemoryPromptSection &&
       typeof api.registerMemoryPromptSection === "function" &&
       promptInjectionAllowed;
+    const warnedBundledActiveMemoryCollisionAgents = new Set<string>();
 
     // Per-session cache: shared by the hook fallback path (populated when only
     // registerMemoryCapability is available) and the registerMemoryPromptSection
@@ -1140,9 +1213,28 @@ const pluginDefinition = {
           }
         }
         const plannerPreflightMode = planRecallMode(prompt);
+        const bundledActiveMemoryEnabledForAgent =
+          isBundledActiveMemoryEnabledForAgent(
+            rawRuntimeConfig,
+            fileBackedRawRuntimeConfig,
+            agentId,
+          );
+        const shouldWarnAndSuppressBundledActiveMemoryCollision =
+          cfg.activeRecallEnabled &&
+          !cfg.activeRecallAllowChainedActiveMemory &&
+          bundledActiveMemoryEnabledForAgent;
+        if (
+          shouldWarnAndSuppressBundledActiveMemoryCollision &&
+          !warnedBundledActiveMemoryCollisionAgents.has(agentId)
+        ) {
+          warnedBundledActiveMemoryCollisionAgents.add(agentId);
+          log.warn(
+            `active recall suppressed because bundled active-memory plugin is enabled for agent "${agentId}" while activeRecallAllowChainedActiveMemory=false`,
+          );
+        }
         const shouldSkipChainedActiveRecall =
-          cfg.activeRecallAllowChainedActiveMemory &&
-          plannerPreflightMode === "no_recall";
+          plannerPreflightMode === "no_recall" ||
+          shouldWarnAndSuppressBundledActiveMemoryCollision;
         const activeRecallResult = shouldSkipChainedActiveRecall
           ? null
           : await activeRecallEngine

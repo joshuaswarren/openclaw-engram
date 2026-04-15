@@ -220,6 +220,54 @@ returns the dreams/verbose/active-recall context through `before_prompt_build`
 and keeps the structured memory section itself isolated in the prompt-section
 builder, so the gateway does not double-inject memory text.
 
+## Active Recall
+
+Remnic ships its own active-recall sub-agent surface for OpenClaw. This is
+separate from the bundled `active-memory` plugin and should be treated as the
+default active-recall path when you want Remnic to own both retrieval and the
+summary block injected into the prompt.
+
+```jsonc
+{
+  "plugins": {
+    "entries": {
+      "openclaw-remnic": {
+        "config": {
+          "activeRecallEnabled": true,
+          "activeRecallAllowChainedActiveMemory": false
+        }
+      }
+    }
+  }
+}
+```
+
+Behavior contract:
+
+- `activeRecallEnabled=true` enables the Remnic-native active-recall summary
+  block.
+- `activeRecallAllowChainedActiveMemory=false` does **not** disable Remnic
+  active recall. It only means Remnic should not layer itself on top of the
+  bundled `active-memory` surface.
+- When the bundled `active-memory` plugin is enabled for the same agent and
+  chaining is disabled, Remnic suppresses its own active-recall block and logs
+  a warning instead of double-injecting competing active-memory summaries.
+- Set `activeRecallAllowChainedActiveMemory=true` only when you intentionally
+  want Remnic active recall to chain through the bundled `active-memory`
+  surface as well.
+- Planner `no_recall` mode still suppresses the auxiliary active-recall block
+  regardless of chaining settings.
+
+Practical guidance:
+
+- Use Remnic active recall by itself when `openclaw-remnic` owns the memory
+  slot and you want one memory system to control recall behavior end to end.
+- Keep the bundled `active-memory` plugin disabled for the same agent unless
+  you have a deliberate compatibility reason to layer both systems.
+- If you do layer them, make that explicit with
+  `activeRecallAllowChainedActiveMemory=true` so the behavior is intentional
+  and reviewable.
+
 ## Codex Compatibility
 
 The plugin now exposes a dedicated `codexCompat` config block:
