@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { LEGACY_PLUGIN_ID, PLUGIN_ID } from "../../remnic-core/src/plugin-id.js";
-import { SlotMismatchMode, validateSlotSelection } from "./slot-validator.js";
+import { validateSlotSelection } from "./slot-validator.js";
+import type { SlotMismatchMode } from "./slot-validator.js";
 
 function buildLogger() {
   const warnings: string[] = [];

@@ -55,6 +55,10 @@ function levenshteinDistance(a: string, b: string): number {
 }
 
 function suggestLikelyRemnicSlot(pluginId: string, actualSlot: string): string {
+  if (actualSlot !== pluginId && (actualSlot === PLUGIN_ID || actualSlot === LEGACY_PLUGIN_ID)) {
+    return pluginId;
+  }
+
   const candidates = Array.from(new Set([pluginId, PLUGIN_ID, LEGACY_PLUGIN_ID]));
   let best = candidates[0] ?? pluginId;
   let bestDistance = Number.POSITIVE_INFINITY;
