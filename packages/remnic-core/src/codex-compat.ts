@@ -43,9 +43,10 @@ export function isCodexProvider(
     return true;
   }
 
-  const providerThreadId = extractCodexThreadId(source);
-
-  return typeof providerThreadId === "string" && providerThreadId.length > 0;
+  const directCodexThreadId = source.codexThreadId;
+  return (
+    typeof directCodexThreadId === "string" && directCodexThreadId.length > 0
+  );
 }
 
 export function extractCodexThreadId(
@@ -110,10 +111,12 @@ export function resolveCodexSessionIdentity(input: {
   const compat = input.codexCompat;
   const codex =
     compat?.enabled !== false && (isCodexProvider(ctx) || isCodexProvider(event));
-  const providerThreadId =
+  const extractedThreadId =
     compat?.enabled === false
       ? null
       : extractCodexThreadId(ctx) ?? extractCodexThreadId(event);
+  const providerThreadId =
+    codex && typeof extractedThreadId === "string" ? extractedThreadId : null;
   const logicalSessionKey =
     codex &&
     compat?.threadIdBufferKeying !== false &&

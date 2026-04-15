@@ -26,9 +26,15 @@ test("isCodexProvider detects bundled Codex provider metadata", () => {
   );
   assert.equal(
     isCodexProvider({
-      providerThreadId: "thread-codex-1",
+      codexThreadId: "thread-codex-1",
     }),
     true,
+  );
+  assert.equal(
+    isCodexProvider({
+      provider: { id: "openai", thread: { id: "thread-openai-1" } },
+    }),
+    false,
   );
   assert.equal(
     isCodexProvider({
@@ -57,6 +63,7 @@ test("resolveCodexSessionIdentity keeps non-Codex providers on raw session keys"
     sessionKey: "session-a",
     ctx: {
       provider: { id: "openai", name: "gpt-5.4" },
+      providerThreadId: "thread-openai-2",
       modelId: "gpt-5.4",
     },
     codexCompat: cfg.codexCompat,
