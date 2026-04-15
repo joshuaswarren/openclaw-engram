@@ -802,6 +802,148 @@ test("before_prompt_build does not suppress Remnic active recall when runtime ac
   }
 });
 
+test("before_prompt_build does not suppress Remnic active recall when runtime active-memory explicitly scopes to no agents", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-active-recall-empty-runtime-agents-"));
+  const { default: plugin } = await import("../src/index.js");
+  const warnings: string[] = [];
+  const api = buildHandlerCapturingApi("before-prompt-build-empty-runtime-agents-test");
+  delete api.registerMemoryPromptSection;
+  api.logger.warn = (message?: unknown) => warnings.push(String(message ?? ""));
+  api.config = {
+    plugins: {
+      entries: {
+        "active-memory": {
+          enabled: true,
+          config: {
+            agents: [],
+          },
+        },
+      },
+    },
+  };
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    activeRecallEnabled: true,
+    activeRecallAllowChainedActiveMemory: false,
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+  let activeRecallCalls = 0;
+  orchestrator.recall = async (query: string) => {
+    if (query.startsWith("current:")) {
+      activeRecallCalls++;
+      return "remembered context from Remnic";
+    }
+    return null;
+  };
+  orchestrator.getLastRecall = () => null;
+
+  const result = await beforePromptBuild(
+    { prompt: "What happened with CI?" },
+    { sessionKey: "session-c-empty-runtime-agents", agentId: "main" },
+  );
+
+  assert.equal(activeRecallCalls, 1);
+  assert.match(String(result?.prependSystemContext ?? ""), /## Active Recall \(Remnic\)/);
+  assert.match(String(result?.prependSystemContext ?? ""), /remembered context from Remnic/);
+  assert.equal(
+    warnings.some((message) =>
+      message.includes("bundled active-memory plugin is enabled for agent \"main\""),
+    ),
+    false,
+  );
+});
+
+test("before_prompt_build does not suppress Remnic active recall when file-backed active-memory explicitly scopes to no agents", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-active-recall-empty-file-agents-"));
+  const configPath = path.join(root, "openclaw.json");
+  await writeFile(
+    configPath,
+    JSON.stringify(
+      {
+        plugins: {
+          entries: {
+            "active-memory": {
+              enabled: true,
+              config: {
+                agents: [],
+              },
+            },
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
+
+  const previousConfigPath = process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+  process.env.OPENCLAW_ENGRAM_CONFIG_PATH = configPath;
+
+  try {
+    const { default: plugin } = await import("../src/index.js");
+    const warnings: string[] = [];
+    const api = buildHandlerCapturingApi("before-prompt-build-empty-file-agents-test");
+    delete api.registerMemoryPromptSection;
+    api.logger.warn = (message?: unknown) => warnings.push(String(message ?? ""));
+    api.config = {
+      plugins: {},
+    };
+    api.pluginConfig = {
+      memoryDir: root,
+      workspaceDir: root,
+      activeRecallEnabled: true,
+      activeRecallAllowChainedActiveMemory: false,
+    };
+    plugin.register(api as any);
+
+    const beforePromptBuild = api.handlers.get("before_prompt_build");
+    assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+    const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+    orchestrator.maybeRunFileHygiene = async () => undefined;
+    orchestrator.config.compactionResetEnabled = false;
+    let activeRecallCalls = 0;
+    orchestrator.recall = async (query: string) => {
+      if (query.startsWith("current:")) {
+        activeRecallCalls++;
+        return "remembered context from Remnic";
+      }
+      return null;
+    };
+    orchestrator.getLastRecall = () => null;
+
+    const result = await beforePromptBuild(
+      { prompt: "What happened with CI?" },
+      { sessionKey: "session-c-empty-file-agents", agentId: "main" },
+    );
+
+    assert.equal(activeRecallCalls, 1);
+    assert.match(String(result?.prependSystemContext ?? ""), /## Active Recall \(Remnic\)/);
+    assert.match(String(result?.prependSystemContext ?? ""), /remembered context from Remnic/);
+    assert.equal(
+      warnings.some((message) =>
+        message.includes("bundled active-memory plugin is enabled for agent \"main\""),
+      ),
+      false,
+    );
+  } finally {
+    if (previousConfigPath === undefined) {
+      delete process.env.OPENCLAW_ENGRAM_CONFIG_PATH;
+    } else {
+      process.env.OPENCLAW_ENGRAM_CONFIG_PATH = previousConfigPath;
+    }
+  }
+});
+
 test("before_prompt_build prepends recent dreams when dreaming injection is enabled", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-dreaming-hook-"));
   await writeFile(
