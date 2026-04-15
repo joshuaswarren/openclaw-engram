@@ -595,6 +595,97 @@ test("processEntitySynthesisQueue skips writing synthesis from a stale timeline 
   }
 });
 
+test("processEntitySynthesisQueue skips writing synthesis when structured sections drift during refresh", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-structured-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-structured-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      sharedContextEnabled: false,
+      hourlySummariesEnabled: false,
+      entitySummaryEnabled: true,
+      entitySynthesisMaxTokens: 160,
+    })) as any;
+    const storage = await orchestrator.getStorage("default");
+    await storage.ensureDirectories();
+
+    const canonical = normalizeEntityName("Jane Doe", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Initial synthesis evidence."], {
+      timestamp: "2026-04-13T09:00:00.000Z",
+      source: "extraction",
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Small teams move faster than committees."],
+        },
+      ],
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe had an earlier synthesis.", {
+      updatedAt: "2026-04-13T10:00:00.000Z",
+      synthesisTimelineCount: 1,
+      synthesisStructuredFactCount: 1,
+    });
+    await storage.writeEntity("Jane Doe", "person", ["Fresh evidence before synthesis."], {
+      timestamp: "2026-04-13T11:00:00.000Z",
+      source: "extraction",
+    });
+
+    let concurrentWriteDone = false;
+    let capturedPrompt = "";
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      if (!concurrentWriteDone) {
+        concurrentWriteDone = true;
+        await storage.writeEntity("Jane Doe", "person", [], {
+          timestamp: "2026-04-13T09:00:00.000Z",
+          source: "extraction",
+          structuredSections: [
+            {
+              key: "beliefs",
+              title: "Beliefs",
+              facts: ["Roadmaps should stay legible to the team."],
+            },
+          ],
+        });
+      }
+      return { content: "Jane Doe synthesis built from a stale structured snapshot." };
+    };
+
+    const firstProcessed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const afterFirstRaw = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const afterFirst = parseEntityFile(afterFirstRaw);
+
+    assert.equal(firstProcessed, 0);
+    assert.match(capturedPrompt, /Fresh evidence before synthesis\./);
+    assert.doesNotMatch(capturedPrompt, /Roadmaps should stay legible to the team\./);
+    assert.equal(afterFirst.synthesis, "Jane Doe had an earlier synthesis.");
+    assert.equal(afterFirst.synthesisStructuredFactCount, 1);
+    assert.equal(isEntitySynthesisStale(afterFirst), true);
+
+    orchestrator.fastChatCompletion = async (messages: Array<{ role: string; content: string }>) => {
+      capturedPrompt = messages.map((message) => message.content).join("\n\n");
+      return { content: "Jane Doe synthesis after re-reading structured evidence." };
+    };
+
+    const secondProcessed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const afterSecondRaw = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const afterSecond = parseEntityFile(afterSecondRaw);
+
+    assert.equal(secondProcessed, 1);
+    assert.match(capturedPrompt, /Fresh evidence before synthesis\./);
+    assert.equal(afterSecond.synthesis, "Jane Doe synthesis after re-reading structured evidence.");
+    assert.equal(afterSecond.synthesisStructuredFactCount, 2);
+    assert.equal(isEntitySynthesisStale(afterSecond), false);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("processEntitySynthesisQueue does not resynthesize timestampless evidence once the snapshot count matches", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-missing-ts-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-missing-ts-workspace-"));

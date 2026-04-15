@@ -2396,12 +2396,20 @@ export class Orchestrator {
         const latestRaw = await storage.readEntity(entityName);
         if (!latestRaw) continue;
         const latestEntity = parseEntityFile(latestRaw, this.config.entitySchemas);
+        const entityStructuredFactCount = (entity.structuredSections ?? [])
+          .reduce((count, section) => count + section.facts.length, 0);
+        const latestStructuredFactCount = (latestEntity.structuredSections ?? [])
+          .reduce((count, section) => count + section.facts.length, 0);
         if (latestEntity.timeline.length !== entity.timeline.length) {
+          continue;
+        }
+        if (latestStructuredFactCount !== entityStructuredFactCount) {
           continue;
         }
         await storage.updateEntitySynthesis(entityName, nextSynthesis, {
           entityUpdatedAt: new Date().toISOString(),
-          synthesisTimelineCount: entity.timeline.length,
+          synthesisStructuredFactCount: latestStructuredFactCount,
+          synthesisTimelineCount: latestEntity.timeline.length,
           updatedAt: nextSynthesisUpdatedAt,
         });
         processed += 1;

@@ -4339,6 +4339,7 @@ export class StorageManager {
     synthesis: string,
     options: {
       entityUpdatedAt?: string;
+      synthesisStructuredFactCount?: number;
       synthesisTimelineCount?: number;
       updatedAt?: string;
       incrementVersion?: boolean;
@@ -4360,12 +4361,17 @@ export class StorageManager {
       && (options.synthesisTimelineCount ?? 0) >= 0
       ? options.synthesisTimelineCount
       : undefined;
-    const synthesisStructuredFactCount = countEntityStructuredFacts(entity);
+    const synthesisStructuredFactCount = Number.isInteger(options.synthesisStructuredFactCount)
+      && (options.synthesisStructuredFactCount ?? 0) >= 0
+      ? options.synthesisStructuredFactCount
+      : countEntityStructuredFacts(entity);
     entity.synthesis = synthesis.trim();
     entity.summary = entity.synthesis;
     entity.synthesisUpdatedAt = updatedAt;
     entity.synthesisTimelineCount = synthesisTimelineCount;
-    entity.synthesisStructuredFactCount = synthesisStructuredFactCount > 0 ? synthesisStructuredFactCount : undefined;
+    entity.synthesisStructuredFactCount = synthesisStructuredFactCount !== undefined && synthesisStructuredFactCount > 0
+      ? synthesisStructuredFactCount
+      : undefined;
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
