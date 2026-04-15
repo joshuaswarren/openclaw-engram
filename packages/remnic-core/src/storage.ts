@@ -1297,23 +1297,24 @@ export function fingerprintEntityStructuredFacts(entity: Pick<EntityFile, "struc
 export function isEntitySynthesisStale(entity: EntityFile): boolean {
   const structuredFactCount = countEntityStructuredFacts(entity);
   const structuredFactDigest = fingerprintEntityStructuredFacts(entity);
+  const storedStructuredFactDigest = entity.synthesisStructuredFactDigest?.trim() || undefined;
   if (entity.timeline.length === 0 && structuredFactCount === 0) return false;
   if (!entity.synthesis?.trim()) return true;
   if (entity.synthesisTimelineCount === undefined) return true;
   if (structuredFactCount > 0 && entity.synthesisStructuredFactCount === undefined) return true;
-  if (structuredFactCount > 0 && !entity.synthesisStructuredFactDigest?.trim()) return true;
+  if (structuredFactCount > 0 && !storedStructuredFactDigest) return true;
   const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
   if (!latestTimelineTimestamp) {
     return entity.timeline.length > entity.synthesisTimelineCount
       || structuredFactCount > (entity.synthesisStructuredFactCount ?? 0)
-      || structuredFactDigest !== entity.synthesisStructuredFactDigest;
+      || structuredFactDigest !== storedStructuredFactDigest;
   }
   if (!entity.synthesisUpdatedAt?.trim()) return true;
   const timelineFreshness = compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt);
   if (timelineFreshness > 0) return true;
   return entity.timeline.length > entity.synthesisTimelineCount
     || structuredFactCount > (entity.synthesisStructuredFactCount ?? 0)
-    || structuredFactDigest !== entity.synthesisStructuredFactDigest;
+    || structuredFactDigest !== storedStructuredFactDigest;
 }
 
 /**
@@ -2376,6 +2377,7 @@ export class StorageManager {
       synthesisUpdatedAt: undefined,
       synthesisVersion: undefined,
       synthesisStructuredFactCount: undefined,
+      synthesisStructuredFactDigest: undefined,
       timeline: [],
       relationships: [],
       activity: [],
