@@ -735,6 +735,36 @@ test("entity retrieval falls back to structured section facts for direct queries
   assert.match(section!, /Alice Example believes small teams should own whole systems\./);
 });
 
+test("entity retrieval does not prefer fallback structured section facts over timeline evidence when a summary exists", async () => {
+  const { config, storage } = await buildHarness("engram-entity-direct-structured-fallback-summary");
+  await storage.writeEntity("Alice Example", "person", [], {
+    timestamp: "2026-04-13T10:00:00.000Z",
+    source: "extraction",
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Alice Example believes small teams should own whole systems."],
+      },
+    ],
+  });
+  const canonical = normalizeEntityName("Alice Example", "person");
+  await storage.updateEntitySynthesis(canonical, "Alice Example leads product strategy at Northwind.", {
+    updatedAt: "2026-04-13T10:05:00.000Z",
+    synthesisTimelineCount: 1,
+  });
+  await storage.writeEntity("Alice Example", "person", ["Alice Example shipped the launch review this week."], {
+    timestamp: "2026-04-13T11:00:00.000Z",
+    source: "extraction",
+  });
+
+  const section = await buildSection(config, storage, "Who is Alice Example?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example leads product strategy at Northwind\./);
+  assert.doesNotMatch(section!, /Alice Example believes small teams should own whole systems\./);
+});
+
 test("entity retrieval can answer from native knowledge titles and aliases without an entity file", async () => {
   const { workspaceDir, config, storage } = await buildHarness("engram-entity-native", {
     nativeKnowledge: {

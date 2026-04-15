@@ -96,13 +96,6 @@ function compactLine(value: string, maxLength: number = 220): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
-function preferNonEmptyText(primary?: string | null, fallback?: string | null): string | undefined {
-  const normalizedPrimary = primary?.trim();
-  if (normalizedPrimary) return normalizedPrimary;
-  const normalizedFallback = fallback?.trim();
-  return normalizedFallback || undefined;
-}
-
 function dedupeHintSnippetsByText(snippets: EntityHintSnippet[]): EntityHintSnippet[] {
   const seen = new Set<string>();
   const result: EntityHintSnippet[] = [];
@@ -320,7 +313,7 @@ async function buildEntityMentionIndex(
       name: entity.name,
       type: entity.type,
       aliases: uniqueStrings(entity.aliases),
-      summary: preferNonEmptyText(entity.synthesis, entity.summary),
+      summary: entity.synthesis?.trim() || entity.summary?.trim() || undefined,
       facts: sanitizedFacts,
       structuredSections: (entity.structuredSections ?? []).map((section) => ({
         key: section.key,
@@ -471,7 +464,7 @@ async function buildHintSnippets(
     if (entry.facts.length === 0) {
       for (const section of entry.structuredSections) {
         for (const fact of section.facts) {
-          snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "section" });
+          snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
         }
       }
     }
