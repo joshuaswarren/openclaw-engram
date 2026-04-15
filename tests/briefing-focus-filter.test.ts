@@ -172,3 +172,26 @@ test("focusMatchesEntity matches summary, facts, and aliases (topic focus)", () 
     false,
   );
 });
+
+test("focusMatchesEntity matches structured section titles and facts", () => {
+  const entity = makeEntity({
+    name: "alex",
+    type: "person",
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Small teams should own whole systems."],
+      },
+    ],
+  });
+
+  assert.equal(
+    focusMatchesEntity(entity, { type: "topic", value: "beliefs" }),
+    true,
+  );
+  assert.equal(
+    focusMatchesEntity(entity, { type: "topic", value: "whole systems" }),
+    true,
+  );
+});

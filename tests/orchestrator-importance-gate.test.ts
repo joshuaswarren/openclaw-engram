@@ -11,6 +11,7 @@ import {
 } from "../src/importance.js";
 import { initLogger, type LoggerBackend } from "../src/logger.js";
 import { Orchestrator } from "../src/orchestrator.js";
+import { normalizeEntityName, parseEntityFile } from "../src/storage.js";
 import type { ExtractionResult, ImportanceLevel } from "../src/types.js";
 
 // ---------------------------------------------------------------------------
@@ -210,6 +211,48 @@ test("persistExtraction writes normal-importance facts under the default gate", 
   );
 
   assert.equal(persistedIds.length, 1);
+});
+
+test("persistExtraction preserves structured entity sections on entity files", async () => {
+  installCapturingLogger();
+  const { orchestrator, storage, memoryDir } = await makeOrchestrator();
+
+  const result: ExtractionResult = {
+    facts: [],
+    entities: [
+      {
+        name: "Jane Doe",
+        type: "person",
+        facts: ["Leads the roadmap."],
+        structuredSections: [
+          {
+            key: "beliefs",
+            title: "Beliefs",
+            facts: ["Small teams move faster than committees."],
+          },
+        ],
+      },
+    ],
+    relationships: [],
+    questions: [],
+    profileUpdates: [],
+  } as ExtractionResult;
+
+  await orchestrator.persistExtraction(result, storage, null);
+
+  const canonical = normalizeEntityName("Jane Doe", "person");
+  const raw = await (await import("node:fs/promises")).readFile(
+    path.join(memoryDir, "entities", `${canonical}.md`),
+    "utf-8",
+  );
+  const parsed = parseEntityFile(raw) as any;
+  assert.deepEqual(parsed.structuredSections, [
+    {
+      key: "beliefs",
+      title: "Beliefs",
+      facts: ["Small teams move faster than committees."],
+    },
+  ]);
 });
 
 test("persistExtraction preserves correction boost so corrections pass 'normal' gate", async () => {

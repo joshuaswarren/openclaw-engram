@@ -42,6 +42,7 @@ import {
   compareEntityTimestamps,
   StorageManager,
   ContentHashIndex,
+  fingerprintEntityStructuredFacts,
   normalizeEntityName,
   normalizeAttributePairs,
   parseEntityFile,
@@ -263,7 +264,93 @@ import type {
   QmdSearchResult,
   RecallPlanMode,
   RecallSectionConfig,
+  EntityStructuredSection,
+  EntityTimelineEntry,
 } from "./types.js";
+
+export function dedupeEntitySynthesisEvidenceEntries(
+  entries: EntityTimelineEntry[],
+): EntityTimelineEntry[] {
+  const dedupedEvidenceEntries: EntityTimelineEntry[] = [];
+  const evidenceByFact = new Map<string, {
+    newest: EntityTimelineEntry;
+    oldest: EntityTimelineEntry;
+  }>();
+
+  for (const entry of entries) {
+    const normalizedFact = entry.text.trim();
+    if (!normalizedFact) continue;
+    const existing = evidenceByFact.get(normalizedFact);
+    if (!existing) {
+      evidenceByFact.set(normalizedFact, { newest: entry, oldest: entry });
+      continue;
+    }
+    if (compareEntityTimestamps(entry.timestamp, existing.newest.timestamp) > 0) {
+      existing.newest = entry;
+    }
+    if (compareEntityTimestamps(entry.timestamp, existing.oldest.timestamp) < 0) {
+      existing.oldest = entry;
+    }
+  }
+
+  for (const { newest, oldest } of evidenceByFact.values()) {
+    dedupedEvidenceEntries.push(newest);
+    const newestKey = [
+      newest.timestamp,
+      newest.source ?? "",
+      newest.sessionKey ?? "",
+      newest.principal ?? "",
+      newest.text,
+    ].join("\u0000");
+    const oldestKey = [
+      oldest.timestamp,
+      oldest.source ?? "",
+      oldest.sessionKey ?? "",
+      oldest.principal ?? "",
+      oldest.text,
+    ].join("\u0000");
+    if (oldestKey !== newestKey) {
+      dedupedEvidenceEntries.push(oldest);
+    }
+  }
+
+  return dedupedEvidenceEntries;
+}
+
+function flattenStructuredSectionEvidence(
+  sections: EntityStructuredSection[] | undefined,
+): EntityTimelineEntry[] {
+  return (sections ?? []).flatMap((section) =>
+    section.facts
+      .map((fact) => fact.trim())
+      .filter((fact) => fact.length > 0)
+      .map((fact) => ({
+        timestamp: "",
+        text: fact,
+        source: `section:${section.title}`,
+      })),
+  );
+}
+
+function fingerprintEntitySynthesisEvidence(entity: {
+  timeline: EntityTimelineEntry[];
+  structuredSections?: EntityStructuredSection[];
+}): string {
+  const fingerprint = createHash("sha256");
+  const timelineEntries = entity.timeline
+    .map((entry) => [
+      entry.timestamp,
+      entry.source ?? "",
+      entry.sessionKey ?? "",
+      entry.principal ?? "",
+      entry.text,
+    ].join("\u0000"))
+    .sort();
+  fingerprint.update(timelineEntries.join("\u0001"));
+  fingerprint.update("\u0002");
+  fingerprint.update(fingerprintEntityStructuredFacts(entity) ?? "");
+  return fingerprint.digest("hex");
+}
 
 export interface GraphRecallSnapshot {
   recordedAt: string;
@@ -1216,7 +1303,7 @@ export class Orchestrator {
       config,
       this.storageRouter,
     );
-    this.storage = new StorageManager(config.memoryDir);
+    this.storage = new StorageManager(config.memoryDir, config.entitySchemas);
     // Propagate the inline-attribution template so the storage layer can strip
     // citations from legacy facts during the hash-index rebuild path.
     this.storage.citationTemplate = config.inlineSourceAttributionFormat;
@@ -2297,7 +2384,7 @@ export class Orchestrator {
       try {
         const raw = await storage.readEntity(entityName);
         if (!raw) continue;
-        const entity = parseEntityFile(raw);
+        const entity = parseEntityFile(raw, this.config.entitySchemas);
         const previousSynthesis = entity.synthesis || entity.summary || "";
         const sortedTimelineEntries = entity.timeline
           .slice()
@@ -2310,20 +2397,26 @@ export class Orchestrator {
         const appendedTimelineEntries = entity.synthesisTimelineCount === undefined
           ? []
           : entity.timeline.slice(Math.max(0, entity.synthesisTimelineCount));
+        const structuredEvidenceEntries = flattenStructuredSectionEvidence(entity.structuredSections);
+        const structuredEvidenceCount = structuredEvidenceEntries.length;
+        const structuredEvidenceDigest = fingerprintEntityStructuredFacts(entity);
+        const structuredEvidenceDrifted = structuredEvidenceDigest !== (entity.synthesisStructuredFactDigest?.trim() || undefined);
+        const appendedStructuredEvidenceEntries = entity.synthesisStructuredFactCount === undefined
+          || structuredEvidenceDrifted
+          ? structuredEvidenceEntries
+          : structuredEvidenceEntries.slice(Math.max(0, entity.synthesisStructuredFactCount));
         const candidateEvidenceEntries = [
           ...newerTimelineEntries,
           ...appendedTimelineEntries,
+          ...appendedStructuredEvidenceEntries,
         ]
           .slice()
           .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
-        const dedupedEvidenceEntries: typeof sortedTimelineEntries = [];
-        const seenEvidenceFacts = new Set<string>();
-        for (const entry of (candidateEvidenceEntries.length > 0 ? candidateEvidenceEntries : sortedTimelineEntries)) {
-          const normalizedFact = entry.text.trim();
-          if (!normalizedFact || seenEvidenceFacts.has(normalizedFact)) continue;
-          seenEvidenceFacts.add(normalizedFact);
-          dedupedEvidenceEntries.push(entry);
-        }
+        const dedupedEvidenceEntries = dedupeEntitySynthesisEvidenceEntries(
+          candidateEvidenceEntries.length > 0
+            ? candidateEvidenceEntries
+            : [...sortedTimelineEntries, ...structuredEvidenceEntries],
+        );
         const chronologicalEvidenceEntries = dedupedEvidenceEntries
           .slice()
           .sort((left, right) => compareEntityTimestamps(left.timestamp, right.timestamp));
@@ -2350,9 +2443,12 @@ export class Orchestrator {
         for (const evidenceEntries of evidenceBatches) {
           const evidenceText = evidenceEntries
             .map((entry) => {
+              const sectionTitle = entry.source?.startsWith("section:")
+                ? entry.source.slice("section:".length)
+                : "";
               const metadata = [
                 `timestamp=${entry.timestamp}`,
-                entry.source ? `source=${entry.source}` : "",
+                sectionTitle ? `section=${sectionTitle}` : entry.source ? `source=${entry.source}` : "",
                 entry.sessionKey ? `session=${entry.sessionKey}` : "",
                 entry.principal ? `principal=${entry.principal}` : "",
               ]
@@ -2385,7 +2481,8 @@ export class Orchestrator {
             },
           );
           const synthesis = response?.content?.trim().replace(/^["']|["']$/g, "");
-          if (!synthesis || synthesis.length < 10 || synthesis.length > 2_000) {
+          const maxSynthesisChars = Math.max(2_000, this.config.entitySynthesisMaxTokens * 8);
+          if (!synthesis || synthesis.length < 10 || synthesis.length > maxSynthesisChars) {
             batchFailed = true;
             break;
           }
@@ -2394,12 +2491,17 @@ export class Orchestrator {
         if (batchFailed || nextSynthesis.length === 0) continue;
         const latestRaw = await storage.readEntity(entityName);
         if (!latestRaw) continue;
-        const latestEntity = parseEntityFile(latestRaw);
-        if (latestEntity.timeline.length !== entity.timeline.length) {
+        const latestEntity = parseEntityFile(latestRaw, this.config.entitySchemas);
+        if (
+          fingerprintEntitySynthesisEvidence(latestEntity)
+          !== fingerprintEntitySynthesisEvidence(entity)
+        ) {
           continue;
         }
         await storage.updateEntitySynthesis(entityName, nextSynthesis, {
           entityUpdatedAt: new Date().toISOString(),
+          synthesisStructuredFactDigest: structuredEvidenceDigest,
+          synthesisStructuredFactCount: structuredEvidenceCount,
           synthesisTimelineCount: entity.timeline.length,
           updatedAt: nextSynthesisUpdatedAt,
         });
@@ -9810,6 +9912,9 @@ export class Orchestrator {
           source: typeof (entity as any)?.source === "string" ? (entity as any).source : "extraction",
           sessionKey: sourceContext?.sessionKey,
           principal: sourceContext?.principal,
+          structuredSections: Array.isArray((entity as any)?.structuredSections)
+            ? (entity as any).structuredSections
+            : undefined,
         });
         if (id) trackPersistedId(storage, id);
       } catch (err) {
@@ -10233,6 +10338,9 @@ export class Orchestrator {
         : [];
       await this.storage.writeEntity(entity.name, entity.type, safeFacts, {
         source: "consolidation",
+        structuredSections: Array.isArray((entity as any)?.structuredSections)
+          ? (entity as any).structuredSections
+          : undefined,
       });
     }
 

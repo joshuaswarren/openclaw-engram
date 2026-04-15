@@ -49,18 +49,35 @@ export function setCachedArchivedMemories(baseDir: string, memories: MemoryFile[
   archiveCacheByDir.set(baseDir, { memories: map, version, loadedAt: Date.now() });
 }
 
-// Entity cache — same pattern as memory cache
+// Entity cache — same pattern as memory cache, but keyed by schema-aware parse inputs.
 const entityCacheByDir = new Map<string, { entities: EntityFile[]; version: number; loadedAt: number }>();
 
-export function getCachedEntities(baseDir: string, currentVersion: number): EntityFile[] | null {
+function buildEntityCacheKey(baseDir: string, schemaKey: string = ""): string {
+  return `${baseDir}\u0000${schemaKey}`;
+}
+
+export function getCachedEntities(
+  baseDir: string,
+  currentVersion: number,
+  schemaKey: string = "",
+): EntityFile[] | null {
   if (currentVersion === 0) return null;
-  const entry = entityCacheByDir.get(baseDir);
+  const entry = entityCacheByDir.get(buildEntityCacheKey(baseDir, schemaKey));
   if (!entry || entry.version !== currentVersion) return null;
   return entry.entities;
 }
 
-export function setCachedEntities(baseDir: string, entities: EntityFile[], version: number): void {
-  entityCacheByDir.set(baseDir, { entities, version, loadedAt: Date.now() });
+export function setCachedEntities(
+  baseDir: string,
+  entities: EntityFile[],
+  version: number,
+  schemaKey: string = "",
+): void {
+  entityCacheByDir.set(buildEntityCacheKey(baseDir, schemaKey), {
+    entities,
+    version,
+    loadedAt: Date.now(),
+  });
 }
 
 // Derived caches — pre-filtered views invalidated alongside the main cache.
@@ -150,7 +167,9 @@ export function clearMemoryCache(baseDir?: string): void {
   if (baseDir) {
     hotCacheByDir.delete(baseDir);
     archiveCacheByDir.delete(baseDir);
-    entityCacheByDir.delete(baseDir);
+    const entityPrefix = `${baseDir}\u0000`;
+    const entityKeysToDelete = [...entityCacheByDir.keys()].filter((key) => key.startsWith(entityPrefix));
+    for (const key of entityKeysToDelete) entityCacheByDir.delete(key);
     episodeMapByDir.delete(baseDir);
     ruleMemoriesByDir.delete(baseDir);
   } else {

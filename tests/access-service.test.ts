@@ -1201,6 +1201,10 @@ test("access service browses memories, lists entities, and applies review dispos
         "",
         "- Maintains Engram.",
         "",
+        "## Beliefs",
+        "",
+        "- Small teams should own whole systems.",
+        "",
       ].join("\n"),
     );
 
@@ -1226,6 +1230,10 @@ test("access service browses memories, lists entities, and applies review dispos
     const entities = await service.entityList({ query: "alex" });
     assert.equal(entities.total, 1);
     assert.equal(entities.entities[0]?.name, "Alex");
+
+    const structuredEntities = await service.entityList({ query: "whole systems" });
+    assert.equal(structuredEntities.total, 1);
+    assert.equal(structuredEntities.entities[0]?.name, "Alex");
 
     const entity = await service.entityGet("person-alex");
     assert.equal(entity.found, true);

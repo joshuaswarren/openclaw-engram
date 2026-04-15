@@ -1350,7 +1350,7 @@ export class EngramAccessService {
     for (const name of names) {
       const raw = await storage.readEntity(name);
       if (!raw) continue;
-      const entity = parseEntityFile(raw);
+      const entity = parseEntityFile(raw, this.orchestrator.config.entitySchemas);
       if (query) {
         const haystack = [
           entity.name,
@@ -1358,6 +1358,7 @@ export class EngramAccessService {
           entity.synthesis || entity.summary || "",
           ...entity.aliases,
           ...entity.facts,
+          ...(entity.structuredSections ?? []).flatMap((section) => [section.title, ...section.facts]),
         ].join("\n").toLowerCase();
         if (!haystack.includes(query)) continue;
       }
@@ -1390,7 +1391,7 @@ export class EngramAccessService {
     return {
       found: true,
       namespace: resolvedNamespace,
-      entity: parseEntityFile(raw),
+      entity: parseEntityFile(raw, this.orchestrator.config.entitySchemas),
     };
   }
 

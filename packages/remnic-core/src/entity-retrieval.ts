@@ -4,9 +4,10 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { collectNativeKnowledgeChunks, type NativeKnowledgeChunk } from "./native-knowledge.js";
 import { compareEntityTimestamps, normalizeEntityName, type StorageManager } from "./storage.js";
-import type { MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
+import { normalizeEntityText, resolveRequestedEntitySectionKeys } from "./entity-schema.js";
+import type { EntityStructuredSection, MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
 
-const ENTITY_INDEX_VERSION = 2;
+const ENTITY_INDEX_VERSION = 3;
 const RECENT_TRANSCRIPT_LOOKBACK_HOURS = 24;
 const INSTRUCTION_LIKE_RE = /\b(always|never|must|should|remember to|do not|don't|process|workflow|template|checklist|instruction)\b/i;
 const METADATA_WRAPPER_RE = /^(source|context|metadata|notes?):/i;
@@ -21,6 +22,8 @@ type EntityMentionIndexEntry = {
   aliases: string[];
   summary?: string;
   facts: string[];
+  timelineFacts: string[];
+  structuredSections: EntityStructuredSection[];
   timeline: Array<{
     timestamp: string;
     text: string;
@@ -58,7 +61,7 @@ type EntityCandidate = {
 type EntityHintSnippet = {
   text: string;
   score: number;
-  kind: "summary" | "fact" | "relationship" | "activity" | "memory" | "native";
+  kind: "summary" | "fact" | "section" | "relationship" | "activity" | "memory" | "native";
 };
 
 export interface BuildEntityRecallSectionOptions {
@@ -74,12 +77,8 @@ export interface BuildEntityRecallSectionOptions {
   transcriptEntries: TranscriptEntry[];
 }
 
-function normalizeText(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-}
-
 function tokenize(value: string): string[] {
-  return normalizeText(value).split(/\s+/).filter((token) => token.length >= 2);
+  return normalizeEntityText(value).split(/\s+/).filter((token) => token.length >= 2);
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -98,18 +97,11 @@ function compactLine(value: string, maxLength: number = 220): string {
   return `${normalized.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`;
 }
 
-function preferNonEmptyText(primary?: string | null, fallback?: string | null): string | undefined {
-  const normalizedPrimary = primary?.trim();
-  if (normalizedPrimary) return normalizedPrimary;
-  const normalizedFallback = fallback?.trim();
-  return normalizedFallback || undefined;
-}
-
 function dedupeHintSnippetsByText(snippets: EntityHintSnippet[]): EntityHintSnippet[] {
   const seen = new Set<string>();
   const result: EntityHintSnippet[] = [];
   for (const snippet of snippets) {
-    const key = normalizeText(snippet.text);
+    const key = normalizeEntityText(snippet.text);
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(snippet);
@@ -124,7 +116,7 @@ function relationLine(entry: EntityMentionIndexEntry, relationship: { target: st
 }
 
 function detectEntityQueryMode(query: string): EntityQueryMode | null {
-  const normalized = normalizeText(query);
+  const normalized = normalizeEntityText(query);
   if (!normalized) return null;
   if (
     /^(what about|and what about|how about|what happened (with|to) (he|him|his|she|her|they|them|their|it|its)|did (he|she|they|it)|is (he|she|they|it)|was (he|she|they|it))\b/.test(normalized)
@@ -132,8 +124,19 @@ function detectEntityQueryMode(query: string): EntityQueryMode | null {
     return "follow_up";
   }
   if (
-    /^(who is|who s|what do we know about|tell me about|what can you tell me about|what s new with|what happened with|what happened to|status of|where is|how is)\b/.test(normalized)
+    /^(who is|who s|what do we know about|what does|tell me about|what can you tell me about|what s new with|what happened with|what happened to|status of|where is|how is)\b/.test(normalized)
   ) {
+    if (/^what does\b/.test(normalized)) {
+      if (/^what does (?:this|that|it|the|a|an|my|our|your|their)\b/.test(normalized)) {
+        return null;
+      }
+      if (
+        /^what does [a-z0-9-]+ (?:error|warning|exception|failure|stack|trace|code|message|log)\b/.test(normalized)
+        && /\b(mean|means|indicate|indicates|imply|implies)\b/.test(normalized)
+      ) {
+        return null;
+      }
+    }
     return /what happened|what s new|status of|how is|where is/.test(normalized) ? "timeline" : "direct";
   }
   if (ENTITY_PRONOUN_RE.test(normalized) && normalized.split(/\s+/).length <= 8) {
@@ -143,8 +146,8 @@ function detectEntityQueryMode(query: string): EntityQueryMode | null {
 }
 
 function scoreAliasMatch(query: string, alias: string): number {
-  const normalizedQuery = normalizeText(query);
-  const normalizedAlias = normalizeText(alias);
+  const normalizedQuery = normalizeEntityText(query);
+  const normalizedAlias = normalizeEntityText(alias);
   if (!normalizedAlias) return 0;
   if (normalizedQuery === normalizedAlias) return 10;
   if (containsPhrase(normalizedQuery, normalizedAlias)) return 8 + Math.min(normalizedAlias.split(/\s+/).length, 3);
@@ -168,7 +171,7 @@ function sanitizeEntityFact(fact: string): string {
 }
 
 function scoreHintSnippet(snippet: EntityHintSnippet, queryTokens: string[]): EntityHintSnippet | null {
-  const normalized = normalizeText(snippet.text);
+  const normalized = normalizeEntityText(snippet.text);
   if (!normalized) return null;
   const scored = { ...snippet };
   if (isLikelyInstructionLike(scored.text) && scored.kind !== "summary") {
@@ -207,7 +210,7 @@ function jaccardSimilarity(a: string, b: string): number {
 function buildAliasIndex(entries: EntityMentionIndexEntry[]): Map<string, EntityMentionIndexEntry[]> {
   const index = new Map<string, EntityMentionIndexEntry[]>();
   for (const entry of entries) {
-    const aliases = uniqueStrings([entry.name, ...entry.aliases]).map(normalizeText).filter(Boolean);
+    const aliases = uniqueStrings([entry.name, ...entry.aliases]).map(normalizeEntityText).filter(Boolean);
     for (const alias of aliases) {
       const existing = index.get(alias) ?? [];
       existing.push(entry);
@@ -268,6 +271,8 @@ function createPseudoNativeEntry(chunk: NativeKnowledgeChunk): EntityMentionInde
     type: chunk.sourceKind,
     aliases: uniqueStrings(chunk.aliases ?? []),
     facts: [],
+    structuredSections: [],
+    timelineFacts: [],
     timeline: [],
     relationships: [],
     activity: [],
@@ -316,13 +321,26 @@ async function buildEntityMentionIndex(
   for (const entity of entityFiles) {
     const canonicalId = normalizeEntityName(entity.name, entity.type);
     const sanitizedFacts = entity.facts.map((fact) => sanitizeEntityFact(fact)).filter(Boolean).map((fact) => compactLine(fact, 180));
+    const sanitizedTimelineFacts = entity.timeline
+      .map((entry) => sanitizeEntityFact(entry.text))
+      .filter(Boolean)
+      .map((fact) => compactLine(fact, 180));
     entities.set(canonicalId, {
       canonicalId,
       name: entity.name,
       type: entity.type,
       aliases: uniqueStrings(entity.aliases),
-      summary: preferNonEmptyText(entity.synthesis, entity.summary),
+      summary: entity.synthesis?.trim() || entity.summary?.trim() || undefined,
       facts: sanitizedFacts,
+      timelineFacts: uniqueStrings(sanitizedTimelineFacts),
+      structuredSections: (entity.structuredSections ?? []).map((section) => ({
+        key: section.key,
+        title: section.title,
+        facts: section.facts
+          .map((fact) => sanitizeEntityFact(fact))
+          .filter(Boolean)
+          .map((fact) => compactLine(fact, 180)),
+      })).filter((section) => section.facts.length > 0),
       timeline: entity.timeline.map((entry) => ({ ...entry })),
       relationships: entity.relationships.map((relationship) => ({ ...relationship })),
       activity: entity.activity.map((activity) => ({ ...activity })),
@@ -350,7 +368,7 @@ async function buildEntityMentionIndex(
       mergeNativeChunk(existingPseudo, chunk);
       continue;
     }
-    const candidateAliases = uniqueStrings([chunk.title, ...(chunk.aliases ?? [])]).map(normalizeText).filter(Boolean);
+    const candidateAliases = uniqueStrings([chunk.title, ...(chunk.aliases ?? [])]).map(normalizeEntityText).filter(Boolean);
     let matched = false;
     for (const alias of candidateAliases) {
       for (const entry of aliasIndex.get(alias) ?? []) {
@@ -443,53 +461,84 @@ async function buildHintSnippets(
   queryTokens: string[],
   mode: EntityQueryMode,
   maxSupportingFacts: number,
+  requestedSectionKeys: Set<string>,
 ): Promise<EntityHintSnippet[]> {
   const snippets: EntityHintSnippet[] = [];
+  const aliasTokens = new Set(tokenize(uniqueStrings([entry.name, ...entry.aliases]).join(" ")));
   if (entry.summary) {
     snippets.push({ text: compactLine(entry.summary, 180), score: 10, kind: "summary" });
   }
 
-  for (const fact of entry.facts) {
-    snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+  if (requestedSectionKeys.size > 0) {
+    for (const section of entry.structuredSections) {
+      if (!requestedSectionKeys.has(normalizeEntityText(section.key).replace(/\s+/g, "_"))) continue;
+      for (const fact of section.facts) {
+        snippets.push({ text: fact, score: mode === "direct" ? 8 : 9, kind: "section" });
+      }
+    }
+  } else {
+    for (const fact of entry.timelineFacts) {
+      snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+    }
+    for (const section of entry.structuredSections) {
+      for (const fact of section.facts) {
+        const normalizedFact = normalizeEntityText(fact);
+        const hasNonAliasQueryOverlap = queryTokens.some((token) =>
+          !aliasTokens.has(token) && normalizedFact.includes(token)
+        );
+        if (entry.timelineFacts.length > 0 && !hasNonAliasQueryOverlap) {
+          continue;
+        }
+        snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+      }
+    }
+    if (entry.timelineFacts.length === 0 && entry.structuredSections.length === 0) {
+      for (const fact of entry.facts) {
+        if (!fact.trim()) continue;
+        snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+      }
+    }
   }
 
-  for (const relationship of entry.relationships) {
-    snippets.push({
-      text: compactLine(relationLine(entry, relationship), 180),
-      score: mode === "direct" && entry.type.toLowerCase() === "person" ? 6 : 4,
-      kind: "relationship",
-    });
-  }
+  if (requestedSectionKeys.size === 0) {
+    for (const relationship of entry.relationships) {
+      snippets.push({
+        text: compactLine(relationLine(entry, relationship), 180),
+        score: mode === "direct" && entry.type.toLowerCase() === "person" ? 6 : 4,
+        kind: "relationship",
+      });
+    }
 
-  for (const activity of entry.activity) {
-    snippets.push({
-      text: compactLine(`${activity.date}: ${activity.note}`, 180),
-      score: 4,
-      kind: "activity",
-    });
-  }
+    for (const activity of entry.activity) {
+      snippets.push({
+        text: compactLine(`${activity.date}: ${activity.note}`, 180),
+        score: 4,
+        kind: "activity",
+      });
+    }
 
-  for (const memorySnippet of entry.memorySnippets.slice(0, Math.min(maxSupportingFacts, 4))) {
-    snippets.push({
-      text: memorySnippet,
-      score: 5,
-      kind: "memory",
-    });
-  }
+    for (const memorySnippet of entry.memorySnippets.slice(0, Math.min(maxSupportingFacts, 4))) {
+      snippets.push({
+        text: memorySnippet,
+        score: 5,
+        kind: "memory",
+      });
+    }
 
-  for (const chunk of entry.nativeChunks) {
-    snippets.push({
-      text: compactLine(chunk.snippet, 180),
-      score: 3,
-      kind: "native",
-    });
+    for (const chunk of entry.nativeChunks) {
+      snippets.push({
+        text: compactLine(chunk.snippet, 180),
+        score: 3,
+        kind: "native",
+      });
+    }
   }
 
   const deduped = new Map<string, EntityHintSnippet>();
   for (const snippet of snippets) {
     const scored = scoreHintSnippet(snippet, queryTokens);
     if (!scored) continue;
-    const normalized = normalizeText(scored.text);
+    const normalized = normalizeEntityText(scored.text);
     const existing = deduped.get(normalized);
     if (!existing || scored.score > existing.score) deduped.set(normalized, scored);
   }
@@ -501,7 +550,12 @@ async function buildHintSnippets(
 }
 
 function summarizeUncertainty(snippets: EntityHintSnippet[]): string | null {
-  const direct = snippets.filter((snippet) => snippet.kind === "summary" || snippet.kind === "fact" || snippet.kind === "memory");
+  const direct = snippets.filter((snippet) =>
+    snippet.kind === "summary"
+    || snippet.kind === "fact"
+    || snippet.kind === "section"
+    || snippet.kind === "memory"
+  );
   if (direct.length < 2) return null;
   for (let index = 0; index < direct.length; index += 1) {
     for (let compare = index + 1; compare < direct.length; compare += 1) {
@@ -547,13 +601,13 @@ function formatEntityHintSection(
             kind: "activity" as const,
           }, queryTokens))
           .filter((snippet): snippet is EntityHintSnippet => snippet !== null)
-          .filter((snippet) => !seedExcludedTexts.has(normalizeText(snippet.text))),
+          .filter((snippet) => !seedExcludedTexts.has(normalizeEntityText(snippet.text))),
       ).slice(0, 2);
       const activityTimelinePool = dedupeHintSnippetsByText(
         snippets
           .filter((snippet) => (
             snippet.kind === "activity" || snippet.kind === "memory"
-          ) && !seedExcludedTexts.has(normalizeText(snippet.text))),
+          ) && !seedExcludedTexts.has(normalizeEntityText(snippet.text))),
       ).slice(0, 2);
       return explicitTimelinePool.length > 0
         ? explicitTimelinePool
@@ -563,17 +617,17 @@ function formatEntityHintSection(
             snippets
               .filter((snippet) => (
                 snippet.kind === "fact" || snippet.kind === "summary"
-              ) && !seedExcludedTexts.has(normalizeText(snippet.text))),
+              ) && !seedExcludedTexts.has(normalizeEntityText(snippet.text))),
           ).slice(0, 2);
     };
-    const baseTopSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
+    const baseTopSnippetTexts = new Set(topSnippets.map((snippet) => normalizeEntityText(snippet.text)));
     const timelinePool = mode !== "direct" ? buildTimelineSnippets(baseTopSnippetTexts) : [];
     if (mode !== "direct" && hasSummary && topSnippets.length < 2) {
       if (timelinePool.length > 0) {
         topSnippets = [...topSnippets, timelinePool[0]!].slice(0, 3);
       }
     }
-    const topSnippetTexts = new Set(topSnippets.map((snippet) => normalizeText(snippet.text)));
+    const topSnippetTexts = new Set(topSnippets.map((snippet) => normalizeEntityText(snippet.text)));
     lines.push(`- target: ${candidate.entry.name} (${candidate.entry.type})`);
     if (candidate.source === "recent_turn") {
       lines.push(`- resolution: carried forward from recent turns via alias "${candidate.alias}"`);
@@ -589,7 +643,7 @@ function formatEntityHintSection(
     }
     if (mode !== "direct") {
       const fallbackTimeline = timelinePool.filter(
-        (snippet) => !topSnippetTexts.has(normalizeText(snippet.text)),
+        (snippet) => !topSnippetTexts.has(normalizeEntityText(snippet.text)),
       );
       if (fallbackTimeline.length > 0) {
         lines.push("- recent timeline:");
@@ -634,11 +688,20 @@ export async function buildEntityRecallSection(options: BuildEntityRecallSection
   const rankedCandidates = candidates.slice(0, candidateLimit);
   const enriched = await Promise.all(
     rankedCandidates.map(async (candidate) => {
+      const requestedSectionKeys = new Set(
+        resolveRequestedEntitySectionKeys(
+          options.query,
+          candidate.entry.type,
+          candidate.entry.structuredSections,
+          options.config.entitySchemas,
+        ),
+      );
       const snippets = await buildHintSnippets(
         candidate.entry,
         queryTokens,
         mode,
         options.maxSupportingFacts,
+        requestedSectionKeys,
       );
       return {
         candidate,

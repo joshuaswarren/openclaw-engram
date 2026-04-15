@@ -223,6 +223,7 @@ export function focusMatchesEntity(entity: EntityFile, focus: BriefingFocus): bo
     entity.synthesis || entity.summary || "",
     ...entity.facts,
     ...(entity.aliases ?? []),
+    ...(entity.structuredSections ?? []).flatMap((section) => [section.title, ...section.facts]),
   ]
     .join(" ")
     .toLowerCase();

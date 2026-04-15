@@ -31,7 +31,7 @@ async function buildHarness(prefix: string, overrides: Record<string, unknown> =
     },
     ...overrides,
   });
-  const storage = new StorageManager(memoryDir);
+  const storage = new StorageManager(memoryDir, config.entitySchemas);
   await storage.ensureDirectories();
   return { memoryDir, workspaceDir, config, storage };
 }
@@ -224,6 +224,29 @@ test("entity retrieval keeps fact snippets in likely answer for timeline queries
   assert.ok(timeline);
   assert.match(timeline!, /- likely answer:\n  - Casey Example handled the rollback during the outage\./);
   assert.match(timeline!, /related entities: Rollback Project/);
+});
+
+test("entity retrieval ignores generic 'what does' technical questions without an entity-specific predicate", async () => {
+  const { config, storage } = await buildHarness("engram-entity-what-does");
+  await writeEntity(
+    storage,
+    "Jane Example",
+    "person",
+    ["Jane Example leads release reviews."],
+    "Jane Example leads release reviews.",
+  );
+
+  const section = await buildSection(
+    config,
+    storage,
+    "What does this error mean?",
+    [
+      { role: "user", content: "Jane Example handled the last rollout." },
+      { role: "assistant", content: "I can summarize Jane Example if needed." },
+    ],
+  );
+
+  assert.equal(section, null);
 });
 
 test("entity retrieval respects small supporting-fact caps when ranking memory snippets", async () => {
@@ -629,6 +652,160 @@ test("entity retrieval surfaces uncertainty when direct facts conflict", async (
   assert.match(section!, /uncertainty: Evidence is mixed across stored facts/);
 });
 
+test("entity retrieval scopes answer hints to requested structured sections", async () => {
+  const { config, storage } = await buildHarness("engram-entity-section-scope");
+  const canonical = normalizeEntityName("Alice Example", "person");
+  await writeFile(
+    path.join(config.memoryDir, "entities", `${canonical}.md`),
+    [
+      "---",
+      "created: 2026-04-13T10:00:00.000Z",
+      "updated: 2026-04-13T10:05:00.000Z",
+      'synthesis_updated_at: "2026-04-13T10:05:00.000Z"',
+      "synthesis_version: 1",
+      "---",
+      "",
+      "# Alice Example",
+      "",
+      "**Type:** person",
+      "**Updated:** 2026-04-13T10:05:00.000Z",
+      "",
+      "## Synthesis",
+      "",
+      "Alice Example is a product leader with strong opinions and a direct writing style.",
+      "",
+      "## Beliefs",
+      "",
+      "- Alice Example believes small teams should own whole systems.",
+      "",
+      "## Communication Style",
+      "",
+      "- Alice Example writes blunt weekly updates in Slack.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const section = await buildSection(config, storage, "What does Alice Example believe?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example believes small teams should own whole systems\./);
+  assert.doesNotMatch(section!, /writes blunt weekly updates in Slack/i);
+});
+
+test("entity retrieval surfaces uncertainty for conflicting structured section evidence", async () => {
+  const { config, storage } = await buildHarness("engram-entity-section-uncertainty");
+  await storage.writeEntity("Alice Example", "person", [], {
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: [
+          "Small teams should own whole systems.",
+          "Large review committees reduce risk.",
+        ],
+      },
+    ],
+  });
+
+  const section = await buildSection(config, storage, "What does Alice Example believe?");
+
+  assert.ok(section);
+  assert.match(section!, /uncertainty: Evidence is mixed across stored facts/);
+});
+
+test("entity retrieval does not treat substring matches as requested structured sections", async () => {
+  const { config, storage } = await buildHarness("engram-entity-section-substring");
+  await storage.writeEntity("Alice Example", "person", ["Alice Example leads product strategy at Northwind."], {
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Alice Example believes small teams should own whole systems."],
+      },
+    ],
+  });
+
+  const section = await buildSection(config, storage, "What does Alice Example find unbelievable under pressure?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example leads product strategy at Northwind\./);
+  assert.doesNotMatch(section!, /Alice Example believes small teams should own whole systems\./i);
+});
+
+test("entity retrieval falls back to structured section facts for direct queries when generic facts are empty", async () => {
+  const { config, storage } = await buildHarness("engram-entity-direct-structured-fallback");
+  await storage.writeEntity("Alice Example", "person", [], {
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Alice Example believes small teams should own whole systems."],
+      },
+      {
+        key: "communication_style",
+        title: "Communication Style",
+        facts: ["Alice Example writes blunt weekly updates in Slack."],
+      },
+    ],
+  });
+
+  const section = await buildSection(config, storage, "Who is Alice Example?");
+
+  assert.ok(section);
+  assert.match(section!, /target: Alice Example \(person\)/);
+  assert.match(section!, /likely answer:/);
+  assert.match(section!, /Alice Example believes small teams should own whole systems\./);
+});
+
+test("entity retrieval can surface relevant structured section facts for mixed entities without requesting a section", async () => {
+  const { config, storage } = await buildHarness("engram-entity-direct-mixed-structured-relevance");
+  await storage.writeEntity("Alice Example", "person", ["Alice Example leads product strategy at Northwind."], {
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Alice Example prefers small teams owning whole systems."],
+      },
+    ],
+  });
+
+  const section = await buildSection(config, storage, "What does Alice Example prefer?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example prefers small teams owning whole systems\./);
+});
+
+test("entity retrieval does not prefer fallback structured section facts over timeline evidence when a summary exists", async () => {
+  const { config, storage } = await buildHarness("engram-entity-direct-structured-fallback-summary");
+  await storage.writeEntity("Alice Example", "person", [], {
+    timestamp: "2026-04-13T10:00:00.000Z",
+    source: "extraction",
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Alice Example believes small teams should own whole systems."],
+      },
+    ],
+  });
+  const canonical = normalizeEntityName("Alice Example", "person");
+  await storage.updateEntitySynthesis(canonical, "Alice Example leads product strategy at Northwind.", {
+    updatedAt: "2026-04-13T10:05:00.000Z",
+    synthesisTimelineCount: 1,
+  });
+  await storage.writeEntity("Alice Example", "person", ["Alice Example shipped the launch review this week."], {
+    timestamp: "2026-04-13T11:00:00.000Z",
+    source: "extraction",
+  });
+
+  const section = await buildSection(config, storage, "Who is Alice Example?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example leads product strategy at Northwind\./);
+  assert.doesNotMatch(section!, /Alice Example believes small teams should own whole systems\./);
+});
+
 test("entity retrieval can answer from native knowledge titles and aliases without an entity file", async () => {
   const { workspaceDir, config, storage } = await buildHarness("engram-entity-native", {
     nativeKnowledge: {
@@ -775,7 +952,7 @@ test("orchestrator injects entity retrieval before the knowledge index", async (
     transcriptEnabled: false,
     hourlySummariesEnabled: false,
   });
-  const storage = new StorageManager(memoryDir);
+  const storage = new StorageManager(memoryDir, cfg.entitySchemas);
   await storage.ensureDirectories();
   await writeEntity(
     storage,
@@ -809,7 +986,7 @@ test("orchestrator preserves zero-limit semantics for entity retrieval", async (
     hourlySummariesEnabled: false,
     entityRetrievalMaxHints: 0,
   });
-  const storage = new StorageManager(memoryDir);
+  const storage = new StorageManager(memoryDir, cfg.entitySchemas);
   await storage.ensureDirectories();
   await writeEntity(
     storage,

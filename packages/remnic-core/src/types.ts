@@ -649,6 +649,7 @@ export interface PluginConfig {
   entityRetrievalMaxSupportingFacts: number;
   entityRetrievalMaxRelatedEntities: number;
   entityRetrievalRecentTurns: number;
+  entitySchemas?: Record<string, EntitySchemaDefinition>;
   // Recall assembly controls
   recallBudgetChars: number;
   recallOuterTimeoutMs: number;
@@ -1320,6 +1321,7 @@ export interface EntityMention {
   name: string;
   type: "person" | "project" | "tool" | "company" | "place" | "other";
   facts: string[];
+  structuredSections?: EntityStructuredSection[];
   source?: ExtractionPassSource;
   promptedByQuestion?: string;
 }
@@ -1346,6 +1348,23 @@ export interface EntityTimelineEntry {
   principal?: string;
 }
 
+export interface EntityStructuredSection {
+  key: string;
+  title: string;
+  facts: string[];
+}
+
+export interface EntitySchemaSectionDefinition {
+  key: string;
+  title: string;
+  description: string;
+  aliases?: string[];
+}
+
+export interface EntitySchemaDefinition {
+  sections: EntitySchemaSectionDefinition[];
+}
+
 export interface EntityFile {
   name: string;
   type: string;
@@ -1358,8 +1377,11 @@ export interface EntityFile {
   synthesis?: string;
   synthesisUpdatedAt?: string;
   synthesisTimelineCount?: number;
+  synthesisStructuredFactCount?: number;
+  synthesisStructuredFactDigest?: string;
   synthesisVersion?: number;
   timeline: EntityTimelineEntry[];
+  structuredSections?: EntityStructuredSection[];
   relationships: EntityRelationship[];
   activity: EntityActivityEntry[];
   aliases: string[];
