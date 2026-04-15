@@ -1859,6 +1859,52 @@ test("agent_end routes Codex-managed turns through the logical thread buffer key
   }
 });
 
+test("agent_end fingerprints only the persisted user and assistant turns", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("agent-end-codex-fingerprint-test");
+  plugin.register(api as any);
+
+  const agentEnd = api.handlers.get("agent_end");
+  assert.ok(agentEnd, "agent_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.transcript.append = async () => undefined;
+  const fingerprints: string[] = [];
+  orchestrator.processTurn = async (
+    _role: string,
+    _content: string,
+    _sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    const fingerprint = (options as { turnFingerprint?: string } | undefined)
+      ?.turnFingerprint;
+    if (typeof fingerprint === "string") {
+      fingerprints.push(fingerprint);
+    }
+  };
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        { role: "system", content: "Skipped system frame" },
+        { role: "user", content: "First persisted turn for Codex dedup." },
+        { role: "tool", content: "Skipped tool frame" },
+        { role: "assistant", content: "Second persisted turn for Codex dedup." },
+      ],
+    },
+    {
+      sessionKey: "session-codex-fingerprint",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-fingerprint-1",
+    },
+  );
+
+  assert.equal(fingerprints.length, 2);
+  assert.equal(fingerprints[0]?.split("\u0001").at(-1), "0");
+  assert.equal(fingerprints[1]?.split("\u0001").at(-1), "1");
+});
+
 test("before_compaction flushes the logical Codex thread buffer before checkpoint work", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-compaction-codex-test");
@@ -1899,6 +1945,46 @@ test("before_compaction flushes the logical Codex thread buffer before checkpoin
     flushed?.options?.bufferKey,
     "codex-thread:thread-compaction-1",
   );
+});
+
+test("before_compaction still runs the independent LCM pre-compaction flush when the Codex signal flush fails", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-compaction-codex-flush-failure-test");
+  plugin.register(api as any);
+
+  const beforeCompaction = api.handlers.get("before_compaction");
+  assert.ok(beforeCompaction, "before_compaction handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.config.checkpointEnabled = false;
+  let observeIdleCalls = 0;
+  let preCompactionFlushCalls = 0;
+  orchestrator.lcmEngine = {
+    enabled: true,
+    waitForSessionObserveIdle: async () => {
+      observeIdleCalls += 1;
+    },
+    preCompactionFlush: async () => {
+      preCompactionFlushCalls += 1;
+    },
+  };
+  orchestrator.flushSession = async () => {
+    throw new Error("signal flush failed");
+  };
+
+  await assert.doesNotReject(async () => {
+    await beforeCompaction(
+      { sessionKey: "session-compaction-failure-a" },
+      {
+        sessionKey: "session-compaction-failure-a",
+        provider: { id: "codex", model: "codex/gpt-5.4" },
+        providerThreadId: "thread-compaction-failure-1",
+      },
+    );
+  });
+
+  assert.equal(observeIdleCalls, 1);
+  assert.equal(preCompactionFlushCalls, 1);
 });
 
 test("before_prompt_build uses the Codex heuristic fallback when thread history shrinks", async () => {
@@ -2195,6 +2281,67 @@ test("before_reset reuses the remembered Codex thread id for logical flush keyin
     api._memoryCapability?.promptBuilder?.({ sessionKey: "session-reset-codex" }) ?? null,
     null,
     "before_reset should clear the cached Codex prompt-section entry",
+  );
+});
+
+test("before_reset preserves the remembered Codex thread after a transient recall failure", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-codex-recall-failure-test", {
+    includeMemoryCapability: true,
+  });
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+
+  let flushed:
+    | {
+        sessionKey: string;
+        options: Record<string, unknown> | undefined;
+      }
+    | undefined;
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushed = { sessionKey, options };
+  };
+
+  orchestrator.recall = async () => "Remembered context";
+  await beforePromptBuild(
+    { prompt: "Prime this Codex session before the transient failure." },
+    {
+      sessionKey: "session-reset-codex-failure",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-codex-failure",
+    },
+  );
+
+  orchestrator.recall = async () => {
+    throw new Error("transient recall failure");
+  };
+  await beforePromptBuild(
+    { prompt: "This recall will fail but should keep the Codex alias." },
+    {
+      sessionKey: "session-reset-codex-failure",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-codex-failure",
+    },
+  );
+
+  await beforeReset({ sessionKey: "session-reset-codex-failure" }, {});
+
+  assert.equal(flushed?.sessionKey, "session-reset-codex-failure");
+  assert.equal(flushed?.options?.reason, "before_reset");
+  assert.equal(
+    flushed?.options?.bufferKey,
+    "codex-thread:thread-reset-codex-failure",
   );
 });
 

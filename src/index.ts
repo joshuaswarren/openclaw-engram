@@ -893,6 +893,7 @@ const pluginDefinition = {
     function clearCodexCompatCaches(
       sessionKey: string,
       providerThreadId?: string | null,
+      options?: { preserveThreadBinding?: boolean },
     ): void {
       cachedMemoryBySession.delete(sessionKey);
       const resolvedThreadId =
@@ -901,7 +902,9 @@ const pluginDefinition = {
         cachedMemoryByCodexThread.delete(resolvedThreadId);
         codexMessageCountByThread.delete(resolvedThreadId);
       }
-      codexThreadBySession.delete(sessionKey);
+      if (options?.preserveThreadBinding !== true) {
+        codexThreadBySession.delete(sessionKey);
+      }
     }
 
     function cachePromptMemoryLines(
@@ -1563,7 +1566,9 @@ const pluginDefinition = {
       } catch (err) {
         log.error("recall failed", err);
         lastRecallSummaryBySession.set(sessionKey, null);
-        clearCodexCompatCaches(sessionKey);
+        clearCodexCompatCaches(sessionKey, undefined, {
+          preserveThreadBinding: true,
+        });
         if (orchestrator.config.compactionResetEnabled) {
           orchestrator.clearRecallWorkspaceOverride(sessionKey);
         }
@@ -1899,7 +1904,8 @@ const pluginDefinition = {
             );
           }
 
-          for (const [turnIndex, msg] of lastTurn.entries()) {
+          let persistedTurnIndex = 0;
+          for (const msg of lastTurn) {
             const rawRole = typeof msg.role === "string" ? msg.role : "";
             if (rawRole !== "user" && rawRole !== "assistant") {
               // Ignore tool/system blocks for extraction to avoid noisy memory churn.
@@ -1974,9 +1980,10 @@ const pluginDefinition = {
                   logicalSessionKey: sessionIdentity.logicalSessionKey,
                   providerThreadId: sessionIdentity.providerThreadId,
                   messageCount: sessionIdentity.messageCount,
-                  turnIndex,
+                  turnIndex: persistedTurnIndex,
                 }),
               });
+              persistedTurnIndex += 1;
             }
           }
 
@@ -2034,12 +2041,19 @@ const pluginDefinition = {
             cfg.codexCompat.enabled &&
             cfg.codexCompat.compactionFlushMode !== "heuristic"
           ) {
-            await orchestrator.flushSession(sessionKey, {
-              reason: "codex_compaction_signal",
-              bufferKey: sessionIdentity.logicalSessionKey,
-            });
-            clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId);
-            rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
+            try {
+              await orchestrator.flushSession(sessionKey, {
+                reason: "codex_compaction_signal",
+                bufferKey: sessionIdentity.logicalSessionKey,
+              });
+              clearCodexCompatCaches(
+                sessionKey,
+                sessionIdentity.providerThreadId,
+              );
+              rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
+            } catch (error) {
+              log.warn(`codexCompat signal flush failed: ${String(error)}`);
+            }
           }
           // LCM: flush pending summaries before context is lost
           // (runs regardless of checkpoint setting — LCM needs pre-compaction flush)
