@@ -1283,7 +1283,7 @@ const pluginDefinition = {
             log.warn(`codexCompat heuristic flush failed: ${String(error)}`);
           }
         }
-        if (shouldPersistMessageCount) {
+        if (typeof currentCount === "number" && shouldPersistMessageCount) {
           codexMessageCountByThread.set(
             sessionIdentity.providerThreadId,
             currentCount,
