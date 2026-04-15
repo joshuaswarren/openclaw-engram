@@ -237,7 +237,19 @@ function isBundledActiveMemoryEnabledForAgent(
   const fileBackedEntry = readActiveMemoryEntry(fileBackedRuntimeConfig);
   const activeMemoryEntry = runtimeEntry ?? fileBackedEntry;
   if (!activeMemoryEntry || typeof activeMemoryEntry !== "object") return false;
-  if (runtimeEntry?.enabled === false || activeMemoryEntry.enabled === false) return false;
+
+  const resolveEnabled = (
+    entry: Record<string, unknown> | undefined,
+  ): boolean | undefined => {
+    return typeof entry?.enabled === "boolean" ? (entry.enabled as boolean) : undefined;
+  };
+
+  const runtimeEnabled = resolveEnabled(runtimeEntry);
+  if (runtimeEnabled === false) return false;
+
+  const fileBackedEnabled = resolveEnabled(fileBackedEntry);
+  if (runtimeEnabled === undefined && fileBackedEnabled === false) return false;
+  if (activeMemoryEntry.enabled === false) return false;
 
   const resolveAgents = (
     entry: Record<string, unknown> | undefined,
