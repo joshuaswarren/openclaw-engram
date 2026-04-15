@@ -218,21 +218,27 @@ function readPluginHooksPolicy(
 
 function isBundledActiveMemoryEnabledForAgent(
   runtimeConfig: unknown,
+  fileBackedRuntimeConfig: unknown,
   agentId: string,
 ): boolean {
-  if (!runtimeConfig || typeof runtimeConfig !== "object") return false;
+  const readActiveMemoryEntry = (config: unknown): Record<string, unknown> | undefined => {
+    if (!config || typeof config !== "object") return undefined;
+    const plugins = (config as Record<string, unknown>).plugins;
+    if (!plugins || typeof plugins !== "object") return undefined;
+    const entries = (plugins as Record<string, unknown>).entries;
+    if (!entries || typeof entries !== "object") return undefined;
+    const activeMemoryEntry = (entries as Record<string, unknown>)["active-memory"];
+    return activeMemoryEntry && typeof activeMemoryEntry === "object"
+      ? (activeMemoryEntry as Record<string, unknown>)
+      : undefined;
+  };
 
-  const plugins = (runtimeConfig as Record<string, unknown>).plugins;
-  if (!plugins || typeof plugins !== "object") return false;
-
-  const entries = (plugins as Record<string, unknown>).entries;
-  if (!entries || typeof entries !== "object") return false;
-
-  const activeMemoryEntry = (entries as Record<string, unknown>)["active-memory"];
+  const activeMemoryEntry =
+    readActiveMemoryEntry(runtimeConfig) ?? readActiveMemoryEntry(fileBackedRuntimeConfig);
   if (!activeMemoryEntry || typeof activeMemoryEntry !== "object") return false;
-  if ((activeMemoryEntry as Record<string, unknown>).enabled === false) return false;
+  if (activeMemoryEntry.enabled === false) return false;
 
-  const entryConfig = (activeMemoryEntry as Record<string, unknown>).config;
+  const entryConfig = activeMemoryEntry.config;
   if (!entryConfig || typeof entryConfig !== "object") return true;
 
   const agents = (entryConfig as Record<string, unknown>).agents;
@@ -455,10 +461,11 @@ const pluginDefinition = {
     log.debug(
       `init llm routing (modelSource=${cfg.modelSource}, localLlmEnabled=${cfg.localLlmEnabled}${cfg.localLlmFastEnabled ? `, fastLlm=${cfg.localLlmFastModel || "(primary)"}` : ""})`,
     );
+    const fileBackedRawRuntimeConfig = loadRawConfigFromFile();
     const rawRuntimeConfig =
       api.config && typeof api.config === "object"
         ? (api.config as Record<string, unknown>)
-        : loadRawConfigFromFile();
+        : fileBackedRawRuntimeConfig;
     const slotValidationMode = validateSlotSelection({
       pluginId: serviceId,
       runtimeConfig: rawRuntimeConfig,
@@ -1164,7 +1171,11 @@ const pluginDefinition = {
         }
         const plannerPreflightMode = planRecallMode(prompt);
         const bundledActiveMemoryEnabledForAgent =
-          isBundledActiveMemoryEnabledForAgent(rawRuntimeConfig, agentId);
+          isBundledActiveMemoryEnabledForAgent(
+            rawRuntimeConfig,
+            fileBackedRawRuntimeConfig,
+            agentId,
+          );
         const shouldWarnAndSuppressBundledActiveMemoryCollision =
           cfg.activeRecallEnabled &&
           !cfg.activeRecallAllowChainedActiveMemory &&
