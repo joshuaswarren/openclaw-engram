@@ -299,6 +299,39 @@ test("updateEntitySynthesis honors an explicit structured fact snapshot count", 
   }
 });
 
+test("updateEntitySynthesis preserves an explicit zero structured fact snapshot count", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-structured-sections-zero-snapshot-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const entityName = "Jane Doe";
+    const entityType = "person";
+    const canonical = normalizeEntityName(entityName, entityType);
+    const timestamp = "2026-04-13T10:00:00.000Z";
+
+    await storage.writeEntity(entityName, entityType, ["Initial fact before synthesis."], {
+      timestamp,
+      source: "extraction",
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe keeps teams small and decisive.", {
+      updatedAt: timestamp,
+      entityUpdatedAt: timestamp,
+      synthesisTimelineCount: 1,
+      synthesisStructuredFactCount: 0,
+    });
+
+    const parsed = parseEntityFile(
+      await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"),
+    );
+
+    assert.equal(parsed.synthesisStructuredFactCount, 0);
+    assert.equal(isEntitySynthesisStale(parsed), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeEntity marks same-timestamp appended evidence as stale after synthesis", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-same-ts-"));
   try {

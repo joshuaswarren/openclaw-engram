@@ -4439,9 +4439,7 @@ export class StorageManager {
     entity.summary = entity.synthesis;
     entity.synthesisUpdatedAt = updatedAt;
     entity.synthesisTimelineCount = synthesisTimelineCount;
-    entity.synthesisStructuredFactCount = synthesisStructuredFactCount !== undefined && synthesisStructuredFactCount > 0
-      ? synthesisStructuredFactCount
-      : undefined;
+    entity.synthesisStructuredFactCount = synthesisStructuredFactCount;
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
