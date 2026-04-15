@@ -713,6 +713,7 @@ function parseEntityFrontmatter(
     synthesisUpdatedAt?: string;
     synthesisTimelineCount?: number;
     synthesisStructuredFactCount?: number;
+    synthesisStructuredFactDigest?: string;
     synthesisVersion?: number;
     extraLines?: string[];
   };
@@ -731,6 +732,7 @@ function parseEntityFrontmatter(
     "synthesis_updated_at",
     "synthesis_timeline_count",
     "synthesis_structured_fact_count",
+    "synthesis_structured_fact_digest",
     "synthesis_version",
   ]);
   for (const line of match[1].split(/\r?\n/)) {
@@ -762,6 +764,7 @@ function parseEntityFrontmatter(
       synthesisUpdatedAt: values.synthesis_updated_at || undefined,
       synthesisTimelineCount: Number.isFinite(synthesisTimelineCount) ? synthesisTimelineCount : undefined,
       synthesisStructuredFactCount: Number.isFinite(synthesisStructuredFactCount) ? synthesisStructuredFactCount : undefined,
+      synthesisStructuredFactDigest: values.synthesis_structured_fact_digest || undefined,
       synthesisVersion: Number.isFinite(synthesisVersion) ? synthesisVersion : undefined,
       extraLines,
     },
@@ -1275,22 +1278,42 @@ function countEntityStructuredFacts(entity: EntityFile): number {
   return (entity.structuredSections ?? []).reduce((count, section) => count + section.facts.length, 0);
 }
 
+function fingerprintEntityStructuredFacts(entity: EntityFile): string | undefined {
+  const normalizedSections = (entity.structuredSections ?? [])
+    .map((section) => ({
+      key: section.key.trim().toLowerCase(),
+      title: section.title.replace(/\s+/g, " ").trim(),
+      facts: normalizeStructuredSectionFacts(section.facts).slice().sort((left, right) => left.localeCompare(right)),
+    }))
+    .filter((section) => section.facts.length > 0)
+    .sort((left, right) =>
+      left.key.localeCompare(right.key)
+      || left.title.localeCompare(right.title)
+      || left.facts.join("\n").localeCompare(right.facts.join("\n")));
+  if (normalizedSections.length === 0) return undefined;
+  return createHash("sha256").update(JSON.stringify(normalizedSections)).digest("hex");
+}
+
 export function isEntitySynthesisStale(entity: EntityFile): boolean {
   const structuredFactCount = countEntityStructuredFacts(entity);
+  const structuredFactDigest = fingerprintEntityStructuredFacts(entity);
   if (entity.timeline.length === 0 && structuredFactCount === 0) return false;
   if (!entity.synthesis?.trim()) return true;
   if (entity.synthesisTimelineCount === undefined) return true;
   if (structuredFactCount > 0 && entity.synthesisStructuredFactCount === undefined) return true;
+  if (structuredFactCount > 0 && !entity.synthesisStructuredFactDigest?.trim()) return true;
   const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
   if (!latestTimelineTimestamp) {
     return entity.timeline.length > entity.synthesisTimelineCount
-      || structuredFactCount > (entity.synthesisStructuredFactCount ?? 0);
+      || structuredFactCount > (entity.synthesisStructuredFactCount ?? 0)
+      || structuredFactDigest !== entity.synthesisStructuredFactDigest;
   }
   if (!entity.synthesisUpdatedAt?.trim()) return true;
   const timelineFreshness = compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt);
   if (timelineFreshness > 0) return true;
   return entity.timeline.length > entity.synthesisTimelineCount
-    || structuredFactCount > (entity.synthesisStructuredFactCount ?? 0);
+    || structuredFactCount > (entity.synthesisStructuredFactCount ?? 0)
+    || structuredFactDigest !== entity.synthesisStructuredFactDigest;
 }
 
 /**
@@ -1452,6 +1475,7 @@ export function parseEntityFile(
   const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
   const synthesisTimelineCount = frontmatter.synthesisTimelineCount;
   const synthesisStructuredFactCount = frontmatter.synthesisStructuredFactCount;
+  const synthesisStructuredFactDigest = frontmatter.synthesisStructuredFactDigest;
   const { structuredSections, remainingExtraSections } = partitionEntityStructuredSections(
     type,
     extraSections,
@@ -1472,6 +1496,7 @@ export function parseEntityFile(
     synthesisUpdatedAt,
     synthesisTimelineCount,
     synthesisStructuredFactCount,
+    synthesisStructuredFactDigest,
     synthesisVersion: frontmatter.synthesisVersion,
     timeline,
     structuredSections,
@@ -1514,6 +1539,7 @@ export function serializeEntityFile(
   const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
   const synthesisTimelineCount = entity.synthesisTimelineCount;
   const synthesisStructuredFactCount = entity.synthesisStructuredFactCount;
+  const synthesisStructuredFactDigest = entity.synthesisStructuredFactDigest?.trim() || "";
   const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
 
   const lines: string[] = [
@@ -1527,6 +1553,9 @@ export function serializeEntityFile(
     ...(synthesisStructuredFactCount === undefined
       ? []
       : [`synthesis_structured_fact_count: ${synthesisStructuredFactCount}`]),
+    ...(synthesisStructuredFactDigest
+      ? [`synthesis_structured_fact_digest: "${synthesisStructuredFactDigest}"`]
+      : []),
     `synthesis_version: ${synthesisVersion}`,
     ...(entity.extraFrontmatterLines ?? []),
     "---",
@@ -4410,6 +4439,7 @@ export class StorageManager {
     options: {
       entityUpdatedAt?: string;
       synthesisStructuredFactCount?: number;
+      synthesisStructuredFactDigest?: string;
       synthesisTimelineCount?: number;
       updatedAt?: string;
       incrementVersion?: boolean;
@@ -4435,11 +4465,14 @@ export class StorageManager {
       && (options.synthesisStructuredFactCount ?? 0) >= 0
       ? options.synthesisStructuredFactCount
       : countEntityStructuredFacts(entity);
+    const synthesisStructuredFactDigest = options.synthesisStructuredFactDigest?.trim()
+      || fingerprintEntityStructuredFacts(entity);
     entity.synthesis = synthesis.trim();
     entity.summary = entity.synthesis;
     entity.synthesisUpdatedAt = updatedAt;
     entity.synthesisTimelineCount = synthesisTimelineCount;
     entity.synthesisStructuredFactCount = synthesisStructuredFactCount;
+    entity.synthesisStructuredFactDigest = synthesisStructuredFactDigest;
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
@@ -4780,6 +4813,7 @@ export class StorageManager {
           synthesisUpdatedAt: undefined,
           synthesisTimelineCount: undefined,
           synthesisStructuredFactCount: undefined,
+          synthesisStructuredFactDigest: undefined,
           synthesisVersion: undefined,
           timeline: [],
           relationships: [],
@@ -4853,6 +4887,7 @@ export class StorageManager {
               mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
               mergedEntity.synthesisTimelineCount = parsed.synthesisTimelineCount;
               mergedEntity.synthesisStructuredFactCount = parsed.synthesisStructuredFactCount;
+              mergedEntity.synthesisStructuredFactDigest = parsed.synthesisStructuredFactDigest;
               mergedEntity.synthesisVersion = parsed.synthesisVersion;
             } else if (!mergedEntity.summary && parsed.summary) {
               mergedEntity.summary = parsed.summary;
@@ -4860,6 +4895,7 @@ export class StorageManager {
               mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
               mergedEntity.synthesisTimelineCount = parsed.synthesisTimelineCount;
               mergedEntity.synthesisStructuredFactCount = parsed.synthesisStructuredFactCount;
+              mergedEntity.synthesisStructuredFactDigest = parsed.synthesisStructuredFactDigest;
               mergedEntity.synthesisVersion = parsed.synthesisVersion;
             }
 

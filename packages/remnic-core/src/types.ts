@@ -1378,6 +1378,7 @@ export interface EntityFile {
   synthesisUpdatedAt?: string;
   synthesisTimelineCount?: number;
   synthesisStructuredFactCount?: number;
+  synthesisStructuredFactDigest?: string;
   synthesisVersion?: number;
   timeline: EntityTimelineEntry[];
   structuredSections?: EntityStructuredSection[];

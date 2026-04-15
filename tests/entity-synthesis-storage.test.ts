@@ -299,6 +299,67 @@ test("updateEntitySynthesis honors an explicit structured fact snapshot count", 
   }
 });
 
+test("entity synthesis becomes stale when structured fact content changes without changing the count", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-structured-sections-digest-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const entityName = "Jane Doe";
+    const entityType = "person";
+    const canonical = normalizeEntityName(entityName, entityType);
+    const timestamp = "2026-04-13T10:00:00.000Z";
+    const entityPath = path.join(dir, "entities", `${canonical}.md`);
+
+    await storage.writeEntity(entityName, entityType, ["Initial fact before synthesis."], {
+      timestamp,
+      source: "extraction",
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Small teams move faster than committees."],
+        },
+      ],
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe keeps teams small and decisive.", {
+      updatedAt: timestamp,
+      entityUpdatedAt: timestamp,
+      synthesisTimelineCount: 1,
+      synthesisStructuredFactCount: 1,
+    });
+
+    const afterSynthesis = parseEntityFile(await readFile(entityPath, "utf-8"));
+    assert.equal(afterSynthesis.synthesisStructuredFactCount, 1);
+    assert.ok(afterSynthesis.synthesisStructuredFactDigest);
+    assert.equal(isEntitySynthesisStale(afterSynthesis), false);
+
+    const rewritten = {
+      ...afterSynthesis,
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Roadmaps should stay legible to the team."],
+        },
+      ],
+      facts: [
+        "Initial fact before synthesis.",
+        "Roadmaps should stay legible to the team.",
+      ],
+    };
+    await writeFile(entityPath, serializeEntityFile(rewritten), "utf-8");
+
+    const reparsed = parseEntityFile(await readFile(entityPath, "utf-8"));
+    assert.equal(reparsed.structuredSections?.[0]?.facts.length, 1);
+    assert.equal(reparsed.synthesisStructuredFactCount, 1);
+    assert.ok(reparsed.synthesisStructuredFactDigest);
+    assert.equal(isEntitySynthesisStale(reparsed), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("updateEntitySynthesis preserves an explicit zero structured fact snapshot count", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-structured-sections-zero-snapshot-"));
   try {
