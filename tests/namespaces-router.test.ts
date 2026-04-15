@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import type { PluginConfig } from "../src/types.js";
@@ -175,4 +175,45 @@ test("v3 namespaces router uses namespaced dir when it exists before first resol
 
   const namespacedProfile = await readFile(path.join(nsDir, "profile.md"), "utf-8");
   assert.match(namespacedProfile, /Namespaced/);
+});
+
+test("v3 namespaces router propagates custom entity schemas to routed storage managers", async () => {
+  const memoryDir = tmpDir("engram-ns-router-schemas");
+  await mkdir(path.join(memoryDir, "entities"), { recursive: true });
+
+  const cfg = baseConfig(memoryDir);
+  cfg.entitySchemas = {
+    person: {
+      sections: [{ key: "principles", title: "Principles", description: "" }],
+    },
+  };
+
+  const router = new NamespaceStorageRouter(cfg);
+  const storage = await router.storageFor("default");
+  const canonical = "person-alice-example";
+  await writeFile(
+    path.join(memoryDir, "entities", `${canonical}.md`),
+    [
+      "# Alice Example",
+      "",
+      "**Type:** person",
+      "",
+      "## Principles",
+      "",
+      "- Alice Example documents operating principles explicitly.",
+      "",
+    ].join("\n"),
+    "utf-8",
+  );
+
+  const entities = await storage.readAllEntityFiles();
+
+  assert.equal(entities.length, 1);
+  assert.deepEqual(entities[0]?.structuredSections, [
+    {
+      key: "principles",
+      title: "Principles",
+      facts: ["Alice Example documents operating principles explicitly."],
+    },
+  ]);
 });

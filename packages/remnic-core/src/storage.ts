@@ -688,6 +688,7 @@ function parseEntityFrontmatter(
     updated?: string;
     synthesisUpdatedAt?: string;
     synthesisTimelineCount?: number;
+    synthesisStructuredFactCount?: number;
     synthesisVersion?: number;
     extraLines?: string[];
   };
@@ -705,6 +706,7 @@ function parseEntityFrontmatter(
     "updated",
     "synthesis_updated_at",
     "synthesis_timeline_count",
+    "synthesis_structured_fact_count",
     "synthesis_version",
   ]);
   for (const line of match[1].split(/\r?\n/)) {
@@ -727,6 +729,7 @@ function parseEntityFrontmatter(
   }
 
   const synthesisTimelineCount = Number.parseInt(values.synthesis_timeline_count ?? "", 10);
+  const synthesisStructuredFactCount = Number.parseInt(values.synthesis_structured_fact_count ?? "", 10);
   const synthesisVersion = Number.parseInt(values.synthesis_version ?? "", 10);
   return {
     frontmatter: {
@@ -734,6 +737,7 @@ function parseEntityFrontmatter(
       updated: values.updated || undefined,
       synthesisUpdatedAt: values.synthesis_updated_at || undefined,
       synthesisTimelineCount: Number.isFinite(synthesisTimelineCount) ? synthesisTimelineCount : undefined,
+      synthesisStructuredFactCount: Number.isFinite(synthesisStructuredFactCount) ? synthesisStructuredFactCount : undefined,
       synthesisVersion: Number.isFinite(synthesisVersion) ? synthesisVersion : undefined,
       extraLines,
     },
@@ -1210,18 +1214,26 @@ export function compareEntityTimestamps(left?: string, right?: string): number {
   return leftValue.localeCompare(rightValue);
 }
 
+function countEntityStructuredFacts(entity: EntityFile): number {
+  return (entity.structuredSections ?? []).reduce((count, section) => count + section.facts.length, 0);
+}
+
 export function isEntitySynthesisStale(entity: EntityFile): boolean {
   if (entity.timeline.length === 0) return false;
   if (!entity.synthesis?.trim()) return true;
   if (entity.synthesisTimelineCount === undefined) return true;
+  const structuredFactCount = countEntityStructuredFacts(entity);
+  if (structuredFactCount > 0 && entity.synthesisStructuredFactCount === undefined) return true;
   const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
   if (!latestTimelineTimestamp) {
-    return entity.timeline.length > entity.synthesisTimelineCount;
+    return entity.timeline.length > entity.synthesisTimelineCount
+      || structuredFactCount > (entity.synthesisStructuredFactCount ?? 0);
   }
   if (!entity.synthesisUpdatedAt?.trim()) return true;
   const timelineFreshness = compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt);
   if (timelineFreshness > 0) return true;
-  return entity.timeline.length > entity.synthesisTimelineCount;
+  return entity.timeline.length > entity.synthesisTimelineCount
+    || structuredFactCount > (entity.synthesisStructuredFactCount ?? 0);
 }
 
 /**
@@ -1383,6 +1395,7 @@ export function parseEntityFile(
   const facts = dedupeEntityFacts(timeline);
   const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
   const synthesisTimelineCount = frontmatter.synthesisTimelineCount;
+  const synthesisStructuredFactCount = frontmatter.synthesisStructuredFactCount;
   const { structuredSections, remainingExtraSections } = partitionEntityStructuredSections(
     type,
     extraSections,
@@ -1401,6 +1414,7 @@ export function parseEntityFile(
     synthesis,
     synthesisUpdatedAt,
     synthesisTimelineCount,
+    synthesisStructuredFactCount,
     synthesisVersion: frontmatter.synthesisVersion,
     timeline,
     structuredSections,
@@ -1437,6 +1451,7 @@ export function serializeEntityFile(
   ) : [];
   const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
   const synthesisTimelineCount = entity.synthesisTimelineCount;
+  const synthesisStructuredFactCount = entity.synthesisStructuredFactCount;
   const synthesisVersion = entity.synthesisVersion ?? (synthesis ? 1 : 0);
 
   const lines: string[] = [
@@ -1447,6 +1462,9 @@ export function serializeEntityFile(
     ...(synthesisTimelineCount === undefined
       ? []
       : [`synthesis_timeline_count: ${synthesisTimelineCount}`]),
+    ...(synthesisStructuredFactCount === undefined
+      ? []
+      : [`synthesis_structured_fact_count: ${synthesisStructuredFactCount}`]),
     `synthesis_version: ${synthesisVersion}`,
     ...(entity.extraFrontmatterLines ?? []),
     "---",
@@ -2248,6 +2266,7 @@ export class StorageManager {
       synthesis: undefined,
       synthesisUpdatedAt: undefined,
       synthesisVersion: undefined,
+      synthesisStructuredFactCount: undefined,
       timeline: [],
       relationships: [],
       activity: [],
@@ -4331,10 +4350,12 @@ export class StorageManager {
       && (options.synthesisTimelineCount ?? 0) >= 0
       ? options.synthesisTimelineCount
       : undefined;
+    const synthesisStructuredFactCount = countEntityStructuredFacts(entity);
     entity.synthesis = synthesis.trim();
     entity.summary = entity.synthesis;
     entity.synthesisUpdatedAt = updatedAt;
     entity.synthesisTimelineCount = synthesisTimelineCount;
+    entity.synthesisStructuredFactCount = synthesisStructuredFactCount > 0 ? synthesisStructuredFactCount : undefined;
     entity.synthesisVersion = Math.max(0, entity.synthesisVersion ?? 0)
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
@@ -4671,6 +4692,7 @@ export class StorageManager {
           synthesis: undefined,
           synthesisUpdatedAt: undefined,
           synthesisTimelineCount: undefined,
+          synthesisStructuredFactCount: undefined,
           synthesisVersion: undefined,
           timeline: [],
           relationships: [],
@@ -4743,12 +4765,14 @@ export class StorageManager {
               mergedEntity.summary = parsed.synthesis;
               mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
               mergedEntity.synthesisTimelineCount = parsed.synthesisTimelineCount;
+              mergedEntity.synthesisStructuredFactCount = parsed.synthesisStructuredFactCount;
               mergedEntity.synthesisVersion = parsed.synthesisVersion;
             } else if (!mergedEntity.summary && parsed.summary) {
               mergedEntity.summary = parsed.summary;
               mergedEntity.synthesis = parsed.summary;
               mergedEntity.synthesisUpdatedAt = parsedSynthesisUpdatedAt;
               mergedEntity.synthesisTimelineCount = parsed.synthesisTimelineCount;
+              mergedEntity.synthesisStructuredFactCount = parsed.synthesisStructuredFactCount;
               mergedEntity.synthesisVersion = parsed.synthesisVersion;
             }
 

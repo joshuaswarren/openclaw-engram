@@ -112,6 +112,74 @@ test("writeEntity preserves structured sections alongside timeline evidence", as
   }
 });
 
+test("writeEntity marks section-only evidence updates as stale after synthesis", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-structured-sections-stale-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const entityName = "Jane Doe";
+    const entityType = "person";
+    const canonical = normalizeEntityName(entityName, entityType);
+    const timestamp = "2026-04-13T10:00:00.000Z";
+
+    await storage.writeEntity(entityName, entityType, ["Initial fact before synthesis."], {
+      timestamp,
+      source: "extraction",
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Small teams move faster than committees."],
+        },
+      ],
+    });
+    await storage.updateEntitySynthesis(canonical, "Jane Doe keeps teams small and decisive.", {
+      updatedAt: timestamp,
+      entityUpdatedAt: timestamp,
+      synthesisTimelineCount: 1,
+    });
+
+    const afterSynthesis = parseEntityFile(
+      await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"),
+    );
+    assert.equal(afterSynthesis.timeline.length, 1);
+    assert.equal(afterSynthesis.synthesisTimelineCount, 1);
+    assert.equal(isEntitySynthesisStale(afterSynthesis), false);
+
+    await storage.writeEntity(entityName, entityType, [], {
+      timestamp,
+      source: "extraction",
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Roadmaps should stay legible to the team."],
+        },
+      ],
+    });
+
+    const parsed = parseEntityFile(
+      await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"),
+    );
+    assert.equal(parsed.timeline.length, 1);
+    assert.equal(parsed.synthesisTimelineCount, 1);
+    assert.deepEqual(parsed.structuredSections, [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: [
+          "Small teams move faster than committees.",
+          "Roadmaps should stay legible to the team.",
+        ],
+      },
+    ]);
+    assert.equal(isEntitySynthesisStale(parsed), true);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeEntity marks same-timestamp appended evidence as stale after synthesis", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-storage-same-ts-"));
   try {
