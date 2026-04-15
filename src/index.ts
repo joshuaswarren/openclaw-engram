@@ -890,6 +890,19 @@ const pluginDefinition = {
       codexThreadBySession.set(sessionKey, providerThreadId);
     }
 
+    function forgetCodexThread(
+      sessionKey: string,
+      providerThreadId?: string | null,
+    ): void {
+      const resolvedThreadId =
+        providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+      if (resolvedThreadId) {
+        cachedMemoryByCodexThread.delete(resolvedThreadId);
+        codexMessageCountByThread.delete(resolvedThreadId);
+      }
+      codexThreadBySession.delete(sessionKey);
+    }
+
     function clearCodexCompatCaches(
       sessionKey: string,
       providerThreadId?: string | null,
@@ -905,6 +918,47 @@ const pluginDefinition = {
       if (options?.preserveThreadBinding !== true) {
         codexThreadBySession.delete(sessionKey);
       }
+    }
+
+    function hasExplicitProviderIdentity(
+      source: Record<string, unknown> | undefined,
+    ): boolean {
+      if (!source || typeof source !== "object") return false;
+      if (typeof source.messageProvider === "string" && source.messageProvider.length > 0) {
+        return true;
+      }
+      if (typeof source.providerId === "string" && source.providerId.length > 0) {
+        return true;
+      }
+      if (typeof source.providerName === "string" && source.providerName.length > 0) {
+        return true;
+      }
+      if (typeof source.modelId === "string" && source.modelId.length > 0) {
+        return true;
+      }
+      if (typeof source.model === "string" && source.model.length > 0) {
+        return true;
+      }
+      if (
+        typeof source.providerThreadId === "string" &&
+        source.providerThreadId.length > 0
+      ) {
+        return true;
+      }
+      if (typeof source.codexThreadId === "string" && source.codexThreadId.length > 0) {
+        return true;
+      }
+      if (source.provider && typeof source.provider === "object") {
+        const provider = source.provider as Record<string, unknown>;
+        return (
+          (typeof provider.id === "string" && provider.id.length > 0) ||
+          (typeof provider.name === "string" && provider.name.length > 0) ||
+          (typeof provider.model === "string" && provider.model.length > 0) ||
+          (typeof provider.modelId === "string" && provider.modelId.length > 0) ||
+          (typeof provider.threadId === "string" && provider.threadId.length > 0)
+        );
+      }
+      return false;
     }
 
     function cachePromptMemoryLines(
@@ -949,6 +1003,11 @@ const pluginDefinition = {
         ctx,
         codexCompat: cfg.codexCompat,
       });
+      const explicitProviderIdentity =
+        hasExplicitProviderIdentity(event) || hasExplicitProviderIdentity(ctx);
+      if (explicitProviderIdentity && !base.isCodex) {
+        forgetCodexThread(sessionKey);
+      }
       const rememberedThreadId =
         base.providerThreadId ??
         (base.isCodex ? resolveStoredCodexThreadId(sessionKey) : null);
@@ -1185,10 +1244,10 @@ const pluginDefinition = {
       if (sessionIdentity.isCodex && !codexCompactionModeLogged) {
         const mode =
           cfg.codexCompat.compactionFlushMode === "auto"
-            ? "signal"
-            : cfg.codexCompat.compactionFlushMode;
+            ? "auto compaction flush mode (signal + heuristic)"
+            : `${cfg.codexCompat.compactionFlushMode} compaction flush mode`;
         log.info(
-          `codexCompat enabled: using ${mode} compaction flush mode for bundled Codex sessions`,
+          `codexCompat enabled: using ${mode} for bundled Codex sessions`,
         );
         codexCompactionModeLogged = true;
       }
@@ -1203,6 +1262,7 @@ const pluginDefinition = {
         const previousCount = codexMessageCountByThread.get(
           sessionIdentity.providerThreadId,
         );
+        let shouldPersistMessageCount = typeof currentCount === "number";
         if (
           typeof currentCount === "number" &&
           typeof previousCount === "number" &&
@@ -1219,10 +1279,11 @@ const pluginDefinition = {
               `codexCompat heuristic flush: thread=${sessionIdentity.providerThreadId} messages ${previousCount} -> ${currentCount}`,
             );
           } catch (error) {
+            shouldPersistMessageCount = false;
             log.warn(`codexCompat heuristic flush failed: ${String(error)}`);
           }
         }
-        if (typeof currentCount === "number") {
+        if (shouldPersistMessageCount) {
           codexMessageCountByThread.set(
             sessionIdentity.providerThreadId,
             currentCount,
