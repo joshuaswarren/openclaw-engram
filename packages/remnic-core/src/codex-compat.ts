@@ -43,15 +43,7 @@ export function isCodexProvider(
     return true;
   }
 
-  const providerThreadId =
-    source.providerThreadId ??
-    provider?.threadId ??
-    (provider?.thread &&
-    typeof provider.thread === "object" &&
-    typeof (provider.thread as Record<string, unknown>).id === "string"
-      ? (provider.thread as Record<string, unknown>).id
-      : undefined) ??
-    source.codexThreadId;
+  const providerThreadId = extractCodexThreadId(source);
 
   return typeof providerThreadId === "string" && providerThreadId.length > 0;
 }

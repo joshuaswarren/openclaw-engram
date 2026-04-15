@@ -947,14 +947,13 @@ const pluginDefinition = {
         codexCompat: cfg.codexCompat,
       });
       const rememberedThreadId =
-        base.providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
-      const isCodex = base.isCodex || Boolean(rememberedThreadId);
+        base.providerThreadId ??
+        (base.isCodex ? resolveStoredCodexThreadId(sessionKey) : null);
       return {
         ...base,
-        isCodex,
         providerThreadId: rememberedThreadId,
         logicalSessionKey:
-          isCodex &&
+          base.isCodex &&
           cfg.codexCompat.threadIdBufferKeying !== false &&
           rememberedThreadId
             ? codexLogicalSessionKey(rememberedThreadId)
@@ -2253,6 +2252,8 @@ const pluginDefinition = {
             (event?.sessionKey as string) ??
             "default";
           const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+          const rememberedThreadId =
+            sessionIdentity.providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
           const flushEnabled =
             cfg.flushOnResetEnabled &&
             typeof (orchestrator as any).flushSession === "function";
@@ -2263,7 +2264,11 @@ const pluginDefinition = {
             ? Promise.resolve(
                 (orchestrator as any).flushSession(sessionKey, {
                   reason: "before_reset",
-                  bufferKey: sessionIdentity.logicalSessionKey,
+                  bufferKey:
+                    rememberedThreadId &&
+                    cfg.codexCompat.threadIdBufferKeying !== false
+                      ? codexLogicalSessionKey(rememberedThreadId)
+                      : sessionIdentity.logicalSessionKey,
                   abortSignal: flushAbort.signal,
                 }),
               ).catch((error) => {

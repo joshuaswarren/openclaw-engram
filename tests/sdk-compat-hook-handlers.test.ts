@@ -2140,6 +2140,71 @@ test("before_reset reuses the remembered Codex thread id for logical flush keyin
   );
 });
 
+test("agent_end does not reuse a remembered Codex thread after the provider switches", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("agent-end-provider-switch-test");
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const agentEnd = api.handlers.get("agent_end");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(agentEnd, "agent_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.transcript.append = async () => undefined;
+
+  const processTurnCalls: Array<Record<string, unknown>> = [];
+  orchestrator.processTurn = async (
+    role: string,
+    content: string,
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    processTurnCalls.push({ role, content, sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime this Codex session with a remembered thread." },
+    {
+      sessionKey: "session-provider-switch",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-provider-switch",
+    },
+  );
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        { role: "user", content: "Store this follow-up after the provider switch." },
+        {
+          role: "assistant",
+          content: "Stored after the provider switched away from Codex.",
+        },
+      ],
+    },
+    {
+      sessionKey: "session-provider-switch",
+      provider: { id: "openai", model: "gpt-5.4" },
+    },
+  );
+
+  assert.equal(processTurnCalls.length, 2);
+  for (const call of processTurnCalls) {
+    assert.equal(call.sessionKey, "session-provider-switch");
+    assert.equal(
+      (call.options as { bufferKey?: string }).bufferKey,
+      "session-provider-switch",
+    );
+    assert.equal(
+      (call.options as { providerThreadId?: string | null }).providerThreadId,
+      null,
+    );
+  }
+});
+
 test("registrationMode setup-only registers zero handlers", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("setup-only-test", {

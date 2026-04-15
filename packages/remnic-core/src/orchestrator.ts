@@ -66,6 +66,7 @@ import {
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
+import { CODEX_THREAD_KEY_PREFIX } from "./codex-compat.js";
 import {
   applyTemporalSupersession,
   normalizeSupersessionKey,
@@ -8429,7 +8430,7 @@ export class Orchestrator {
     return (
       this.config.codexCompat.enabled === true &&
       this.config.codexCompat.fingerprintDedup === true &&
-      bufferKey.startsWith("codex-thread:")
+      bufferKey.startsWith(CODEX_THREAD_KEY_PREFIX)
     );
   }
 
