@@ -307,7 +307,7 @@ test("processEntitySynthesisQueue counts failed entities against the maxEntities
   }
 });
 
-test("processEntitySynthesisQueue deduplicates repeated facts before truncating evidence", async () => {
+test("processEntitySynthesisQueue keeps the newest and oldest repeated facts before truncating evidence", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-dedupe-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-dedupe-workspace-"));
   try {
@@ -356,7 +356,9 @@ test("processEntitySynthesisQueue deduplicates repeated facts before truncating 
     assert.match(capturedPrompt, /Repeated recent fact\./);
     assert.match(capturedPrompt, /Unique older fact should still be included\./);
     assert.doesNotMatch(capturedPrompt, /Seed fact before synthesis\./);
-    assert.equal((capturedPrompt.match(/Repeated recent fact\./g) ?? []).length, 1);
+    assert.match(capturedPrompt, /timestamp=2026-04-13T13:00:00.000Z, source=extraction: Repeated recent fact\./);
+    assert.match(capturedPrompt, /timestamp=2026-04-13T20:00:00.000Z, source=extraction: Repeated recent fact\./);
+    assert.equal((capturedPrompt.match(/Repeated recent fact\./g) ?? []).length, 2);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });

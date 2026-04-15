@@ -2317,12 +2317,41 @@ export class Orchestrator {
           .slice()
           .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
         const dedupedEvidenceEntries: typeof sortedTimelineEntries = [];
-        const seenEvidenceFacts = new Set<string>();
+        const evidenceByFact = new Map<string, {
+          newest: typeof sortedTimelineEntries[number];
+          oldest: typeof sortedTimelineEntries[number];
+        }>();
         for (const entry of (candidateEvidenceEntries.length > 0 ? candidateEvidenceEntries : sortedTimelineEntries)) {
           const normalizedFact = entry.text.trim();
-          if (!normalizedFact || seenEvidenceFacts.has(normalizedFact)) continue;
-          seenEvidenceFacts.add(normalizedFact);
-          dedupedEvidenceEntries.push(entry);
+          if (!normalizedFact) continue;
+          const existing = evidenceByFact.get(normalizedFact);
+          if (!existing) {
+            evidenceByFact.set(normalizedFact, { newest: entry, oldest: entry });
+            continue;
+          }
+          if (compareEntityTimestamps(entry.timestamp, existing.oldest.timestamp) < 0) {
+            existing.oldest = entry;
+          }
+        }
+        for (const { newest, oldest } of evidenceByFact.values()) {
+          dedupedEvidenceEntries.push(newest);
+          const newestKey = [
+            newest.timestamp,
+            newest.source ?? "",
+            newest.sessionKey ?? "",
+            newest.principal ?? "",
+            newest.text,
+          ].join("\u0000");
+          const oldestKey = [
+            oldest.timestamp,
+            oldest.source ?? "",
+            oldest.sessionKey ?? "",
+            oldest.principal ?? "",
+            oldest.text,
+          ].join("\u0000");
+          if (oldestKey !== newestKey) {
+            dedupedEvidenceEntries.push(oldest);
+          }
         }
         const chronologicalEvidenceEntries = dedupedEvidenceEntries
           .slice()

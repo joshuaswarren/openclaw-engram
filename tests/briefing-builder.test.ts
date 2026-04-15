@@ -10,7 +10,13 @@ import {
   parseBriefingWindow,
   parseBriefingFocus,
 } from "../src/briefing.js";
-import type { BriefingFollowup, EntityFile, CalendarSource, CalendarEvent } from "../src/types.js";
+import type {
+  BriefingFollowup,
+  EntityFile,
+  CalendarSource,
+  CalendarEvent,
+  PluginConfig,
+} from "../src/types.js";
 
 // Fixed "now" so facts written into a particular YYYY-MM-DD directory land
 // inside the briefing's lookback window deterministically.
@@ -55,11 +61,12 @@ async function writeMemoryFixture(
 async function writeEntityFixture(
   baseDir: string,
   entity: EntityFile,
+  entitySchemas?: PluginConfig["entitySchemas"],
 ): Promise<void> {
   const entitiesDir = path.join(baseDir, "entities");
   await mkdir(entitiesDir, { recursive: true });
   const filename = `${entity.name}.md`;
-  await writeFile(path.join(entitiesDir, filename), serializeEntityFile(entity), "utf-8");
+  await writeFile(path.join(entitiesDir, filename), serializeEntityFile(entity, entitySchemas), "utf-8");
 }
 
 async function makeTempDir(): Promise<string> {
