@@ -168,9 +168,8 @@ export function clearMemoryCache(baseDir?: string): void {
     hotCacheByDir.delete(baseDir);
     archiveCacheByDir.delete(baseDir);
     const entityPrefix = `${baseDir}\u0000`;
-    for (const key of entityCacheByDir.keys()) {
-      if (key.startsWith(entityPrefix)) entityCacheByDir.delete(key);
-    }
+    const entityKeysToDelete = [...entityCacheByDir.keys()].filter((key) => key.startsWith(entityPrefix));
+    for (const key of entityKeysToDelete) entityCacheByDir.delete(key);
     episodeMapByDir.delete(baseDir);
     ruleMemoriesByDir.delete(baseDir);
   } else {

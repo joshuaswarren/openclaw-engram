@@ -1278,7 +1278,7 @@ function countEntityStructuredFacts(entity: EntityFile): number {
   return (entity.structuredSections ?? []).reduce((count, section) => count + section.facts.length, 0);
 }
 
-export function fingerprintEntityStructuredFacts(entity: EntityFile): string | undefined {
+export function fingerprintEntityStructuredFacts(entity: Pick<EntityFile, "structuredSections">): string | undefined {
   const normalizedSections = (entity.structuredSections ?? [])
     .map((section) => ({
       key: section.key.trim().toLowerCase(),

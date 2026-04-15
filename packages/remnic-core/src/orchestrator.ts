@@ -346,17 +346,9 @@ function fingerprintEntitySynthesisEvidence(entity: {
       entry.text,
     ].join("\u0000"))
     .sort();
-  const sectionEntries = (entity.structuredSections ?? [])
-    .flatMap((section) =>
-      section.facts
-        .map((fact) => fact.trim())
-        .filter((fact) => fact.length > 0)
-        .map((fact) => [section.key, section.title, fact].join("\u0000")),
-    )
-    .sort();
   fingerprint.update(timelineEntries.join("\u0001"));
   fingerprint.update("\u0002");
-  fingerprint.update(sectionEntries.join("\u0001"));
+  fingerprint.update(fingerprintEntityStructuredFacts(entity) ?? "");
   return fingerprint.digest("hex");
 }
 
