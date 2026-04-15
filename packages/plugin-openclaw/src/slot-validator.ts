@@ -1,7 +1,8 @@
-import { LEGACY_PLUGIN_ID, PLUGIN_ID } from "../../remnic-core/src/plugin-id.js";
-
 export type SlotMismatchMode = "error" | "warn" | "silent";
 export type SlotValidationResult = "ok" | "passive";
+
+const CANONICAL_REMNIC_MEMORY_SLOT_ID = "openclaw-remnic";
+const LEGACY_REMNIC_MEMORY_SLOT_ID = "openclaw-engram";
 
 export interface SlotValidationContext {
   pluginId: string;
@@ -55,11 +56,20 @@ function levenshteinDistance(a: string, b: string): number {
 }
 
 function suggestLikelyRemnicSlot(pluginId: string, actualSlot: string): string {
-  if (actualSlot !== pluginId && (actualSlot === PLUGIN_ID || actualSlot === LEGACY_PLUGIN_ID)) {
+  if (
+    pluginId === CANONICAL_REMNIC_MEMORY_SLOT_ID &&
+    actualSlot === LEGACY_REMNIC_MEMORY_SLOT_ID
+  ) {
     return pluginId;
   }
 
-  const candidates = Array.from(new Set([pluginId, PLUGIN_ID, LEGACY_PLUGIN_ID]));
+  const candidates = Array.from(
+    new Set([
+      pluginId,
+      CANONICAL_REMNIC_MEMORY_SLOT_ID,
+      LEGACY_REMNIC_MEMORY_SLOT_ID,
+    ]),
+  );
   let best = candidates[0] ?? pluginId;
   let bestDistance = Number.POSITIVE_INFINITY;
 
