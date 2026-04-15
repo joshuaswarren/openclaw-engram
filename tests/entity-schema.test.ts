@@ -26,7 +26,7 @@ test("getEntitySchema merges partial overrides onto default sections", () => {
     "voice",
   ]);
   assert.equal(schema.sections[0]?.title, "Core Beliefs");
-  assert.deepEqual(schema.sections[0]?.aliases, ["values"]);
+  assert.deepEqual(schema.sections[0]?.aliases, ["belief", "beliefs", "believe", "believes", "values"]);
 });
 
 test("resolveRequestedEntitySectionKeys still matches default aliases under partial overrides", () => {
@@ -52,4 +52,29 @@ test("resolveRequestedEntitySectionKeys still matches default aliases under part
   );
 
   assert.deepEqual(requested, ["communication_style"]);
+});
+
+test("resolveRequestedEntitySectionKeys preserves default aliases on overridden sections", () => {
+  const entitySchemas = normalizeEntitySchemas({
+    person: {
+      sections: [
+        { key: "beliefs", title: "Core Beliefs" },
+      ],
+    },
+  });
+
+  const requested = resolveRequestedEntitySectionKeys(
+    "What does Alice believe?",
+    "person",
+    [
+      {
+        key: "beliefs",
+        title: "Core Beliefs",
+        facts: ["Believes careful migrations beat rushed rewrites."],
+      },
+    ],
+    entitySchemas,
+  );
+
+  assert.deepEqual(requested, ["beliefs"]);
 });

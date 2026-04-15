@@ -110,7 +110,15 @@ function mergeEntitySchemaDefinitions(
   const seen = new Set<string>();
 
   for (const section of defaults.sections) {
-    const nextSection = overrideByKey.get(section.key) ?? section;
+    const override = overrideByKey.get(section.key);
+    const mergedAliases = Array.from(new Set([...(section.aliases ?? []), ...(override?.aliases ?? [])]));
+    const nextSection = override
+      ? {
+          ...section,
+          ...override,
+          ...(mergedAliases.length > 0 ? { aliases: mergedAliases } : {}),
+        }
+      : section;
     mergedSections.push(nextSection);
     seen.add(nextSection.key);
   }

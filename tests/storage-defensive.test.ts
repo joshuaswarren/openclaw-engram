@@ -85,3 +85,30 @@ test("StorageManager.readMemoryByPath uses entity content type instead of non-ca
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("StorageManager.readMemoryByPath falls back to canonical entity filename prefixes when content is empty", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-storage-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const entityPath = path.join(dir, "entities", "person-jane-doe.md");
+    await writeFile(
+      entityPath,
+      [
+        "---",
+        "created: 2026-04-14T10:00:00.000Z",
+        "updated: 2026-04-14T10:00:00.000Z",
+        "---",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const entityMemory = await storage.readMemoryByPath(entityPath);
+
+    assert.ok(entityMemory, "expected to read the canonical entity file");
+    assert.ok(entityMemory!.frontmatter.tags.includes("person"), "tags should include the canonical entity type from the filename");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

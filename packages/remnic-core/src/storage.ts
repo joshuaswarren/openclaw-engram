@@ -431,13 +431,31 @@ function inferEntityTypeFromContent(content: string): string | undefined {
   return typeMatch || undefined;
 }
 
+const KNOWN_ENTITY_FILENAME_PREFIXES = new Set([
+  "company",
+  "other",
+  "person",
+  "place",
+  "project",
+  "tool",
+  "topic",
+]);
+
+function inferEntityTypeFromFilename(pathRel: string): string | undefined {
+  const basename = path.basename(pathRel, ".md").toLowerCase();
+  const separator = basename.indexOf("-");
+  if (separator <= 0) return undefined;
+  const candidate = basename.slice(0, separator);
+  return KNOWN_ENTITY_FILENAME_PREFIXES.has(candidate) ? candidate : undefined;
+}
+
 function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, pathRel: string, content: string = ""): MemoryFrontmatter {
   const normalizedPath = pathRel.split(path.sep).join("/");
   let normalizedFrontmatter = frontmatter;
 
   if (normalizedPath === "entities" || normalizedPath.startsWith("entities/") || normalizedPath.includes("/entities/")) {
     const basename = path.basename(pathRel, ".md");
-    const inferredType = inferEntityTypeFromContent(content) || "entity";
+    const inferredType = inferEntityTypeFromContent(content) || inferEntityTypeFromFilename(pathRel) || "entity";
     const existingTags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
     normalizedFrontmatter = {
       ...normalizedFrontmatter,
