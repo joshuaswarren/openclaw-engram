@@ -670,6 +670,27 @@ test("entity retrieval scopes answer hints to requested structured sections", as
   assert.doesNotMatch(section!, /writes blunt weekly updates in Slack/i);
 });
 
+test("entity retrieval surfaces uncertainty for conflicting structured section evidence", async () => {
+  const { config, storage } = await buildHarness("engram-entity-section-uncertainty");
+  await storage.writeEntity("Alice Example", "person", [], {
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: [
+          "Small teams should own whole systems.",
+          "Large review committees reduce risk.",
+        ],
+      },
+    ],
+  });
+
+  const section = await buildSection(config, storage, "What does Alice Example believe?");
+
+  assert.ok(section);
+  assert.match(section!, /uncertainty: Evidence is mixed across stored facts/);
+});
+
 test("entity retrieval does not treat substring matches as requested structured sections", async () => {
   const { config, storage } = await buildHarness("engram-entity-section-substring");
   await storage.writeEntity("Alice Example", "person", ["Alice Example leads product strategy at Northwind."], {

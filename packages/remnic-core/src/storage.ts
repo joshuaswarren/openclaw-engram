@@ -426,13 +426,18 @@ function parseFrontmatter(
   return result;
 }
 
-function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, pathRel: string): MemoryFrontmatter {
+function inferEntityTypeFromContent(content: string): string | undefined {
+  const typeMatch = content.match(/^\*\*Type:\*\*\s*([^\n]+)/m)?.[1]?.trim().toLowerCase();
+  return typeMatch || undefined;
+}
+
+function normalizeFrontmatterForPath(frontmatter: MemoryFrontmatter, pathRel: string, content: string = ""): MemoryFrontmatter {
   const normalizedPath = pathRel.split(path.sep).join("/");
   let normalizedFrontmatter = frontmatter;
 
   if (normalizedPath === "entities" || normalizedPath.startsWith("entities/") || normalizedPath.includes("/entities/")) {
     const basename = path.basename(pathRel, ".md");
-    const inferredType = basename.includes("-") ? basename.split("-")[0] : "entity";
+    const inferredType = inferEntityTypeFromContent(content) || "entity";
     const existingTags = Array.isArray(frontmatter.tags) ? frontmatter.tags : [];
     normalizedFrontmatter = {
       ...normalizedFrontmatter,
@@ -2580,6 +2585,7 @@ export class StorageManager {
               frontmatter: normalizeFrontmatterForPath(
                 parsed.frontmatter,
                 toMemoryPathRel(this.baseDir, fullPath),
+                parsed.content,
               ),
               content: parsed.content,
             } satisfies MemoryFile;
@@ -2853,6 +2859,7 @@ export class StorageManager {
                   frontmatter: normalizeFrontmatterForPath(
                     parsed.frontmatter,
                     toMemoryPathRel(this.baseDir, fullPath),
+                    parsed.content,
                   ),
                   content: parsed.content,
                 });
@@ -2882,6 +2889,7 @@ export class StorageManager {
           frontmatter: normalizeFrontmatterForPath(
             parsed.frontmatter,
             toMemoryPathRel(this.baseDir, filePath),
+            parsed.content,
           ),
           content: parsed.content,
         };

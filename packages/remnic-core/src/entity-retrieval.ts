@@ -531,7 +531,12 @@ async function buildHintSnippets(
 }
 
 function summarizeUncertainty(snippets: EntityHintSnippet[]): string | null {
-  const direct = snippets.filter((snippet) => snippet.kind === "summary" || snippet.kind === "fact" || snippet.kind === "memory");
+  const direct = snippets.filter((snippet) =>
+    snippet.kind === "summary"
+    || snippet.kind === "fact"
+    || snippet.kind === "section"
+    || snippet.kind === "memory"
+  );
   if (direct.length < 2) return null;
   for (let index = 0; index < direct.length; index += 1) {
     for (let compare = index + 1; compare < direct.length; compare += 1) {

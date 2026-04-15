@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { StorageManager } from "../src/storage.ts";
 
 test("StorageManager.readMemoryByPath returns synthetic MemoryFile for entity files (no frontmatter)", async () => {
@@ -50,3 +50,38 @@ test("StorageManager.writeEntity tolerates malformed entity payloads (no throw)"
   }
 });
 
+test("StorageManager.readMemoryByPath uses entity content type instead of non-canonical filename prefix", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "openclaw-engram-storage-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const entityPath = path.join(dir, "entities", "jane-doe.md");
+    await writeFile(
+      entityPath,
+      [
+        "---",
+        "created: 2026-04-14T10:00:00.000Z",
+        "updated: 2026-04-14T10:00:00.000Z",
+        "---",
+        "",
+        "# Jane Doe",
+        "",
+        "**Type:** person",
+        "",
+        "## Synthesis",
+        "",
+        "Jane Doe keeps launch reviews concise.",
+      ].join("\n"),
+      "utf-8",
+    );
+
+    const entityMemory = await storage.readMemoryByPath(entityPath);
+
+    assert.ok(entityMemory, "expected to read the non-canonical entity file");
+    assert.ok(entityMemory!.frontmatter.tags.includes("person"), "tags should include the entity type from content");
+    assert.equal(entityMemory!.frontmatter.tags.includes("jane"), false, "tags should not infer a bogus type from the filename");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
