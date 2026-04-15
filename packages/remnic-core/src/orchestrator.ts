@@ -7880,6 +7880,11 @@ export class Orchestrator {
     role: "user" | "assistant",
     content: string,
     sessionKey?: string,
+    options: {
+      bufferKey?: string;
+      providerThreadId?: string | null;
+      turnFingerprint?: string;
+    } = {},
   ): Promise<void> {
     if (role !== "user" && role !== "assistant") {
       log.debug(`processTurn: ignoring unsupported role=${String(role)}`);
@@ -7893,14 +7898,19 @@ export class Orchestrator {
     }
 
     const bufferKey =
-      typeof sessionKey === "string" && sessionKey.length > 0
-        ? sessionKey
-        : "default";
+      typeof options.bufferKey === "string" && options.bufferKey.length > 0
+        ? options.bufferKey
+        : typeof sessionKey === "string" && sessionKey.length > 0
+          ? sessionKey
+          : "default";
     const turn: BufferTurn = {
       role,
       content,
       timestamp: new Date().toISOString(),
       sessionKey,
+      logicalSessionKey: bufferKey,
+      providerThreadId: options.providerThreadId ?? null,
+      turnFingerprint: options.turnFingerprint,
     };
 
     const decision = await this.buffer.addTurn(bufferKey, turn);
@@ -7915,12 +7925,18 @@ export class Orchestrator {
 
   async flushSession(
     sessionKey: string,
-    options: { reason: string; abortSignal?: AbortSignal },
+    options: {
+      reason: string;
+      abortSignal?: AbortSignal;
+      bufferKey?: string;
+    },
   ): Promise<void> {
     const bufferKey =
-      typeof sessionKey === "string" && sessionKey.length > 0
-        ? sessionKey
-        : "default";
+      typeof options.bufferKey === "string" && options.bufferKey.length > 0
+        ? options.bufferKey
+        : typeof sessionKey === "string" && sessionKey.length > 0
+          ? sessionKey
+          : "default";
     const turns = this.buffer.getTurns(bufferKey);
     if (turns.length === 0) return;
     await new Promise<void>((resolve, reject) => {
@@ -8109,10 +8125,12 @@ export class Orchestrator {
     // Fingerprint only user/assistant text; tool/system noise should not produce unique runs.
     const normalized = turns
       .filter((t) => t.role === "user" || t.role === "assistant")
-      .map(
-        (t) =>
-          `${t.role}:${(t.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`,
-      )
+      .map((t) => {
+        if (typeof t.turnFingerprint === "string" && t.turnFingerprint.length > 0) {
+          return `fp:${t.turnFingerprint}`;
+        }
+        return `${t.role}:${(t.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`;
+      })
       .join("\n");
     if (!normalized) return false;
 
@@ -8244,6 +8262,21 @@ export class Orchestrator {
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
     const storage = await this.storageRouter.storageFor(selfNamespace);
+    const extractionFingerprint = this.buildProcessedExtractionFingerprint(
+      normalizedTurns,
+      bufferKey,
+    );
+    if (
+      extractionFingerprint &&
+      this.shouldApplyCodexFingerprintDedup(bufferKey) &&
+      (await this.hasProcessedExtractionFingerprint(storage, extractionFingerprint))
+    ) {
+      log.debug(
+        `runExtraction: skipping already-processed Codex turn fingerprint for ${bufferKey}`,
+      );
+      await clearBuffer({ ignoreAbort: true });
+      return;
+    }
 
     // Pass existing entity names so the LLM can reuse them instead of inventing variants
     const existingEntities = await storage.listEntityNames();
@@ -8305,6 +8338,15 @@ export class Orchestrator {
       threadIdForExtraction,
       { sessionKey, principal },
     );
+    if (
+      extractionFingerprint &&
+      this.shouldApplyCodexFingerprintDedup(bufferKey)
+    ) {
+      await this.recordProcessedExtractionFingerprint(
+        storage,
+        extractionFingerprint,
+      );
+    }
     await clearBuffer({ ignoreAbort: true });
 
     // Build memory box from this extraction (v8.0 Phase 2A)
@@ -8381,6 +8423,68 @@ export class Orchestrator {
 
     this.requestQmdMaintenance();
     await this.runTierMigrationCycle(storage, "extraction");
+  }
+
+  private shouldApplyCodexFingerprintDedup(bufferKey: string): boolean {
+    return (
+      this.config.codexCompat.enabled === true &&
+      this.config.codexCompat.fingerprintDedup === true &&
+      bufferKey.startsWith("codex-thread:")
+    );
+  }
+
+  private buildProcessedExtractionFingerprint(
+    turns: BufferTurn[],
+    bufferKey: string,
+  ): string | null {
+    if (!Array.isArray(turns) || turns.length === 0) return null;
+    const normalized = turns
+      .filter((turn) => turn.role === "user" || turn.role === "assistant")
+      .map((turn) => {
+        if (
+          typeof turn.turnFingerprint === "string" &&
+          turn.turnFingerprint.length > 0
+        ) {
+          return turn.turnFingerprint;
+        }
+        return `${turn.role}:${(turn.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`;
+      })
+      .filter((value) => value.length > 0)
+      .join("\n");
+    if (!normalized) return null;
+    return createHash("sha256")
+      .update(`${bufferKey}\n${normalized}`)
+      .digest("hex");
+  }
+
+  private async hasProcessedExtractionFingerprint(
+    storage: StorageManager,
+    fingerprint: string,
+  ): Promise<boolean> {
+    const meta = await storage.loadMeta();
+    return (meta.processedExtractionFingerprints ?? []).some(
+      (entry) => entry.fingerprint === fingerprint,
+    );
+  }
+
+  private async recordProcessedExtractionFingerprint(
+    storage: StorageManager,
+    fingerprint: string,
+  ): Promise<void> {
+    const meta = await storage.loadMeta();
+    const observedAt = new Date().toISOString();
+    const seen = new Map(
+      (meta.processedExtractionFingerprints ?? []).map((entry) => [
+        entry.fingerprint,
+        entry.observedAt,
+      ]),
+    );
+    seen.set(fingerprint, observedAt);
+    meta.processedExtractionFingerprints = Array.from(seen.entries())
+      .map(([value, at]) => ({ fingerprint: value, observedAt: at }))
+      .sort((left, right) => left.observedAt.localeCompare(right.observedAt))
+      .slice(-500);
+    await storage.saveMeta(meta);
   }
 
   private async runTierMigrationCycle(

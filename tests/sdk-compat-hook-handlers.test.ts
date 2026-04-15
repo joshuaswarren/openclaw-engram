@@ -1806,6 +1806,158 @@ test("agent_end skips transcript persistence and extraction buffering for heartb
   assert.equal(processTurnCalls, 0);
 });
 
+test("agent_end routes Codex-managed turns through the logical thread buffer key", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("agent-end-codex-thread-test");
+  plugin.register(api as any);
+
+  const agentEnd = api.handlers.get("agent_end");
+  assert.ok(agentEnd, "agent_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.transcript.append = async () => undefined;
+  const processTurnCalls: Array<Record<string, unknown>> = [];
+  orchestrator.processTurn = async (
+    role: string,
+    content: string,
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    processTurnCalls.push({ role, content, sessionKey, options });
+  };
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        { role: "user", content: "Please remember this Codex-threaded fact." },
+        { role: "assistant", content: "Saved for the Codex compatibility test." },
+      ],
+    },
+    {
+      sessionKey: "session-codex-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-99",
+    },
+  );
+
+  assert.equal(processTurnCalls.length, 2);
+  for (const call of processTurnCalls) {
+    assert.equal(call.sessionKey, "session-codex-a");
+    assert.equal(
+      (call.options as { bufferKey?: string }).bufferKey,
+      "codex-thread:thread-99",
+    );
+    assert.equal(
+      (call.options as { providerThreadId?: string }).providerThreadId,
+      "thread-99",
+    );
+    assert.equal(
+      typeof (call.options as { turnFingerprint?: string }).turnFingerprint,
+      "string",
+    );
+  }
+});
+
+test("before_compaction flushes the logical Codex thread buffer before checkpoint work", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-compaction-codex-test");
+  plugin.register(api as any);
+
+  const beforeCompaction = api.handlers.get("before_compaction");
+  assert.ok(beforeCompaction, "before_compaction handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.config.checkpointEnabled = false;
+  orchestrator.lcmEngine = { enabled: false };
+
+  let flushed:
+    | {
+        sessionKey: string;
+        options: Record<string, unknown> | undefined;
+      }
+    | undefined;
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushed = { sessionKey, options };
+  };
+
+  await beforeCompaction(
+    { sessionKey: "session-compaction-a" },
+    {
+      sessionKey: "session-compaction-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-compaction-1",
+    },
+  );
+
+  assert.equal(flushed?.sessionKey, "session-compaction-a");
+  assert.equal(flushed?.options?.reason, "codex_compaction_signal");
+  assert.equal(
+    flushed?.options?.bufferKey,
+    "codex-thread:thread-compaction-1",
+  );
+});
+
+test("before_prompt_build uses the Codex heuristic fallback when thread history shrinks", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-codex-heuristic-test");
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+
+  const flushCalls: Array<Record<string, unknown>> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 10 },
+    {
+      sessionKey: "session-heuristic-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-heuristic-1",
+    },
+  );
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 4 },
+    {
+      sessionKey: "session-heuristic-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-heuristic-1",
+    },
+  );
+
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-heuristic-a");
+  assert.equal(
+    (flushCalls[0]?.options as { reason?: string }).reason,
+    "codex_compaction_heuristic",
+  );
+  assert.equal(
+    (flushCalls[0]?.options as { bufferKey?: string }).bufferKey,
+    "codex-thread:thread-heuristic-1",
+  );
+});
+
 test("before_reset flushes the session and clears the precomputed recall cache", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-test", {
@@ -1925,6 +2077,66 @@ test("before_reset still clears the session cache when flush-on-reset is disable
     api._memoryCapability?.promptBuilder?.({ sessionKey: "session-b" }) ?? null,
     null,
     "before_reset should still clear the precomputed recall cache when flush is disabled",
+  );
+});
+
+test("before_reset reuses the remembered Codex thread id for logical flush keying", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-codex-test", {
+    includeMemoryCapability: true,
+  });
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+  assert.ok(api._memoryCapability?.promptBuilder, "memory capability promptBuilder should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  let flushed:
+    | {
+        sessionKey: string;
+        options: Record<string, unknown> | undefined;
+      }
+    | undefined;
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushed = { sessionKey, options };
+  };
+
+  await beforePromptBuild(
+    { prompt: "What does this Codex thread remember?" },
+    {
+      sessionKey: "session-reset-codex",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-codex",
+    },
+  );
+
+  assert.ok(
+    api._memoryCapability?.promptBuilder?.({ sessionKey: "session-reset-codex" }),
+    "before_prompt_build should populate the Codex session cache before reset",
+  );
+
+  await beforeReset({ sessionKey: "session-reset-codex" }, {});
+
+  assert.equal(flushed?.sessionKey, "session-reset-codex");
+  assert.equal(flushed?.options?.reason, "before_reset");
+  assert.equal(
+    flushed?.options?.bufferKey,
+    "codex-thread:thread-reset-codex",
+  );
+  assert.equal(
+    api._memoryCapability?.promptBuilder?.({ sessionKey: "session-reset-codex" }) ?? null,
+    null,
+    "before_reset should clear the cached Codex prompt-section entry",
   );
 });
 

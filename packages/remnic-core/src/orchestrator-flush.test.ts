@@ -155,6 +155,127 @@ test("processTurn preserves the original sessionKey on buffered turns", async ()
   assert.equal(capturedTurn?.sessionKey, undefined);
 });
 
+test("processTurn honors an explicit logical buffer key and turn fingerprint", async () => {
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  let capturedTurn: BufferTurn | undefined;
+  let capturedBufferKey: string | undefined;
+
+  orchestrator.config = parseConfig({});
+  orchestrator.buffer = {
+    async addTurn(bufferKey: string, turn: BufferTurn) {
+      capturedBufferKey = bufferKey;
+      capturedTurn = turn;
+      return "keep_buffering";
+    },
+  };
+
+  await orchestrator.processTurn("assistant", "remember beta", "session-b", {
+    bufferKey: "codex-thread:thread-7",
+    providerThreadId: "thread-7",
+    turnFingerprint: "fp-thread-7",
+  });
+
+  assert.equal(capturedBufferKey, "codex-thread:thread-7");
+  assert.equal(capturedTurn?.sessionKey, "session-b");
+  assert.equal(capturedTurn?.logicalSessionKey, "codex-thread:thread-7");
+  assert.equal(capturedTurn?.providerThreadId, "thread-7");
+  assert.equal(capturedTurn?.turnFingerprint, "fp-thread-7");
+});
+
+test("flushSession honors an explicit bufferKey override", async () => {
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  let queuedBufferKey: string | undefined;
+
+  orchestrator.buffer = {
+    getTurns(bufferKey: string) {
+      return bufferKey === "codex-thread:thread-11"
+        ? [makeTurn("session-z", "remember gamma")]
+        : [];
+    },
+  };
+  orchestrator.queueBufferedExtraction = async (
+    _queuedTurns: BufferTurn[],
+    _reason: string,
+    options?: Record<string, unknown>,
+  ) => {
+    queuedBufferKey = options?.bufferKey as string | undefined;
+    (options?.onTaskSettled as ((error?: unknown) => void) | undefined)?.();
+  };
+
+  await orchestrator.flushSession("session-z", {
+    reason: "codex_compaction_signal",
+    bufferKey: "codex-thread:thread-11",
+  });
+
+  assert.equal(queuedBufferKey, "codex-thread:thread-11");
+});
+
+test("runExtraction skips Codex batches whose fingerprint already exists in storage meta", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+
+  let clearCalls = 0;
+  let extractCalls = 0;
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => ({
+        extractionCount: 0,
+        lastExtractionAt: null,
+        lastConsolidationAt: null,
+        totalMemories: 0,
+        totalEntities: 0,
+        processedExtractionFingerprints: [
+          {
+            fingerprint: orchestrator.buildProcessedExtractionFingerprint(
+              [
+                {
+                  ...makeTurn("session-c", "remember delta"),
+                  logicalSessionKey: "codex-thread:thread-12",
+                  turnFingerprint: "fp-thread-12",
+                },
+              ],
+              "codex-thread:thread-12",
+            ),
+            observedAt: "2026-04-15T00:00:00.000Z",
+          },
+        ],
+      }),
+      saveMeta: async () => undefined,
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => {
+      extractCalls += 1;
+      return { facts: [], entities: [], questions: [], profileUpdates: [] };
+    },
+  };
+
+  await orchestrator.runExtraction(
+    [
+      {
+        ...makeTurn("session-c", "remember delta"),
+        logicalSessionKey: "codex-thread:thread-12",
+        turnFingerprint: "fp-thread-12",
+      },
+    ],
+    {
+      bufferKey: "codex-thread:thread-12",
+    },
+  );
+
+  assert.equal(extractCalls, 0);
+  assert.equal(clearCalls, 1);
+});
+
 test("runExtraction aborts before late buffer clearing when the caller cancels", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;

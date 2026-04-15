@@ -1069,6 +1069,9 @@ export interface BufferTurn {
   content: string;
   timestamp: string;
   sessionKey?: string;
+  logicalSessionKey?: string;
+  providerThreadId?: string | null;
+  turnFingerprint?: string;
 }
 
 export interface BufferEntryState {
@@ -1455,6 +1458,10 @@ export interface MetaState {
   lastConsolidationAt: string | null;
   totalMemories: number;
   totalEntities: number;
+  processedExtractionFingerprints?: Array<{
+    fingerprint: string;
+    observedAt: string;
+  }>;
 }
 
 export type MemoryActionType =

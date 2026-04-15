@@ -58,6 +58,11 @@ import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src
 import { createFileToggleStore } from "../packages/remnic-core/src/session-toggles.js";
 import { appendRecallAuditEntry, pruneRecallAuditEntries } from "../packages/remnic-core/src/recall-audit.js";
 import { createActiveRecallEngine } from "../packages/remnic-core/src/active-recall.js";
+import {
+  buildTurnFingerprint,
+  codexLogicalSessionKey,
+  resolveCodexSessionIdentity,
+} from "../packages/remnic-core/src/codex-compat.js";
 import { planRecallMode } from "../packages/remnic-core/src/intent.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
@@ -867,6 +872,95 @@ const pluginDefinition = {
     // paths and the closure-captured handlers below can reference it without
     // TDZ surprises.
     const cachedMemoryBySession = new Map<string, string[] | null>();
+    const cachedMemoryByCodexThread = new Map<string, string[] | null>();
+    const codexThreadBySession = new Map<string, string>();
+    const codexMessageCountByThread = new Map<string, number>();
+    let codexCompactionModeLogged = false;
+
+    function resolveStoredCodexThreadId(sessionKey: string): string | null {
+      const threadId = codexThreadBySession.get(sessionKey);
+      return typeof threadId === "string" && threadId.length > 0 ? threadId : null;
+    }
+
+    function rememberCodexThread(
+      sessionKey: string,
+      providerThreadId: string | null,
+    ): void {
+      if (!providerThreadId) return;
+      codexThreadBySession.set(sessionKey, providerThreadId);
+    }
+
+    function clearCodexCompatCaches(
+      sessionKey: string,
+      providerThreadId?: string | null,
+    ): void {
+      cachedMemoryBySession.delete(sessionKey);
+      const resolvedThreadId =
+        providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+      if (resolvedThreadId) {
+        cachedMemoryByCodexThread.delete(resolvedThreadId);
+        codexMessageCountByThread.delete(resolvedThreadId);
+      }
+      codexThreadBySession.delete(sessionKey);
+    }
+
+    function cachePromptMemoryLines(
+      sessionKey: string,
+      providerThreadId: string | null,
+      memoryLines: string[] | null,
+    ): void {
+      cachedMemoryBySession.set(sessionKey, memoryLines);
+      if (providerThreadId) {
+        codexThreadBySession.set(sessionKey, providerThreadId);
+        cachedMemoryByCodexThread.set(providerThreadId, memoryLines);
+      }
+    }
+
+    function consumePromptMemoryLines(
+      sessionKey: string,
+      options?: { destructive?: boolean },
+    ): string[] | null {
+      const destructive = options?.destructive !== false;
+      const sessionLines = cachedMemoryBySession.get(sessionKey) ?? null;
+      const providerThreadId = resolveStoredCodexThreadId(sessionKey);
+      const threadLines = providerThreadId
+        ? (cachedMemoryByCodexThread.get(providerThreadId) ?? null)
+        : null;
+      const resolved = sessionLines ?? threadLines;
+      if (!destructive) return resolved;
+      cachedMemoryBySession.delete(sessionKey);
+      if (providerThreadId) {
+        cachedMemoryByCodexThread.delete(providerThreadId);
+      }
+      return resolved;
+    }
+
+    function resolveSessionIdentity(
+      sessionKey: string,
+      event: Record<string, unknown>,
+      ctx: Record<string, unknown>,
+    ) {
+      const base = resolveCodexSessionIdentity({
+        sessionKey,
+        event,
+        ctx,
+        codexCompat: cfg.codexCompat,
+      });
+      const rememberedThreadId =
+        base.providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+      const isCodex = base.isCodex || Boolean(rememberedThreadId);
+      return {
+        ...base,
+        isCodex,
+        providerThreadId: rememberedThreadId,
+        logicalSessionKey:
+          isCodex &&
+          cfg.codexCompat.threadIdBufferKeying !== false &&
+          rememberedThreadId
+            ? codexLogicalSessionKey(rememberedThreadId)
+            : base.logicalSessionKey,
+      };
+    }
 
     // Single source of truth for the structured memory section: every code path
     // that populates `cachedMemoryBySession` MUST use this helper so the cache
@@ -1086,6 +1180,8 @@ const pluginDefinition = {
       if (!prompt || prompt.length < 5) return;
 
       const sessionKey = (ctx?.sessionKey as string) ?? "default";
+      const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+      rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
       const runtimeAgent = (ctx.runtime as Record<string, unknown> | undefined)
         ?.agent as Record<string, unknown> | undefined;
       const agentId =
@@ -1100,6 +1196,53 @@ const pluginDefinition = {
       log.debug(
         `${hookLabel}: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
       );
+      if (sessionIdentity.isCodex && !codexCompactionModeLogged) {
+        const mode =
+          cfg.codexCompat.compactionFlushMode === "auto"
+            ? "signal"
+            : cfg.codexCompat.compactionFlushMode;
+        log.info(
+          `codexCompat enabled: using ${mode} compaction flush mode for bundled Codex sessions`,
+        );
+        codexCompactionModeLogged = true;
+      }
+      if (
+        hookLabel === "before_prompt_build" &&
+        sessionIdentity.isCodex &&
+        sessionIdentity.providerThreadId &&
+        (cfg.codexCompat.compactionFlushMode === "heuristic" ||
+          cfg.codexCompat.compactionFlushMode === "auto")
+      ) {
+        const currentCount = sessionIdentity.messageCount;
+        const previousCount = codexMessageCountByThread.get(
+          sessionIdentity.providerThreadId,
+        );
+        if (
+          typeof currentCount === "number" &&
+          typeof previousCount === "number" &&
+          currentCount < previousCount
+        ) {
+          try {
+            await orchestrator.flushSession(sessionKey, {
+              reason: "codex_compaction_heuristic",
+              bufferKey: sessionIdentity.logicalSessionKey,
+            });
+            clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId);
+            rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
+            log.info(
+              `codexCompat heuristic flush: thread=${sessionIdentity.providerThreadId} messages ${previousCount} -> ${currentCount}`,
+            );
+          } catch (error) {
+            log.warn(`codexCompat heuristic flush failed: ${String(error)}`);
+          }
+        }
+        if (typeof currentCount === "number") {
+          codexMessageCountByThread.set(
+            sessionIdentity.providerThreadId,
+            currentCount,
+          );
+        }
+      }
       if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
         const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
           const re = wildcardToRegExp(pattern);
@@ -1421,6 +1564,7 @@ const pluginDefinition = {
       } catch (err) {
         log.error("recall failed", err);
         lastRecallSummaryBySession.set(sessionKey, null);
+        clearCodexCompatCaches(sessionKey);
         if (orchestrator.config.compactionResetEnabled) {
           orchestrator.clearRecallWorkspaceOverride(sessionKey);
         }
@@ -1460,17 +1604,26 @@ const pluginDefinition = {
             ctx: Record<string, unknown>,
           ) => {
             const sessionKey = (ctx?.sessionKey as string) ?? "default";
+            const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
             // Reset the cache at the start of every turn so a recall miss
             // can never serve stale memory from a prior turn through the
             // capability promptBuilder fallback.
             if (needsCacheFallback) {
-              cachedMemoryBySession.set(sessionKey, null);
+              cachePromptMemoryLines(
+                sessionKey,
+                sessionIdentity.providerThreadId,
+                null,
+              );
             }
             const result = await recallHookHandler("before_prompt_build", event, ctx);
             // Populate cache for capability promptBuilder fallback using the
             // same structured line format as the registerMemoryPromptSection path.
             if (needsCacheFallback && result?.memoryLines) {
-              cachedMemoryBySession.set(sessionKey, result.memoryLines);
+              cachePromptMemoryLines(
+                sessionKey,
+                sessionIdentity.providerThreadId,
+                result.memoryLines,
+              );
             }
             // Strip the internal `memoryLines` field before returning to the
             // gateway — it's a closure-private carrier for cache population
@@ -1537,10 +1690,15 @@ const pluginDefinition = {
           ctx: Record<string, unknown>,
         ) => {
           const sessionKey = (ctx?.sessionKey as string) ?? "default";
-          cachedMemoryBySession.set(sessionKey, null); // reset each turn
+          const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+          cachePromptMemoryLines(sessionKey, sessionIdentity.providerThreadId, null);
           const result = await recallHookHandler("before_prompt_build", event, ctx);
           if (result?.memoryLines) {
-            cachedMemoryBySession.set(sessionKey, result.memoryLines);
+            cachePromptMemoryLines(
+              sessionKey,
+              sessionIdentity.providerThreadId,
+              result.memoryLines,
+            );
           }
           if (result && "memoryLines" in result) {
             const { memoryLines: _ml, ...gatewayResult } = result;
@@ -1558,9 +1716,7 @@ const pluginDefinition = {
         sessionKey?: string;
       }): string[] | null => {
         const key = params?.sessionKey ?? "default";
-        const lines = cachedMemoryBySession.get(key) ?? null;
-        cachedMemoryBySession.delete(key);
-        return lines;
+        return consumePromptMemoryLines(key);
       };
 
       (memoryBuildFn as any).id = "engram-memory";
@@ -1596,14 +1752,12 @@ const pluginDefinition = {
         ? (params: { sessionKey?: string }): string[] | null => {
             // Non-destructive peek — the section builder will handle cleanup
             const key = params?.sessionKey ?? "default";
-            return cachedMemoryBySession.get(key) ?? null;
+            return consumePromptMemoryLines(key, { destructive: false });
           }
         : (params: { sessionKey?: string }): string[] | null => {
             // Capability-only: destructive read since we are the sole consumer
             const key = params?.sessionKey ?? "default";
-            const lines = cachedMemoryBySession.get(key) ?? null;
-            cachedMemoryBySession.delete(key);
-            return lines;
+            return consumePromptMemoryLines(key);
           };
 
       // Derive the agent id owning this memory from the registration-time
@@ -1681,6 +1835,8 @@ const pluginDefinition = {
         }
 
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
+        const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+        rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
 
         try {
           // Extract the last user-assistant exchange
@@ -1744,7 +1900,7 @@ const pluginDefinition = {
             );
           }
 
-          for (const msg of lastTurn) {
+          for (const [turnIndex, msg] of lastTurn.entries()) {
             const rawRole = typeof msg.role === "string" ? msg.role : "";
             if (rawRole !== "user" && rawRole !== "assistant") {
               // Ignore tool/system blocks for extraction to avoid noisy memory churn.
@@ -1810,7 +1966,18 @@ const pluginDefinition = {
             }
 
             if (stripped.length > 0) {
-              await orchestrator.processTurn(role, stripped, sessionKey);
+              await orchestrator.processTurn(role, stripped, sessionKey, {
+                bufferKey: sessionIdentity.logicalSessionKey,
+                providerThreadId: sessionIdentity.providerThreadId,
+                turnFingerprint: buildTurnFingerprint({
+                  role,
+                  content: stripped,
+                  logicalSessionKey: sessionIdentity.logicalSessionKey,
+                  providerThreadId: sessionIdentity.providerThreadId,
+                  messageCount: sessionIdentity.messageCount,
+                  turnIndex,
+                }),
+              });
             }
           }
 
@@ -1859,8 +2026,22 @@ const pluginDefinition = {
           (ctx?.sessionKey as string) ??
           (event?.sessionKey as string) ??
           "default";
+        const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+        rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
 
         try {
+          if (
+            sessionIdentity.isCodex &&
+            cfg.codexCompat.enabled &&
+            cfg.codexCompat.compactionFlushMode !== "heuristic"
+          ) {
+            await orchestrator.flushSession(sessionKey, {
+              reason: "codex_compaction_signal",
+              bufferKey: sessionIdentity.logicalSessionKey,
+            });
+            clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId);
+            rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
+          }
           // LCM: flush pending summaries before context is lost
           // (runs regardless of checkpoint setting — LCM needs pre-compaction flush)
           // Token count is stashed here; after_compaction records the final pair.
@@ -1944,8 +2125,10 @@ const pluginDefinition = {
           (ctx?.sessionKey as string) ??
           (event?.sessionKey as string) ??
           "default";
+        const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
 
         try {
+          clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId);
           // LCM: record compaction with real token counts and verify coverage
           // (runs regardless of reset setting — LCM needs compaction metrics)
           if (orchestrator.lcmEngine?.enabled) {
@@ -2069,6 +2252,7 @@ const pluginDefinition = {
             (ctx?.sessionKey as string) ??
             (event?.sessionKey as string) ??
             "default";
+          const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
           const flushEnabled =
             cfg.flushOnResetEnabled &&
             typeof (orchestrator as any).flushSession === "function";
@@ -2079,6 +2263,7 @@ const pluginDefinition = {
             ? Promise.resolve(
                 (orchestrator as any).flushSession(sessionKey, {
                   reason: "before_reset",
+                  bufferKey: sessionIdentity.logicalSessionKey,
                   abortSignal: flushAbort.signal,
                 }),
               ).catch((error) => {
@@ -2089,8 +2274,8 @@ const pluginDefinition = {
             : Promise.resolve();
           const boundedFlush = flushEnabled
             ? Promise.race([
-                flushPromise,
-                new Promise<void>((resolve) => {
+              flushPromise,
+              new Promise<void>((resolve) => {
                   timeoutId = setTimeout(() => {
                     flushTimedOut = true;
                     flushAbort.abort();
@@ -2108,7 +2293,7 @@ const pluginDefinition = {
               `before_reset flush timed out after ${cfg.beforeResetTimeoutMs}ms`,
             );
           }
-          cachedMemoryBySession.delete(sessionKey);
+          clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId);
           if (
             typeof (orchestrator as any).clearRecallWorkspaceOverride === "function"
           ) {

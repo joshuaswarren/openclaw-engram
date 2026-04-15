@@ -3450,7 +3450,35 @@ export class StorageManager {
     const metaPath = path.join(this.stateDir, "meta.json");
     try {
       const raw = await readFile(metaPath, "utf-8");
-      return JSON.parse(raw) as MetaState;
+      const parsed = JSON.parse(raw) as MetaState;
+      return {
+        extractionCount:
+          typeof parsed.extractionCount === "number" ? parsed.extractionCount : 0,
+        lastExtractionAt: parsed.lastExtractionAt ?? null,
+        lastConsolidationAt: parsed.lastConsolidationAt ?? null,
+        totalMemories:
+          typeof parsed.totalMemories === "number" ? parsed.totalMemories : 0,
+        totalEntities:
+          typeof parsed.totalEntities === "number" ? parsed.totalEntities : 0,
+        processedExtractionFingerprints: Array.isArray(
+          parsed.processedExtractionFingerprints,
+        )
+          ? parsed.processedExtractionFingerprints
+              .filter(
+                (entry) =>
+                  entry &&
+                  typeof entry === "object" &&
+                  typeof (entry as { fingerprint?: unknown }).fingerprint ===
+                    "string" &&
+                  typeof (entry as { observedAt?: unknown }).observedAt ===
+                    "string",
+              )
+              .map((entry) => ({
+                fingerprint: (entry as { fingerprint: string }).fingerprint,
+                observedAt: (entry as { observedAt: string }).observedAt,
+              }))
+          : [],
+      };
     } catch {
       return {
         extractionCount: 0,
@@ -3458,6 +3486,7 @@ export class StorageManager {
         lastConsolidationAt: null,
         totalMemories: 0,
         totalEntities: 0,
+        processedExtractionFingerprints: [],
       };
     }
   }
