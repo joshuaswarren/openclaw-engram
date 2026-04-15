@@ -919,32 +919,6 @@ function parseEntityTimelineBullet(
   return entry;
 }
 
-function isEntityTimelineLikeBullet(bullet: string): boolean {
-  const trimmed = bullet.trim();
-  if (!trimmed.startsWith("[")) return false;
-
-  const firstEnd = findEntityTimelineTokenEnd(trimmed);
-  if (firstEnd === -1) return false;
-
-  const firstToken = trimmed.slice(1, firstEnd).trim();
-  if (!firstToken) return false;
-  if (looksLikeEntityTimelineTimestamp(firstToken)) return true;
-
-  const equalsIdx = firstToken.indexOf("=");
-  if (equalsIdx === -1) return false;
-
-  switch (firstToken.slice(0, equalsIdx).trim().toLowerCase()) {
-    case "source":
-    case "source_meta":
-    case "session":
-    case "sessionkey":
-    case "principal":
-      return true;
-    default:
-      return false;
-  }
-}
-
 function isEntitySynthesisTimelinePromotionBullet(bullet: string): boolean {
   const trimmed = bullet.trim();
   if (!trimmed.startsWith("[")) return false;

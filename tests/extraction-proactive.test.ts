@@ -196,6 +196,73 @@ test("normalizeExtractionResultPayload preserves structured entity sections", ()
   ]);
 });
 
+test("consolidate normalizes fallback entity updates with validated structured sections", async () => {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+  });
+
+  const engine = new ExtractionEngine(config);
+  (engine as any).parseWithGatewayFallback = async () => ({
+    items: [
+      {
+        existingId: "memory-1",
+        action: "ADD",
+        reason: "keep",
+      },
+    ],
+    profileUpdates: [],
+    entityUpdates: [
+      {
+        name: "Alex",
+        type: "person",
+        facts: ["Owns the review timeline.", 42],
+        structuredSections: [
+          {
+            key: "beliefs",
+            title: "Beliefs",
+            facts: ["Alex believes small teams should own whole systems.", 7],
+          },
+          {
+            key: "",
+            title: "Missing Key",
+            facts: ["should drop"],
+          },
+          {
+            key: "communication-style",
+            title: 5,
+            facts: ["should drop"],
+          },
+        ],
+        promptedByQuestion: "Who owns the review timeline?",
+      },
+    ],
+  });
+
+  const result = await engine.consolidate(
+    [{ frontmatter: { id: "memory-1", category: "fact" }, content: "New memory." } as any],
+    [{ frontmatter: { id: "memory-0", category: "fact" }, content: "Existing memory." } as any],
+    "",
+  );
+
+  assert.deepEqual(result.entityUpdates, [
+    {
+      name: "Alex",
+      type: "person",
+      facts: ["Owns the review timeline."],
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Alex believes small teams should own whole systems."],
+        },
+      ],
+      promptedByQuestion: "Who owns the review timeline?",
+    },
+  ]);
+});
+
 test("applyProactiveQuestionPass filters proactive facts by allowlist and confidence", async () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",

@@ -179,30 +179,7 @@ export class ExtractionEngine {
   private normalizeExtractionResultPayload(parsed: any): ExtractionResult {
     const entities = Array.isArray(parsed?.entities)
       ? parsed.entities
-          .map((e: any) => ({
-            name: typeof e?.name === "string" ? e.name : "",
-            type: typeof e?.type === "string" ? e.type : "other",
-            facts: Array.isArray(e?.facts)
-              ? e.facts.filter((f: any) => typeof f === "string")
-              : [],
-            structuredSections: Array.isArray(e?.structuredSections)
-              ? e.structuredSections
-                  .map((section: any) => ({
-                    key: typeof section?.key === "string" ? section.key : "",
-                    title: typeof section?.title === "string" ? section.title : "",
-                    facts: Array.isArray(section?.facts)
-                      ? section.facts.filter((fact: any) => typeof fact === "string")
-                      : [],
-                  }))
-                  .filter((section: any) => (
-                    section.key.length > 0 &&
-                    section.title.length > 0 &&
-                    section.facts.length > 0
-                  ))
-              : undefined,
-            promptedByQuestion:
-              typeof e?.promptedByQuestion === "string" ? e.promptedByQuestion : undefined,
-          }))
+          .map((e: any) => this.normalizeEntityUpdate(e))
           .filter((e: any) => e.name.length > 0)
       : [];
 
@@ -263,6 +240,33 @@ export class ExtractionEngine {
                 typeof r?.promptedByQuestion === "string" ? r.promptedByQuestion : undefined,
             }))
         : undefined,
+    };
+  }
+
+  private normalizeEntityUpdate(entity: any): ExtractedEntityResult {
+    return {
+      name: typeof entity?.name === "string" ? entity.name : "",
+      type: typeof entity?.type === "string" ? entity.type : "other",
+      facts: Array.isArray(entity?.facts)
+        ? entity.facts.filter((fact: any) => typeof fact === "string")
+        : [],
+      structuredSections: Array.isArray(entity?.structuredSections)
+        ? entity.structuredSections
+            .map((section: any) => ({
+              key: typeof section?.key === "string" ? section.key : "",
+              title: typeof section?.title === "string" ? section.title : "",
+              facts: Array.isArray(section?.facts)
+                ? section.facts.filter((fact: any) => typeof fact === "string")
+                : [],
+            }))
+            .filter((section: any) => (
+              section.key.length > 0 &&
+              section.title.length > 0 &&
+              section.facts.length > 0
+            ))
+        : undefined,
+      promptedByQuestion:
+        typeof entity?.promptedByQuestion === "string" ? entity.promptedByQuestion : undefined,
     };
   }
 
@@ -1431,14 +1435,7 @@ Consolidate the new memories against existing ones.`,
     );
     if (fallbackResult) {
       log.debug(`consolidation: ${fallbackResult.items.length} decisions via fallback`);
-      const normalizedEntityUpdates = fallbackResult.entityUpdates.map((entity) => ({
-        ...entity,
-        structuredSections: Array.isArray(entity.structuredSections)
-          ? entity.structuredSections
-          : undefined,
-        promptedByQuestion:
-          typeof entity.promptedByQuestion === "string" ? entity.promptedByQuestion : undefined,
-      }));
+      const normalizedEntityUpdates = fallbackResult.entityUpdates.map((entity) => this.normalizeEntityUpdate(entity));
       return this.sanitizeConsolidationResult({
         items: fallbackResult.items.map((item) => ({
           ...item,
@@ -1557,28 +1554,7 @@ Respond with valid JSON only, matching this schema:
           .filter((item: any) => item.existingId.length > 0);
         const normalizedEntityUpdates = Array.isArray(parsed.entityUpdates)
           ? parsed.entityUpdates
-              .map((entity: any) => ({
-                name: typeof entity?.name === "string" ? entity.name : "",
-                type: typeof entity?.type === "string" ? entity.type : "other",
-                facts: Array.isArray(entity?.facts)
-                  ? entity.facts.filter((fact: any) => typeof fact === "string")
-                  : [],
-                structuredSections: Array.isArray(entity?.structuredSections)
-                  ? entity.structuredSections
-                      .map((section: any) => ({
-                        key: typeof section?.key === "string" ? section.key : "",
-                        title: typeof section?.title === "string" ? section.title : "",
-                        facts: Array.isArray(section?.facts)
-                          ? section.facts.filter((fact: any) => typeof fact === "string")
-                          : [],
-                      }))
-                      .filter((section: any) => (
-                        section.key.length > 0 &&
-                        section.title.length > 0 &&
-                        section.facts.length > 0
-                      ))
-                  : undefined,
-              }))
+              .map((entity: any) => this.normalizeEntityUpdate(entity))
               .filter((entity: any) => entity.name.length > 0)
           : [];
         log.debug(
