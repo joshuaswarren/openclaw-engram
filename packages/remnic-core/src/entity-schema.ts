@@ -101,13 +101,39 @@ export function normalizeEntitySchemas(raw: unknown): Record<string, EntitySchem
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+function mergeEntitySchemaDefinitions(
+  defaults: EntitySchemaDefinition,
+  overrides: EntitySchemaDefinition,
+): EntitySchemaDefinition {
+  const overrideByKey = new Map(overrides.sections.map((section) => [section.key, section]));
+  const mergedSections: EntitySchemaSectionDefinition[] = [];
+  const seen = new Set<string>();
+
+  for (const section of defaults.sections) {
+    const nextSection = overrideByKey.get(section.key) ?? section;
+    mergedSections.push(nextSection);
+    seen.add(nextSection.key);
+  }
+
+  for (const section of overrides.sections) {
+    if (seen.has(section.key)) continue;
+    mergedSections.push(section);
+    seen.add(section.key);
+  }
+
+  return { sections: mergedSections };
+}
+
 export function getEntitySchema(
   entityType: string,
   entitySchemas?: Record<string, EntitySchemaDefinition>,
 ): EntitySchemaDefinition | undefined {
   const normalizedType = toSnakeCase(entityType);
-  return entitySchemas?.[normalizedType]
-    ?? DEFAULT_ENTITY_SCHEMAS[normalizedType];
+  const defaults = DEFAULT_ENTITY_SCHEMAS[normalizedType];
+  const overrides = entitySchemas?.[normalizedType];
+  if (!defaults) return overrides;
+  if (!overrides) return defaults;
+  return mergeEntitySchemaDefinitions(defaults, overrides);
 }
 
 export function matchEntitySchemaSection(

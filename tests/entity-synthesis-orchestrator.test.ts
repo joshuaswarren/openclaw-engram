@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { parseConfig } from "../packages/remnic-core/src/config.js";
-import { Orchestrator } from "../packages/remnic-core/src/orchestrator.js";
+import { Orchestrator, dedupeEntitySynthesisEvidenceEntries } from "../packages/remnic-core/src/orchestrator.js";
 import {
   isEntitySynthesisStale,
   normalizeEntityName,
@@ -363,6 +363,31 @@ test("processEntitySynthesisQueue keeps the newest and oldest repeated facts bef
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });
   }
+});
+
+test("dedupeEntitySynthesisEvidenceEntries updates the newest duplicate even when input order drifts", () => {
+  const deduped = dedupeEntitySynthesisEvidenceEntries([
+    {
+      text: "Repeated recent fact.",
+      timestamp: "2026-04-13T14:00:00.000Z",
+      source: "extraction",
+    },
+    {
+      text: "Repeated recent fact.",
+      timestamp: "2026-04-13T12:00:00.000Z",
+      source: "extraction",
+    },
+    {
+      text: "Repeated recent fact.",
+      timestamp: "2026-04-13T15:00:00.000Z",
+      source: "extraction",
+    },
+  ]);
+
+  assert.deepEqual(deduped.map((entry) => entry.timestamp), [
+    "2026-04-13T15:00:00.000Z",
+    "2026-04-13T12:00:00.000Z",
+  ]);
 });
 
 test("processEntitySynthesisQueue treats offset timestamps as newer when filtering evidence", async () => {

@@ -4383,7 +4383,9 @@ export class StorageManager {
       + (options.incrementVersion === false ? 0 : 1);
     entity.updated = entityUpdatedAt;
     await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
-    await this.removeEntitySynthesisQueueEntries([name]);
+    await this.removeEntitySynthesisQueueEntries([
+      ...new Set([name, normalizeEntityName(entity.name, entity.type)]),
+    ]);
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
   }

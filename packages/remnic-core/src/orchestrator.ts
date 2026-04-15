@@ -263,7 +263,57 @@ import type {
   QmdSearchResult,
   RecallPlanMode,
   RecallSectionConfig,
+  EntityTimelineEntry,
 } from "./types.js";
+
+export function dedupeEntitySynthesisEvidenceEntries(
+  entries: EntityTimelineEntry[],
+): EntityTimelineEntry[] {
+  const dedupedEvidenceEntries: EntityTimelineEntry[] = [];
+  const evidenceByFact = new Map<string, {
+    newest: EntityTimelineEntry;
+    oldest: EntityTimelineEntry;
+  }>();
+
+  for (const entry of entries) {
+    const normalizedFact = entry.text.trim();
+    if (!normalizedFact) continue;
+    const existing = evidenceByFact.get(normalizedFact);
+    if (!existing) {
+      evidenceByFact.set(normalizedFact, { newest: entry, oldest: entry });
+      continue;
+    }
+    if (compareEntityTimestamps(entry.timestamp, existing.newest.timestamp) > 0) {
+      existing.newest = entry;
+    }
+    if (compareEntityTimestamps(entry.timestamp, existing.oldest.timestamp) < 0) {
+      existing.oldest = entry;
+    }
+  }
+
+  for (const { newest, oldest } of evidenceByFact.values()) {
+    dedupedEvidenceEntries.push(newest);
+    const newestKey = [
+      newest.timestamp,
+      newest.source ?? "",
+      newest.sessionKey ?? "",
+      newest.principal ?? "",
+      newest.text,
+    ].join("\u0000");
+    const oldestKey = [
+      oldest.timestamp,
+      oldest.source ?? "",
+      oldest.sessionKey ?? "",
+      oldest.principal ?? "",
+      oldest.text,
+    ].join("\u0000");
+    if (oldestKey !== newestKey) {
+      dedupedEvidenceEntries.push(oldest);
+    }
+  }
+
+  return dedupedEvidenceEntries;
+}
 
 export interface GraphRecallSnapshot {
   recordedAt: string;
@@ -2316,43 +2366,9 @@ export class Orchestrator {
         ]
           .slice()
           .sort((left, right) => compareEntityTimestamps(right.timestamp, left.timestamp));
-        const dedupedEvidenceEntries: typeof sortedTimelineEntries = [];
-        const evidenceByFact = new Map<string, {
-          newest: typeof sortedTimelineEntries[number];
-          oldest: typeof sortedTimelineEntries[number];
-        }>();
-        for (const entry of (candidateEvidenceEntries.length > 0 ? candidateEvidenceEntries : sortedTimelineEntries)) {
-          const normalizedFact = entry.text.trim();
-          if (!normalizedFact) continue;
-          const existing = evidenceByFact.get(normalizedFact);
-          if (!existing) {
-            evidenceByFact.set(normalizedFact, { newest: entry, oldest: entry });
-            continue;
-          }
-          if (compareEntityTimestamps(entry.timestamp, existing.oldest.timestamp) < 0) {
-            existing.oldest = entry;
-          }
-        }
-        for (const { newest, oldest } of evidenceByFact.values()) {
-          dedupedEvidenceEntries.push(newest);
-          const newestKey = [
-            newest.timestamp,
-            newest.source ?? "",
-            newest.sessionKey ?? "",
-            newest.principal ?? "",
-            newest.text,
-          ].join("\u0000");
-          const oldestKey = [
-            oldest.timestamp,
-            oldest.source ?? "",
-            oldest.sessionKey ?? "",
-            oldest.principal ?? "",
-            oldest.text,
-          ].join("\u0000");
-          if (oldestKey !== newestKey) {
-            dedupedEvidenceEntries.push(oldest);
-          }
-        }
+        const dedupedEvidenceEntries = dedupeEntitySynthesisEvidenceEntries(
+          candidateEvidenceEntries.length > 0 ? candidateEvidenceEntries : sortedTimelineEntries,
+        );
         const chronologicalEvidenceEntries = dedupedEvidenceEntries
           .slice()
           .sort((left, right) => compareEntityTimestamps(left.timestamp, right.timestamp));

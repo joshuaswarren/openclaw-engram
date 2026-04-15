@@ -2307,3 +2307,41 @@ test("refreshEntitySynthesisQueue keeps canonical filenames when headings drift"
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("updateEntitySynthesis removes queue entries that match the parsed canonical heading", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-queue-remove-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const canonicalFilename = normalizeEntityName("Jane Doe", "person");
+    const parsedCanonical = normalizeEntityName("Jane Do", "person");
+    await storage.writeEntity("Jane Doe", "person", ["Leads roadmap work."], {
+      timestamp: "2026-04-13T10:00:00.000Z",
+      source: "extraction",
+    });
+
+    const entityPath = path.join(dir, "entities", `${canonicalFilename}.md`);
+    const raw = await readFile(entityPath, "utf-8");
+    await writeFile(entityPath, raw.replace("# Jane Doe", "# Jane Do"), "utf-8");
+    await writeFile(
+      path.join(dir, "state", "entity-synthesis-queue.json"),
+      JSON.stringify({
+        updatedAt: "2026-04-13T10:05:00.000Z",
+        entityNames: [parsedCanonical],
+      }, null, 2) + "\n",
+      "utf-8",
+    );
+
+    await storage.updateEntitySynthesis(canonicalFilename, "Jane Doe leads roadmap work.", {
+      updatedAt: "2026-04-13T10:06:00.000Z",
+      synthesisTimelineCount: 1,
+    });
+
+    const queue = await storage.readEntitySynthesisQueue();
+
+    assert.deepEqual(queue, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
