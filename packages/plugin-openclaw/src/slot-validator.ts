@@ -57,8 +57,9 @@ function levenshteinDistance(a: string, b: string): number {
 
 function suggestLikelyRemnicSlot(pluginId: string, actualSlot: string): string {
   if (
-    pluginId === CANONICAL_REMNIC_MEMORY_SLOT_ID &&
-    actualSlot === LEGACY_REMNIC_MEMORY_SLOT_ID
+    actualSlot !== pluginId &&
+    (actualSlot === CANONICAL_REMNIC_MEMORY_SLOT_ID ||
+      actualSlot === LEGACY_REMNIC_MEMORY_SLOT_ID)
   ) {
     return pluginId;
   }

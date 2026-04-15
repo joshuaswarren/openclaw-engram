@@ -97,6 +97,33 @@ test("slot validator points legacy slot users at the canonical plugin id", () =>
   );
 });
 
+test("slot validator points canonical slot users at the legacy plugin id when validating legacy mode", () => {
+  const { logger } = buildLogger();
+
+  assert.throws(
+    () =>
+      validateSlotSelection({
+        pluginId: LEGACY_PLUGIN_ID,
+        runtimeConfig: {
+          plugins: {
+            slots: {
+              memory: CANONICAL_PLUGIN_ID,
+            },
+          },
+        },
+        requireExclusive: true,
+        onMismatch: "error",
+        logger,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, new RegExp(CANONICAL_PLUGIN_ID));
+      assert.match(error.message, new RegExp(LEGACY_PLUGIN_ID));
+      return true;
+    },
+  );
+});
+
 test("slot validator returns passive and warns on mismatch when configured to warn", () => {
   const { logger, warnings } = buildLogger();
   const result = validateSlotSelection({
