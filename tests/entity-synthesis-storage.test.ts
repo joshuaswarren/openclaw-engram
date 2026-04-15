@@ -7,7 +7,6 @@ import {
   StorageManager,
   compareEntityTimestamps,
   isEntitySynthesisStale,
-  latestEntityTimelineTimestamp,
   normalizeEntityName,
   parseEntityFile,
   serializeEntityFile,
@@ -106,6 +105,12 @@ test("writeEntity preserves structured sections alongside timeline evidence", as
         ],
       },
     ]);
+    assert.deepEqual(parsed.facts, [
+      "Leads the roadmap.",
+      "Owns release approvals now.",
+      "Small teams move faster than committees.",
+      "Roadmaps should stay legible to the team.",
+    ]);
     assert.equal(parsed.timeline.length, 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -145,6 +150,7 @@ test("writeEntity merges schema-backed sections even when incoming keys use raw 
     const parsed = parseEntityFile(
       await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"),
     );
+    const raw = await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8");
 
     assert.deepEqual(parsed.structuredSections, [
       {
@@ -156,6 +162,11 @@ test("writeEntity merges schema-backed sections even when incoming keys use raw 
         ],
       },
     ]);
+    assert.deepEqual(parsed.facts, [
+      "Small teams move faster than committees.",
+      "Roadmaps should stay legible to the team.",
+    ]);
+    assert.doesNotMatch(raw, /## Facts/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -1626,7 +1637,6 @@ test("parseEntityFile preserves unknown timestamps for legacy facts without meta
   const parsed = parseEntityFile(raw);
 
   assert.deepEqual(parsed.timeline.map((entry) => entry.timestamp), ["", ""]);
-  assert.equal(latestEntityTimelineTimestamp(parsed), undefined);
   assert.equal(isEntitySynthesisStale(parsed), true);
 });
 
@@ -1772,7 +1782,6 @@ test("entity synthesis staleness uses parsed timestamps instead of raw string or
     "",
   ].join("\n"));
 
-  assert.equal(latestEntityTimelineTimestamp(parsed), "2026-04-13T10:00:00-05:00");
   assert.equal(isEntitySynthesisStale(parsed), true);
 });
 

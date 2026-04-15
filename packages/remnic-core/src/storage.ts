@@ -1081,7 +1081,7 @@ function serializeEntityTimelineEntry(entry: EntityTimelineEntry): string {
   return `- ${serializedMetadata}${entry.text}`.trimEnd();
 }
 
-function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
+function dedupeEntityTimelineFacts(timeline: EntityTimelineEntry[]): string[] {
   return [...new Set(
     timeline
       .map((entry) => entry.text.trim())
@@ -1091,6 +1091,37 @@ function dedupeEntityFacts(timeline: EntityTimelineEntry[]): string[] {
 
 function normalizeEntitySectionFact(value: string): string {
   return value.replace(/\s+/g, " ").trim();
+}
+
+function collectStructuredSectionFacts(structuredSections: EntityStructuredSection[]): string[] {
+  const facts: string[] = [];
+  for (const section of structuredSections) {
+    for (const fact of section.facts) {
+      const normalized = normalizeEntitySectionFact(fact);
+      if (!normalized) continue;
+      facts.push(normalized);
+    }
+  }
+  return [...new Set(facts)];
+}
+
+function compileEntityFacts(
+  timeline: EntityTimelineEntry[],
+  structuredSections: EntityStructuredSection[],
+): string[] {
+  const facts: string[] = [];
+  const seen = new Set<string>();
+  for (const fact of dedupeEntityTimelineFacts(timeline)) {
+    if (seen.has(fact)) continue;
+    seen.add(fact);
+    facts.push(fact);
+  }
+  for (const fact of collectStructuredSectionFacts(structuredSections)) {
+    if (seen.has(fact)) continue;
+    seen.add(fact);
+    facts.push(fact);
+  }
+  return facts;
 }
 
 function parseEntityStructuredSectionFacts(lines: string[]): string[] {
@@ -1160,7 +1191,7 @@ function partitionEntityStructuredSections(
   };
 }
 
-export function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
+function latestEntityTimelineTimestamp(entity: EntityFile): string | undefined {
   let latestRaw: string | undefined;
   for (const entry of entity.timeline) {
     const timestamp = entry.timestamp.trim();
@@ -1372,7 +1403,6 @@ export function parseEntityFile(
   const synthesis =
     readEntitySectionText(lines, ["Synthesis"], { preserveBullets: true, skipTimelineBullets: true })
     ?? readEntitySectionText(lines, ["Summary"], { preserveBullets: true, skipTimelineBullets: true });
-  const facts = dedupeEntityFacts(timeline);
   const synthesisUpdatedAt = frontmatter.synthesisUpdatedAt || undefined;
   const synthesisTimelineCount = frontmatter.synthesisTimelineCount;
   const synthesisStructuredFactCount = frontmatter.synthesisStructuredFactCount;
@@ -1381,6 +1411,7 @@ export function parseEntityFile(
     extraSections,
     entitySchemas,
   );
+  const facts = compileEntityFacts(timeline, structuredSections);
 
   return {
     name,
@@ -1423,12 +1454,14 @@ export function serializeEntityFile(
     entity.structuredSections ?? [],
     entitySchemas,
   );
-  const legacyFacts = timeline.length === 0 ? dedupeEntityFacts(
-    entity.facts.map((fact) => ({
-      timestamp: updated,
-      text: fact,
-    })),
-  ) : [];
+  const sectionFacts = new Set(collectStructuredSectionFacts(structuredSections));
+  const legacyFacts = timeline.length === 0
+    ? [...new Set(
+      entity.facts
+        .map((fact) => normalizeEntitySectionFact(fact))
+        .filter((fact) => fact.length > 0 && !sectionFacts.has(fact)),
+    )]
+    : [];
   const synthesisUpdatedAt = entity.synthesisUpdatedAt?.trim() || "";
   const synthesisTimelineCount = entity.synthesisTimelineCount;
   const synthesisStructuredFactCount = entity.synthesisStructuredFactCount;
@@ -2309,13 +2342,13 @@ export class StorageManager {
       if (alreadyPresent) continue;
       entity.timeline.push(nextEntry);
     }
-    entity.facts = dedupeEntityFacts(entity.timeline);
-    entity.summary = entity.synthesis || entity.summary;
     entity.structuredSections = sortStructuredSectionsBySchema(
       type,
       Array.from(structuredSectionMap.values()),
       this.entitySchemas,
     );
+    entity.facts = compileEntityFacts(entity.timeline, entity.structuredSections);
+    entity.summary = entity.synthesis || entity.summary;
     entity.name = name;
     entity.type = type;
     entity.created = entity.created || timestamp;
@@ -4834,8 +4867,6 @@ export class StorageManager {
           timelineKeys.add(key);
           return true;
         });
-        mergedEntity.facts = dedupeEntityFacts(mergedEntity.timeline);
-
         // Deduplicate relationships by target+label
         const relKeys = new Set<string>();
         mergedEntity.relationships = mergedEntity.relationships.filter((r) => {
@@ -4863,6 +4894,7 @@ export class StorageManager {
           mergedEntity.structuredSections ?? [],
           this.entitySchemas,
         );
+        mergedEntity.facts = compileEntityFacts(mergedEntity.timeline, mergedEntity.structuredSections);
 
         const extraSectionKeys = new Set<string>();
         mergedEntity.extraSections = (mergedEntity.extraSections ?? []).filter((section) => {

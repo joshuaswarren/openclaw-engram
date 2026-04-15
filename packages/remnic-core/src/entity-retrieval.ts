@@ -7,7 +7,7 @@ import { compareEntityTimestamps, normalizeEntityName, type StorageManager } fro
 import { normalizeEntityText, resolveRequestedEntitySectionKeys } from "./entity-schema.js";
 import type { EntityStructuredSection, MemoryFile, PluginConfig, TranscriptEntry } from "./types.js";
 
-const ENTITY_INDEX_VERSION = 2;
+const ENTITY_INDEX_VERSION = 3;
 const RECENT_TRANSCRIPT_LOOKBACK_HOURS = 24;
 const INSTRUCTION_LIKE_RE = /\b(always|never|must|should|remember to|do not|don't|process|workflow|template|checklist|instruction)\b/i;
 const METADATA_WRAPPER_RE = /^(source|context|metadata|notes?):/i;
@@ -22,6 +22,7 @@ type EntityMentionIndexEntry = {
   aliases: string[];
   summary?: string;
   facts: string[];
+  timelineFacts: string[];
   structuredSections: EntityStructuredSection[];
   timeline: Array<{
     timestamp: string;
@@ -260,6 +261,7 @@ function createPseudoNativeEntry(chunk: NativeKnowledgeChunk): EntityMentionInde
     aliases: uniqueStrings(chunk.aliases ?? []),
     facts: [],
     structuredSections: [],
+    timelineFacts: [],
     timeline: [],
     relationships: [],
     activity: [],
@@ -308,6 +310,10 @@ async function buildEntityMentionIndex(
   for (const entity of entityFiles) {
     const canonicalId = normalizeEntityName(entity.name, entity.type);
     const sanitizedFacts = entity.facts.map((fact) => sanitizeEntityFact(fact)).filter(Boolean).map((fact) => compactLine(fact, 180));
+    const sanitizedTimelineFacts = entity.timeline
+      .map((entry) => sanitizeEntityFact(entry.text))
+      .filter(Boolean)
+      .map((fact) => compactLine(fact, 180));
     entities.set(canonicalId, {
       canonicalId,
       name: entity.name,
@@ -315,6 +321,7 @@ async function buildEntityMentionIndex(
       aliases: uniqueStrings(entity.aliases),
       summary: entity.synthesis?.trim() || entity.summary?.trim() || undefined,
       facts: sanitizedFacts,
+      timelineFacts: uniqueStrings(sanitizedTimelineFacts),
       structuredSections: (entity.structuredSections ?? []).map((section) => ({
         key: section.key,
         title: section.title,
@@ -458,10 +465,10 @@ async function buildHintSnippets(
       }
     }
   } else {
-    for (const fact of entry.facts) {
+    for (const fact of entry.timelineFacts) {
       snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
     }
-    if (entry.facts.length === 0) {
+    if (entry.timelineFacts.length === 0) {
       for (const section of entry.structuredSections) {
         for (const fact of section.facts) {
           snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
