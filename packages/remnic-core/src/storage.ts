@@ -8,6 +8,7 @@ import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import {
   matchEntitySchemaSection,
+  normalizeEntityStructuredSection,
   sortStructuredSectionsBySchema,
 } from "./entity-schema.js";
 import {
@@ -2290,11 +2291,12 @@ export class StorageManager {
       }]),
     );
     for (const section of options.structuredSections ?? []) {
-      const existingSection = structuredSectionMap.get(section.key);
+      const normalizedSection = normalizeEntityStructuredSection(type, section, this.entitySchemas);
+      const existingSection = structuredSectionMap.get(normalizedSection.key);
       if (!existingSection) {
-        structuredSectionMap.set(section.key, {
-          key: section.key,
-          title: section.title,
+        structuredSectionMap.set(normalizedSection.key, {
+          key: normalizedSection.key,
+          title: normalizedSection.title,
           facts: [...new Set(section.facts.map((fact) => fact.trim()).filter((fact) => fact.length > 0))],
         });
         continue;
@@ -2306,8 +2308,8 @@ export class StorageManager {
         mergedFacts.add(trimmed);
       }
       existingSection.facts = Array.from(mergedFacts);
-      if (!existingSection.title.trim() && section.title.trim()) {
-        existingSection.title = section.title;
+      if (!existingSection.title.trim() && normalizedSection.title.trim()) {
+        existingSection.title = normalizedSection.title;
       }
     }
     for (const fact of safeFacts) {

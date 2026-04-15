@@ -61,6 +61,10 @@ function titleFromKey(key: string): string {
     .join(" ");
 }
 
+function tokenizeNormalized(value: string): string[] {
+  return normalizeText(value).split(/\s+/).filter(Boolean);
+}
+
 function normalizeSectionDefinition(raw: unknown): EntitySchemaSectionDefinition | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const value = raw as Record<string, unknown>;
@@ -124,14 +128,42 @@ export function matchEntitySchemaSection(
   return null;
 }
 
+export function normalizeEntityStructuredSection(
+  entityType: string,
+  section: Pick<EntityStructuredSection, "key" | "title">,
+  entitySchemas?: Record<string, EntitySchemaDefinition>,
+): Pick<EntityStructuredSection, "key" | "title"> {
+  const matchedSection = matchEntitySchemaSection(entityType, section.title, entitySchemas)
+    ?? matchEntitySchemaSection(entityType, section.key, entitySchemas);
+  if (matchedSection) {
+    return {
+      key: matchedSection.key,
+      title: matchedSection.title,
+    };
+  }
+  const key = toSnakeCase(section.key || section.title);
+  return {
+    key,
+    title: section.title.trim() || titleFromKey(key),
+  };
+}
+
 function queryMentionsAlias(query: string, alias: string): boolean {
-  const normalizedQuery = normalizeText(query);
-  const normalizedAlias = normalizeText(alias);
-  if (!normalizedQuery || !normalizedAlias) return false;
-  if (normalizedQuery.includes(normalizedAlias)) return true;
-  return normalizedQuery
-    .split(/\s+/)
-    .some((token) => token === normalizedAlias);
+  const queryTokens = tokenizeNormalized(query);
+  const aliasTokens = tokenizeNormalized(alias);
+  if (queryTokens.length === 0 || aliasTokens.length === 0) return false;
+  if (aliasTokens.length > queryTokens.length) return false;
+  for (let index = 0; index <= queryTokens.length - aliasTokens.length; index += 1) {
+    let matched = true;
+    for (let offset = 0; offset < aliasTokens.length; offset += 1) {
+      if (queryTokens[index + offset] !== aliasTokens[offset]) {
+        matched = false;
+        break;
+      }
+    }
+    if (matched) return true;
+  }
+  return false;
 }
 
 export function resolveRequestedEntitySectionKeys(

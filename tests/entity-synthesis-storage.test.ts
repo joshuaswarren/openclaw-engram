@@ -112,6 +112,55 @@ test("writeEntity preserves structured sections alongside timeline evidence", as
   }
 });
 
+test("writeEntity merges schema-backed sections even when incoming keys use raw casing", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-structured-sections-schema-key-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const entityName = "Jane Doe";
+    const entityType = "person";
+    const canonical = normalizeEntityName(entityName, entityType);
+
+    await storage.writeEntity(entityName, entityType, [], {
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Small teams move faster than committees."],
+        },
+      ],
+    });
+
+    await storage.writeEntity(entityName, entityType, [], {
+      structuredSections: [
+        {
+          key: "Beliefs",
+          title: "Beliefs",
+          facts: ["Roadmaps should stay legible to the team."],
+        },
+      ],
+    });
+
+    const parsed = parseEntityFile(
+      await readFile(path.join(dir, "entities", `${canonical}.md`), "utf-8"),
+    );
+
+    assert.deepEqual(parsed.structuredSections, [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: [
+          "Small teams move faster than committees.",
+          "Roadmaps should stay legible to the team.",
+        ],
+      },
+    ]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeEntity marks section-only evidence updates as stale after synthesis", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-structured-sections-stale-"));
   try {

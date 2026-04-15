@@ -670,6 +670,25 @@ test("entity retrieval scopes answer hints to requested structured sections", as
   assert.doesNotMatch(section!, /writes blunt weekly updates in Slack/i);
 });
 
+test("entity retrieval does not treat substring matches as requested structured sections", async () => {
+  const { config, storage } = await buildHarness("engram-entity-section-substring");
+  await storage.writeEntity("Alice Example", "person", ["Alice Example leads product strategy at Northwind."], {
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Alice Example believes small teams should own whole systems."],
+      },
+    ],
+  });
+
+  const section = await buildSection(config, storage, "What does Alice Example find unbelievable under pressure?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example leads product strategy at Northwind\./);
+  assert.doesNotMatch(section!, /Alice Example believes small teams should own whole systems\./i);
+});
+
 test("entity retrieval falls back to structured section facts for direct queries when generic facts are empty", async () => {
   const { config, storage } = await buildHarness("engram-entity-direct-structured-fallback");
   await storage.writeEntity("Alice Example", "person", [], {
