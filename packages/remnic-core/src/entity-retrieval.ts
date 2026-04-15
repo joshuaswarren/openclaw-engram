@@ -453,6 +453,7 @@ async function buildHintSnippets(
   requestedSectionKeys: Set<string>,
 ): Promise<EntityHintSnippet[]> {
   const snippets: EntityHintSnippet[] = [];
+  const aliasTokens = new Set(tokenize(uniqueStrings([entry.name, ...entry.aliases]).join(" ")));
   if (entry.summary) {
     snippets.push({ text: compactLine(entry.summary, 180), score: 10, kind: "summary" });
   }
@@ -468,11 +469,22 @@ async function buildHintSnippets(
     for (const fact of entry.timelineFacts) {
       snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
     }
-    if (entry.timelineFacts.length === 0) {
-      for (const section of entry.structuredSections) {
-        for (const fact of section.facts) {
-          snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+    for (const section of entry.structuredSections) {
+      for (const fact of section.facts) {
+        const normalizedFact = normalizeEntityText(fact);
+        const hasNonAliasQueryOverlap = queryTokens.some((token) =>
+          !aliasTokens.has(token) && normalizedFact.includes(token)
+        );
+        if (entry.timelineFacts.length > 0 && !hasNonAliasQueryOverlap) {
+          continue;
         }
+        snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
+      }
+    }
+    if (entry.timelineFacts.length === 0 && entry.structuredSections.length === 0) {
+      for (const fact of entry.facts) {
+        if (!fact.trim()) continue;
+          snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
       }
     }
   }

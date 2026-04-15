@@ -735,6 +735,24 @@ test("entity retrieval falls back to structured section facts for direct queries
   assert.match(section!, /Alice Example believes small teams should own whole systems\./);
 });
 
+test("entity retrieval can surface relevant structured section facts for mixed entities without requesting a section", async () => {
+  const { config, storage } = await buildHarness("engram-entity-direct-mixed-structured-relevance");
+  await storage.writeEntity("Alice Example", "person", ["Alice Example leads product strategy at Northwind."], {
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Alice Example prefers small teams owning whole systems."],
+      },
+    ],
+  });
+
+  const section = await buildSection(config, storage, "What does Alice Example prefer?");
+
+  assert.ok(section);
+  assert.match(section!, /Alice Example prefers small teams owning whole systems\./);
+});
+
 test("entity retrieval does not prefer fallback structured section facts over timeline evidence when a summary exists", async () => {
   const { config, storage } = await buildHarness("engram-entity-direct-structured-fallback-summary");
   await storage.writeEntity("Alice Example", "person", [], {
