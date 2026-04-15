@@ -124,6 +124,35 @@ test("slot validator points canonical slot users at the legacy plugin id when va
   );
 });
 
+test("slot validator does not recommend the nearest alternate Remnic id as the active fix target", () => {
+  const { logger } = buildLogger();
+
+  assert.throws(
+    () =>
+      validateSlotSelection({
+        pluginId: CANONICAL_PLUGIN_ID,
+        runtimeConfig: {
+          plugins: {
+            slots: {
+              memory: "openclaw-engra",
+            },
+          },
+        },
+        requireExclusive: true,
+        onMismatch: "error",
+        logger,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /openclaw-engra/);
+      assert.match(error.message, new RegExp(LEGACY_PLUGIN_ID));
+      assert.match(error.message, new RegExp(CANONICAL_PLUGIN_ID));
+      assert.match(error.message, /only activates when plugins\.slots\.memory is "openclaw-remnic"/);
+      return true;
+    },
+  );
+});
+
 test("slot validator returns passive and warns on mismatch when configured to warn", () => {
   const { logger, warnings } = buildLogger();
   const result = validateSlotSelection({

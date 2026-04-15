@@ -87,9 +87,14 @@ function suggestLikelyRemnicSlot(pluginId: string, actualSlot: string): string {
 
 function mismatchMessage(pluginId: string, actualSlot: string): string {
   const suggestedSlot = suggestLikelyRemnicSlot(pluginId, actualSlot);
+  const suggestionLine =
+    suggestedSlot === pluginId
+      ? `The closest known memory-slot plugin id is "${pluginId}".`
+      : `The closest known Remnic memory-slot plugin id to that value is "${suggestedSlot}", but this loaded plugin only activates when plugins.slots.memory is "${pluginId}".`;
+
   return [
     `[remnic] plugins.slots.memory is set to "${actualSlot}", so ${pluginId} will not attach active memory hooks.`,
-    `If you meant Remnic here, the closest known memory-slot plugin id is "${suggestedSlot}".`,
+    suggestionLine,
     `Set plugins.slots.memory to "${pluginId}" to make Remnic the active memory plugin,`,
     `or set slotBehavior.onSlotMismatch = "silent" to load passively on purpose.`,
     "See docs/plugins/openclaw.md#slot-selection for the full contract.",
