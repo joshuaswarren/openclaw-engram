@@ -216,6 +216,31 @@ function readPluginHooksPolicy(
     | undefined;
 }
 
+function isBundledActiveMemoryEnabledForAgent(
+  runtimeConfig: unknown,
+  agentId: string,
+): boolean {
+  if (!runtimeConfig || typeof runtimeConfig !== "object") return false;
+
+  const plugins = (runtimeConfig as Record<string, unknown>).plugins;
+  if (!plugins || typeof plugins !== "object") return false;
+
+  const entries = (plugins as Record<string, unknown>).entries;
+  if (!entries || typeof entries !== "object") return false;
+
+  const activeMemoryEntry = (entries as Record<string, unknown>)["active-memory"];
+  if (!activeMemoryEntry || typeof activeMemoryEntry !== "object") return false;
+  if ((activeMemoryEntry as Record<string, unknown>).enabled === false) return false;
+
+  const entryConfig = (activeMemoryEntry as Record<string, unknown>).config;
+  if (!entryConfig || typeof entryConfig !== "object") return true;
+
+  const agents = (entryConfig as Record<string, unknown>).agents;
+  if (!Array.isArray(agents) || agents.length === 0) return true;
+
+  return agents.some((value) => typeof value === "string" && value === agentId);
+}
+
 function wildcardToRegExp(pattern: string): RegExp {
   const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped.replace(/\*/g, ".*")}$`);
@@ -724,10 +749,7 @@ const pluginDefinition = {
     });
     const activeRecallEngine = createActiveRecallEngine(
       {
-        recall: async (query, sessionKey) =>
-          cfg.activeRecallAllowChainedActiveMemory
-            ? orchestrator.recall(query, sessionKey)
-            : null,
+        recall: async (query, sessionKey) => orchestrator.recall(query, sessionKey),
         getLastRecallSnapshot: (sessionKey) => orchestrator.getLastRecall(sessionKey),
         explainLastRecall:
           cfg.activeRecallAttachRecallExplain === true
@@ -787,6 +809,7 @@ const pluginDefinition = {
       sdkCaps.hasRegisterMemoryPromptSection &&
       typeof api.registerMemoryPromptSection === "function" &&
       promptInjectionAllowed;
+    const warnedBundledActiveMemoryCollisionAgents = new Set<string>();
 
     // Per-session cache: shared by the hook fallback path (populated when only
     // registerMemoryCapability is available) and the registerMemoryPromptSection
@@ -1140,9 +1163,24 @@ const pluginDefinition = {
           }
         }
         const plannerPreflightMode = planRecallMode(prompt);
+        const bundledActiveMemoryEnabledForAgent =
+          isBundledActiveMemoryEnabledForAgent(rawRuntimeConfig, agentId);
+        const shouldWarnAndSuppressBundledActiveMemoryCollision =
+          cfg.activeRecallEnabled &&
+          !cfg.activeRecallAllowChainedActiveMemory &&
+          bundledActiveMemoryEnabledForAgent;
+        if (
+          shouldWarnAndSuppressBundledActiveMemoryCollision &&
+          !warnedBundledActiveMemoryCollisionAgents.has(agentId)
+        ) {
+          warnedBundledActiveMemoryCollisionAgents.add(agentId);
+          log.warn(
+            `active recall suppressed because bundled active-memory plugin is enabled for agent "${agentId}" while activeRecallAllowChainedActiveMemory=false`,
+          );
+        }
         const shouldSkipChainedActiveRecall =
-          cfg.activeRecallAllowChainedActiveMemory &&
-          plannerPreflightMode === "no_recall";
+          plannerPreflightMode === "no_recall" ||
+          shouldWarnAndSuppressBundledActiveMemoryCollision;
         const activeRecallResult = shouldSkipChainedActiveRecall
           ? null
           : await activeRecallEngine

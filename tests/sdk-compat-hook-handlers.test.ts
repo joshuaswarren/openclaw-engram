@@ -440,7 +440,7 @@ test("before_prompt_build prepends the active-recall fallback block when enabled
   assert.match(String(result?.prependSystemContext ?? ""), /remembered context from Remnic/);
 });
 
-test("before_prompt_build honors activeRecallAllowChainedActiveMemory=false", async () => {
+test("before_prompt_build still prepends Remnic active recall when chaining is disabled and bundled active-memory is absent", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-active-recall-no-chain-"));
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-prompt-build-active-recall-no-chain-test");
@@ -476,9 +476,68 @@ test("before_prompt_build honors activeRecallAllowChainedActiveMemory=false", as
     { sessionKey: "session-c-no-chain", agentId: "main" },
   );
 
-  assert.equal(chainedRecallCalls, 0);
+  assert.equal(chainedRecallCalls, 1);
   assert.equal(primaryRecallCalls, 1);
+  assert.match(String(result?.prependSystemContext ?? ""), /## Active Recall \(Remnic\)/);
+  assert.match(String(result?.prependSystemContext ?? ""), /remembered context from Remnic/);
+});
+
+test("before_prompt_build warns and suppresses Remnic active recall when bundled active-memory is enabled for the same agent and chaining is disabled", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-active-recall-collision-"));
+  const { default: plugin } = await import("../src/index.js");
+  const warnings: string[] = [];
+  const api = buildHandlerCapturingApi("before-prompt-build-active-recall-collision-test");
+  delete api.registerMemoryPromptSection;
+  api.logger.warn = (message?: unknown) => warnings.push(String(message ?? ""));
+  api.config = {
+    plugins: {
+      entries: {
+        "active-memory": {
+          enabled: true,
+          config: {
+            agents: ["main"],
+          },
+        },
+      },
+    },
+  };
+  api.pluginConfig = {
+    memoryDir: root,
+    workspaceDir: root,
+    activeRecallEnabled: true,
+    activeRecallAllowChainedActiveMemory: false,
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+  let activeRecallCalls = 0;
+  orchestrator.recall = async (query: string) => {
+    if (query.startsWith("current:")) {
+      activeRecallCalls++;
+      return "remembered context from Remnic";
+    }
+    return null;
+  };
+  orchestrator.getLastRecall = () => null;
+
+  const result = await beforePromptBuild(
+    { prompt: "What happened with CI?" },
+    { sessionKey: "session-c-collision", agentId: "main" },
+  );
+
+  assert.equal(activeRecallCalls, 0);
   assert.equal(result, undefined);
+  assert.ok(
+    warnings.some((message) =>
+      message.includes("bundled active-memory plugin is enabled for agent \"main\""),
+    ),
+    "expected a collision warning when bundled active-memory is enabled for the same agent",
+  );
 });
 
 test("before_prompt_build prepends recent dreams when dreaming injection is enabled", async () => {
