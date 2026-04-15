@@ -472,6 +472,13 @@ async function buildHintSnippets(
     for (const fact of entry.facts) {
       snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "fact" });
     }
+    if (entry.facts.length === 0) {
+      for (const section of entry.structuredSections) {
+        for (const fact of section.facts) {
+          snippets.push({ text: fact, score: mode === "direct" ? 6 : 7, kind: "section" });
+        }
+      }
+    }
   }
 
   if (requestedSectionKeys.size === 0) {

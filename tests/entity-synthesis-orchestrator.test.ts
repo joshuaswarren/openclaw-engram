@@ -595,7 +595,7 @@ test("processEntitySynthesisQueue skips writing synthesis from a stale timeline 
   }
 });
 
-test("processEntitySynthesisQueue keeps timestampless evidence stale after synthesis refresh", async () => {
+test("processEntitySynthesisQueue does not resynthesize timestampless evidence once the snapshot count matches", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-missing-ts-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "remnic-entity-synthesis-orch-missing-ts-workspace-"));
   try {
@@ -631,15 +631,25 @@ test("processEntitySynthesisQueue keeps timestampless evidence stale after synth
       return { content: "Jane Doe synthesis rebuilt from timestampless evidence." };
     };
 
-    const processed = await orchestrator.processEntitySynthesisQueue("default", 1);
-    const rawEntity = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
-    const parsed = parseEntityFile(rawEntity);
+    const firstProcessed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const firstRawEntity = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const firstParsed = parseEntityFile(firstRawEntity);
 
-    assert.equal(processed, 1);
+    assert.equal(firstProcessed, 1);
     assert.equal(refreshCalls, 1);
-    assert.equal(parsed.synthesis, "Jane Doe synthesis rebuilt from timestampless evidence.");
-    assert.equal(parsed.synthesisUpdatedAt, undefined);
-    assert.equal(isEntitySynthesisStale(parsed), true);
+    assert.equal(firstParsed.synthesis, "Jane Doe synthesis rebuilt from timestampless evidence.");
+    assert.equal(firstParsed.synthesisUpdatedAt, undefined);
+    assert.equal(firstParsed.synthesisTimelineCount, firstParsed.timeline.length);
+    assert.equal(isEntitySynthesisStale(firstParsed), false);
+
+    const secondProcessed = await orchestrator.processEntitySynthesisQueue("default", 1);
+    const secondRawEntity = await readFile(path.join(memoryDir, "entities", `${canonical}.md`), "utf-8");
+    const secondParsed = parseEntityFile(secondRawEntity);
+
+    assert.equal(secondProcessed, 0);
+    assert.equal(refreshCalls, 1);
+    assert.equal(secondParsed.synthesis, "Jane Doe synthesis rebuilt from timestampless evidence.");
+    assert.equal(isEntitySynthesisStale(secondParsed), false);
   } finally {
     await rm(memoryDir, { recursive: true, force: true });
     await rm(workspaceDir, { recursive: true, force: true });

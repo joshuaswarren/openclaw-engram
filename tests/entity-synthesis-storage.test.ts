@@ -1487,6 +1487,33 @@ test("timestamp-less synthesized legacy entities stay fresh when the evidence sn
   assert.equal(isEntitySynthesisStale(reparsed), false);
 });
 
+test("timestamp-less synthesized legacy entities stay fresh without synthesisUpdatedAt when the evidence snapshot count matches", () => {
+  const reparsed = parseEntityFile(serializeEntityFile({
+    name: "Casey Example",
+    type: "person",
+    created: "2026-04-13T10:00:00.000Z",
+    updated: "2026-04-13T10:05:00.000Z",
+    facts: ["Owns rollout coordination.", "Keeps release notes current."],
+    summary: "Casey Example keeps rollout coordination on track.",
+    synthesis: "Casey Example keeps rollout coordination on track.",
+    synthesisUpdatedAt: undefined,
+    synthesisTimelineCount: 2,
+    synthesisVersion: 1,
+    timeline: [
+      { timestamp: "", text: "Owns rollout coordination.", source: "migration" },
+      { timestamp: "", text: "Keeps release notes current.", source: "migration" },
+    ],
+    relationships: [],
+    activity: [],
+    aliases: [],
+  }));
+
+  assert.deepEqual(reparsed.timeline.map((entry) => entry.timestamp), ["", ""]);
+  assert.equal(reparsed.synthesisUpdatedAt, undefined);
+  assert.equal(reparsed.synthesisTimelineCount, 2);
+  assert.equal(isEntitySynthesisStale(reparsed), false);
+});
+
 test("serializeEntityFile preserves facts-only entities as legacy facts instead of synthetic timeline entries", () => {
   const serialized = serializeEntityFile({
     name: "Casey Example",

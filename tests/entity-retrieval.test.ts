@@ -670,6 +670,31 @@ test("entity retrieval scopes answer hints to requested structured sections", as
   assert.doesNotMatch(section!, /writes blunt weekly updates in Slack/i);
 });
 
+test("entity retrieval falls back to structured section facts for direct queries when generic facts are empty", async () => {
+  const { config, storage } = await buildHarness("engram-entity-direct-structured-fallback");
+  await storage.writeEntity("Alice Example", "person", [], {
+    structuredSections: [
+      {
+        key: "beliefs",
+        title: "Beliefs",
+        facts: ["Alice Example believes small teams should own whole systems."],
+      },
+      {
+        key: "communication_style",
+        title: "Communication Style",
+        facts: ["Alice Example writes blunt weekly updates in Slack."],
+      },
+    ],
+  });
+
+  const section = await buildSection(config, storage, "Who is Alice Example?");
+
+  assert.ok(section);
+  assert.match(section!, /target: Alice Example \(person\)/);
+  assert.match(section!, /likely answer:/);
+  assert.match(section!, /Alice Example believes small teams should own whole systems\./);
+});
+
 test("entity retrieval can answer from native knowledge titles and aliases without an entity file", async () => {
   const { workspaceDir, config, storage } = await buildHarness("engram-entity-native", {
     nativeKnowledge: {

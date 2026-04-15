@@ -1213,12 +1213,12 @@ export function compareEntityTimestamps(left?: string, right?: string): number {
 export function isEntitySynthesisStale(entity: EntityFile): boolean {
   if (entity.timeline.length === 0) return false;
   if (!entity.synthesis?.trim()) return true;
-  if (!entity.synthesisUpdatedAt?.trim()) return true;
   if (entity.synthesisTimelineCount === undefined) return true;
   const latestTimelineTimestamp = latestEntityTimelineTimestamp(entity);
   if (!latestTimelineTimestamp) {
     return entity.timeline.length > entity.synthesisTimelineCount;
   }
+  if (!entity.synthesisUpdatedAt?.trim()) return true;
   const timelineFreshness = compareEntityTimestamps(latestTimelineTimestamp, entity.synthesisUpdatedAt);
   if (timelineFreshness > 0) return true;
   return entity.timeline.length > entity.synthesisTimelineCount;
