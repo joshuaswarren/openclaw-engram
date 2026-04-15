@@ -2514,6 +2514,72 @@ test("before_reset stops using the remembered Codex thread after an explicit pro
   );
 });
 
+test("before_reset flushes metadata-less follow-up turns under the raw session key", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-metadata-less-agent-end-test", {
+    includeMemoryCapability: true,
+  });
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  const agentEnd = api.handlers.get("agent_end");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+  assert.ok(agentEnd, "agent_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.transcript.append = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+
+  let flushed:
+    | {
+        sessionKey: string;
+        options: Record<string, unknown> | undefined;
+      }
+    | undefined;
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushed = { sessionKey, options };
+  };
+  orchestrator.processTurn = async () => undefined;
+
+  await beforePromptBuild(
+    { prompt: "Prime this Codex session before metadata goes missing." },
+    {
+      sessionKey: "session-reset-metadata-less",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-metadata-less",
+    },
+  );
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        { role: "user", content: "This metadata-less follow-up should buffer on the raw key." },
+        { role: "assistant", content: "Acknowledged." },
+      ],
+    },
+    {
+      sessionKey: "session-reset-metadata-less",
+    },
+  );
+
+  await beforeReset({ sessionKey: "session-reset-metadata-less" }, {});
+
+  assert.equal(flushed?.sessionKey, "session-reset-metadata-less");
+  assert.equal(flushed?.options?.reason, "before_reset");
+  assert.equal(
+    flushed?.options?.bufferKey,
+    "session-reset-metadata-less",
+  );
+});
+
 test("agent_end does not reuse a remembered Codex thread after the provider switches", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("agent-end-provider-switch-test");
@@ -2577,6 +2643,51 @@ test("agent_end does not reuse a remembered Codex thread after the provider swit
       null,
     );
   }
+});
+
+test("capability promptBuilder does not fall back to stale Codex thread cache after a metadata-less short prompt", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("capability-prompt-builder-codex-stale-thread-test", {
+    includeMemoryCapability: true,
+  });
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(api._memoryCapability?.promptBuilder, "memory capability promptBuilder should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+
+  await beforePromptBuild(
+    { prompt: "Prime this Codex session for capability fallback." },
+    {
+      sessionKey: "session-capability-stale-thread",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-capability-stale-thread",
+    },
+  );
+
+  assert.ok(
+    api._memoryCapability?.promptBuilder?.({ sessionKey: "session-capability-stale-thread" }),
+    "the first Codex turn should populate the capability promptBuilder cache",
+  );
+
+  const shortPromptResult = await beforePromptBuild(
+    { prompt: "ok" },
+    {
+      sessionKey: "session-capability-stale-thread",
+    },
+  );
+
+  assert.equal(shortPromptResult, undefined);
+  assert.equal(
+    api._memoryCapability?.promptBuilder?.({
+      sessionKey: "session-capability-stale-thread",
+    }) ?? null,
+    null,
+  );
 });
 
 test("registrationMode setup-only registers zero handlers", async () => {

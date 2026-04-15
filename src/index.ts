@@ -978,12 +978,15 @@ const pluginDefinition = {
       options?: { destructive?: boolean },
     ): string[] | null {
       const destructive = options?.destructive !== false;
-      const sessionLines = cachedMemoryBySession.get(sessionKey) ?? null;
+      const hasSessionLines = cachedMemoryBySession.has(sessionKey);
+      const sessionLines = hasSessionLines
+        ? (cachedMemoryBySession.get(sessionKey) ?? null)
+        : null;
       const providerThreadId = resolveStoredCodexThreadId(sessionKey);
       const threadLines = providerThreadId
         ? (cachedMemoryByCodexThread.get(providerThreadId) ?? null)
         : null;
-      const resolved = sessionLines ?? threadLines;
+      const resolved = hasSessionLines ? sessionLines : threadLines;
       if (!destructive) return resolved;
       cachedMemoryBySession.delete(sessionKey);
       if (providerThreadId) {
@@ -1901,6 +1904,9 @@ const pluginDefinition = {
 
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
         const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+        if (!sessionIdentity.isCodex && !sessionIdentity.providerThreadId) {
+          forgetCodexThread(sessionKey);
+        }
         rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
 
         try {
