@@ -1176,25 +1176,9 @@ const pluginDefinition = {
           }
         }
       }
-      if (!prompt || prompt.length < 5) return;
-
       const sessionKey = (ctx?.sessionKey as string) ?? "default";
       const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
       rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
-      const runtimeAgent = (ctx.runtime as Record<string, unknown> | undefined)
-        ?.agent as Record<string, unknown> | undefined;
-      const agentId =
-        (ctx?.agentId as string | undefined) ??
-        (runtimeAgent?.id as string | undefined) ??
-        "main";
-      const verboseRequested = cfg.verboseRecallVisibility !== false &&
-        isVerboseRecallRequested(event, ctx);
-      log.debug(
-        `${hookLabel}: sessionKey=${sessionKey}, promptLen=${prompt.length}`,
-      );
-      log.debug(
-        `${hookLabel}: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
-      );
       if (sessionIdentity.isCodex && !codexCompactionModeLogged) {
         const mode =
           cfg.codexCompat.compactionFlushMode === "auto"
@@ -1242,6 +1226,22 @@ const pluginDefinition = {
           );
         }
       }
+      if (!prompt || prompt.length < 5) return;
+
+      const runtimeAgent = (ctx.runtime as Record<string, unknown> | undefined)
+        ?.agent as Record<string, unknown> | undefined;
+      const agentId =
+        (ctx?.agentId as string | undefined) ??
+        (runtimeAgent?.id as string | undefined) ??
+        "main";
+      const verboseRequested = cfg.verboseRecallVisibility !== false &&
+        isVerboseRecallRequested(event, ctx);
+      log.debug(
+        `${hookLabel}: sessionKey=${sessionKey}, promptLen=${prompt.length}`,
+      );
+      log.debug(
+        `${hookLabel}: cronRecallMode=${cfg.cronRecallMode}, allowlistCount=${cfg.cronRecallAllowlist.length}`,
+      );
       if (sessionKey.includes(":cron:") && cfg.cronRecallMode === "allowlist") {
         const matchedPattern = cfg.cronRecallAllowlist.find((pattern) => {
           const re = wildcardToRegExp(pattern);

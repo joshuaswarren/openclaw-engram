@@ -276,6 +276,81 @@ test("runExtraction skips Codex batches whose fingerprint already exists in stor
   assert.equal(clearCalls, 1);
 });
 
+test("runExtraction still clears the Codex buffer when fingerprint persistence fails after durable writes", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+  config.codexCompat.enabled = true;
+  config.codexCompat.fingerprintDedup = true;
+
+  let clearCalls = 0;
+  let persistCalls = 0;
+  let fingerprintWrites = 0;
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => ({
+        extractionCount: 0,
+        lastExtractionAt: null,
+        lastConsolidationAt: null,
+        totalMemories: 0,
+        totalEntities: 0,
+        processedExtractionFingerprints: [],
+      }),
+      saveMeta: async () => undefined,
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => ({
+      facts: [
+        {
+          content: "remember epsilon",
+          category: "fact",
+          confidence: 0.9,
+          tags: [],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    }),
+  };
+  orchestrator.persistExtraction = async () => {
+    persistCalls += 1;
+    return ["fact-1"];
+  };
+  orchestrator.recordProcessedExtractionFingerprint = async () => {
+    fingerprintWrites += 1;
+    throw new Error("saveMeta failed");
+  };
+  orchestrator.requestQmdMaintenance = () => undefined;
+  orchestrator.runTierMigrationCycle = async () => undefined;
+
+  await orchestrator.runExtraction(
+    [
+      {
+        ...makeTurn("session-d", "remember epsilon"),
+        logicalSessionKey: "codex-thread:thread-13",
+        turnFingerprint: "fp-thread-13",
+      },
+    ],
+    {
+      bufferKey: "codex-thread:thread-13",
+    },
+  );
+
+  assert.equal(persistCalls, 1);
+  assert.equal(fingerprintWrites, 1);
+  assert.equal(clearCalls, 1);
+});
+
 test("runExtraction aborts before late buffer clearing when the caller cancels", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;

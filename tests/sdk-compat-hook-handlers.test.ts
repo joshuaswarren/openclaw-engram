@@ -1958,6 +1958,64 @@ test("before_prompt_build uses the Codex heuristic fallback when thread history 
   );
 });
 
+test("before_prompt_build still applies the Codex heuristic fallback when the post-compaction prompt is short", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-codex-heuristic-short-prompt-test");
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+
+  const flushCalls: Array<Record<string, unknown>> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 10 },
+    {
+      sessionKey: "session-heuristic-short-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-heuristic-short-1",
+    },
+  );
+  const shortPromptResult = await beforePromptBuild(
+    { prompt: "ok", messageCount: 4 },
+    {
+      sessionKey: "session-heuristic-short-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-heuristic-short-1",
+    },
+  );
+
+  assert.equal(shortPromptResult, undefined);
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-heuristic-short-a");
+  assert.equal(
+    (flushCalls[0]?.options as { reason?: string }).reason,
+    "codex_compaction_heuristic",
+  );
+  assert.equal(
+    (flushCalls[0]?.options as { bufferKey?: string }).bufferKey,
+    "codex-thread:thread-heuristic-short-1",
+  );
+});
+
 test("before_reset flushes the session and clears the precomputed recall cache", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-test", {

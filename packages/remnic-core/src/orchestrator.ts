@@ -8343,10 +8343,17 @@ export class Orchestrator {
       extractionFingerprint &&
       this.shouldApplyCodexFingerprintDedup(bufferKey)
     ) {
-      await this.recordProcessedExtractionFingerprint(
-        storage,
-        extractionFingerprint,
-      );
+      try {
+        await this.recordProcessedExtractionFingerprint(
+          storage,
+          extractionFingerprint,
+        );
+      } catch (error) {
+        log.warn(
+          "runExtraction: failed to persist processed extraction fingerprint; continuing with buffer clear",
+          error,
+        );
+      }
     }
     await clearBuffer({ ignoreAbort: true });
 
