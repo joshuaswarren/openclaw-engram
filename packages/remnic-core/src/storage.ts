@@ -1750,7 +1750,7 @@ export class StorageManager {
     if (!this._versioningConfig || !this._versioningConfig.enabled) return;
     try {
       const existing = await readFile(filePath, "utf-8");
-      await createPageVersion(filePath, existing, trigger, this._versioningConfig, log);
+      await createPageVersion(filePath, existing, trigger, this._versioningConfig, log, undefined, this.baseDir);
     } catch {
       // File does not exist yet — nothing to snapshot
     }

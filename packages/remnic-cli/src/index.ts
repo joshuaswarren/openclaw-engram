@@ -425,6 +425,8 @@ async function cmdVersions(rest: string[]): Promise<void> {
     sidecarDir: config.versioningSidecarDir,
   };
 
+  const memDir = resolveMemoryDir();
+
   const action = rest[0] ?? "help";
   const json = rest.includes("--json");
 
@@ -436,7 +438,7 @@ async function cmdVersions(rest: string[]): Promise<void> {
         process.exit(1);
       }
       const absPath = path.resolve(pagePath);
-      const history = await listVersions(absPath, versioningConfig);
+      const history = await listVersions(absPath, versioningConfig, memDir);
       if (json) {
         console.log(JSON.stringify(history, null, 2));
       } else {
@@ -462,7 +464,7 @@ async function cmdVersions(rest: string[]): Promise<void> {
       }
       const absPath = path.resolve(pagePath);
       try {
-        const content = await getVersion(absPath, versionId, versioningConfig);
+        const content = await getVersion(absPath, versionId, versioningConfig, memDir);
         console.log(content);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
@@ -481,7 +483,7 @@ async function cmdVersions(rest: string[]): Promise<void> {
       }
       const absPath = path.resolve(pagePath);
       try {
-        const diffOutput = await diffVersions(absPath, v1, v2, versioningConfig);
+        const diffOutput = await diffVersions(absPath, v1, v2, versioningConfig, memDir);
         console.log(diffOutput);
       } catch (err) {
         console.error(err instanceof Error ? err.message : String(err));
@@ -499,7 +501,7 @@ async function cmdVersions(rest: string[]): Promise<void> {
       }
       const absPath = path.resolve(pagePath);
       try {
-        const version = await revertToVersion(absPath, versionId, versioningConfig);
+        const version = await revertToVersion(absPath, versionId, versioningConfig, undefined, memDir);
         if (json) {
           console.log(JSON.stringify(version, null, 2));
         } else {
