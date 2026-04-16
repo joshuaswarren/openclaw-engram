@@ -183,6 +183,34 @@ export {
 } from "./briefing.js";
 
 // ---------------------------------------------------------------------------
+// Binary lifecycle management (#367)
+// ---------------------------------------------------------------------------
+
+export {
+  type BinaryLifecycleConfig,
+  type BinaryStorageBackendConfig,
+  type BinaryAssetRecord,
+  type BinaryAssetStatus,
+  type BinaryLifecycleManifest,
+  type PipelineResult,
+  type BinaryStorageBackend,
+  DEFAULT_SCAN_PATTERNS,
+  DEFAULT_MAX_BINARY_SIZE_BYTES,
+  DEFAULT_GRACE_PERIOD_DAYS,
+  FilesystemBackend,
+  NoneBackend,
+  createBackend,
+  scanForBinaries,
+  matchesPatterns,
+  readManifest,
+  writeManifest,
+  manifestPath,
+  manifestDir,
+  emptyManifest,
+  runBinaryLifecyclePipeline,
+} from "./binary-lifecycle/index.js";
+
+// ---------------------------------------------------------------------------
 // Bootstrap
 // ---------------------------------------------------------------------------
 
