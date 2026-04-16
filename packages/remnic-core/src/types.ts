@@ -182,6 +182,22 @@ export function confidenceTier(score: number): ConfidenceTier {
 /** Default TTL in days for speculative memories (auto-expire if unconfirmed) */
 export const SPECULATIVE_TTL_DAYS = 30;
 
+/**
+ * Shape for semantic chunking config overrides stored in PluginConfig.
+ * Mirrors SemanticChunkingConfig from semantic-chunking.ts without creating
+ * a circular import (types.ts is imported by everything).
+ */
+export interface SemanticChunkingConfigShape {
+  enabled: boolean;
+  targetTokens: number;
+  minTokens: number;
+  maxTokens: number;
+  smoothingWindowSize: number;
+  boundaryThresholdStdDevs: number;
+  embeddingBatchSize: number;
+  fallbackToRecursive: boolean;
+}
+
 export interface PluginConfig {
   openaiApiKey: string | undefined;
   openaiBaseUrl: string | undefined;
@@ -262,6 +278,11 @@ export interface PluginConfig {
   chunkingTargetTokens: number;
   chunkingMinTokens: number;
   chunkingOverlapSentences: number;
+  // Semantic Chunking (Issue #368)
+  /** Enable semantic chunking with embedding-based topic boundary detection. Default: false. */
+  semanticChunkingEnabled: boolean;
+  /** Optional overrides for the semantic chunking algorithm. */
+  semanticChunkingConfig: Partial<SemanticChunkingConfigShape>;
   // Contradiction Detection (Phase 2B)
   contradictionDetectionEnabled: boolean;
   contradictionSimilarityThreshold: number;
