@@ -510,7 +510,7 @@ test("runExtraction persists fingerprint and extraction counters through one coh
     },
   );
 
-  assert.equal(loadMetaCalls, 2);
+  assert.equal(loadMetaCalls, 1);
   assert.equal(saveMetaCalls, 1);
   assert.equal(clearCalls, 1);
   assert.equal(savedMeta?.extractionCount, 1);

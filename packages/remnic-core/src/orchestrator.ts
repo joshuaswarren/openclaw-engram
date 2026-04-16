@@ -8297,10 +8297,16 @@ export class Orchestrator {
       normalizedTurns,
       bufferKey,
     );
+    let meta =
+      extractionFingerprint && shouldPersistProcessedFingerprint
+        ? await storage.loadMeta()
+        : null;
     if (
       extractionFingerprint &&
       shouldPersistProcessedFingerprint &&
-      (await this.hasProcessedExtractionFingerprint(storage, extractionFingerprint))
+      (meta?.processedExtractionFingerprints ?? []).some(
+        (entry) => entry.fingerprint === extractionFingerprint,
+      )
     ) {
       log.debug(
         `runExtraction: skipping already-processed extraction fingerprint for ${bufferKey}`,
@@ -8369,7 +8375,7 @@ export class Orchestrator {
       threadIdForExtraction,
       { sessionKey, principal },
     );
-    const meta = await storage.loadMeta();
+    meta ??= await storage.loadMeta();
     if (extractionFingerprint && shouldPersistProcessedFingerprint) {
       try {
         await this.recordProcessedExtractionFingerprint(
@@ -8470,16 +8476,6 @@ export class Orchestrator {
 
     this.requestQmdMaintenance();
     await this.runTierMigrationCycle(storage, "extraction");
-  }
-
-  private async hasProcessedExtractionFingerprint(
-    storage: StorageManager,
-    fingerprint: string,
-  ): Promise<boolean> {
-    const meta = await storage.loadMeta();
-    return (meta.processedExtractionFingerprints ?? []).some(
-      (entry) => entry.fingerprint === fingerprint,
-    );
   }
 
   private async recordProcessedExtractionFingerprint(
