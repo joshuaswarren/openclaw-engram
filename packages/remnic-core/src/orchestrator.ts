@@ -9336,7 +9336,7 @@ export class Orchestrator {
     if (this.config.extractionJudgeEnabled) {
       try {
         const judgeCandidates: JudgeCandidate[] = facts
-          .map((f, i) => {
+          .reduce<JudgeCandidate[]>((acc, f) => {
             if (
               !f ||
               typeof f.content !== "string" ||
@@ -9344,22 +9344,22 @@ export class Orchestrator {
               typeof f.category !== "string" ||
               !f.category.trim()
             ) {
-              return null;
+              return acc;
             }
             const imp = scoreImportance(
               f.content,
               f.category,
               Array.isArray(f.tags) ? f.tags : [],
             );
-            return {
+            acc.push({
               text: f.content,
-              category: f.category,
+              category: f.category as string,
               confidence: typeof f.confidence === "number" ? f.confidence : 0.7,
               tags: Array.isArray(f.tags) ? f.tags : [],
               importanceLevel: imp.level,
-            } satisfies JudgeCandidate;
-          })
-          .filter((c): c is JudgeCandidate => c !== null);
+            });
+            return acc;
+          }, []);
         judgeVerdicts = await judgeFactDurability(
           judgeCandidates,
           this.config,
