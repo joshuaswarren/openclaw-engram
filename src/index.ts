@@ -2394,11 +2394,17 @@ const pluginDefinition = {
           (event?.sessionKey as string) ??
           "default";
         const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
-        rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
+        const signalThreadId =
+          sessionIdentity.providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+        const signalLogicalSessionKey =
+          signalThreadId && cfg.codexCompat.threadIdBufferKeying !== false
+            ? codexLogicalSessionKey(signalThreadId)
+            : sessionIdentity.logicalSessionKey;
+        rememberCodexThread(sessionKey, signalThreadId);
 
         try {
           if (
-            sessionIdentity.isCodex &&
+            signalThreadId &&
             cfg.codexCompat.enabled &&
             cfg.codexCompat.compactionFlushMode !== "heuristic"
           ) {
@@ -2407,14 +2413,11 @@ const pluginDefinition = {
                 reason: "codex_compaction_signal",
                 bufferKey: resolveExtractionBufferKey(
                   sessionKey,
-                  sessionIdentity.logicalSessionKey,
+                  signalLogicalSessionKey,
                 ),
               });
-              clearCodexCompatCaches(
-                sessionKey,
-                sessionIdentity.providerThreadId,
-              );
-              rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
+              clearCodexCompatCaches(sessionKey, signalThreadId);
+              rememberCodexThread(sessionKey, signalThreadId);
             } catch (error) {
               log.warn(`codexCompat signal flush failed: ${String(error)}`);
             }

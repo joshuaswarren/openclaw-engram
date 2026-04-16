@@ -88,6 +88,7 @@ import {
   type EvalShadowRecallRecord,
 } from "./evals.js";
 import { SessionObserverState } from "./session-observer-state.js";
+import { CODEX_THREAD_KEY_PREFIX } from "./codex-thread-key.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
@@ -8027,7 +8028,11 @@ export class Orchestrator {
         const turns = this.buffer.getTurns(bufferKey);
         if (turns.length === 0) return;
         const normalizedSessionKey = normalizeReplaySessionKey(sessionKey);
+        const allowSharedSessionBuffer = bufferKey.startsWith(
+          CODEX_THREAD_KEY_PREFIX,
+        );
         if (
+          !allowSharedSessionBuffer &&
           turns.some(
             (turn) =>
               turn.sessionKey &&
@@ -8364,11 +8369,13 @@ export class Orchestrator {
       threadIdForExtraction,
       { sessionKey, principal },
     );
+    const meta = await storage.loadMeta();
     if (extractionFingerprint && shouldPersistProcessedFingerprint) {
       try {
         await this.recordProcessedExtractionFingerprint(
           storage,
           extractionFingerprint,
+          meta,
         );
       } catch (error) {
         log.warn(
@@ -8440,7 +8447,6 @@ export class Orchestrator {
     this.maybeScheduleConsolidation(nonZeroExtraction);
 
     // Update meta (safely handle potentially invalid result)
-    const meta = await storage.loadMeta();
     meta.extractionCount += 1;
     meta.lastExtractionAt = new Date().toISOString();
     meta.totalMemories += Array.isArray(result?.facts)
@@ -8468,8 +8474,9 @@ export class Orchestrator {
   private async recordProcessedExtractionFingerprint(
     storage: StorageManager,
     fingerprint: string,
+    preloadedMeta?: Awaited<ReturnType<StorageManager["loadMeta"]>>,
   ): Promise<void> {
-    const meta = await storage.loadMeta();
+    const meta = preloadedMeta ?? (await storage.loadMeta());
     const observedAt = new Date().toISOString();
     const seen = new Map(
       (meta.processedExtractionFingerprints ?? []).map((entry) => [
@@ -8482,7 +8489,9 @@ export class Orchestrator {
       .map(([value, at]) => ({ fingerprint: value, observedAt: at }))
       .sort((left, right) => left.observedAt.localeCompare(right.observedAt))
       .slice(-500);
-    await storage.saveMeta(meta);
+    if (!preloadedMeta) {
+      await storage.saveMeta(meta);
+    }
   }
 
   private async runTierMigrationCycle(

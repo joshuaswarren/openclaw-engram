@@ -1951,6 +1951,56 @@ test("before_compaction flushes the logical Codex thread buffer before checkpoin
   );
 });
 
+test("before_compaction falls back to the remembered Codex thread when the hook payload is sparse", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-compaction-codex-fallback-test");
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeCompaction = api.handlers.get("before_compaction");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeCompaction, "before_compaction handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.checkpointEnabled = false;
+  orchestrator.lcmEngine = { enabled: false };
+
+  let flushed:
+    | {
+        sessionKey: string;
+        options: Record<string, unknown> | undefined;
+      }
+    | undefined;
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushed = { sessionKey, options };
+  };
+
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 6 },
+    {
+      sessionKey: "session-compaction-sparse-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-compaction-sparse-1",
+    },
+  );
+
+  await beforeCompaction({ sessionKey: "session-compaction-sparse-a" }, {});
+
+  assert.equal(flushed?.sessionKey, "session-compaction-sparse-a");
+  assert.equal(flushed?.options?.reason, "codex_compaction_signal");
+  assert.ok(
+    String(flushed?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-compaction-sparse-1",
+    ),
+    "before_compaction should reuse the remembered Codex logical thread buffer",
+  );
+});
+
 test("before_compaction still runs the independent LCM pre-compaction flush when the Codex signal flush fails", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-compaction-codex-flush-failure-test");

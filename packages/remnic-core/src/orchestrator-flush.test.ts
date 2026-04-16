@@ -351,6 +351,114 @@ test("runExtraction still clears the buffer when fingerprint persistence fails a
   assert.equal(clearCalls, 1);
 });
 
+test("runExtraction persists fingerprint and extraction counters through one coherent meta save", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+
+  let clearCalls = 0;
+  let loadMetaCalls = 0;
+  let saveMetaCalls = 0;
+  let savedMeta:
+    | {
+        extractionCount: number;
+        lastExtractionAt: string | null;
+        totalMemories: number;
+        totalEntities: number;
+        processedExtractionFingerprints: Array<{
+          fingerprint: string;
+          observedAt: string;
+        }>;
+      }
+    | undefined;
+
+  const meta = {
+    extractionCount: 0,
+    lastExtractionAt: null,
+    lastConsolidationAt: null,
+    totalMemories: 0,
+    totalEntities: 0,
+    processedExtractionFingerprints: [] as Array<{
+      fingerprint: string;
+      observedAt: string;
+    }>,
+  };
+
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => {
+        loadMetaCalls += 1;
+        return meta;
+      },
+      saveMeta: async (nextMeta: typeof meta) => {
+        saveMetaCalls += 1;
+        savedMeta = structuredClone(nextMeta);
+      },
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => ({
+      facts: [
+        {
+          content: "remember zeta",
+          category: "fact",
+          confidence: 0.9,
+          tags: [],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    }),
+  };
+  orchestrator.persistExtraction = async () => ["fact-1"];
+  orchestrator.requestQmdMaintenance = () => undefined;
+  orchestrator.runTierMigrationCycle = async () => undefined;
+
+  await orchestrator.runExtraction(
+    [
+      {
+        ...makeTurn("session-e", "remember zeta"),
+        logicalSessionKey: "logical-thread:thread-14",
+        turnFingerprint: "fp-thread-14",
+        persistProcessedFingerprint: true,
+      },
+    ],
+    {
+      bufferKey: "logical-thread:thread-14",
+    },
+  );
+
+  assert.equal(loadMetaCalls, 2);
+  assert.equal(saveMetaCalls, 1);
+  assert.equal(clearCalls, 1);
+  assert.equal(savedMeta?.extractionCount, 1);
+  assert.equal(savedMeta?.totalMemories, 1);
+  assert.equal(savedMeta?.processedExtractionFingerprints.length, 1);
+  assert.equal(
+    savedMeta?.processedExtractionFingerprints[0]?.fingerprint,
+    orchestrator.buildExtractionFingerprint(
+      [
+        {
+          ...makeTurn("session-e", "remember zeta"),
+          logicalSessionKey: "logical-thread:thread-14",
+          turnFingerprint: "fp-thread-14",
+          persistProcessedFingerprint: true,
+        },
+      ],
+      "logical-thread:thread-14",
+    ),
+  );
+});
+
 test("runExtraction aborts before late buffer clearing when the caller cancels", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;

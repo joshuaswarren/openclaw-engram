@@ -178,6 +178,60 @@ test("observeSessionHeartbeat skips when buffer contains mixed session turns", a
   assert.equal(queued, false);
 });
 
+test("observeSessionHeartbeat allows shared Codex logical buffers with mixed session turns", async () => {
+  let queued = false;
+  let queuedBufferKey: string | null = null;
+  const fake = {
+    config: { sessionObserverEnabled: true },
+    heartbeatObserverChains: new Map<string, Promise<void>>(),
+    transcript: {
+      estimateSessionFootprint: async () => ({ bytes: 25_000, tokens: 6_250 }),
+    },
+    sessionObserver: {
+      observe: async () => ({
+        triggered: true,
+        deltaBytes: 6_500,
+        deltaTokens: 1_500,
+        band: { maxBytes: 50_000, triggerDeltaBytes: 6_000, triggerDeltaTokens: 1_200 },
+      }),
+    },
+    buffer: {
+      getTurns: () => [
+        {
+          role: "user",
+          content: "session A",
+          timestamp: "2026-02-25T00:00:00.000Z",
+          sessionKey: "agent:generalist:main",
+        },
+        {
+          role: "assistant",
+          content: "session B",
+          timestamp: "2026-02-25T00:00:01.000Z",
+          sessionKey: "agent:research:main",
+        },
+      ],
+    },
+    shouldQueueExtraction: () => true,
+    queueBufferedExtraction: async (
+      _turns: BufferTurn[],
+      _reason: string,
+      options?: { bufferKey?: string },
+    ) => {
+      queued = true;
+      queuedBufferKey = options?.bufferKey ?? null;
+    },
+  };
+
+  await (Orchestrator.prototype as any).observeSessionHeartbeat.call(
+    fake,
+    "agent:generalist:main",
+    { bufferKey: "codex-thread:thread-shared-1" },
+  );
+
+  assert.equal(queued, true);
+  assert.equal(queuedBufferKey, "codex-thread:thread-shared-1");
+});
+
 test("queueBufferedExtraction preserves buffered turns when dedupe skips enqueue", async () => {
   let cleared = false;
   let queued = false;
