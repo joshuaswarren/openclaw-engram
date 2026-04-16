@@ -278,6 +278,79 @@ test("runExtraction skips batches whose persisted fingerprint already exists in 
   assert.equal(clearCalls, 1);
 });
 
+test("runExtraction preserves deduped buffers when the caller aborts before clearing", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+
+  let clearCalls = 0;
+  const abortController = new AbortController();
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => {
+        abortController.abort();
+        return {
+          extractionCount: 0,
+          lastExtractionAt: null,
+          lastConsolidationAt: null,
+          totalMemories: 0,
+          totalEntities: 0,
+          processedExtractionFingerprints: [
+            {
+              fingerprint: orchestrator.buildExtractionFingerprint(
+                [
+                  {
+                    ...makeTurn("session-c", "remember delta"),
+                    logicalSessionKey: "logical-thread:thread-12",
+                    turnFingerprint: "fp-thread-12",
+                    persistProcessedFingerprint: true,
+                  },
+                ],
+                "logical-thread:thread-12",
+              ),
+              observedAt: "2026-04-15T00:00:00.000Z",
+            },
+          ],
+        };
+      },
+      saveMeta: async () => undefined,
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => {
+      throw new Error("should not extract");
+    },
+  };
+
+  await assert.rejects(
+    orchestrator.runExtraction(
+      [
+        {
+          ...makeTurn("session-c", "remember delta"),
+          logicalSessionKey: "logical-thread:thread-12",
+          turnFingerprint: "fp-thread-12",
+          persistProcessedFingerprint: true,
+        },
+      ],
+      {
+        bufferKey: "logical-thread:thread-12",
+        abortSignal: abortController.signal,
+      },
+    ),
+    /extraction aborted \(before_clear_buffer\)/,
+  );
+
+  assert.equal(clearCalls, 0);
+});
+
 test("runExtraction still clears the buffer when fingerprint persistence fails after durable writes", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;

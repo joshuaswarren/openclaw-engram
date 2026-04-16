@@ -148,13 +148,19 @@ export function buildTurnFingerprint(input: {
   content: string;
   logicalSessionKey: string;
   providerThreadId?: string | null;
-  messageCount?: number | null;
+  maxContentChars?: number;
   turnIndex: number;
 }): string {
   const normalizedContent = input.content.replace(/\s+/g, " ").trim();
+  const fingerprintContent =
+    typeof input.maxContentChars === "number" &&
+    Number.isFinite(input.maxContentChars) &&
+    input.maxContentChars > 0
+      ? normalizedContent.slice(0, input.maxContentChars)
+      : normalizedContent;
   return [
     input.role,
-    normalizedContent,
+    fingerprintContent,
     input.providerThreadId ?? input.logicalSessionKey,
     String(input.turnIndex),
   ].join("\u0001");

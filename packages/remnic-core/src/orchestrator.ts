@@ -8305,7 +8305,7 @@ export class Orchestrator {
       log.debug(
         `runExtraction: skipping already-processed extraction fingerprint for ${bufferKey}`,
       );
-      await clearBuffer({ ignoreAbort: true });
+      await clearBuffer();
       return;
     }
 

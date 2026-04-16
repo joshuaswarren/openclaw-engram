@@ -125,7 +125,6 @@ test("buildTurnFingerprint is stable for the same logical turn", () => {
     content: "Memory saved.",
     logicalSessionKey: codexLogicalSessionKey("thread-9"),
     providerThreadId: "thread-9",
-    messageCount: 12,
     turnIndex: 1,
   });
   const right = buildTurnFingerprint({
@@ -133,28 +132,27 @@ test("buildTurnFingerprint is stable for the same logical turn", () => {
     content: "Memory   saved.\n",
     logicalSessionKey: codexLogicalSessionKey("thread-9"),
     providerThreadId: "thread-9",
-    messageCount: 12,
     turnIndex: 1,
   });
 
   assert.equal(left, right);
 });
 
-test("buildTurnFingerprint ignores volatile messageCount changes for the same logical turn", () => {
+test("buildTurnFingerprint truncates content to the extraction fingerprint budget", () => {
   const earlier = buildTurnFingerprint({
     role: "assistant",
-    content: "Memory saved.",
+    content: `${"A".repeat(32)}tail-one`,
     logicalSessionKey: codexLogicalSessionKey("thread-9"),
     providerThreadId: "thread-9",
-    messageCount: 12,
+    maxContentChars: 32,
     turnIndex: 1,
   });
   const replayed = buildTurnFingerprint({
     role: "assistant",
-    content: "Memory saved.",
+    content: `${"A".repeat(32)}tail-two`,
     logicalSessionKey: codexLogicalSessionKey("thread-9"),
     providerThreadId: "thread-9",
-    messageCount: 20,
+    maxContentChars: 32,
     turnIndex: 1,
   });
 

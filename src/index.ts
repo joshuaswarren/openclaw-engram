@@ -2334,7 +2334,7 @@ const pluginDefinition = {
                   content: stripped,
                   logicalSessionKey: sessionIdentity.logicalSessionKey,
                   providerThreadId: sessionIdentity.providerThreadId,
-                  messageCount: sessionIdentity.messageCount,
+                  maxContentChars: cfg.extractionMaxTurnChars,
                   turnIndex: persistedTurnIndex,
                 }),
                 persistProcessedFingerprint:
@@ -2405,7 +2405,7 @@ const pluginDefinition = {
         try {
           if (
             signalThreadId &&
-            cfg.codexCompat.enabled &&
+            cfg.codexCompat.enabled !== false &&
             cfg.codexCompat.compactionFlushMode !== "heuristic"
           ) {
             try {
