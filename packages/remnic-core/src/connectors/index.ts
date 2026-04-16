@@ -40,6 +40,22 @@ export {
   runCodexMaterialize,
   type RunMaterializeOptions,
 } from "./codex-materialize-runner.js";
+export {
+  generateMarketplaceManifest,
+  validateMarketplaceManifest,
+  checkMarketplaceManifest,
+  writeMarketplaceManifest,
+  installFromMarketplace,
+  MARKETPLACE_SCHEMA_VERSION,
+  MARKETPLACE_MANIFEST_FILENAME,
+  type MarketplaceManifest,
+  type MarketplaceEntry,
+  type MarketplaceConfig,
+  type MarketplaceInstallType,
+  type MarketplaceInstallResult,
+  type MarketplaceValidation,
+  type MarketplaceLogger,
+} from "./codex/marketplace.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

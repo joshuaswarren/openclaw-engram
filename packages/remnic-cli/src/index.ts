@@ -92,6 +92,11 @@ import {
   validateSlug,
   validateTaxonomy,
   getTaxonomyFilePath,
+  generateMarketplaceManifest,
+  checkMarketplaceManifest,
+  writeMarketplaceManifest,
+  installFromMarketplace,
+  type MarketplaceInstallType,
 } from "@remnic/core";
 import type {
   BinaryLifecycleConfig,
@@ -1228,9 +1233,110 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
       }
       console.log(healthy ? "\nConnector healthy" : "\nConnector has issues");
     }
+  } else if (action === "marketplace") {
+    const subAction = nonFlagArgs[0];
+    await cmdConnectorsMarketplace(subAction, strippedRest, json);
   } else {
-    console.log("Usage: remnic connectors <list|install|remove|doctor> [id]");
+    console.log("Usage: remnic connectors <list|install|remove|doctor|marketplace> [id]");
     process.exit(1);
+  }
+}
+
+// ── Marketplace subcommand (connectors marketplace) ────────��────────────────
+
+async function cmdConnectorsMarketplace(
+  subAction: string | undefined,
+  rest: string[],
+  json: boolean,
+): Promise<void> {
+  const configPath = resolveConfigPath(resolveFlagStrict(rest, "--config"));
+  const rawConfig = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const config = parseConfig(rawConfig);
+
+  if (subAction === "generate") {
+    const outputDir = resolveFlagStrict(rest, "--output") ?? process.cwd();
+    const manifest = generateMarketplaceManifest(config);
+    await writeMarketplaceManifest(outputDir, manifest);
+    const outPath = path.join(outputDir, "marketplace.json");
+    if (json) {
+      console.log(JSON.stringify({ status: "generated", path: outPath }, null, 2));
+    } else {
+      console.log(`Generated marketplace.json at ${outPath}`);
+    }
+  } else if (subAction === "validate") {
+    const targetPath = rest.filter((a) => !a.startsWith("--"))[0]
+      ?? path.join(process.cwd(), "marketplace.json");
+    const resolved = path.resolve(targetPath);
+
+    if (!fs.existsSync(resolved)) {
+      console.error(`File not found: ${resolved}`);
+      process.exit(1);
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(fs.readFileSync(resolved, "utf8"));
+    } catch {
+      console.error(`Invalid JSON in ${resolved}`);
+      process.exit(1);
+    }
+
+    const validation = checkMarketplaceManifest(parsed);
+    if (json) {
+      console.log(JSON.stringify(validation, null, 2));
+    }
+    if (validation.valid) {
+      if (!json) console.log(`Valid marketplace manifest: ${resolved}`);
+      // exit 0
+    } else {
+      if (!json) {
+        console.error(`Invalid marketplace manifest: ${resolved}`);
+        for (const err of validation.errors) {
+          console.error(`  - ${err}`);
+        }
+      }
+      process.exit(1);
+    }
+  } else if (subAction === "install") {
+    const source = rest.filter((a) => !a.startsWith("--"))[0];
+    if (!source) {
+      console.error("Usage: remnic connectors marketplace install <source> [--type github|git|local|url]");
+      process.exit(1);
+    }
+
+    const typeFlag = resolveFlagStrict(rest, "--type") ?? "github";
+    const validTypes = new Set(["github", "git", "local", "url"]);
+    if (!validTypes.has(typeFlag)) {
+      console.error(`Invalid --type: "${typeFlag}". Must be one of: ${[...validTypes].join(", ")}`);
+      process.exit(1);
+    }
+
+    const result = await installFromMarketplace(
+      source,
+      typeFlag as MarketplaceInstallType,
+      config,
+    );
+
+    if (json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      console.log(result.message);
+      if (result.pluginsFound.length > 0) {
+        console.log(`  Plugins: ${result.pluginsFound.join(", ")}`);
+      }
+    }
+
+    if (!result.ok) process.exit(1);
+  } else {
+    console.log(`Usage: remnic connectors marketplace <generate|validate|install> [args]
+
+  generate [--output <dir>]            Generate marketplace.json
+  validate [path]                      Validate a marketplace.json file
+  install <source> [--type <type>]     Install from marketplace source
+                                       Types: github, git, local, url (default: github)`);
+    if (!subAction) process.exit(1);
   }
 }
 
@@ -2809,7 +2915,10 @@ Usage:
   remnic review <list|approve|dismiss|flag> [id]  Review inbox
   remnic sync <run|watch> [--source <dir>] Diff-aware sync
   remnic dedup [--json]             Find duplicate memories
-  remnic connectors <list|install|remove|doctor> [id]  Manage connectors
+  remnic connectors <list|install|remove|doctor|marketplace> [id]  Manage connectors
+    marketplace generate    Generate marketplace.json for Codex
+    marketplace validate    Validate a marketplace.json file
+    marketplace install     Install from a marketplace source
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
   remnic benchmark <run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
