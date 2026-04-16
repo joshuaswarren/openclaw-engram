@@ -2264,6 +2264,79 @@ test("before_prompt_build retries the Codex heuristic fallback after a failed fl
   );
 });
 
+test("before_prompt_build preserves the Codex heuristic baseline across transient recall failures", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-codex-recall-failure-baseline-test");
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+
+  const flushCalls: Array<Record<string, unknown>> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  orchestrator.recall = async () => "Remembered context";
+  await beforePromptBuild(
+    { prompt: "Prime this Codex thread before the transient failure.", messageCount: 10 },
+    {
+      sessionKey: "session-recall-failure-baseline",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-recall-failure-baseline",
+    },
+  );
+
+  orchestrator.recall = async () => {
+    throw new Error("transient recall failure");
+  };
+  await beforePromptBuild(
+    { prompt: "This recall fails after the heuristic baseline is refreshed.", messageCount: 10 },
+    {
+      sessionKey: "session-recall-failure-baseline",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-recall-failure-baseline",
+    },
+  );
+
+  orchestrator.recall = async () => "Remembered context";
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 4 },
+    {
+      sessionKey: "session-recall-failure-baseline",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-recall-failure-baseline",
+    },
+  );
+
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-recall-failure-baseline");
+  assert.equal(
+    (flushCalls[0]?.options as { reason?: string }).reason,
+    "codex_compaction_heuristic",
+  );
+  assert.ok(
+    String(
+      (flushCalls[0]?.options as { bufferKey?: string }).bufferKey ?? "",
+    ).startsWith("codex-thread:thread-recall-failure-baseline"),
+    "transient recall failures should preserve the Codex heuristic baseline",
+  );
+});
+
 test("before_prompt_build tracks Codex compaction baselines per principal-scoped buffer key", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-prompt-build-codex-principal-baseline-test");

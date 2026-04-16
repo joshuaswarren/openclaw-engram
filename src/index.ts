@@ -1791,6 +1791,7 @@ const pluginDefinition = {
         log.error("recall failed", err);
         lastRecallSummaryBySession.set(sessionKey, null);
         clearCodexCompatCaches(sessionKey, undefined, {
+          preserveMessageCount: true,
           preserveThreadBinding: true,
         });
         if (orchestrator.config.compactionResetEnabled) {
