@@ -3231,6 +3231,134 @@ test("agent_end does not reuse a remembered Codex thread after the provider swit
   }
 });
 
+test("agent_end preserves the remembered Codex thread when the provider-switch flush fails", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("agent-end-provider-switch-flush-failure-test");
+  api.pluginConfig = {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const agentEnd = api.handlers.get("agent_end");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(agentEnd, "agent_end handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.transcript.append = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  let failProviderSwitchFlush = true;
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+    if (
+      failProviderSwitchFlush &&
+      options?.reason === "codex_provider_switch"
+    ) {
+      failProviderSwitchFlush = false;
+      throw new Error("provider-switch flush failed");
+    }
+  };
+
+  const processTurnCalls: Array<Record<string, unknown>> = [];
+  orchestrator.processTurn = async (
+    role: string,
+    content: string,
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    processTurnCalls.push({ role, content, sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime this Codex session with a remembered thread before the flush fails." },
+    {
+      sessionKey: "session-provider-switch-flush-failure",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-provider-switch-flush-failure",
+    },
+  );
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        {
+          role: "user",
+          content: "Store this follow-up after the provider-switch flush fails.",
+        },
+        {
+          role: "assistant",
+          content: "Stored after the provider switch flush failed.",
+        },
+      ],
+    },
+    {
+      sessionKey: "session-provider-switch-flush-failure",
+      provider: { id: "openai", model: "gpt-5.4" },
+    },
+  );
+
+  await beforeReset(
+    { sessionKey: "session-provider-switch-flush-failure" },
+    {},
+  );
+
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: call.options?.reason,
+      bufferKey: call.options?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-provider-switch-flush-failure",
+        reason: "codex_provider_switch",
+        bufferKey:
+          "codex-thread:thread-provider-switch-flush-failure::principal:default",
+      },
+      {
+        sessionKey: "session-provider-switch-flush-failure",
+        reason: "before_reset",
+        bufferKey:
+          "codex-thread:thread-provider-switch-flush-failure::principal:default",
+      },
+    ],
+  );
+
+  assert.equal(processTurnCalls.length, 2);
+  for (const call of processTurnCalls) {
+    assert.equal(call.sessionKey, "session-provider-switch-flush-failure");
+    assert.equal(
+      (call.options as { bufferKey?: string }).bufferKey,
+      "session-provider-switch-flush-failure",
+    );
+    assert.equal(
+      (call.options as { providerThreadId?: string | null }).providerThreadId,
+      null,
+    );
+  }
+});
+
 test("agent_end scopes Codex logical buffers to the mapped principal", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("agent-end-codex-principal-buffer-scope-test");

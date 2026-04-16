@@ -66,7 +66,7 @@ import {
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
-import { CODEX_THREAD_KEY_PREFIX } from "./codex-compat.js";
+import { CODEX_THREAD_KEY_PREFIX } from "./codex-thread-key.js";
 import {
   applyTemporalSupersession,
   normalizeSupersessionKey,

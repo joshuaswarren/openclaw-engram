@@ -1,6 +1,7 @@
-import type { CodexCompatConfig } from "./types.js";
+import type { CodexCompatConfig } from "../packages/remnic-core/src/types.js";
+import { CODEX_THREAD_KEY_PREFIX } from "../packages/remnic-core/src/codex-thread-key.js";
 
-export const CODEX_THREAD_KEY_PREFIX = "codex-thread:";
+export { CODEX_THREAD_KEY_PREFIX };
 
 function readModelId(
   source: Record<string, unknown> | undefined,

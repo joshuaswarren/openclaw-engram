@@ -63,7 +63,7 @@ import {
   CODEX_THREAD_KEY_PREFIX,
   codexLogicalSessionKey,
   resolveCodexSessionIdentity,
-} from "../packages/remnic-core/src/codex-compat.js";
+} from "./codex-compat.js";
 import { planRecallMode } from "../packages/remnic-core/src/intent.js";
 import { resolvePrincipal } from "../packages/remnic-core/src/namespaces/principal.js";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
@@ -2110,7 +2110,11 @@ const pluginDefinition = {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
         const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
         await flushAndForgetCodexThreadOnProviderSwitch(sessionKey, sessionIdentity);
-        if (!sessionIdentity.isCodex && !sessionIdentity.providerThreadId) {
+        if (
+          !sessionIdentity.isCodex &&
+          !sessionIdentity.providerThreadId &&
+          !sessionIdentity.previousCodexThreadId
+        ) {
           forgetCodexThread(sessionKey);
         }
         rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);

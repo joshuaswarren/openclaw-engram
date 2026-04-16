@@ -7,8 +7,8 @@ import {
   extractCodexThreadId,
   isCodexProvider,
   resolveCodexSessionIdentity,
-} from "./codex-compat.js";
-import { parseConfig } from "./config.js";
+} from "../src/codex-compat.js";
+import { parseConfig } from "../src/config.js";
 
 test("isCodexProvider detects bundled Codex provider metadata", () => {
   assert.equal(
