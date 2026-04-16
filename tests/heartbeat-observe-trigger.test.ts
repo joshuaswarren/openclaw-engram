@@ -267,6 +267,10 @@ test("shouldQueueExtraction supports non-committing dedupe prechecks", async () 
       extractionDedupeWindowMs: 60_000,
     },
     recentExtractionFingerprints: new Map<string, number>(),
+    normalizeExtractionFingerprintTurns:
+      (Orchestrator.prototype as any).normalizeExtractionFingerprintTurns,
+    buildExtractionFingerprint:
+      (Orchestrator.prototype as any).buildExtractionFingerprint,
     shouldQueueExtraction: (Orchestrator.prototype as any).shouldQueueExtraction,
   };
 
@@ -290,6 +294,10 @@ test("buildProcessedExtractionFingerprint prefixes turn fingerprints consistentl
     config: {
       extractionMaxTurnChars: 10_000,
     },
+    normalizeExtractionFingerprintTurns:
+      (Orchestrator.prototype as any).normalizeExtractionFingerprintTurns,
+    buildExtractionFingerprint:
+      (Orchestrator.prototype as any).buildExtractionFingerprint,
     buildProcessedExtractionFingerprint:
       (Orchestrator.prototype as any).buildProcessedExtractionFingerprint,
   };
@@ -335,6 +343,10 @@ test("shouldQueueExtraction dedupes within a buffer key but not across sessions"
       extractionDedupeWindowMs: 60_000,
     },
     recentExtractionFingerprints: new Map<string, number>(),
+    normalizeExtractionFingerprintTurns:
+      (Orchestrator.prototype as any).normalizeExtractionFingerprintTurns,
+    buildExtractionFingerprint:
+      (Orchestrator.prototype as any).buildExtractionFingerprint,
     shouldQueueExtraction: (Orchestrator.prototype as any).shouldQueueExtraction,
   };
 

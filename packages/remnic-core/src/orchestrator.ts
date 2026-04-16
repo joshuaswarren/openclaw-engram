@@ -8116,6 +8116,33 @@ export class Orchestrator {
     log.debug(`queued extraction from ${reason}`);
   }
 
+  private normalizeExtractionFingerprintTurns(turns: BufferTurn[]): string[] {
+    if (!Array.isArray(turns) || turns.length === 0) return [];
+    return turns
+      .filter((turn) => turn.role === "user" || turn.role === "assistant")
+      .map((turn) => {
+        if (
+          typeof turn.turnFingerprint === "string" &&
+          turn.turnFingerprint.length > 0
+        ) {
+          return `fp:${turn.turnFingerprint}`;
+        }
+        return `${turn.role}:${(turn.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`;
+      })
+      .filter((value) => value.length > 0);
+  }
+
+  private buildExtractionFingerprint(
+    turns: BufferTurn[],
+    bufferKey: string,
+  ): string | null {
+    const normalized = this.normalizeExtractionFingerprintTurns(turns).join("\n");
+    if (!normalized) return null;
+    return createHash("sha256")
+      .update(`${bufferKey}\n${normalized}`)
+      .digest("hex");
+  }
+
   private shouldQueueExtraction(
     turns: BufferTurn[],
     options: { commit?: boolean; bufferKey?: string } = {},
@@ -8123,22 +8150,9 @@ export class Orchestrator {
     if (!this.config.extractionDedupeEnabled) return true;
     if (!Array.isArray(turns) || turns.length === 0) return false;
 
-    // Fingerprint only user/assistant text; tool/system noise should not produce unique runs.
-    const normalized = turns
-      .filter((t) => t.role === "user" || t.role === "assistant")
-      .map((t) => {
-        if (typeof t.turnFingerprint === "string" && t.turnFingerprint.length > 0) {
-          return `fp:${t.turnFingerprint}`;
-        }
-        return `${t.role}:${(t.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`;
-      })
-      .join("\n");
-    if (!normalized) return false;
-
     const bufferKey = options.bufferKey ?? turns[0]?.sessionKey ?? "default";
-    const fingerprint = createHash("sha256")
-      .update(`${bufferKey}\n${normalized}`)
-      .digest("hex");
+    const fingerprint = this.buildExtractionFingerprint(turns, bufferKey);
+    if (!fingerprint) return false;
     const now = Date.now();
     const seenAt = this.recentExtractionFingerprints.get(fingerprint);
     if (seenAt && now - seenAt < this.config.extractionDedupeWindowMs) {
@@ -8445,24 +8459,7 @@ export class Orchestrator {
     turns: BufferTurn[],
     bufferKey: string,
   ): string | null {
-    if (!Array.isArray(turns) || turns.length === 0) return null;
-    const normalized = turns
-      .filter((turn) => turn.role === "user" || turn.role === "assistant")
-      .map((turn) => {
-        if (
-          typeof turn.turnFingerprint === "string" &&
-          turn.turnFingerprint.length > 0
-        ) {
-          return `fp:${turn.turnFingerprint}`;
-        }
-        return `${turn.role}:${(turn.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`;
-      })
-      .filter((value) => value.length > 0)
-      .join("\n");
-    if (!normalized) return null;
-    return createHash("sha256")
-      .update(`${bufferKey}\n${normalized}`)
-      .digest("hex");
+    return this.buildExtractionFingerprint(turns, bufferKey);
   }
 
   private async hasProcessedExtractionFingerprint(

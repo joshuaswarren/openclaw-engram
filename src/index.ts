@@ -1207,6 +1207,48 @@ const pluginDefinition = {
       }
     }
 
+    async function flushAndForgetRememberedCodexThreadOnMetadataLoss(
+      sessionKey: string,
+      sessionIdentity: {
+        isCodex: boolean;
+        providerThreadId?: string | null;
+        previousCodexThreadId?: string | null;
+      },
+    ): Promise<void> {
+      if (
+        sessionIdentity.isCodex ||
+        sessionIdentity.providerThreadId ||
+        sessionIdentity.previousCodexThreadId
+      ) {
+        return;
+      }
+      const rememberedThreadId = resolveStoredCodexThreadId(sessionKey);
+      if (!rememberedThreadId) {
+        forgetCodexThread(sessionKey);
+        return;
+      }
+      const bufferKey =
+        resolveStoredCodexBufferKey(sessionKey) ??
+        resolveCodexCompactionBaselineKey(sessionKey, rememberedThreadId);
+      if (!bufferKey) {
+        forgetCodexThread(sessionKey, rememberedThreadId);
+        return;
+      }
+      if (typeof (orchestrator as any).flushSession !== "function") {
+        log.warn("codexCompat metadata-loss flush unavailable; preserving binding");
+        return;
+      }
+      try {
+        await (orchestrator as any).flushSession(sessionKey, {
+          reason: "codex_metadata_loss",
+          bufferKey,
+        });
+        forgetCodexThread(sessionKey, rememberedThreadId);
+      } catch (error) {
+        log.warn(`codexCompat metadata-loss flush failed: ${String(error)}`);
+      }
+    }
+
     function resolveExtractionBufferKey(
       sessionKey: string,
       logicalSessionKey: string,
@@ -2110,13 +2152,10 @@ const pluginDefinition = {
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
         const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
         await flushAndForgetCodexThreadOnProviderSwitch(sessionKey, sessionIdentity);
-        if (
-          !sessionIdentity.isCodex &&
-          !sessionIdentity.providerThreadId &&
-          !sessionIdentity.previousCodexThreadId
-        ) {
-          forgetCodexThread(sessionKey);
-        }
+        await flushAndForgetRememberedCodexThreadOnMetadataLoss(
+          sessionKey,
+          sessionIdentity,
+        );
         rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
 
         try {

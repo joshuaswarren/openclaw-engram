@@ -3085,17 +3085,15 @@ test("before_reset flushes metadata-less follow-up turns under the raw session k
   orchestrator.transcript.append = async () => undefined;
   orchestrator.config.compactionResetEnabled = false;
 
-  let flushed:
-    | {
-        sessionKey: string;
-        options: Record<string, unknown> | undefined;
-      }
-    | undefined;
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
   orchestrator.flushSession = async (
     sessionKey: string,
     options?: Record<string, unknown>,
   ) => {
-    flushed = { sessionKey, options };
+    flushCalls.push({ sessionKey, options });
   };
   orchestrator.processTurn = async () => undefined;
 
@@ -3123,11 +3121,24 @@ test("before_reset flushes metadata-less follow-up turns under the raw session k
 
   await beforeReset({ sessionKey: "session-reset-metadata-less" }, {});
 
-  assert.equal(flushed?.sessionKey, "session-reset-metadata-less");
-  assert.equal(flushed?.options?.reason, "before_reset");
-  assert.equal(
-    flushed?.options?.bufferKey,
-    "session-reset-metadata-less",
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: call.options?.reason,
+      bufferKey: call.options?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-reset-metadata-less",
+        reason: "codex_metadata_loss",
+        bufferKey: "codex-thread:thread-reset-metadata-less::principal:default",
+      },
+      {
+        sessionKey: "session-reset-metadata-less",
+        reason: "before_reset",
+        bufferKey: "session-reset-metadata-less",
+      },
+    ],
   );
 });
 
