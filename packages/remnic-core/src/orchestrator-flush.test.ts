@@ -721,6 +721,116 @@ test("runExtraction clears the buffer even when the post-persist meta save fails
   assert.equal(clearCalls, 1);
 });
 
+test("runExtraction still runs follow-on extraction helpers when the post-persist meta save fails", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+  config.memoryBoxesEnabled = true;
+  config.threadingEnabled = true;
+
+  let clearCalls = 0;
+  let boxCalls = 0;
+  let appendCalls = 0;
+  let titleCalls = 0;
+  let scheduleCalls = 0;
+  let qmdCalls = 0;
+  let tierCalls = 0;
+
+  const meta = {
+    extractionCount: 0,
+    lastExtractionAt: null,
+    lastConsolidationAt: null,
+    totalMemories: 0,
+    totalEntities: 0,
+    processedExtractionFingerprints: [] as Array<{
+      fingerprint: string;
+      observedAt: string;
+    }>,
+  };
+
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => meta,
+      saveMeta: async () => {
+        throw new Error("meta save failed");
+      },
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => ({
+      facts: [
+        {
+          content: "remember iota",
+          category: "fact",
+          confidence: 0.9,
+          tags: [],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    }),
+  };
+  orchestrator.persistExtraction = async () => ["fact-1"];
+  orchestrator.threading = {
+    processTurn: async () => "thread-17",
+    appendEpisodeIds: async () => {
+      appendCalls += 1;
+    },
+    updateThreadTitle: async () => {
+      titleCalls += 1;
+    },
+  };
+  orchestrator.boxBuilderFor = () => ({
+    onExtraction: async () => {
+      boxCalls += 1;
+    },
+  });
+  orchestrator.maybeScheduleConsolidation = () => {
+    scheduleCalls += 1;
+  };
+  orchestrator.requestQmdMaintenance = () => {
+    qmdCalls += 1;
+  };
+  orchestrator.runTierMigrationCycle = async () => {
+    tierCalls += 1;
+  };
+  orchestrator.nonZeroExtractionsSinceConsolidation = 0;
+
+  await assert.rejects(
+    orchestrator.runExtraction(
+      [
+        {
+          ...makeTurn("session-h", "remember iota"),
+          logicalSessionKey: "logical-thread:thread-17",
+          turnFingerprint: "fp-thread-17",
+          persistProcessedFingerprint: true,
+        },
+      ],
+      {
+        bufferKey: "logical-thread:thread-17",
+      },
+    ),
+    /meta save failed/,
+  );
+
+  assert.equal(clearCalls, 1);
+  assert.equal(boxCalls, 1);
+  assert.equal(appendCalls, 1);
+  assert.equal(titleCalls, 1);
+  assert.equal(scheduleCalls, 1);
+  assert.equal(qmdCalls, 1);
+  assert.equal(tierCalls, 1);
+});
+
 test("runExtraction aborts before late buffer clearing when the caller cancels", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;

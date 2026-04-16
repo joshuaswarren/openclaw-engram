@@ -8410,9 +8410,6 @@ export class Orchestrator {
       postPersistMetaError = error;
     }
     await clearBuffer({ ignoreAbort: true });
-    if (postPersistMetaError) {
-      throw postPersistMetaError;
-    }
 
     // Build memory box from this extraction (v8.0 Phase 2A)
     // Topics are derived from the current extraction's facts and entities only —
@@ -8476,6 +8473,10 @@ export class Orchestrator {
 
     this.requestQmdMaintenance();
     await this.runTierMigrationCycle(storage, "extraction");
+
+    if (postPersistMetaError) {
+      throw postPersistMetaError;
+    }
   }
 
   private async recordProcessedExtractionFingerprint(
