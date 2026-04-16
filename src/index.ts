@@ -2341,7 +2341,7 @@ const pluginDefinition = {
                 }),
                 persistProcessedFingerprint:
                   sessionIdentity.isCodex &&
-                  cfg.codexCompat.enabled === true &&
+                  cfg.codexCompat.enabled !== false &&
                   cfg.codexCompat.fingerprintDedup === true &&
                   cfg.codexCompat.threadIdBufferKeying !== false &&
                   !!sessionIdentity.providerThreadId,
