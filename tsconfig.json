@@ -3,7 +3,9 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "outDir": "dist",
     "rootDir": ".",
     "strict": true,
@@ -13,8 +15,23 @@
     "resolveJsonModule": true,
     "declaration": true,
     "declarationMap": true,
-    "sourceMap": true
+    "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@remnic/core": [
+        "./packages/remnic-core/src/index.ts"
+      ]
+    }
   },
-  "include": ["src/**/*.ts", "src/**/*.d.ts", "packages/remnic-core/src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "scripts", ".worktrees"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.d.ts",
+    "packages/remnic-core/src/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist",
+    "scripts",
+    ".worktrees"
+  ]
 }

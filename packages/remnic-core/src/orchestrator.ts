@@ -7934,31 +7934,48 @@ export class Orchestrator {
       bufferKey?: string;
     },
   ): Promise<void> {
-    const discoveredBufferKey =
-      typeof sessionKey === "string" && sessionKey.length > 0
-        ? await this.buffer.findBufferKeyForSession?.(sessionKey)
-        : null;
-    const bufferKey =
+    const explicitBufferKey =
       typeof options.bufferKey === "string" && options.bufferKey.length > 0
         ? options.bufferKey
+        : null;
+    const discoveredBufferKeys =
+      explicitBufferKey ||
+      typeof sessionKey !== "string" ||
+      sessionKey.length === 0 ||
+      typeof this.buffer.findBufferKeysForSession !== "function"
+        ? []
+        : await this.buffer.findBufferKeysForSession(sessionKey);
+    const discoveredBufferKey =
+      explicitBufferKey ||
+      discoveredBufferKeys.length > 0 ||
+      typeof sessionKey !== "string" ||
+      sessionKey.length === 0
+        ? null
+        : await this.buffer.findBufferKeyForSession?.(sessionKey);
+    const bufferKeys = explicitBufferKey
+      ? [explicitBufferKey]
+      : discoveredBufferKeys.length > 0
+        ? discoveredBufferKeys
         : typeof discoveredBufferKey === "string" && discoveredBufferKey.length > 0
-          ? discoveredBufferKey
+          ? [discoveredBufferKey]
           : typeof sessionKey === "string" && sessionKey.length > 0
-            ? sessionKey
-            : "default";
-    const turns = this.buffer.getTurns(bufferKey);
-    if (turns.length === 0) return;
-    await new Promise<void>((resolve, reject) => {
-      void this
-        .queueBufferedExtraction(turns, "trigger_mode", {
-          bufferKey,
-          clearBufferAfterExtraction: true,
-          skipDedupeCheck: true,
-          abortSignal: options.abortSignal,
-          onTaskSettled: (error) => (error ? reject(error) : resolve()),
-        })
-        .catch(reject);
-    });
+            ? [sessionKey]
+            : ["default"];
+    for (const bufferKey of bufferKeys) {
+      const turns = this.buffer.getTurns(bufferKey);
+      if (turns.length === 0) continue;
+      await new Promise<void>((resolve, reject) => {
+        void this
+          .queueBufferedExtraction(turns, "trigger_mode", {
+            bufferKey,
+            clearBufferAfterExtraction: true,
+            skipDedupeCheck: true,
+            abortSignal: options.abortSignal,
+            onTaskSettled: (error) => (error ? reject(error) : resolve()),
+          })
+          .catch(reject);
+      });
+    }
   }
 
   async ingestReplayBatch(

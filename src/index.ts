@@ -1159,10 +1159,8 @@ const pluginDefinition = {
         base.providerThreadId ??
         (base.isCodex
           ? storedCodexThreadId
-          : !explicitProviderIdentity &&
-              hintedThreadId &&
-              storedCodexThreadId === hintedThreadId
-            ? storedCodexThreadId
+          : !explicitProviderIdentity
+            ? hintedThreadId ?? storedCodexThreadId
             : null);
       return {
         ...base,
@@ -2758,10 +2756,13 @@ const pluginDefinition = {
         ) => {
           const sessionKey = event.sessionKey ?? "default";
           log.debug(`session_end: ${sessionKey}`);
-          const rememberedThreadId = resolveStoredCodexThreadId(sessionKey);
+          const sessionIdentity = resolveSessionIdentity(sessionKey, event, {});
+          const rememberedThreadId =
+            sessionIdentity.providerThreadId ??
+            resolveStoredCodexThreadId(sessionKey);
           const bufferKeys = resolveBeforeResetBufferKeys(sessionKey, {
             providerThreadId: rememberedThreadId,
-            logicalSessionKey: sessionKey,
+            logicalSessionKey: sessionIdentity.logicalSessionKey,
           });
           let drainedAllBuffers = false;
           if (typeof (orchestrator as any).flushSession === "function") {

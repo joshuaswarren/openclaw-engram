@@ -1,5 +1,5 @@
-import type { CodexCompatConfig } from "../packages/remnic-core/src/types.js";
-import { CODEX_THREAD_KEY_PREFIX } from "../packages/remnic-core/src/codex-thread-key.js";
+import { CODEX_THREAD_KEY_PREFIX } from "@remnic/core";
+import type { CodexCompatConfig } from "@remnic/core";
 
 export { CODEX_THREAD_KEY_PREFIX };
 

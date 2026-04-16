@@ -3250,7 +3250,7 @@ test("before_reset preserves the remembered Codex thread when the provider-switc
   );
 });
 
-test("before_reset flushes metadata-less follow-up turns under the raw session key", async () => {
+test("before_reset keeps metadata-less follow-up turns on the remembered Codex buffer", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-metadata-less-agent-end-test", {
     includeMemoryCapability: true,
@@ -3312,21 +3312,13 @@ test("before_reset flushes metadata-less follow-up turns under the raw session k
     bufferKey: call.options?.bufferKey,
   }));
 
-  assert.equal(summarizedFlushCalls.length, 2);
-  assert.deepEqual(summarizedFlushCalls[1], {
-    sessionKey: "session-reset-metadata-less",
-    reason: "before_reset",
-    bufferKey: "session-reset-metadata-less",
-  });
-  assert.equal(
-    summarizedFlushCalls[0]?.sessionKey,
-    "session-reset-metadata-less",
-  );
-  assert.equal(summarizedFlushCalls[0]?.reason, "codex_metadata_loss");
-  assert.match(
-    String(summarizedFlushCalls[0]?.bufferKey ?? ""),
-    /^codex-thread:thread-reset-metadata-less(?:::principal:default)?$/,
-  );
+  assert.deepEqual(summarizedFlushCalls, [
+    {
+      sessionKey: "session-reset-metadata-less",
+      reason: "before_reset",
+      bufferKey: "codex-thread:thread-reset-metadata-less::principal:default",
+    },
+  ]);
 });
 
 test("session_end releases remembered Codex bindings after a successful drain", async () => {
@@ -3392,6 +3384,123 @@ test("session_end releases remembered Codex bindings after a successful drain", 
       "codex-thread:thread-session-end-codex-release",
     ),
     "session_end should drain the remembered Codex thread buffer before releasing the mapping",
+  );
+});
+
+test("before_reset recovers sparse providerThreadId metadata without a remembered binding", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-sparse-provider-thread-id-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.transcript.append = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforeReset(
+    {
+      sessionKey: "session-reset-sparse-thread-id",
+      providerThreadId: "thread-reset-sparse-thread-id",
+    },
+    {},
+  );
+
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: call.options?.reason,
+      bufferKey: call.options?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-reset-sparse-thread-id",
+        reason: "before_reset",
+        bufferKey: "codex-thread:thread-reset-sparse-thread-id::principal:default",
+      },
+    ],
+  );
+});
+
+test("session_end drains sparse providerThreadId metadata without a remembered binding", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("session-end-sparse-provider-thread-id-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const sessionEnd = api.handlers.get("session_end");
+  assert.ok(sessionEnd, "session_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await sessionEnd(
+    {
+      sessionKey: "session-end-sparse-thread-id",
+      providerThreadId: "thread-session-end-sparse-thread-id",
+    },
+    {},
+  );
+
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: call.options?.reason,
+      bufferKey: call.options?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-end-sparse-thread-id",
+        reason: "session_end",
+        bufferKey: "codex-thread:thread-session-end-sparse-thread-id::principal:default",
+      },
+    ],
   );
 });
 

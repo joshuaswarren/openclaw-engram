@@ -187,6 +187,9 @@ test("flushSession honors an explicit bufferKey override", async () => {
   let queuedBufferKey: string | undefined;
 
   orchestrator.buffer = {
+    async findBufferKeyForSession() {
+      throw new Error("flushSession should not discover a buffer key when one is provided");
+    },
     getTurns(bufferKey: string) {
       return bufferKey === "codex-thread:thread-11"
         ? [makeTurn("session-z", "remember gamma")]
@@ -240,6 +243,42 @@ test("flushSession falls back to a discovered logical buffer key for the session
   });
 
   assert.equal(queuedBufferKey, "codex-thread:thread-11::principal:cli");
+});
+
+test("flushSession drains every discovered buffer for the session", async () => {
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  const queuedBufferKeys: string[] = [];
+
+  orchestrator.buffer = {
+    async findBufferKeysForSession(sessionKey: string) {
+      return sessionKey === "session-z"
+        ? ["session-z", "codex-thread:thread-11::principal:cli"]
+        : [];
+    },
+    getTurns(bufferKey: string) {
+      return bufferKey === "session-z" ||
+        bufferKey === "codex-thread:thread-11::principal:cli"
+        ? [makeTurn("session-z", "remember " + bufferKey)]
+        : [];
+    },
+  };
+  orchestrator.queueBufferedExtraction = async (
+    _queuedTurns: BufferTurn[],
+    _reason: string,
+    options?: Record<string, unknown>,
+  ) => {
+    queuedBufferKeys.push(options?.bufferKey as string);
+    (options?.onTaskSettled as ((error?: unknown) => void) | undefined)?.();
+  };
+
+  await orchestrator.flushSession("session-z", {
+    reason: "session-command",
+  });
+
+  assert.deepEqual(queuedBufferKeys, [
+    "session-z",
+    "codex-thread:thread-11::principal:cli",
+  ]);
 });
 
 test("runExtraction skips batches whose persisted fingerprint already exists in storage meta", async () => {
