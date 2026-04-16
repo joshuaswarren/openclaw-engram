@@ -1257,6 +1257,15 @@ export function parseConfig(raw: unknown): PluginConfig {
       }
       return "low";
     })(),
+    // Extraction judge (issue #376). Opt-in LLM-as-judge fact-worthiness gate.
+    extractionJudgeEnabled: cfg.extractionJudgeEnabled === true,
+    extractionJudgeModel:
+      typeof cfg.extractionJudgeModel === "string" ? cfg.extractionJudgeModel : "",
+    extractionJudgeBatchSize:
+      typeof cfg.extractionJudgeBatchSize === "number" && Number.isFinite(cfg.extractionJudgeBatchSize)
+        ? Math.max(1, Math.round(cfg.extractionJudgeBatchSize))
+        : 20,
+    extractionJudgeShadow: cfg.extractionJudgeShadow === true,
     // Inline source attribution (issue #369). Opt-in to preserve
     // backwards compatibility with existing downstream consumers.
     inlineSourceAttributionEnabled: cfg.inlineSourceAttributionEnabled === true,

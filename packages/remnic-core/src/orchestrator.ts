@@ -19,6 +19,11 @@ import { chunkContent, type ChunkingConfig } from "./chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
+  judgeFactDurability,
+  type JudgeBatchResult,
+  type JudgeCandidate,
+} from "./extraction-judge.js";
+import {
   attachCitation,
   type CitationContext,
   hasCitationForTemplate,
@@ -9323,7 +9328,59 @@ export class Orchestrator {
     const routeRules = await this.loadRoutingRules();
     const routeOptions = this.routeEngineOptions();
 
+    // Extraction judge gate (issue #376). When enabled, batch-evaluate all
+    // candidate facts for durability before the per-fact write loop. The
+    // verdicts map is keyed by fact index in the `facts` array.
+    let judgeVerdicts: JudgeBatchResult | null = null;
+    let judgeGatedCount = 0;
+    if (this.config.extractionJudgeEnabled) {
+      try {
+        const judgeCandidates: JudgeCandidate[] = facts
+          .map((f, i) => {
+            if (
+              !f ||
+              typeof f.content !== "string" ||
+              !f.content.trim() ||
+              typeof f.category !== "string" ||
+              !f.category.trim()
+            ) {
+              return null;
+            }
+            const imp = scoreImportance(
+              f.content,
+              f.category,
+              Array.isArray(f.tags) ? f.tags : [],
+            );
+            return {
+              text: f.content,
+              category: f.category,
+              confidence: typeof f.confidence === "number" ? f.confidence : 0.7,
+              tags: Array.isArray(f.tags) ? f.tags : [],
+              importanceLevel: imp.level,
+            } satisfies JudgeCandidate;
+          })
+          .filter((c): c is JudgeCandidate => c !== null);
+        judgeVerdicts = await judgeFactDurability(
+          judgeCandidates,
+          this.config,
+          this.localLlm,
+          new FallbackLlmClient(this.config.gatewayConfig),
+        );
+        log.info(
+          `extraction-judge: ${judgeVerdicts.verdicts.size}/${judgeCandidates.length} facts evaluated, ` +
+            `${judgeVerdicts.cached} cached, ${judgeVerdicts.judged} judged, ${judgeVerdicts.elapsed}ms`,
+        );
+      } catch (err) {
+        // Fail-open: if the entire judge pipeline errors, proceed without filtering
+        log.warn(
+          `extraction-judge: pipeline error, proceeding without filtering (fail-open): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    let factLoopIndex = -1;
     for (const fact of facts) {
+      factLoopIndex++;
       if (
         !fact ||
         typeof (fact as any).content !== "string" ||
@@ -9430,6 +9487,27 @@ export class Orchestrator {
           `metric:importance_gated level=${importance.level} threshold=${this.config.extractionMinImportanceLevel} category=${writeCategory} count=${importanceGatedCount}`,
         );
         continue;
+      }
+
+      // Extraction judge gate (issue #376). After the local importance gate
+      // passes, consult the judge verdict (computed before the loop). In
+      // active mode, non-durable facts are dropped. In shadow mode, verdicts
+      // are logged but all facts proceed to write.
+      if (judgeVerdicts) {
+        const verdict = judgeVerdicts.verdicts.get(factLoopIndex);
+        if (verdict && !verdict.durable) {
+          if (this.config.extractionJudgeShadow) {
+            log.info(
+              `extraction-judge[shadow]: would reject "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
+            );
+          } else {
+            judgeGatedCount++;
+            log.debug(
+              `extraction-judge: rejected "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
+            );
+            continue;
+          }
+        }
       }
 
       // Issue #373 — write-time semantic similarity guard. Hook runs after
@@ -10141,8 +10219,10 @@ export class Orchestrator {
     const dedupSuffix = dedupedCount > 0 ? ` (${dedupedCount} deduped)` : "";
     const gatedSuffix =
       importanceGatedCount > 0 ? ` (${importanceGatedCount} gated)` : "";
+    const judgeSuffix =
+      judgeGatedCount > 0 ? ` (${judgeGatedCount} judge-rejected)` : "";
     log.info(
-      `persisted: ${facts.length - dedupedCount - importanceGatedCount} facts${dedupSuffix}${gatedSuffix}, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
+      `persisted: ${facts.length - dedupedCount - importanceGatedCount - judgeGatedCount} facts${dedupSuffix}${gatedSuffix}${judgeSuffix}, ${entities.length} entities, ${questions.length} questions, ${profileUpdates.length} profile updates`,
     );
 
     // Update temporal + tag indexes (v8.1) — fire-and-forget, fail-open

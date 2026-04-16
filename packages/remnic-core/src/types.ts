@@ -348,6 +348,15 @@ export interface PluginConfig {
   heartbeat: HeartbeatConfig;
   slotBehavior: SlotBehaviorConfig;
   codexCompat: CodexCompatConfig;
+  // Extraction judge (issue #376)
+  /** Enable the LLM-as-judge fact-worthiness gate on extracted facts. Default false (opt-in). */
+  extractionJudgeEnabled: boolean;
+  /** Model override for the judge LLM. Empty string means use the local model. */
+  extractionJudgeModel: string;
+  /** Maximum number of candidate facts per judge LLM batch call. */
+  extractionJudgeBatchSize: number;
+  /** Shadow mode: log judge verdicts but do not filter facts. Default false. */
+  extractionJudgeShadow: boolean;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   daySummaryEnabled: boolean;
