@@ -97,6 +97,12 @@ import {
   writeMarketplaceManifest,
   installFromMarketplace,
   type MarketplaceInstallType,
+  EnrichmentProviderRegistry,
+  WebSearchProvider,
+  runEnrichmentPipeline,
+  appendAuditEntry,
+  readAuditLog,
+  defaultEnrichmentPipelineConfig,
 } from "@remnic/core";
 import type {
   BinaryLifecycleConfig,
@@ -140,6 +146,7 @@ type CommandName =
   | "briefing"
   | "binary"
   | "taxonomy"
+  | "enrich"
   | "openclaw";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
@@ -558,6 +565,144 @@ Options:
   --json    Output in JSON format
 `);
       break;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// enrich command (issue #365)
+// ---------------------------------------------------------------------------
+
+async function cmdEnrich(rest: string[]): Promise<void> {
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+
+  const subcommand = rest[0];
+
+  // Sub-commands that don't need an entity name
+  if (subcommand === "audit") {
+    const memoryDir = expandTilde(config.memoryDir);
+    const auditDir = path.join(memoryDir, "enrichment");
+    const sinceFlag = resolveFlag(rest.slice(1), "--since");
+    const entries = await readAuditLog(auditDir, sinceFlag ?? undefined);
+    if (entries.length === 0) {
+      console.log("No enrichment audit entries found.");
+      return;
+    }
+    for (const entry of entries) {
+      const status = entry.accepted ? "ACCEPTED" : "REJECTED";
+      const url = entry.sourceUrl ? ` (${entry.sourceUrl})` : "";
+      console.log(
+        `[${entry.timestamp}] ${status} ${entry.entityName} via ${entry.provider}: ${entry.candidateText}${url}`,
+      );
+    }
+    return;
+  }
+
+  if (subcommand === "providers") {
+    const pipelineConfig = defaultEnrichmentPipelineConfig();
+    pipelineConfig.enabled = config.enrichmentEnabled;
+    pipelineConfig.maxCandidatesPerEntity = config.enrichmentMaxCandidatesPerEntity;
+    pipelineConfig.autoEnrichOnCreate = config.enrichmentAutoOnCreate;
+
+    const registry = new EnrichmentProviderRegistry();
+    registry.register(new WebSearchProvider());
+
+    const allEnabled = registry.listEnabled(pipelineConfig);
+    console.log(`Pipeline enabled: ${pipelineConfig.enabled}`);
+    console.log(`Auto-enrich on create: ${pipelineConfig.autoEnrichOnCreate}`);
+    console.log(`Max candidates per entity: ${pipelineConfig.maxCandidatesPerEntity}`);
+    console.log(`\nRegistered providers:`);
+
+    const webSearch = registry.get("web-search");
+    if (webSearch) {
+      const available = await webSearch.isAvailable();
+      console.log(`  - web-search (${webSearch.costTier}) — ${available ? "available" : "unavailable (no searchFn configured)"}`);
+    }
+    if (allEnabled.length === 0) {
+      console.log("\n  No providers are currently enabled in config.");
+    }
+    return;
+  }
+
+  if (!config.enrichmentEnabled) {
+    console.error("Enrichment pipeline is disabled (enrichmentEnabled = false).");
+    process.exit(1);
+  }
+
+  const dryRun = rest.includes("--dry-run");
+  const all = rest.includes("--all");
+
+  if (!all && (!subcommand || subcommand.startsWith("--"))) {
+    console.error("Usage: remnic enrich <entity-name> | --all | --dry-run | audit | providers");
+    process.exit(1);
+  }
+
+  const orchestrator = new Orchestrator(config);
+  await orchestrator.initialize();
+  const storage = await orchestrator.getStorage(config.defaultNamespace);
+
+  // Gather entities to enrich
+  const entityFiles = await storage.listEntities();
+  let targets = entityFiles;
+  if (!all && subcommand && !subcommand.startsWith("--")) {
+    const match = entityFiles.find(
+      (e) => e.name.toLowerCase() === subcommand.toLowerCase(),
+    );
+    if (!match) {
+      console.error(`Entity not found: ${subcommand}`);
+      process.exit(1);
+    }
+    targets = [match];
+  }
+
+  if (targets.length === 0) {
+    console.log("No entities to enrich.");
+    return;
+  }
+
+  // Build pipeline config and registry
+  const pipelineConfig = defaultEnrichmentPipelineConfig();
+  pipelineConfig.enabled = true;
+  pipelineConfig.maxCandidatesPerEntity = config.enrichmentMaxCandidatesPerEntity;
+
+  const registry = new EnrichmentProviderRegistry();
+  registry.register(new WebSearchProvider());
+
+  // Map entity files to enrichment inputs
+  const inputs = targets.map((ef) => ({
+    name: ef.name,
+    type: ef.type,
+    knownFacts: ef.facts,
+    importanceLevel: "normal" as const,
+  }));
+
+  if (dryRun) {
+    console.log(`Dry run: would enrich ${inputs.length} entity(ies):`);
+    for (const input of inputs) {
+      const providers = registry.getForImportance(input.importanceLevel, pipelineConfig);
+      console.log(`  - ${input.name} (${input.type}) — ${providers.length} provider(s)`);
+    }
+    return;
+  }
+
+  console.log(`Enriching ${inputs.length} entity(ies)...`);
+  const noopLog = { info() {}, warn() {}, error() {}, debug() {} };
+  const results = await runEnrichmentPipeline(inputs, registry, pipelineConfig, noopLog);
+
+  if (results.length === 0) {
+    console.log("No enrichment results (no providers matched).");
+    return;
+  }
+
+  for (const result of results) {
+    console.log(
+      `  ${result.entityName} via ${result.provider}: ${result.candidatesAccepted} accepted, ${result.candidatesRejected} rejected (${result.elapsed}ms)`,
+    );
   }
 }
 
@@ -2883,6 +3028,11 @@ Options:
       break;
     }
 
+    case "enrich": {
+      await cmdEnrich(rest);
+      break;
+    }
+
     case "openclaw": {
       const subAction = rest[0] ?? "help";
       if (subAction === "install") {
@@ -2955,6 +3105,11 @@ Usage:
     add <id> <name> [--priority N]    Add custom category
     remove <id>                       Remove custom category
     resolve <text> [--category <cat>] Test resolver on sample text
+  remnic enrich <entity-name>    Manually enrich a specific entity
+  remnic enrich --all            Enrich all entities
+  remnic enrich --dry-run        Preview what would be enriched
+  remnic enrich audit            Show recent enrichment audit log
+  remnic enrich providers        List registered providers and their status
 
 Options:
   --json    Output in JSON format

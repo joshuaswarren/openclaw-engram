@@ -1984,6 +1984,14 @@ export function parseConfig(raw: unknown): PluginConfig {
     // Codex citation parity (issue #379)
     citationsEnabled: cfg.citationsEnabled === true,
     citationsAutoDetect: cfg.citationsAutoDetect !== false,
+
+    // External enrichment pipeline (issue #365)
+    enrichmentEnabled: cfg.enrichmentEnabled === true,
+    enrichmentAutoOnCreate: cfg.enrichmentAutoOnCreate === true,
+    enrichmentMaxCandidatesPerEntity:
+      typeof cfg.enrichmentMaxCandidatesPerEntity === "number"
+        ? Math.max(0, Math.floor(cfg.enrichmentMaxCandidatesPerEntity))
+        : 20,
   };
 }
 
