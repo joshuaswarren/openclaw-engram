@@ -235,7 +235,7 @@ test("runExtraction skips batches whose persisted fingerprint already exists in 
         totalEntities: 0,
         processedExtractionFingerprints: [
           {
-            fingerprint: orchestrator.buildProcessedExtractionFingerprint(
+            fingerprint: orchestrator.buildExtractionFingerprint(
               [
                 {
                   ...makeTurn("session-c", "remember delta"),

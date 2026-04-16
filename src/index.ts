@@ -2641,6 +2641,7 @@ const pluginDefinition = {
             typeof (orchestrator as any).flushSession === "function";
           const flushAbort = new AbortController();
           let flushTimedOut = false;
+          let flushFailed = false;
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
           const flushPromise = flushEnabled
             ? (async () => {
@@ -2654,6 +2655,7 @@ const pluginDefinition = {
                     }),
                   ).catch((error) => {
                     if (!flushAbort.signal.aborted) {
+                      flushFailed = true;
                       log.warn(
                         `before_reset flush failed for ${bufferKey}: ${String(error)}`,
                       );
@@ -2683,7 +2685,12 @@ const pluginDefinition = {
               `before_reset flush timed out after ${cfg.beforeResetTimeoutMs}ms`,
             );
           }
-          clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId);
+          const drainedAllBuffers =
+            flushEnabled && !flushTimedOut && !flushFailed;
+          clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId, {
+            preserveThreadBinding: !drainedAllBuffers,
+            preserveMessageCount: !drainedAllBuffers,
+          });
           if (
             typeof (orchestrator as any).clearRecallWorkspaceOverride === "function"
           ) {
@@ -2693,7 +2700,6 @@ const pluginDefinition = {
       );
     } catch (error) {
       log.debug(`before_reset hook unavailable on this runtime: ${String(error)}`);
-    }
     }
 
     // ========================================================================
@@ -2745,12 +2751,39 @@ const pluginDefinition = {
         ) => {
           const sessionKey = event.sessionKey ?? "default";
           log.debug(`session_end: ${sessionKey}`);
-          // Future: flush pending extractions here when Orchestrator gains a flush method.
+          const rememberedThreadId = resolveStoredCodexThreadId(sessionKey);
+          const bufferKeys = resolveBeforeResetBufferKeys(sessionKey, {
+            providerThreadId: rememberedThreadId,
+            logicalSessionKey: sessionKey,
+          });
+          let drainedAllBuffers = false;
+          if (typeof (orchestrator as any).flushSession === "function") {
+            let flushFailed = false;
+            for (const bufferKey of bufferKeys) {
+              try {
+                await (orchestrator as any).flushSession(sessionKey, {
+                  reason: "session_end",
+                  bufferKey,
+                });
+              } catch (error) {
+                flushFailed = true;
+                log.warn(
+                  `session_end flush failed for ${bufferKey}: ${String(error)}`,
+                );
+              }
+            }
+            drainedAllBuffers = !flushFailed;
+          }
+          clearCodexCompatCaches(sessionKey, rememberedThreadId, {
+            preserveThreadBinding: !drainedAllBuffers,
+            preserveMessageCount: !drainedAllBuffers,
+          });
           if (orchestrator.config.compactionResetEnabled) {
             orchestrator.clearRecallWorkspaceOverride(sessionKey);
           }
         },
       );
+    }
 
       // ---- Tool observation ----
       api.on(

@@ -2678,6 +2678,73 @@ test("before_reset still clears the session cache when flush-on-reset is disable
   );
 });
 
+test("before_reset preserves the remembered Codex binding when reset draining is disabled", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-disabled-codex-binding-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    flushOnResetEnabled: false,
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime the Codex thread before reset." },
+    {
+      sessionKey: "session-reset-disabled-codex",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-disabled-codex",
+    },
+  );
+
+  await beforeReset({ sessionKey: "session-reset-disabled-codex" }, {});
+
+  await beforePromptBuild(
+    { prompt: "The provider switched after reset without draining." },
+    {
+      sessionKey: "session-reset-disabled-codex",
+      provider: { id: "openai", model: "gpt-5.4" },
+    },
+  );
+
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-reset-disabled-codex");
+  assert.equal(flushCalls[0]?.options?.reason, "codex_provider_switch");
+  assert.ok(
+    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-reset-disabled-codex",
+    ),
+    "the remembered Codex thread should remain available for the later provider-switch drain",
+  );
+});
+
 test("before_reset reuses the remembered Codex thread id for logical flush keying", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-codex-test", {
@@ -3139,6 +3206,72 @@ test("before_reset flushes metadata-less follow-up turns under the raw session k
         bufferKey: "session-reset-metadata-less",
       },
     ],
+  );
+});
+
+test("session_end releases remembered Codex bindings after a successful drain", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("session-end-codex-binding-release-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const sessionEnd = api.handlers.get("session_end");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(sessionEnd, "session_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime the Codex session before ending it." },
+    {
+      sessionKey: "session-end-codex-release",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-session-end-codex-release",
+    },
+  );
+
+  await sessionEnd({ sessionKey: "session-end-codex-release" }, {});
+
+  await beforePromptBuild(
+    { prompt: "This follow-up runs on a non-Codex provider after session end." },
+    {
+      sessionKey: "session-end-codex-release",
+      provider: { id: "openai", model: "gpt-5.4" },
+    },
+  );
+
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-end-codex-release");
+  assert.equal(flushCalls[0]?.options?.reason, "session_end");
+  assert.ok(
+    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-session-end-codex-release",
+    ),
+    "session_end should drain the remembered Codex thread buffer before releasing the mapping",
   );
 });
 

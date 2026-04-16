@@ -8281,7 +8281,7 @@ export class Orchestrator {
     const shouldPersistProcessedFingerprint = normalizedTurns.some(
       (turn) => turn.persistProcessedFingerprint === true,
     );
-    const extractionFingerprint = this.buildProcessedExtractionFingerprint(
+    const extractionFingerprint = this.buildExtractionFingerprint(
       normalizedTurns,
       bufferKey,
     );
@@ -8446,13 +8446,6 @@ export class Orchestrator {
 
     this.requestQmdMaintenance();
     await this.runTierMigrationCycle(storage, "extraction");
-  }
-
-  private buildProcessedExtractionFingerprint(
-    turns: BufferTurn[],
-    bufferKey: string,
-  ): string | null {
-    return this.buildExtractionFingerprint(turns, bufferKey);
   }
 
   private async hasProcessedExtractionFingerprint(
