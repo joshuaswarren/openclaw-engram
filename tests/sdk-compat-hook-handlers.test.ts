@@ -3634,6 +3634,7 @@ test("before_reset prefers the remembered Codex thread over sparse providerThrea
     includeMemoryCapability: true,
   });
   api.pluginConfig = {
+    namespacesEnabled: false,
     codexCompat: {
       enabled: true,
       threadIdBufferKeying: true,
@@ -3691,8 +3692,7 @@ test("before_reset prefers the remembered Codex thread over sparse providerThrea
       {
         sessionKey: "session-reset-remembered-thread",
         reason: "before_reset",
-        bufferKey:
-          "codex-thread:thread-reset-remembered-thread::principal:default",
+        bufferKey: "codex-thread:thread-reset-remembered-thread",
       },
     ],
   );
