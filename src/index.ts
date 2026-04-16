@@ -66,7 +66,7 @@ import {
   resolveCodexSessionIdentity,
 } from "./codex-compat.js";
 import { planRecallMode } from "../packages/remnic-core/src/intent.js";
-import { resolvePrincipal } from "../packages/remnic-core/src/namespaces/principal.js";
+import { resolvePrincipal } from "@remnic/core";
 import { createDreamsSurface } from "../packages/remnic-core/src/surfaces/dreams.js";
 import { createHeartbeatSurface, type HeartbeatEntry } from "../packages/remnic-core/src/surfaces/heartbeat.js";
 import type { ConsolidationObservation } from "../packages/remnic-core/src/types.js";
@@ -2343,6 +2343,7 @@ const pluginDefinition = {
                   sessionKey,
                   sessionIdentity.logicalSessionKey,
                 ),
+                logicalSessionKey: sessionIdentity.logicalSessionKey,
                 providerThreadId: sessionIdentity.providerThreadId,
                 turnFingerprint: buildTurnFingerprint({
                   role,
@@ -2353,7 +2354,7 @@ const pluginDefinition = {
                   turnIndex: persistedTurnIndex,
                 }),
                 persistProcessedFingerprint:
-                  sessionIdentity.isCodex &&
+                  sessionIdentity.codexThreadBound &&
                   cfg.codexCompat.enabled !== false &&
                   cfg.codexCompat.fingerprintDedup === true &&
                   cfg.codexCompat.threadIdBufferKeying !== false &&

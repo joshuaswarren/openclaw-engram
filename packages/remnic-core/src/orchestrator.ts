@@ -7883,6 +7883,7 @@ export class Orchestrator {
     sessionKey?: string,
     options: {
       bufferKey?: string;
+      logicalSessionKey?: string;
       providerThreadId?: string | null;
       turnFingerprint?: string;
       persistProcessedFingerprint?: boolean;
@@ -7910,7 +7911,7 @@ export class Orchestrator {
       content,
       timestamp: new Date().toISOString(),
       sessionKey,
-      logicalSessionKey: bufferKey,
+      logicalSessionKey: options.logicalSessionKey ?? bufferKey,
       providerThreadId: options.providerThreadId ?? null,
       turnFingerprint: options.turnFingerprint,
       persistProcessedFingerprint: options.persistProcessedFingerprint === true,

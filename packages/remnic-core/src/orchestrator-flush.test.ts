@@ -170,12 +170,13 @@ test("processTurn honors an explicit logical buffer key and turn fingerprint", a
   };
 
   await orchestrator.processTurn("assistant", "remember beta", "session-b", {
-    bufferKey: "codex-thread:thread-7",
+    bufferKey: "codex-thread:thread-7::principal:cli",
+    logicalSessionKey: "codex-thread:thread-7",
     providerThreadId: "thread-7",
     turnFingerprint: "fp-thread-7",
   });
 
-  assert.equal(capturedBufferKey, "codex-thread:thread-7");
+  assert.equal(capturedBufferKey, "codex-thread:thread-7::principal:cli");
   assert.equal(capturedTurn?.sessionKey, "session-b");
   assert.equal(capturedTurn?.logicalSessionKey, "codex-thread:thread-7");
   assert.equal(capturedTurn?.providerThreadId, "thread-7");

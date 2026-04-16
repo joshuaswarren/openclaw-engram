@@ -3873,8 +3873,17 @@ test("agent_end ignores bare providerThreadId as provider-switch evidence", asyn
       "codex-thread:thread-provider-thread-only::principal:default",
     );
     assert.equal(
+      (call.options as { logicalSessionKey?: string }).logicalSessionKey,
+      "codex-thread:thread-provider-thread-only",
+    );
+    assert.equal(
       (call.options as { providerThreadId?: string | null }).providerThreadId,
       "thread-provider-thread-only",
+    );
+    assert.equal(
+      (call.options as { persistProcessedFingerprint?: boolean })
+        .persistProcessedFingerprint,
+      true,
     );
   }
 });
