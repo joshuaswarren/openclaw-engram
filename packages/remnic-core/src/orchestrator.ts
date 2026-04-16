@@ -8384,9 +8384,11 @@ export class Orchestrator {
         );
       }
     }
-    // Persist extraction counters and processed fingerprints before clearing
-    // the buffer or running follow-on helpers so replay dedupe survives any
-    // later non-essential failure.
+    // Persist extraction counters and processed fingerprints before running
+    // follow-on helpers so replay dedupe survives any later non-essential
+    // failure. If this aggregate meta write fails, still clear the buffer:
+    // the durable memories are already written and replaying the same turns
+    // would duplicate them.
     meta.extractionCount += 1;
     meta.lastExtractionAt = new Date().toISOString();
     meta.totalMemories += Array.isArray(result?.facts)
@@ -8395,8 +8397,16 @@ export class Orchestrator {
     meta.totalEntities += Array.isArray(result?.entities)
       ? result.entities.length
       : 0;
-    await storage.saveMeta(meta);
+    let postPersistMetaError: unknown;
+    try {
+      await storage.saveMeta(meta);
+    } catch (error) {
+      postPersistMetaError = error;
+    }
     await clearBuffer({ ignoreAbort: true });
+    if (postPersistMetaError) {
+      throw postPersistMetaError;
+    }
 
     // Build memory box from this extraction (v8.0 Phase 2A)
     // Topics are derived from the current extraction's facts and entities only —

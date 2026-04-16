@@ -1167,6 +1167,8 @@ const pluginDefinition = {
       return {
         ...base,
         providerThreadId: rememberedThreadId,
+        codexThreadBound:
+          !!rememberedThreadId && (base.isCodex || !explicitProviderIdentity),
         logicalSessionKey:
           cfg.codexCompat.threadIdBufferKeying !== false &&
           rememberedThreadId &&
@@ -1530,7 +1532,7 @@ const pluginDefinition = {
       }
       if (
         hookLabel === "before_prompt_build" &&
-        sessionIdentity.isCodex &&
+        sessionIdentity.codexThreadBound &&
         sessionIdentity.providerThreadId &&
         (cfg.codexCompat.compactionFlushMode === "heuristic" ||
           cfg.codexCompat.compactionFlushMode === "auto")

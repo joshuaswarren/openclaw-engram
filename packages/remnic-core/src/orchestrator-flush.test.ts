@@ -644,6 +644,83 @@ test("runExtraction saves the processed fingerprint before late threading failur
   );
 });
 
+test("runExtraction clears the buffer even when the post-persist meta save fails", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+
+  let clearCalls = 0;
+  let saveMetaCalls = 0;
+
+  const meta = {
+    extractionCount: 0,
+    lastExtractionAt: null,
+    lastConsolidationAt: null,
+    totalMemories: 0,
+    totalEntities: 0,
+    processedExtractionFingerprints: [] as Array<{
+      fingerprint: string;
+      observedAt: string;
+    }>,
+  };
+
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => meta,
+      saveMeta: async () => {
+        saveMetaCalls += 1;
+        throw new Error("meta save failed");
+      },
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => ({
+      facts: [
+        {
+          content: "remember theta",
+          category: "fact",
+          confidence: 0.9,
+          tags: [],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    }),
+  };
+  orchestrator.persistExtraction = async () => ["fact-1"];
+  orchestrator.requestQmdMaintenance = () => undefined;
+  orchestrator.runTierMigrationCycle = async () => undefined;
+
+  await assert.rejects(
+    orchestrator.runExtraction(
+      [
+        {
+          ...makeTurn("session-g", "remember theta"),
+          logicalSessionKey: "logical-thread:thread-16",
+          turnFingerprint: "fp-thread-16",
+          persistProcessedFingerprint: true,
+        },
+      ],
+      {
+        bufferKey: "logical-thread:thread-16",
+      },
+    ),
+    /meta save failed/,
+  );
+
+  assert.equal(saveMetaCalls, 1);
+  assert.equal(clearCalls, 1);
+});
+
 test("runExtraction aborts before late buffer clearing when the caller cancels", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;

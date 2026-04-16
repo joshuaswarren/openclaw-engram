@@ -2944,6 +2944,74 @@ test("before_reset preserves the shared Codex baseline when another session stay
   );
 });
 
+test("before_prompt_build runs the compaction heuristic for remembered Codex threads when hook metadata is sparse", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-sparse-codex-heuristic-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    namespacesEnabled: false,
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime the Codex thread before sparse heuristic detection.", messageCount: 9 },
+    {
+      sessionKey: "session-sparse-codex-heuristic",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-sparse-codex-heuristic",
+    },
+  );
+
+  await beforePromptBuild(
+    {
+      prompt: "The next hook only carries the remembered provider thread id.",
+      messageCount: 3,
+      providerThreadId: "thread-sparse-codex-heuristic",
+    },
+    {
+      sessionKey: "session-sparse-codex-heuristic",
+    },
+  );
+
+  assert.equal(flushCalls.length, 1);
+  assert.deepEqual(
+    flushCalls[0],
+    {
+      sessionKey: "session-sparse-codex-heuristic",
+      options: {
+        reason: "codex_compaction_heuristic",
+        bufferKey: "codex-thread:thread-sparse-codex-heuristic",
+      },
+    },
+  );
+});
+
 test("before_reset preserves the remembered Codex thread after a transient recall failure", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-codex-recall-failure-test", {
