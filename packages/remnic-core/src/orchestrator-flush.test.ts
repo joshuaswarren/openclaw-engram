@@ -183,6 +183,22 @@ test("processTurn honors an explicit logical buffer key and turn fingerprint", a
   assert.equal(capturedTurn?.turnFingerprint, "fp-thread-7");
 });
 
+test("buildExtractionFingerprint normalizes fallback content like turn fingerprints", () => {
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = parseConfig({});
+
+  const compact = orchestrator.buildExtractionFingerprint(
+    [makeTurn("session-b", "Memory saved.")],
+    "logical-thread:thread-7",
+  );
+  const spaced = orchestrator.buildExtractionFingerprint(
+    [makeTurn("session-b", "  Memory   saved.\n")],
+    "logical-thread:thread-7",
+  );
+
+  assert.equal(compact, spaced);
+});
+
 test("flushSession honors an explicit bufferKey override", async () => {
   const orchestrator = Object.create(Orchestrator.prototype) as any;
   let queuedBufferKey: string | undefined;

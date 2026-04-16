@@ -3012,6 +3012,77 @@ test("before_prompt_build runs the compaction heuristic for remembered Codex thr
   );
 });
 
+test("before_prompt_build does not run the Codex heuristic fallback when codex compat is disabled", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-codex-heuristic-disabled-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    namespacesEnabled: false,
+    codexCompat: {
+      enabled: false,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforeCompaction = api.handlers.get("before_compaction");
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforeCompaction, "before_compaction handler should be registered");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforeCompaction(
+    { sessionKey: "session-heuristic-disabled-a" },
+    {
+      sessionKey: "session-heuristic-disabled-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-heuristic-disabled-1",
+    },
+  );
+
+  await beforePromptBuild(
+    {
+      prompt: "Prime the remembered thread while codex compat is disabled.",
+      messageCount: 9,
+      providerThreadId: "thread-heuristic-disabled-1",
+    },
+    {
+      sessionKey: "session-heuristic-disabled-a",
+    },
+  );
+
+  await beforePromptBuild(
+    {
+      prompt: "The next sparse prompt should not flush because codex compat is disabled.",
+      messageCount: 3,
+      providerThreadId: "thread-heuristic-disabled-1",
+    },
+    {
+      sessionKey: "session-heuristic-disabled-a",
+    },
+  );
+
+  assert.deepEqual(flushCalls, []);
+});
+
 test("before_reset preserves the remembered Codex thread after a transient recall failure", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-codex-recall-failure-test", {

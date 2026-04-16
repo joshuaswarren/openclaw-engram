@@ -8155,7 +8155,7 @@ export class Orchestrator {
         ) {
           return `fp:${turn.turnFingerprint}`;
         }
-        return `${turn.role}:${(turn.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`;
+        return `${turn.role}:${(turn.content ?? "").replace(/\s+/g, " ").trim().slice(0, this.config.extractionMaxTurnChars)}`;
       })
       .filter((value) => value.length > 0);
   }

@@ -1545,6 +1545,7 @@ const pluginDefinition = {
       }
       if (
         hookLabel === "before_prompt_build" &&
+        cfg.codexCompat.enabled !== false &&
         sessionIdentity.codexThreadBound &&
         sessionIdentity.providerThreadId &&
         (cfg.codexCompat.compactionFlushMode === "heuristic" ||
