@@ -1151,9 +1151,14 @@ const pluginDefinition = {
       });
       const explicitProviderIdentity =
         hasExplicitProviderIdentity(event) || hasExplicitProviderIdentity(ctx);
-      if (explicitProviderIdentity && !base.isCodex) {
-        forgetCodexThread(sessionKey);
-      }
+      const previousCodexThreadId =
+        explicitProviderIdentity && !base.isCodex
+          ? resolveStoredCodexThreadId(sessionKey)
+          : null;
+      const previousCodexBufferKey = previousCodexThreadId
+        ? resolveStoredCodexBufferKey(sessionKey) ??
+          resolveCodexCompactionBaselineKey(sessionKey, previousCodexThreadId)
+        : null;
       const rememberedThreadId =
         base.providerThreadId ??
         (base.isCodex ? resolveStoredCodexThreadId(sessionKey) : null);
@@ -1166,7 +1171,35 @@ const pluginDefinition = {
           rememberedThreadId
             ? codexLogicalSessionKey(rememberedThreadId)
             : base.logicalSessionKey,
+        previousCodexThreadId,
+        previousCodexBufferKey,
       };
+    }
+
+    async function flushAndForgetCodexThreadOnProviderSwitch(
+      sessionKey: string,
+      sessionIdentity: {
+        isCodex: boolean;
+        previousCodexThreadId?: string | null;
+        previousCodexBufferKey?: string | null;
+      },
+    ): Promise<void> {
+      if (sessionIdentity.isCodex || !sessionIdentity.previousCodexThreadId) {
+        return;
+      }
+      const bufferKey = sessionIdentity.previousCodexBufferKey;
+      try {
+        if (bufferKey && typeof (orchestrator as any).flushSession === "function") {
+          await (orchestrator as any).flushSession(sessionKey, {
+            reason: "codex_provider_switch",
+            bufferKey,
+          });
+        }
+      } catch (error) {
+        log.warn(`codexCompat provider-switch flush failed: ${String(error)}`);
+      } finally {
+        forgetCodexThread(sessionKey, sessionIdentity.previousCodexThreadId);
+      }
     }
 
     function resolveExtractionBufferKey(
@@ -1400,6 +1433,7 @@ const pluginDefinition = {
       }
       const sessionKey = (ctx?.sessionKey as string) ?? "default";
       const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+      await flushAndForgetCodexThreadOnProviderSwitch(sessionKey, sessionIdentity);
       rememberCodexThread(sessionKey, sessionIdentity.providerThreadId);
       if (sessionIdentity.isCodex && !codexCompactionModeLogged) {
         const mode =
@@ -2070,6 +2104,7 @@ const pluginDefinition = {
 
         const sessionKey = (ctx?.sessionKey as string) ?? "default";
         const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+        await flushAndForgetCodexThreadOnProviderSwitch(sessionKey, sessionIdentity);
         if (!sessionIdentity.isCodex && !sessionIdentity.providerThreadId) {
           forgetCodexThread(sessionKey);
         }
@@ -2508,6 +2543,7 @@ const pluginDefinition = {
             (event?.sessionKey as string) ??
             "default";
           const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
+          await flushAndForgetCodexThreadOnProviderSwitch(sessionKey, sessionIdentity);
           const rememberedThreadId =
             sessionIdentity.providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
           const flushEnabled =

@@ -2491,15 +2491,25 @@ test("before_prompt_build keeps a shared Codex thread baseline when another sess
     },
   );
 
-  assert.equal(flushCalls.length, 1);
-  assert.equal(flushCalls[0]?.sessionKey, "session-shared-unbind-b");
-  assert.equal(
-    (flushCalls[0]?.options as { reason?: string }).reason,
-    "codex_compaction_heuristic",
-  );
-  assert.equal(
-    (flushCalls[0]?.options as { bufferKey?: string }).bufferKey,
-    "codex-thread:thread-shared-unbind-1",
+  assert.equal(flushCalls.length, 2);
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: (call.options as { reason?: string } | undefined)?.reason,
+      bufferKey: (call.options as { bufferKey?: string } | undefined)?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-shared-unbind-a",
+        reason: "codex_provider_switch",
+        bufferKey: "codex-thread:thread-shared-unbind-1",
+      },
+      {
+        sessionKey: "session-shared-unbind-b",
+        reason: "codex_compaction_heuristic",
+        bufferKey: "codex-thread:thread-shared-unbind-1",
+      },
+    ],
   );
 });
 
@@ -2897,17 +2907,15 @@ test("before_reset stops using the remembered Codex thread after an explicit pro
   orchestrator.recall = async () => "Remembered context";
   orchestrator.config.compactionResetEnabled = false;
 
-  let flushed:
-    | {
-        sessionKey: string;
-        options: Record<string, unknown> | undefined;
-      }
-    | undefined;
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
   orchestrator.flushSession = async (
     sessionKey: string,
     options?: Record<string, unknown>,
   ) => {
-    flushed = { sessionKey, options };
+    flushCalls.push({ sessionKey, options });
   };
 
   await beforePromptBuild(
@@ -2929,11 +2937,25 @@ test("before_reset stops using the remembered Codex thread after an explicit pro
 
   await beforeReset({ sessionKey: "session-reset-provider-switch" }, {});
 
-  assert.equal(flushed?.sessionKey, "session-reset-provider-switch");
-  assert.equal(flushed?.options?.reason, "before_reset");
-  assert.equal(
-    flushed?.options?.bufferKey,
-    "session-reset-provider-switch",
+  assert.equal(flushCalls.length, 2);
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: call.options?.reason,
+      bufferKey: call.options?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-reset-provider-switch",
+        reason: "codex_provider_switch",
+        bufferKey: "codex-thread:thread-reset-provider-switch::principal:default",
+      },
+      {
+        sessionKey: "session-reset-provider-switch",
+        reason: "before_reset",
+        bufferKey: "session-reset-provider-switch",
+      },
+    ],
   );
 });
 
@@ -3018,6 +3040,16 @@ test("agent_end does not reuse a remembered Codex thread after the provider swit
   orchestrator.recall = async () => "Remembered context";
   orchestrator.transcript.append = async () => undefined;
 
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
   const processTurnCalls: Array<Record<string, unknown>> = [];
   orchestrator.processTurn = async (
     role: string,
@@ -3054,6 +3086,20 @@ test("agent_end does not reuse a remembered Codex thread after the provider swit
     },
   );
 
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: call.options?.reason,
+      bufferKey: call.options?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-provider-switch",
+        reason: "codex_provider_switch",
+        bufferKey: "codex-thread:thread-provider-switch::principal:default",
+      },
+    ],
+  );
   assert.equal(processTurnCalls.length, 2);
   for (const call of processTurnCalls) {
     assert.equal(call.sessionKey, "session-provider-switch");
