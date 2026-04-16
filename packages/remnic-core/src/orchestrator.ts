@@ -20,8 +20,10 @@ import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   judgeFactDurability,
+  createVerdictCache,
   type JudgeBatchResult,
   type JudgeCandidate,
+  type JudgeVerdict,
 } from "./extraction-judge.js";
 import {
   attachCitation,
@@ -1087,6 +1089,7 @@ export class Orchestrator {
   readonly summarizer: HourlySummarizer;
   readonly localLlm: LocalLlmClient;
   readonly fastLlm: LocalLlmClient;
+  private readonly judgeVerdictCache: Map<string, JudgeVerdict>;
   private readonly fastGatewayLlm: FallbackLlmClient | null;
   readonly modelRegistry: ModelRegistry;
   readonly relevance: RelevanceStore;
@@ -1352,6 +1355,7 @@ export class Orchestrator {
       this.modelRegistry,
       this.transcript,
     );
+    this.judgeVerdictCache = createVerdictCache();
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     this.fastLlm = config.localLlmFastEnabled
       ? (() => {
@@ -9355,6 +9359,17 @@ export class Orchestrator {
             f.category,
             Array.isArray(f.tags) ? f.tags : [],
           );
+          // Pre-filter: skip facts below importance threshold to avoid
+          // wasting LLM calls on facts that will be filtered anyway in
+          // the per-fact write loop (issue #376 review finding).
+          if (
+            !isAboveImportanceThreshold(
+              imp.level,
+              this.config.extractionMinImportanceLevel,
+            )
+          ) {
+            continue;
+          }
           judgeCandidates.push({
             text: f.content,
             category: f.category as string,
@@ -9369,6 +9384,7 @@ export class Orchestrator {
           this.config,
           this.localLlm,
           new FallbackLlmClient(this.config.gatewayConfig),
+          this.judgeVerdictCache,
         );
         // Remap candidate-indexed verdicts to original fact indexes
         judgeVerdictsByFactIndex = new Map();

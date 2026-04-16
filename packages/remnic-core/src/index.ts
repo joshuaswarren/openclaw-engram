@@ -65,6 +65,7 @@ export {
   judgeFactDurability,
   clearVerdictCache,
   verdictCacheSize,
+  createVerdictCache,
   type JudgeCandidate,
   type JudgeVerdict,
   type JudgeBatchResult,

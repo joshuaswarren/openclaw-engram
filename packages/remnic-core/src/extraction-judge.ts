@@ -72,21 +72,48 @@ NOT DURABLE examples (reject):
 - Information that will be stale within hours
 - Step-by-step instructions for a one-time task
 
+Return a JSON array of objects with these fields:
+- index: number (the candidate index)
+- durable: boolean (true if the fact is durable)
+- reason: string (brief explanation)
+
 Rules:
 1. Return exactly one verdict per input candidate, matched by index.
 2. The reason field must be a short phrase (under 80 characters).
 3. When in doubt lean toward durable — false negatives are worse than false positives.
-4. Output valid JSON only. No markdown fences, no commentary.`;
+4. Output valid JSON only. No markdown fences, no commentary.
+
+Example output:
+[{"index": 0, "durable": true, "reason": "Stable personal preference"}, {"index": 1, "durable": false, "reason": "Ephemeral build status"}]`;
 
 // ---------------------------------------------------------------------------
-// Content-hash cache (in-memory, per-process)
+// Content-hash cache (in-memory, per-process fallback)
 // ---------------------------------------------------------------------------
 
-/** sha256 of text+category, cached across calls within the same process. */
-const verdictCache = new Map<string, JudgeVerdict>();
+/** Maximum entries before evicting the oldest half. */
+const VERDICT_CACHE_MAX_SIZE = 10_000;
+
+/** Module-level fallback cache, used when callers do not pass their own. */
+const defaultVerdictCache = new Map<string, JudgeVerdict>();
 
 function cacheKey(text: string, category: string): string {
   return createHash("sha256").update(`${text}\0${category}`).digest("hex");
+}
+
+/**
+ * Enforce the max-size invariant on a verdict cache. When the cache exceeds
+ * VERDICT_CACHE_MAX_SIZE, the oldest half of entries are deleted (Map
+ * iteration order is insertion order).
+ */
+function enforceMaxCacheSize(cache: Map<string, JudgeVerdict>): void {
+  if (cache.size <= VERDICT_CACHE_MAX_SIZE) return;
+  const deleteCount = Math.floor(cache.size / 2);
+  let deleted = 0;
+  for (const key of cache.keys()) {
+    if (deleted >= deleteCount) break;
+    cache.delete(key);
+    deleted++;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -112,11 +139,16 @@ export async function judgeFactDurability(
   config: PluginConfig,
   localLlm: LocalLlmClient | null,
   fallbackLlm: FallbackLlmClient | null,
+  cache?: Map<string, JudgeVerdict>,
 ): Promise<JudgeBatchResult> {
   const startMs = Date.now();
   const verdicts = new Map<number, JudgeVerdict>();
   let cached = 0;
   let judged = 0;
+
+  // Use caller-provided cache for per-orchestrator scoping, or fall back
+  // to the module-level default cache.
+  const verdictCache = cache ?? defaultVerdictCache;
 
   if (candidates.length === 0) {
     return { verdicts, cached, judged, elapsed: 0 };
@@ -193,6 +225,8 @@ export async function judgeFactDurability(
           const c = candidates[idx];
           verdictCache.set(cacheKey(c.text, c.category), verdict);
         }
+        // Evict oldest entries if cache exceeds max size
+        enforceMaxCacheSize(verdictCache);
       }
     } catch (err) {
       // Fail-open: if the LLM call fails, approve all candidates in this batch
@@ -232,8 +266,13 @@ async function callJudgeLlm(
 
   const modelOverride = config.extractionJudgeModel || undefined;
 
-  // Try local LLM first
-  if (localLlm) {
+  // When modelSource is "gateway", skip localLlm and go directly to fallback
+  // (the gateway-routed backend). This respects the operator's explicit
+  // routing preference.
+  const skipLocal = config.modelSource === "gateway";
+
+  // Try local LLM first (unless modelSource says gateway)
+  if (localLlm && !skipLocal) {
     try {
       const result = await (localLlm as any).chatCompletion(messages, {
         temperature: 0.1,
@@ -353,12 +392,17 @@ function parseJudgeResponse(
 // Cache management (exposed for testing)
 // ---------------------------------------------------------------------------
 
-/** Clear the in-memory verdict cache. Primarily for tests. */
+/** Clear the in-memory default verdict cache. Primarily for tests. */
 export function clearVerdictCache(): void {
-  verdictCache.clear();
+  defaultVerdictCache.clear();
 }
 
-/** Return the current verdict cache size. Primarily for tests. */
+/** Return the current default verdict cache size. Primarily for tests. */
 export function verdictCacheSize(): number {
-  return verdictCache.size;
+  return defaultVerdictCache.size;
+}
+
+/** Create a new per-instance verdict cache. Orchestrators should hold one. */
+export function createVerdictCache(): Map<string, JudgeVerdict> {
+  return new Map();
 }
