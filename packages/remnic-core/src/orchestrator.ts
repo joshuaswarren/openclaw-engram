@@ -8384,6 +8384,18 @@ export class Orchestrator {
         );
       }
     }
+    // Persist extraction counters and processed fingerprints before clearing
+    // the buffer or running follow-on helpers so replay dedupe survives any
+    // later non-essential failure.
+    meta.extractionCount += 1;
+    meta.lastExtractionAt = new Date().toISOString();
+    meta.totalMemories += Array.isArray(result?.facts)
+      ? result.facts.length
+      : 0;
+    meta.totalEntities += Array.isArray(result?.entities)
+      ? result.entities.length
+      : 0;
+    await storage.saveMeta(meta);
     await clearBuffer({ ignoreAbort: true });
 
     // Build memory box from this extraction (v8.0 Phase 2A)
@@ -8445,17 +8457,6 @@ export class Orchestrator {
       result.profileUpdates.length > 0;
     if (nonZeroExtraction) this.nonZeroExtractionsSinceConsolidation += 1;
     this.maybeScheduleConsolidation(nonZeroExtraction);
-
-    // Update meta (safely handle potentially invalid result)
-    meta.extractionCount += 1;
-    meta.lastExtractionAt = new Date().toISOString();
-    meta.totalMemories += Array.isArray(result?.facts)
-      ? result.facts.length
-      : 0;
-    meta.totalEntities += Array.isArray(result?.entities)
-      ? result.entities.length
-      : 0;
-    await storage.saveMeta(meta);
 
     this.requestQmdMaintenance();
     await this.runTierMigrationCycle(storage, "extraction");

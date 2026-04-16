@@ -532,6 +532,118 @@ test("runExtraction persists fingerprint and extraction counters through one coh
   );
 });
 
+test("runExtraction saves the processed fingerprint before late threading failures", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+  config.threadingEnabled = true;
+
+  let clearCalls = 0;
+  let saveMetaCalls = 0;
+  let savedMeta:
+    | {
+        extractionCount: number;
+        lastExtractionAt: string | null;
+        totalMemories: number;
+        totalEntities: number;
+        processedExtractionFingerprints: Array<{
+          fingerprint: string;
+          observedAt: string;
+        }>;
+      }
+    | undefined;
+
+  const meta = {
+    extractionCount: 0,
+    lastExtractionAt: null,
+    lastConsolidationAt: null,
+    totalMemories: 0,
+    totalEntities: 0,
+    processedExtractionFingerprints: [] as Array<{
+      fingerprint: string;
+      observedAt: string;
+    }>,
+  };
+
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => meta,
+      saveMeta: async (nextMeta: typeof meta) => {
+        saveMetaCalls += 1;
+        savedMeta = structuredClone(nextMeta);
+      },
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => ({
+      facts: [
+        {
+          content: "remember eta",
+          category: "fact",
+          confidence: 0.9,
+          tags: [],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    }),
+  };
+  orchestrator.persistExtraction = async () => ["fact-1"];
+  orchestrator.threading = {
+    processTurn: async () => "thread-15",
+    appendEpisodeIds: async () => undefined,
+    updateThreadTitle: async () => {
+      throw new Error("thread title failed");
+    },
+  };
+  orchestrator.requestQmdMaintenance = () => undefined;
+  orchestrator.runTierMigrationCycle = async () => undefined;
+
+  await assert.rejects(
+    orchestrator.runExtraction(
+      [
+        {
+          ...makeTurn("session-f", "remember eta"),
+          logicalSessionKey: "logical-thread:thread-15",
+          turnFingerprint: "fp-thread-15",
+          persistProcessedFingerprint: true,
+        },
+      ],
+      {
+        bufferKey: "logical-thread:thread-15",
+      },
+    ),
+    /thread title failed/,
+  );
+
+  assert.equal(saveMetaCalls, 1);
+  assert.equal(clearCalls, 1);
+  assert.equal(savedMeta?.processedExtractionFingerprints.length, 1);
+  assert.equal(
+    savedMeta?.processedExtractionFingerprints[0]?.fingerprint,
+    orchestrator.buildExtractionFingerprint(
+      [
+        {
+          ...makeTurn("session-f", "remember eta"),
+          logicalSessionKey: "logical-thread:thread-15",
+          turnFingerprint: "fp-thread-15",
+          persistProcessedFingerprint: true,
+        },
+      ],
+      "logical-thread:thread-15",
+    ),
+  );
+});
+
 test("runExtraction aborts before late buffer clearing when the caller cancels", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;
