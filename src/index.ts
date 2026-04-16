@@ -1032,11 +1032,16 @@ const pluginDefinition = {
       if (resolvedThreadId) {
         cachedMemoryByCodexThread.delete(resolvedThreadId);
       }
-      if (
-        resolvedBufferKey &&
-        options?.preserveMessageCount !== true
-      ) {
-        codexMessageCountByBufferKey.delete(resolvedBufferKey);
+      if (resolvedBufferKey && options?.preserveMessageCount !== true) {
+        const sessionsForBuffer = codexSessionsByBufferKey.get(resolvedBufferKey);
+        const otherSessionsRemain =
+          options?.preserveThreadBinding === true ||
+          Array.from(sessionsForBuffer ?? []).some(
+            (boundSessionKey) => boundSessionKey !== sessionKey,
+          );
+        if (!otherSessionsRemain) {
+          codexMessageCountByBufferKey.delete(resolvedBufferKey);
+        }
       }
       if (options?.preserveThreadBinding !== true) {
         if (resolvedBufferKey) {

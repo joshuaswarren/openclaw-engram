@@ -2730,6 +2730,93 @@ test("before_reset reuses the remembered Codex thread id for logical flush keyin
   );
 });
 
+test("before_reset preserves the shared Codex baseline when another session stays bound", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-shared-codex-baseline-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    namespacesEnabled: false,
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime the shared Codex baseline.", messageCount: 10 },
+    {
+      sessionKey: "session-reset-shared-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-shared-baseline",
+    },
+  );
+  await beforePromptBuild(
+    { prompt: "Prime the shared Codex baseline.", messageCount: 10 },
+    {
+      sessionKey: "session-reset-shared-b",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-shared-baseline",
+    },
+  );
+
+  await beforeReset({ sessionKey: "session-reset-shared-a" }, {});
+
+  await beforePromptBuild(
+    { prompt: "The thread compacted after session A reset.", messageCount: 4 },
+    {
+      sessionKey: "session-reset-shared-b",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-shared-baseline",
+    },
+  );
+
+  assert.equal(flushCalls.length, 2);
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: call.options?.reason,
+      bufferKey: call.options?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-reset-shared-a",
+        reason: "before_reset",
+        bufferKey: "codex-thread:thread-reset-shared-baseline",
+      },
+      {
+        sessionKey: "session-reset-shared-b",
+        reason: "codex_compaction_heuristic",
+        bufferKey: "codex-thread:thread-reset-shared-baseline",
+      },
+    ],
+  );
+});
+
 test("before_reset preserves the remembered Codex thread after a transient recall failure", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-codex-recall-failure-test", {
