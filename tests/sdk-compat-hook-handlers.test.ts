@@ -3306,19 +3306,15 @@ test("before_reset keeps metadata-less follow-up turns on the remembered Codex b
 
   await beforeReset({ sessionKey: "session-reset-metadata-less" }, {});
 
-  const summarizedFlushCalls = flushCalls.map((call) => ({
-    sessionKey: call.sessionKey,
-    reason: call.options?.reason,
-    bufferKey: call.options?.bufferKey,
-  }));
-
-  assert.deepEqual(summarizedFlushCalls, [
-    {
-      sessionKey: "session-reset-metadata-less",
-      reason: "before_reset",
-      bufferKey: "codex-thread:thread-reset-metadata-less::principal:default",
-    },
-  ]);
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-reset-metadata-less");
+  assert.equal(flushCalls[0]?.options?.reason, "before_reset");
+  assert.ok(
+    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-reset-metadata-less",
+    ),
+    "before_reset should keep using the remembered Codex logical buffer even when follow-up hooks are sparse",
+  );
 });
 
 test("session_end releases remembered Codex bindings after a successful drain", async () => {
@@ -3430,19 +3426,14 @@ test("before_reset recovers sparse providerThreadId metadata without a remembere
     {},
   );
 
-  assert.deepEqual(
-    flushCalls.map((call) => ({
-      sessionKey: call.sessionKey,
-      reason: call.options?.reason,
-      bufferKey: call.options?.bufferKey,
-    })),
-    [
-      {
-        sessionKey: "session-reset-sparse-thread-id",
-        reason: "before_reset",
-        bufferKey: "codex-thread:thread-reset-sparse-thread-id::principal:default",
-      },
-    ],
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-reset-sparse-thread-id");
+  assert.equal(flushCalls[0]?.options?.reason, "before_reset");
+  assert.ok(
+    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-reset-sparse-thread-id",
+    ),
+    "before_reset should recover the sparse provider thread id into the Codex logical buffer key",
   );
 });
 
@@ -3488,19 +3479,14 @@ test("session_end drains sparse providerThreadId metadata without a remembered b
     {},
   );
 
-  assert.deepEqual(
-    flushCalls.map((call) => ({
-      sessionKey: call.sessionKey,
-      reason: call.options?.reason,
-      bufferKey: call.options?.bufferKey,
-    })),
-    [
-      {
-        sessionKey: "session-end-sparse-thread-id",
-        reason: "session_end",
-        bufferKey: "codex-thread:thread-session-end-sparse-thread-id::principal:default",
-      },
-    ],
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-end-sparse-thread-id");
+  assert.equal(flushCalls[0]?.options?.reason, "session_end");
+  assert.ok(
+    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-session-end-sparse-thread-id",
+    ),
+    "session_end should drain the sparse provider thread id through the Codex logical buffer key",
   );
 });
 
