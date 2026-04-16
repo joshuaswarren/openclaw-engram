@@ -87,13 +87,14 @@ async function stageMirror(
       const mimeType = guessMimeType(ext);
       const remotePath = relPath;
 
+      let backendLocation = remotePath;
       if (!dryRun) {
-        await backend.upload(fullPath, remotePath);
+        backendLocation = await backend.upload(fullPath, remotePath);
       }
 
       const record: BinaryAssetRecord = {
         originalPath: relPath,
-        mirroredPath: remotePath,
+        mirroredPath: backendLocation,
         contentHash,
         sizeBytes: stat.size,
         mimeType,
@@ -185,9 +186,11 @@ async function stageClean(
   const now = Date.now();
   const graceMs = gracePeriodDays * 24 * 60 * 60 * 1000;
 
-  // Clean assets that have been mirrored or redirected and are past grace period.
+  // Clean only assets that have been redirected (markdown refs already rewritten).
+  // Mirrored-only assets must NOT be cleaned — their markdown refs still point
+  // to the local file, so deletion would break links.
   const candidates = assets.filter(
-    (a) => a.status === "mirrored" || a.status === "redirected",
+    (a) => a.status === "redirected",
   );
 
   for (const asset of candidates) {

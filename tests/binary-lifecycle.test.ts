@@ -323,6 +323,11 @@ test("mirror stage creates manifest entry with status 'mirrored'", async () => {
     assert.equal(manifest.assets[0].status, "mirrored");
     assert.equal(manifest.assets[0].originalPath, "photo.png");
     assert.ok(manifest.assets[0].contentHash.length > 0);
+    // mirroredPath should reflect actual backend location, not the original relative path.
+    assert.ok(
+      manifest.assets[0].mirroredPath.includes(backendDir),
+      "mirroredPath should contain the backend base path",
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
     await rm(backendDir, { recursive: true, force: true });
@@ -377,6 +382,12 @@ test("clean stage deletes local file after grace period", async () => {
   const backendDir = await mkdtemp(tmpPrefix());
   try {
     await writeFile(path.join(dir, "old.png"), Buffer.alloc(64));
+    // A markdown reference is needed so the redirect stage transitions the
+    // asset to "redirected" — cleanup only processes redirected assets.
+    await writeFile(
+      path.join(dir, "ref.md"),
+      "![img](./old.png)",
+    );
 
     // Set grace period to 0 so everything is immediately eligible.
     const config = makeConfig({
@@ -390,11 +401,42 @@ test("clean stage deletes local file after grace period", async () => {
     );
 
     assert.equal(result.mirrored, 1);
+    assert.equal(result.redirected, 1);
     // With gracePeriodDays=0, the file should be cleaned in the same run.
     assert.equal(result.cleaned, 1);
 
     // Local file should be gone.
     assert.equal(fs.existsSync(path.join(dir, "old.png")), false);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(backendDir, { recursive: true, force: true });
+  }
+});
+
+test("clean stage does NOT delete mirrored-only assets (no redirect)", async () => {
+  const dir = await mkdtemp(tmpPrefix());
+  const backendDir = await mkdtemp(tmpPrefix());
+  try {
+    // Binary file with NO markdown reference — stays "mirrored", never "redirected".
+    await writeFile(path.join(dir, "unreferenced.png"), Buffer.alloc(64));
+
+    const config = makeConfig({
+      backend: { type: "filesystem", basePath: backendDir },
+      gracePeriodDays: 0, // Past grace, but cleanup should still skip it.
+    });
+    const backend = createBackend(config.backend);
+
+    const result = await runBinaryLifecyclePipeline(
+      dir, config, backend, noopLog,
+    );
+
+    assert.equal(result.mirrored, 1);
+    assert.equal(result.redirected, 0);
+    // Mirrored-only assets must not be cleaned — markdown refs still point local.
+    assert.equal(result.cleaned, 0);
+
+    // Local file must still exist.
+    assert.equal(fs.existsSync(path.join(dir, "unreferenced.png")), true);
   } finally {
     await rm(dir, { recursive: true, force: true });
     await rm(backendDir, { recursive: true, force: true });

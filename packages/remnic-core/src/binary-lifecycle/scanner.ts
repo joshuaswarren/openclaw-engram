@@ -52,7 +52,9 @@ export async function scanForBinaries(
 
     for (const entry of entries) {
       const fullPath = path.join(dir, entry.name);
-      const relativePath = path.relative(memoryDir, fullPath);
+      // Normalize to POSIX separators so redirect matching works on Windows
+      // (markdown links always use forward slashes).
+      const relativePath = path.relative(memoryDir, fullPath).split(path.sep).join("/");
 
       if (entry.isDirectory()) {
         // Skip the manifest directory itself and hidden dirs starting with .
