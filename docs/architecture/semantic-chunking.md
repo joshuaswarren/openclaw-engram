@@ -43,7 +43,6 @@ top-level `semanticChunkingEnabled` flag gates the feature.
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `enabled` | boolean | `false` | Master switch within the config object |
 | `targetTokens` | number | `200` | Target tokens per chunk |
 | `minTokens` | number | `100` | Minimum tokens before merging with neighbor |
 | `maxTokens` | number | `400` | Maximum tokens before recursive splitting |

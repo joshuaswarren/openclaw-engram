@@ -110,7 +110,6 @@ function parseSemanticChunkingConfig(
   const src = raw as Record<string, unknown>;
   const out: Partial<SemanticChunkingConfigShape> = {};
 
-  if (typeof src.enabled === "boolean") out.enabled = src.enabled;
   if (typeof src.targetTokens === "number") out.targetTokens = src.targetTokens;
   if (typeof src.minTokens === "number") out.minTokens = src.minTokens;
   if (typeof src.maxTokens === "number") out.maxTokens = src.maxTokens;

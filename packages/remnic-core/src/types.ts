@@ -188,7 +188,6 @@ export const SPECULATIVE_TTL_DAYS = 30;
  * a circular import (types.ts is imported by everything).
  */
 export interface SemanticChunkingConfigShape {
-  enabled: boolean;
   targetTokens: number;
   minTokens: number;
   maxTokens: number;

@@ -365,7 +365,6 @@ test("semanticChunkContent: batching respects embeddingBatchSize", async () => {
 
 test("semanticChunkContent: config defaults applied correctly", () => {
   const cfg = DEFAULT_SEMANTIC_CHUNKING_CONFIG;
-  assert.equal(cfg.enabled, false);
   assert.equal(cfg.targetTokens, 200);
   assert.equal(cfg.minTokens, 100);
   assert.equal(cfg.maxTokens, 400);
@@ -452,4 +451,41 @@ test("semanticChunkContent: partial config merges with defaults", async () => {
   });
   assert.ok(result);
   assert.equal(result.method, "semantic");
+});
+
+test("semanticChunkContent: embeddingBatchSize 0 does not cause infinite loop", async () => {
+  let callCount = 0;
+  const countingEmbedFn: EmbedFn = async (texts: string[]) => {
+    callCount++;
+    return texts.map(() => [1, 0, 0]);
+  };
+
+  const sentences = Array.from({ length: 5 }, (_, i) => `Sentence ${i}.`);
+  const text = sentences.join(" ");
+
+  // batchSize 0 should be clamped to 1, resulting in 5 calls (one per sentence)
+  const result = await semanticChunkContent(text, countingEmbedFn, {
+    embeddingBatchSize: 0,
+    minTokens: 5,
+  });
+
+  assert.ok(result);
+  assert.equal(callCount, 5);
+});
+
+test("semanticChunkContent: two sentences exceeding maxTokens triggers recursive split", async () => {
+  // Two long sentences whose combined token count exceeds maxTokens
+  const longA = "A".repeat(200) + ".";
+  const longB = "B".repeat(200) + ".";
+  const text = `${longA} ${longB}`;
+
+  const result = await semanticChunkContent(text, uniformEmbedFn, {
+    maxTokens: 50, // Very low to force splitting
+    targetTokens: 25,
+    minTokens: 10,
+  });
+
+  // Should fall back to recursive splitting since the 2-sentence chunk exceeds maxTokens
+  assert.equal(result.method, "recursive-fallback");
+  assert.ok(result.chunks.length >= 2, `Expected multiple chunks, got ${result.chunks.length}`);
 });

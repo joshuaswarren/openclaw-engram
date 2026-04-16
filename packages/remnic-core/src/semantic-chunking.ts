@@ -13,8 +13,6 @@ import { chunkContent, type Chunk, type ChunkResult } from "./chunking.js";
 // ---------------------------------------------------------------------------
 
 export interface SemanticChunkingConfig {
-  /** Whether semantic chunking is enabled. Default: false. */
-  enabled: boolean;
   /** Target tokens per chunk. Default: 200. */
   targetTokens: number;
   /** Minimum tokens for a segment before merging with neighbor. Default: 100. */
@@ -32,7 +30,6 @@ export interface SemanticChunkingConfig {
 }
 
 export const DEFAULT_SEMANTIC_CHUNKING_CONFIG: SemanticChunkingConfig = {
-  enabled: false,
   targetTokens: 200,
   minTokens: 100,
   maxTokens: 400,
@@ -78,6 +75,9 @@ export type EmbedFn = (texts: string[]) => Promise<number[][]>;
 /**
  * Cosine similarity between two vectors.
  * Returns a value in [-1, 1]. Identical direction = 1, orthogonal = 0.
+ *
+ * NOTE: This duplicates cosineSimilarity in recall-mmr.ts and embedding-fallback.ts.
+ * Consider extracting to a shared math utility in a future refactor.
  */
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) {
@@ -342,6 +342,9 @@ export async function semanticChunkContent(
     ...config,
   };
 
+  // Guard against non-positive batch size which would cause an infinite loop
+  const batchSize = Math.max(1, cfg.embeddingBatchSize);
+
   // --- Empty / trivially short input ---
   if (!content || content.trim().length === 0) {
     return {
@@ -392,7 +395,7 @@ export async function semanticChunkContent(
   // --- Attempt embedding ---
   let embeddings: number[][];
   try {
-    embeddings = await batchEmbed(sentences, embedFn, cfg.embeddingBatchSize);
+    embeddings = await batchEmbed(sentences, embedFn, batchSize);
   } catch {
     // Embedding failed — fall back if configured
     if (cfg.fallbackToRecursive) {
@@ -418,8 +421,12 @@ export async function semanticChunkContent(
     similarities.push(cosineSimilarity(embeddings[i], embeddings[i + 1]));
   }
 
-  // If only one pair (2 sentences), nothing to smooth or split meaningfully
+  // If only one pair (2 sentences), nothing to smooth or split meaningfully.
+  // However, if the combined content exceeds maxTokens, apply recursive splitting.
   if (similarities.length <= 1) {
+    if (totalTokens > cfg.maxTokens) {
+      return buildRecursiveFallback(content, cfg);
+    }
     return {
       chunked: false,
       chunks: [
