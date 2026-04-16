@@ -156,7 +156,6 @@ export function buildTurnFingerprint(input: {
     input.role,
     normalizedContent,
     input.providerThreadId ?? input.logicalSessionKey,
-    typeof input.messageCount === "number" ? String(input.messageCount) : "na",
     String(input.turnIndex),
   ].join("\u0001");
 }

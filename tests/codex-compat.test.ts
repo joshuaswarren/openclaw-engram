@@ -139,3 +139,24 @@ test("buildTurnFingerprint is stable for the same logical turn", () => {
 
   assert.equal(left, right);
 });
+
+test("buildTurnFingerprint ignores volatile messageCount changes for the same logical turn", () => {
+  const earlier = buildTurnFingerprint({
+    role: "assistant",
+    content: "Memory saved.",
+    logicalSessionKey: codexLogicalSessionKey("thread-9"),
+    providerThreadId: "thread-9",
+    messageCount: 12,
+    turnIndex: 1,
+  });
+  const replayed = buildTurnFingerprint({
+    role: "assistant",
+    content: "Memory saved.",
+    logicalSessionKey: codexLogicalSessionKey("thread-9"),
+    providerThreadId: "thread-9",
+    messageCount: 20,
+    turnIndex: 1,
+  });
+
+  assert.equal(earlier, replayed);
+});
