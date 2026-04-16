@@ -1262,13 +1262,13 @@ const pluginDefinition = {
       }
     }
 
-    function resolveBeforeResetBufferKeys(
+    async function resolveBeforeResetBufferKeys(
       sessionKey: string,
       sessionIdentity: {
         providerThreadId?: string | null;
         logicalSessionKey: string;
       },
-    ): string[] {
+    ): Promise<string[]> {
       const rememberedThreadId =
         sessionIdentity.providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
       const primaryBufferKey = resolveExtractionBufferKey(
@@ -1278,7 +1278,20 @@ const pluginDefinition = {
           : sessionIdentity.logicalSessionKey,
       );
       const rawBufferKey = sessionKey;
+      const discoveredBufferKeys =
+        typeof sessionKey === "string" &&
+        sessionKey.length > 0 &&
+        typeof (orchestrator as any).buffer?.findBufferKeysForSession === "function"
+          ? await (orchestrator as any).buffer
+              .findBufferKeysForSession(sessionKey)
+              .catch(() => [])
+          : [];
       const bufferKeys = [primaryBufferKey];
+      for (const bufferKey of discoveredBufferKeys) {
+        if (bufferKey !== primaryBufferKey && hasBufferedTurns(bufferKey)) {
+          bufferKeys.push(bufferKey);
+        }
+      }
       if (rawBufferKey !== primaryBufferKey && hasBufferedTurns(rawBufferKey)) {
         bufferKeys.push(rawBufferKey);
       }
@@ -2637,7 +2650,7 @@ const pluginDefinition = {
             "default";
           const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
           await flushAndForgetCodexThreadOnProviderSwitch(sessionKey, sessionIdentity);
-          const bufferKeys = resolveBeforeResetBufferKeys(
+          const bufferKeys = await resolveBeforeResetBufferKeys(
             sessionKey,
             sessionIdentity,
           );
@@ -2760,7 +2773,7 @@ const pluginDefinition = {
           const rememberedThreadId =
             sessionIdentity.providerThreadId ??
             resolveStoredCodexThreadId(sessionKey);
-          const bufferKeys = resolveBeforeResetBufferKeys(sessionKey, {
+          const bufferKeys = await resolveBeforeResetBufferKeys(sessionKey, {
             providerThreadId: rememberedThreadId,
             logicalSessionKey: sessionIdentity.logicalSessionKey,
           });

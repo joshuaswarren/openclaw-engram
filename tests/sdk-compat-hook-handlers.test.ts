@@ -3155,6 +3155,80 @@ test("before_reset stops using the remembered Codex thread after an explicit pro
   );
 });
 
+test("before_reset drains previously bound Codex buffers after thread rebinding", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-codex-rebind-drain-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.transcript.append = async () => undefined;
+  orchestrator.config.compactionResetEnabled = false;
+
+  const oldBufferKey = "codex-thread:thread-reset-rebind-old";
+  const newBufferKey = "codex-thread:thread-reset-rebind-new";
+  orchestrator.buffer.findBufferKeysForSession = async (sessionKey: string) =>
+    sessionKey === "session-reset-rebind" ? [oldBufferKey, newBufferKey] : [];
+  orchestrator.buffer.getTurns = (bufferKey: string) =>
+    bufferKey === oldBufferKey || bufferKey === newBufferKey
+      ? [{ role: "user", content: "pending " + bufferKey, timestamp: new Date().toISOString(), sessionKey: "session-reset-rebind" }]
+      : [];
+
+  const flushCalls: Array<string> = [];
+  orchestrator.flushSession = async (
+    _sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push(String(options?.bufferKey ?? ""));
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime the old Codex thread before rebinding it." },
+    {
+      sessionKey: "session-reset-rebind",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-rebind-old",
+    },
+  );
+
+  await beforePromptBuild(
+    { prompt: "Rebind this Codex session onto a new provider thread id." },
+    {
+      sessionKey: "session-reset-rebind",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-rebind-new",
+    },
+  );
+
+  await beforeReset({ sessionKey: "session-reset-rebind" }, {});
+
+  assert.ok(flushCalls.length >= 2);
+  assert.ok(
+    flushCalls.some((bufferKey) => bufferKey.startsWith(oldBufferKey)),
+    "before_reset should still drain the previously bound Codex buffer after rebinding",
+  );
+  assert.ok(
+    flushCalls.some((bufferKey) => bufferKey.startsWith(newBufferKey)),
+    "before_reset should drain the current Codex buffer after rebinding",
+  );
+});
+
 test("before_reset preserves the remembered Codex thread when the provider-switch flush fails", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi(
@@ -3541,6 +3615,79 @@ test("session_end drains sparse ctx providerThreadId metadata without a remember
       "codex-thread:thread-session-end-sparse-ctx-thread-id",
     ),
     "session_end should drain the sparse ctx provider thread id through the Codex logical buffer key",
+  );
+});
+
+test("session_end drains previously bound Codex buffers after thread rebinding", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("session-end-codex-rebind-drain-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const sessionEnd = api.handlers.get("session_end");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(sessionEnd, "session_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const oldBufferKey = "codex-thread:thread-session-end-rebind-old";
+  const newBufferKey = "codex-thread:thread-session-end-rebind-new";
+  orchestrator.buffer.findBufferKeysForSession = async (sessionKey: string) =>
+    sessionKey === "session-end-rebind" ? [oldBufferKey, newBufferKey] : [];
+  orchestrator.buffer.getTurns = (bufferKey: string) =>
+    bufferKey === oldBufferKey || bufferKey === newBufferKey
+      ? [{ role: "user", content: "pending " + bufferKey, timestamp: new Date().toISOString(), sessionKey: "session-end-rebind" }]
+      : [];
+
+  const flushCalls: Array<string> = [];
+  orchestrator.flushSession = async (
+    _sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push(String(options?.bufferKey ?? ""));
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime the old Codex thread before session end rebinding." },
+    {
+      sessionKey: "session-end-rebind",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-session-end-rebind-old",
+    },
+  );
+
+  await beforePromptBuild(
+    { prompt: "Rebind this Codex session onto a new thread before ending it." },
+    {
+      sessionKey: "session-end-rebind",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-session-end-rebind-new",
+    },
+  );
+
+  await sessionEnd({ sessionKey: "session-end-rebind" }, {});
+
+  assert.ok(flushCalls.length >= 2);
+  assert.ok(
+    flushCalls.some((bufferKey) => bufferKey.startsWith(oldBufferKey)),
+    "session_end should still drain the previously bound Codex buffer after rebinding",
+  );
+  assert.ok(
+    flushCalls.some((bufferKey) => bufferKey.startsWith(newBufferKey)),
+    "session_end should drain the current Codex buffer after rebinding",
   );
 });
 
