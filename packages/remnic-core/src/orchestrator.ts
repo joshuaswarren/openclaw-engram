@@ -7934,12 +7934,18 @@ export class Orchestrator {
       bufferKey?: string;
     },
   ): Promise<void> {
+    const discoveredBufferKey =
+      typeof sessionKey === "string" && sessionKey.length > 0
+        ? await this.buffer.findBufferKeyForSession?.(sessionKey)
+        : null;
     const bufferKey =
       typeof options.bufferKey === "string" && options.bufferKey.length > 0
         ? options.bufferKey
-        : typeof sessionKey === "string" && sessionKey.length > 0
-          ? sessionKey
-          : "default";
+        : typeof discoveredBufferKey === "string" && discoveredBufferKey.length > 0
+          ? discoveredBufferKey
+          : typeof sessionKey === "string" && sessionKey.length > 0
+            ? sessionKey
+            : "default";
     const turns = this.buffer.getTurns(bufferKey);
     if (turns.length === 0) return;
     await new Promise<void>((resolve, reject) => {

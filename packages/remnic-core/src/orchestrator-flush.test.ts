@@ -210,6 +210,38 @@ test("flushSession honors an explicit bufferKey override", async () => {
   assert.equal(queuedBufferKey, "codex-thread:thread-11");
 });
 
+test("flushSession falls back to a discovered logical buffer key for the session", async () => {
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  let queuedBufferKey: string | undefined;
+
+  orchestrator.buffer = {
+    async findBufferKeyForSession(sessionKey: string) {
+      return sessionKey === "session-z"
+        ? "codex-thread:thread-11::principal:cli"
+        : null;
+    },
+    getTurns(bufferKey: string) {
+      return bufferKey === "codex-thread:thread-11::principal:cli"
+        ? [makeTurn("session-z", "remember gamma")]
+        : [];
+    },
+  };
+  orchestrator.queueBufferedExtraction = async (
+    _queuedTurns: BufferTurn[],
+    _reason: string,
+    options?: Record<string, unknown>,
+  ) => {
+    queuedBufferKey = options?.bufferKey as string | undefined;
+    (options?.onTaskSettled as ((error?: unknown) => void) | undefined)?.();
+  };
+
+  await orchestrator.flushSession("session-z", {
+    reason: "session-command",
+  });
+
+  assert.equal(queuedBufferKey, "codex-thread:thread-11::principal:cli");
+});
+
 test("runExtraction skips batches whose persisted fingerprint already exists in storage meta", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;
