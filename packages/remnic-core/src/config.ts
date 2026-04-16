@@ -1944,6 +1944,17 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 30,
     codexMaterializeOnConsolidation: cfg.codexMaterializeOnConsolidation !== false,
     codexMaterializeOnSessionEnd: cfg.codexMaterializeOnSessionEnd !== false,
+
+    // Page-level versioning (issue #371)
+    versioningEnabled: cfg.versioningEnabled === true,
+    versioningMaxPerPage:
+      typeof cfg.versioningMaxPerPage === "number"
+        ? Math.max(0, Math.floor(cfg.versioningMaxPerPage))
+        : 50,
+    versioningSidecarDir:
+      typeof cfg.versioningSidecarDir === "string" && cfg.versioningSidecarDir.trim().length > 0
+        ? cfg.versioningSidecarDir.trim()
+        : ".versions",
   };
 }
 

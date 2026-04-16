@@ -196,6 +196,23 @@ export { CODEX_THREAD_KEY_PREFIX } from "./codex-thread-key.js";
 export type { CodexCompatConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
+// Page-level versioning (issue #371)
+// ---------------------------------------------------------------------------
+
+export {
+  createVersion,
+  listVersions,
+  getVersion,
+  revertToVersion,
+  diffVersions,
+  type PageVersion,
+  type VersionTrigger,
+  type VersionHistory,
+  type VersioningConfig,
+  type VersioningLogger,
+} from "./page-versioning.js";
+
+// ---------------------------------------------------------------------------
 // Logger
 // ---------------------------------------------------------------------------
 

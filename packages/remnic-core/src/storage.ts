@@ -6,6 +6,7 @@ import { log } from "./logger.js";
 import { getCachedEntities, setCachedEntities } from "./memory-cache.js";
 import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
+import { createVersion as createPageVersion, type VersioningConfig, type VersionTrigger } from "./page-versioning.js";
 import {
   matchEntitySchemaSection,
   normalizeEntityStructuredSection,
@@ -1733,6 +1734,28 @@ export class StorageManager {
   /** Optional: set by the orchestrator after construction to enable template-aware citation stripping during legacy hash rebuild. */
   citationTemplate: string = DEFAULT_CITATION_FORMAT;
 
+  /** Page-versioning configuration.  Set by the orchestrator after construction. */
+  private _versioningConfig: VersioningConfig | null = null;
+
+  /** Set the page-versioning configuration.  When `enabled` is false (default), all versioning calls are no-ops. */
+  setVersioningConfig(config: VersioningConfig): void {
+    this._versioningConfig = config;
+  }
+
+  /**
+   * Snapshot the current content of a page before overwriting.
+   * No-op when versioning is disabled or the file does not yet exist.
+   */
+  private async snapshotBeforeWrite(filePath: string, trigger: VersionTrigger): Promise<void> {
+    if (!this._versioningConfig || !this._versioningConfig.enabled) return;
+    try {
+      const existing = await readFile(filePath, "utf-8");
+      await createPageVersion(filePath, existing, trigger, this._versioningConfig, log, undefined, this.baseDir);
+    } catch {
+      // File does not exist yet — nothing to snapshot
+    }
+  }
+
   constructor(
     private readonly baseDir: string,
     private readonly entitySchemas?: PluginConfig["entitySchemas"],
@@ -2144,6 +2167,7 @@ export class StorageManager {
       filePath = path.join(this.factsDir, today, `${id}.md`);
     }
 
+    await this.snapshotBeforeWrite(filePath, "write");
     await writeFile(filePath, fileContent, "utf-8");
     this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.writeMemory", {
@@ -2448,6 +2472,7 @@ export class StorageManager {
     entity.created = entity.created || timestamp;
     entity.updated = new Date().toISOString();
 
+    await this.snapshotBeforeWrite(filePath, "write");
     await writeFile(filePath, serializeEntityFile(entity, this.entitySchemas), "utf-8");
     this.invalidateKnowledgeIndexCache();
     this.bumpMemoryStatusVersion(); // invalidate entity cache
@@ -2465,6 +2490,7 @@ export class StorageManager {
 
   async writeProfile(content: string): Promise<void> {
     await this.ensureDirectories();
+    await this.snapshotBeforeWrite(this.profilePath, "consolidation");
     await writeFile(this.profilePath, content, "utf-8");
     log.debug("updated profile.md");
   }

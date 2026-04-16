@@ -918,6 +918,14 @@ export interface PluginConfig {
   codexMaterializeOnConsolidation: boolean;
   /** Run materialization at Codex session-end hook. Default true. */
   codexMaterializeOnSessionEnd: boolean;
+
+  // Page-level versioning (issue #371)
+  /** Enable page-level versioning with sidecar snapshots. Default false. */
+  versioningEnabled: boolean;
+  /** Maximum number of version snapshots to keep per page. Default 50. Set to 0 to disable pruning. */
+  versioningMaxPerPage: number;
+  /** Name of the sidecar directory inside memoryDir. Default ".versions". */
+  versioningSidecarDir: string;
 }
 
 /** Runtime configuration for the daily context briefing feature. */
