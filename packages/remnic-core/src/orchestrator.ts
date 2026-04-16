@@ -9329,46 +9329,58 @@ export class Orchestrator {
     const routeOptions = this.routeEngineOptions();
 
     // Extraction judge gate (issue #376). When enabled, batch-evaluate all
-    // candidate facts for durability before the per-fact write loop. The
-    // verdicts map is keyed by fact index in the `facts` array.
-    let judgeVerdicts: JudgeBatchResult | null = null;
+    // candidate facts for durability before the per-fact write loop.
+    // The verdicts map is keyed by candidate index — we maintain a
+    // candidateIndexToFactIndex mapping so the write loop can look up
+    // verdicts by original fact index.
+    let judgeVerdictsByFactIndex: Map<number, import("./extraction-judge.js").JudgeVerdict> | null = null;
     let judgeGatedCount = 0;
     if (this.config.extractionJudgeEnabled) {
       try {
-        const judgeCandidates: JudgeCandidate[] = facts
-          .reduce<JudgeCandidate[]>((acc, f) => {
-            if (
-              !f ||
-              typeof f.content !== "string" ||
-              !f.content.trim() ||
-              typeof f.category !== "string" ||
-              !f.category.trim()
-            ) {
-              return acc;
-            }
-            const imp = scoreImportance(
-              f.content,
-              f.category,
-              Array.isArray(f.tags) ? f.tags : [],
-            );
-            acc.push({
-              text: f.content,
-              category: f.category as string,
-              confidence: typeof f.confidence === "number" ? f.confidence : 0.7,
-              tags: Array.isArray(f.tags) ? f.tags : [],
-              importanceLevel: imp.level,
-            });
-            return acc;
-          }, []);
-        judgeVerdicts = await judgeFactDurability(
+        const judgeCandidates: JudgeCandidate[] = [];
+        const candidateToFactIndex: number[] = [];
+        for (let fi = 0; fi < facts.length; fi++) {
+          const f = facts[fi];
+          if (
+            !f ||
+            typeof f.content !== "string" ||
+            !f.content.trim() ||
+            typeof f.category !== "string" ||
+            !f.category.trim()
+          ) {
+            continue;
+          }
+          const imp = scoreImportance(
+            f.content,
+            f.category,
+            Array.isArray(f.tags) ? f.tags : [],
+          );
+          judgeCandidates.push({
+            text: f.content,
+            category: f.category as string,
+            confidence: typeof f.confidence === "number" ? f.confidence : 0.7,
+            tags: Array.isArray(f.tags) ? f.tags : [],
+            importanceLevel: imp.level,
+          });
+          candidateToFactIndex.push(fi);
+        }
+        const judgeResult = await judgeFactDurability(
           judgeCandidates,
           this.config,
           this.localLlm,
           new FallbackLlmClient(this.config.gatewayConfig),
         );
+        // Remap candidate-indexed verdicts to original fact indexes
+        judgeVerdictsByFactIndex = new Map();
+        for (const [candidateIdx, verdict] of judgeResult.verdicts) {
+          const factIdx = candidateToFactIndex[candidateIdx];
+          if (factIdx !== undefined) {
+            judgeVerdictsByFactIndex.set(factIdx, verdict);
+          }
+        }
         log.info(
-          `extraction-judge: ${judgeVerdicts.verdicts.size}/${judgeCandidates.length} facts evaluated, ` +
-            `${judgeVerdicts.cached} cached, ${judgeVerdicts.judged} judged, ${judgeVerdicts.elapsed}ms`,
+          `extraction-judge: ${judgeResult.verdicts.size}/${judgeCandidates.length} facts evaluated, ` +
+            `${judgeResult.cached} cached, ${judgeResult.judged} judged, ${judgeResult.elapsed}ms`,
         );
       } catch (err) {
         // Fail-open: if the entire judge pipeline errors, proceed without filtering
@@ -9493,8 +9505,8 @@ export class Orchestrator {
       // passes, consult the judge verdict (computed before the loop). In
       // active mode, non-durable facts are dropped. In shadow mode, verdicts
       // are logged but all facts proceed to write.
-      if (judgeVerdicts) {
-        const verdict = judgeVerdicts.verdicts.get(factLoopIndex);
+      if (judgeVerdictsByFactIndex) {
+        const verdict = judgeVerdictsByFactIndex.get(factLoopIndex);
         if (verdict && !verdict.durable) {
           if (this.config.extractionJudgeShadow) {
             log.info(

@@ -230,6 +230,8 @@ async function callJudgeLlm(
     { role: "user", content: userPrompt },
   ];
 
+  const modelOverride = config.extractionJudgeModel || undefined;
+
   // Try local LLM first
   if (localLlm) {
     try {
@@ -239,6 +241,7 @@ async function callJudgeLlm(
         responseFormat: { type: "json_object" },
         timeoutMs: 1500,
         operation: "extraction-judge",
+        ...(modelOverride ? { model: modelOverride } : {}),
       });
       if (result?.content) {
         return result.content;
@@ -259,6 +262,7 @@ async function callJudgeLlm(
           temperature: 0.1,
           maxTokens: 2048,
           timeoutMs: 1500,
+          ...(modelOverride ? { model: modelOverride } : {}),
         },
       );
       if (result?.content) {
