@@ -81,6 +81,8 @@ import {
   DEFAULT_SCAN_PATTERNS,
   DEFAULT_MAX_BINARY_SIZE_BYTES,
   DEFAULT_GRACE_PERIOD_DAYS,
+  publisherFor,
+  PUBLISHERS,
 } from "@remnic/core";
 import type {
   BinaryLifecycleConfig,
@@ -1115,6 +1117,33 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     if (result.configPath) console.log(`  Config: ${result.configPath}`);
     if (result.status === "already_installed") console.log("Use --force to reinstall.");
     if (result.status === "config_required") console.log("Set config with --config <key>=<value>");
+
+    // Publish memory extension if the connector has a publisher and the
+    // install was successful (not error/already_installed/config_required).
+    if (result.status === "installed") {
+      const pub = publisherFor(connectorId);
+      if (pub) {
+        try {
+          const available = await pub.isHostAvailable();
+          if (available) {
+            const memoryDir = resolveMemoryDir();
+            const pubResult = await pub.publish({
+              config: { memoryDir },
+              skillsRoot: path.join(memoryDir, "skills"),
+              log: { info: console.log, warn: console.warn, error: console.error },
+            });
+            if (pubResult.filesWritten.length > 0) {
+              console.log(`  Published memory extension to ${pubResult.extensionRoot}`);
+            }
+          }
+        } catch (err) {
+          // Per CLAUDE.md #13: external service calls must not crash the
+          // primary install flow. Surface a user-facing note instead.
+          const msg = err instanceof Error ? err.message : String(err);
+          console.warn(`  Warning: memory extension publish failed: ${msg}`);
+        }
+      }
+    }
   } else if (action === "remove") {
     if (!connectorId) {
       console.error("Usage: remnic connectors remove <id>");
@@ -1142,14 +1171,47 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
       process.exit(1);
     }
     const result = await doctorConnector(connectorId);
+
+    // Append memory extension publisher health for each registered publisher.
+    const publisherChecks: Array<{ name: string; ok: boolean; detail: string }> = [];
+    for (const [hostId, factory] of Object.entries(PUBLISHERS)) {
+      try {
+        const pub = factory();
+        const available = await pub.isHostAvailable();
+        const extRoot = available ? await pub.resolveExtensionRoot() : "(host not installed)";
+        const extensionExists = available && extRoot
+          ? fs.existsSync(extRoot)
+          : false;
+        publisherChecks.push({
+          name: `Publisher: ${hostId}`,
+          ok: !available || extensionExists,
+          detail: !available
+            ? "host not installed (skip)"
+            : extensionExists
+            ? `extension at ${extRoot}`
+            : `extension missing at ${extRoot} — run \`remnic connectors install ${connectorId}\``,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        publisherChecks.push({
+          name: `Publisher: ${hostId}`,
+          ok: false,
+          detail: `error: ${msg}`,
+        });
+      }
+    }
+
+    const allChecks = [...result.checks, ...publisherChecks];
+    const healthy = allChecks.every((c) => c.ok);
+
     if (json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify({ ...result, checks: allChecks, healthy }, null, 2));
     } else {
-      for (const check of result.checks) {
+      for (const check of allChecks) {
         const icon = check.ok ? "✓" : "✗";
         console.log(`  ${icon} ${check.name}: ${check.detail}`);
       }
-      console.log(result.healthy ? "\nConnector healthy" : "\nConnector has issues");
+      console.log(healthy ? "\nConnector healthy" : "\nConnector has issues");
     }
   } else {
     console.log("Usage: remnic connectors <list|install|remove|doctor> [id]");
