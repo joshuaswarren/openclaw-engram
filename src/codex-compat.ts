@@ -20,7 +20,7 @@ function readModelId(
     : null;
 }
 
-export function isCodexProvider(
+function isCodexProvider(
   source: Record<string, unknown> | undefined,
 ): boolean {
   if (!source || typeof source !== "object") return false;
@@ -118,11 +118,11 @@ export function resolveCodexSessionIdentity(input: {
   const ctx = input.ctx ?? undefined;
   const compat = input.codexCompat;
   const codex =
-    compat?.enabled !== false && (isCodexProvider(ctx) || isCodexProvider(event));
+    compat?.enabled === true && (isCodexProvider(ctx) || isCodexProvider(event));
   const extractedThreadId =
-    compat?.enabled === false
-      ? null
-      : extractCodexThreadId(ctx) ?? extractCodexThreadId(event);
+    compat?.enabled === true
+      ? extractCodexThreadId(ctx) ?? extractCodexThreadId(event)
+      : null;
   const providerThreadId =
     codex && typeof extractedThreadId === "string" ? extractedThreadId : null;
   const logicalSessionKey =

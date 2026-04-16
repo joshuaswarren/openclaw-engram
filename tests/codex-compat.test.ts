@@ -5,51 +5,27 @@ import {
   buildTurnFingerprint,
   codexLogicalSessionKey,
   extractCodexThreadId,
-  isCodexProvider,
   resolveCodexSessionIdentity,
 } from "../src/codex-compat.js";
 import { parseConfig } from "../src/config.js";
 
-test("isCodexProvider detects bundled Codex provider metadata", () => {
-  assert.equal(
-    isCodexProvider({
+test("resolveCodexSessionIdentity keeps Codex compat opt-in by default", () => {
+  const cfg = parseConfig({});
+  const identity = resolveCodexSessionIdentity({
+    sessionKey: "session-default-opt-in",
+    ctx: {
       provider: { id: "codex", name: "codex/gpt-5.4", model: "codex/gpt-5.4" },
-    }),
-    true,
-  );
-  assert.equal(
-    isCodexProvider({
-      provider: { name: "openai" },
-      modelId: "codex/gpt-5.4",
-    }),
-    true,
-  );
-  assert.equal(
-    isCodexProvider({
-      codexThreadId: "thread-codex-1",
-    }),
-    true,
-  );
-  assert.equal(
-    isCodexProvider({
-      messageProvider: "codex",
-      providerThreadId: "thread-codex-2",
-    }),
-    true,
-  );
-  assert.equal(
-    isCodexProvider({
-      provider: { id: "openai", thread: { id: "thread-openai-1" } },
-    }),
-    false,
-  );
-  assert.equal(
-    isCodexProvider({
-      provider: { id: "openai", name: "gpt-5.4" },
-      modelId: "gpt-5.4",
-    }),
-    false,
-  );
+      providerThreadId: "thread-default-opt-in",
+      messageCount: 17,
+    },
+    codexCompat: cfg.codexCompat,
+  });
+
+  assert.equal(cfg.codexCompat.enabled, false);
+  assert.equal(identity.isCodex, false);
+  assert.equal(identity.providerThreadId, null);
+  assert.equal(identity.logicalSessionKey, "session-default-opt-in");
+  assert.equal(identity.messageCount, 17);
 });
 
 test("extractCodexThreadId reads direct and nested provider thread ids", () => {
@@ -82,7 +58,7 @@ test("resolveCodexSessionIdentity keeps non-Codex providers on raw session keys"
 });
 
 test("resolveCodexSessionIdentity collapses Codex sessions onto provider thread ids", () => {
-  const cfg = parseConfig({});
+  const cfg = parseConfig({ codexCompat: { enabled: true } });
   const identity = resolveCodexSessionIdentity({
     sessionKey: "session-b",
     ctx: {
@@ -100,7 +76,7 @@ test("resolveCodexSessionIdentity collapses Codex sessions onto provider thread 
 });
 
 test("resolveCodexSessionIdentity does not infer message count from hook message arrays", () => {
-  const cfg = parseConfig({});
+  const cfg = parseConfig({ codexCompat: { enabled: true } });
   const identity = resolveCodexSessionIdentity({
     sessionKey: "session-c",
     event: {

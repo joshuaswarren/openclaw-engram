@@ -279,7 +279,7 @@ The plugin now exposes a dedicated `codexCompat` config block:
       "openclaw-remnic": {
         "config": {
           "codexCompat": {
-            "enabled": true,
+            "enabled": false,
             "threadIdBufferKeying": true,
             "compactionFlushMode": "auto",
             "fingerprintDedup": true
@@ -291,9 +291,11 @@ The plugin now exposes a dedicated `codexCompat` config block:
 }
 ```
 
-The intent of this block is to make Remnic's extraction buffering safe under
-Codex-managed threads and compaction without changing non-Codex provider
-behavior.
+`codexCompat.enabled` is opt-in and defaults to `false`, so the compatibility
+path only activates for deployments that explicitly enable bundled Codex
+thread handling. The intent of this block is to make Remnic's extraction
+buffering safe under Codex-managed threads and compaction without changing
+non-Codex provider behavior.
 
 Behavior contract:
 

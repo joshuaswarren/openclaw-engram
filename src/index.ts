@@ -2771,7 +2771,7 @@ const pluginDefinition = {
           ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
             Record<string, unknown>,
         ) => {
-          const sessionKey = event.sessionKey ?? "default";
+          const sessionKey = event.sessionKey ?? ctx.sessionKey ?? "default";
           log.debug(`session_end: ${sessionKey}`);
           const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
           const rememberedThreadId =

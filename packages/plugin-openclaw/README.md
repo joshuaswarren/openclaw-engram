@@ -225,7 +225,7 @@ Codex-provider safety work:
       "openclaw-remnic": {
         "config": {
           "codexCompat": {
-            "enabled": true,
+            "enabled": false,
             "threadIdBufferKeying": true,
             "compactionFlushMode": "auto",
             "fingerprintDedup": true
@@ -236,6 +236,9 @@ Codex-provider safety work:
   }
 }
 ```
+
+`codexCompat.enabled` defaults to `false`, so operators only opt into bundled
+Codex thread buffering and compaction behavior when they explicitly enable it.
 
 This governs Remnic's own buffering and extraction behavior only. Remnic still
 uses its own extraction auth path; OpenClaw's bundled Codex provider auth does
