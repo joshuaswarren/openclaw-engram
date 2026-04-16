@@ -70,6 +70,10 @@ import {
   resolveBriefingSaveDir,
   briefingFilename,
   FileCalendarSource,
+  listVersions,
+  getVersion,
+  revertToVersion,
+  diffVersions,
 } from "@remnic/core";
 import {
   runBenchSuite,
@@ -396,6 +400,133 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
     for (const m of memories) {
       console.log(`- ${m.content}`);
     }
+  }
+}
+
+// ── Page-level versioning (issue #371) ─────────────────────────────────────
+
+async function cmdVersions(rest: string[]): Promise<void> {
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+
+  if (!config.versioningEnabled) {
+    console.error("Page versioning is disabled (versioningEnabled = false).");
+    process.exit(1);
+  }
+
+  const versioningConfig = {
+    enabled: config.versioningEnabled,
+    maxVersionsPerPage: config.versioningMaxPerPage,
+    sidecarDir: config.versioningSidecarDir,
+  };
+
+  const action = rest[0] ?? "help";
+  const json = rest.includes("--json");
+
+  switch (action) {
+    case "list": {
+      const pagePath = rest[1];
+      if (!pagePath) {
+        console.error("Usage: remnic versions list <page-path>");
+        process.exit(1);
+      }
+      const absPath = path.resolve(pagePath);
+      const history = await listVersions(absPath, versioningConfig);
+      if (json) {
+        console.log(JSON.stringify(history, null, 2));
+      } else {
+        if (history.versions.length === 0) {
+          console.log(`No versions found for ${pagePath}`);
+        } else {
+          console.log(`Versions for ${pagePath} (current: v${history.currentVersion}):\n`);
+          for (const v of history.versions) {
+            const note = v.note ? ` — ${v.note}` : "";
+            console.log(`  v${v.versionId}  ${v.timestamp}  ${v.trigger}  ${v.sizeBytes} bytes${note}`);
+          }
+        }
+      }
+      break;
+    }
+
+    case "show": {
+      const pagePath = rest[1];
+      const versionId = rest[2];
+      if (!pagePath || !versionId) {
+        console.error("Usage: remnic versions show <page-path> <version-id>");
+        process.exit(1);
+      }
+      const absPath = path.resolve(pagePath);
+      try {
+        const content = await getVersion(absPath, versionId, versioningConfig);
+        console.log(content);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+      break;
+    }
+
+    case "diff": {
+      const pagePath = rest[1];
+      const v1 = rest[2];
+      const v2 = rest[3];
+      if (!pagePath || !v1 || !v2) {
+        console.error("Usage: remnic versions diff <page-path> <v1> <v2>");
+        process.exit(1);
+      }
+      const absPath = path.resolve(pagePath);
+      try {
+        const diffOutput = await diffVersions(absPath, v1, v2, versioningConfig);
+        console.log(diffOutput);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+      break;
+    }
+
+    case "revert": {
+      const pagePath = rest[1];
+      const versionId = rest[2];
+      if (!pagePath || !versionId) {
+        console.error("Usage: remnic versions revert <page-path> <version-id>");
+        process.exit(1);
+      }
+      const absPath = path.resolve(pagePath);
+      try {
+        const version = await revertToVersion(absPath, versionId, versioningConfig);
+        if (json) {
+          console.log(JSON.stringify(version, null, 2));
+        } else {
+          console.log(`Reverted ${pagePath} to version ${versionId}.`);
+          console.log(`Created snapshot v${version.versionId} of previous content.`);
+        }
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+      break;
+    }
+
+    default:
+      console.log(`
+remnic versions — Page-level versioning
+
+Usage:
+  remnic versions list <page-path>              List all versions of a page
+  remnic versions show <page-path> <id>         Print content of a specific version
+  remnic versions diff <page-path> <v1> <v2>    Show diff between two versions
+  remnic versions revert <page-path> <id>       Revert page to a specific version
+
+Options:
+  --json    Output in JSON format
+`);
+      break;
   }
 }
 
@@ -2182,6 +2313,11 @@ Options:
       break;
     }
 
+    case "versions": {
+      await cmdVersions(rest);
+      break;
+    }
+
     case "openclaw": {
       const subAction = rest[0] ?? "help";
       if (subAction === "install") {
@@ -2239,6 +2375,8 @@ Usage:
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
     Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
     Focus: person:<name>, project:<name>, topic:<name>.
+  remnic versions <list|show|diff|revert> <page-path> [id] [--json]
+    Page-level versioning: list, show, diff, or revert page snapshots.
 
 Options:
   --json    Output in JSON format

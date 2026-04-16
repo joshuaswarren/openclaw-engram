@@ -1,0 +1,427 @@
+/**
+ * Page-level versioning with history and revert (issue #371).
+ *
+ * Provides snapshot-based versioning for memory files using a sidecar
+ * directory layout.  Each memory page gets a `.versions/<pageName>/`
+ * subdirectory containing numbered snapshots and a `manifest.json` that
+ * records the version history.
+ *
+ * Storage layout:
+ *   memoryDir/
+ *     facts/preferences.md              <- current file
+ *     .versions/
+ *       facts__preferences/
+ *         manifest.json                  <- VersionHistory
+ *         1.md                           <- version 1 snapshot
+ *         2.md                           <- version 2 snapshot
+ */
+
+import { createHash } from "node:crypto";
+import path from "node:path";
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  writeFile,
+  unlink,
+} from "node:fs/promises";
+
+// ---------------------------------------------------------------------------
+// Public interfaces
+// ---------------------------------------------------------------------------
+
+export interface PageVersion {
+  versionId: string;
+  timestamp: string;
+  contentHash: string;
+  sizeBytes: number;
+  trigger: VersionTrigger;
+  note?: string;
+}
+
+export type VersionTrigger = "write" | "consolidation" | "revert" | "manual";
+
+export interface VersionHistory {
+  pagePath: string;
+  versions: PageVersion[];
+  currentVersion: string;
+}
+
+export interface VersioningConfig {
+  enabled: boolean;
+  maxVersionsPerPage: number;
+  sidecarDir: string;
+}
+
+// ---------------------------------------------------------------------------
+// Logger interface (minimal, avoids coupling to the host logger)
+// ---------------------------------------------------------------------------
+
+export interface VersioningLogger {
+  debug(msg: string): void;
+  warn(msg: string): void;
+}
+
+const NOOP_LOGGER: VersioningLogger = {
+  debug: () => {},
+  warn: () => {},
+};
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
+
+function contentHash(content: string): string {
+  return createHash("sha256").update(content, "utf-8").digest("hex");
+}
+
+/**
+ * Derive a filesystem-safe sidecar key from a page path relative to memoryDir.
+ *
+ * `facts/2026-01-15/pref-001.md` -> `facts__2026-01-15__pref-001`
+ */
+function sidecarKey(pagePath: string): string {
+  const withoutExt = pagePath.replace(/\.md$/i, "");
+  return withoutExt.replace(/[\\/]/g, "__");
+}
+
+function sidecarDir(memoryDir: string, sidecar: string, pagePath: string): string {
+  return path.join(memoryDir, sidecar, sidecarKey(pagePath));
+}
+
+function manifestPath(memoryDir: string, sidecar: string, pagePath: string): string {
+  return path.join(sidecarDir(memoryDir, sidecar, pagePath), "manifest.json");
+}
+
+async function fileExists(p: string): Promise<boolean> {
+  try {
+    await access(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function readManifest(
+  memoryDir: string,
+  sidecar: string,
+  pagePath: string,
+): Promise<VersionHistory> {
+  const mp = manifestPath(memoryDir, sidecar, pagePath);
+  try {
+    const raw = await readFile(mp, "utf-8");
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) {
+      return { pagePath, versions: [], currentVersion: "0" };
+    }
+    const obj = parsed as Record<string, unknown>;
+    const versions = Array.isArray(obj.versions) ? (obj.versions as PageVersion[]) : [];
+    const currentVersion = typeof obj.currentVersion === "string" ? obj.currentVersion : "0";
+    return { pagePath: typeof obj.pagePath === "string" ? obj.pagePath : pagePath, versions, currentVersion };
+  } catch {
+    return { pagePath, versions: [], currentVersion: "0" };
+  }
+}
+
+async function writeManifest(
+  memoryDir: string,
+  sidecar: string,
+  pagePath: string,
+  history: VersionHistory,
+): Promise<void> {
+  const dir = sidecarDir(memoryDir, sidecar, pagePath);
+  await mkdir(dir, { recursive: true });
+  const mp = manifestPath(memoryDir, sidecar, pagePath);
+  await writeFile(mp, JSON.stringify(history, null, 2) + "\n", "utf-8");
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Create a new version snapshot for a page.
+ *
+ * Call this BEFORE overwriting the current file so the previous content is
+ * preserved. If the file does not exist yet (first write), the provided
+ * `content` is snapshotted as version 1.
+ *
+ * Pruning: when the number of versions exceeds `config.maxVersionsPerPage`,
+ * the oldest snapshots (and their files) are removed.
+ */
+export async function createVersion(
+  pagePath: string,
+  content: string,
+  trigger: VersionTrigger,
+  config: VersioningConfig,
+  log: VersioningLogger = NOOP_LOGGER,
+  note?: string,
+): Promise<PageVersion> {
+  const { sidecarDir: sidecar, maxVersionsPerPage } = config;
+  const memoryDir = resolveMemoryDir(pagePath, config);
+
+  const history = await readManifest(memoryDir, sidecar, relPath(pagePath, memoryDir));
+  const nextId = String(history.versions.length > 0
+    ? Math.max(...history.versions.map((v) => Number(v.versionId))) + 1
+    : 1);
+
+  const hash = contentHash(content);
+  const version: PageVersion = {
+    versionId: nextId,
+    timestamp: new Date().toISOString(),
+    contentHash: hash,
+    sizeBytes: Buffer.byteLength(content, "utf-8"),
+    trigger,
+    ...(note !== undefined ? { note } : {}),
+  };
+
+  // Write snapshot file
+  const dir = sidecarDir(memoryDir, sidecar, relPath(pagePath, memoryDir));
+  await mkdir(dir, { recursive: true });
+  const ext = path.extname(pagePath) || ".md";
+  const snapshotPath = path.join(dir, `${nextId}${ext}`);
+  await writeFile(snapshotPath, content, "utf-8");
+
+  history.versions.push(version);
+  history.currentVersion = nextId;
+
+  // Prune old versions if exceeding max
+  if (maxVersionsPerPage > 0 && history.versions.length > maxVersionsPerPage) {
+    const toRemove = history.versions.splice(0, history.versions.length - maxVersionsPerPage);
+    for (const old of toRemove) {
+      const oldPath = path.join(dir, `${old.versionId}${ext}`);
+      try {
+        await unlink(oldPath);
+      } catch {
+        log.debug(`page-versioning: could not remove old snapshot ${oldPath}`);
+      }
+    }
+  }
+
+  await writeManifest(memoryDir, sidecar, relPath(pagePath, memoryDir), history);
+  log.debug(`page-versioning: created version ${nextId} for ${pagePath} (trigger=${trigger})`);
+
+  return version;
+}
+
+/**
+ * List all versions for a page.
+ */
+export async function listVersions(
+  pagePath: string,
+  config: VersioningConfig,
+): Promise<VersionHistory> {
+  const memoryDir = resolveMemoryDir(pagePath, config);
+  const rel = relPath(pagePath, memoryDir);
+  const history = await readManifest(memoryDir, config.sidecarDir, rel);
+  // Sort ascending by versionId (numeric)
+  history.versions.sort((a, b) => Number(a.versionId) - Number(b.versionId));
+  return history;
+}
+
+/**
+ * Read the content of a specific version.
+ */
+export async function getVersion(
+  pagePath: string,
+  versionId: string,
+  config: VersioningConfig,
+): Promise<string> {
+  const memoryDir = resolveMemoryDir(pagePath, config);
+  const rel = relPath(pagePath, memoryDir);
+  const ext = path.extname(pagePath) || ".md";
+  const dir = sidecarDir(memoryDir, config.sidecarDir, rel);
+  const snapshotPath = path.join(dir, `${versionId}${ext}`);
+
+  if (!(await fileExists(snapshotPath))) {
+    throw new Error(`Version ${versionId} not found for ${pagePath}`);
+  }
+
+  return readFile(snapshotPath, "utf-8");
+}
+
+/**
+ * Revert a page to a previous version.
+ *
+ * 1. Reads the target version's content.
+ * 2. Snapshots the CURRENT content as a new version (trigger: "revert").
+ * 3. Writes the reverted content to the page file.
+ *
+ * Returns the newly created version entry for the revert snapshot.
+ */
+export async function revertToVersion(
+  pagePath: string,
+  versionId: string,
+  config: VersioningConfig,
+  log: VersioningLogger = NOOP_LOGGER,
+): Promise<PageVersion> {
+  // Read target version content
+  const targetContent = await getVersion(pagePath, versionId, config);
+
+  // Snapshot current content before overwriting
+  let currentContent = "";
+  try {
+    currentContent = await readFile(pagePath, "utf-8");
+  } catch {
+    // File may not exist; that's okay
+  }
+
+  const version = await createVersion(
+    pagePath,
+    currentContent,
+    "revert",
+    config,
+    log,
+    `reverted to version ${versionId}`,
+  );
+
+  // Write the reverted content to the actual page
+  await writeFile(pagePath, targetContent, "utf-8");
+  log.debug(`page-versioning: reverted ${pagePath} to version ${versionId}`);
+
+  return version;
+}
+
+/**
+ * Simple line-based diff between two versions.
+ *
+ * Returns a unified-style diff string showing added (+) and removed (-) lines.
+ */
+export async function diffVersions(
+  pagePath: string,
+  v1: string,
+  v2: string,
+  config: VersioningConfig,
+): Promise<string> {
+  const content1 = await getVersion(pagePath, v1, config);
+  const content2 = await getVersion(pagePath, v2, config);
+
+  const lines1 = content1.split("\n");
+  const lines2 = content2.split("\n");
+
+  const result: string[] = [];
+  result.push(`--- version ${v1}`);
+  result.push(`+++ version ${v2}`);
+
+  // Simple LCS-based diff
+  const lcs = computeLCS(lines1, lines2);
+  let i = 0;
+  let j = 0;
+  let k = 0;
+
+  while (k < lcs.length) {
+    // Emit removed lines before the next common line
+    while (i < lines1.length && lines1[i] !== lcs[k]) {
+      result.push(`-${lines1[i]}`);
+      i++;
+    }
+    // Emit added lines before the next common line
+    while (j < lines2.length && lines2[j] !== lcs[k]) {
+      result.push(`+${lines2[j]}`);
+      j++;
+    }
+    // Common line
+    result.push(` ${lcs[k]}`);
+    i++;
+    j++;
+    k++;
+  }
+  // Remaining removed lines
+  while (i < lines1.length) {
+    result.push(`-${lines1[i]}`);
+    i++;
+  }
+  // Remaining added lines
+  while (j < lines2.length) {
+    result.push(`+${lines2[j]}`);
+    j++;
+  }
+
+  return result.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// LCS helper for diffVersions
+// ---------------------------------------------------------------------------
+
+function computeLCS(a: string[], b: string[]): string[] {
+  const m = a.length;
+  const n = b.length;
+  // Build DP table
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      if (a[i - 1] === b[j - 1]) {
+        dp[i][j] = dp[i - 1][j - 1] + 1;
+      } else {
+        dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+      }
+    }
+  }
+  // Backtrack to build LCS
+  const result: string[] = [];
+  let i = m;
+  let j = n;
+  while (i > 0 && j > 0) {
+    if (a[i - 1] === b[j - 1]) {
+      result.unshift(a[i - 1]);
+      i--;
+      j--;
+    } else if (dp[i - 1][j] > dp[i][j - 1]) {
+      i--;
+    } else {
+      j--;
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Path helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Given an absolute page path, resolve the memory directory.
+ *
+ * If `pagePath` is absolute, the memory directory is derived by stripping
+ * the relative portion.  The config's sidecarDir is always resolved relative
+ * to the memory directory.
+ */
+function resolveMemoryDir(pagePath: string, _config: VersioningConfig): string {
+  // The pagePath is always absolute.  The "memoryDir" is the root that
+  // contains the page.  We resolve it by checking common subdirectories.
+  // In practice, the caller's memoryDir is known from context, but here
+  // we infer it from the absolute path by looking for known subdirs.
+  //
+  // For simplicity, we walk up from the pagePath until we find a directory
+  // that does NOT match known subdirectory names.
+  const knownSubdirs = new Set([
+    "facts",
+    "corrections",
+    "entities",
+    "state",
+    "artifacts",
+    "questions",
+    "profiles",
+  ]);
+
+  let dir = path.dirname(pagePath);
+  // Walk up past date directories (YYYY-MM-DD) and known subdirs
+  for (let depth = 0; depth < 5; depth++) {
+    const base = path.basename(dir);
+    if (knownSubdirs.has(base) || /^\d{4}-\d{2}-\d{2}$/.test(base)) {
+      dir = path.dirname(dir);
+    } else {
+      break;
+    }
+  }
+  return dir;
+}
+
+/**
+ * Compute relative path of a page within its memory directory.
+ */
+function relPath(pagePath: string, memoryDir: string): string {
+  return path.relative(memoryDir, pagePath);
+}

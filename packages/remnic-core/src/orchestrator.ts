@@ -1308,6 +1308,12 @@ export class Orchestrator {
     // Propagate the inline-attribution template so the storage layer can strip
     // citations from legacy facts during the hash-index rebuild path.
     this.storage.citationTemplate = config.inlineSourceAttributionFormat;
+    // Wire page-level versioning (issue #371)
+    this.storage.setVersioningConfig({
+      enabled: config.versioningEnabled,
+      maxVersionsPerPage: config.versioningMaxPerPage,
+      sidecarDir: config.versioningSidecarDir,
+    });
     this.qmd = createSearchBackend(config);
     const conversationIndexRuntime = createConversationIndexRuntime(config, {
       getQmd: () => this.conversationQmd,

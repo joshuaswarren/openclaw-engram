@@ -615,6 +615,22 @@
         "default": true,
         "description": "Run Codex memory materialization from the Codex session-end hook."
       },
+      "versioningEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable page-level versioning with sidecar snapshots."
+      },
+      "versioningMaxPerPage": {
+        "type": "integer",
+        "default": 50,
+        "minimum": 0,
+        "description": "Maximum number of version snapshots per page. Set to 0 to disable pruning."
+      },
+      "versioningSidecarDir": {
+        "type": "string",
+        "default": ".versions",
+        "description": "Name of the sidecar directory inside memoryDir for version snapshots."
+      },
       "codexCompat": {
         "type": "object",
         "additionalProperties": false,
