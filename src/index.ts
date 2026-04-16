@@ -1188,17 +1188,22 @@ const pluginDefinition = {
         return;
       }
       const bufferKey = sessionIdentity.previousCodexBufferKey;
+      if (!bufferKey) {
+        forgetCodexThread(sessionKey, sessionIdentity.previousCodexThreadId);
+        return;
+      }
+      if (typeof (orchestrator as any).flushSession !== "function") {
+        log.warn("codexCompat provider-switch flush unavailable; preserving binding");
+        return;
+      }
       try {
-        if (bufferKey && typeof (orchestrator as any).flushSession === "function") {
-          await (orchestrator as any).flushSession(sessionKey, {
-            reason: "codex_provider_switch",
-            bufferKey,
-          });
-        }
+        await (orchestrator as any).flushSession(sessionKey, {
+          reason: "codex_provider_switch",
+          bufferKey,
+        });
+        forgetCodexThread(sessionKey, sessionIdentity.previousCodexThreadId);
       } catch (error) {
         log.warn(`codexCompat provider-switch flush failed: ${String(error)}`);
-      } finally {
-        forgetCodexThread(sessionKey, sessionIdentity.previousCodexThreadId);
       }
     }
 
