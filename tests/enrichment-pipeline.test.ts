@@ -277,6 +277,26 @@ test("Pipeline: max candidates trims excess", async () => {
   assert.equal(results[0].candidatesRejected, 20);
 });
 
+test("Pipeline: maxCandidatesPerEntity = 0 rejects all candidates", async () => {
+  const candidates: EnrichmentCandidate[] = Array.from({ length: 5 }, (_, i) => ({
+    text: `Fact ${i}`,
+    source: "mock",
+    confidence: 0.5,
+    category: "fact" as const,
+  }));
+
+  const registry = new EnrichmentProviderRegistry();
+  registry.register(makeMockProvider("mock", "cheap", candidates));
+
+  const config = enabledConfig({ maxCandidatesPerEntity: 0 });
+  const entity = makeEntity();
+
+  const results = await runEnrichmentPipeline([entity], registry, config, NOOP_LOG);
+  assert.equal(results[0].candidatesFound, 5);
+  assert.equal(results[0].candidatesAccepted, 0);
+  assert.equal(results[0].candidatesRejected, 5);
+});
+
 test("Pipeline: disabled config returns empty results", async () => {
   const registry = new EnrichmentProviderRegistry();
   registry.register(makeMockProvider("mock"));

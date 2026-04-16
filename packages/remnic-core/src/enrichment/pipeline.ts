@@ -160,12 +160,17 @@ export async function runEnrichmentPipeline(
         candidate.source = provider.id;
       }
 
-      // Cap at maxCandidatesPerEntity
+      // Cap at maxCandidatesPerEntity.
+      // 0 means "accept none"; undefined/negative means "no cap".
       const maxCandidates = config.maxCandidatesPerEntity;
-      const accepted =
-        maxCandidates > 0 && candidates.length > maxCandidates
-          ? candidates.slice(0, maxCandidates)
-          : candidates;
+      let accepted: EnrichmentCandidate[];
+      if (maxCandidates === 0) {
+        accepted = [];
+      } else if (maxCandidates > 0 && candidates.length > maxCandidates) {
+        accepted = candidates.slice(0, maxCandidates);
+      } else {
+        accepted = candidates;
+      }
       const rejected = candidates.length - accepted.length;
 
       results.push({

@@ -3517,6 +3517,22 @@
           "llmFollowups": true
         },
         "description": "Daily Context Briefing (#370). Knobs: enabled, defaultWindow ('yesterday', '3d', '1w', '24h', ...), defaultFormat (markdown|json), maxFollowups (0-10), calendarSource (path to ICS/JSON file, null = off), saveByDefault, saveDir (null = $REMNIC_HOME/briefings/), llmFollowups (disable to skip Responses API calls)."
+      },
+      "enrichmentEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the external enrichment pipeline (#365). When true, entities can be enriched via registered providers."
+      },
+      "enrichmentAutoOnCreate": {
+        "type": "boolean",
+        "default": false,
+        "description": "Automatically enrich newly created entities when the enrichment pipeline is enabled."
+      },
+      "enrichmentMaxCandidatesPerEntity": {
+        "type": "integer",
+        "default": 20,
+        "minimum": 0,
+        "description": "Maximum enrichment candidates accepted per entity per run. Set to 0 to accept none."
       }
     }
   },

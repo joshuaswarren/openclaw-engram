@@ -647,7 +647,7 @@ async function cmdEnrich(rest: string[]): Promise<void> {
   const storage = await orchestrator.getStorage(config.defaultNamespace);
 
   // Gather entities to enrich
-  const entityFiles = await storage.listEntities();
+  const entityFiles = await storage.readAllEntityFiles();
   let targets = entityFiles;
   if (!all && subcommand && !subcommand.startsWith("--")) {
     const match = entityFiles.find(
@@ -669,6 +669,15 @@ async function cmdEnrich(rest: string[]): Promise<void> {
   const pipelineConfig = defaultEnrichmentPipelineConfig();
   pipelineConfig.enabled = true;
   pipelineConfig.maxCandidatesPerEntity = config.enrichmentMaxCandidatesPerEntity;
+  pipelineConfig.providers = [
+    { id: "web-search", enabled: true, costTier: "cheap" },
+  ];
+  pipelineConfig.importanceThresholds = {
+    critical: ["web-search"],
+    high: ["web-search"],
+    normal: ["web-search"],
+    low: [],
+  };
 
   const registry = new EnrichmentProviderRegistry();
   registry.register(new WebSearchProvider());
