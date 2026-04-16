@@ -1155,22 +1155,24 @@ const pluginDefinition = {
         ? resolveStoredCodexBufferKey(sessionKey) ??
           resolveCodexCompactionBaselineKey(sessionKey, previousCodexThreadId)
         : null;
+      const hasRememberedCodexBinding = !!storedCodexThreadId;
+      const allowHintedThreadFallback =
+        base.isCodex || (!explicitProviderIdentity && hasRememberedCodexBinding);
       const rememberedThreadId =
         base.providerThreadId ??
-        (base.isCodex
-          ? storedCodexThreadId
-          : !explicitProviderIdentity
-            ? hintedThreadId ?? storedCodexThreadId
-            : null);
+        (allowHintedThreadFallback
+          ? hintedThreadId ?? storedCodexThreadId
+          : null);
       return {
         ...base,
         providerThreadId: rememberedThreadId,
         codexThreadBound:
-          !!rememberedThreadId && (base.isCodex || !explicitProviderIdentity),
+          !!rememberedThreadId &&
+          (base.isCodex || (!explicitProviderIdentity && hasRememberedCodexBinding)),
         logicalSessionKey:
           cfg.codexCompat.threadIdBufferKeying !== false &&
           rememberedThreadId &&
-          (base.isCodex || !explicitProviderIdentity)
+          (base.isCodex || (!explicitProviderIdentity && hasRememberedCodexBinding))
             ? codexLogicalSessionKey(rememberedThreadId)
             : base.logicalSessionKey,
         previousCodexThreadId,

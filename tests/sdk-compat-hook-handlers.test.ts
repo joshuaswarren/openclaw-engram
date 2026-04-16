@@ -3457,7 +3457,7 @@ test("session_end releases remembered Codex bindings after a successful drain", 
   );
 });
 
-test("before_reset recovers sparse providerThreadId metadata without a remembered binding", async () => {
+test("before_reset ignores sparse providerThreadId metadata without a remembered Codex binding", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-sparse-provider-thread-id-test", {
     includeMemoryCapability: true,
@@ -3503,15 +3503,14 @@ test("before_reset recovers sparse providerThreadId metadata without a remembere
   assert.equal(flushCalls.length, 1);
   assert.equal(flushCalls[0]?.sessionKey, "session-reset-sparse-thread-id");
   assert.equal(flushCalls[0]?.options?.reason, "before_reset");
-  assert.ok(
-    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
-      "codex-thread:thread-reset-sparse-thread-id",
-    ),
-    "before_reset should recover the sparse provider thread id into the Codex logical buffer key",
+  assert.equal(
+    flushCalls[0]?.options?.bufferKey,
+    "session-reset-sparse-thread-id",
+    "before_reset should keep sparse providerThreadId hooks on the raw session buffer without a confirmed Codex binding",
   );
 });
 
-test("session_end drains sparse providerThreadId metadata without a remembered binding", async () => {
+test("session_end ignores sparse providerThreadId metadata without a remembered Codex binding", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("session-end-sparse-provider-thread-id-test", {
     includeMemoryCapability: true,
@@ -3556,15 +3555,14 @@ test("session_end drains sparse providerThreadId metadata without a remembered b
   assert.equal(flushCalls.length, 1);
   assert.equal(flushCalls[0]?.sessionKey, "session-end-sparse-thread-id");
   assert.equal(flushCalls[0]?.options?.reason, "session_end");
-  assert.ok(
-    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
-      "codex-thread:thread-session-end-sparse-thread-id",
-    ),
-    "session_end should drain the sparse provider thread id through the Codex logical buffer key",
+  assert.equal(
+    flushCalls[0]?.options?.bufferKey,
+    "session-end-sparse-thread-id",
+    "session_end should keep sparse providerThreadId hooks on the raw session buffer without a confirmed Codex binding",
   );
 });
 
-test("session_end drains sparse ctx providerThreadId metadata without a remembered binding", async () => {
+test("session_end ignores sparse ctx providerThreadId metadata without a remembered Codex binding", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("session-end-sparse-ctx-provider-thread-id-test", {
     includeMemoryCapability: true,
@@ -3610,11 +3608,10 @@ test("session_end drains sparse ctx providerThreadId metadata without a remember
   assert.equal(flushCalls.length, 1);
   assert.equal(flushCalls[0]?.sessionKey, "session-end-sparse-ctx-thread-id");
   assert.equal(flushCalls[0]?.options?.reason, "session_end");
-  assert.ok(
-    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
-      "codex-thread:thread-session-end-sparse-ctx-thread-id",
-    ),
-    "session_end should drain the sparse ctx provider thread id through the Codex logical buffer key",
+  assert.equal(
+    flushCalls[0]?.options?.bufferKey,
+    "session-end-sparse-ctx-thread-id",
+    "session_end should keep sparse ctx providerThreadId hooks on the raw session buffer without a confirmed Codex binding",
   );
 });
 
