@@ -3490,6 +3490,60 @@ test("session_end drains sparse providerThreadId metadata without a remembered b
   );
 });
 
+test("session_end drains sparse ctx providerThreadId metadata without a remembered binding", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("session-end-sparse-ctx-provider-thread-id-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const sessionEnd = api.handlers.get("session_end");
+  assert.ok(sessionEnd, "session_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await sessionEnd(
+    {
+      sessionKey: "session-end-sparse-ctx-thread-id",
+    },
+    {
+      providerThreadId: "thread-session-end-sparse-ctx-thread-id",
+    },
+  );
+
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-end-sparse-ctx-thread-id");
+  assert.equal(flushCalls[0]?.options?.reason, "session_end");
+  assert.ok(
+    String(flushCalls[0]?.options?.bufferKey ?? "").startsWith(
+      "codex-thread:thread-session-end-sparse-ctx-thread-id",
+    ),
+    "session_end should drain the sparse ctx provider thread id through the Codex logical buffer key",
+  );
+});
+
 test("agent_end does not reuse a remembered Codex thread after the provider switches", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("agent-end-provider-switch-test");

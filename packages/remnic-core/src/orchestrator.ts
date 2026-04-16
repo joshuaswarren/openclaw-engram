@@ -7945,22 +7945,13 @@ export class Orchestrator {
       typeof this.buffer.findBufferKeysForSession !== "function"
         ? []
         : await this.buffer.findBufferKeysForSession(sessionKey);
-    const discoveredBufferKey =
-      explicitBufferKey ||
-      discoveredBufferKeys.length > 0 ||
-      typeof sessionKey !== "string" ||
-      sessionKey.length === 0
-        ? null
-        : await this.buffer.findBufferKeyForSession?.(sessionKey);
     const bufferKeys = explicitBufferKey
       ? [explicitBufferKey]
       : discoveredBufferKeys.length > 0
         ? discoveredBufferKeys
-        : typeof discoveredBufferKey === "string" && discoveredBufferKey.length > 0
-          ? [discoveredBufferKey]
-          : typeof sessionKey === "string" && sessionKey.length > 0
-            ? [sessionKey]
-            : ["default"];
+        : typeof sessionKey === "string" && sessionKey.length > 0
+          ? [sessionKey]
+          : ["default"];
     for (const bufferKey of bufferKeys) {
       const turns = this.buffer.getTurns(bufferKey);
       if (turns.length === 0) continue;

@@ -187,8 +187,8 @@ test("flushSession honors an explicit bufferKey override", async () => {
   let queuedBufferKey: string | undefined;
 
   orchestrator.buffer = {
-    async findBufferKeyForSession() {
-      throw new Error("flushSession should not discover a buffer key when one is provided");
+    async findBufferKeysForSession() {
+      throw new Error("flushSession should not discover buffer keys when one is provided");
     },
     getTurns(bufferKey: string) {
       return bufferKey === "codex-thread:thread-11"
@@ -218,10 +218,10 @@ test("flushSession falls back to a discovered logical buffer key for the session
   let queuedBufferKey: string | undefined;
 
   orchestrator.buffer = {
-    async findBufferKeyForSession(sessionKey: string) {
+    async findBufferKeysForSession(sessionKey: string) {
       return sessionKey === "session-z"
-        ? "codex-thread:thread-11::principal:cli"
-        : null;
+        ? ["codex-thread:thread-11::principal:cli"]
+        : [];
     },
     getTurns(bufferKey: string) {
       return bufferKey === "codex-thread:thread-11::principal:cli"

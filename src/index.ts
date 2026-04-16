@@ -2751,12 +2751,12 @@ const pluginDefinition = {
         async (
           event: import("openclaw/plugin-sdk").PluginHookSessionEvent &
             Record<string, unknown>,
-          _ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
+          ctx: import("openclaw/plugin-sdk").PluginHookAgentContext &
             Record<string, unknown>,
         ) => {
           const sessionKey = event.sessionKey ?? "default";
           log.debug(`session_end: ${sessionKey}`);
-          const sessionIdentity = resolveSessionIdentity(sessionKey, event, {});
+          const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
           const rememberedThreadId =
             sessionIdentity.providerThreadId ??
             resolveStoredCodexThreadId(sessionKey);
