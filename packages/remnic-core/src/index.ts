@@ -430,6 +430,28 @@ export {
 } from "./connectors/codex-materialize.js";
 
 // ---------------------------------------------------------------------------
+// Memory Extension Publishers (#381)
+// ---------------------------------------------------------------------------
+
+export {
+  publisherFor,
+  publisherForConnector,
+  hostIdForConnector,
+  PUBLISHERS,
+  CodexMemoryExtensionPublisher,
+  ClaudeCodeMemoryExtensionPublisher,
+  HermesMemoryExtensionPublisher,
+  REMNIC_SEMANTIC_OVERVIEW,
+  REMNIC_CITATION_FORMAT,
+  REMNIC_MCP_TOOL_INVENTORY,
+  REMNIC_RECALL_DECISION_RULES,
+  type MemoryExtensionPublisher,
+  type PublishContext,
+  type PublishResult,
+  type PublisherCapabilities,
+} from "./memory-extension/index.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
