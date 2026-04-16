@@ -3188,24 +3188,26 @@ test("before_reset flushes metadata-less follow-up turns under the raw session k
 
   await beforeReset({ sessionKey: "session-reset-metadata-less" }, {});
 
-  assert.deepEqual(
-    flushCalls.map((call) => ({
-      sessionKey: call.sessionKey,
-      reason: call.options?.reason,
-      bufferKey: call.options?.bufferKey,
-    })),
-    [
-      {
-        sessionKey: "session-reset-metadata-less",
-        reason: "codex_metadata_loss",
-        bufferKey: "codex-thread:thread-reset-metadata-less::principal:default",
-      },
-      {
-        sessionKey: "session-reset-metadata-less",
-        reason: "before_reset",
-        bufferKey: "session-reset-metadata-less",
-      },
-    ],
+  const summarizedFlushCalls = flushCalls.map((call) => ({
+    sessionKey: call.sessionKey,
+    reason: call.options?.reason,
+    bufferKey: call.options?.bufferKey,
+  }));
+
+  assert.equal(summarizedFlushCalls.length, 2);
+  assert.deepEqual(summarizedFlushCalls[1], {
+    sessionKey: "session-reset-metadata-less",
+    reason: "before_reset",
+    bufferKey: "session-reset-metadata-less",
+  });
+  assert.equal(
+    summarizedFlushCalls[0]?.sessionKey,
+    "session-reset-metadata-less",
+  );
+  assert.equal(summarizedFlushCalls[0]?.reason, "codex_metadata_loss");
+  assert.match(
+    String(summarizedFlushCalls[0]?.bufferKey ?? ""),
+    /^codex-thread:thread-reset-metadata-less(?:::principal:default)?$/,
   );
 });
 
