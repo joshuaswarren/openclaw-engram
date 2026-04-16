@@ -876,7 +876,10 @@ const pluginDefinition = {
     const cachedMemoryBySession = new Map<string, string[] | null>();
     const cachedMemoryByCodexThread = new Map<string, string[] | null>();
     const codexThreadBySession = new Map<string, string>();
-    const codexMessageCountByThread = new Map<string, number>();
+    const codexBufferKeyBySession = new Map<string, string>();
+    const codexSessionsByThread = new Map<string, Set<string>>();
+    const codexSessionsByBufferKey = new Map<string, Set<string>>();
+    const codexMessageCountByBufferKey = new Map<string, number>();
     let codexCompactionModeLogged = false;
 
     function resolveStoredCodexThreadId(sessionKey: string): string | null {
@@ -884,12 +887,99 @@ const pluginDefinition = {
       return typeof threadId === "string" && threadId.length > 0 ? threadId : null;
     }
 
+    function resolveStoredCodexBufferKey(sessionKey: string): string | null {
+      const bufferKey = codexBufferKeyBySession.get(sessionKey);
+      return typeof bufferKey === "string" && bufferKey.length > 0
+        ? bufferKey
+        : null;
+    }
+
+    function addSessionToCodexIndex(
+      index: Map<string, Set<string>>,
+      key: string,
+      sessionKey: string,
+    ): void {
+      const sessions = index.get(key) ?? new Set<string>();
+      sessions.add(sessionKey);
+      index.set(key, sessions);
+    }
+
+    function removeSessionFromCodexIndex(
+      index: Map<string, Set<string>>,
+      key: string,
+      sessionKey: string,
+    ): boolean {
+      const sessions = index.get(key);
+      if (!sessions) return true;
+      sessions.delete(sessionKey);
+      if (sessions.size === 0) {
+        index.delete(key);
+        return true;
+      }
+      return false;
+    }
+
+    function resolveCodexCompactionBaselineKey(
+      sessionKey: string,
+      providerThreadId?: string | null,
+    ): string | null {
+      const resolvedThreadId =
+        providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+      if (!resolvedThreadId) return null;
+      const logicalSessionKey =
+        cfg.codexCompat.threadIdBufferKeying !== false
+          ? codexLogicalSessionKey(resolvedThreadId)
+          : sessionKey;
+      return resolveExtractionBufferKey(sessionKey, logicalSessionKey);
+    }
+
     function rememberCodexThread(
       sessionKey: string,
       providerThreadId: string | null,
     ): void {
       if (!providerThreadId) return;
+      const previousThreadId = resolveStoredCodexThreadId(sessionKey);
+      const previousBufferKey = resolveStoredCodexBufferKey(sessionKey);
+      const nextBufferKey = resolveCodexCompactionBaselineKey(
+        sessionKey,
+        providerThreadId,
+      );
+      if (
+        previousThreadId === providerThreadId &&
+        previousBufferKey === nextBufferKey
+      ) {
+        return;
+      }
+      if (previousBufferKey) {
+        const bufferWasEmptied = removeSessionFromCodexIndex(
+          codexSessionsByBufferKey,
+          previousBufferKey,
+          sessionKey,
+        );
+        if (bufferWasEmptied) {
+          codexMessageCountByBufferKey.delete(previousBufferKey);
+        }
+      }
+      if (previousThreadId) {
+        const threadWasEmptied = removeSessionFromCodexIndex(
+          codexSessionsByThread,
+          previousThreadId,
+          sessionKey,
+        );
+        if (threadWasEmptied) {
+          cachedMemoryByCodexThread.delete(previousThreadId);
+        }
+      }
       codexThreadBySession.set(sessionKey, providerThreadId);
+      if (nextBufferKey) {
+        codexBufferKeyBySession.set(sessionKey, nextBufferKey);
+        addSessionToCodexIndex(
+          codexSessionsByBufferKey,
+          nextBufferKey,
+          sessionKey,
+        );
+      }
+      addSessionToCodexIndex(codexSessionsByThread, providerThreadId, sessionKey);
     }
 
     function forgetCodexThread(
@@ -898,11 +988,31 @@ const pluginDefinition = {
     ): void {
       const resolvedThreadId =
         providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+      const resolvedBufferKey =
+        resolveStoredCodexBufferKey(sessionKey) ??
+        resolveCodexCompactionBaselineKey(sessionKey, resolvedThreadId);
+      if (resolvedBufferKey) {
+        const bufferWasEmptied = removeSessionFromCodexIndex(
+          codexSessionsByBufferKey,
+          resolvedBufferKey,
+          sessionKey,
+        );
+        if (bufferWasEmptied) {
+          codexMessageCountByBufferKey.delete(resolvedBufferKey);
+        }
+      }
       if (resolvedThreadId) {
-        cachedMemoryByCodexThread.delete(resolvedThreadId);
-        codexMessageCountByThread.delete(resolvedThreadId);
+        const threadWasEmptied = removeSessionFromCodexIndex(
+          codexSessionsByThread,
+          resolvedThreadId,
+          sessionKey,
+        );
+        if (threadWasEmptied) {
+          cachedMemoryByCodexThread.delete(resolvedThreadId);
+        }
       }
       codexThreadBySession.delete(sessionKey);
+      codexBufferKeyBySession.delete(sessionKey);
     }
 
     function clearCodexCompatCaches(
@@ -916,14 +1026,35 @@ const pluginDefinition = {
       cachedMemoryBySession.delete(sessionKey);
       const resolvedThreadId =
         providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+      const resolvedBufferKey =
+        resolveStoredCodexBufferKey(sessionKey) ??
+        resolveCodexCompactionBaselineKey(sessionKey, resolvedThreadId);
       if (resolvedThreadId) {
         cachedMemoryByCodexThread.delete(resolvedThreadId);
-        if (options?.preserveMessageCount !== true) {
-          codexMessageCountByThread.delete(resolvedThreadId);
-        }
+      }
+      if (
+        resolvedBufferKey &&
+        options?.preserveMessageCount !== true
+      ) {
+        codexMessageCountByBufferKey.delete(resolvedBufferKey);
       }
       if (options?.preserveThreadBinding !== true) {
+        if (resolvedBufferKey) {
+          removeSessionFromCodexIndex(
+            codexSessionsByBufferKey,
+            resolvedBufferKey,
+            sessionKey,
+          );
+        }
+        if (resolvedThreadId) {
+          removeSessionFromCodexIndex(
+            codexSessionsByThread,
+            resolvedThreadId,
+            sessionKey,
+          );
+        }
         codexThreadBySession.delete(sessionKey);
+        codexBufferKeyBySession.delete(sessionKey);
       }
     }
 
@@ -975,7 +1106,7 @@ const pluginDefinition = {
     ): void {
       cachedMemoryBySession.set(sessionKey, memoryLines);
       if (providerThreadId) {
-        codexThreadBySession.set(sessionKey, providerThreadId);
+        rememberCodexThread(sessionKey, providerThreadId);
         cachedMemoryByCodexThread.set(providerThreadId, memoryLines);
       }
     }
@@ -1283,9 +1414,13 @@ const pluginDefinition = {
           cfg.codexCompat.compactionFlushMode === "auto")
       ) {
         const currentCount = sessionIdentity.messageCount;
-        const previousCount = codexMessageCountByThread.get(
+        const codexBaselineKey = resolveCodexCompactionBaselineKey(
+          sessionKey,
           sessionIdentity.providerThreadId,
         );
+        const previousCount = codexBaselineKey
+          ? codexMessageCountByBufferKey.get(codexBaselineKey)
+          : undefined;
         let shouldPersistMessageCount = typeof currentCount === "number";
         if (
           typeof currentCount === "number" &&
@@ -1310,11 +1445,12 @@ const pluginDefinition = {
             log.warn(`codexCompat heuristic flush failed: ${String(error)}`);
           }
         }
-        if (typeof currentCount === "number" && shouldPersistMessageCount) {
-          codexMessageCountByThread.set(
-            sessionIdentity.providerThreadId,
-            currentCount,
-          );
+        if (
+          typeof currentCount === "number" &&
+          shouldPersistMessageCount &&
+          codexBaselineKey
+        ) {
+          codexMessageCountByBufferKey.set(codexBaselineKey, currentCount);
         }
       }
       if (!prompt || prompt.length < 5) return;

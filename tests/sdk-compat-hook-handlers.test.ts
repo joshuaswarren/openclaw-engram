@@ -2264,6 +2264,171 @@ test("before_prompt_build retries the Codex heuristic fallback after a failed fl
   );
 });
 
+test("before_prompt_build tracks Codex compaction baselines per principal-scoped buffer key", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-codex-principal-baseline-test");
+  api.pluginConfig = {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    principalFromSessionKeyMode: "map",
+    principalFromSessionKeyRules: [
+      { match: "session-alpha", principal: "team-alpha" },
+      { match: "session-beta", principal: "team-beta" },
+    ],
+    namespacePolicies: [
+      {
+        name: "team-alpha",
+        readPrincipals: ["team-alpha"],
+        writePrincipals: ["team-alpha"],
+        includeInRecallByDefault: false,
+      },
+      {
+        name: "team-beta",
+        readPrincipals: ["team-beta"],
+        writePrincipals: ["team-beta"],
+        includeInRecallByDefault: false,
+      },
+    ],
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+
+  const flushCalls: Array<Record<string, unknown>> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 10 },
+    {
+      sessionKey: "session-alpha",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-principal-baseline",
+    },
+  );
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 10 },
+    {
+      sessionKey: "session-beta",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-principal-baseline",
+    },
+  );
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 4 },
+    {
+      sessionKey: "session-alpha",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-principal-baseline",
+    },
+  );
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 4 },
+    {
+      sessionKey: "session-beta",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-principal-baseline",
+    },
+  );
+
+  assert.equal(flushCalls.length, 2);
+  assert.deepEqual(
+    flushCalls.map((call) => (call.options as { bufferKey?: string }).bufferKey),
+    [
+      "codex-thread:thread-shared-principal-baseline::principal:team-alpha",
+      "codex-thread:thread-shared-principal-baseline::principal:team-beta",
+    ],
+  );
+});
+
+test("before_prompt_build keeps a shared Codex thread baseline when another session unbinds", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-prompt-build-codex-shared-unbind-test");
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+
+  const flushCalls: Array<Record<string, unknown>> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 10 },
+    {
+      sessionKey: "session-shared-unbind-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-unbind-1",
+    },
+  );
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 10 },
+    {
+      sessionKey: "session-shared-unbind-b",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-unbind-1",
+    },
+  );
+  await beforePromptBuild(
+    { prompt: "This session switched providers." },
+    {
+      sessionKey: "session-shared-unbind-a",
+      provider: { id: "openai", model: "gpt-4.1" },
+    },
+  );
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 4 },
+    {
+      sessionKey: "session-shared-unbind-b",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-unbind-1",
+    },
+  );
+
+  assert.equal(flushCalls.length, 1);
+  assert.equal(flushCalls[0]?.sessionKey, "session-shared-unbind-b");
+  assert.equal(
+    (flushCalls[0]?.options as { reason?: string }).reason,
+    "codex_compaction_heuristic",
+  );
+  assert.equal(
+    (flushCalls[0]?.options as { bufferKey?: string }).bufferKey,
+    "codex-thread:thread-shared-unbind-1::principal:default",
+  );
+});
+
 test("before_prompt_build logs the full Codex auto compaction mode", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-prompt-build-codex-auto-log-test");
