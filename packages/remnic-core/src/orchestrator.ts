@@ -9332,11 +9332,48 @@ export class Orchestrator {
     const routeRules = await this.loadRoutingRules();
     const routeOptions = this.routeEngineOptions();
 
+    // Pre-routing pass: compute the routed category for every fact BEFORE
+    // building judge candidates.  Route rules may override f.category (e.g.
+    // via taxonomy remapping), and the judge must evaluate against the
+    // *final* category that will actually be persisted — not the raw
+    // extraction-time category.  The per-fact write loop below reuses
+    // these pre-computed results so routing is evaluated exactly once per
+    // fact (no duplicated logic).
+    const preRoutedCategories: Array<string | undefined> = new Array(facts.length);
+    if (routeRules.length > 0) {
+      for (let fi = 0; fi < facts.length; fi++) {
+        const f = facts[fi];
+        if (
+          !f ||
+          typeof f.content !== "string" ||
+          !f.content.trim() ||
+          typeof f.category !== "string" ||
+          !f.category.trim()
+        ) {
+          continue;
+        }
+        try {
+          const tags = Array.isArray(f.tags) ? f.tags : [];
+          const routeText = `${f.category} ${tags.join(" ")} ${f.content}`;
+          const selected = selectRouteRule(routeText, routeRules, routeOptions);
+          if (selected?.target.category) {
+            preRoutedCategories[fi] = selected.target.category;
+          }
+        } catch {
+          // Fail-open: routing errors fall through to the extracted category.
+        }
+      }
+    }
+
     // Extraction judge gate (issue #376). When enabled, batch-evaluate all
     // candidate facts for durability before the per-fact write loop.
     // The verdicts map is keyed by candidate index — we maintain a
     // candidateIndexToFactIndex mapping so the write loop can look up
     // verdicts by original fact index.
+    //
+    // Candidates are built using the *routed* category (preRoutedCategories)
+    // so the judge evaluates durability against the same category that will
+    // be persisted, not the raw extraction-time category.
     let judgeVerdictsByFactIndex: Map<number, import("./extraction-judge.js").JudgeVerdict> | null = null;
     let judgeGatedCount = 0;
     if (this.config.extractionJudgeEnabled) {
@@ -9354,10 +9391,17 @@ export class Orchestrator {
           ) {
             continue;
           }
+          // Use the routed category when available so the judge sees the
+          // final persisted category, not the raw extraction-time value.
+          // Cast to MemoryCategory — routing targets are always valid
+          // category slugs defined in the taxonomy; the fallback is the
+          // original ExtractedFact.category which is already typed.
+          const judgeCategory = (preRoutedCategories[fi] ?? f.category) as import("./types.js").MemoryCategory;
+          const tags = Array.isArray(f.tags) ? f.tags : [];
           const imp = scoreImportance(
             f.content,
-            f.category,
-            Array.isArray(f.tags) ? f.tags : [],
+            judgeCategory,
+            tags,
           );
           // Pre-filter: skip facts below importance threshold to avoid
           // wasting LLM calls on facts that will be filtered anyway in
@@ -9372,9 +9416,9 @@ export class Orchestrator {
           }
           judgeCandidates.push({
             text: f.content,
-            category: f.category as string,
+            category: judgeCategory,
             confidence: typeof f.confidence === "number" ? f.confidence : 0.7,
-            tags: Array.isArray(f.tags) ? f.tags : [],
+            tags,
             importanceLevel: imp.level,
           });
           candidateToFactIndex.push(fi);

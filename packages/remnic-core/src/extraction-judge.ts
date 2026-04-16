@@ -271,6 +271,14 @@ async function callJudgeLlm(
   // routing preference.
   const skipLocal = config.modelSource === "gateway";
 
+  // Resolve the gateway agent ID so the fallback LLM routes through the
+  // correct agent persona's model chain — identical to the pattern used
+  // by ExtractionEngine.withGatewayAgent().
+  const agentId =
+    config.modelSource === "gateway"
+      ? (config.gatewayAgentId || undefined)
+      : undefined;
+
   // Try local LLM first (unless modelSource says gateway)
   if (localLlm && !skipLocal) {
     try {
@@ -302,6 +310,7 @@ async function callJudgeLlm(
           maxTokens: 2048,
           timeoutMs: 1500,
           ...(modelOverride ? { model: modelOverride } : {}),
+          ...(agentId ? { agentId } : {}),
         },
       );
       if (result?.content) {
