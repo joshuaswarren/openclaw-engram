@@ -2895,6 +2895,17 @@ test("before_reset stops using the remembered Codex thread after an explicit pro
   const api = buildHandlerCapturingApi("before-reset-provider-switch-test", {
     includeMemoryCapability: true,
   });
+  api.pluginConfig = {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
   plugin.register(api as any);
 
   const beforePromptBuild = api.handlers.get("before_prompt_build");
@@ -3028,6 +3039,17 @@ test("before_reset flushes metadata-less follow-up turns under the raw session k
 test("agent_end does not reuse a remembered Codex thread after the provider switches", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("agent-end-provider-switch-test");
+  api.pluginConfig = {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
   plugin.register(api as any);
 
   const beforePromptBuild = api.handlers.get("before_prompt_build");
