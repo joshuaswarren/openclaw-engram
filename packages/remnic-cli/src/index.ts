@@ -74,6 +74,16 @@ import {
   getVersion,
   revertToVersion,
   diffVersions,
+  readManifest,
+  writeManifest,
+  createBackend,
+  runBinaryLifecyclePipeline,
+  DEFAULT_SCAN_PATTERNS,
+  DEFAULT_MAX_BINARY_SIZE_BYTES,
+  DEFAULT_GRACE_PERIOD_DAYS,
+} from "@remnic/core";
+import type {
+  BinaryLifecycleConfig,
 } from "@remnic/core";
 import {
   runBenchSuite,
@@ -111,6 +121,7 @@ type CommandName =
   | "space"
   | "benchmark"
   | "briefing"
+  | "binary"
   | "openclaw";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
@@ -1827,6 +1838,141 @@ async function promptYesNo(question: string, defaultYes = true): Promise<boolean
   });
 }
 
+// ── Binary lifecycle CLI ─────────────────────────────────────────────────────
+
+async function cmdBinary(rest: string[]): Promise<void> {
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+  const memoryDir = resolveMemoryDir();
+
+  // Build the BinaryLifecycleConfig from PluginConfig values.
+  const blConfig: BinaryLifecycleConfig = {
+    enabled: config.binaryLifecycleEnabled,
+    gracePeriodDays: config.binaryLifecycleGracePeriodDays,
+    maxBinarySizeBytes: DEFAULT_MAX_BINARY_SIZE_BYTES,
+    scanPatterns: DEFAULT_SCAN_PATTERNS,
+    backend: {
+      type: config.binaryLifecycleBackendType,
+      basePath: config.binaryLifecycleBackendPath || undefined,
+    },
+  };
+
+  const action = rest[0] ?? "help";
+
+  switch (action) {
+    case "scan": {
+      const manifest = await readManifest(memoryDir);
+      // Inline import to avoid pulling scanner into every CLI load
+      const { scanForBinaries } = await import("@remnic/core");
+      const found = await scanForBinaries(memoryDir, blConfig, manifest);
+      if (found.length === 0) {
+        console.log("No untracked binary files found.");
+      } else {
+        console.log(`Found ${found.length} untracked binary file(s):`);
+        for (const p of found) {
+          console.log(`  ${p}`);
+        }
+      }
+      break;
+    }
+
+    case "status": {
+      const manifest = await readManifest(memoryDir);
+      const counts = {
+        total: manifest.assets.length,
+        pending: manifest.assets.filter((a) => a.status === "pending").length,
+        mirrored: manifest.assets.filter((a) => a.status === "mirrored").length,
+        redirected: manifest.assets.filter((a) => a.status === "redirected").length,
+        cleaned: manifest.assets.filter((a) => a.status === "cleaned").length,
+        error: manifest.assets.filter((a) => a.status === "error").length,
+      };
+      const totalBytes = manifest.assets.reduce((sum, a) => sum + a.sizeBytes, 0);
+      console.log(`Binary lifecycle manifest (${memoryDir}):`);
+      console.log(`  Total assets:  ${counts.total}`);
+      console.log(`  Pending:       ${counts.pending}`);
+      console.log(`  Mirrored:      ${counts.mirrored}`);
+      console.log(`  Redirected:    ${counts.redirected}`);
+      console.log(`  Cleaned:       ${counts.cleaned}`);
+      console.log(`  Errors:        ${counts.error}`);
+      console.log(`  Total size:    ${(totalBytes / 1024).toFixed(1)} KB`);
+      if (manifest.lastScanAt) {
+        console.log(`  Last scan:     ${manifest.lastScanAt}`);
+      }
+      break;
+    }
+
+    case "run": {
+      const dryRun = rest.includes("--dry-run");
+      const backend = createBackend(blConfig.backend);
+      const log = {
+        info: (msg: string) => console.log(msg),
+        warn: (msg: string) => console.warn(msg),
+        error: (msg: string) => console.error(msg),
+      };
+      const result = await runBinaryLifecyclePipeline(
+        memoryDir,
+        blConfig,
+        backend,
+        log,
+        { dryRun },
+      );
+      console.log(
+        `\nPipeline complete${dryRun ? " (dry-run)" : ""}:` +
+          ` scanned=${result.scanned}, mirrored=${result.mirrored},` +
+          ` redirected=${result.redirected}, cleaned=${result.cleaned}`,
+      );
+      if (result.errors.length > 0) {
+        console.error(`Errors (${result.errors.length}):`);
+        for (const e of result.errors) console.error(`  ${e}`);
+      }
+      break;
+    }
+
+    case "clean": {
+      const force = rest.includes("--force");
+      if (!force) {
+        console.error("Use --force to confirm cleanup of local binary copies.");
+        process.exit(1);
+      }
+      const backend = createBackend(blConfig.backend);
+      const log = {
+        info: (msg: string) => console.log(msg),
+        warn: (msg: string) => console.warn(msg),
+        error: (msg: string) => console.error(msg),
+      };
+      const result = await runBinaryLifecyclePipeline(
+        memoryDir,
+        blConfig,
+        backend,
+        log,
+        { forceClean: true },
+      );
+      console.log(
+        `\nClean complete: cleaned=${result.cleaned}`,
+      );
+      if (result.errors.length > 0) {
+        console.error(`Errors (${result.errors.length}):`);
+        for (const e of result.errors) console.error(`  ${e}`);
+      }
+      break;
+    }
+
+    default:
+      console.log(`Usage: remnic binary <scan|status|run|clean>
+
+  scan               Scan for untracked binary files
+  status             Show binary lifecycle manifest summary
+  run [--dry-run]    Run full binary lifecycle pipeline
+  clean --force      Force-clean local copies past grace period`);
+      break;
+  }
+}
+
 async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   const configPath = resolveOpenclawConfigPath(opts.configPath);
   const fallbackMemoryDir = path.join(resolveHomeDir(), ".openclaw", "workspace", "memory", "local");
@@ -2320,6 +2466,11 @@ Options:
       break;
     }
 
+    case "binary": {
+      await cmdBinary(rest);
+      break;
+    }
+
     case "openclaw": {
       const subAction = rest[0] ?? "help";
       if (subAction === "install") {
@@ -2379,6 +2530,10 @@ Usage:
     Focus: person:<name>, project:<name>, topic:<name>.
   remnic versions <list|show|diff|revert> <page-path> [id] [--json]
     Page-level versioning: list, show, diff, or revert page snapshots.
+  remnic binary scan               Scan for untracked binary files
+  remnic binary status             Show binary lifecycle manifest summary
+  remnic binary run [--dry-run]    Run full binary lifecycle pipeline
+  remnic binary clean --force      Force-clean binaries past grace period
 
 Options:
   --json    Output in JSON format

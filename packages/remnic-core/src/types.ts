@@ -926,6 +926,16 @@ export interface PluginConfig {
   versioningMaxPerPage: number;
   /** Name of the sidecar directory inside memoryDir. Default ".versions". */
   versioningSidecarDir: string;
+
+  // Binary file lifecycle management (#367)
+  /** Enable binary file lifecycle management (mirror, redirect, clean). Default: false. */
+  binaryLifecycleEnabled: boolean;
+  /** Grace period in days before a mirrored binary is eligible for local cleanup. Default: 7. */
+  binaryLifecycleGracePeriodDays: number;
+  /** Storage backend type: "filesystem" copies to a local dir, "none" is no-op. Default: "none". */
+  binaryLifecycleBackendType: "filesystem" | "s3" | "none";
+  /** Base path for the filesystem backend. Required when backendType is "filesystem". */
+  binaryLifecycleBackendPath: string;
 }
 
 /** Runtime configuration for the daily context briefing feature. */

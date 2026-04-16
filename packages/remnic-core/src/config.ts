@@ -1955,6 +1955,25 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.versioningSidecarDir === "string" && cfg.versioningSidecarDir.trim().length > 0
         ? cfg.versioningSidecarDir.trim()
         : ".versions",
+
+    // Binary file lifecycle management (#367)
+    binaryLifecycleEnabled: cfg.binaryLifecycleEnabled === true,
+    binaryLifecycleGracePeriodDays:
+      typeof cfg.binaryLifecycleGracePeriodDays === "number"
+        ? Math.max(0, Math.floor(cfg.binaryLifecycleGracePeriodDays))
+        : 7,
+    binaryLifecycleBackendType: (() => {
+      const valid = ["filesystem", "s3", "none"] as const;
+      const raw = cfg.binaryLifecycleBackendType;
+      if (typeof raw === "string" && (valid as readonly string[]).includes(raw)) {
+        return raw as "filesystem" | "s3" | "none";
+      }
+      return "none" as const;
+    })(),
+    binaryLifecycleBackendPath:
+      typeof cfg.binaryLifecycleBackendPath === "string"
+        ? cfg.binaryLifecycleBackendPath.trim()
+        : "",
   };
 }
 
