@@ -11,6 +11,7 @@ import type {
   RecallPipelineConfig,
   RecallSectionConfig,
   ReasoningEffort,
+  SemanticChunkingConfigShape,
   SessionObserverBandConfig,
   SlotBehaviorConfig,
   SlotMismatchMode,
@@ -96,6 +97,28 @@ function normalizeMemoryRelativeDir(raw: unknown, fallback: string): string {
     .filter((segment) => segment.length > 0 && segment !== "." && segment !== "..")
     .join("/");
   return normalized.length > 0 ? normalized : fallback;
+}
+
+/**
+ * Parse and validate the semanticChunkingConfig sub-object.
+ * Returns only recognized numeric/boolean fields with their correct types.
+ */
+function parseSemanticChunkingConfig(
+  raw: unknown,
+): Partial<SemanticChunkingConfigShape> {
+  if (!raw || typeof raw !== "object") return {};
+  const src = raw as Record<string, unknown>;
+  const out: Partial<SemanticChunkingConfigShape> = {};
+
+  if (typeof src.targetTokens === "number") out.targetTokens = src.targetTokens;
+  if (typeof src.minTokens === "number") out.minTokens = src.minTokens;
+  if (typeof src.maxTokens === "number") out.maxTokens = src.maxTokens;
+  if (typeof src.smoothingWindowSize === "number") out.smoothingWindowSize = src.smoothingWindowSize;
+  if (typeof src.boundaryThresholdStdDevs === "number") out.boundaryThresholdStdDevs = src.boundaryThresholdStdDevs;
+  if (typeof src.embeddingBatchSize === "number") out.embeddingBatchSize = src.embeddingBatchSize;
+  if (typeof src.fallbackToRecursive === "boolean") out.fallbackToRecursive = src.fallbackToRecursive;
+
+  return out;
 }
 
 const VALID_EFFORTS: ReasoningEffort[] = ["none", "low", "medium", "high"];
@@ -801,6 +824,9 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.chunkingMinTokens === "number" ? cfg.chunkingMinTokens : 150,
     chunkingOverlapSentences:
       typeof cfg.chunkingOverlapSentences === "number" ? cfg.chunkingOverlapSentences : 2,
+    // Semantic Chunking (Issue #368)
+    semanticChunkingEnabled: cfg.semanticChunkingEnabled === true,
+    semanticChunkingConfig: parseSemanticChunkingConfig(cfg.semanticChunkingConfig),
     // Contradiction Detection (Phase 2B)
     contradictionDetectionEnabled: cfg.contradictionDetectionEnabled === true, // Off by default initially
     contradictionSimilarityThreshold:
