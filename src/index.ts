@@ -60,6 +60,7 @@ import { appendRecallAuditEntry, pruneRecallAuditEntries } from "../packages/rem
 import { createActiveRecallEngine } from "../packages/remnic-core/src/active-recall.js";
 import {
   buildTurnFingerprint,
+  CODEX_THREAD_KEY_PREFIX,
   codexLogicalSessionKey,
   resolveCodexSessionIdentity,
 } from "../packages/remnic-core/src/codex-compat.js";
@@ -907,14 +908,19 @@ const pluginDefinition = {
     function clearCodexCompatCaches(
       sessionKey: string,
       providerThreadId?: string | null,
-      options?: { preserveThreadBinding?: boolean },
+      options?: {
+        preserveMessageCount?: boolean;
+        preserveThreadBinding?: boolean;
+      },
     ): void {
       cachedMemoryBySession.delete(sessionKey);
       const resolvedThreadId =
         providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
       if (resolvedThreadId) {
         cachedMemoryByCodexThread.delete(resolvedThreadId);
-        codexMessageCountByThread.delete(resolvedThreadId);
+        if (options?.preserveMessageCount !== true) {
+          codexMessageCountByThread.delete(resolvedThreadId);
+        }
       }
       if (options?.preserveThreadBinding !== true) {
         codexThreadBySession.delete(sessionKey);
@@ -1033,7 +1039,7 @@ const pluginDefinition = {
     ): string {
       if (
         !cfg.namespacesEnabled ||
-        !logicalSessionKey.startsWith("codex-thread:")
+        !logicalSessionKey.startsWith(CODEX_THREAD_KEY_PREFIX)
       ) {
         return logicalSessionKey;
       }
@@ -2232,7 +2238,10 @@ const pluginDefinition = {
         const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
 
         try {
-          clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId);
+          clearCodexCompatCaches(sessionKey, sessionIdentity.providerThreadId, {
+            preserveMessageCount: true,
+            preserveThreadBinding: true,
+          });
           // LCM: record compaction with real token counts and verify coverage
           // (runs regardless of reset setting — LCM needs compaction metrics)
           if (orchestrator.lcmEngine?.enabled) {

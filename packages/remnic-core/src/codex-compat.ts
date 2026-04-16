@@ -75,7 +75,7 @@ export function codexLogicalSessionKey(providerThreadId: string): string {
   return `${CODEX_THREAD_KEY_PREFIX}${providerThreadId}`;
 }
 
-export function extractProviderMessageCount(
+function extractProviderMessageCount(
   source: Record<string, unknown> | undefined,
 ): number | null {
   if (!source || typeof source !== "object") return null;

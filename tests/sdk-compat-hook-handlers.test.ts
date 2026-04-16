@@ -1991,6 +1991,89 @@ test("before_compaction still runs the independent LCM pre-compaction flush when
   assert.equal(preCompactionFlushCalls, 1);
 });
 
+test("after_compaction preserves the Codex heuristic baseline when the signal flush fails", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("after-compaction-codex-heuristic-baseline-test");
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "auto",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeCompaction = api.handlers.get("before_compaction");
+  const afterCompaction = api.handlers.get("after_compaction");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeCompaction, "before_compaction handler should be registered");
+  assert.ok(afterCompaction, "after_compaction handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.checkpointEnabled = false;
+  orchestrator.config.compactionResetEnabled = false;
+  orchestrator.lcmEngine = { enabled: false };
+
+  const flushCalls: Array<Record<string, unknown>> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+    if (options?.reason === "codex_compaction_signal") {
+      throw new Error("signal flush failed");
+    }
+  };
+
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 10 },
+    {
+      sessionKey: "session-auto-baseline-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-auto-baseline-1",
+    },
+  );
+  await beforeCompaction(
+    { sessionKey: "session-auto-baseline-a" },
+    {
+      sessionKey: "session-auto-baseline-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-auto-baseline-1",
+    },
+  );
+  await afterCompaction({ sessionKey: "session-auto-baseline-a" }, {});
+  await beforePromptBuild(
+    { prompt: "What changed in this Codex thread?", messageCount: 4 },
+    {
+      sessionKey: "session-auto-baseline-a",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-auto-baseline-1",
+    },
+  );
+
+  assert.equal(flushCalls.length, 2);
+  assert.equal(flushCalls[0]?.sessionKey, "session-auto-baseline-a");
+  assert.equal(
+    (flushCalls[0]?.options as { reason?: string }).reason,
+    "codex_compaction_signal",
+  );
+  assert.equal(flushCalls[1]?.sessionKey, "session-auto-baseline-a");
+  assert.equal(
+    (flushCalls[1]?.options as { reason?: string }).reason,
+    "codex_compaction_heuristic",
+  );
+  assert.ok(
+    String(
+      (flushCalls[1]?.options as { bufferKey?: string }).bufferKey ?? "",
+    ).startsWith("codex-thread:thread-auto-baseline-1"),
+    "after_compaction should preserve the Codex thread baseline for heuristic fallback",
+  );
+});
+
 test("before_prompt_build uses the Codex heuristic fallback when thread history shrinks", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-prompt-build-codex-heuristic-test");
