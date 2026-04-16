@@ -2434,6 +2434,7 @@ test("before_prompt_build keeps a shared Codex thread baseline when another sess
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-prompt-build-codex-shared-unbind-test");
   api.pluginConfig = {
+    namespacesEnabled: false,
     codexCompat: {
       enabled: true,
       threadIdBufferKeying: true,
@@ -2498,7 +2499,7 @@ test("before_prompt_build keeps a shared Codex thread baseline when another sess
   );
   assert.equal(
     (flushCalls[0]?.options as { bufferKey?: string }).bufferKey,
-    "codex-thread:thread-shared-unbind-1::principal:default",
+    "codex-thread:thread-shared-unbind-1",
   );
 });
 
