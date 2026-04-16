@@ -3131,7 +3131,7 @@ test("before_reset flushes metadata-less follow-up turns under the raw session k
       {
         sessionKey: "session-reset-metadata-less",
         reason: "codex_metadata_loss",
-        bufferKey: "codex-thread:thread-reset-metadata-less",
+        bufferKey: "codex-thread:thread-reset-metadata-less::principal:default",
       },
       {
         sessionKey: "session-reset-metadata-less",
@@ -3300,6 +3300,24 @@ test("agent_end preserves the remembered Codex thread when the provider-switch f
     processTurnCalls.push({ role, content, sessionKey, options });
   };
 
+  const rawBufferedTurns: Array<Record<string, unknown>> = [];
+  const originalGetTurns = orchestrator.buffer.getTurns.bind(orchestrator.buffer);
+  orchestrator.buffer.getTurns = (bufferKey: string) => {
+    if (bufferKey === "session-provider-switch-flush-failure") {
+      return rawBufferedTurns;
+    }
+    return originalGetTurns(bufferKey);
+  };
+  orchestrator.processTurn = async (
+    role: string,
+    content: string,
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    processTurnCalls.push({ role, content, sessionKey, options });
+    rawBufferedTurns.push({ role, content, sessionKey, options });
+  };
+
   await beforePromptBuild(
     { prompt: "Prime this Codex session with a remembered thread before the flush fails." },
     {
@@ -3352,6 +3370,11 @@ test("agent_end preserves the remembered Codex thread when the provider-switch f
         reason: "before_reset",
         bufferKey:
           "codex-thread:thread-provider-switch-flush-failure::principal:default",
+      },
+      {
+        sessionKey: "session-provider-switch-flush-failure",
+        reason: "before_reset",
+        bufferKey: "session-provider-switch-flush-failure",
       },
     ],
   );

@@ -66,7 +66,6 @@ import {
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
-import { CODEX_THREAD_KEY_PREFIX } from "./codex-thread-key.js";
 import {
   applyTemporalSupersession,
   normalizeSupersessionKey,
@@ -7885,6 +7884,7 @@ export class Orchestrator {
       bufferKey?: string;
       providerThreadId?: string | null;
       turnFingerprint?: string;
+      persistProcessedFingerprint?: boolean;
     } = {},
   ): Promise<void> {
     if (role !== "user" && role !== "assistant") {
@@ -7912,6 +7912,7 @@ export class Orchestrator {
       logicalSessionKey: bufferKey,
       providerThreadId: options.providerThreadId ?? null,
       turnFingerprint: options.turnFingerprint,
+      persistProcessedFingerprint: options.persistProcessedFingerprint === true,
     };
 
     const decision = await this.buffer.addTurn(bufferKey, turn);
@@ -8277,17 +8278,20 @@ export class Orchestrator {
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
     const storage = await this.storageRouter.storageFor(selfNamespace);
+    const shouldPersistProcessedFingerprint = normalizedTurns.some(
+      (turn) => turn.persistProcessedFingerprint === true,
+    );
     const extractionFingerprint = this.buildProcessedExtractionFingerprint(
       normalizedTurns,
       bufferKey,
     );
     if (
       extractionFingerprint &&
-      this.shouldApplyCodexFingerprintDedup(bufferKey) &&
+      shouldPersistProcessedFingerprint &&
       (await this.hasProcessedExtractionFingerprint(storage, extractionFingerprint))
     ) {
       log.debug(
-        `runExtraction: skipping already-processed Codex turn fingerprint for ${bufferKey}`,
+        `runExtraction: skipping already-processed extraction fingerprint for ${bufferKey}`,
       );
       await clearBuffer({ ignoreAbort: true });
       return;
@@ -8353,10 +8357,7 @@ export class Orchestrator {
       threadIdForExtraction,
       { sessionKey, principal },
     );
-    if (
-      extractionFingerprint &&
-      this.shouldApplyCodexFingerprintDedup(bufferKey)
-    ) {
+    if (extractionFingerprint && shouldPersistProcessedFingerprint) {
       try {
         await this.recordProcessedExtractionFingerprint(
           storage,
@@ -8445,14 +8446,6 @@ export class Orchestrator {
 
     this.requestQmdMaintenance();
     await this.runTierMigrationCycle(storage, "extraction");
-  }
-
-  private shouldApplyCodexFingerprintDedup(bufferKey: string): boolean {
-    return (
-      this.config.codexCompat.enabled === true &&
-      this.config.codexCompat.fingerprintDedup === true &&
-      bufferKey.startsWith(CODEX_THREAD_KEY_PREFIX)
-    );
   }
 
   private buildProcessedExtractionFingerprint(

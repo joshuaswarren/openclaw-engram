@@ -1072,6 +1072,7 @@ export interface BufferTurn {
   logicalSessionKey?: string;
   providerThreadId?: string | null;
   turnFingerprint?: string;
+  persistProcessedFingerprint?: boolean;
 }
 
 export interface BufferEntryState {

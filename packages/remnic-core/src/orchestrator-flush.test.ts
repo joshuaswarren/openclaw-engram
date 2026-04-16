@@ -210,7 +210,7 @@ test("flushSession honors an explicit bufferKey override", async () => {
   assert.equal(queuedBufferKey, "codex-thread:thread-11");
 });
 
-test("runExtraction skips Codex batches whose fingerprint already exists in storage meta", async () => {
+test("runExtraction skips batches whose persisted fingerprint already exists in storage meta", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;
   config.extractionMinUserTurns = 1;
@@ -239,11 +239,12 @@ test("runExtraction skips Codex batches whose fingerprint already exists in stor
               [
                 {
                   ...makeTurn("session-c", "remember delta"),
-                  logicalSessionKey: "codex-thread:thread-12",
+                  logicalSessionKey: "logical-thread:thread-12",
                   turnFingerprint: "fp-thread-12",
+                  persistProcessedFingerprint: true,
                 },
               ],
-              "codex-thread:thread-12",
+              "logical-thread:thread-12",
             ),
             observedAt: "2026-04-15T00:00:00.000Z",
           },
@@ -263,12 +264,13 @@ test("runExtraction skips Codex batches whose fingerprint already exists in stor
     [
       {
         ...makeTurn("session-c", "remember delta"),
-        logicalSessionKey: "codex-thread:thread-12",
+        logicalSessionKey: "logical-thread:thread-12",
         turnFingerprint: "fp-thread-12",
+        persistProcessedFingerprint: true,
       },
     ],
     {
-      bufferKey: "codex-thread:thread-12",
+      bufferKey: "logical-thread:thread-12",
     },
   );
 
@@ -276,13 +278,10 @@ test("runExtraction skips Codex batches whose fingerprint already exists in stor
   assert.equal(clearCalls, 1);
 });
 
-test("runExtraction still clears the Codex buffer when fingerprint persistence fails after durable writes", async () => {
+test("runExtraction still clears the buffer when fingerprint persistence fails after durable writes", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;
   config.extractionMinUserTurns = 1;
-  config.codexCompat.enabled = true;
-  config.codexCompat.fingerprintDedup = true;
-
   let clearCalls = 0;
   let persistCalls = 0;
   let fingerprintWrites = 0;
@@ -337,12 +336,13 @@ test("runExtraction still clears the Codex buffer when fingerprint persistence f
     [
       {
         ...makeTurn("session-d", "remember epsilon"),
-        logicalSessionKey: "codex-thread:thread-13",
+        logicalSessionKey: "logical-thread:thread-13",
         turnFingerprint: "fp-thread-13",
+        persistProcessedFingerprint: true,
       },
     ],
     {
-      bufferKey: "codex-thread:thread-13",
+      bufferKey: "logical-thread:thread-13",
     },
   );
 

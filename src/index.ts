@@ -1249,6 +1249,40 @@ const pluginDefinition = {
       }
     }
 
+    function hasBufferedTurns(bufferKey: string): boolean {
+      try {
+        if (typeof (orchestrator as any).buffer?.getTurns !== "function") {
+          return false;
+        }
+        return ((orchestrator as any).buffer.getTurns(bufferKey) as unknown[]).length > 0;
+      } catch {
+        return false;
+      }
+    }
+
+    function resolveBeforeResetBufferKeys(
+      sessionKey: string,
+      sessionIdentity: {
+        providerThreadId?: string | null;
+        logicalSessionKey: string;
+      },
+    ): string[] {
+      const rememberedThreadId =
+        sessionIdentity.providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+      const primaryBufferKey = resolveExtractionBufferKey(
+        sessionKey,
+        rememberedThreadId && cfg.codexCompat.threadIdBufferKeying !== false
+          ? codexLogicalSessionKey(rememberedThreadId)
+          : sessionIdentity.logicalSessionKey,
+      );
+      const rawBufferKey = sessionKey;
+      const bufferKeys = [primaryBufferKey];
+      if (rawBufferKey !== primaryBufferKey && hasBufferedTurns(rawBufferKey)) {
+        bufferKeys.push(rawBufferKey);
+      }
+      return Array.from(new Set(bufferKeys));
+    }
+
     function resolveExtractionBufferKey(
       sessionKey: string,
       logicalSessionKey: string,
@@ -2301,6 +2335,12 @@ const pluginDefinition = {
                   messageCount: sessionIdentity.messageCount,
                   turnIndex: persistedTurnIndex,
                 }),
+                persistProcessedFingerprint:
+                  sessionIdentity.isCodex &&
+                  cfg.codexCompat.enabled === true &&
+                  cfg.codexCompat.fingerprintDedup === true &&
+                  cfg.codexCompat.threadIdBufferKeying !== false &&
+                  !!sessionIdentity.providerThreadId,
               });
               persistedTurnIndex += 1;
             }
@@ -2592,8 +2632,10 @@ const pluginDefinition = {
             "default";
           const sessionIdentity = resolveSessionIdentity(sessionKey, event, ctx);
           await flushAndForgetCodexThreadOnProviderSwitch(sessionKey, sessionIdentity);
-          const rememberedThreadId =
-            sessionIdentity.providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+          const bufferKeys = resolveBeforeResetBufferKeys(
+            sessionKey,
+            sessionIdentity,
+          );
           const flushEnabled =
             cfg.flushOnResetEnabled &&
             typeof (orchestrator as any).flushSession === "function";
@@ -2601,23 +2643,24 @@ const pluginDefinition = {
           let flushTimedOut = false;
           let timeoutId: ReturnType<typeof setTimeout> | undefined;
           const flushPromise = flushEnabled
-            ? Promise.resolve(
-                (orchestrator as any).flushSession(sessionKey, {
-                  reason: "before_reset",
-                  bufferKey: resolveExtractionBufferKey(
-                    sessionKey,
-                    rememberedThreadId &&
-                      cfg.codexCompat.threadIdBufferKeying !== false
-                      ? codexLogicalSessionKey(rememberedThreadId)
-                      : sessionIdentity.logicalSessionKey,
-                  ),
-                  abortSignal: flushAbort.signal,
-                }),
-              ).catch((error) => {
-                if (!flushAbort.signal.aborted) {
-                  log.warn(`before_reset flush failed: ${String(error)}`);
+            ? (async () => {
+                for (const bufferKey of bufferKeys) {
+                  if (flushAbort.signal.aborted) break;
+                  await Promise.resolve(
+                    (orchestrator as any).flushSession(sessionKey, {
+                      reason: "before_reset",
+                      bufferKey,
+                      abortSignal: flushAbort.signal,
+                    }),
+                  ).catch((error) => {
+                    if (!flushAbort.signal.aborted) {
+                      log.warn(
+                        `before_reset flush failed for ${bufferKey}: ${String(error)}`,
+                      );
+                    }
+                  });
                 }
-              })
+              })()
             : Promise.resolve();
           const boundedFlush = flushEnabled
             ? Promise.race([
