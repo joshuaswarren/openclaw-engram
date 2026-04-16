@@ -9,6 +9,57 @@ Reference patterns:
 
 PR #11 showed a repeated pattern: fixing one review comment introduced or exposed adjacent regressions. This playbook defines a reusable pre-push gate so changes land cleanly with fewer follow-up commits.
 
+## Why PRs Need Many Review Rounds
+
+This usually happens when a stateful subsystem is patched locally instead of
+being hardened as a system.
+
+Typical examples in this repo:
+
+- session identity and provider detection
+- sparse metadata fallback
+- remembered thread/binding reuse
+- provider rebinding
+- compaction-triggered flushes
+- `before_reset` and `session_end`
+- cache rebuild and replay/dedupe behavior
+
+What reviewers are actually doing:
+
+1. One review comment exposes the first broken invariant.
+2. A follow-up review probes the adjacent path that shares the same state.
+3. Another follow-up finds the next uncovered edge.
+
+That is not random reviewer churn. It is evidence that the full state machine
+was not modeled before the first fix was pushed.
+
+## First-Pass Hardening Workflow
+
+Use this workflow before requesting another review on any stateful change.
+
+1. Enumerate the owned entrypoints.
+   - Example: recall hook, compaction hook, `before_reset`, `session_end`,
+     direct flush, restart/load path.
+2. Write the scenario matrix.
+   - explicit provider identity
+   - sparse metadata with remembered binding
+   - sparse metadata without remembered binding
+   - provider rebinding
+   - restart recovery
+   - dedupe/replay path
+3. Define the invariants per scenario.
+   - which buffer key is selected
+   - which cache/binding is trusted
+   - which flush targets must drain
+   - which fallback paths are allowed
+4. Fix the subsystem once, not the individual comment.
+5. Add tests for the entire failure class.
+6. Run the hardening gate.
+7. Only then request AI review again.
+
+If you are answering review comments with serial micro-pushes, you are almost
+certainly paying for missing matrix coverage.
+
 ## Higher-Level Principles (Generalizable)
 
 These apply to any subsystem.
