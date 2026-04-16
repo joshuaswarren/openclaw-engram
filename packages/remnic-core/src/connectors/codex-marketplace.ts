@@ -1,5 +1,5 @@
 /**
- * codex/marketplace.ts — Codex marketplace installation support (#418)
+ * codex-marketplace.ts — Codex marketplace installation support (#418)
  *
  * Provides types and functions for integrating Remnic with the Codex CLI
  * marketplace system (`codex marketplace add`). This module handles:
@@ -20,8 +20,8 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
-import { log } from "../../logger.js";
-import type { PluginConfig } from "../../types.js";
+import { log } from "../logger.js";
+import type { PluginConfig } from "../types.js";
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -458,11 +458,11 @@ async function resolveGit(
  */
 function readPackageVersion(): string | undefined {
   // Walk up from this file to find the workspace root package.json
-  // This module lives at packages/remnic-core/src/connectors/codex/marketplace.ts
-  // so workspace root is 5 levels up.
+  // This module lives at packages/remnic-core/src/connectors/codex-marketplace.ts
+  // so workspace root is 4 levels up.
   const candidates = [
+    path.resolve(import.meta.dirname ?? ".", "../../../.."),
     path.resolve(import.meta.dirname ?? ".", "../../../../.."),
-    path.resolve(import.meta.dirname ?? ".", "../../../../../.."),
     path.resolve(import.meta.dirname ?? ".", ".."),
   ];
 

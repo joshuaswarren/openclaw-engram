@@ -1235,7 +1235,18 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     }
   } else if (action === "marketplace") {
     const subAction = nonFlagArgs[0];
-    await cmdConnectorsMarketplace(subAction, strippedRest, json);
+    // Strip the subAction token so downstream positional parsing picks up the
+    // real argument (e.g. the install source or validate path), not the
+    // subcommand name itself.  Only the first occurrence is removed.
+    let subActionRemoved = false;
+    const marketplaceRest = strippedRest.filter((a) => {
+      if (!subActionRemoved && a === subAction) {
+        subActionRemoved = true;
+        return false;
+      }
+      return true;
+    });
+    await cmdConnectorsMarketplace(subAction, marketplaceRest, json);
   } else {
     console.log("Usage: remnic connectors <list|install|remove|doctor|marketplace> [id]");
     process.exit(1);
@@ -1336,7 +1347,7 @@ async function cmdConnectorsMarketplace(
   validate [path]                      Validate a marketplace.json file
   install <source> [--type <type>]     Install from marketplace source
                                        Types: github, git, local, url (default: github)`);
-    if (!subAction) process.exit(1);
+    process.exit(1);
   }
 }
 

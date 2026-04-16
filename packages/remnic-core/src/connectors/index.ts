@@ -55,7 +55,7 @@ export {
   type MarketplaceInstallResult,
   type MarketplaceValidation,
   type MarketplaceLogger,
-} from "./codex/marketplace.js";
+} from "./codex-marketplace.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

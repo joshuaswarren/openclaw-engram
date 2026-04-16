@@ -12,7 +12,7 @@ import {
   installFromMarketplace,
   MARKETPLACE_SCHEMA_VERSION,
   MARKETPLACE_MANIFEST_FILENAME,
-} from "../packages/remnic-core/src/connectors/codex/marketplace.js";
+} from "../packages/remnic-core/src/connectors/codex-marketplace.js";
 import { parseConfig } from "../packages/remnic-core/src/config.js";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
