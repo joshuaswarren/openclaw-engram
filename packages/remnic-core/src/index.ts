@@ -58,6 +58,20 @@ export { StorageManager } from "./storage.js";
 export { ExtractionEngine } from "./extraction.js";
 
 // ---------------------------------------------------------------------------
+// Extraction Judge (issue #376)
+// ---------------------------------------------------------------------------
+
+export {
+  judgeFactDurability,
+  clearVerdictCache,
+  verdictCacheSize,
+  createVerdictCache,
+  type JudgeCandidate,
+  type JudgeVerdict,
+  type JudgeBatchResult,
+} from "./extraction-judge.js";
+
+// ---------------------------------------------------------------------------
 // Inline source attribution (issue #369)
 // ---------------------------------------------------------------------------
 

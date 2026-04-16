@@ -2009,6 +2009,27 @@
         "default": "low",
         "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
       },
+      "extractionJudgeEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the LLM-as-judge fact-worthiness gate. When enabled, extracted facts are evaluated for durability before being persisted. Off by default (opt-in)."
+      },
+      "extractionJudgeModel": {
+        "type": "string",
+        "default": "",
+        "description": "Model override for the extraction judge LLM. Empty string uses the configured local model."
+      },
+      "extractionJudgeBatchSize": {
+        "type": "number",
+        "default": 20,
+        "minimum": 1,
+        "description": "Maximum number of candidate facts sent to the judge LLM in a single batch call."
+      },
+      "extractionJudgeShadow": {
+        "type": "boolean",
+        "default": false,
+        "description": "Shadow mode for the extraction judge. When true, judge verdicts are logged but all facts are still persisted regardless of the verdict."
+      },
       "inlineSourceAttributionEnabled": {
         "type": "boolean",
         "default": false,
