@@ -103,6 +103,8 @@ import {
   appendAuditEntry,
   readAuditLog,
   defaultEnrichmentPipelineConfig,
+  discoverMemoryExtensions,
+  resolveExtensionsRoot,
 } from "@remnic/core";
 import type {
   BinaryLifecycleConfig,
@@ -147,7 +149,8 @@ type CommandName =
   | "binary"
   | "taxonomy"
   | "enrich"
-  | "openclaw";
+  | "openclaw"
+  | "extensions";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
@@ -794,6 +797,107 @@ async function cmdEnrich(rest: string[]): Promise<void> {
   }
   if (totalPersisted > 0) {
     console.log(`\n  ${totalPersisted} candidate(s) persisted to memory store.`);
+  }
+}
+
+async function cmdExtensions(action: string, rest: string[]): Promise<void> {
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+
+  const root = resolveExtensionsRoot(config);
+  const noopLog = { warn: () => {}, debug: () => {} };
+  const warnLog = {
+    warn: (msg: string) => console.warn(msg),
+    debug: () => {},
+  };
+
+  switch (action) {
+    case "list": {
+      const extensions = await discoverMemoryExtensions(root, noopLog);
+      if (extensions.length === 0) {
+        console.log("No memory extensions found.");
+        console.log(`  Scanned: ${root}`);
+        return;
+      }
+      console.log(`Memory extensions (${extensions.length}):`);
+      for (const ext of extensions) {
+        const schemaInfo = ext.schema?.version ? ` v${ext.schema.version}` : "";
+        const types = ext.schema?.memoryTypes?.join(", ") ?? "any";
+        console.log(`  ${ext.name}${schemaInfo}  (types: ${types})`);
+      }
+      console.log(`\nRoot: ${root}`);
+      break;
+    }
+
+    case "show": {
+      const name = rest[0];
+      if (!name) {
+        console.error("Usage: remnic extensions show <name>");
+        process.exitCode = 1;
+        return;
+      }
+      const extensions = await discoverMemoryExtensions(root, noopLog);
+      const ext = extensions.find((e) => e.name === name);
+      if (!ext) {
+        console.error(`Extension "${name}" not found in ${root}`);
+        process.exitCode = 1;
+        return;
+      }
+      console.log(ext.instructions);
+      break;
+    }
+
+    case "validate": {
+      const extensions = await discoverMemoryExtensions(root, warnLog);
+      // Re-scan to detect skipped entries
+      let entries: string[] = [];
+      try {
+        entries = fs.readdirSync(root);
+      } catch {
+        console.log(`Extensions root does not exist: ${root}`);
+        process.exitCode = 0;
+        return;
+      }
+      const validNames = new Set(extensions.map((e) => e.name));
+      let errors = 0;
+      for (const entry of entries) {
+        const entryPath = path.join(root, entry);
+        try {
+          if (!fs.statSync(entryPath).isDirectory()) continue;
+        } catch {
+          continue;
+        }
+        if (!validNames.has(entry)) {
+          errors++;
+        }
+      }
+      console.log(`Validated: ${extensions.length} valid, ${errors} skipped`);
+      if (errors > 0) {
+        process.exitCode = 1;
+      }
+      break;
+    }
+
+    case "reload": {
+      // No-op stub reserved for future caching
+      console.log("Extension cache reloaded (no-op: caching not yet implemented).");
+      break;
+    }
+
+    default:
+      console.log(`Usage: remnic extensions <list|show|validate|reload>
+
+  list                 List discovered extensions
+  show <name>          Print instructions.md content
+  validate             Validate all extensions, exit non-zero on errors
+  reload               Reserved for future caching (no-op)
+`);
+      break;
   }
 }
 
@@ -2056,7 +2160,7 @@ function isServiceRunning(): { running: boolean; pid?: number } {
   return { running: false };
 }
 
-function daemonStatus(): void {
+async function daemonStatus(): Promise<void> {
   const { running, pid } = isServiceRunning();
   const port = inferPort();
   const serviceInstalled = isMacOS()
@@ -2072,6 +2176,27 @@ function daemonStatus(): void {
   console.log(`  Platform:  ${process.platform}`);
   console.log(`  PID file:  ${fs.existsSync(PID_FILE) ? PID_FILE : LEGACY_PID_FILE}`);
   console.log(`  Log file:  ${fs.existsSync(LOG_FILE) ? LOG_FILE : LEGACY_LOG_FILE}`);
+
+  // Memory extensions status (#382)
+  try {
+    const configPath = resolveConfigPath();
+    const raw = fs.existsSync(configPath)
+      ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+      : {};
+    const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+    const config = parseConfig(remnicCfg);
+    const extRoot = resolveExtensionsRoot(config);
+    const noopLog = { warn: () => {}, debug: () => {} };
+    const exts = await discoverMemoryExtensions(extRoot, noopLog);
+    if (exts.length > 0) {
+      const names = exts.map((e) => e.name).join(", ");
+      console.log(`  Memory extensions: ${exts.length} active (${names})`);
+    } else {
+      console.log(`  Memory extensions: none`);
+    }
+  } catch {
+    console.log(`  Memory extensions: unknown (config error)`);
+  }
 }
 
 function daemonStart(): void {
@@ -2904,7 +3029,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
           daemonUninstall();
           break;
         case "status":
-          daemonStatus();
+          await daemonStatus();
           break;
         default:
           console.log("Usage: remnic daemon <start|stop|restart|install|uninstall|status>");
@@ -3126,6 +3251,12 @@ Options:
       break;
     }
 
+    case "extensions": {
+      const action = rest[0] ?? "help";
+      await cmdExtensions(action, rest.slice(1));
+      break;
+    }
+
     case "openclaw": {
       const subAction = rest[0] ?? "help";
       if (subAction === "install") {
@@ -3180,6 +3311,7 @@ Usage:
     marketplace generate    Generate marketplace.json for Codex
     marketplace validate    Validate a marketplace.json file
     marketplace install     Install from a marketplace source
+  remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
   remnic benchmark <run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]

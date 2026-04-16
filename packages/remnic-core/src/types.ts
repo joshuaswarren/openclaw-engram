@@ -958,6 +958,15 @@ export interface PluginConfig {
   enrichmentAutoOnCreate: boolean;
   /** Max candidates accepted per entity per enrichment run. Default 20. */
   enrichmentMaxCandidatesPerEntity: number;
+
+  // Memory extensions discovery (#382)
+  /** Whether third-party memory extensions are discovered and injected into consolidation. Default true. */
+  memoryExtensionsEnabled: boolean;
+  /**
+   * Root directory for memory extensions. Empty string means derive from
+   * memoryDir: go up to the Remnic home dir and append memory_extensions.
+   */
+  memoryExtensionsRoot: string;
 }
 
 /** Runtime configuration for the daily context briefing feature. */

@@ -1992,6 +1992,13 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.enrichmentMaxCandidatesPerEntity === "number"
         ? Math.max(0, Math.floor(cfg.enrichmentMaxCandidatesPerEntity))
         : 20,
+
+    // Memory extensions discovery (#382)
+    memoryExtensionsEnabled: cfg.memoryExtensionsEnabled !== false,
+    memoryExtensionsRoot:
+      typeof cfg.memoryExtensionsRoot === "string" && cfg.memoryExtensionsRoot.trim().length > 0
+        ? cfg.memoryExtensionsRoot.trim()
+        : "",
   };
 }
 

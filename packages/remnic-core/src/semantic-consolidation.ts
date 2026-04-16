@@ -6,10 +6,13 @@
  * Reduces memory store bloat while preserving all unique information.
  */
 
+import path from "node:path";
 import type { MemoryFile, PluginConfig } from "./types.js";
 import { normalizeRecallTokens, countRecallTokenOverlap } from "./recall-tokenization.js";
 import { runPostConsolidationMaterialize } from "./connectors/codex-materialize-runner.js";
 import type { MaterializeResult, RolloutSummaryInput } from "./connectors/codex-materialize.js";
+import { discoverMemoryExtensions, renderExtensionsBlock } from "./memory-extension-host/index.js";
+import { log } from "./logger.js";
 
 export interface ConsolidationCluster {
   category: string;
@@ -139,6 +142,34 @@ Write ONLY the consolidated memory content (no metadata, no explanation, no prea
  */
 export function parseConsolidationResponse(response: string): string {
   return response.trim();
+}
+
+/**
+ * Resolve the memory extensions root directory from config.
+ * If memoryExtensionsRoot is empty, derive from memoryDir by going up to
+ * the Remnic home dir and appending memory_extensions.
+ */
+export function resolveExtensionsRoot(config: PluginConfig): string {
+  if (config.memoryExtensionsRoot.length > 0) {
+    return config.memoryExtensionsRoot;
+  }
+  // Default: memoryDir is typically ~/.openclaw/workspace/memory/local
+  // Go up to the parent that owns the memory tree and append memory_extensions
+  return path.join(path.dirname(config.memoryDir), "memory_extensions");
+}
+
+/**
+ * Discover extensions and build the block to append to a consolidation prompt.
+ * Returns "" when extensions are disabled or none are found.
+ */
+export async function buildExtensionsBlockForConsolidation(
+  config: PluginConfig,
+): Promise<string> {
+  if (!config.memoryExtensionsEnabled) return "";
+  const root = resolveExtensionsRoot(config);
+  const extensions = await discoverMemoryExtensions(root, log);
+  if (extensions.length === 0) return "";
+  return renderExtensionsBlock(extensions);
 }
 
 /**
