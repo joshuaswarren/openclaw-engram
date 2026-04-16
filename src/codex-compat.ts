@@ -84,8 +84,13 @@ function extractProviderMessageCount(
   if (typeof directCount === "number" && Number.isFinite(directCount)) {
     return directCount;
   }
-  if (Array.isArray(source.messages)) {
-    return source.messages.length;
+  const provider =
+    source.provider && typeof source.provider === "object"
+      ? (source.provider as Record<string, unknown>)
+      : undefined;
+  const nestedCount = provider?.messageCount;
+  if (typeof nestedCount === "number" && Number.isFinite(nestedCount)) {
+    return nestedCount;
   }
   return null;
 }

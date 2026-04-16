@@ -99,6 +99,26 @@ test("resolveCodexSessionIdentity collapses Codex sessions onto provider thread 
   assert.equal(identity.messageCount, 17);
 });
 
+test("resolveCodexSessionIdentity does not infer message count from hook message arrays", () => {
+  const cfg = parseConfig({});
+  const identity = resolveCodexSessionIdentity({
+    sessionKey: "session-c",
+    event: {
+      messages: [
+        { role: "user", content: "First message" },
+        { role: "assistant", content: "Second message" },
+      ],
+    },
+    ctx: {
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-43",
+    },
+    codexCompat: cfg.codexCompat,
+  });
+
+  assert.equal(identity.messageCount, null);
+});
+
 test("buildTurnFingerprint is stable for the same logical turn", () => {
   const left = buildTurnFingerprint({
     role: "assistant",

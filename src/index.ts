@@ -62,6 +62,7 @@ import {
   buildTurnFingerprint,
   CODEX_THREAD_KEY_PREFIX,
   codexLogicalSessionKey,
+  extractCodexThreadId,
   resolveCodexSessionIdentity,
 } from "./codex-compat.js";
 import { planRecallMode } from "../packages/remnic-core/src/intent.js";
@@ -1082,12 +1083,6 @@ const pluginDefinition = {
       if (typeof source.model === "string" && source.model.length > 0) {
         return true;
       }
-      if (
-        typeof source.providerThreadId === "string" &&
-        source.providerThreadId.length > 0
-      ) {
-        return true;
-      }
       if (typeof source.codexThreadId === "string" && source.codexThreadId.length > 0) {
         return true;
       }
@@ -1097,8 +1092,7 @@ const pluginDefinition = {
           (typeof provider.id === "string" && provider.id.length > 0) ||
           (typeof provider.name === "string" && provider.name.length > 0) ||
           (typeof provider.model === "string" && provider.model.length > 0) ||
-          (typeof provider.modelId === "string" && provider.modelId.length > 0) ||
-          (typeof provider.threadId === "string" && provider.threadId.length > 0)
+          (typeof provider.modelId === "string" && provider.modelId.length > 0)
         );
       }
       return false;
@@ -1151,24 +1145,32 @@ const pluginDefinition = {
       });
       const explicitProviderIdentity =
         hasExplicitProviderIdentity(event) || hasExplicitProviderIdentity(ctx);
+      const storedCodexThreadId = resolveStoredCodexThreadId(sessionKey);
+      const hintedThreadId =
+        extractCodexThreadId(ctx as Record<string, unknown>) ??
+        extractCodexThreadId(event as Record<string, unknown>);
       const previousCodexThreadId =
-        explicitProviderIdentity && !base.isCodex
-          ? resolveStoredCodexThreadId(sessionKey)
-          : null;
+        explicitProviderIdentity && !base.isCodex ? storedCodexThreadId : null;
       const previousCodexBufferKey = previousCodexThreadId
         ? resolveStoredCodexBufferKey(sessionKey) ??
           resolveCodexCompactionBaselineKey(sessionKey, previousCodexThreadId)
         : null;
       const rememberedThreadId =
         base.providerThreadId ??
-        (base.isCodex ? resolveStoredCodexThreadId(sessionKey) : null);
+        (base.isCodex
+          ? storedCodexThreadId
+          : !explicitProviderIdentity &&
+              hintedThreadId &&
+              storedCodexThreadId === hintedThreadId
+            ? storedCodexThreadId
+            : null);
       return {
         ...base,
         providerThreadId: rememberedThreadId,
         logicalSessionKey:
-          base.isCodex &&
           cfg.codexCompat.threadIdBufferKeying !== false &&
-          rememberedThreadId
+          rememberedThreadId &&
+          (base.isCodex || !explicitProviderIdentity)
             ? codexLogicalSessionKey(rememberedThreadId)
             : base.logicalSessionKey,
         previousCodexThreadId,

@@ -3377,6 +3377,97 @@ test("agent_end does not reuse a remembered Codex thread after the provider swit
   }
 });
 
+test("agent_end ignores bare providerThreadId as provider-switch evidence", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("agent-end-bare-provider-thread-id-test");
+  api.pluginConfig = {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const agentEnd = api.handlers.get("agent_end");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(agentEnd, "agent_end handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.transcript.append = async () => undefined;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  const processTurnCalls: Array<Record<string, unknown>> = [];
+  orchestrator.processTurn = async (
+    role: string,
+    content: string,
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    processTurnCalls.push({ role, content, sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime this Codex session with a remembered thread." },
+    {
+      sessionKey: "session-provider-thread-only",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-provider-thread-only",
+    },
+  );
+
+  await agentEnd(
+    {
+      success: true,
+      messages: [
+        {
+          role: "user",
+          content: "Store this follow-up when only the provider thread id is present.",
+        },
+        {
+          role: "assistant",
+          content: "Stored while the runtime omitted provider identity fields.",
+        },
+      ],
+    },
+    {
+      sessionKey: "session-provider-thread-only",
+      providerThreadId: "thread-provider-thread-only",
+    },
+  );
+
+  assert.deepEqual(flushCalls, []);
+  assert.equal(processTurnCalls.length, 2);
+  for (const call of processTurnCalls) {
+    assert.equal(call.sessionKey, "session-provider-thread-only");
+    assert.equal(
+      (call.options as { bufferKey?: string }).bufferKey,
+      "codex-thread:thread-provider-thread-only::principal:default",
+    );
+    assert.equal(
+      (call.options as { providerThreadId?: string | null }).providerThreadId,
+      "thread-provider-thread-only",
+    );
+  }
+});
+
 test("agent_end preserves the remembered Codex thread when the provider-switch flush fails", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("agent-end-provider-switch-flush-failure-test");
