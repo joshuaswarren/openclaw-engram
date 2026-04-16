@@ -68,8 +68,8 @@ export function validateTaxonomy(taxonomy: Taxonomy): void {
     if (!Array.isArray(cat.filingRules)) {
       throw new Error(`Taxonomy category "${cat.id}" filingRules must be an array`);
     }
-    if (typeof cat.priority !== "number") {
-      throw new Error(`Taxonomy category "${cat.id}" must have a numeric priority`);
+    if (typeof cat.priority !== "number" || !Number.isFinite(cat.priority)) {
+      throw new Error(`Taxonomy category "${cat.id}" must have a finite numeric priority`);
     }
     if (!Array.isArray(cat.memoryCategories)) {
       throw new Error(`Taxonomy category "${cat.id}" memoryCategories must be an array`);
@@ -103,9 +103,12 @@ export async function loadTaxonomy(memoryDir: string): Promise<Taxonomy> {
   let raw: string;
   try {
     raw = await readFile(taxonomyPath, "utf-8");
-  } catch {
-    // File not found — return defaults
-    return structuredClone(DEFAULT_TAXONOMY);
+  } catch (err: unknown) {
+    // Only fall back to defaults for missing file; rethrow permission / I/O errors
+    if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+      return structuredClone(DEFAULT_TAXONOMY);
+    }
+    throw err;
   }
 
   const parsed: unknown = JSON.parse(raw);

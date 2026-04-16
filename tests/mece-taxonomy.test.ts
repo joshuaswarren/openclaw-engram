@@ -331,6 +331,23 @@ describe("loadTaxonomy", () => {
     );
   });
 
+  it("rethrows non-ENOENT errors instead of falling back to defaults", async () => {
+    // Create a taxonomy directory that is a file, not a directory, so readFile
+    // on the nested path triggers ENOTDIR (not ENOENT).
+    const taxonomyDir = path.join(tmpDir, ".taxonomy");
+    // Write a plain file where a directory is expected
+    fs.writeFileSync(taxonomyDir, "not a directory");
+
+    await assert.rejects(
+      () => loadTaxonomy(tmpDir),
+      (err: Error) => {
+        const code = (err as NodeJS.ErrnoException).code;
+        // Should be ENOTDIR or similar I/O error, NOT silently returning defaults
+        return code !== "ENOENT";
+      },
+    );
+  });
+
   it("rejects duplicate IDs", async () => {
     const custom: Taxonomy = {
       version: 1,
@@ -411,6 +428,53 @@ describe("validateSlug", () => {
 
   it("rejects slug with underscores", () => {
     assert.throws(() => validateSlug("my_category"), /invalid/i);
+  });
+});
+
+// ── validateTaxonomy ───────────────────────────────────────────────────────
+
+describe("validateTaxonomy priority validation", () => {
+  function makeTaxonomyWithPriority(priority: number): Taxonomy {
+    return {
+      version: 1,
+      categories: [
+        {
+          id: "test",
+          name: "Test",
+          description: "Test category",
+          filingRules: ["test"],
+          priority,
+          memoryCategories: [],
+        },
+      ],
+    };
+  }
+
+  it("rejects NaN priority", () => {
+    assert.throws(
+      () => validateTaxonomy(makeTaxonomyWithPriority(NaN)),
+      /finite numeric priority/,
+    );
+  });
+
+  it("rejects Infinity priority", () => {
+    assert.throws(
+      () => validateTaxonomy(makeTaxonomyWithPriority(Infinity)),
+      /finite numeric priority/,
+    );
+  });
+
+  it("rejects -Infinity priority", () => {
+    assert.throws(
+      () => validateTaxonomy(makeTaxonomyWithPriority(-Infinity)),
+      /finite numeric priority/,
+    );
+  });
+
+  it("accepts finite numeric priority", () => {
+    assert.doesNotThrow(() => validateTaxonomy(makeTaxonomyWithPriority(50)));
+    assert.doesNotThrow(() => validateTaxonomy(makeTaxonomyWithPriority(0)));
+    assert.doesNotThrow(() => validateTaxonomy(makeTaxonomyWithPriority(-1)));
   });
 });
 

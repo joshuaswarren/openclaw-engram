@@ -2422,7 +2422,19 @@ async function cmdTaxonomy(rest: string[]): Promise<void> {
     }
 
     case "resolve": {
-      const text = rest.slice(1).filter((a) => !a.startsWith("--")).join(" ");
+      // Strip --flag and its following value token together so flag values
+      // (e.g. "preference" in `--category preference`) don't leak into text.
+      const resolveArgs = rest.slice(1);
+      const textParts: string[] = [];
+      for (let i = 0; i < resolveArgs.length; i++) {
+        if (resolveArgs[i].startsWith("--")) {
+          // Skip the flag and its value (next token)
+          i++;
+          continue;
+        }
+        textParts.push(resolveArgs[i]);
+      }
+      const text = textParts.join(" ");
       if (!text) {
         console.error("Usage: remnic taxonomy resolve <text>");
         process.exit(1);
