@@ -435,6 +435,8 @@ export {
 
 export {
   publisherFor,
+  publisherForConnector,
+  hostIdForConnector,
   PUBLISHERS,
   CodexMemoryExtensionPublisher,
   ClaudeCodeMemoryExtensionPublisher,

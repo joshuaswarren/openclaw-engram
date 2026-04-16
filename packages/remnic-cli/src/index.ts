@@ -81,7 +81,8 @@ import {
   DEFAULT_SCAN_PATTERNS,
   DEFAULT_MAX_BINARY_SIZE_BYTES,
   DEFAULT_GRACE_PERIOD_DAYS,
-  publisherFor,
+  publisherForConnector,
+  hostIdForConnector,
   PUBLISHERS,
 } from "@remnic/core";
 import type {
@@ -1121,7 +1122,7 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     // Publish memory extension if the connector has a publisher and the
     // install was successful (not error/already_installed/config_required).
     if (result.status === "installed") {
-      const pub = publisherFor(connectorId);
+      const pub = publisherForConnector(connectorId);
       if (pub) {
         try {
           const available = await pub.isHostAvailable();
@@ -1172,9 +1173,13 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     }
     const result = await doctorConnector(connectorId);
 
-    // Append memory extension publisher health for each registered publisher.
+    // Append memory extension publisher health only for the requested
+    // connector's host, not all registered publishers. This prevents
+    // unrelated hosts from polluting the health status.
     const publisherChecks: Array<{ name: string; ok: boolean; detail: string }> = [];
-    for (const [hostId, factory] of Object.entries(PUBLISHERS)) {
+    const targetHostId = hostIdForConnector(connectorId);
+    const factory = PUBLISHERS[targetHostId];
+    if (factory) {
       try {
         const pub = factory();
         const available = await pub.isHostAvailable();
@@ -1183,7 +1188,7 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
           ? fs.existsSync(extRoot)
           : false;
         publisherChecks.push({
-          name: `Publisher: ${hostId}`,
+          name: `Publisher: ${targetHostId}`,
           ok: !available || extensionExists,
           detail: !available
             ? "host not installed (skip)"
@@ -1194,7 +1199,7 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         publisherChecks.push({
-          name: `Publisher: ${hostId}`,
+          name: `Publisher: ${targetHostId}`,
           ok: false,
           detail: `error: ${msg}`,
         });

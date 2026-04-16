@@ -7,6 +7,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 
 import {
   publisherFor,
+  publisherForConnector,
+  hostIdForConnector,
   PUBLISHERS,
   CodexMemoryExtensionPublisher,
   ClaudeCodeMemoryExtensionPublisher,
@@ -295,4 +297,50 @@ test("publisherFor returns fresh instances each call", () => {
   const a = publisherFor("codex");
   const b = publisherFor("codex");
   assert.ok(a !== b, "each call should return a distinct instance");
+});
+
+// ── hostIdForConnector mapping ────────────────────────────────────────────
+
+test("hostIdForConnector maps 'codex-cli' to 'codex'", () => {
+  assert.equal(hostIdForConnector("codex-cli"), "codex");
+});
+
+test("hostIdForConnector returns identity for matching IDs", () => {
+  assert.equal(hostIdForConnector("claude-code"), "claude-code");
+  assert.equal(hostIdForConnector("hermes"), "hermes");
+  assert.equal(hostIdForConnector("codex"), "codex");
+});
+
+test("hostIdForConnector returns identity for unknown connectors", () => {
+  assert.equal(hostIdForConnector("cursor"), "cursor");
+  assert.equal(hostIdForConnector("unknown-xyz"), "unknown-xyz");
+});
+
+// ── publisherForConnector ─────────────────────────────────────────────────
+
+test("publisherForConnector('codex-cli') resolves to Codex publisher", () => {
+  const pub = publisherForConnector("codex-cli");
+  assert.ok(pub, "expected a publisher for codex-cli");
+  assert.equal(pub.hostId, "codex");
+  assert.ok(pub instanceof CodexMemoryExtensionPublisher);
+});
+
+test("publisherForConnector('claude-code') returns Claude Code publisher", () => {
+  const pub = publisherForConnector("claude-code");
+  assert.ok(pub, "expected a publisher for claude-code");
+  assert.equal(pub.hostId, "claude-code");
+  assert.ok(pub instanceof ClaudeCodeMemoryExtensionPublisher);
+});
+
+test("publisherForConnector('hermes') returns Hermes publisher", () => {
+  const pub = publisherForConnector("hermes");
+  assert.ok(pub, "expected a publisher for hermes");
+  assert.equal(pub.hostId, "hermes");
+  assert.ok(pub instanceof HermesMemoryExtensionPublisher);
+});
+
+test("publisherForConnector returns undefined for connectors without a publisher", () => {
+  assert.equal(publisherForConnector("cursor"), undefined);
+  assert.equal(publisherForConnector("cline"), undefined);
+  assert.equal(publisherForConnector("unknown-xyz"), undefined);
 });
