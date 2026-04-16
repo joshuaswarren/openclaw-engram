@@ -3131,7 +3131,7 @@ test("before_reset flushes metadata-less follow-up turns under the raw session k
       {
         sessionKey: "session-reset-metadata-less",
         reason: "codex_metadata_loss",
-        bufferKey: "codex-thread:thread-reset-metadata-less::principal:default",
+        bufferKey: "codex-thread:thread-reset-metadata-less",
       },
       {
         sessionKey: "session-reset-metadata-less",
