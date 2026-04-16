@@ -1748,11 +1748,23 @@ export class StorageManager {
    */
   private async snapshotBeforeWrite(filePath: string, trigger: VersionTrigger): Promise<void> {
     if (!this._versioningConfig || !this._versioningConfig.enabled) return;
+    let existing: string;
     try {
-      const existing = await readFile(filePath, "utf-8");
-      await createPageVersion(filePath, existing, trigger, this._versioningConfig, log, undefined, this.baseDir);
-    } catch {
+      existing = await readFile(filePath, "utf-8");
+    } catch (err: unknown) {
       // File does not exist yet — nothing to snapshot
+      if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "ENOENT") return;
+      // Unexpected read error — log and bail (non-critical)
+      log.warn(`page-versioning: could not read ${filePath} for snapshot: ${err}`);
+      return;
+    }
+    // Version creation errors must not be silently swallowed — log and propagate
+    // so callers know the pre-write snapshot failed (critical for data safety).
+    try {
+      await createPageVersion(filePath, existing, trigger, this._versioningConfig, log, undefined, this.baseDir);
+    } catch (err: unknown) {
+      log.error(`page-versioning: failed to create version for ${filePath}: ${err}`);
+      throw err;
     }
   }
 
@@ -3346,6 +3358,7 @@ export class StorageManager {
       log.warn(`updated memory content sanitized for ${id}; violations=${sanitized.violations.join(", ")}`);
     }
     const fileContent = `${serializeFrontmatter(updated)}\n\n${sanitized.text}\n`;
+    await this.snapshotBeforeWrite(memory.path, "write");
     await writeFile(memory.path, fileContent, "utf-8");
     this.invalidateAllMemoriesCache();
     await this.appendGeneratedMemoryLifecycleEventFailOpen("storage.updateMemory", {

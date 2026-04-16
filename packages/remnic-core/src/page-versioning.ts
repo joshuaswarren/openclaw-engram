@@ -119,19 +119,32 @@ async function readManifest(
   memoryDir: string,
   sidecar: string,
   pagePath: string,
+  log: VersioningLogger = NOOP_LOGGER,
 ): Promise<VersionHistory> {
   const mp = manifestPath(memoryDir, sidecar, pagePath);
+  let raw: string;
   try {
-    const raw = await readFile(mp, "utf-8");
+    raw = await readFile(mp, "utf-8");
+  } catch (err: unknown) {
+    // Manifest does not exist yet — expected for first-ever version
+    if (err && typeof err === "object" && "code" in err && (err as { code: string }).code === "ENOENT") {
+      return { pagePath, versions: [], currentVersion: "0" };
+    }
+    log.warn(`page-versioning: could not read manifest ${mp}: ${err}`);
+    return { pagePath, versions: [], currentVersion: "0" };
+  }
+  try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) {
+      log.warn(`page-versioning: manifest ${mp} has invalid JSON structure`);
       return { pagePath, versions: [], currentVersion: "0" };
     }
     const obj = parsed as Record<string, unknown>;
     const versions = Array.isArray(obj.versions) ? (obj.versions as PageVersion[]) : [];
     const currentVersion = typeof obj.currentVersion === "string" ? obj.currentVersion : "0";
     return { pagePath: typeof obj.pagePath === "string" ? obj.pagePath : pagePath, versions, currentVersion };
-  } catch {
+  } catch (err: unknown) {
+    log.warn(`page-versioning: failed to parse manifest ${mp}: ${err}`);
     return { pagePath, versions: [], currentVersion: "0" };
   }
 }
@@ -176,7 +189,7 @@ export async function createVersion(
   const mPath = manifestPath(resolvedMemoryDir, sidecar, relPath(pagePath, resolvedMemoryDir));
 
   return withPageLock(mPath, async () => {
-    const history = await readManifest(resolvedMemoryDir, sidecar, relPath(pagePath, resolvedMemoryDir));
+    const history = await readManifest(resolvedMemoryDir, sidecar, relPath(pagePath, resolvedMemoryDir), log);
     const nextId = String(history.versions.length > 0
       ? Math.max(...history.versions.map((v) => Number(v.versionId))) + 1
       : 1);
