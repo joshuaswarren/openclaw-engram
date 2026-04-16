@@ -8453,7 +8453,7 @@ export class Orchestrator {
           typeof turn.turnFingerprint === "string" &&
           turn.turnFingerprint.length > 0
         ) {
-          return turn.turnFingerprint;
+          return `fp:${turn.turnFingerprint}`;
         }
         return `${turn.role}:${(turn.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`;
       })

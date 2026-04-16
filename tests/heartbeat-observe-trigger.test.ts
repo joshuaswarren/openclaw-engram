@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { Orchestrator } from "../src/orchestrator.ts";
 import type { BufferTurn } from "../src/types.js";
 
@@ -282,6 +283,38 @@ test("shouldQueueExtraction supports non-committing dedupe prechecks", async () 
   });
   assert.equal(commit, true);
   assert.equal(fake.recentExtractionFingerprints.size, 1);
+});
+
+test("buildProcessedExtractionFingerprint prefixes turn fingerprints consistently with in-memory dedupe", () => {
+  const fake = {
+    config: {
+      extractionMaxTurnChars: 10_000,
+    },
+    buildProcessedExtractionFingerprint:
+      (Orchestrator.prototype as any).buildProcessedExtractionFingerprint,
+  };
+
+  const turns: BufferTurn[] = [
+    {
+      role: "user",
+      content: "ignored when turnFingerprint is present",
+      timestamp: "2026-02-25T00:00:00.000Z",
+      sessionKey: "agent:generalist:main",
+      turnFingerprint: "user:hello",
+    },
+  ];
+
+  const fingerprint = fake.buildProcessedExtractionFingerprint.call(
+    fake,
+    turns,
+    "codex-thread:thread-1",
+  );
+
+  const expected = createHash("sha256")
+    .update("codex-thread:thread-1\nfp:user:hello")
+    .digest("hex");
+
+  assert.equal(fingerprint, expected);
 });
 
 test("shouldQueueExtraction dedupes within a buffer key but not across sessions", async () => {
