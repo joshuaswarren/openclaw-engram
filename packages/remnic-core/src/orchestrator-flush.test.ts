@@ -564,6 +564,90 @@ test("runExtraction persists fingerprint and extraction counters through one coh
   );
 });
 
+test("runExtraction loads meta before updating extraction counters when fingerprint persistence is skipped", async () => {
+  const config = parseConfig({});
+  config.extractionMinChars = 0;
+  config.extractionMinUserTurns = 1;
+
+  let clearCalls = 0;
+  let loadMetaCalls = 0;
+  let saveMetaCalls = 0;
+  let savedMeta:
+    | {
+        extractionCount: number;
+        lastExtractionAt: string | null;
+        totalMemories: number;
+        totalEntities: number;
+        processedExtractionFingerprints: Array<{
+          fingerprint: string;
+          observedAt: string;
+        }>;
+      }
+    | undefined;
+
+  const meta = {
+    extractionCount: 0,
+    lastExtractionAt: null,
+    lastConsolidationAt: null,
+    totalMemories: 0,
+    totalEntities: 0,
+    processedExtractionFingerprints: [] as Array<{
+      fingerprint: string;
+      observedAt: string;
+    }>,
+  };
+
+  const orchestrator = Object.create(Orchestrator.prototype) as any;
+  orchestrator.config = config;
+  orchestrator.buffer = {
+    clearAfterExtraction: async () => {
+      clearCalls += 1;
+    },
+  };
+  orchestrator.storageRouter = {
+    storageFor: async () => ({
+      listEntityNames: async () => [],
+      loadMeta: async () => {
+        loadMetaCalls += 1;
+        return meta;
+      },
+      saveMeta: async (nextMeta: typeof meta) => {
+        saveMetaCalls += 1;
+        savedMeta = structuredClone(nextMeta);
+      },
+    }),
+  };
+  orchestrator.extraction = {
+    extract: async () => ({
+      facts: [
+        {
+          content: "remember eta",
+          category: "fact",
+          confidence: 0.9,
+          tags: [],
+        },
+      ],
+      entities: [],
+      questions: [],
+      profileUpdates: [],
+    }),
+  };
+  orchestrator.persistExtraction = async () => ["fact-1"];
+  orchestrator.requestQmdMaintenance = () => undefined;
+  orchestrator.runTierMigrationCycle = async () => undefined;
+
+  await orchestrator.runExtraction([makeTurn("session-f", "remember eta")], {
+    bufferKey: "logical-thread:thread-15",
+  });
+
+  assert.equal(loadMetaCalls, 1);
+  assert.equal(saveMetaCalls, 1);
+  assert.equal(clearCalls, 1);
+  assert.equal(savedMeta?.extractionCount, 1);
+  assert.equal(savedMeta?.totalMemories, 1);
+  assert.equal(savedMeta?.processedExtractionFingerprints.length, 0);
+});
+
 test("runExtraction saves the processed fingerprint before late threading failures", async () => {
   const config = parseConfig({});
   config.extractionMinChars = 0;
