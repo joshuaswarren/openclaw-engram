@@ -2705,15 +2705,21 @@ export class EngramAccessService {
    * Record citation usage from an observed oai-mem-citation block.
    * For each citation entry, extract the memory ID from the path and
    * increment its access tracking via the orchestrator. Returns the
-   * count of matched memories.
+   * count of submitted IDs and the count of IDs that matched real memories.
    */
   async recordCitationUsage(request: {
     sessionId?: string;
     namespace?: string;
     entries: Array<{ path: string; lineStart: number; lineEnd: number; note: string }>;
     rolloutIds: string[];
-  }): Promise<number> {
-    if (request.entries.length === 0) return 0;
+  }): Promise<{ submitted: number; matched: number }> {
+    if (request.entries.length === 0) return { submitted: 0, matched: 0 };
+
+    // Enforce namespace ACLs — citation tracking is a write-like operation.
+    const resolvedNamespace = this.resolveWritableNamespace(
+      request.namespace,
+      request.sessionId,
+    );
 
     // Extract memory IDs from citation paths. The path in citations
     // follows the pattern `facts/<id>.md` or just `<id>.md`.
@@ -2727,15 +2733,23 @@ export class EngramAccessService {
       }
     }
 
-    if (memoryIds.length === 0) return 0;
+    if (memoryIds.length === 0) return { submitted: 0, matched: 0 };
 
-    try {
-      this.orchestrator.trackMemoryAccess(memoryIds);
-    } catch {
-      // Fail gracefully — citation usage tracking is best-effort.
-      log.debug("citation usage tracking: failed to record access for cited memories");
+    // Determine which IDs correspond to real memories in storage.
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const allMemories = await storage.readAllMemories();
+    const existingIds = new Set(allMemories.map((m) => m.frontmatter.id));
+    const matchedIds = memoryIds.filter((id) => existingIds.has(id));
+
+    if (matchedIds.length > 0) {
+      try {
+        this.orchestrator.trackMemoryAccess(matchedIds);
+      } catch {
+        // Fail gracefully — citation usage tracking is best-effort.
+        log.debug("citation usage tracking: failed to record access for cited memories");
+      }
     }
 
-    return memoryIds.length;
+    return { submitted: memoryIds.length, matched: matchedIds.length };
   }
 }

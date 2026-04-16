@@ -659,17 +659,21 @@ export class EngramAccessHttpServer {
       // Record usage: for each citation entry, try to increment usage on the
       // matching memory. The service exposes recordAccess for this purpose.
       let matched = 0;
+      let submitted = 0;
       if (typeof this.service.recordCitationUsage === "function") {
-        matched = await this.service.recordCitationUsage({
+        const result = await this.service.recordCitationUsage({
           sessionId,
           namespace: this.resolveNamespace(req, namespace),
           entries,
           rolloutIds,
         });
+        submitted = result.submitted;
+        matched = result.matched;
       }
 
       this.respondJson(res, 200, {
         ok: true,
+        submitted,
         matched,
         entriesReceived: entries.length,
         rolloutIdsReceived: rolloutIds.length,
