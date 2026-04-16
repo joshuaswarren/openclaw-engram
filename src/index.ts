@@ -2783,7 +2783,6 @@ const pluginDefinition = {
           }
         },
       );
-    }
 
       // ---- Tool observation ----
       api.on(
@@ -2877,8 +2876,15 @@ const pluginDefinition = {
           if (orchestrator.config.sessionObserverEnabled !== true) return;
           const sessionKey =
             (event?.context?.sessionKey as string) ?? "default";
+          const rememberedThreadId = resolveStoredCodexThreadId(sessionKey);
+          const bufferKey = resolveExtractionBufferKey(
+            sessionKey,
+            rememberedThreadId && cfg.codexCompat.threadIdBufferKeying !== false
+              ? codexLogicalSessionKey(rememberedThreadId)
+              : sessionKey,
+          );
           void orchestrator
-            .observeSessionHeartbeat(sessionKey)
+            .observeSessionHeartbeat(sessionKey, { bufferKey })
             .catch((err: unknown) => {
               log.debug(`agent_heartbeat observer failed: ${err}`);
             });
@@ -2906,8 +2912,15 @@ const pluginDefinition = {
               ) => {
                 if (orchestrator.config.sessionObserverEnabled !== true) return;
                 const sessionKey = (ctx?.sessionKey as string) ?? "default";
+                const rememberedThreadId = resolveStoredCodexThreadId(sessionKey);
+                const bufferKey = resolveExtractionBufferKey(
+                  sessionKey,
+                  rememberedThreadId && cfg.codexCompat.threadIdBufferKeying !== false
+                    ? codexLogicalSessionKey(rememberedThreadId)
+                    : sessionKey,
+                );
                 void orchestrator
-                  .observeSessionHeartbeat(sessionKey)
+                  .observeSessionHeartbeat(sessionKey, { bufferKey })
                   .catch((err: unknown) => {
                     log.debug(`agent_heartbeat typed observer failed: ${err}`);
                   });
@@ -2921,6 +2934,8 @@ const pluginDefinition = {
         .catch(() => {
           // legacy-hook-compat import failed — skip typed registration
         });
+    }
+
     }
 
     // ========================================================================

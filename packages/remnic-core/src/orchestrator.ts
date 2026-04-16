@@ -8008,16 +8008,23 @@ export class Orchestrator {
     }
   }
 
-  async observeSessionHeartbeat(sessionKey: string): Promise<void> {
+  async observeSessionHeartbeat(
+    sessionKey: string,
+    options: { bufferKey?: string } = {},
+  ): Promise<void> {
     if (this.config.sessionObserverEnabled !== true) return;
     if (!sessionKey || sessionKey.length === 0) return;
 
+    const bufferKey =
+      typeof options.bufferKey === "string" && options.bufferKey.length > 0
+        ? options.bufferKey
+        : sessionKey;
     const previous =
       this.heartbeatObserverChains.get(sessionKey) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(async () => {
-        const turns = this.buffer.getTurns(sessionKey);
+        const turns = this.buffer.getTurns(bufferKey);
         if (turns.length === 0) return;
         const normalizedSessionKey = normalizeReplaySessionKey(sessionKey);
         if (
@@ -8028,16 +8035,16 @@ export class Orchestrator {
           )
         ) {
           log.debug(
-            `heartbeat observer skipped: mixed-session buffer contents for ${sessionKey}`,
+            `heartbeat observer skipped: mixed-session buffer contents for ${bufferKey}`,
           );
           return;
         }
         if (!this.shouldQueueExtraction(turns, {
           commit: false,
-          bufferKey: sessionKey,
+          bufferKey,
         })) {
           log.debug(
-            `heartbeat observer skipped: extraction dedupe for ${sessionKey}`,
+            `heartbeat observer skipped: extraction dedupe for ${bufferKey}`,
           );
           return;
         }
@@ -8053,7 +8060,7 @@ export class Orchestrator {
           `heartbeat observer trigger: session=${sessionKey} deltaBytes=${decision.deltaBytes} deltaTokens=${decision.deltaTokens}`,
         );
         await this.queueBufferedExtraction(turns, "heartbeat_observer", {
-          bufferKey: sessionKey,
+          bufferKey,
         });
       });
 

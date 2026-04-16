@@ -50,6 +50,58 @@ test("observeSessionHeartbeat queues buffered extraction when observer threshold
   assert.equal(queuedReason, "heartbeat_observer");
 });
 
+test("observeSessionHeartbeat uses an explicit logical buffer key when provided", async () => {
+  const rawTurns: BufferTurn[] = [];
+  const logicalTurns: BufferTurn[] = [
+    {
+      role: "user",
+      content: "Codex logical buffer turn.",
+      timestamp: "2026-02-25T00:00:00.000Z",
+      sessionKey: "agent:generalist:main",
+    },
+  ];
+
+  let queuedBufferKey: string | null = null;
+  const fake = {
+    config: { sessionObserverEnabled: true },
+    heartbeatObserverChains: new Map<string, Promise<void>>(),
+    transcript: {
+      estimateSessionFootprint: async () => ({ bytes: 25_000, tokens: 6_250 }),
+    },
+    sessionObserver: {
+      observe: async () => ({
+        triggered: true,
+        deltaBytes: 6_500,
+        deltaTokens: 1_500,
+        band: { maxBytes: 50_000, triggerDeltaBytes: 6_000, triggerDeltaTokens: 1_200 },
+      }),
+    },
+    buffer: {
+      getTurns: (bufferKey: string) =>
+        bufferKey === "codex-thread:thread-123"
+          ? logicalTurns
+          : rawTurns,
+    },
+    shouldQueueExtraction: (_turns: BufferTurn[], options?: { bufferKey?: string }) =>
+      options?.bufferKey === "codex-thread:thread-123",
+    queueBufferedExtraction: async (
+      _turns: BufferTurn[],
+      _reason: string,
+      options?: { bufferKey?: string },
+    ) => {
+      queuedBufferKey = options?.bufferKey ?? null;
+    },
+  };
+
+  await (Orchestrator.prototype as any).observeSessionHeartbeat.call(
+    fake,
+    "agent:generalist:main",
+    { bufferKey: "codex-thread:thread-123" },
+  );
+
+  assert.equal(queuedBufferKey, "codex-thread:thread-123");
+});
+
 test("observeSessionHeartbeat no-ops when observer is disabled", async () => {
   let invoked = false;
   const fake = {
@@ -289,7 +341,7 @@ test("shouldQueueExtraction supports non-committing dedupe prechecks", async () 
   assert.equal(fake.recentExtractionFingerprints.size, 1);
 });
 
-test("buildProcessedExtractionFingerprint prefixes turn fingerprints consistently with in-memory dedupe", () => {
+test("buildExtractionFingerprint prefixes turn fingerprints consistently with in-memory dedupe", () => {
   const fake = {
     config: {
       extractionMaxTurnChars: 10_000,
@@ -298,8 +350,6 @@ test("buildProcessedExtractionFingerprint prefixes turn fingerprints consistentl
       (Orchestrator.prototype as any).normalizeExtractionFingerprintTurns,
     buildExtractionFingerprint:
       (Orchestrator.prototype as any).buildExtractionFingerprint,
-    buildProcessedExtractionFingerprint:
-      (Orchestrator.prototype as any).buildProcessedExtractionFingerprint,
   };
 
   const turns: BufferTurn[] = [
@@ -312,7 +362,7 @@ test("buildProcessedExtractionFingerprint prefixes turn fingerprints consistentl
     },
   ];
 
-  const fingerprint = fake.buildProcessedExtractionFingerprint.call(
+  const fingerprint = fake.buildExtractionFingerprint.call(
     fake,
     turns,
     "codex-thread:thread-1",
