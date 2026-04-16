@@ -875,7 +875,7 @@ const pluginDefinition = {
     // paths and the closure-captured handlers below can reference it without
     // TDZ surprises.
     const cachedMemoryBySession = new Map<string, string[] | null>();
-    const cachedMemoryByCodexThread = new Map<string, string[] | null>();
+    const cachedMemoryByCodexCacheKey = new Map<string, string[] | null>();
     const codexThreadBySession = new Map<string, string>();
     const codexBufferKeyBySession = new Map<string, string>();
     const codexSessionsByThread = new Map<string, Set<string>>();
@@ -934,6 +934,26 @@ const pluginDefinition = {
       return resolveExtractionBufferKey(sessionKey, logicalSessionKey);
     }
 
+    function resolveCodexPromptCacheKey(
+      sessionKey: string,
+      providerThreadId?: string | null,
+    ): string | null {
+      const resolvedThreadId =
+        providerThreadId ?? resolveStoredCodexThreadId(sessionKey);
+      if (!resolvedThreadId) return null;
+      if (!cfg.namespacesEnabled) {
+        return resolvedThreadId;
+      }
+      if (cfg.codexCompat.threadIdBufferKeying !== false) {
+        return resolveExtractionBufferKey(
+          sessionKey,
+          codexLogicalSessionKey(resolvedThreadId),
+        );
+      }
+      const principal = resolvePrincipal(sessionKey, cfg);
+      return `${resolvedThreadId}::principal:${principal}`;
+    }
+
     function rememberCodexThread(
       sessionKey: string,
       providerThreadId: string | null,
@@ -941,7 +961,15 @@ const pluginDefinition = {
       if (!providerThreadId) return;
       const previousThreadId = resolveStoredCodexThreadId(sessionKey);
       const previousBufferKey = resolveStoredCodexBufferKey(sessionKey);
+      const previousPromptCacheKey = resolveCodexPromptCacheKey(
+        sessionKey,
+        previousThreadId,
+      );
       const nextBufferKey = resolveCodexCompactionBaselineKey(
+        sessionKey,
+        providerThreadId,
+      );
+      const nextPromptCacheKey = resolveCodexPromptCacheKey(
         sessionKey,
         providerThreadId,
       );
@@ -961,15 +989,18 @@ const pluginDefinition = {
           codexMessageCountByBufferKey.delete(previousBufferKey);
         }
       }
+      if (
+        previousPromptCacheKey &&
+        previousPromptCacheKey !== nextPromptCacheKey
+      ) {
+        cachedMemoryByCodexCacheKey.delete(previousPromptCacheKey);
+      }
       if (previousThreadId) {
-        const threadWasEmptied = removeSessionFromCodexIndex(
+        removeSessionFromCodexIndex(
           codexSessionsByThread,
           previousThreadId,
           sessionKey,
         );
-        if (threadWasEmptied) {
-          cachedMemoryByCodexThread.delete(previousThreadId);
-        }
       }
       codexThreadBySession.set(sessionKey, providerThreadId);
       if (nextBufferKey) {
@@ -1002,15 +1033,19 @@ const pluginDefinition = {
           codexMessageCountByBufferKey.delete(resolvedBufferKey);
         }
       }
+      const resolvedPromptCacheKey = resolveCodexPromptCacheKey(
+        sessionKey,
+        resolvedThreadId,
+      );
+      if (resolvedPromptCacheKey) {
+        cachedMemoryByCodexCacheKey.delete(resolvedPromptCacheKey);
+      }
       if (resolvedThreadId) {
-        const threadWasEmptied = removeSessionFromCodexIndex(
+        removeSessionFromCodexIndex(
           codexSessionsByThread,
           resolvedThreadId,
           sessionKey,
         );
-        if (threadWasEmptied) {
-          cachedMemoryByCodexThread.delete(resolvedThreadId);
-        }
       }
       codexThreadBySession.delete(sessionKey);
       codexBufferKeyBySession.delete(sessionKey);
@@ -1030,8 +1065,12 @@ const pluginDefinition = {
       const resolvedBufferKey =
         resolveStoredCodexBufferKey(sessionKey) ??
         resolveCodexCompactionBaselineKey(sessionKey, resolvedThreadId);
-      if (resolvedThreadId) {
-        cachedMemoryByCodexThread.delete(resolvedThreadId);
+      const resolvedPromptCacheKey = resolveCodexPromptCacheKey(
+        sessionKey,
+        resolvedThreadId,
+      );
+      if (resolvedPromptCacheKey) {
+        cachedMemoryByCodexCacheKey.delete(resolvedPromptCacheKey);
       }
       if (resolvedBufferKey && options?.preserveMessageCount !== true) {
         const sessionsForBuffer = codexSessionsByBufferKey.get(resolvedBufferKey);
@@ -1106,7 +1145,13 @@ const pluginDefinition = {
       cachedMemoryBySession.set(sessionKey, memoryLines);
       if (providerThreadId) {
         rememberCodexThread(sessionKey, providerThreadId);
-        cachedMemoryByCodexThread.set(providerThreadId, memoryLines);
+        const promptCacheKey = resolveCodexPromptCacheKey(
+          sessionKey,
+          providerThreadId,
+        );
+        if (promptCacheKey) {
+          cachedMemoryByCodexCacheKey.set(promptCacheKey, memoryLines);
+        }
       }
     }
 
@@ -1119,15 +1164,15 @@ const pluginDefinition = {
       const sessionLines = hasSessionLines
         ? (cachedMemoryBySession.get(sessionKey) ?? null)
         : null;
-      const providerThreadId = resolveStoredCodexThreadId(sessionKey);
-      const threadLines = providerThreadId
-        ? (cachedMemoryByCodexThread.get(providerThreadId) ?? null)
+      const promptCacheKey = resolveCodexPromptCacheKey(sessionKey);
+      const threadLines = promptCacheKey
+        ? (cachedMemoryByCodexCacheKey.get(promptCacheKey) ?? null)
         : null;
       const resolved = hasSessionLines ? sessionLines : threadLines;
       if (!destructive) return resolved;
       cachedMemoryBySession.delete(sessionKey);
-      if (providerThreadId) {
-        cachedMemoryByCodexThread.delete(providerThreadId);
+      if (promptCacheKey) {
+        cachedMemoryByCodexCacheKey.delete(promptCacheKey);
       }
       return resolved;
     }
@@ -1161,7 +1206,7 @@ const pluginDefinition = {
       const rememberedThreadId =
         base.providerThreadId ??
         (allowHintedThreadFallback
-          ? hintedThreadId ?? storedCodexThreadId
+          ? storedCodexThreadId ?? hintedThreadId
           : null);
       return {
         ...base,

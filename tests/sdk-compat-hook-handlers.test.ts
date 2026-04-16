@@ -3628,6 +3628,76 @@ test("session_end falls back to ctx.sessionKey when the event omits it", async (
   );
 });
 
+test("before_reset prefers the remembered Codex thread over sparse providerThreadId hints", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("before-reset-prefers-remembered-codex-thread-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  const beforeReset = api.handlers.get("before_reset");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(beforeReset, "before_reset handler should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async () => "Remembered context";
+  orchestrator.config.compactionResetEnabled = false;
+
+  const flushCalls: Array<{
+    sessionKey: string;
+    options: Record<string, unknown> | undefined;
+  }> = [];
+  orchestrator.flushSession = async (
+    sessionKey: string,
+    options?: Record<string, unknown>,
+  ) => {
+    flushCalls.push({ sessionKey, options });
+  };
+
+  await beforePromptBuild(
+    { prompt: "Prime this Codex session before sparse reset metadata arrives." },
+    {
+      sessionKey: "session-reset-remembered-thread",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-reset-remembered-thread",
+    },
+  );
+
+  await beforeReset(
+    {
+      sessionKey: "session-reset-remembered-thread",
+      providerThreadId: "thread-reset-stale-hint",
+    },
+    {},
+  );
+
+  assert.deepEqual(
+    flushCalls.map((call) => ({
+      sessionKey: call.sessionKey,
+      reason: call.options?.reason,
+      bufferKey: call.options?.bufferKey,
+    })),
+    [
+      {
+        sessionKey: "session-reset-remembered-thread",
+        reason: "before_reset",
+        bufferKey:
+          "codex-thread:thread-reset-remembered-thread::principal:default",
+      },
+    ],
+  );
+});
+
 test("before_reset ignores sparse providerThreadId metadata without a remembered Codex binding", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-reset-sparse-provider-thread-id-test", {
@@ -4313,6 +4383,92 @@ test("agent_end scopes Codex logical buffers to the mapped principal", async () 
       "thread-shared-across-principals",
     );
   }
+});
+
+test("capability promptBuilder does not reuse Codex thread cache across principals sharing a thread id", async () => {
+  const { default: plugin } = await import("../src/index.js");
+  const api = buildHandlerCapturingApi("capability-prompt-builder-codex-principal-scope-test", {
+    includeMemoryCapability: true,
+  });
+  api.pluginConfig = {
+    namespacesEnabled: true,
+    defaultNamespace: "default",
+    sharedNamespace: "shared",
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+    principalFromSessionKeyMode: "map",
+    principalFromSessionKeyRules: [
+      { match: "session-alpha", principal: "team-alpha" },
+      { match: "session-beta", principal: "team-beta" },
+    ],
+    namespacePolicies: [
+      {
+        name: "team-alpha",
+        readPrincipals: ["team-alpha"],
+        writePrincipals: ["team-alpha"],
+        includeInRecallByDefault: false,
+      },
+      {
+        name: "team-beta",
+        readPrincipals: ["team-beta"],
+        writePrincipals: ["team-beta"],
+        includeInRecallByDefault: false,
+      },
+    ],
+  };
+  plugin.register(api as any);
+
+  const beforePromptBuild = api.handlers.get("before_prompt_build");
+  assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
+  assert.ok(api._memoryPromptSection, "memory prompt section should be registered");
+  assert.ok(api._memoryCapability?.promptBuilder, "memory capability promptBuilder should be registered");
+
+  const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
+  orchestrator.maybeRunFileHygiene = async () => undefined;
+  orchestrator.recall = async (_prompt: string, sessionKey: string) =>
+    sessionKey === "session-alpha"
+      ? "Alpha principal context"
+      : "Beta principal context";
+
+  await beforePromptBuild(
+    { prompt: "Prime the shared Codex thread for alpha." },
+    {
+      sessionKey: "session-alpha",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-capability-cache",
+    },
+  );
+
+  const alphaPromptSection = api._memoryPromptSection?.({
+    sessionKey: "session-alpha",
+  }) ?? null;
+  assert.ok(alphaPromptSection?.join("\n").includes("Alpha principal context"));
+
+  await beforePromptBuild(
+    { prompt: "Prime the shared Codex thread for beta." },
+    {
+      sessionKey: "session-beta",
+      provider: { id: "codex", model: "codex/gpt-5.4" },
+      providerThreadId: "thread-shared-capability-cache",
+    },
+  );
+
+  assert.equal(
+    api._memoryCapability?.promptBuilder?.({
+      sessionKey: "session-alpha",
+    }) ?? null,
+    null,
+    "alpha should not see beta's cached prompt lines when the Codex thread id is reused across principals",
+  );
+
+  const betaPromptLines = api._memoryCapability?.promptBuilder?.({
+    sessionKey: "session-beta",
+  }) ?? null;
+  assert.ok(betaPromptLines?.join("\n").includes("Beta principal context"));
 });
 
 test("capability promptBuilder does not fall back to stale Codex thread cache after a metadata-less short prompt", async () => {
