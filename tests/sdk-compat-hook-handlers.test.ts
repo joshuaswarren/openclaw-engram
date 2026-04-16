@@ -1809,6 +1809,14 @@ test("agent_end skips transcript persistence and extraction buffering for heartb
 test("agent_end routes Codex-managed turns through the logical thread buffer key", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("agent-end-codex-thread-test");
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
   plugin.register(api as any);
 
   const agentEnd = api.handlers.get("agent_end");
@@ -1910,6 +1918,14 @@ test("agent_end fingerprints only the persisted user and assistant turns", async
 test("before_compaction flushes the logical Codex thread buffer before checkpoint work", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-compaction-codex-test");
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "auto",
+      fingerprintDedup: true,
+    },
+  };
   plugin.register(api as any);
 
   const beforeCompaction = api.handlers.get("before_compaction");
@@ -1954,6 +1970,14 @@ test("before_compaction flushes the logical Codex thread buffer before checkpoin
 test("before_compaction falls back to the remembered Codex thread when the hook payload is sparse", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("before-compaction-codex-fallback-test");
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "auto",
+      fingerprintDedup: true,
+    },
+  };
   plugin.register(api as any);
 
   const beforePromptBuild = api.handlers.get("before_prompt_build");
@@ -2394,6 +2418,12 @@ test("before_prompt_build tracks Codex compaction baselines per principal-scoped
     namespacesEnabled: true,
     defaultNamespace: "default",
     sharedNamespace: "shared",
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
     principalFromSessionKeyMode: "map",
     principalFromSessionKeyRules: [
       { match: "session-alpha", principal: "team-alpha" },
@@ -2800,6 +2830,14 @@ test("before_reset reuses the remembered Codex thread id for logical flush keyin
   const api = buildHandlerCapturingApi("before-reset-codex-test", {
     includeMemoryCapability: true,
   });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
   plugin.register(api as any);
 
   const beforePromptBuild = api.handlers.get("before_prompt_build");
@@ -3088,6 +3126,14 @@ test("before_reset preserves the remembered Codex thread after a transient recal
   const api = buildHandlerCapturingApi("before-reset-codex-recall-failure-test", {
     includeMemoryCapability: true,
   });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
   plugin.register(api as any);
 
   const beforePromptBuild = api.handlers.get("before_prompt_build");
@@ -3400,6 +3446,14 @@ test("before_reset keeps metadata-less follow-up turns on the remembered Codex b
   const api = buildHandlerCapturingApi("before-reset-metadata-less-agent-end-test", {
     includeMemoryCapability: true,
   });
+  api.pluginConfig = {
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
+  };
   plugin.register(api as any);
 
   const beforePromptBuild = api.handlers.get("before_prompt_build");
@@ -4163,6 +4217,12 @@ test("agent_end scopes Codex logical buffers to the mapped principal", async () 
     namespacesEnabled: true,
     defaultNamespace: "default",
     sharedNamespace: "shared",
+    codexCompat: {
+      enabled: true,
+      threadIdBufferKeying: true,
+      compactionFlushMode: "heuristic",
+      fingerprintDedup: true,
+    },
     principalFromSessionKeyMode: "map",
     principalFromSessionKeyRules: [
       { match: "session-alpha", principal: "team-alpha" },
