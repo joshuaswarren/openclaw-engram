@@ -1,10 +1,11 @@
 import type { Readable, Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { EngramAccessService } from "./access-service.js";
+import type { EngramAccessService, EngramAccessRecallResponse } from "./access-service.js";
 import { readEnvVar } from "./runtime/env.js";
 import type { RecallPlanMode } from "./types.js";
 import { validateBriefingFormat } from "./briefing.js";
+import { buildCitationGuidance, type CitationMetadata } from "./citations.js";
 
 type JsonRpcId = string | number | null;
 
@@ -79,10 +80,17 @@ export class EngramMcpServer {
    */
   private initSessionIds = new Map<string, string>();
 
+  /** Whether oai-mem-citation guidance is explicitly enabled via config. */
+  private readonly citationsEnabled: boolean;
+  /** Whether to auto-enable citations for Codex adapter connections. */
+  private readonly citationsAutoDetect: boolean;
+
   constructor(
     private readonly service: EngramAccessService,
-    options: { principal?: string } = {},
+    options: { principal?: string; citationsEnabled?: boolean; citationsAutoDetect?: boolean } = {},
   ) {
+    this.citationsEnabled = options.citationsEnabled === true;
+    this.citationsAutoDetect = options.citationsAutoDetect !== false;
     this.authenticatedPrincipal =
       options.principal?.trim() ||
       readEnvVar("OPENCLAW_ENGRAM_ACCESS_PRINCIPAL")?.trim() ||
@@ -817,7 +825,7 @@ export class EngramMcpServer {
 
       try {
         const effectivePrincipal = options?.principalOverride ?? this.authenticatedPrincipal;
-        const result = await this.callTool(name, argumentsObject, effectivePrincipal);
+        const result = await this.callTool(name, argumentsObject, effectivePrincipal, options?.sessionId);
         return {
           jsonrpc: "2.0",
           id,
@@ -937,10 +945,41 @@ export class EngramMcpServer {
     output.write(message);
   }
 
-  private async callTool(name: string, args: Record<string, unknown>, effectivePrincipal?: string): Promise<unknown> {
+  /**
+   * Determine whether oai-mem-citation guidance should be appended to recall.
+   * Returns true when explicitly enabled via config OR when auto-detect is
+   * active and the current MCP session belongs to a Codex adapter client.
+   */
+  private shouldEmitCitations(mcpSessionId?: string): boolean {
+    if (this.citationsEnabled) return true;
+    if (!this.citationsAutoDetect) return false;
+    if (!mcpSessionId) return false;
+    const info = this.clientInfoBySession.get(mcpSessionId);
+    if (!info) return false;
+    const lowerName = info.name.toLowerCase();
+    return lowerName === "codex-mcp-client" || lowerName.includes("codex");
+  }
+
+  /**
+   * Build citation metadata for each recall result that has a path.
+   * Line range defaults to 1-1 when not determinable from the summary.
+   */
+  private buildRecallCitations(response: EngramAccessRecallResponse): CitationMetadata[] {
+    return response.results
+      .filter((r) => r.path && r.path.length > 0)
+      .map((r) => ({
+        memoryId: r.id,
+        path: r.path,
+        lineStart: 1,
+        lineEnd: 1,
+        noteDefault: r.preview?.slice(0, 60) || r.id,
+      }));
+  }
+
+  private async callTool(name: string, args: Record<string, unknown>, effectivePrincipal?: string, mcpSessionId?: string): Promise<unknown> {
     switch (toLegacyToolName(name)) {
-      case "engram.recall":
-        return this.service.recall({
+      case "engram.recall": {
+        const response = await this.service.recall({
           query: typeof args.query === "string" ? args.query : "",
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
@@ -948,6 +987,20 @@ export class EngramMcpServer {
           mode: typeof args.mode === "string" ? args.mode as RecallPlanMode | "auto" : undefined,
           includeDebug: args.includeDebug === true,
         });
+
+        if (this.shouldEmitCitations(mcpSessionId)) {
+          const citations = this.buildRecallCitations(response);
+          const guidance = buildCitationGuidance(citations);
+          if (guidance.length > 0) {
+            return {
+              ...response,
+              context: response.context + guidance,
+              citations,
+            };
+          }
+        }
+        return response;
+      }
       case "engram.recall_explain":
         return this.service.recallExplain({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,

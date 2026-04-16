@@ -641,6 +641,16 @@
         "default": true,
         "description": "Auto-regenerate RESOLVER.md when the taxonomy changes."
       },
+      "citationsEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable oai-mem-citation blocks in recall responses for Codex citation parity."
+      },
+      "citationsAutoDetect": {
+        "type": "boolean",
+        "default": true,
+        "description": "Auto-enable citations when the Codex adapter is detected."
+      },
       "codexCompat": {
         "type": "object",
         "additionalProperties": false,

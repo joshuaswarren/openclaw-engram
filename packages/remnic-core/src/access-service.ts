@@ -2700,4 +2700,42 @@ export class EngramAccessService {
       },
     };
   }
+
+  /**
+   * Record citation usage from an observed oai-mem-citation block.
+   * For each citation entry, extract the memory ID from the path and
+   * increment its access tracking via the orchestrator. Returns the
+   * count of matched memories.
+   */
+  async recordCitationUsage(request: {
+    sessionId?: string;
+    namespace?: string;
+    entries: Array<{ path: string; lineStart: number; lineEnd: number; note: string }>;
+    rolloutIds: string[];
+  }): Promise<number> {
+    if (request.entries.length === 0) return 0;
+
+    // Extract memory IDs from citation paths. The path in citations
+    // follows the pattern `facts/<id>.md` or just `<id>.md`.
+    const memoryIds: string[] = [];
+    for (const entry of request.entries) {
+      // Strip directory prefix and .md extension to derive the memory ID.
+      const basename = entry.path.split("/").pop() ?? entry.path;
+      const id = basename.endsWith(".md") ? basename.slice(0, -3) : basename;
+      if (id.length > 0) {
+        memoryIds.push(id);
+      }
+    }
+
+    if (memoryIds.length === 0) return 0;
+
+    try {
+      this.orchestrator.trackMemoryAccess(memoryIds);
+    } catch {
+      // Fail gracefully — citation usage tracking is best-effort.
+      log.debug("citation usage tracking: failed to record access for cited memories");
+    }
+
+    return memoryIds.length;
+  }
 }

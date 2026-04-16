@@ -241,6 +241,19 @@ export {
 } from "./page-versioning.js";
 
 // ---------------------------------------------------------------------------
+// OAI-mem-citation blocks (issue #379)
+// ---------------------------------------------------------------------------
+
+export {
+  parseOaiMemCitation,
+  formatOaiMemCitation,
+  buildCitationGuidance,
+  type CitationEntry,
+  type CitationBlock,
+  type CitationMetadata,
+} from "./citations.js";
+
+// ---------------------------------------------------------------------------
 // Logger
 // ---------------------------------------------------------------------------
 
