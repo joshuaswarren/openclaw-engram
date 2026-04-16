@@ -84,10 +84,19 @@ import {
   publisherForConnector,
   hostIdForConnector,
   PUBLISHERS,
+  DEFAULT_TAXONOMY,
+  resolveCategory,
+  generateResolverDocument,
+  loadTaxonomy,
+  saveTaxonomy,
+  validateSlug,
+  validateTaxonomy,
+  getTaxonomyFilePath,
 } from "@remnic/core";
 import type {
   BinaryLifecycleConfig,
 } from "@remnic/core";
+import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 import {
   runBenchSuite,
   runExplain,
@@ -125,6 +134,7 @@ type CommandName =
   | "benchmark"
   | "briefing"
   | "binary"
+  | "taxonomy"
   | "openclaw";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
@@ -2265,6 +2275,200 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   console.log("  3. Run `remnic doctor` to verify the full configuration.");
 }
 
+// ── Taxonomy commands (#366) ─────────────────────────────────────────────────
+
+async function cmdTaxonomy(rest: string[]): Promise<void> {
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+
+  if (!config.taxonomyEnabled) {
+    console.error(
+      "Taxonomy is disabled in config (taxonomyEnabled = false). Enable it to use taxonomy commands.",
+    );
+    process.exit(1);
+  }
+
+  const subCommand = rest[0];
+
+  switch (subCommand) {
+    case "show": {
+      const taxonomy = await loadTaxonomy(config.memoryDir);
+      const json = rest.includes("--json");
+      if (json) {
+        console.log(JSON.stringify(taxonomy, null, 2));
+      } else {
+        console.log(`Taxonomy v${taxonomy.version} — ${taxonomy.categories.length} categories\n`);
+        const idWidth = Math.max(4, ...taxonomy.categories.map((c) => c.id.length));
+        const nameWidth = Math.max(6, ...taxonomy.categories.map((c) => c.name.length));
+        const header = `${"ID".padEnd(idWidth)}  ${"Name".padEnd(nameWidth)}  ${"Pri".padStart(3)}  Memory Categories`;
+        console.log(header);
+        console.log("-".repeat(header.length + 10));
+        const sorted = [...taxonomy.categories].sort((a, b) => a.priority - b.priority);
+        for (const cat of sorted) {
+          const line = `${cat.id.padEnd(idWidth)}  ${cat.name.padEnd(nameWidth)}  ${String(cat.priority).padStart(3)}  ${cat.memoryCategories.join(", ")}`;
+          console.log(line);
+        }
+      }
+      break;
+    }
+
+    case "resolver": {
+      const taxonomy = await loadTaxonomy(config.memoryDir);
+      const doc = generateResolverDocument(taxonomy);
+      console.log(doc);
+
+      if (config.taxonomyAutoGenResolver) {
+        const resolverPath = path.join(config.memoryDir, ".taxonomy", "RESOLVER.md");
+        fs.mkdirSync(path.dirname(resolverPath), { recursive: true });
+        fs.writeFileSync(resolverPath, doc);
+        console.error(`Written: ${resolverPath}`);
+      }
+      break;
+    }
+
+    case "add": {
+      const id = rest[1];
+      const name = rest[2];
+      if (!id || !name) {
+        console.error("Usage: remnic taxonomy add <id> <name>");
+        process.exit(1);
+      }
+      try {
+        validateSlug(id);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+
+      const taxonomy = await loadTaxonomy(config.memoryDir);
+      if (taxonomy.categories.some((c) => c.id === id)) {
+        console.error(`Category "${id}" already exists.`);
+        process.exit(1);
+      }
+
+      const descriptionFlag = resolveFlag(rest, "--description");
+      const priorityFlag = resolveFlag(rest, "--priority");
+      const memoryCategoriesFlag = resolveFlag(rest, "--memory-categories");
+
+      const newCat: TaxonomyCategory = {
+        id,
+        name,
+        description: descriptionFlag ?? `Custom category: ${name}`,
+        filingRules: [`Content belonging to ${name}`],
+        priority: priorityFlag ? Number(priorityFlag) : 100,
+        memoryCategories: memoryCategoriesFlag ? memoryCategoriesFlag.split(",").map((s) => s.trim()) : [],
+      };
+
+      taxonomy.categories.push(newCat);
+      try {
+        validateTaxonomy(taxonomy);
+      } catch (err) {
+        console.error(`Invalid taxonomy: ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      }
+      await saveTaxonomy(config.memoryDir, taxonomy);
+      console.log(`Added category "${id}" (${name}).`);
+
+      if (config.taxonomyAutoGenResolver) {
+        const doc = generateResolverDocument(taxonomy);
+        const resolverPath = path.join(config.memoryDir, ".taxonomy", "RESOLVER.md");
+        fs.writeFileSync(resolverPath, doc);
+        console.error(`Regenerated: ${resolverPath}`);
+      }
+      break;
+    }
+
+    case "remove": {
+      const id = rest[1];
+      if (!id) {
+        console.error("Usage: remnic taxonomy remove <id>");
+        process.exit(1);
+      }
+
+      const taxonomy = await loadTaxonomy(config.memoryDir);
+      const idx = taxonomy.categories.findIndex((c) => c.id === id);
+      if (idx === -1) {
+        console.error(`Category "${id}" not found.`);
+        process.exit(1);
+      }
+
+      // Prevent removing a default category that has memoryCategories mapped
+      const target = taxonomy.categories[idx]!;
+      const isDefault = DEFAULT_TAXONOMY.categories.some((c) => c.id === id);
+      if (isDefault && target.memoryCategories.length > 0) {
+        console.error(
+          `Cannot remove default category "${id}" that maps MemoryCategory values: ${target.memoryCategories.join(", ")}. ` +
+          `Reassign them first.`,
+        );
+        process.exit(1);
+      }
+
+      taxonomy.categories.splice(idx, 1);
+      await saveTaxonomy(config.memoryDir, taxonomy);
+      console.log(`Removed category "${id}".`);
+
+      if (config.taxonomyAutoGenResolver) {
+        const doc = generateResolverDocument(taxonomy);
+        const resolverPath = path.join(config.memoryDir, ".taxonomy", "RESOLVER.md");
+        fs.writeFileSync(resolverPath, doc);
+        console.error(`Regenerated: ${resolverPath}`);
+      }
+      break;
+    }
+
+    case "resolve": {
+      const text = rest.slice(1).filter((a) => !a.startsWith("--")).join(" ");
+      if (!text) {
+        console.error("Usage: remnic taxonomy resolve <text>");
+        process.exit(1);
+      }
+
+      const categoryFlag = resolveFlag(rest, "--category") as MemoryCategory | undefined;
+      const memoryCategory: MemoryCategory = categoryFlag ?? "fact";
+      const taxonomy = await loadTaxonomy(config.memoryDir);
+      const decision = resolveCategory(text, memoryCategory, taxonomy);
+      const json = rest.includes("--json");
+
+      if (json) {
+        console.log(JSON.stringify(decision, null, 2));
+      } else {
+        console.log(`Category:   ${decision.categoryId}`);
+        console.log(`Confidence: ${decision.confidence.toFixed(2)}`);
+        console.log(`Reason:     ${decision.reason}`);
+        if (decision.alternatives.length > 0) {
+          console.log(`\nAlternatives:`);
+          for (const alt of decision.alternatives.slice(0, 3)) {
+            console.log(`  - ${alt.categoryId}: ${alt.reason}`);
+          }
+        }
+      }
+      break;
+    }
+
+    default:
+      console.log(`
+remnic taxonomy — MECE knowledge directory
+
+Usage:
+  remnic taxonomy show [--json]                     Show current taxonomy
+  remnic taxonomy resolver                          Print/regenerate RESOLVER.md
+  remnic taxonomy add <id> <name> [options]         Add a custom category
+    --description <text>                              Category description
+    --priority <number>                               Priority (lower wins, default 100)
+    --memory-categories <list>                        Comma-separated MemoryCategory values
+  remnic taxonomy remove <id>                       Remove a custom category
+  remnic taxonomy resolve <text> [--category <cat>] Test: resolve text to a category
+    --json                                            JSON output
+`);
+      break;
+  }
+}
+
 // ── CLI entry ────────────────────────────────────────────────────────────────
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -2538,6 +2742,11 @@ Options:
       break;
     }
 
+    case "taxonomy": {
+      await cmdTaxonomy(rest);
+      break;
+    }
+
     case "openclaw": {
       const subAction = rest[0] ?? "help";
       if (subAction === "install") {
@@ -2601,6 +2810,12 @@ Usage:
   remnic binary status             Show binary lifecycle manifest summary
   remnic binary run [--dry-run]    Run full binary lifecycle pipeline
   remnic binary clean --force      Force-clean binaries past grace period
+  remnic taxonomy <show|resolver|add|remove|resolve>  MECE knowledge directory
+    show [--json]                     Show current taxonomy
+    resolver                          Print/regenerate RESOLVER.md
+    add <id> <name> [--priority N]    Add custom category
+    remove <id>                       Remove custom category
+    resolve <text> [--category <cat>] Test resolver on sample text
 
 Options:
   --json    Output in JSON format

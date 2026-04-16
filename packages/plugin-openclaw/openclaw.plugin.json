@@ -631,6 +631,16 @@
         "default": ".versions",
         "description": "Name of the sidecar directory inside memoryDir for version snapshots."
       },
+      "taxonomyEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the MECE taxonomy knowledge directory for categorizing memories."
+      },
+      "taxonomyAutoGenResolver": {
+        "type": "boolean",
+        "default": true,
+        "description": "Auto-regenerate RESOLVER.md when the taxonomy changes."
+      },
       "codexCompat": {
         "type": "object",
         "additionalProperties": false,

@@ -905,6 +905,12 @@ export interface PluginConfig {
   // Codex CLI connector settings (install-time)
   codex: CodexConnectorConfig;
 
+  // MECE Taxonomy (#366)
+  /** Enable the MECE taxonomy knowledge directory. Default false. */
+  taxonomyEnabled: boolean;
+  /** Auto-regenerate RESOLVER.md when taxonomy changes. Default true. */
+  taxonomyAutoGenResolver: boolean;
+
   // Codex CLI — native memory materialization (#378)
   /** Materialize Remnic memories into Codex's expected ~/.codex/memories/ layout. Default true. */
   codexMaterializeMemories: boolean;
