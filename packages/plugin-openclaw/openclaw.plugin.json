@@ -622,7 +622,7 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": true
+            "default": false
           },
           "threadIdBufferKeying": {
             "type": "boolean",

@@ -190,6 +190,37 @@ export class SmartBuffer {
     return [...entry.turns];
   }
 
+  async findBufferKeyForSession(sessionKey: string): Promise<string | null> {
+    const bufferKeys = await this.findBufferKeysForSession(sessionKey);
+    return bufferKeys[0] ?? null;
+  }
+
+  async findBufferKeysForSession(sessionKey: string): Promise<string[]> {
+    if (typeof sessionKey !== "string" || sessionKey.length === 0) return [];
+    await this.load();
+
+    const matches: string[] = [];
+    const directEntry = this.peekEntry(sessionKey);
+    if ((directEntry?.turns.length ?? 0) > 0) {
+      matches.push(sessionKey);
+    }
+
+    const entries = this.state.entries ?? {};
+    for (const [bufferKey, entry] of Object.entries(entries)) {
+      if (
+        !matches.includes(bufferKey) &&
+        entry.turns.some(
+          (turn) =>
+            typeof turn.sessionKey === "string" && turn.sessionKey === sessionKey,
+        )
+      ) {
+        matches.push(bufferKey);
+      }
+    }
+
+    return matches;
+  }
+
   async clearAfterExtraction(bufferKey = "default"): Promise<void> {
     await this.load();
     const entry = this.entryFor(bufferKey);

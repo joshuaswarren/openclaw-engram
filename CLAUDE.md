@@ -172,3 +172,33 @@ Default workflow going forward:
 
 Reference:
 `docs/ops/pr-review-hardening-playbook.md`
+
+## Why Review Churn Happens
+
+When a PR touches session identity, retrieval routing, compaction, cache, or
+other lifecycle-heavy behavior, repeated review rounds usually mean the change
+was fixed too locally instead of being hardened as a whole subsystem.
+
+The common failure mode:
+
+1. A fix is made for the reported bug only.
+2. A reviewer then exercises an adjacent path:
+   - sparse metadata
+   - remembered binding reuse
+   - provider rebinding
+   - restart recovery
+   - `before_reset`
+   - `session_end`
+   - compaction
+3. Another follow-up commit is required.
+
+Required prevention workflow:
+
+1. Build the scenario matrix before coding.
+2. Define the invariants for every entrypoint the subsystem owns.
+3. Add tests for the entire failure class, not only the reported example.
+4. Apply one cohesive subsystem patch.
+5. Run the hardening gate before requesting AI review again.
+
+If the work is stateful and you are responding one review comment at a time,
+stop and widen the fix before pushing.

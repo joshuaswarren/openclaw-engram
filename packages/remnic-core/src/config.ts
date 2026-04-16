@@ -362,7 +362,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       ? (cfg.codexCompat as Record<string, unknown>)
       : {};
   const codexCompat: CodexCompatConfig = {
-    enabled: rawCodexCompat.enabled !== false,
+    enabled: rawCodexCompat.enabled === true,
     threadIdBufferKeying: rawCodexCompat.threadIdBufferKeying !== false,
     compactionFlushMode:
       typeof rawCodexCompat.compactionFlushMode === "string" &&

@@ -279,7 +279,7 @@ The plugin now exposes a dedicated `codexCompat` config block:
       "openclaw-remnic": {
         "config": {
           "codexCompat": {
-            "enabled": true,
+            "enabled": false,
             "threadIdBufferKeying": true,
             "compactionFlushMode": "auto",
             "fingerprintDedup": true
@@ -291,9 +291,35 @@ The plugin now exposes a dedicated `codexCompat` config block:
 }
 ```
 
-The intent of this block is to make Remnic's extraction buffering safe under
-Codex-managed threads and compaction without changing non-Codex provider
-behavior.
+`codexCompat.enabled` is opt-in and defaults to `false`, so the compatibility
+path only activates for deployments that explicitly enable bundled Codex
+thread handling. The intent of this block is to make Remnic's extraction
+buffering safe under Codex-managed threads and compaction without changing
+non-Codex provider behavior.
+
+Behavior contract:
+
+- `enabled=true` turns on the bundled Codex compatibility path only for Codex
+  provider sessions. Claude, GPT, local, and other providers keep the
+  pre-existing session-keyed behavior.
+- `threadIdBufferKeying=true` collapses multiple OpenClaw `sessionKey`s that
+  share the same Codex provider thread into one logical buffer key
+  (`codex-thread:<providerThreadId>`). This prevents per-session buffer
+  divergence for one Codex-managed conversation.
+- `compactionFlushMode=signal` flushes the pending logical-thread buffer in
+  `before_compaction`, before Codex-managed history replacement lands.
+- `compactionFlushMode=heuristic` is a v1 fallback: if the runtime does not
+  expose an explicit compaction signal, Remnic treats a sudden drop in Codex
+  thread message count as compaction and forces a flush on the next
+  `before_prompt_build`.
+- `compactionFlushMode=auto` prefers the explicit compaction signal path and
+  only falls back to the heuristic path when needed.
+- `fingerprintDedup=true` persists processed Codex extraction fingerprints in
+  Remnic state so the same logical turn set is not re-extracted when it is
+  replayed through a second OpenClaw session for the same Codex thread.
+- Reset and compaction cleanup clear both the raw per-session prompt cache and
+  the Codex thread alias cache so precomputed recall text cannot leak across
+  compaction boundaries.
 
 Important clarification: Remnic's extraction pipeline still uses its own
 Responses API auth path. Bundled Codex provider auth in OpenClaw does not

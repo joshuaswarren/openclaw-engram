@@ -88,6 +88,7 @@ import {
   type EvalShadowRecallRecord,
 } from "./evals.js";
 import { SessionObserverState } from "./session-observer-state.js";
+import { CODEX_THREAD_KEY_PREFIX } from "./codex-thread-key.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
 import { EmbeddingFallback } from "./embedding-fallback.js";
@@ -7880,6 +7881,13 @@ export class Orchestrator {
     role: "user" | "assistant",
     content: string,
     sessionKey?: string,
+    options: {
+      bufferKey?: string;
+      logicalSessionKey?: string;
+      providerThreadId?: string | null;
+      turnFingerprint?: string;
+      persistProcessedFingerprint?: boolean;
+    } = {},
   ): Promise<void> {
     if (role !== "user" && role !== "assistant") {
       log.debug(`processTurn: ignoring unsupported role=${String(role)}`);
@@ -7893,14 +7901,20 @@ export class Orchestrator {
     }
 
     const bufferKey =
-      typeof sessionKey === "string" && sessionKey.length > 0
-        ? sessionKey
-        : "default";
+      typeof options.bufferKey === "string" && options.bufferKey.length > 0
+        ? options.bufferKey
+        : typeof sessionKey === "string" && sessionKey.length > 0
+          ? sessionKey
+          : "default";
     const turn: BufferTurn = {
       role,
       content,
       timestamp: new Date().toISOString(),
       sessionKey,
+      logicalSessionKey: options.logicalSessionKey ?? bufferKey,
+      providerThreadId: options.providerThreadId ?? null,
+      turnFingerprint: options.turnFingerprint,
+      persistProcessedFingerprint: options.persistProcessedFingerprint === true,
     };
 
     const decision = await this.buffer.addTurn(bufferKey, turn);
@@ -7915,25 +7929,45 @@ export class Orchestrator {
 
   async flushSession(
     sessionKey: string,
-    options: { reason: string; abortSignal?: AbortSignal },
+    options: {
+      reason: string;
+      abortSignal?: AbortSignal;
+      bufferKey?: string;
+    },
   ): Promise<void> {
-    const bufferKey =
-      typeof sessionKey === "string" && sessionKey.length > 0
-        ? sessionKey
-        : "default";
-    const turns = this.buffer.getTurns(bufferKey);
-    if (turns.length === 0) return;
-    await new Promise<void>((resolve, reject) => {
-      void this
-        .queueBufferedExtraction(turns, "trigger_mode", {
-          bufferKey,
-          clearBufferAfterExtraction: true,
-          skipDedupeCheck: true,
-          abortSignal: options.abortSignal,
-          onTaskSettled: (error) => (error ? reject(error) : resolve()),
-        })
-        .catch(reject);
-    });
+    const explicitBufferKey =
+      typeof options.bufferKey === "string" && options.bufferKey.length > 0
+        ? options.bufferKey
+        : null;
+    const discoveredBufferKeys =
+      explicitBufferKey ||
+      typeof sessionKey !== "string" ||
+      sessionKey.length === 0 ||
+      typeof this.buffer.findBufferKeysForSession !== "function"
+        ? []
+        : await this.buffer.findBufferKeysForSession(sessionKey);
+    const bufferKeys = explicitBufferKey
+      ? [explicitBufferKey]
+      : discoveredBufferKeys.length > 0
+        ? discoveredBufferKeys
+        : typeof sessionKey === "string" && sessionKey.length > 0
+          ? [sessionKey]
+          : ["default"];
+    for (const bufferKey of bufferKeys) {
+      const turns = this.buffer.getTurns(bufferKey);
+      if (turns.length === 0) continue;
+      await new Promise<void>((resolve, reject) => {
+        void this
+          .queueBufferedExtraction(turns, "trigger_mode", {
+            bufferKey,
+            clearBufferAfterExtraction: true,
+            skipDedupeCheck: true,
+            abortSignal: options.abortSignal,
+            onTaskSettled: (error) => (error ? reject(error) : resolve()),
+          })
+          .catch(reject);
+      });
+    }
   }
 
   async ingestReplayBatch(
@@ -7990,19 +8024,30 @@ export class Orchestrator {
     }
   }
 
-  async observeSessionHeartbeat(sessionKey: string): Promise<void> {
+  async observeSessionHeartbeat(
+    sessionKey: string,
+    options: { bufferKey?: string } = {},
+  ): Promise<void> {
     if (this.config.sessionObserverEnabled !== true) return;
     if (!sessionKey || sessionKey.length === 0) return;
 
+    const bufferKey =
+      typeof options.bufferKey === "string" && options.bufferKey.length > 0
+        ? options.bufferKey
+        : sessionKey;
     const previous =
       this.heartbeatObserverChains.get(sessionKey) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
       .then(async () => {
-        const turns = this.buffer.getTurns(sessionKey);
+        const turns = this.buffer.getTurns(bufferKey);
         if (turns.length === 0) return;
         const normalizedSessionKey = normalizeReplaySessionKey(sessionKey);
+        const allowSharedSessionBuffer = bufferKey.startsWith(
+          CODEX_THREAD_KEY_PREFIX,
+        );
         if (
+          !allowSharedSessionBuffer &&
           turns.some(
             (turn) =>
               turn.sessionKey &&
@@ -8010,16 +8055,16 @@ export class Orchestrator {
           )
         ) {
           log.debug(
-            `heartbeat observer skipped: mixed-session buffer contents for ${sessionKey}`,
+            `heartbeat observer skipped: mixed-session buffer contents for ${bufferKey}`,
           );
           return;
         }
         if (!this.shouldQueueExtraction(turns, {
           commit: false,
-          bufferKey: sessionKey,
+          bufferKey,
         })) {
           log.debug(
-            `heartbeat observer skipped: extraction dedupe for ${sessionKey}`,
+            `heartbeat observer skipped: extraction dedupe for ${bufferKey}`,
           );
           return;
         }
@@ -8035,7 +8080,7 @@ export class Orchestrator {
           `heartbeat observer trigger: session=${sessionKey} deltaBytes=${decision.deltaBytes} deltaTokens=${decision.deltaTokens}`,
         );
         await this.queueBufferedExtraction(turns, "heartbeat_observer", {
-          bufferKey: sessionKey,
+          bufferKey,
         });
       });
 
@@ -8099,6 +8144,33 @@ export class Orchestrator {
     log.debug(`queued extraction from ${reason}`);
   }
 
+  private normalizeExtractionFingerprintTurns(turns: BufferTurn[]): string[] {
+    if (!Array.isArray(turns) || turns.length === 0) return [];
+    return turns
+      .filter((turn) => turn.role === "user" || turn.role === "assistant")
+      .map((turn) => {
+        if (
+          typeof turn.turnFingerprint === "string" &&
+          turn.turnFingerprint.length > 0
+        ) {
+          return `fp:${turn.turnFingerprint}`;
+        }
+        return `${turn.role}:${(turn.content ?? "").replace(/\s+/g, " ").trim().slice(0, this.config.extractionMaxTurnChars)}`;
+      })
+      .filter((value) => value.length > 0);
+  }
+
+  private buildExtractionFingerprint(
+    turns: BufferTurn[],
+    bufferKey: string,
+  ): string | null {
+    const normalized = this.normalizeExtractionFingerprintTurns(turns).join("\n");
+    if (!normalized) return null;
+    return createHash("sha256")
+      .update(`${bufferKey}\n${normalized}`)
+      .digest("hex");
+  }
+
   private shouldQueueExtraction(
     turns: BufferTurn[],
     options: { commit?: boolean; bufferKey?: string } = {},
@@ -8106,20 +8178,9 @@ export class Orchestrator {
     if (!this.config.extractionDedupeEnabled) return true;
     if (!Array.isArray(turns) || turns.length === 0) return false;
 
-    // Fingerprint only user/assistant text; tool/system noise should not produce unique runs.
-    const normalized = turns
-      .filter((t) => t.role === "user" || t.role === "assistant")
-      .map(
-        (t) =>
-          `${t.role}:${(t.content ?? "").trim().slice(0, this.config.extractionMaxTurnChars)}`,
-      )
-      .join("\n");
-    if (!normalized) return false;
-
     const bufferKey = options.bufferKey ?? turns[0]?.sessionKey ?? "default";
-    const fingerprint = createHash("sha256")
-      .update(`${bufferKey}\n${normalized}`)
-      .digest("hex");
+    const fingerprint = this.buildExtractionFingerprint(turns, bufferKey);
+    if (!fingerprint) return false;
     const now = Date.now();
     const seenAt = this.recentExtractionFingerprints.get(fingerprint);
     if (seenAt && now - seenAt < this.config.extractionDedupeWindowMs) {
@@ -8244,6 +8305,30 @@ export class Orchestrator {
     const principal = resolvePrincipal(sessionKey, this.config);
     const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
     const storage = await this.storageRouter.storageFor(selfNamespace);
+    const shouldPersistProcessedFingerprint = normalizedTurns.some(
+      (turn) => turn.persistProcessedFingerprint === true,
+    );
+    const extractionFingerprint = this.buildExtractionFingerprint(
+      normalizedTurns,
+      bufferKey,
+    );
+    let meta =
+      extractionFingerprint && shouldPersistProcessedFingerprint
+        ? await storage.loadMeta()
+        : null;
+    if (
+      extractionFingerprint &&
+      shouldPersistProcessedFingerprint &&
+      (meta?.processedExtractionFingerprints ?? []).some(
+        (entry) => entry.fingerprint === extractionFingerprint,
+      )
+    ) {
+      log.debug(
+        `runExtraction: skipping already-processed extraction fingerprint for ${bufferKey}`,
+      );
+      await clearBuffer();
+      return;
+    }
 
     // Pass existing entity names so the LLM can reuse them instead of inventing variants
     const existingEntities = await storage.listEntityNames();
@@ -8305,6 +8390,40 @@ export class Orchestrator {
       threadIdForExtraction,
       { sessionKey, principal },
     );
+    meta ??= await storage.loadMeta();
+    if (extractionFingerprint && shouldPersistProcessedFingerprint) {
+      try {
+        await this.recordProcessedExtractionFingerprint(
+          storage,
+          extractionFingerprint,
+          meta,
+        );
+      } catch (error) {
+        log.warn(
+          "runExtraction: failed to persist processed extraction fingerprint; continuing with buffer clear",
+          error,
+        );
+      }
+    }
+    // Persist extraction counters and processed fingerprints before running
+    // follow-on helpers so replay dedupe survives any later non-essential
+    // failure. If this aggregate meta write fails, still clear the buffer:
+    // the durable memories are already written and replaying the same turns
+    // would duplicate them.
+    meta.extractionCount += 1;
+    meta.lastExtractionAt = new Date().toISOString();
+    meta.totalMemories += Array.isArray(result?.facts)
+      ? result.facts.length
+      : 0;
+    meta.totalEntities += Array.isArray(result?.entities)
+      ? result.entities.length
+      : 0;
+    let postPersistMetaError: unknown;
+    try {
+      await storage.saveMeta(meta);
+    } catch (error) {
+      postPersistMetaError = error;
+    }
     await clearBuffer({ ignoreAbort: true });
 
     // Build memory box from this extraction (v8.0 Phase 2A)
@@ -8367,20 +8486,35 @@ export class Orchestrator {
     if (nonZeroExtraction) this.nonZeroExtractionsSinceConsolidation += 1;
     this.maybeScheduleConsolidation(nonZeroExtraction);
 
-    // Update meta (safely handle potentially invalid result)
-    const meta = await storage.loadMeta();
-    meta.extractionCount += 1;
-    meta.lastExtractionAt = new Date().toISOString();
-    meta.totalMemories += Array.isArray(result?.facts)
-      ? result.facts.length
-      : 0;
-    meta.totalEntities += Array.isArray(result?.entities)
-      ? result.entities.length
-      : 0;
-    await storage.saveMeta(meta);
-
     this.requestQmdMaintenance();
     await this.runTierMigrationCycle(storage, "extraction");
+
+    if (postPersistMetaError) {
+      throw postPersistMetaError;
+    }
+  }
+
+  private async recordProcessedExtractionFingerprint(
+    storage: StorageManager,
+    fingerprint: string,
+    preloadedMeta?: Awaited<ReturnType<StorageManager["loadMeta"]>>,
+  ): Promise<void> {
+    const meta = preloadedMeta ?? (await storage.loadMeta());
+    const observedAt = new Date().toISOString();
+    const seen = new Map(
+      (meta.processedExtractionFingerprints ?? []).map((entry) => [
+        entry.fingerprint,
+        entry.observedAt,
+      ]),
+    );
+    seen.set(fingerprint, observedAt);
+    meta.processedExtractionFingerprints = Array.from(seen.entries())
+      .map(([value, at]) => ({ fingerprint: value, observedAt: at }))
+      .sort((left, right) => left.observedAt.localeCompare(right.observedAt))
+      .slice(-500);
+    if (!preloadedMeta) {
+      await storage.saveMeta(meta);
+    }
   }
 
   private async runTierMigrationCycle(

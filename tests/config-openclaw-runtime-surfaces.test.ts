@@ -62,7 +62,7 @@ test("parseConfig defaults the new OpenClaw runtime-surface settings", () => {
     gateExtractionDuringHeartbeat: true,
   });
   assert.deepEqual(cfg.codexCompat, {
-    enabled: true,
+    enabled: false,
     threadIdBufferKeying: true,
     compactionFlushMode: "auto",
     fingerprintDedup: true,

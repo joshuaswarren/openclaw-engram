@@ -20,6 +20,9 @@ importers:
       '@orama/plugin-data-persistence':
         specifier: ^3.0.0
         version: 3.1.18
+      '@remnic/core':
+        specifier: workspace:^
+        version: link:packages/remnic-core
       '@sinclair/typebox':
         specifier: ^0.34.0
         version: 0.34.49

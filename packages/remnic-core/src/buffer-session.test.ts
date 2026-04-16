@@ -79,6 +79,74 @@ test("SmartBuffer read-only accessors do not persist phantom entries for unknown
   assert.deepEqual(Object.keys(storage.saved?.entries ?? {}).sort(), ["default", "thread-a"]);
 });
 
+test("SmartBuffer can recover a logical buffer key from a raw session key", async () => {
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+    entries: {
+      default: {
+        turns: [],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+      "codex-thread:thread-22::principal:cli": {
+        turns: [
+          {
+            ...makeTurn("session-z", "gamma memory"),
+            logicalSessionKey: "codex-thread:thread-22",
+          },
+        ],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+    },
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  const resolved = await buffer.findBufferKeyForSession("session-z");
+
+  assert.equal(resolved, "codex-thread:thread-22::principal:cli");
+});
+
+test("SmartBuffer finds every buffer key that still carries turns for a session", async () => {
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+    entries: {
+      default: {
+        turns: [],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+      "session-z": {
+        turns: [makeTurn("session-z", "raw memory")],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+      "codex-thread:thread-22::principal:cli": {
+        turns: [
+          {
+            ...makeTurn("session-z", "logical memory"),
+            logicalSessionKey: "codex-thread:thread-22",
+          },
+        ],
+        lastExtractionAt: null,
+        extractionCount: 0,
+      },
+    },
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  const resolved = await buffer.findBufferKeysForSession("session-z");
+
+  assert.deepEqual(resolved, [
+    "session-z",
+    "codex-thread:thread-22::principal:cli",
+  ]);
+});
+
 test("SmartBuffer prunes stale logical session buffers to a bounded entry set", async () => {
   const entries = Object.fromEntries(
     Array.from({ length: 205 }, (_, index) => [

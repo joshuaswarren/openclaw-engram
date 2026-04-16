@@ -89,6 +89,7 @@ export { MeilisearchBackend } from "./search/meilisearch-backend.js";
 // ---------------------------------------------------------------------------
 
 export { buildEntityRecallSection } from "./entity-retrieval.js";
+export { resolvePrincipal } from "./namespaces/principal.js";
 
 // ---------------------------------------------------------------------------
 // Trust zones
@@ -172,6 +173,13 @@ export {
 // ---------------------------------------------------------------------------
 
 export { BootstrapEngine } from "./bootstrap.js";
+
+// ---------------------------------------------------------------------------
+// Codex compatibility helpers
+// ---------------------------------------------------------------------------
+
+export { CODEX_THREAD_KEY_PREFIX } from "./codex-thread-key.js";
+export type { CodexCompatConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Logger

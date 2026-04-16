@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { Orchestrator } from "../src/orchestrator.ts";
 import type { BufferTurn } from "../src/types.js";
 
@@ -47,6 +48,58 @@ test("observeSessionHeartbeat queues buffered extraction when observer threshold
 
   assert.equal(queued, true);
   assert.equal(queuedReason, "heartbeat_observer");
+});
+
+test("observeSessionHeartbeat uses an explicit logical buffer key when provided", async () => {
+  const rawTurns: BufferTurn[] = [];
+  const logicalTurns: BufferTurn[] = [
+    {
+      role: "user",
+      content: "Codex logical buffer turn.",
+      timestamp: "2026-02-25T00:00:00.000Z",
+      sessionKey: "agent:generalist:main",
+    },
+  ];
+
+  let queuedBufferKey: string | null = null;
+  const fake = {
+    config: { sessionObserverEnabled: true },
+    heartbeatObserverChains: new Map<string, Promise<void>>(),
+    transcript: {
+      estimateSessionFootprint: async () => ({ bytes: 25_000, tokens: 6_250 }),
+    },
+    sessionObserver: {
+      observe: async () => ({
+        triggered: true,
+        deltaBytes: 6_500,
+        deltaTokens: 1_500,
+        band: { maxBytes: 50_000, triggerDeltaBytes: 6_000, triggerDeltaTokens: 1_200 },
+      }),
+    },
+    buffer: {
+      getTurns: (bufferKey: string) =>
+        bufferKey === "codex-thread:thread-123"
+          ? logicalTurns
+          : rawTurns,
+    },
+    shouldQueueExtraction: (_turns: BufferTurn[], options?: { bufferKey?: string }) =>
+      options?.bufferKey === "codex-thread:thread-123",
+    queueBufferedExtraction: async (
+      _turns: BufferTurn[],
+      _reason: string,
+      options?: { bufferKey?: string },
+    ) => {
+      queuedBufferKey = options?.bufferKey ?? null;
+    },
+  };
+
+  await (Orchestrator.prototype as any).observeSessionHeartbeat.call(
+    fake,
+    "agent:generalist:main",
+    { bufferKey: "codex-thread:thread-123" },
+  );
+
+  assert.equal(queuedBufferKey, "codex-thread:thread-123");
 });
 
 test("observeSessionHeartbeat no-ops when observer is disabled", async () => {
@@ -123,6 +176,60 @@ test("observeSessionHeartbeat skips when buffer contains mixed session turns", a
   );
 
   assert.equal(queued, false);
+});
+
+test("observeSessionHeartbeat allows shared Codex logical buffers with mixed session turns", async () => {
+  let queued = false;
+  let queuedBufferKey: string | null = null;
+  const fake = {
+    config: { sessionObserverEnabled: true },
+    heartbeatObserverChains: new Map<string, Promise<void>>(),
+    transcript: {
+      estimateSessionFootprint: async () => ({ bytes: 25_000, tokens: 6_250 }),
+    },
+    sessionObserver: {
+      observe: async () => ({
+        triggered: true,
+        deltaBytes: 6_500,
+        deltaTokens: 1_500,
+        band: { maxBytes: 50_000, triggerDeltaBytes: 6_000, triggerDeltaTokens: 1_200 },
+      }),
+    },
+    buffer: {
+      getTurns: () => [
+        {
+          role: "user",
+          content: "session A",
+          timestamp: "2026-02-25T00:00:00.000Z",
+          sessionKey: "agent:generalist:main",
+        },
+        {
+          role: "assistant",
+          content: "session B",
+          timestamp: "2026-02-25T00:00:01.000Z",
+          sessionKey: "agent:research:main",
+        },
+      ],
+    },
+    shouldQueueExtraction: () => true,
+    queueBufferedExtraction: async (
+      _turns: BufferTurn[],
+      _reason: string,
+      options?: { bufferKey?: string },
+    ) => {
+      queued = true;
+      queuedBufferKey = options?.bufferKey ?? null;
+    },
+  };
+
+  await (Orchestrator.prototype as any).observeSessionHeartbeat.call(
+    fake,
+    "agent:generalist:main",
+    { bufferKey: "codex-thread:thread-shared-1" },
+  );
+
+  assert.equal(queued, true);
+  assert.equal(queuedBufferKey, "codex-thread:thread-shared-1");
 });
 
 test("queueBufferedExtraction preserves buffered turns when dedupe skips enqueue", async () => {
@@ -266,6 +373,10 @@ test("shouldQueueExtraction supports non-committing dedupe prechecks", async () 
       extractionDedupeWindowMs: 60_000,
     },
     recentExtractionFingerprints: new Map<string, number>(),
+    normalizeExtractionFingerprintTurns:
+      (Orchestrator.prototype as any).normalizeExtractionFingerprintTurns,
+    buildExtractionFingerprint:
+      (Orchestrator.prototype as any).buildExtractionFingerprint,
     shouldQueueExtraction: (Orchestrator.prototype as any).shouldQueueExtraction,
   };
 
@@ -282,6 +393,40 @@ test("shouldQueueExtraction supports non-committing dedupe prechecks", async () 
   });
   assert.equal(commit, true);
   assert.equal(fake.recentExtractionFingerprints.size, 1);
+});
+
+test("buildExtractionFingerprint prefixes turn fingerprints consistently with in-memory dedupe", () => {
+  const fake = {
+    config: {
+      extractionMaxTurnChars: 10_000,
+    },
+    normalizeExtractionFingerprintTurns:
+      (Orchestrator.prototype as any).normalizeExtractionFingerprintTurns,
+    buildExtractionFingerprint:
+      (Orchestrator.prototype as any).buildExtractionFingerprint,
+  };
+
+  const turns: BufferTurn[] = [
+    {
+      role: "user",
+      content: "ignored when turnFingerprint is present",
+      timestamp: "2026-02-25T00:00:00.000Z",
+      sessionKey: "agent:generalist:main",
+      turnFingerprint: "user:hello",
+    },
+  ];
+
+  const fingerprint = fake.buildExtractionFingerprint.call(
+    fake,
+    turns,
+    "codex-thread:thread-1",
+  );
+
+  const expected = createHash("sha256")
+    .update("codex-thread:thread-1\nfp:user:hello")
+    .digest("hex");
+
+  assert.equal(fingerprint, expected);
 });
 
 test("shouldQueueExtraction dedupes within a buffer key but not across sessions", async () => {
@@ -302,6 +447,10 @@ test("shouldQueueExtraction dedupes within a buffer key but not across sessions"
       extractionDedupeWindowMs: 60_000,
     },
     recentExtractionFingerprints: new Map<string, number>(),
+    normalizeExtractionFingerprintTurns:
+      (Orchestrator.prototype as any).normalizeExtractionFingerprintTurns,
+    buildExtractionFingerprint:
+      (Orchestrator.prototype as any).buildExtractionFingerprint,
     shouldQueueExtraction: (Orchestrator.prototype as any).shouldQueueExtraction,
   };
 

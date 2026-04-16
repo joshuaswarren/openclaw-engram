@@ -64,6 +64,46 @@ These rules are the default workflow for all agents and contributors.
 Reference workflow:
 `docs/ops/pr-review-hardening-playbook.md`
 
+## Why Stateful PRs Churn (Read Before Touching Lifecycle Logic)
+
+PRs in retrieval, session identity, compaction, cache, or reset/end-of-session code
+often attract many review rounds for the same structural reason:
+
+1. The subsystem is stateful across multiple entrypoints.
+   - A local fix in one hook can break `before_reset`, `session_end`, compaction,
+     sparse metadata handling, remembered bindings, provider rebinding, or restart recovery.
+2. Reviewers probe different slices of the same state machine.
+   - One reviewer may catch provider detection drift.
+   - Another may catch lifecycle drain gaps.
+   - Another may catch stale-cache or replay behavior.
+   These are usually adjacent invariant misses, not unrelated bugs.
+3. Comment-by-comment patching makes churn worse.
+   - If you only fix the literal review comment, the next review round often finds
+     the neighboring invariant you did not model yet.
+
+Required response:
+
+1. Stop and model the full contract first.
+2. Write the scenario matrix before changing code.
+3. Patch the subsystem coherently once.
+4. Add tests for the failure class, not just the reported instance.
+5. Run the hardening gate before asking for another review.
+
+Minimum scenario matrix for session/retrieval/cache work:
+
+- explicit provider identity
+- sparse metadata with remembered binding
+- sparse metadata without remembered binding
+- provider rebinding
+- restart/reload recovery
+- compaction flush
+- `before_reset`
+- `session_end`
+- dedupe/replay behavior
+
+If you cannot explain the behavior for every row in that matrix, the PR is not
+ready for external review.
+
 ## Review Prevention Checklist (All Agents — Read Before Every PR)
 
 These patterns were extracted from 60+ PRs across 2026-04-05 to 2026-04-12
