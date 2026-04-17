@@ -199,6 +199,7 @@ import {
   findSimilarClusters,
   buildConsolidationPrompt,
   parseConsolidationResponse,
+  buildExtensionsBlockForConsolidation,
   materializeAfterSemanticConsolidation,
   type SemanticConsolidationResult,
 } from "./semantic-consolidation.js";
@@ -2183,9 +2184,20 @@ export class Orchestrator {
       return result;
     }
 
+    // Discover memory extensions once for all clusters (#382)
+    let extensionsBlock = "";
+    try {
+      extensionsBlock = await buildExtensionsBlockForConsolidation(this.config);
+    } catch (err) {
+      log.warn(`[semantic-consolidation] extension discovery failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    }
+
     for (const cluster of clusters) {
       try {
-        const prompt = buildConsolidationPrompt(cluster);
+        let prompt = buildConsolidationPrompt(cluster);
+        if (extensionsBlock.length > 0) {
+          prompt += "\n\n" + extensionsBlock;
+        }
         const messages = [
           {
             role: "system" as const,

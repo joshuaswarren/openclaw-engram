@@ -3,7 +3,9 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "./logger.js";
-import type { MemoryFile } from "./types.js";
+import type { MemoryFile, PluginConfig } from "./types.js";
+import { discoverMemoryExtensions, renderExtensionsFooter } from "./memory-extension-host/index.js";
+import { resolveExtensionsRoot } from "./semantic-consolidation.js";
 
 const PROMPT_RELATIVE_PATH = path.join("prompts", "day_summary.prompt.md");
 
@@ -104,4 +106,18 @@ export function formatDaySummaryMemories(memories: string | MemoryFile[]): strin
     })
     .join("\n\n")
     .trim();
+}
+
+/**
+ * Build a one-line extension footer for day-summary and summary-snapshot contexts.
+ * Returns "" when extensions are disabled or none are found.
+ */
+export async function buildExtensionsFooterForSummary(
+  config: PluginConfig,
+): Promise<string> {
+  if (!config.memoryExtensionsEnabled) return "";
+  const root = resolveExtensionsRoot(config);
+  const extensions = await discoverMemoryExtensions(root, log);
+  if (extensions.length === 0) return "";
+  return renderExtensionsFooter(extensions);
 }

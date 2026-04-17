@@ -504,6 +504,7 @@ export class CompoundingEngine {
           causalTrajectoryStoreDir: this.config.causalTrajectoryStoreDir,
           gatewayConfig: this.config.gatewayConfig,
           gatewayAgentId: this.config.modelSource === "gateway" ? (this.config.gatewayAgentId || undefined) : undefined,
+          pluginConfig: this.config,
           config: {
             minRecurrence: this.config.cmcConsolidationMinRecurrence,
             minSessions: this.config.cmcConsolidationMinSessions,

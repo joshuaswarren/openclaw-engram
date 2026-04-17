@@ -23,6 +23,7 @@ import path from "node:path";
 import { log } from "./logger.js";
 import { runPostConsolidationMaterialize } from "./connectors/codex-materialize-runner.js";
 import type { MaterializeResult, RolloutSummaryInput } from "./connectors/codex-materialize.js";
+import { buildExtensionsBlockForConsolidation } from "./semantic-consolidation.js";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -259,6 +260,7 @@ export async function deriveCausalPromotionCandidates(options: {
   config: ConsolidationConfig;
   gatewayConfig?: GatewayConfig;
   gatewayAgentId?: string;
+  pluginConfig?: PluginConfig;
 }): Promise<CausalPatternCandidate[]> {
   try {
     const trajectories = await readAllTrajectories(options.memoryDir, options.causalTrajectoryStoreDir);
@@ -268,7 +270,15 @@ export async function deriveCausalPromotionCandidates(options: {
     const chainIndex = await readChainIndex(chainsDir);
 
     // Format the causal context for the LLM
-    const context = formatCausalContext(trajectories, chainIndex);
+    let context = formatCausalContext(trajectories, chainIndex);
+
+    // Append memory extensions block if available (#382)
+    if (options.pluginConfig) {
+      const extBlock = await buildExtensionsBlockForConsolidation(options.pluginConfig);
+      if (extBlock.length > 0) {
+        context += "\n\n" + extBlock;
+      }
+    }
 
     // If no LLM available, fall back to empty (no deterministic fallback)
     const llm = new FallbackLlmClient(options.gatewayConfig);

@@ -659,6 +659,16 @@
         "default": true,
         "description": "Auto-enable citations when the Codex adapter is detected."
       },
+      "memoryExtensionsEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Whether third-party memory extensions are discovered and injected into consolidation prompts."
+      },
+      "memoryExtensionsRoot": {
+        "type": "string",
+        "default": "",
+        "description": "Root directory for memory extensions. Empty string derives from memoryDir (go up to Remnic home and append memory_extensions)."
+      },
       "codexCompat": {
         "type": "object",
         "additionalProperties": false,

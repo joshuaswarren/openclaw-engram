@@ -144,7 +144,7 @@ export {
 // Day summary / LCM
 // ---------------------------------------------------------------------------
 
-export { loadDaySummaryPrompt } from "./day-summary.js";
+export { loadDaySummaryPrompt, buildExtensionsFooterForSummary } from "./day-summary.js";
 
 // ---------------------------------------------------------------------------
 // Active memory bridge
@@ -348,6 +348,24 @@ export {
   type FileChange,
   type SyncState,
 } from "./sync/index.js";
+
+// ---------------------------------------------------------------------------
+// Memory Extension Host (#382)
+// ---------------------------------------------------------------------------
+
+export {
+  discoverMemoryExtensions,
+  renderExtensionsBlock,
+  renderExtensionsFooter,
+  REMNIC_EXTENSIONS_TOTAL_TOKEN_LIMIT,
+  type DiscoveredExtension,
+  type ExtensionSchema,
+} from "./memory-extension-host/index.js";
+
+export {
+  resolveExtensionsRoot,
+  buildExtensionsBlockForConsolidation,
+} from "./semantic-consolidation.js";
 
 // ---------------------------------------------------------------------------
 // Connector Manager
