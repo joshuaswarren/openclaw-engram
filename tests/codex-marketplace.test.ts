@@ -221,6 +221,139 @@ test("checkMarketplaceManifest validates plugin entry fields", () => {
   assert.ok(result.errors.some((e) => e.includes("plugins[0].installType")));
 });
 
+// ── Optional field type validation (PR #427 post-merge) ───────────────────
+
+test("checkMarketplaceManifest rejects malformed optional entry field", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        entry: 123,
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("plugins[0].entry")));
+});
+
+test("checkMarketplaceManifest rejects malformed optional manifestUrl field", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        manifestUrl: {},
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("plugins[0].manifestUrl")));
+});
+
+test("checkMarketplaceManifest rejects malformed optional configSchema field", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        configSchema: false,
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("plugins[0].configSchema")));
+});
+
+test("checkMarketplaceManifest rejects empty-string optional fields", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        entry: "",
+        manifestUrl: "  ",
+        configSchema: "",
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("plugins[0].entry")));
+  assert.ok(result.errors.some((e) => e.includes("plugins[0].manifestUrl")));
+  assert.ok(result.errors.some((e) => e.includes("plugins[0].configSchema")));
+});
+
+test("checkMarketplaceManifest accepts valid optional fields", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        entry: "packages/plugin",
+        manifestUrl: "https://example.com/manifest.json",
+        configSchema: "plugin.json",
+      },
+    ],
+  });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.errors.length, 0);
+});
+
+test("checkMarketplaceManifest accepts absent optional fields", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+      },
+    ],
+  });
+
+  assert.equal(result.valid, true);
+  assert.equal(result.errors.length, 0);
+});
+
 // ── writeMarketplaceManifest ────────────────────────────────────────────────
 
 test("writeMarketplaceManifest writes valid JSON to disk", async () => {

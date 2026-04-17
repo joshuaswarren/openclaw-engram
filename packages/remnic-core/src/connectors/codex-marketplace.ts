@@ -223,6 +223,23 @@ export function checkMarketplaceManifest(manifest: unknown): MarketplaceValidati
           `got ${JSON.stringify(plugin.installType)}`,
         );
       }
+
+      // Optional fields — validate type when present (PR #427 post-merge fix).
+      if ("manifestUrl" in plugin && plugin.manifestUrl !== undefined) {
+        if (typeof plugin.manifestUrl !== "string" || (plugin.manifestUrl as string).trim().length === 0) {
+          errors.push(`${prefix}.manifestUrl must be a non-empty string when provided`);
+        }
+      }
+      if ("entry" in plugin && plugin.entry !== undefined) {
+        if (typeof plugin.entry !== "string" || (plugin.entry as string).trim().length === 0) {
+          errors.push(`${prefix}.entry must be a non-empty string when provided`);
+        }
+      }
+      if ("configSchema" in plugin && plugin.configSchema !== undefined) {
+        if (typeof plugin.configSchema !== "string" || (plugin.configSchema as string).trim().length === 0) {
+          errors.push(`${prefix}.configSchema must be a non-empty string when provided`);
+        }
+      }
     }
   }
 

@@ -1664,8 +1664,15 @@ async function cmdConnectorsMarketplace(
       process.exit(1);
     }
 
-    const typeFlag = resolveFlagStrict(rest, "--type") ?? "github";
+    // CLAUDE.md gotcha #14 & #51: reject --type without a value instead of
+    // silently defaulting to "github".
     const validTypes = new Set(["github", "git", "local", "url"]);
+    const hasTypeFlag = rest.includes("--type");
+    const typeFlag = resolveFlagStrict(rest, "--type") ?? (hasTypeFlag ? undefined : "github");
+    if (typeFlag === undefined) {
+      console.error(`--type requires a value. Must be one of: ${[...validTypes].join(", ")}`);
+      process.exit(1);
+    }
     if (!validTypes.has(typeFlag)) {
       console.error(`Invalid --type: "${typeFlag}". Must be one of: ${[...validTypes].join(", ")}`);
       process.exit(1);
