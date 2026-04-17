@@ -1948,6 +1948,8 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 30,
     codexMaterializeOnConsolidation: cfg.codexMaterializeOnConsolidation !== false,
     codexMaterializeOnSessionEnd: cfg.codexMaterializeOnSessionEnd !== false,
+    // Codex CLI — marketplace integration (#418)
+    codexMarketplaceEnabled: cfg.codexMarketplaceEnabled !== false, // default: true
 
     // Page-level versioning (issue #371)
     versioningEnabled: cfg.versioningEnabled === true,

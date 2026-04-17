@@ -618,6 +618,11 @@
         "default": true,
         "description": "Run Codex memory materialization from the Codex session-end hook."
       },
+      "codexMarketplaceEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Enable Codex marketplace integration for plugin discovery and installation."
+      },
       "versioningEnabled": {
         "type": "boolean",
         "default": false,

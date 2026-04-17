@@ -924,6 +924,8 @@ export interface PluginConfig {
   codexMaterializeOnConsolidation: boolean;
   /** Run materialization at Codex session-end hook. Default true. */
   codexMaterializeOnSessionEnd: boolean;
+  /** Enable Codex marketplace integration. Default true. */
+  codexMarketplaceEnabled: boolean;
 
   // Page-level versioning (issue #371)
   /** Enable page-level versioning with sidecar snapshots. Default false. */
