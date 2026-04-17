@@ -147,10 +147,17 @@ export function chunkContent(
 
       // Start new chunk with overlap (if not at end)
       if (!isLastSentence) {
-        // Keep last N sentences for overlap
+        // Keep last N sentences for overlap.
+        // Guard: slice(-0) === slice(0), which returns the ENTIRE array
+        // (CLAUDE.md gotcha #27). When overlapSentences is 0, clear fully.
         const overlapCount = Math.min(config.overlapSentences, currentChunkSentences.length);
-        currentChunkSentences = currentChunkSentences.slice(-overlapCount);
-        currentTokens = currentChunkSentences.reduce((sum, s) => sum + estimateTokens(s), 0);
+        if (overlapCount <= 0) {
+          currentChunkSentences = [];
+          currentTokens = 0;
+        } else {
+          currentChunkSentences = currentChunkSentences.slice(-overlapCount);
+          currentTokens = currentChunkSentences.reduce((sum, s) => sum + estimateTokens(s), 0);
+        }
       }
     }
   }

@@ -1768,6 +1768,53 @@
         "default": 2,
         "description": "Number of sentences to overlap between chunks"
       },
+      "semanticChunkingEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable semantic chunking with embedding-based topic boundary detection (requires embedding provider)"
+      },
+      "semanticChunkingConfig": {
+        "type": "object",
+        "default": {},
+        "description": "Optional overrides for the semantic chunking algorithm",
+        "properties": {
+          "targetTokens": {
+            "type": "number",
+            "default": 200,
+            "description": "Target tokens per chunk"
+          },
+          "minTokens": {
+            "type": "number",
+            "default": 100,
+            "description": "Minimum tokens for a segment before merging with neighbor"
+          },
+          "maxTokens": {
+            "type": "number",
+            "default": 400,
+            "description": "Maximum tokens for a segment before recursive splitting"
+          },
+          "smoothingWindowSize": {
+            "type": "number",
+            "default": 3,
+            "description": "Window size for the moving-average smoothing filter (auto-rounded to odd)"
+          },
+          "boundaryThresholdStdDevs": {
+            "type": "number",
+            "default": 1.0,
+            "description": "Standard deviations below mean for boundary detection"
+          },
+          "embeddingBatchSize": {
+            "type": "number",
+            "default": 32,
+            "description": "Batch size for embedding requests"
+          },
+          "fallbackToRecursive": {
+            "type": "boolean",
+            "default": true,
+            "description": "Fall back to recursive chunking when embeddings are unavailable"
+          }
+        }
+      },
       "contradictionDetectionEnabled": {
         "type": "boolean",
         "default": false,
@@ -3783,6 +3830,15 @@
       "label": "Chunk Overlap Sentences",
       "advanced": true,
       "placeholder": "2"
+    },
+    "semanticChunkingEnabled": {
+      "label": "Semantic Chunking",
+      "help": "Use embedding-based topic detection for more coherent chunks (requires chunking enabled)"
+    },
+    "semanticChunkingConfig": {
+      "label": "Semantic Chunking Config",
+      "advanced": true,
+      "help": "Override defaults for semantic chunking algorithm parameters"
     },
     "contradictionDetectionEnabled": {
       "label": "Contradiction Detection",

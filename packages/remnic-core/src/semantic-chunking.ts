@@ -129,10 +129,15 @@ export function stddev(series: number[]): number {
  * Simple moving average over a 1D series.
  * The window is centered: for window size W, each output[i] averages
  * series[i - floor(W/2) .. i + floor(W/2)], clamped to bounds.
+ *
+ * Even window sizes are rounded up to the next odd value so the window
+ * is symmetric around the center point (Finding 4, PR #420).
  */
 export function movingAverage(series: number[], windowSize: number): number[] {
   if (series.length === 0) return [];
   if (windowSize < 1) windowSize = 1;
+  // Round even values up to the next odd so the window is symmetric.
+  if (windowSize % 2 === 0) windowSize = windowSize + 1;
 
   const halfW = Math.floor(windowSize / 2);
   const result: number[] = new Array(series.length);
@@ -310,9 +315,12 @@ function splitLongSegment(
   targetTokens: number,
 ): SemanticChunk[] {
   const text = segment.join(" ");
+  // Cap targetTokens to maxTokens so recursive splitting never produces
+  // segments larger than the configured maximum (Finding 2, PR #420).
+  const cappedTarget = Math.min(targetTokens, maxTokens);
   const result: ChunkResult = chunkContent(text, {
-    targetTokens,
-    minTokens: Math.min(targetTokens, maxTokens),
+    targetTokens: cappedTarget,
+    minTokens: Math.min(cappedTarget, maxTokens),
     overlapSentences: 0,
   });
 
