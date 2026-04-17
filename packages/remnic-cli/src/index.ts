@@ -124,8 +124,8 @@ import {
   type BenchConfig,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
-export { hasFlag, resolveFlag } from "./cli-args.js";
-import { hasFlag, resolveFlag } from "./cli-args.js";
+export { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
+import { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
 
 export { parseConnectorConfig, stripConfigArgv };
@@ -2973,20 +2973,8 @@ async function cmdTaxonomy(rest: string[]): Promise<void> {
       // Strip --flag and its following value token together so flag values
       // (e.g. "preference" in `--category preference`) don't leak into text.
       // Boolean flags (like --json) don't consume a following value token.
-      const BOOLEAN_FLAGS = new Set(["--json"]);
       const resolveArgs = rest.slice(1);
-      const textParts: string[] = [];
-      for (let i = 0; i < resolveArgs.length; i++) {
-        if (resolveArgs[i].startsWith("--")) {
-          // Boolean flags have no trailing value — skip only the flag itself
-          if (!BOOLEAN_FLAGS.has(resolveArgs[i])) {
-            // Key-value flag: skip the flag and its value (next token)
-            i++;
-          }
-          continue;
-        }
-        textParts.push(resolveArgs[i]);
-      }
+      const textParts = stripResolveFlags(resolveArgs, TAXONOMY_RESOLVE_BOOLEAN_FLAGS);
       const text = textParts.join(" ");
       if (!text) {
         console.error("Usage: remnic taxonomy resolve <text>");

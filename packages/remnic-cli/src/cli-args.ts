@@ -24,3 +24,34 @@ export function resolveFlag(args: string[], flag: string): string | undefined {
 export function hasFlag(args: string[], flag: string): boolean {
   return args.indexOf(flag) !== -1;
 }
+
+/**
+ * Set of flags for `taxonomy resolve` that are boolean (no trailing value).
+ * Key-value flags (like `--category`) consume the next token as their value.
+ */
+export const TAXONOMY_RESOLVE_BOOLEAN_FLAGS = new Set(["--json"]);
+
+/**
+ * Strip CLI flags from `taxonomy resolve` argument tokens, returning only
+ * the text parts. Boolean flags (e.g. `--json`) skip only the flag itself;
+ * key-value flags (e.g. `--category preference`) skip the flag and its
+ * following value token.
+ */
+export function stripResolveFlags(
+  args: string[],
+  booleanFlags: ReadonlySet<string> = TAXONOMY_RESOLVE_BOOLEAN_FLAGS,
+): string[] {
+  const textParts: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i].startsWith("--")) {
+      // Boolean flags have no trailing value — skip only the flag itself
+      if (!booleanFlags.has(args[i])) {
+        // Key-value flag: skip the flag and its value (next token)
+        i++;
+      }
+      continue;
+    }
+    textParts.push(args[i]);
+  }
+  return textParts;
+}
