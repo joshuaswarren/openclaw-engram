@@ -809,20 +809,19 @@ remnic versions diff [file] [version]             # Diff a version against curre
 remnic versions revert [file] [version]           # Revert a file to a previous version
 
 # MECE taxonomy
-remnic taxonomy list                              # List taxonomy categories
-remnic taxonomy add [category]                    # Add a taxonomy category
-remnic taxonomy remove [category]                 # Remove a taxonomy category
-remnic taxonomy resolve [query]                   # Resolve a query to a taxonomy category
+remnic taxonomy show                              # Show taxonomy categories and priorities
+remnic taxonomy resolver                          # Generate or display resolver decision tree
+remnic taxonomy add <id> <name>                   # Add a taxonomy category
+remnic taxonomy remove <id>                       # Remove a taxonomy category
 
 # Entity enrichment
-remnic enrichment run [entity]                    # Run enrichment for an entity
-remnic enrichment status [entity]                 # Check enrichment status
+remnic enrich <entity-name|--all|audit|providers> [--dry-run]   # Run enrichment pipeline
 
 # Binary lifecycle
 remnic binary scan                                # Scan for binary files in memory directory
-remnic binary mirror                              # Mirror binaries to configured backend
-remnic binary clean                               # Clean up mirrored/redirected binaries
 remnic binary status                              # Show binary lifecycle status
+remnic binary run [--dry-run]                     # Run lifecycle (redirect/clean) for binaries
+remnic binary clean [--dry-run]                   # Clean up mirrored/redirected binaries
 
 # Access layer
 remnic daemon start                # Start HTTP API + managed daemon

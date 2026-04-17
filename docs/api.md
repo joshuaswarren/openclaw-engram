@@ -22,9 +22,9 @@ The canonical CLI is `remnic`. The legacy `engram` binary remains as a forwarder
 | `remnic space <list\|switch\|create\|delete\|push\|pull\|share\|promote\|audit>` | Manage personal, project, and team memory spaces |
 | `remnic benchmark <run\|check\|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]` | Run benchmarks, check for regressions, generate reports |
 | `remnic versions <list\|show\|diff\|revert> [file] [version]` | Page version history management |
-| `remnic taxonomy <list\|add\|remove\|resolve> [args]` | MECE taxonomy knowledge directory management |
-| `remnic enrichment <run\|status> [entity]` | External entity enrichment pipeline |
-| `remnic binary <scan\|mirror\|clean\|status>` | Binary file lifecycle operations |
+| `remnic taxonomy <show\|resolver\|add\|remove> [args]` | MECE taxonomy knowledge directory management |
+| `remnic enrich <entity-name\|--all\|audit\|providers> [--dry-run]` | External entity enrichment pipeline |
+| `remnic binary <scan\|status\|run\|clean> [--dry-run]` | Binary file lifecycle operations |
 
 All commands accept `--json` for machine-readable output. The CLI resolves configuration from:
 
@@ -64,7 +64,7 @@ Core routes:
 - `POST /engram/v1/observe` — feed conversation messages into LCM archive and extraction pipeline
 - `POST /engram/v1/lcm/search` — full-text search over LCM-archived conversations
 - `GET /engram/v1/lcm/status` — LCM availability and stats
-- `POST /engram/v1/citations/observed` — Record observed citation usage for attribution tracking
+- `POST /v1/citations/observed` — Record observed citation usage for attribution tracking
 
 Recall request fields:
 
@@ -194,19 +194,25 @@ Response (HTTP 200):
 - `archiveAvailable` — whether the LCM archive is accessible
 - `stats` (optional) — `{ totalTurns }` when LCM is enabled
 
-#### `POST /engram/v1/citations/observed`
+#### `POST /v1/citations/observed`
 
-Record that a cited memory was used by the agent. Used for citation attribution tracking.
+Record that cited memories were used by the agent. Used for citation attribution tracking.
 
 Request fields:
 
-- `rolloutIds` (string[], required) — Rollout IDs from the oai-mem-citation block
-- `sessionKey` (string, optional) — Session identifier
+- `sessionId` (string, optional) — Session identifier
 - `namespace` (string, optional) — Target namespace
+- `citations` (object, required) — Citation data containing:
+  - `entries` (array, optional) — Array of `{ path: string, lineStart: number, lineEnd: number, note?: string }` objects
+  - `rolloutIds` (string[], optional) — Rollout IDs from the oai-mem-citation block
 
 Response (HTTP 200):
 
-- `accepted` — Number of rollout IDs accepted
+- `ok` (boolean) — Whether the request succeeded
+- `submitted` (number) — Number of citation entries submitted
+- `matched` (number) — Number of entries matched to existing memories
+- `entriesReceived` (number) — Number of citation entries in the request
+- `rolloutIdsReceived` (number) — Number of rollout IDs in the request
 
 #### `X-Engram-Principal` Header
 
@@ -529,9 +535,9 @@ Run via `openclaw engram <command>`:
 | `trust-zone-promote --record-id <id> --target-zone <zone> --reason <text> [--dry-run]` | Preview or apply a trust-zone promotion |
 | `trust-zone-demo-seed [--scenario enterprise-buyer-v1] [--recorded-at <iso>] [--dry-run]` | Explicitly preview or seed the opt-in trust-zone buyer demo dataset |
 | `versions <list\|show\|diff\|revert> [file] [version]` | Page version history management |
-| `taxonomy <list\|add\|remove\|resolve> [args]` | MECE taxonomy knowledge directory management |
-| `enrichment <run\|status> [entity]` | External entity enrichment pipeline |
-| `binary <scan\|mirror\|clean\|status>` | Binary file lifecycle operations |
+| `taxonomy <show\|resolver\|add\|remove> [args]` | MECE taxonomy knowledge directory management |
+| `enrich <entity-name\|--all\|audit\|providers> [--dry-run]` | External entity enrichment pipeline |
+| `binary <scan\|status\|run\|clean> [--dry-run]` | Binary file lifecycle operations |
 
 ## Error Responses
 
