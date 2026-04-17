@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { log } from "./logger.js";
 import type { MemoryFile, PluginConfig } from "./types.js";
 import { discoverMemoryExtensions, renderExtensionsFooter } from "./memory-extension-host/index.js";
-import { resolveExtensionsRoot } from "./semantic-consolidation.js";
+import { resolveExtensionsRoot } from "./config.js";
 
 const PROMPT_RELATIVE_PATH = path.join("prompts", "day_summary.prompt.md");
 

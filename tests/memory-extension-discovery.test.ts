@@ -21,8 +21,8 @@ import type { DiscoveredExtension } from "../packages/remnic-core/src/memory-ext
 import {
   buildConsolidationPrompt,
   buildExtensionsBlockForConsolidation,
-  resolveExtensionsRoot,
 } from "../packages/remnic-core/src/semantic-consolidation.ts";
+import { resolveExtensionsRoot } from "../packages/remnic-core/src/config.ts";
 import { buildExtensionsFooterForSummary } from "../packages/remnic-core/src/day-summary.ts";
 import type { PluginConfig } from "../packages/remnic-core/src/types.ts";
 import { parseConfig } from "../packages/remnic-core/src/config.ts";
@@ -465,6 +465,89 @@ test("buildExtensionsFooterForSummary returns empty when no extensions", async (
 
   const footer = await buildExtensionsFooterForSummary(config);
   assert.equal(footer, "");
+
+  fs.rmSync(root, { recursive: true });
+});
+
+// ── Symlinked root rejection (#428 P2) ────────────────────────────────────
+
+test("symlinked extensions root is rejected with warning", async () => {
+  const base = makeTempDir();
+
+  // Create a real directory to be the symlink target
+  const realRoot = path.join(base, "real-extensions");
+  fs.mkdirSync(realRoot, { recursive: true });
+  createExtension(realRoot, "should-not-find", { instructions: "Hidden behind symlink" });
+
+  // Create a symlink that points to the real root
+  const symlinkRoot = path.join(base, "symlinked-root");
+  fs.symlinkSync(realRoot, symlinkRoot);
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(symlinkRoot, log);
+
+  assert.deepStrictEqual(result, []);
+  assert.ok(
+    warnings.some((w) => w.includes("is a symlink") && w.includes("refusing to traverse")),
+    `Expected symlink root warning, got: ${JSON.stringify(warnings)}`,
+  );
+
+  fs.rmSync(base, { recursive: true });
+});
+
+// ── Symlinked instructions.md rejection (#428 P1) ─────────────────────────
+
+test("extension with symlinked instructions.md is skipped with warning", async () => {
+  const root = makeTempDir();
+
+  // Create a file outside the extension directory to symlink to
+  const secretFile = path.join(root, "_secret.txt");
+  fs.writeFileSync(secretFile, "sensitive data", "utf-8");
+
+  // Create extension directory with a symlinked instructions.md
+  const extDir = path.join(root, "bad-ext");
+  fs.mkdirSync(extDir, { recursive: true });
+  fs.symlinkSync(secretFile, path.join(extDir, "instructions.md"));
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(root, log);
+
+  // The extension should NOT be discovered
+  assert.equal(result.length, 0);
+  assert.ok(
+    warnings.some((w) => w.includes("instructions.md is a symlink")),
+    `Expected symlinked instructions.md warning, got: ${JSON.stringify(warnings)}`,
+  );
+
+  fs.rmSync(root, { recursive: true });
+});
+
+// ── Symlinked schema.json rejection (#428 P1) ────────────────────────────
+
+test("extension with symlinked schema.json ignores schema with warning", async () => {
+  const root = makeTempDir();
+
+  // Create a file outside the extension directory to symlink to
+  const secretFile = path.join(root, "_secret-schema.json");
+  fs.writeFileSync(secretFile, '{"memoryTypes":["fact"]}', "utf-8");
+
+  // Create extension with real instructions but symlinked schema
+  const extDir = path.join(root, "partial-ext");
+  fs.mkdirSync(extDir, { recursive: true });
+  fs.writeFileSync(path.join(extDir, "instructions.md"), "Legit instructions", "utf-8");
+  fs.symlinkSync(secretFile, path.join(extDir, "schema.json"));
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(root, log);
+
+  // The extension IS discovered, but schema should be undefined
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "partial-ext");
+  assert.equal(result[0].schema, undefined);
+  assert.ok(
+    warnings.some((w) => w.includes("schema.json is a symlink")),
+    `Expected symlinked schema.json warning, got: ${JSON.stringify(warnings)}`,
+  );
 
   fs.rmSync(root, { recursive: true });
 });

@@ -362,10 +362,8 @@ export {
   type ExtensionSchema,
 } from "./memory-extension-host/index.js";
 
-export {
-  resolveExtensionsRoot,
-  buildExtensionsBlockForConsolidation,
-} from "./semantic-consolidation.js";
+export { resolveExtensionsRoot } from "./config.js";
+export { buildExtensionsBlockForConsolidation } from "./semantic-consolidation.js";
 
 // ---------------------------------------------------------------------------
 // Connector Manager

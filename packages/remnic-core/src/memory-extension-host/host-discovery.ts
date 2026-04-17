@@ -7,7 +7,7 @@
  * any extension's scripts/ directory.
  */
 
-import { readdir, readFile, lstat, stat } from "node:fs/promises";
+import { readdir, readFile, lstat } from "node:fs/promises";
 import path from "node:path";
 import type { LoggerBackend } from "../logger.js";
 import type { DiscoveredExtension, ExtensionSchema } from "./types.js";
@@ -38,13 +38,18 @@ export async function discoverMemoryExtensions(
   log: Pick<LoggerBackend, "warn" | "debug">,
 ): Promise<DiscoveredExtension[]> {
   // If root doesn't exist, return empty silently (not even a warning).
-  // Use stat() for root — the user configures this path, so following a
-  // symlink here is intentional.  Child entries use lstat() to block
-  // symlink traversal that could escape the extensions directory.
+  // Use lstat() for root — a symlinked extensions root could redirect the
+  // entire discovery to an attacker-controlled directory (#428 P2).
   let rootStat;
   try {
-    rootStat = await stat(root);
+    rootStat = await lstat(root);
   } catch {
+    return [];
+  }
+  if (rootStat.isSymbolicLink()) {
+    log.warn?.(
+      `[memory-extensions] extensions root "${root}" is a symlink, refusing to traverse for security`,
+    );
     return [];
   }
   if (!rootStat.isDirectory()) {
@@ -87,30 +92,52 @@ export async function discoverMemoryExtensions(
       continue;
     }
 
-    // Require instructions.md
+    // Require instructions.md — reject symlinks to prevent path-traversal leaks (#428 P1).
     const instructionsPath = path.join(entryPath, "instructions.md");
-    let instructions: string;
     try {
-      instructions = await readFile(instructionsPath, "utf-8");
+      const instrStat = await lstat(instructionsPath);
+      if (instrStat.isSymbolicLink()) {
+        log.warn?.(
+          `[memory-extensions] skipping "${entry}": instructions.md is a symlink, refusing to read for security`,
+        );
+        continue;
+      }
     } catch {
       log.warn?.(
         `[memory-extensions] skipping "${entry}": missing instructions.md`,
       );
       continue;
     }
+    let instructions: string;
+    try {
+      instructions = await readFile(instructionsPath, "utf-8");
+    } catch {
+      log.warn?.(
+        `[memory-extensions] skipping "${entry}": could not read instructions.md`,
+      );
+      continue;
+    }
 
-    // Read optional schema.json
+    // Read optional schema.json — reject symlinks (#428 P1).
     let schema: ExtensionSchema | undefined;
     const schemaPath = path.join(entryPath, "schema.json");
     try {
-      const schemaRaw = await readFile(schemaPath, "utf-8");
-      const parsed = JSON.parse(schemaRaw);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        schema = validateSchema(parsed);
-      } else {
+      const schemaStat = await lstat(schemaPath);
+      if (schemaStat.isSymbolicLink()) {
         log.warn?.(
-          `[memory-extensions] "${entry}": schema.json is not a valid object, ignoring schema`,
+          `[memory-extensions] "${entry}": schema.json is a symlink, ignoring schema for security`,
         );
+        // schema remains undefined — we skip reading but don't skip the extension
+      } else {
+        const schemaRaw = await readFile(schemaPath, "utf-8");
+        const parsed = JSON.parse(schemaRaw);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          schema = validateSchema(parsed);
+        } else {
+          log.warn?.(
+            `[memory-extensions] "${entry}": schema.json is not a valid object, ignoring schema`,
+          );
+        }
       }
     } catch (err) {
       // File doesn't exist → fine, no warning needed

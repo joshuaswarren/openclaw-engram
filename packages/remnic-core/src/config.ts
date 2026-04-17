@@ -2272,3 +2272,23 @@ function buildRecallPipelineConfig(cfg: Record<string, unknown>): RecallPipeline
 
   return { recallBudgetChars, pipeline };
 }
+
+// ---------------------------------------------------------------------------
+// Extensions root resolution (#428 follow-up)
+// Moved here from semantic-consolidation.ts — this is a generic config-to-path
+// resolver with no semantic-consolidation logic.
+// ---------------------------------------------------------------------------
+
+/**
+ * Resolve the memory extensions root directory from config.
+ * If memoryExtensionsRoot is empty, derive from memoryDir by going up to
+ * the Remnic home dir and appending memory_extensions.
+ */
+export function resolveExtensionsRoot(config: PluginConfig): string {
+  if (config.memoryExtensionsRoot.length > 0) {
+    return config.memoryExtensionsRoot;
+  }
+  // Default: memoryDir is typically ~/.openclaw/workspace/memory/local
+  // Go up to the parent that owns the memory tree and append memory_extensions
+  return path.join(path.dirname(config.memoryDir), "memory_extensions");
+}
