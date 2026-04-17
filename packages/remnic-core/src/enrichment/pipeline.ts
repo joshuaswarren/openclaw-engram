@@ -138,12 +138,15 @@ export async function runEnrichmentPipeline(
         continue;
       }
 
-      // Run provider
+      // Run provider.
+      // Count every attempt toward rate-limit buckets — including failures —
+      // because the provider may have consumed external quota before throwing
+      // (PR #425 review finding 2).
       let candidates: EnrichmentCandidate[];
       try {
         candidates = await provider.enrich(entity);
-        recordCall(provider.id, rateBuckets);
       } catch (err) {
+        recordCall(provider.id, rateBuckets);
         log.error?.(
           `enrichment: provider ${provider.id} failed for ${entity.name}: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -158,6 +161,7 @@ export async function runEnrichmentPipeline(
         });
         continue;
       }
+      recordCall(provider.id, rateBuckets);
 
       // Tag each candidate with provider id
       for (const candidate of candidates) {

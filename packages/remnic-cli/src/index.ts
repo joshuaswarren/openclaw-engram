@@ -742,6 +742,10 @@ async function cmdEnrich(rest: string[]): Promise<void> {
   let totalPersisted = 0;
   for (const result of results) {
     for (const candidate of result.acceptedCandidates) {
+      // Split persistence and audit into separate try-catch blocks so an
+      // audit-write failure after a successful memory write is logged as a
+      // warning instead of masking the successful persist (PR #425 review).
+      let persisted = false;
       try {
         await storage.writeMemory(candidate.category, candidate.text, {
           confidence: candidate.confidence,
@@ -749,16 +753,8 @@ async function cmdEnrich(rest: string[]): Promise<void> {
           entityRef: result.entityName,
           source: `enrichment:${candidate.source}`,
         });
+        persisted = true;
         totalPersisted++;
-        // Write audit entry for accepted candidate
-        await appendAuditEntry(auditDir, {
-          timestamp: new Date().toISOString(),
-          entityName: result.entityName,
-          provider: result.provider,
-          candidateText: candidate.text,
-          sourceUrl: candidate.sourceUrl,
-          accepted: true,
-        });
       } catch (err) {
         console.error(
           `  Failed to persist candidate for ${result.entityName}: ${err instanceof Error ? err.message : String(err)}`,
@@ -776,6 +772,25 @@ async function cmdEnrich(rest: string[]): Promise<void> {
           });
         } catch {
           // Audit write failure is non-fatal
+        }
+      }
+
+      // Write audit entry for accepted candidate — separate from persist
+      // so audit failures don't mask a successful memory write.
+      if (persisted) {
+        try {
+          await appendAuditEntry(auditDir, {
+            timestamp: new Date().toISOString(),
+            entityName: result.entityName,
+            provider: result.provider,
+            candidateText: candidate.text,
+            sourceUrl: candidate.sourceUrl,
+            accepted: true,
+          });
+        } catch (auditErr) {
+          console.warn(
+            `  Warning: audit write failed for ${result.entityName} (memory was persisted): ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`,
+          );
         }
       }
     }
