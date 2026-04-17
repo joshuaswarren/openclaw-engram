@@ -223,6 +223,17 @@ export function checkMarketplaceManifest(manifest: unknown): MarketplaceValidati
           `got ${JSON.stringify(plugin.installType)}`,
         );
       }
+
+      // Validate optional string fields — reject present-but-wrong-type values
+      // so they fail here rather than causing runtime errors downstream.
+      const optionalStringFields = ["entry", "manifestUrl", "configSchema", "author"] as const;
+      for (const field of optionalStringFields) {
+        if (field in plugin && typeof plugin[field] !== "string") {
+          errors.push(
+            `${prefix}.${field} must be a string if provided; got ${typeof plugin[field]}`,
+          );
+        }
+      }
     }
   }
 

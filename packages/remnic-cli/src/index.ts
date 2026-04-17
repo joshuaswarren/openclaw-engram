@@ -1664,8 +1664,16 @@ async function cmdConnectorsMarketplace(
       process.exit(1);
     }
 
-    const typeFlag = resolveFlagStrict(rest, "--type") ?? "github";
+    // CLAUDE.md gotcha #14 / #51: distinguish "flag not provided" from
+    // "flag provided without a value" — the latter must be a hard error.
     const validTypes = new Set(["github", "git", "local", "url"]);
+    const typeFlagPresent = rest.includes("--type");
+    const typeFlagValue = resolveFlagStrict(rest, "--type");
+    if (typeFlagPresent && typeFlagValue === undefined) {
+      console.error(`--type requires a value (${[...validTypes].join(", ")})`);
+      process.exit(1);
+    }
+    const typeFlag = typeFlagValue ?? "github";
     if (!validTypes.has(typeFlag)) {
       console.error(`Invalid --type: "${typeFlag}". Must be one of: ${[...validTypes].join(", ")}`);
       process.exit(1);

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { fileURLToPath } from "node:url";
 
 import {
   generateMarketplaceManifest,
@@ -437,4 +438,194 @@ test("MARKETPLACE_MANIFEST_FILENAME is marketplace.json", () => {
 
 test("MARKETPLACE_SCHEMA_VERSION is 1", () => {
   assert.equal(MARKETPLACE_SCHEMA_VERSION, 1);
+});
+
+// ── Optional field type validation (Finding 1 — PR #427) ─────────────────────
+
+test("checkMarketplaceManifest rejects non-string entry field", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        entry: 123,
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("entry") && e.includes("string")));
+});
+
+test("checkMarketplaceManifest rejects non-string manifestUrl field", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        manifestUrl: { url: "bad" },
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("manifestUrl") && e.includes("string")));
+});
+
+test("checkMarketplaceManifest rejects non-string configSchema field", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        configSchema: 42,
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("configSchema") && e.includes("string")));
+});
+
+test("checkMarketplaceManifest rejects non-string author field", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        author: ["not", "a", "string"],
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  assert.ok(result.errors.some((e) => e.includes("author") && e.includes("string")));
+});
+
+test("checkMarketplaceManifest accepts valid optional string fields", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        entry: "packages/plugin",
+        manifestUrl: "https://example.com/manifest.json",
+        configSchema: "plugin.json",
+        author: "tester",
+      },
+    ],
+  });
+
+  assert.ok(result.valid, `unexpected errors: ${result.errors.join("; ")}`);
+});
+
+test("checkMarketplaceManifest accepts absent optional fields", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+      },
+    ],
+  });
+
+  assert.ok(result.valid, `unexpected errors: ${result.errors.join("; ")}`);
+});
+
+test("checkMarketplaceManifest reports multiple malformed optional fields", () => {
+  const result = checkMarketplaceManifest({
+    version: 1,
+    name: "test",
+    description: "test",
+    plugins: [
+      {
+        name: "p",
+        version: "1.0.0",
+        description: "d",
+        repository: "o/r",
+        installType: "github",
+        entry: 123,
+        manifestUrl: false,
+        configSchema: null,
+      },
+    ],
+  });
+
+  assert.equal(result.valid, false);
+  // Should report an error for each malformed optional field
+  assert.ok(result.errors.some((e) => e.includes("entry")));
+  assert.ok(result.errors.some((e) => e.includes("manifestUrl")));
+  assert.ok(result.errors.some((e) => e.includes("configSchema")));
+});
+
+// ── --type flag fail-fast validation (Finding 2 — PR #427) ────────────────────
+
+const CLI_SRC_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "packages",
+  "remnic-cli",
+  "src",
+  "index.ts",
+);
+
+test("CLI marketplace install guards --type present-without-value", async () => {
+  const src = fs.readFileSync(CLI_SRC_PATH, "utf-8");
+
+  // The guard must check whether --type is present in the args array
+  // and error if resolveFlagStrict returns undefined for a present flag.
+  assert.ok(
+    src.includes('rest.includes("--type")'),
+    "CLI must check for --type presence in rest args",
+  );
+  assert.ok(
+    src.includes('--type requires a value'),
+    "CLI must emit an error message when --type is present without a value",
+  );
+});
+
+test("CLI marketplace install still defaults to github when --type is omitted", async () => {
+  const src = fs.readFileSync(CLI_SRC_PATH, "utf-8");
+
+  // When --type is not provided at all, the default should be "github".
+  assert.ok(
+    src.includes('?? "github"'),
+    "CLI must default typeFlag to 'github' when --type is absent",
+  );
 });
