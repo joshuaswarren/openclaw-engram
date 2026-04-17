@@ -882,6 +882,86 @@ of truth for similarity logic across read-time and write-time code paths.
 | `summarizationEnabled` | `false` | Summarize old memories when count exceeds threshold |
 | `summarizationTriggerCount` | `1000` | Memory count that triggers summarization |
 
+## Extraction Judge (issue #376)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `extractionJudgeEnabled` | `false` | Enable the LLM-as-judge post-extraction durability filter |
+| `extractionJudgeModel` | `""` | Model override for judge; empty = use configured local model |
+| `extractionJudgeBatchSize` | `20` | Max candidates per LLM batch call |
+| `extractionJudgeShadow` | `false` | Shadow mode: log verdicts without filtering |
+
+## Semantic Chunking (issue #368)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `semanticChunkingEnabled` | `false` | Enable topic-boundary chunking via sentence embeddings |
+| `semanticChunkingConfig` | `(see below)` | Sub-object with chunking parameters |
+
+### `semanticChunkingConfig` keys
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `targetTokens` | `number` | `200` | Target token count per chunk |
+| `minTokens` | `number` | `100` | Minimum token count per chunk |
+| `maxTokens` | `number` | `400` | Maximum token count per chunk |
+| `smoothingWindowSize` | `number` | `3` | Sliding window size for similarity smoothing |
+| `boundaryThresholdStdDevs` | `number` | `1.0` | Standard deviations below mean similarity to trigger a boundary |
+| `embeddingBatchSize` | `number` | `32` | Batch size for sentence embedding calls |
+| `fallbackToRecursive` | `boolean` | `true` | Fall back to recursive character chunking when embeddings are unavailable |
+
+## Page Versioning (issue #371)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `versioningEnabled` | `false` | Enable page-level versioning |
+| `versioningMaxPerPage` | `50` | Max snapshots per page (0 = unlimited) |
+| `versioningSidecarDir` | `""` | Override sidecar directory path (empty = default `.versions/` next to memoryDir) |
+
+## Citations (issue #379)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `citationsEnabled` | `false` | Emit oai-mem-citation blocks in recall responses |
+| `citationsAutoDetect` | `true` | Auto-detect Codex citation context |
+
+## MECE Taxonomy (issue #366)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `taxonomyEnabled` | `false` | Enable the MECE knowledge directory |
+| `taxonomyAutoGenResolver` | `true` | Auto-regenerate RESOLVER.md when taxonomy changes |
+
+## Enrichment Pipeline (issue #365)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `enrichmentEnabled` | `false` | Enable external entity enrichment pipeline |
+| `enrichmentAutoOnCreate` | `false` | Auto-enrich newly created entities |
+| `enrichmentMaxCandidatesPerEntity` | `5` | Max enrichment candidates per entity per run |
+
+## Binary Lifecycle (issue #367)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `binaryLifecycleEnabled` | `false` | Enable binary file lifecycle management |
+| `binaryLifecycleGracePeriodDays` | `7` | Days before local cleanup of mirrored files |
+| `binaryLifecycleBackendType` | `"none"` | Storage backend: `"none"`, `"filesystem"`, `"s3"` |
+| `binaryLifecycleBackendPath` | `""` | Base path for filesystem backend |
+
+## Codex Marketplace (issue #418)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `codexMarketplaceEnabled` | `true` | Enable Codex marketplace installation support |
+
+## Memory Extensions (issue #382)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `memoryExtensionsEnabled` | `true` | Enable third-party memory extension discovery |
+| `memoryExtensionsRoot` | `""` | Override memory extensions root directory |
+
 
 ## Schema-Complete Default and Recommended Settings
 
@@ -1358,3 +1438,33 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `recallPipeline[].topK` | (unset) | (unset) |
 | `recallPipeline[].timeoutMs` | (unset) | (unset) |
 | `recallPipeline[].maxPatterns` | (unset) | (unset) |
+| `extractionJudgeEnabled` | `false` | `false` |
+| `extractionJudgeModel` | `""` | `""` |
+| `extractionJudgeBatchSize` | `20` | `20` |
+| `extractionJudgeShadow` | `false` | `false` |
+| `semanticChunkingEnabled` | `false` | `false` |
+| `semanticChunkingConfig` | `{"targetTokens":200,"minTokens":100,"maxTokens":400,"smoothingWindowSize":3,"boundaryThresholdStdDevs":1.0,"embeddingBatchSize":32,"fallbackToRecursive":true}` | `{"targetTokens":200,"minTokens":100,"maxTokens":400,"smoothingWindowSize":3,"boundaryThresholdStdDevs":1.0,"embeddingBatchSize":32,"fallbackToRecursive":true}` |
+| `semanticChunkingConfig.targetTokens` | `200` | `200` |
+| `semanticChunkingConfig.minTokens` | `100` | `100` |
+| `semanticChunkingConfig.maxTokens` | `400` | `400` |
+| `semanticChunkingConfig.smoothingWindowSize` | `3` | `3` |
+| `semanticChunkingConfig.boundaryThresholdStdDevs` | `1.0` | `1.0` |
+| `semanticChunkingConfig.embeddingBatchSize` | `32` | `32` |
+| `semanticChunkingConfig.fallbackToRecursive` | `true` | `true` |
+| `versioningEnabled` | `false` | `false` |
+| `versioningMaxPerPage` | `50` | `50` |
+| `versioningSidecarDir` | `""` | `""` |
+| `citationsEnabled` | `false` | `false` |
+| `citationsAutoDetect` | `true` | `true` |
+| `taxonomyEnabled` | `false` | `false` |
+| `taxonomyAutoGenResolver` | `true` | `true` |
+| `enrichmentEnabled` | `false` | `false` |
+| `enrichmentAutoOnCreate` | `false` | `false` |
+| `enrichmentMaxCandidatesPerEntity` | `5` | `5` |
+| `binaryLifecycleEnabled` | `false` | `false` |
+| `binaryLifecycleGracePeriodDays` | `7` | `7` |
+| `binaryLifecycleBackendType` | `"none"` | `"none"` |
+| `binaryLifecycleBackendPath` | `""` | `""` |
+| `codexMarketplaceEnabled` | `true` | `true` |
+| `memoryExtensionsEnabled` | `true` | `true` |
+| `memoryExtensionsRoot` | `""` | `""` |

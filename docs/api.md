@@ -21,6 +21,10 @@ The canonical CLI is `remnic`. The legacy `engram` binary remains as a forwarder
 | `remnic connectors <list\|install\|remove\|doctor> [id]` | Manage host adapter connectors |
 | `remnic space <list\|switch\|create\|delete\|push\|pull\|share\|promote\|audit>` | Manage personal, project, and team memory spaces |
 | `remnic benchmark <run\|check\|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]` | Run benchmarks, check for regressions, generate reports |
+| `remnic versions <list\|show\|diff\|revert> [file] [version]` | Page version history management |
+| `remnic taxonomy <list\|add\|remove\|resolve> [args]` | MECE taxonomy knowledge directory management |
+| `remnic enrichment <run\|status> [entity]` | External entity enrichment pipeline |
+| `remnic binary <scan\|mirror\|clean\|status>` | Binary file lifecycle operations |
 
 All commands accept `--json` for machine-readable output. The CLI resolves configuration from:
 
@@ -60,6 +64,7 @@ Core routes:
 - `POST /engram/v1/observe` — feed conversation messages into LCM archive and extraction pipeline
 - `POST /engram/v1/lcm/search` — full-text search over LCM-archived conversations
 - `GET /engram/v1/lcm/status` — LCM availability and stats
+- `POST /engram/v1/citations/observed` — Record observed citation usage for attribution tracking
 
 Recall request fields:
 
@@ -189,6 +194,20 @@ Response (HTTP 200):
 - `archiveAvailable` — whether the LCM archive is accessible
 - `stats` (optional) — `{ totalTurns }` when LCM is enabled
 
+#### `POST /engram/v1/citations/observed`
+
+Record that a cited memory was used by the agent. Used for citation attribution tracking.
+
+Request fields:
+
+- `rolloutIds` (string[], required) — Rollout IDs from the oai-mem-citation block
+- `sessionKey` (string, optional) — Session identifier
+- `namespace` (string, optional) — Target namespace
+
+Response (HTTP 200):
+
+- `accepted` — Number of rollout IDs accepted
+
 #### `X-Engram-Principal` Header
 
 When the server is started with `--trust-principal-header`, requests can include an `X-Engram-Principal` header to override the authenticated principal for that request. This determines namespace read/write access. Without `--trust-principal-header`, the header is silently ignored.
@@ -213,6 +232,7 @@ Available MCP tools:
 - `remnic.review_queue_list`
 - `remnic.observe`
 - `remnic.lcm_search`
+- `remnic.day_summary`
 
 The legacy `engram.*` aliases remain available through the v1.x compatibility window.
 
@@ -241,6 +261,16 @@ Search the LCM conversation archive for matching content using full-text search.
 - `limit` (number, optional) — max results to return
 
 **Returns:** `{ query, namespace, results: [{ sessionId, content, turnIndex }], count, lcmEnabled }`
+
+#### `remnic.day_summary`
+
+Generate a structured end-of-day summary from memory content.
+
+**Parameters:**
+- `date` (string, optional) — ISO date string (defaults to today)
+- `namespace` (string, optional) — Target namespace
+
+**Returns:** Structured summary of the day's memory activity.
 
 ### MCP over HTTP
 
@@ -498,6 +528,10 @@ Run via `openclaw engram <command>`:
 | `trust-zone-status` | Show trust-zone store status and aggregate counts |
 | `trust-zone-promote --record-id <id> --target-zone <zone> --reason <text> [--dry-run]` | Preview or apply a trust-zone promotion |
 | `trust-zone-demo-seed [--scenario enterprise-buyer-v1] [--recorded-at <iso>] [--dry-run]` | Explicitly preview or seed the opt-in trust-zone buyer demo dataset |
+| `versions <list\|show\|diff\|revert> [file] [version]` | Page version history management |
+| `taxonomy <list\|add\|remove\|resolve> [args]` | MECE taxonomy knowledge directory management |
+| `enrichment <run\|status> [entity]` | External entity enrichment pipeline |
+| `binary <scan\|mirror\|clean\|status>` | Binary file lifecycle operations |
 
 ## Error Responses
 

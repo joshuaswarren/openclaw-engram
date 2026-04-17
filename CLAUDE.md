@@ -33,22 +33,96 @@
 
 ### File Structure
 ```
-src/
-├── index.ts              # Plugin entry point, hook registration
-├── config.ts             # Config parsing with defaults
-├── types.ts              # TypeScript interfaces
-├── logger.ts             # Logging wrapper
-├── orchestrator.ts       # Core memory coordination
-├── storage.ts            # File I/O for memories
-├── buffer.ts             # Smart turn buffering
-├── extraction.ts         # GPT-5.2 extraction engine
-├── qmd.ts                # QMD search client
-├── importance.ts         # Importance scoring
-├── chunking.ts           # Large content chunking
-├── threading.ts          # Conversation threading
-├── topics.ts             # Topic extraction
-├── tools.ts              # Agent tools
-└── cli.ts                # CLI commands
+packages/remnic-core/src/
+│
+│ ── Core lifecycle ──────────────────────────────────────
+├── index.ts                    # Plugin entry point, hook registration
+├── config.ts                   # Config parsing with defaults
+├── types.ts                    # TypeScript interfaces
+├── logger.ts                   # Logging wrapper
+├── orchestrator.ts             # Core memory coordination
+├── storage.ts                  # File I/O for memories
+├── buffer.ts                   # Smart turn buffering
+├── lifecycle.ts                # Session and service lifecycle management
+├── bootstrap.ts                # Plugin bootstrap / init sequence
+│
+│ ── Extraction & scoring ────────────────────────────────
+├── extraction.ts               # GPT-5.2 extraction engine
+├── extraction-judge.ts         # LLM-as-judge fact-worthiness gate
+├── importance.ts               # Importance scoring
+├── calibration.ts              # Score calibration helpers
+├── topics.ts                   # Topic extraction
+│
+│ ── Chunking & storage format ───────────────────────────
+├── chunking.ts                 # Recursive large-content chunking
+├── semantic-chunking.ts        # Topic-boundary chunking (embedding-based)
+├── page-versioning.ts          # Snapshot-based version history for memory files
+├── citations.ts                # OAI-mem-citation block generation
+│
+│ ── Recall & retrieval ──────────────────────────────────
+├── qmd.ts                      # QMD search client
+├── qmd-recall-cache.ts         # Recall result caching
+├── retrieval.ts                # Primary retrieval orchestration
+├── recall-audit.ts             # Recall audit trail
+├── recall-mmr.ts               # Maximal marginal relevance diversification
+├── recall-qos.ts               # Recall quality-of-service enforcement
+├── recall-query-policy.ts      # Query rewriting / policy
+├── recall-state.ts             # Recall state tracking
+├── rerank.ts                   # Result reranking
+├── source-attribution.ts       # Source attribution for recalled facts
+│
+│ ── Dedup & consolidation ───────────────────────────────
+├── dedup/                      # Semantic deduplication pipeline
+├── semantic-consolidation.ts   # Embedding-aware memory merging
+├── summarizer.ts               # Summary generation
+├── summary-snapshot.ts         # Point-in-time summary snapshots
+│
+│ ── Taxonomy & classification ───────────────────────────
+├── taxonomy/                   # MECE taxonomy resolver, loader, defaults
+├── entity-retrieval.ts         # Entity-aware retrieval
+├── entity-schema.ts            # Entity type definitions
+│
+│ ── Extensions & publishers ─────────────────────────────
+├── memory-extension/           # Third-party extension discovery + publishers
+├── memory-extension-host/      # Host-side extension rendering + discovery
+│
+│ ── Enrichment ──────────────────────────────────────────
+├── enrichment/                 # External enrichment pipeline, provider registry
+│
+│ ── Binary lifecycle ────────────────────────────────────
+├── binary-lifecycle/           # Mirror/redirect/clean pipeline for binary files
+│
+│ ── Access surfaces ─────────────────────────────────────
+├── cli.ts                      # CLI commands
+├── access-mcp.ts               # MCP server surface
+├── access-http.ts              # HTTP API surface
+├── access-cli.ts               # CLI access helpers
+├── surfaces/                   # Heartbeat, dreams, and other surface integrations
+│
+│ ── Maintenance & governance ────────────────────────────
+├── maintenance/                # Governance crons, archive, backup, observation ledger
+├── hygiene.ts                  # Memory hygiene checks
+├── memory-cache.ts             # Multi-layer memory cache
+│
+│ ── Compatibility & migration ───────────────────────────
+├── compat/                     # Provider compatibility checks (Codex, etc.)
+├── migrate/                    # Legacy data migration utilities
+├── sdk-compat.ts               # SDK compatibility shims
+│
+│ ── Session & threading ─────────────────────────────────
+├── threading.ts                # Conversation threading
+├── session-integrity.ts        # Session identity validation
+├── session-toggles.ts          # Per-session feature toggles
+├── namespaces/                 # Multi-tenant namespace resolution
+│
+│ ── Supporting subsystems ───────────────────────────────
+├── routing/                    # Tier and model routing
+├── sync/                       # Cross-device sync
+├── network/                    # Network transport helpers
+├── profiling.ts                # Runtime profiling
+├── intent.ts                   # User intent classification
+├── tokens.ts                   # Token counting utilities
+└── utils/                      # Shared utility functions
 ```
 
 ### Key Patterns
@@ -59,6 +133,14 @@ src/
 4. **QMD for search** — hybrid BM25 + vector + reranking
 5. **Markdown + YAML frontmatter** — human-readable storage format
 6. **Consolidation** — periodic merging, cleaning, and summarization
+7. **Extraction judge** — optional LLM-as-judge post-filter evaluates fact durability before writes
+8. **Semantic chunking** — sentence-embedding-based topic boundary detection alternative to recursive chunking
+9. **Page versioning** — every memory file overwrite saves a numbered snapshot; list/diff/revert via CLI
+10. **Citation blocks** — recall responses emit `<oai-mem-citation>` blocks for Codex-compatible attribution
+11. **Publisher contract** — pluggable `MemoryExtensionPublisher` interface for host-specific extension installation
+12. **MECE taxonomy** — deterministic categorization via mutually exclusive, collectively exhaustive directory
+13. **Enrichment pipeline** — importance-tiered external enrichment with provider registry and audit trail
+14. **Binary lifecycle** — three-stage mirror/redirect/clean pipeline for binary files in memory directory
 
 ### Integration Points
 

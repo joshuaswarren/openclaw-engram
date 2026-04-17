@@ -517,6 +517,7 @@ Start with zero config. Enable features as your needs grow:
 | **+ Memory OS** | Memory boxes, graph reasoning, compounding, shared context, identity continuity |
 | **+ LCM** | Lossless Context Management — never lose conversation context to compaction |
 | **+ Parallel retrieval** | Three specialized agents (DirectFact, Contextual, Temporal) run in parallel — same latency, broader coverage |
+| **+ Quality gates** | Extraction judge, semantic chunking, MECE taxonomy, page versioning |
 | **+ Advanced** | Trust zones, causal trajectories, harmonic retrieval, evaluation harness, poisoning defense |
 
 Use a preset to jump to a recommended level: `conservative`, `balanced`, `research-max`, or `local-llm-heavy`.
@@ -551,6 +552,28 @@ Run Engram as a standalone HTTP server that multiple agent harnesses share. Isol
 - **Entity tracking** — People, projects, tools, companies tracked as structured entities
 - **Lifecycle management** — Memories age through active, validated, stale, archived states
 - **Episode/Note model** — Memories classified as time-specific events or stable beliefs
+
+### Extraction & Processing (opt-in)
+
+- **Extraction Judge** — LLM-as-judge post-extraction filter that evaluates fact durability before write. Has shadow mode for calibration. Opt-in via `extractionJudgeEnabled`. (issue #376)
+- **Semantic Chunking** — Smoothing-based topic boundary detection using sentence embeddings and cosine similarity, as an alternative to recursive chunking. Opt-in via `semanticChunkingEnabled`. (issue #368)
+- **OAI-mem-citation Blocks** — Recall responses emit `<oai-mem-citation>` blocks matching the Codex citation format for memory attribution and usage tracking. Opt-in via `citationsEnabled`. (issue #379)
+
+### Organization & Taxonomy (opt-in)
+
+- **MECE Taxonomy** — Mutually Exclusive, Collectively Exhaustive knowledge directory with resolver decision tree for deterministic memory categorization. Opt-in via `taxonomyEnabled`. (issue #366)
+- **Enrichment Pipeline** — Importance-tiered API spend for entity enrichment from external sources with a provider registry. Opt-in via `enrichmentEnabled`. (issue #365)
+
+### Storage & Lifecycle (opt-in)
+
+- **Page Versioning** — Snapshot-based history for memory files. Every overwrite saves a numbered snapshot in a sidecar directory. List, inspect, diff, and revert. Opt-in via `versioningEnabled`. (issue #371)
+- **Binary Lifecycle Management** — Three-stage pipeline (mirror, redirect, clean) for binary files in the memory directory with configurable storage backends. Opt-in via `binaryLifecycleEnabled`. (issue #367)
+
+### Integrations & Extensions
+
+- **Codex Marketplace** — Install Remnic via `codex marketplace add joshuaswarren/remnic`. Marketplace manifest at repo root. (issue #418)
+- **Memory Extension Publisher Contract** — Pluggable contract for installing host-specific instruction files into any AI agent host's extension directory. Generalizes the pattern previously hard-coded for Codex. (issue #381)
+- **Memory Extension Discovery** — Third-party memory extensions provide structured instructions that influence consolidation, auto-discovered from extension directories. (issue #382)
 
 ### Search Backends
 
@@ -779,6 +802,28 @@ remnic briefing                                  # Yesterday's briefing (markdow
 remnic briefing --since 3d --focus project:alpha # Focused 3-day lookback
 remnic briefing --format json --save             # JSON + dated file in $REMNIC_HOME/briefings
 
+# Page versioning
+remnic versions list [file]                       # List version history for a memory file
+remnic versions show [file] [version]             # Show a specific version snapshot
+remnic versions diff [file] [version]             # Diff a version against current
+remnic versions revert [file] [version]           # Revert a file to a previous version
+
+# MECE taxonomy
+remnic taxonomy list                              # List taxonomy categories
+remnic taxonomy add [category]                    # Add a taxonomy category
+remnic taxonomy remove [category]                 # Remove a taxonomy category
+remnic taxonomy resolve [query]                   # Resolve a query to a taxonomy category
+
+# Entity enrichment
+remnic enrichment run [entity]                    # Run enrichment for an entity
+remnic enrichment status [entity]                 # Check enrichment status
+
+# Binary lifecycle
+remnic binary scan                                # Scan for binary files in memory directory
+remnic binary mirror                              # Mirror binaries to configured backend
+remnic binary clean                               # Clean up mirrored/redirected binaries
+remnic binary status                              # Show binary lifecycle status
+
 # Access layer
 remnic daemon start                # Start HTTP API + managed daemon
 openclaw engram access mcp-serve   # Start OpenClaw-hosted stdio MCP server
@@ -827,6 +872,13 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `semanticConsolidationEnabled` | `false` | Enable periodic semantic dedup of similar memories |
 | `semanticConsolidationThreshold` | `0.8` | Token overlap threshold (0.8=conservative, 0.6=aggressive) |
 | `semanticConsolidationModel` | `"auto"` | LLM for synthesis: `"auto"`, `"fast"`, or specific model |
+| `extractionJudgeEnabled` | `false` | LLM-as-judge post-extraction durability filter |
+| `semanticChunkingEnabled` | `false` | Topic-boundary chunking via sentence embeddings |
+| `versioningEnabled` | `false` | Snapshot-based page versioning with history and revert |
+| `citationsEnabled` | `false` | Emit `oai-mem-citation` blocks in recall responses |
+| `taxonomyEnabled` | `false` | MECE knowledge directory with resolver decision tree |
+| `enrichmentEnabled` | `false` | External entity enrichment pipeline |
+| `binaryLifecycleEnabled` | `false` | Binary file lifecycle management (mirror/redirect/clean) |
 
 **[See the full config reference for all 60+ settings](docs/config-reference.md)** including search backend configuration, namespace policies, Memory OS features, governance, evaluation harness, trust zones, causal trajectories, and more.
 
@@ -856,6 +908,16 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Platform Migration Guide](docs/guides/platform-migration.md) — Migrating to the monorepo architecture (v9.1.36+)
 - [Hermes Setup](docs/integration/hermes-setup.md) — HTTP client for remote Remnic instances
 - [Deployment Topologies](docs/integration/deployment-topologies.md) — Localhost, LAN, remote, containerized, standalone
+- [Extraction Judge](docs/architecture/extraction-judge.md) — LLM-as-judge fact-worthiness gate
+- [Semantic Chunking](docs/architecture/semantic-chunking.md) — Topic-boundary detection
+- [Page Versioning](docs/architecture/page-versioning.md) — Snapshot-based history and revert
+- [Citations](docs/architecture/citations.md) — OAI-mem-citation block format
+- [Memory Extension Publishers](docs/architecture/memory-extension-publishers.md) — Pluggable publisher contract
+- [MECE Taxonomy](docs/architecture/mece-taxonomy.md) — Knowledge directory with resolver
+- [Enrichment Pipeline](docs/architecture/enrichment-pipeline.md) — Entity enrichment from external sources
+- [Binary Lifecycle](docs/architecture/binary-lifecycle.md) — Binary file management
+- [Memory Extensions](docs/architecture/memory-extensions.md) — Third-party extension discovery
+- [Codex Marketplace](docs/plugins/codex-marketplace.md) — Marketplace installation
 
 ## Contributing
 
