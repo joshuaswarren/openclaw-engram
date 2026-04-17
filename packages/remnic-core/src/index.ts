@@ -357,13 +357,13 @@ export {
   discoverMemoryExtensions,
   renderExtensionsBlock,
   renderExtensionsFooter,
+  resolveExtensionsRoot,
   REMNIC_EXTENSIONS_TOTAL_TOKEN_LIMIT,
   type DiscoveredExtension,
   type ExtensionSchema,
 } from "./memory-extension-host/index.js";
 
 export {
-  resolveExtensionsRoot,
   buildExtensionsBlockForConsolidation,
 } from "./semantic-consolidation.js";
 

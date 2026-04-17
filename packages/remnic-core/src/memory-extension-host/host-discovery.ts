@@ -7,9 +7,10 @@
  * any extension's scripts/ directory.
  */
 
-import { readdir, readFile, lstat, stat } from "node:fs/promises";
+import { readdir, readFile, lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { LoggerBackend } from "../logger.js";
+import type { PluginConfig } from "../types.js";
 import type { DiscoveredExtension, ExtensionSchema } from "./types.js";
 
 /** Total token budget for all discovered extension instructions combined. */
@@ -38,14 +39,38 @@ export async function discoverMemoryExtensions(
   log: Pick<LoggerBackend, "warn" | "debug">,
 ): Promise<DiscoveredExtension[]> {
   // If root doesn't exist, return empty silently (not even a warning).
-  // Use stat() for root — the user configures this path, so following a
-  // symlink here is intentional.  Child entries use lstat() to block
-  // symlink traversal that could escape the extensions directory.
+  // Use lstat() for root — a symlinked extensions root could redirect
+  // discovery to an untrusted directory tree (#428 P2).  When the root
+  // IS a symlink, resolve it and verify it still lives under the parent
+  // memory directory so that an attacker-controlled symlink can't point
+  // discovery at /etc or another user's home.
   let rootStat;
   try {
-    rootStat = await stat(root);
+    rootStat = await lstat(root);
   } catch {
     return [];
+  }
+  if (rootStat.isSymbolicLink()) {
+    // Resolve and verify the real path is inside the expected parent.
+    let resolved: string;
+    try {
+      resolved = await realpath(root);
+    } catch {
+      return [];
+    }
+    const expectedParent = path.dirname(root);
+    if (!resolved.startsWith(expectedParent + path.sep) && resolved !== expectedParent) {
+      log.warn?.(
+        `[memory-extensions] root "${root}" is a symlink resolving outside the expected parent directory, skipping`,
+      );
+      return [];
+    }
+    // Re-check the resolved path is a directory.
+    try {
+      rootStat = await lstat(resolved);
+    } catch {
+      return [];
+    }
   }
   if (!rootStat.isDirectory()) {
     return [];
@@ -87,8 +112,14 @@ export async function discoverMemoryExtensions(
       continue;
     }
 
-    // Require instructions.md
+    // Require instructions.md — reject symlinked files (#428 P1)
     const instructionsPath = path.join(entryPath, "instructions.md");
+    if (await isSymlink(instructionsPath)) {
+      log.warn?.(
+        `[memory-extensions] skipping "${entry}": instructions.md is a symlink`,
+      );
+      continue;
+    }
     let instructions: string;
     try {
       instructions = await readFile(instructionsPath, "utf-8");
@@ -99,27 +130,33 @@ export async function discoverMemoryExtensions(
       continue;
     }
 
-    // Read optional schema.json
+    // Read optional schema.json — reject symlinked files (#428 P1)
     let schema: ExtensionSchema | undefined;
     const schemaPath = path.join(entryPath, "schema.json");
-    try {
-      const schemaRaw = await readFile(schemaPath, "utf-8");
-      const parsed = JSON.parse(schemaRaw);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        schema = validateSchema(parsed);
-      } else {
-        log.warn?.(
-          `[memory-extensions] "${entry}": schema.json is not a valid object, ignoring schema`,
-        );
-      }
-    } catch (err) {
-      // File doesn't exist → fine, no warning needed
-      if (isFileNotFoundError(err)) {
-        // schema remains undefined
-      } else {
-        log.warn?.(
-          `[memory-extensions] "${entry}": malformed schema.json, ignoring schema`,
-        );
+    if (await isSymlink(schemaPath)) {
+      log.warn?.(
+        `[memory-extensions] "${entry}": schema.json is a symlink, ignoring schema`,
+      );
+    } else {
+      try {
+        const schemaRaw = await readFile(schemaPath, "utf-8");
+        const parsed = JSON.parse(schemaRaw);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          schema = validateSchema(parsed);
+        } else {
+          log.warn?.(
+            `[memory-extensions] "${entry}": schema.json is not a valid object, ignoring schema`,
+          );
+        }
+      } catch (err) {
+        // File doesn't exist → fine, no warning needed
+        if (isFileNotFoundError(err)) {
+          // schema remains undefined
+        } else {
+          log.warn?.(
+            `[memory-extensions] "${entry}": malformed schema.json, ignoring schema`,
+          );
+        }
       }
     }
 
@@ -197,4 +234,34 @@ function isFileNotFoundError(err: unknown): boolean {
     "code" in err &&
     (err as { code: string }).code === "ENOENT"
   );
+}
+
+/**
+ * Returns true if the path exists and is a symlink.
+ * Returns false if the path does not exist or is not a symlink.
+ */
+async function isSymlink(filePath: string): Promise<boolean> {
+  try {
+    const s = await lstat(filePath);
+    return s.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Resolve the memory extensions root directory from config.
+ * If memoryExtensionsRoot is empty, derive from memoryDir by going up to
+ * the Remnic home dir and appending memory_extensions.
+ *
+ * Moved here from semantic-consolidation.ts (#428 Finding 3) because this
+ * is a generic config-to-path resolver with no consolidation logic.
+ */
+export function resolveExtensionsRoot(config: PluginConfig): string {
+  if (config.memoryExtensionsRoot.length > 0) {
+    return config.memoryExtensionsRoot;
+  }
+  // Default: memoryDir is typically ~/.openclaw/workspace/memory/local
+  // Go up to the parent that owns the memory tree and append memory_extensions
+  return path.join(path.dirname(config.memoryDir), "memory_extensions");
 }
