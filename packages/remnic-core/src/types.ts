@@ -942,6 +942,12 @@ export interface PluginConfig {
   binaryLifecycleBackendType: "filesystem" | "s3" | "none";
   /** Base path for the filesystem backend. Required when backendType is "filesystem". */
   binaryLifecycleBackendPath: string;
+
+  // Codex citation parity (issue #379)
+  /** Enable oai-mem-citation blocks in recall responses. Default false. */
+  citationsEnabled: boolean;
+  /** Auto-enable citations when the Codex adapter is detected. Default true. */
+  citationsAutoDetect: boolean;
 }
 
 /** Runtime configuration for the daily context briefing feature. */

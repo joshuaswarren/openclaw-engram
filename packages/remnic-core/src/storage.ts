@@ -5176,6 +5176,31 @@ export class StorageManager {
     return memories.find((m) => m.frontmatter.id === id) ?? null;
   }
 
+  /**
+   * Check which of the given memory IDs actually exist on disk.
+   *
+   * Uses a lightweight directory scan (collectActiveMemoryPaths) that reads
+   * file names without parsing frontmatter — much cheaper than readAllMemories()
+   * for simple existence checks like citation usage tracking.
+   *
+   * Returns the subset of `ids` that correspond to real memory files.
+   */
+  async filterExistingMemoryIds(ids: string[]): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const wantedIds = new Set(ids);
+    const filePaths = await this.collectActiveMemoryPaths();
+    const foundIds = new Set<string>();
+    for (const filePath of filePaths) {
+      const basename = path.basename(filePath, ".md");
+      if (wantedIds.has(basename)) {
+        foundIds.add(basename);
+        // Short-circuit once all requested IDs are found.
+        if (foundIds.size === wantedIds.size) break;
+      }
+    }
+    return foundIds;
+  }
+
   async getProjectedMemoryState(id: string): Promise<MemoryProjectionCurrentState | null> {
     const projected = readProjectedMemoryState(this.baseDir, id);
     if (projected) return projected;

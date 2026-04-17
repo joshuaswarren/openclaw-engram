@@ -603,6 +603,8 @@ const pluginDefinition = {
             authToken: cfg.agentAccessHttp.authToken,
             principal: cfg.agentAccessHttp.principal,
             maxBodyBytes: cfg.agentAccessHttp.maxBodyBytes,
+            citationsEnabled: cfg.citationsEnabled,
+            citationsAutoDetect: cfg.citationsAutoDetect,
           });
     (globalThis as any)[keys.ACCESS_HTTP_SERVER] = accessHttpServer;
 

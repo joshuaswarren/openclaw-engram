@@ -12,6 +12,7 @@ import { validateRequest, type SchemaName, type SchemaTypeFor } from "./access-s
 import type { RecallPlanMode } from "./types.js";
 import { isTrustZoneName, type TrustZoneName, type TrustZoneRecordKind, type TrustZoneSourceClass } from "./trust-zones.js";
 import { AdapterRegistry, type ResolvedIdentity } from "./adapters/index.js";
+import type { CitationEntry } from "./citations.js";
 
 export interface EngramAccessHttpServerOptions {
   service: EngramAccessService;
@@ -31,6 +32,10 @@ export interface EngramAccessHttpServerOptions {
   enableAdapters?: boolean;
   /** Custom adapter registry (defaults to built-in adapters) */
   adapterRegistry?: AdapterRegistry;
+  /** Enable oai-mem-citation blocks in recall responses (issue #379). */
+  citationsEnabled?: boolean;
+  /** Auto-enable citations for Codex adapter connections (issue #379). */
+  citationsAutoDetect?: boolean;
 }
 
 export interface EngramAccessHttpServerStatus {
@@ -132,7 +137,11 @@ export class EngramAccessHttpServer {
     this.adapterRegistry = options.enableAdapters !== false
       ? (options.adapterRegistry ?? new AdapterRegistry())
       : null;
-    this.mcpServer = new EngramMcpServer(this.service, { principal: options.principal });
+    this.mcpServer = new EngramMcpServer(this.service, {
+      principal: options.principal,
+      citationsEnabled: options.citationsEnabled,
+      citationsAutoDetect: options.citationsAutoDetect,
+    });
   }
 
   async start(): Promise<EngramAccessHttpServerStatus> {
@@ -601,6 +610,77 @@ export class EngramAccessHttpServer {
         this.recordWriteRateLimitHit();
       }
       this.respondJson(res, response.dryRun ? 200 : 201, response);
+      return;
+    }
+
+    // Citation usage tracking (issue #379)
+    if (req.method === "POST" && pathname === "/v1/citations/observed") {
+      const body = await this.readJsonBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        throw new HttpError(400, "request body must be a JSON object", "invalid_body");
+      }
+      const payload = body as Record<string, unknown>;
+      const sessionId = typeof payload.sessionId === "string" ? payload.sessionId : undefined;
+      const namespace = typeof payload.namespace === "string" ? payload.namespace : undefined;
+      const citationsRaw = payload.citations;
+      if (!citationsRaw || typeof citationsRaw !== "object" || Array.isArray(citationsRaw)) {
+        throw new HttpError(400, "citations must be a JSON object with entries and rolloutIds", "invalid_citations");
+      }
+      const citObj = citationsRaw as Record<string, unknown>;
+      const entries: CitationEntry[] = [];
+      if (Array.isArray(citObj.entries)) {
+        for (const raw of citObj.entries) {
+          if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+            const e = raw as Record<string, unknown>;
+            if (
+              typeof e.path === "string" &&
+              typeof e.lineStart === "number" &&
+              typeof e.lineEnd === "number"
+            ) {
+              entries.push({
+                path: e.path,
+                lineStart: e.lineStart,
+                lineEnd: e.lineEnd,
+                note: typeof e.note === "string" ? e.note : "",
+              });
+            }
+          }
+        }
+      }
+      const rolloutIds: string[] = [];
+      if (Array.isArray(citObj.rolloutIds)) {
+        for (const id of citObj.rolloutIds) {
+          if (typeof id === "string" && id.length > 0) {
+            rolloutIds.push(id);
+          }
+        }
+      }
+
+      // Record usage: for each citation entry, try to increment usage on the
+      // matching memory. The service exposes recordAccess for this purpose.
+      // Pass authenticatedPrincipal so namespace ACL checks use the same
+      // identity resolution as other write endpoints (Finding #1, issue #379).
+      let matched = 0;
+      let submitted = 0;
+      if (typeof this.service.recordCitationUsage === "function") {
+        const result = await this.service.recordCitationUsage({
+          sessionId,
+          namespace: this.resolveNamespace(req, namespace),
+          authenticatedPrincipal: this.resolveRequestPrincipal(req),
+          entries,
+          rolloutIds,
+        });
+        submitted = result.submitted;
+        matched = result.matched;
+      }
+
+      this.respondJson(res, 200, {
+        ok: true,
+        submitted,
+        matched,
+        entriesReceived: entries.length,
+        rolloutIdsReceived: rolloutIds.length,
+      });
       return;
     }
 

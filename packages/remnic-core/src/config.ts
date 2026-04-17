@@ -1978,6 +1978,10 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.binaryLifecycleBackendPath === "string"
         ? cfg.binaryLifecycleBackendPath.trim()
         : "",
+
+    // Codex citation parity (issue #379)
+    citationsEnabled: cfg.citationsEnabled === true,
+    citationsAutoDetect: cfg.citationsAutoDetect !== false,
   };
 }
 
