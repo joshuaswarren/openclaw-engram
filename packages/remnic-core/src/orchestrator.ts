@@ -9789,6 +9789,14 @@ export class Orchestrator {
             );
             chunkResult = semanticResult;
           } catch (err) {
+            // Honor the fallbackToRecursive contract: when the user explicitly
+            // disables fallback, re-throw so extraction fails fast instead of
+            // silently using the recursive chunker. semanticChunkContent already
+            // throws when fallback is disabled, but this outer catch swallowed
+            // that signal. (PR #439 post-merge Finding 1.)
+            if (this.config.semanticChunkingConfig?.fallbackToRecursive === false) {
+              throw err;
+            }
             log.debug(
               `semantic chunking failed, falling back to recursive chunker: ${err}`,
             );

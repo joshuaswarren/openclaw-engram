@@ -144,10 +144,15 @@ export class EmbeddingFallback {
    * Embed an array of texts and return their embedding vectors.
    *
    * This is the public batch-embed interface used by semantic chunking
-   * (Finding 1, PR #420 post-merge).  Each text is embedded individually
-   * through the existing embed() private method.  If the provider is
-   * unavailable or any single embedding fails, the method throws so the
-   * caller can fall back to recursive chunking.
+   * (Finding 1, PR #420 post-merge). Texts are grouped into batches of
+   * `embeddingBatchSize` (from `semanticChunkingConfig`, default 32) and
+   * each batch is dispatched concurrently via `Promise.all()`. This
+   * preserves the semantic intent of `embeddingBatchSize` — without batching,
+   * every text incurred a sequential HTTP round-trip, making the batch size
+   * config ineffective. (PR #439 post-merge Finding 2.)
+   *
+   * If the provider is unavailable or any single embedding fails, the method
+   * throws so the caller can fall back to recursive chunking.
    */
   async embedTexts(texts: string[]): Promise<number[][]> {
     const provider = await this.resolveProvider();
@@ -155,13 +160,23 @@ export class EmbeddingFallback {
       throw new Error("Embedding provider is not available");
     }
 
+    const batchSize = Math.max(
+      1,
+      this.config.semanticChunkingConfig?.embeddingBatchSize ?? 32,
+    );
+
     const vectors: number[][] = [];
-    for (const text of texts) {
-      const vec = await this.embed(text, provider, { mode: "lookup" });
-      if (!vec) {
-        throw new Error("Embedding returned null for input text");
+    for (let i = 0; i < texts.length; i += batchSize) {
+      const batch = texts.slice(i, i + batchSize);
+      const batchResults = await Promise.all(
+        batch.map((text) => this.embed(text, provider, { mode: "lookup" })),
+      );
+      for (const vec of batchResults) {
+        if (!vec) {
+          throw new Error("Embedding returned null for input text");
+        }
+        vectors.push(vec);
       }
-      vectors.push(vec);
     }
     return vectors;
   }
