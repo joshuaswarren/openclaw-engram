@@ -21,7 +21,7 @@ The canonical CLI is `remnic`. The legacy `engram` binary remains as a forwarder
 | `remnic connectors <list\|install\|remove\|doctor> [id]` | Manage host adapter connectors |
 | `remnic space <list\|switch\|create\|delete\|push\|pull\|share\|promote\|audit>` | Manage personal, project, and team memory spaces |
 | `remnic benchmark <run\|check\|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]` | Run benchmarks, check for regressions, generate reports |
-| `remnic versions <list\|show\|diff\|revert> [file] [version]` | Page version history management |
+| `remnic versions <list\|show\|diff\|revert> <page-path> [version-id(s)]` | Page version history management |
 | `remnic taxonomy <show\|resolver\|add\|remove> [args]` | MECE taxonomy knowledge directory management |
 | `remnic enrich <entity-name\|--all\|audit\|providers> [--dry-run]` | External entity enrichment pipeline |
 | `remnic binary <scan\|status\|run\|clean> [--dry-run\|--force]` | Binary file lifecycle operations |
@@ -535,7 +535,7 @@ Run via `openclaw engram <command>`:
 | `trust-zone-status` | Show trust-zone store status and aggregate counts |
 | `trust-zone-promote --record-id <id> --target-zone <zone> --reason <text> [--dry-run]` | Preview or apply a trust-zone promotion |
 | `trust-zone-demo-seed [--scenario enterprise-buyer-v1] [--recorded-at <iso>] [--dry-run]` | Explicitly preview or seed the opt-in trust-zone buyer demo dataset |
-| `versions <list\|show\|diff\|revert> [file] [version]` | Page version history management |
+| `versions <list\|show\|diff\|revert> <page-path> [version-id(s)]` | Page version history management |
 | `taxonomy <show\|resolver\|add\|remove> [args]` | MECE taxonomy knowledge directory management |
 | `enrich <entity-name\|--all\|audit\|providers> [--dry-run]` | External entity enrichment pipeline |
 | `binary <scan\|status\|run\|clean> [--dry-run\|--force]` | Binary file lifecycle operations |

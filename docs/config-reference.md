@@ -916,7 +916,7 @@ of truth for similarity logic across read-time and write-time code paths.
 |---------|---------|-------------|
 | `versioningEnabled` | `false` | Enable page-level versioning |
 | `versioningMaxPerPage` | `50` | Max snapshots per page (0 = unlimited) |
-| `versioningSidecarDir` | `""` | Override sidecar directory path (empty = default `.versions/` next to memoryDir) |
+| `versioningSidecarDir` | `".versions"` | Override sidecar directory path (`.versions/` relative to memoryDir when unset) |
 
 ## Citations (issue #379)
 
@@ -1453,7 +1453,7 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `semanticChunkingConfig.fallbackToRecursive` | `true` | `true` |
 | `versioningEnabled` | `false` | `false` |
 | `versioningMaxPerPage` | `50` | `50` |
-| `versioningSidecarDir` | `""` | `""` |
+| `versioningSidecarDir` | `".versions"` | `".versions"` |
 | `citationsEnabled` | `false` | `false` |
 | `citationsAutoDetect` | `true` | `true` |
 | `taxonomyEnabled` | `false` | `false` |

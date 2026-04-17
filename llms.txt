@@ -130,12 +130,13 @@ BUILD / TEST / DEVELOP
 ACCESS LAYER
 
 HTTP API:
-  Base path /engram/v1/... (v1.x compatibility window).
+  Most routes under /engram/v1/... (v1.x compatibility window).
   Bearer-token auth, binds to loopback by default.
   Routes: health, recall, recall/explain, memories (CRUD), entities,
   observe, lcm/search, lcm/status, trust-zones/status, trust-zones/records,
-  trust-zones/promote, review-queue, maintenance, citations/observed,
-  suggestions, review-disposition.
+  trust-zones/promote, review-queue, maintenance, suggestions,
+  review-disposition.
+  Exception: POST /v1/citations/observed (no /engram prefix).
 
 MCP tools:
   Exposed via stdio and HTTP transports. 14+ tools covering recall, store,
@@ -145,7 +146,7 @@ MCP tools:
 Standalone CLI (20+ commands):
   init, status, query, doctor, config, daemon, tree, onboard, curate,
   review, sync, dedup, connectors, space, benchmark, versions, taxonomy,
-  enrichment, binary.
+  enrich, binary.
 
 Operator UI:
   http://127.0.0.1:4318/engram/ui/

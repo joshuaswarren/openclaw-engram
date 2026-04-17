@@ -803,10 +803,10 @@ remnic briefing --since 3d --focus project:alpha # Focused 3-day lookback
 remnic briefing --format json --save             # JSON + dated file in $REMNIC_HOME/briefings
 
 # Page versioning
-remnic versions list [file]                       # List version history for a memory file
-remnic versions show [file] [version]             # Show a specific version snapshot
-remnic versions diff [file] [version]             # Diff a version against current
-remnic versions revert [file] [version]           # Revert a file to a previous version
+remnic versions list <page-path>                  # List version history for a memory file
+remnic versions show <page-path> <version-id>     # Show a specific version snapshot
+remnic versions diff <page-path> <v1> <v2>        # Diff two versions of a memory file
+remnic versions revert <page-path> <version-id>   # Revert a file to a previous version
 
 # MECE taxonomy
 remnic taxonomy show                              # Show taxonomy categories and priorities
