@@ -9,6 +9,7 @@ import {
   publisherFor,
   publisherForConnector,
   hostIdForConnector,
+  registerPublisher,
   PUBLISHERS,
   CodexMemoryExtensionPublisher,
   ClaudeCodeMemoryExtensionPublisher,
@@ -20,6 +21,12 @@ import {
 } from "../packages/remnic-core/src/memory-extension/index.js";
 
 import type { PublishContext } from "../packages/remnic-core/src/memory-extension/types.js";
+
+// Register host-specific publishers for testing.
+// In production this happens in @remnic/cli (the host adapter layer).
+registerPublisher("codex", () => new CodexMemoryExtensionPublisher());
+registerPublisher("claude-code", () => new ClaudeCodeMemoryExtensionPublisher());
+registerPublisher("hermes", () => new HermesMemoryExtensionPublisher());
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

@@ -1,14 +1,16 @@
 /**
  * @remnic/core — Memory Extension Publisher Registry
  *
- * Central registry of host-specific publishers. Each publisher knows
- * how to write Remnic instruction artefacts into a host's extension
- * directory.
+ * Generic registry that host adapters populate at startup via
+ * `registerPublisher()`. The publisher *classes* live in core so
+ * adapters can import them, but the wiring of host-specific
+ * implementations into the registry happens in the host adapter
+ * layer (e.g. @remnic/cli), not here. This keeps core free of
+ * host-specific knowledge (CLAUDE.md gotcha #31).
  *
- * Usage:
- *   import { publisherFor } from "../memory-extension/index.js";
- *   const pub = publisherFor("codex");
- *   if (pub && await pub.isHostAvailable()) { ... }
+ * Usage (from a host adapter):
+ *   import { registerPublisher, CodexMemoryExtensionPublisher } from "@remnic/core";
+ *   registerPublisher("codex", () => new CodexMemoryExtensionPublisher());
  */
 
 export type {
@@ -30,19 +32,28 @@ export { ClaudeCodeMemoryExtensionPublisher } from "./claude-code-publisher.js";
 export { HermesMemoryExtensionPublisher } from "./hermes-publisher.js";
 
 import type { MemoryExtensionPublisher } from "./types.js";
-import { CodexMemoryExtensionPublisher } from "./codex-publisher.js";
-import { ClaudeCodeMemoryExtensionPublisher } from "./claude-code-publisher.js";
-import { HermesMemoryExtensionPublisher } from "./hermes-publisher.js";
 
 /**
  * Factory registry keyed by host ID. Each value is a zero-argument
  * factory that returns a fresh publisher instance.
+ *
+ * Starts empty — host adapters populate it via registerPublisher().
  */
-export const PUBLISHERS: Record<string, () => MemoryExtensionPublisher> = {
-  "codex": () => new CodexMemoryExtensionPublisher(),
-  "claude-code": () => new ClaudeCodeMemoryExtensionPublisher(),
-  "hermes": () => new HermesMemoryExtensionPublisher(),
-};
+export const PUBLISHERS: Record<string, () => MemoryExtensionPublisher> = {};
+
+/**
+ * Register a publisher factory for a given host ID.
+ *
+ * Host adapters call this at startup to wire their host-specific
+ * publisher implementations into the registry. Calling with an
+ * existing hostId replaces the previous factory.
+ */
+export function registerPublisher(
+  hostId: string,
+  factory: () => MemoryExtensionPublisher,
+): void {
+  PUBLISHERS[hostId] = factory;
+}
 
 /**
  * Maps connector IDs to publisher host IDs.
