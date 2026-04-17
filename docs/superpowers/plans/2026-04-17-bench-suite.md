@@ -141,7 +141,7 @@ export interface BenchmarkRunner {
   ): Promise<BenchmarkResult>;
 }
 
-export { type MemorySystem, type LlmJudge } from "../adapters/types.js";
+export { type MemorySystem, type LlmJudge } from "./adapters/types.js";
 ```
 
 - [ ] **Step 2: Create `packages/bench/src/providers/types.ts`**
@@ -282,7 +282,7 @@ describe("OpenAIProvider", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsx --test packages/bench/src/providers/__tests__/openai.test.ts`
+Run: `npx tsx --test packages/bench/src/providers/__tests__/openai.test.ts`
 Expected: FAIL — `Cannot find module '../openai.js'`
 
 - [ ] **Step 3: Implement `packages/bench/src/providers/openai.ts`**
@@ -400,7 +400,7 @@ export class OpenAIProvider implements LlmProvider {
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsx --test packages/bench/src/providers/__tests__/openai.test.ts`
+Run: `npx tsx --test packages/bench/src/providers/__tests__/openai.test.ts`
 Expected: 3 tests PASS
 
 - [ ] **Step 5: Commit**
@@ -453,12 +453,12 @@ export type {
   BenchmarkMeta,
   BenchmarkResult,
   BenchmarkRunner,
-} from "@remnic/bench/adapters/types.js";
+} from "@remnic/bench";
 ```
 
 - [ ] **Step 4: Verify existing evals still compile**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsc --noEmit -p evals/tsconfig.json 2>/dev/null || npx tsx evals/run.ts --help`
+Run: `npx tsc --noEmit -p evals/tsconfig.json 2>/dev/null || npx tsx evals/run.ts --help`
 Expected: Help text prints without errors
 
 - [ ] **Step 5: Commit**
@@ -605,10 +605,10 @@ cp evals/benchmarks/longmemeval/runner.ts packages/bench/src/benchmarks/publishe
 cp evals/benchmarks/locomo/runner.ts packages/bench/src/benchmarks/published/locomo/runner.ts
 ```
 
-In each copied runner, update imports:
-- `../../adapter/types.js` → `../../adapters/types.js` (moved location — note: these paths reference the same `types.ts` migrated in Task 1.3, just from deeper in the directory tree; verify the relative path resolves to `packages/bench/src/adapters/types.ts`)
-- `../../scorer.js` → `../../scorer.js` (same relative path since scorer is now at `packages/bench/src/scorer.ts`)
-- `../../reporter.js` → `../../reporter.js` (same)
+In each copied runner, update imports. Runners move from `evals/benchmarks/<name>/` (2 levels deep) to `packages/bench/src/benchmarks/published/<name>/` (3 levels deep under `src/`), so relative paths need an extra `../`:
+- `../../adapter/types.js` → `../../../adapters/types.js`
+- `../../scorer.js` → `../../../scorer.js`
+- `../../reporter.js` → `../../../reporter.js`
 
 - [ ] **Step 2: Create the benchmark registry**
 
@@ -710,7 +710,7 @@ describe("buildResultMeta", () => {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsx --test packages/bench/src/runner.test.ts`
+Run: `npx tsx --test packages/bench/src/runner.test.ts`
 Expected: FAIL — module not found
 
 - [ ] **Step 3: Implement `packages/bench/src/runner.ts`**
@@ -810,7 +810,7 @@ export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkRe
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsx --test packages/bench/src/runner.test.ts`
+Run: `npx tsx --test packages/bench/src/runner.test.ts`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -969,7 +969,7 @@ Find the existing `cmdBenchmark` handler (around line 1903) and add a branch tha
 
 - [ ] **Step 4: Verify `remnic bench list` works**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsx packages/remnic-cli/src/index.ts bench list`
+Run: `npx tsx packages/remnic-cli/src/index.ts bench list`
 Expected: Prints 5 benchmark names
 
 - [ ] **Step 5: Commit**
@@ -1037,7 +1037,7 @@ describe("bench integration", () => {
 
 - [ ] **Step 2: Run integration test**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsx --test packages/bench/src/__tests__/integration.test.ts`
+Run: `npx tsx --test packages/bench/src/__tests__/integration.test.ts`
 Expected: All tests PASS
 
 - [ ] **Step 3: Commit**
@@ -1098,7 +1098,7 @@ describe("computeAggregates", () => {
 
 - [ ] **Step 2: Run to verify failure**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsx --test packages/bench/src/stats/__tests__/bootstrap.test.ts`
+Run: `npx tsx --test packages/bench/src/stats/__tests__/bootstrap.test.ts`
 
 - [ ] **Step 3: Implement `packages/bench/src/stats/bootstrap.ts`**
 
@@ -1121,7 +1121,7 @@ function seededRandom(seed: number): () => number {
   let s = seed;
   return () => {
     s = (s * 1664525 + 1013904223) & 0xffffffff;
-    return (s >>> 0) / 0xffffffff;
+    return (s >>> 0) / 0x100000000;
   };
 }
 
@@ -1174,7 +1174,7 @@ export function computeAggregates(values: number[]): AggregateResult {
 
 - [ ] **Step 4: Run to verify pass**
 
-Run: `cd /Users/joshuawarren/src/remnic && npx tsx --test packages/bench/src/stats/__tests__/bootstrap.test.ts`
+Run: `npx tsx --test packages/bench/src/stats/__tests__/bootstrap.test.ts`
 
 - [ ] **Step 5: Commit**
 
