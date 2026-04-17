@@ -144,6 +144,7 @@ grep "\[engram\]" ~/.openclaw/logs/gateway.log
 53. **Status filters must enumerate ALL non-active states** — filtering only `superseded` and `archived` but not `quarantined`, `rejected`, or `pending_review` causes stale data in user-facing outputs. Define an explicit `ACTIVE_STATUSES` set rather than an ad-hoc exclusion list. When adding a new status, grep ALL filters. PR #396.
 54. **Never delete before write in file replace operations** — `rmSync(target)` then `renameSync(tmp, target)` loses data permanently if rename fails. Write to temp first, then rename atomically. Verify rename success before cleanup. `renameSync` can fail on cross-device moves. PR #394.
 55. **Documented behavior must have a corresponding implementation and test** — if docs say "timeout is applied to all daemon calls", the provider must forward the timeout parameter AND a test must verify it. CI publish workflows must validate `github.ref == 'refs/heads/main'` on the job, not just the trigger. Config properties defined in schema must be wired end-to-end. PR #397, #398.
+56. **Never merge before AI reviewers post** — `cursor[bot]` and `chatgpt-codex-connector[bot]` take 2-5 minutes to review a PR. Merging immediately after PR creation races past them, leaving comments unaddressed on merged code. Run `scripts/pre-merge-check.sh <PR#>` before every `gh pr merge`. The script verifies: (1) both AI reviewers have posted, (2) zero unresolved threads remain. PRs #429-#439 had 5 comments missed due to this race.
 
 ## Cleaner PR Workflow
 
@@ -169,6 +170,11 @@ Default workflow going forward:
 5. Treat AI review freshness as a merge criterion.
    - A stale positive verdict on an older head does not count.
    - Merge-ready means green checks, zero unresolved review threads, and a fresh positive AI verdict on the current head.
+
+6. Run pre-merge check before every merge.
+   - `scripts/pre-merge-check.sh <PR#>` — blocks if reviewers haven't posted or threads are unresolved.
+   - Wait at least 3 minutes after PR creation before attempting to merge.
+   - Never merge a PR in the same tool call that created it.
 
 Reference:
 `docs/ops/pr-review-hardening-playbook.md`
