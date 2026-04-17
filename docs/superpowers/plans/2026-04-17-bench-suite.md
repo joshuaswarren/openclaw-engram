@@ -739,7 +739,11 @@ export function resolveRunConfig(opts: {
     return { mode: "quick", runCount: 1, seeds: [opts.seeds?.[0] ?? 42] };
   }
   const runCount = opts.runCount ?? 5;
-  const seeds = opts.seeds ?? DEFAULT_SEEDS.slice(0, runCount);
+  const baseSeed = DEFAULT_SEEDS[0];
+  const seeds = opts.seeds
+    ?? (runCount <= DEFAULT_SEEDS.length
+      ? DEFAULT_SEEDS.slice(0, runCount)
+      : Array.from({ length: runCount }, (_, i) => baseSeed + i));
   return { mode: "full", runCount, seeds };
 }
 
@@ -777,17 +781,25 @@ export interface RunBenchmarkOpts {
 
 export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkResult[]> {
   const runConfig = resolveRunConfig(opts);
-  const outputDir = opts.outputDir ?? path.join(process.cwd(), "bench-results");
+  const defaultResultsDir = path.join(os.homedir(), ".remnic", "bench", "results");
+  const outputDir = opts.outputDir ?? defaultResultsDir;
   const datasetBase = opts.datasetDir ?? path.join(process.cwd(), "evals", "datasets");
   const results: BenchmarkResult[] = [];
+
+  const system = opts.systemProvider
+    ? await createProvider(opts.systemProvider)
+    : undefined;
+  const judge = opts.judgeProvider
+    ? await createProvider(opts.judgeProvider)
+    : undefined;
 
   for (const name of opts.benchmarks) {
     const runner = await getBenchmark(name);
     console.log(`\nRunning: ${runner.meta.name} (${runner.meta.category})...`);
 
     const result = await runner.run(
-      undefined as any, // adapter created by CLI layer
-      undefined,        // judge created by CLI layer
+      system,
+      judge,
       {
         limit: opts.limit,
         datasetDir: path.join(datasetBase, name),
@@ -946,6 +958,7 @@ Options:
 // packages/bench/src/index.ts
 export * from "./types.js";
 export * from "./schema.js";
+export * from "./adapters/types.js";
 export * from "./providers/types.js";
 export * from "./providers/openai.js";
 export { listBenchmarks, getBenchmark, registerBenchmark } from "./benchmarks/registry.js";
