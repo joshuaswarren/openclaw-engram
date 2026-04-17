@@ -9,6 +9,7 @@ import {
   publisherFor,
   publisherForConnector,
   hostIdForConnector,
+  registerPublisher,
   PUBLISHERS,
   CodexMemoryExtensionPublisher,
   ClaudeCodeMemoryExtensionPublisher,
@@ -20,6 +21,12 @@ import {
 } from "../packages/remnic-core/src/memory-extension/index.js";
 
 import type { PublishContext } from "../packages/remnic-core/src/memory-extension/types.js";
+
+// Register concrete publishers — the registry is now empty at import time
+// (Finding 3, #423). Tests must register publishers like the CLI does.
+registerPublisher("codex", () => new CodexMemoryExtensionPublisher());
+registerPublisher("claude-code", () => new ClaudeCodeMemoryExtensionPublisher());
+registerPublisher("hermes", () => new HermesMemoryExtensionPublisher());
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -76,6 +83,16 @@ test("PUBLISHERS registry has entries for codex, claude-code, hermes", () => {
   assert.ok("codex" in PUBLISHERS);
   assert.ok("claude-code" in PUBLISHERS);
   assert.ok("hermes" in PUBLISHERS);
+});
+
+test("registerPublisher adds a custom publisher to the registry", () => {
+  const customFactory = () => new CodexMemoryExtensionPublisher();
+  registerPublisher("custom-test-host", customFactory);
+  const pub = publisherFor("custom-test-host");
+  assert.ok(pub, "expected a publisher for custom-test-host");
+  assert.equal(pub.hostId, "codex"); // it's a Codex instance under the hood
+  // Clean up to avoid polluting other tests
+  delete PUBLISHERS["custom-test-host"];
 });
 
 // ── Codex publisher ────────────────────────────────────────────────────────

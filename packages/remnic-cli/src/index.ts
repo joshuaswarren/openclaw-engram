@@ -83,7 +83,12 @@ import {
   DEFAULT_GRACE_PERIOD_DAYS,
   publisherForConnector,
   hostIdForConnector,
+  registerPublisher,
   PUBLISHERS,
+  CodexMemoryExtensionPublisher,
+  ClaudeCodeMemoryExtensionPublisher,
+  HermesMemoryExtensionPublisher,
+  coerceInstallExtension,
   DEFAULT_TAXONOMY,
   resolveCategory,
   generateResolverDocument,
@@ -124,6 +129,16 @@ import { hasFlag, resolveFlag } from "./cli-args.js";
 import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
 
 export { parseConnectorConfig, stripConfigArgv };
+
+// ── Publisher Registrations ─────────────────────────────────────────────────
+// Concrete publisher factories are registered here in the CLI, not in
+// @remnic/core. Core exports the interface + registry helpers; the CLI
+// (host adapter layer) wires the concrete implementations.
+// See CLAUDE.md gotcha #31.
+
+registerPublisher("codex", () => new CodexMemoryExtensionPublisher());
+registerPublisher("claude-code", () => new ClaudeCodeMemoryExtensionPublisher());
+registerPublisher("hermes", () => new HermesMemoryExtensionPublisher());
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -259,6 +274,29 @@ function resolveMemoryDir(): string {
   }
 
   return configMemoryDir;
+}
+
+/**
+ * Resolve the active namespace for publisher context.
+ *
+ * Priority: config defaultNamespace > "default".
+ * Never throws — falls back to "default" on any error.
+ */
+function resolveNamespaceForPublish(): string {
+  try {
+    const configPath = resolveConfigPath();
+    if (fs.existsSync(configPath)) {
+      const raw = JSON.parse(fs.readFileSync(configPath, "utf8"));
+      const cfg = raw.remnic ?? raw.engram ?? raw;
+      if (typeof cfg.defaultNamespace === "string" && cfg.defaultNamespace.length > 0) {
+        return cfg.defaultNamespace;
+      }
+    }
+  } catch {
+    // Fall through to default
+  }
+
+  return "default";
 }
 
 /**
@@ -1483,8 +1521,12 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
           const available = await pub.isHostAvailable();
           if (available) {
             const memoryDir = resolveMemoryDir();
+            // Finding 2 (#423): pass the active namespace into the publish
+            // context so renderInstructions() uses the real namespace
+            // instead of falling back to "default".
+            const namespace = resolveNamespaceForPublish();
             const pubResult = await pub.publish({
-              config: { memoryDir },
+              config: { memoryDir, namespace },
               skillsRoot: path.join(memoryDir, "skills"),
               log: { info: console.log, warn: console.warn, error: console.error },
             });
@@ -1531,10 +1573,21 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     // Append memory extension publisher health only for the requested
     // connector's host, not all registered publishers. This prevents
     // unrelated hosts from polluting the health status.
+    //
+    // Finding 1 (#423): skip the publisher check entirely when the user
+    // opted out of extension install via `installExtension=false`.
+    // Per CLAUDE.md gotcha #36, string "false" is truthy — coerce first.
     const publisherChecks: Array<{ name: string; ok: boolean; detail: string }> = [];
     const targetHostId = hostIdForConnector(connectorId);
+    const connectorInstance = result.checks.length > 0
+      ? listConnectors().installed.find((c) => c.connectorId === connectorId)
+      : undefined;
+    const installExtensionRaw = connectorInstance?.config?.installExtension;
+    const installExtensionCoerced = coerceInstallExtension(installExtensionRaw);
+    const extensionOptedOut = installExtensionCoerced === false;
+
     const factory = PUBLISHERS[targetHostId];
-    if (factory) {
+    if (factory && !extensionOptedOut) {
       try {
         const pub = factory();
         const available = await pub.isHostAvailable();
@@ -1559,6 +1612,12 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
           detail: `error: ${msg}`,
         });
       }
+    } else if (factory && extensionOptedOut) {
+      publisherChecks.push({
+        name: `Publisher: ${targetHostId}`,
+        ok: true,
+        detail: "skipped (installExtension=false)",
+      });
     }
 
     const allChecks = [...result.checks, ...publisherChecks];

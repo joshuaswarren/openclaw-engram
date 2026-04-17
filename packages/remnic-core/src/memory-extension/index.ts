@@ -1,14 +1,18 @@
 /**
  * @remnic/core — Memory Extension Publisher Registry
  *
- * Central registry of host-specific publishers. Each publisher knows
- * how to write Remnic instruction artefacts into a host's extension
- * directory.
+ * Central registry for host-specific publishers. The registry itself
+ * is empty at import time — host adapters (e.g. the CLI) call
+ * {@link registerPublisher} to wire concrete implementations.
  *
- * Usage:
- *   import { publisherFor } from "../memory-extension/index.js";
- *   const pub = publisherFor("codex");
- *   if (pub && await pub.isHostAvailable()) { ... }
+ * Core exports the interface, the registry helpers, and the concrete
+ * publisher *classes* (so host packages can import them), but never
+ * auto-registers them. This keeps the architecture boundary clean:
+ * core has no host-specific wiring.
+ *
+ * Usage (in a host adapter):
+ *   import { registerPublisher, CodexMemoryExtensionPublisher } from "@remnic/core";
+ *   registerPublisher("codex", () => new CodexMemoryExtensionPublisher());
  */
 
 export type {
@@ -30,19 +34,29 @@ export { ClaudeCodeMemoryExtensionPublisher } from "./claude-code-publisher.js";
 export { HermesMemoryExtensionPublisher } from "./hermes-publisher.js";
 
 import type { MemoryExtensionPublisher } from "./types.js";
-import { CodexMemoryExtensionPublisher } from "./codex-publisher.js";
-import { ClaudeCodeMemoryExtensionPublisher } from "./claude-code-publisher.js";
-import { HermesMemoryExtensionPublisher } from "./hermes-publisher.js";
 
 /**
  * Factory registry keyed by host ID. Each value is a zero-argument
  * factory that returns a fresh publisher instance.
+ *
+ * Starts empty — host adapters populate it via {@link registerPublisher}.
+ * This avoids wiring host-specific implementations directly into
+ * `@remnic/core` (CLAUDE.md gotcha #31).
  */
-export const PUBLISHERS: Record<string, () => MemoryExtensionPublisher> = {
-  "codex": () => new CodexMemoryExtensionPublisher(),
-  "claude-code": () => new ClaudeCodeMemoryExtensionPublisher(),
-  "hermes": () => new HermesMemoryExtensionPublisher(),
-};
+export const PUBLISHERS: Record<string, () => MemoryExtensionPublisher> = {};
+
+/**
+ * Register a publisher factory for the given host ID.
+ *
+ * Call this from the CLI or host-specific package at startup to
+ * populate the registry before any `publisherFor()` lookups.
+ */
+export function registerPublisher(
+  hostId: string,
+  factory: () => MemoryExtensionPublisher,
+): void {
+  PUBLISHERS[hostId] = factory;
+}
 
 /**
  * Maps connector IDs to publisher host IDs.
