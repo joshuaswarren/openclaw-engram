@@ -2911,12 +2911,17 @@ async function cmdTaxonomy(rest: string[]): Promise<void> {
     case "resolve": {
       // Strip --flag and its following value token together so flag values
       // (e.g. "preference" in `--category preference`) don't leak into text.
+      // Boolean flags (like --json) don't consume a following value token.
+      const BOOLEAN_FLAGS = new Set(["--json"]);
       const resolveArgs = rest.slice(1);
       const textParts: string[] = [];
       for (let i = 0; i < resolveArgs.length; i++) {
         if (resolveArgs[i].startsWith("--")) {
-          // Skip the flag and its value (next token)
-          i++;
+          // Boolean flags have no trailing value — skip only the flag itself
+          if (!BOOLEAN_FLAGS.has(resolveArgs[i])) {
+            // Key-value flag: skip the flag and its value (next token)
+            i++;
+          }
           continue;
         }
         textParts.push(resolveArgs[i]);
