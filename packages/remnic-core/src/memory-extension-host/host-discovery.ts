@@ -7,7 +7,7 @@
  * any extension's scripts/ directory.
  */
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, lstat, stat } from "node:fs/promises";
 import path from "node:path";
 import type { LoggerBackend } from "../logger.js";
 import type { DiscoveredExtension, ExtensionSchema } from "./types.js";
@@ -37,7 +37,10 @@ export async function discoverMemoryExtensions(
   root: string,
   log: Pick<LoggerBackend, "warn" | "debug">,
 ): Promise<DiscoveredExtension[]> {
-  // If root doesn't exist, return empty silently (not even a warning)
+  // If root doesn't exist, return empty silently (not even a warning).
+  // Use stat() for root — the user configures this path, so following a
+  // symlink here is intentional.  Child entries use lstat() to block
+  // symlink traversal that could escape the extensions directory.
   let rootStat;
   try {
     rootStat = await stat(root);
@@ -60,11 +63,18 @@ export async function discoverMemoryExtensions(
   for (const entry of entries) {
     const entryPath = path.join(root, entry);
 
-    // Must be a directory
+    // Must be a real directory (not a symlink) — lstat() blocks symlink
+    // traversal that could escape the extensions root (#382 P2).
     let entryStat;
     try {
-      entryStat = await stat(entryPath);
+      entryStat = await lstat(entryPath);
     } catch {
+      continue;
+    }
+    if (entryStat.isSymbolicLink()) {
+      log.warn?.(
+        `[memory-extensions] skipping "${entry}": symlinks are not followed for security`,
+      );
       continue;
     }
     if (!entryStat.isDirectory()) continue;

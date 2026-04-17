@@ -32,7 +32,7 @@ import { extractJsonCandidates } from "./json-extract.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { applyWorkExtractionBoundary } from "./work/boundary.js";
 import { buildChatCompletionTokenLimit, shouldAssumeOpenAiChatCompletions } from "./openai-chat-compat.js";
-import { formatDaySummaryMemories, loadDaySummaryPrompt } from "./day-summary.js";
+import { formatDaySummaryMemories, loadDaySummaryPrompt, buildExtensionsFooterForSummary } from "./day-summary.js";
 import { ProfilingCollector } from "./profiling.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
@@ -2369,9 +2369,18 @@ Respond with valid JSON matching this schema:
     if (memoryContext.length === 0) return null;
 
     const systemPrompt = await loadDaySummaryPrompt();
+
+    // Append extension footer when extensions are active (#382)
+    let extensionsFooter = "";
+    try {
+      extensionsFooter = await buildExtensionsFooterForSummary(this.config);
+    } catch {
+      // Non-fatal: skip extension footer if discovery fails
+    }
+
     const userPrompt = `Generate an end-of-day summary from this Remnic memory context:
 
-${memoryContext}`;
+${memoryContext}${extensionsFooter.length > 0 ? `\n\n${extensionsFooter}` : ""}`;
     const traceId = crypto.randomUUID();
     const startedAt = Date.now();
     this.emit({ kind: "llm_start", traceId, model: this.config.model, operation: "day_summary", input: memoryContext.slice(0, 4000) });

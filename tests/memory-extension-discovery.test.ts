@@ -23,6 +23,7 @@ import {
   buildExtensionsBlockForConsolidation,
   resolveExtensionsRoot,
 } from "../packages/remnic-core/src/semantic-consolidation.ts";
+import { buildExtensionsFooterForSummary } from "../packages/remnic-core/src/day-summary.ts";
 import type { PluginConfig } from "../packages/remnic-core/src/types.ts";
 import { parseConfig } from "../packages/remnic-core/src/config.ts";
 
@@ -390,6 +391,80 @@ test("consolidation prompt empty when extensions disabled", async () => {
 
   const block = await buildExtensionsBlockForConsolidation(config);
   assert.equal(block, "");
+
+  fs.rmSync(root, { recursive: true });
+});
+
+// ── Symlink traversal blocking (#382 P2) ───────────────────────────────────
+
+test("symlink extension entry is skipped with warning", async () => {
+  const root = makeTempDir();
+
+  // Create a real extension to be the symlink target
+  const targetDir = path.join(root, "_real-target");
+  fs.mkdirSync(targetDir, { recursive: true });
+  fs.writeFileSync(path.join(targetDir, "instructions.md"), "Should not be discovered via symlink", "utf-8");
+
+  // Create a symlink inside the extensions root
+  const symlinkPath = path.join(root, "symlink-ext");
+  fs.symlinkSync(targetDir, symlinkPath);
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(root, log);
+
+  // The symlink should NOT be discovered
+  assert.equal(result.length, 0);
+  assert.ok(warnings.some((w) => w.includes("symlinks are not followed")));
+
+  fs.rmSync(root, { recursive: true });
+});
+
+// ── buildExtensionsFooterForSummary wiring (#382) ──────────────────────────
+
+test("buildExtensionsFooterForSummary returns footer when extensions exist", async () => {
+  const root = makeTempDir();
+  createExtension(root, "day-ext", {
+    instructions: "Day summary extension.",
+  });
+
+  const config = parseConfig({
+    memoryExtensionsEnabled: true,
+    memoryExtensionsRoot: root,
+  });
+
+  const footer = await buildExtensionsFooterForSummary(config);
+  assert.ok(footer.includes("Active extensions: day-ext"));
+
+  fs.rmSync(root, { recursive: true });
+});
+
+test("buildExtensionsFooterForSummary returns empty when disabled", async () => {
+  const root = makeTempDir();
+  createExtension(root, "day-ext", {
+    instructions: "Should not appear.",
+  });
+
+  const config = parseConfig({
+    memoryExtensionsEnabled: false,
+    memoryExtensionsRoot: root,
+  });
+
+  const footer = await buildExtensionsFooterForSummary(config);
+  assert.equal(footer, "");
+
+  fs.rmSync(root, { recursive: true });
+});
+
+test("buildExtensionsFooterForSummary returns empty when no extensions", async () => {
+  const root = makeTempDir();
+
+  const config = parseConfig({
+    memoryExtensionsEnabled: true,
+    memoryExtensionsRoot: root,
+  });
+
+  const footer = await buildExtensionsFooterForSummary(config);
+  assert.equal(footer, "");
 
   fs.rmSync(root, { recursive: true });
 });
