@@ -1372,6 +1372,8 @@ test("access HTTP server exposes MCP JSON-RPC endpoint at /mcp", async () => {
     port: 0,
     authToken: "secret-token",
     maxBodyBytes: 4096,
+    citationsEnabled: false,
+    citationsAutoDetect: false,
   });
   const started = await server.start();
   const base = `http://${started.host}:${started.port}`;
