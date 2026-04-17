@@ -100,10 +100,16 @@ function parseEntries(block: string): CitationEntry[] {
 /**
  * Parse a single citation entry line:
  *   `<path>:<line_start>-<line_end>|note=[<note>]`
+ *
+ * Splits on the LAST `:` before the range pattern, not the first, because
+ * file paths can contain colons on some systems (e.g., Windows drive letters
+ * like `C:\` or macOS resource forks).
  */
 function parseEntryLine(line: string): CitationEntry | null {
-  // Match: path:lineStart-lineEnd|note=[note]
-  const match = line.match(/^(.+?):(\d+)-(\d+)\|note=\[(.*)?\]$/);
+  // Match the range+note suffix anchored at the end, allowing the path prefix
+  // to contain colons. The (.+) is greedy so it consumes everything up to the
+  // LAST `:` before the `\d+-\d+|note=[...]` suffix.
+  const match = line.match(/^(.+):(\d+)-(\d+)\|note=\[(.*)?\]$/);
   if (!match) return null;
   const [, pathRaw, startRaw, endRaw, noteRaw] = match;
   if (!pathRaw || !startRaw || !endRaw) return null;

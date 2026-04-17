@@ -658,12 +658,15 @@ export class EngramAccessHttpServer {
 
       // Record usage: for each citation entry, try to increment usage on the
       // matching memory. The service exposes recordAccess for this purpose.
+      // Pass authenticatedPrincipal so namespace ACL checks use the same
+      // identity resolution as other write endpoints (Finding #1, issue #379).
       let matched = 0;
       let submitted = 0;
       if (typeof this.service.recordCitationUsage === "function") {
         const result = await this.service.recordCitationUsage({
           sessionId,
           namespace: this.resolveNamespace(req, namespace),
+          authenticatedPrincipal: this.resolveRequestPrincipal(req),
           entries,
           rolloutIds,
         });

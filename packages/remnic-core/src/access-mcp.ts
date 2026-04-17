@@ -949,13 +949,35 @@ export class EngramMcpServer {
    * Determine whether oai-mem-citation guidance should be appended to recall.
    * Returns true when explicitly enabled via config OR when auto-detect is
    * active and the current MCP session belongs to a Codex adapter client.
+   *
+   * When no sessionId is provided (e.g., stdio transport where there are no
+   * HTTP headers carrying mcp-session-id), fall back to checking if there is
+   * exactly one known session whose clientInfo matches the Codex pattern.
+   * This covers the common stdio case where a single client connection exists.
    */
   private shouldEmitCitations(mcpSessionId?: string): boolean {
     if (this.citationsEnabled) return true;
     if (!this.citationsAutoDetect) return false;
-    if (!mcpSessionId) return false;
-    const info = this.clientInfoBySession.get(mcpSessionId);
-    if (!info) return false;
+
+    // Direct session lookup (HTTP transport with mcp-session-id header).
+    if (mcpSessionId) {
+      const info = this.clientInfoBySession.get(mcpSessionId);
+      if (!info) return false;
+      return this.isCodexClient(info);
+    }
+
+    // Stdio fallback: no session ID available. If there is exactly one session
+    // registered (the typical stdio pattern), check that session's clientInfo.
+    if (this.clientInfoBySession.size === 1) {
+      const [info] = [...this.clientInfoBySession.values()];
+      if (info) return this.isCodexClient(info);
+    }
+
+    return false;
+  }
+
+  /** Check whether a clientInfo record identifies a Codex adapter client. */
+  private isCodexClient(info: { name: string; version?: string }): boolean {
     const lowerName = info.name.toLowerCase();
     return lowerName === "codex-mcp-client" || lowerName.includes("codex");
   }

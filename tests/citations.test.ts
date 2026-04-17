@@ -134,6 +134,46 @@ id-1
   assert.equal(result.entries[0].note, "");
 });
 
+test("parseOaiMemCitation: path with colons splits on the LAST colon before range", () => {
+  // File paths can contain colons on some systems (e.g., Windows drive letters,
+  // macOS resource forks). The parser must split on the last `:` before the
+  // digit range, not the first.
+  const text = `<oai-mem-citation>
+<citation_entries>
+C:\\Users\\data:facts/fact-1.md:10-20|note=[colon in path]
+</citation_entries>
+<rollout_ids>
+id-1
+</rollout_ids>
+</oai-mem-citation>`;
+
+  const result = parseOaiMemCitation(text);
+  assert.ok(result);
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].path, "C:\\Users\\data:facts/fact-1.md");
+  assert.equal(result.entries[0].lineStart, 10);
+  assert.equal(result.entries[0].lineEnd, 20);
+  assert.equal(result.entries[0].note, "colon in path");
+});
+
+test("parseOaiMemCitation: simple path still parses correctly after regex change", () => {
+  const text = `<oai-mem-citation>
+<citation_entries>
+facts/simple.md:5-15|note=[simple test]
+</citation_entries>
+<rollout_ids>
+id-1
+</rollout_ids>
+</oai-mem-citation>`;
+
+  const result = parseOaiMemCitation(text);
+  assert.ok(result);
+  assert.equal(result.entries.length, 1);
+  assert.equal(result.entries[0].path, "facts/simple.md");
+  assert.equal(result.entries[0].lineStart, 5);
+  assert.equal(result.entries[0].lineEnd, 15);
+});
+
 // ---------------------------------------------------------------------------
 // formatOaiMemCitation
 // ---------------------------------------------------------------------------

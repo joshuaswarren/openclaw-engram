@@ -2710,15 +2710,20 @@ export class EngramAccessService {
   async recordCitationUsage(request: {
     sessionId?: string;
     namespace?: string;
+    authenticatedPrincipal?: string;
     entries: Array<{ path: string; lineStart: number; lineEnd: number; note: string }>;
     rolloutIds: string[];
   }): Promise<{ submitted: number; matched: number }> {
     if (request.entries.length === 0) return { submitted: 0, matched: 0 };
 
     // Enforce namespace ACLs — citation tracking is a write-like operation.
+    // Pass authenticatedPrincipal so the principal resolution matches other
+    // write endpoints (gotcha #42: read and write paths must resolve through
+    // the same namespace layer).
     const resolvedNamespace = this.resolveWritableNamespace(
       request.namespace,
       request.sessionId,
+      request.authenticatedPrincipal,
     );
 
     // Extract memory IDs from citation paths. The path in citations
@@ -2735,10 +2740,10 @@ export class EngramAccessService {
 
     if (memoryIds.length === 0) return { submitted: 0, matched: 0 };
 
-    // Determine which IDs correspond to real memories in storage.
+    // Determine which IDs correspond to real memories in storage using a
+    // targeted file-existence scan instead of loading all memories (Finding #2).
     const storage = await this.orchestrator.getStorage(resolvedNamespace);
-    const allMemories = await storage.readAllMemories();
-    const existingIds = new Set(allMemories.map((m) => m.frontmatter.id));
+    const existingIds = await storage.filterExistingMemoryIds(memoryIds);
     const matchedIds = memoryIds.filter((id) => existingIds.has(id));
 
     if (matchedIds.length > 0) {
