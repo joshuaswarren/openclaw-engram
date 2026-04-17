@@ -161,32 +161,33 @@ export async function discoverMemoryExtensions(
 }
 
 function validateSchema(raw: Record<string, unknown>): ExtensionSchema {
-  const result: ExtensionSchema = {};
-
-  if (Array.isArray(raw.memoryTypes)) {
-    const validTypes = raw.memoryTypes.filter(
+  const memoryTypes: ExtensionSchema["memoryTypes"] = (() => {
+    if (!Array.isArray(raw.memoryTypes)) return undefined;
+    const valid = raw.memoryTypes.filter(
       (t): t is "fact" | "preference" | "procedure" | "reference" =>
         typeof t === "string" && VALID_MEMORY_TYPES.has(t),
     );
-    if (validTypes.length > 0) {
-      result.memoryTypes = validTypes;
-    }
-  }
+    return valid.length > 0 ? valid : undefined;
+  })();
 
-  if (Array.isArray(raw.groupingHints)) {
-    const validHints = raw.groupingHints.filter(
+  const groupingHints: ExtensionSchema["groupingHints"] = (() => {
+    if (!Array.isArray(raw.groupingHints)) return undefined;
+    const valid = raw.groupingHints.filter(
       (h): h is string => typeof h === "string" && h.length > 0,
     );
-    if (validHints.length > 0) {
-      result.groupingHints = validHints;
-    }
-  }
+    return valid.length > 0 ? valid : undefined;
+  })();
 
-  if (typeof raw.version === "string" && raw.version.length > 0) {
-    result.version = raw.version;
-  }
+  const version: ExtensionSchema["version"] =
+    typeof raw.version === "string" && raw.version.length > 0
+      ? raw.version
+      : undefined;
 
-  return result;
+  return {
+    ...(memoryTypes ? { memoryTypes } : {}),
+    ...(groupingHints ? { groupingHints } : {}),
+    ...(version ? { version } : {}),
+  };
 }
 
 function isFileNotFoundError(err: unknown): boolean {
