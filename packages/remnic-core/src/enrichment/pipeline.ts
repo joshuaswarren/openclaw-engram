@@ -138,11 +138,12 @@ export async function runEnrichmentPipeline(
         continue;
       }
 
-      // Run provider
+      // Run provider — count toward rate limit regardless of success/failure
+      // (PR #425 review finding 2). A failed call still consumed an API
+      // request, so it must be accounted for.
       let candidates: EnrichmentCandidate[];
       try {
         candidates = await provider.enrich(entity);
-        recordCall(provider.id, rateBuckets);
       } catch (err) {
         log.error?.(
           `enrichment: provider ${provider.id} failed for ${entity.name}: ${err instanceof Error ? err.message : String(err)}`,
@@ -157,6 +158,8 @@ export async function runEnrichmentPipeline(
           elapsed: Date.now() - start,
         });
         continue;
+      } finally {
+        recordCall(provider.id, rateBuckets);
       }
 
       // Tag each candidate with provider id

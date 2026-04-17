@@ -742,6 +742,10 @@ async function cmdEnrich(rest: string[]): Promise<void> {
   let totalPersisted = 0;
   for (const result of results) {
     for (const candidate of result.acceptedCandidates) {
+      // Split persistence from audit writes (PR #425 review finding 1).
+      // If writeMemory succeeds but audit fails, don't treat it as a
+      // persistence failure — the memory was written successfully.
+      let persisted = false;
       try {
         await storage.writeMemory(candidate.category, candidate.text, {
           confidence: candidate.confidence,
@@ -750,15 +754,7 @@ async function cmdEnrich(rest: string[]): Promise<void> {
           source: `enrichment:${candidate.source}`,
         });
         totalPersisted++;
-        // Write audit entry for accepted candidate
-        await appendAuditEntry(auditDir, {
-          timestamp: new Date().toISOString(),
-          entityName: result.entityName,
-          provider: result.provider,
-          candidateText: candidate.text,
-          sourceUrl: candidate.sourceUrl,
-          accepted: true,
-        });
+        persisted = true;
       } catch (err) {
         console.error(
           `  Failed to persist candidate for ${result.entityName}: ${err instanceof Error ? err.message : String(err)}`,
@@ -776,6 +772,25 @@ async function cmdEnrich(rest: string[]): Promise<void> {
           });
         } catch {
           // Audit write failure is non-fatal
+        }
+      }
+
+      // Write audit entry for accepted candidate — separate try-catch
+      // so an audit I/O error doesn't mask a successful persist.
+      if (persisted) {
+        try {
+          await appendAuditEntry(auditDir, {
+            timestamp: new Date().toISOString(),
+            entityName: result.entityName,
+            provider: result.provider,
+            candidateText: candidate.text,
+            sourceUrl: candidate.sourceUrl,
+            accepted: true,
+          });
+        } catch (auditErr) {
+          console.error(
+            `  Audit write failed for ${result.entityName}: ${auditErr instanceof Error ? auditErr.message : String(auditErr)}`,
+          );
         }
       }
     }
