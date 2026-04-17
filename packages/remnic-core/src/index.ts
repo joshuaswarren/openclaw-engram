@@ -248,6 +248,7 @@ export {
   parseOaiMemCitation,
   formatOaiMemCitation,
   buildCitationGuidance,
+  sanitizeNoteForCitation,
   type CitationEntry,
   type CitationBlock,
   type CitationMetadata,
