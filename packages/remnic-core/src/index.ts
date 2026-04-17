@@ -484,6 +484,29 @@ export {
 } from "./taxonomy/index.js";
 
 // ---------------------------------------------------------------------------
+// Enrichment pipeline (issue #365)
+// ---------------------------------------------------------------------------
+
+export {
+  EnrichmentProviderRegistry,
+  WebSearchProvider,
+  runEnrichmentPipeline,
+  appendAuditEntry,
+  readAuditLog,
+  defaultEnrichmentPipelineConfig,
+  type EnrichmentCandidate,
+  type EnrichmentCostTier,
+  type EnrichmentPipelineConfig,
+  type EnrichmentProvider,
+  type EnrichmentProviderConfig,
+  type EnrichmentResult,
+  type EntityEnrichmentInput,
+  type EnrichmentAuditEntry,
+  type WebSearchFn,
+  type WebSearchProviderOptions,
+} from "./enrichment/index.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 

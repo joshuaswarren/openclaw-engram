@@ -950,6 +950,14 @@ export interface PluginConfig {
   citationsEnabled: boolean;
   /** Auto-enable citations when the Codex adapter is detected. Default true. */
   citationsAutoDetect: boolean;
+
+  // External enrichment pipeline (issue #365)
+  /** Enable the external enrichment pipeline. Default false. */
+  enrichmentEnabled: boolean;
+  /** Automatically enrich new entities on creation. Default false. */
+  enrichmentAutoOnCreate: boolean;
+  /** Max candidates accepted per entity per enrichment run. Default 20. */
+  enrichmentMaxCandidatesPerEntity: number;
 }
 
 /** Runtime configuration for the daily context briefing feature. */
