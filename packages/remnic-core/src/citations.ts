@@ -147,6 +147,19 @@ function parseIds(block: string, openTag: string, closeTag: string): string[] | 
 }
 
 // ---------------------------------------------------------------------------
+// Sanitizer
+// ---------------------------------------------------------------------------
+
+/**
+ * Replace newline characters (\n, \r) with spaces so that note values can be
+ * safely embedded in a single citation entry line without corrupting the
+ * line-based parser (`parseEntryLine` splits on `\n`).
+ */
+export function sanitizeNoteForCitation(note: string): string {
+  return note.replace(/[\r\n]+/g, " ").trim();
+}
+
+// ---------------------------------------------------------------------------
 // Formatter
 // ---------------------------------------------------------------------------
 
@@ -155,7 +168,7 @@ function parseIds(block: string, openTag: string, closeTag: string): string[] | 
  */
 export function formatOaiMemCitation(block: CitationBlock): string {
   const entryLines = block.entries
-    .map((e) => `${e.path}:${e.lineStart}-${e.lineEnd}|note=[${e.note}]`)
+    .map((e) => `${e.path}:${e.lineStart}-${e.lineEnd}|note=[${sanitizeNoteForCitation(e.note)}]`)
     .join("\n");
   const idLines = block.rolloutIds.join("\n");
 
@@ -185,7 +198,7 @@ export function buildCitationGuidance(citations: CitationMetadata[]): string {
   if (citations.length === 0) return "";
 
   const entryExamples = citations.map((c) =>
-    `${c.path}:${c.lineStart}-${c.lineEnd}|note=[${c.noteDefault}]`,
+    `${c.path}:${c.lineStart}-${c.lineEnd}|note=[${sanitizeNoteForCitation(c.noteDefault)}]`,
   );
   const rolloutExamples = citations
     .filter((c) => c.rolloutId != null)

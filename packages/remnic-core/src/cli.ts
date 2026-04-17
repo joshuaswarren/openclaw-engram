@@ -678,6 +678,8 @@ export interface AccessHttpServeCliCommandOptions {
   principal?: string;
   maxBodyBytes?: number;
   trustPrincipalHeader?: boolean;
+  citationsEnabled?: boolean;
+  citationsAutoDetect?: boolean;
   createServer?: (options: {
     service: EngramAccessService;
     host?: string;
@@ -686,6 +688,8 @@ export interface AccessHttpServeCliCommandOptions {
     principal?: string;
     maxBodyBytes?: number;
     trustPrincipalHeader?: boolean;
+    citationsEnabled?: boolean;
+    citationsAutoDetect?: boolean;
   }) => AccessHttpServerLike;
 }
 
@@ -2396,6 +2400,8 @@ export async function runAccessHttpServeCliCommand(
         principal: input.principal,
         maxBodyBytes: input.maxBodyBytes,
         trustPrincipalHeader: input.trustPrincipalHeader,
+        citationsEnabled: input.citationsEnabled,
+        citationsAutoDetect: input.citationsAutoDetect,
       }));
 
     const server = createServer(options);
@@ -4703,6 +4709,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             principal: resolveAccessPrincipalOverride(options.principal, orchestrator.config.agentAccessHttp.principal),
             maxBodyBytes: Number.isFinite(maxBodyBytesRaw) ? maxBodyBytesRaw : 131072,
             trustPrincipalHeader: options.trustPrincipalHeader === true,
+            citationsEnabled: orchestrator.config.citationsEnabled,
+            citationsAutoDetect: orchestrator.config.citationsAutoDetect,
           });
           console.log(JSON.stringify(status, null, 2));
           console.log("OK");

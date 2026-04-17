@@ -4,6 +4,7 @@ import {
   parseOaiMemCitation,
   formatOaiMemCitation,
   buildCitationGuidance,
+  sanitizeNoteForCitation,
   type CitationBlock,
   type CitationMetadata,
 } from "../packages/remnic-core/src/citations.js";
@@ -293,4 +294,86 @@ test("buildCitationGuidance: citations without rolloutId produce empty rollout s
   // The rollout_ids section should be empty (just the tags with nothing between).
   const rolloutSection = guidance.split("<rollout_ids>")[1]?.split("</rollout_ids>")[0] ?? "";
   assert.equal(rolloutSection.trim(), "");
+});
+
+// ---------------------------------------------------------------------------
+// sanitizeNoteForCitation
+// ---------------------------------------------------------------------------
+
+test("sanitizeNoteForCitation: replaces LF with space", () => {
+  assert.equal(sanitizeNoteForCitation("line1\nline2"), "line1 line2");
+});
+
+test("sanitizeNoteForCitation: replaces CR+LF with space", () => {
+  assert.equal(sanitizeNoteForCitation("line1\r\nline2"), "line1 line2");
+});
+
+test("sanitizeNoteForCitation: replaces multiple consecutive newlines with a single space", () => {
+  assert.equal(sanitizeNoteForCitation("line1\n\n\nline2"), "line1 line2");
+});
+
+test("sanitizeNoteForCitation: preserves notes without newlines", () => {
+  assert.equal(sanitizeNoteForCitation("already clean"), "already clean");
+});
+
+test("sanitizeNoteForCitation: empty string stays empty", () => {
+  assert.equal(sanitizeNoteForCitation(""), "");
+});
+
+// ---------------------------------------------------------------------------
+// formatOaiMemCitation: multi-line notes are sanitized
+// ---------------------------------------------------------------------------
+
+test("formatOaiMemCitation: multi-line note is flattened to one line", () => {
+  const block: CitationBlock = {
+    entries: [
+      { path: "facts/f.md", lineStart: 1, lineEnd: 5, note: "line1\nline2\nline3" },
+    ],
+    rolloutIds: ["rollout-1"],
+  };
+
+  const formatted = formatOaiMemCitation(block);
+  // The note should NOT contain literal newlines.
+  assert.ok(formatted.includes("|note=[line1 line2 line3]"));
+  // Round-trip must succeed: parsed note matches sanitized version.
+  const parsed = parseOaiMemCitation(formatted);
+  assert.ok(parsed);
+  assert.equal(parsed.entries.length, 1);
+  assert.equal(parsed.entries[0].note, "line1 line2 line3");
+});
+
+test("formatOaiMemCitation: CR+LF in note is flattened", () => {
+  const block: CitationBlock = {
+    entries: [
+      { path: "facts/f.md", lineStart: 1, lineEnd: 1, note: "a\r\nb" },
+    ],
+    rolloutIds: [],
+  };
+
+  const formatted = formatOaiMemCitation(block);
+  assert.ok(formatted.includes("|note=[a b]"));
+});
+
+// ---------------------------------------------------------------------------
+// buildCitationGuidance: multi-line noteDefault is sanitized
+// ---------------------------------------------------------------------------
+
+test("buildCitationGuidance: multi-line noteDefault is flattened", () => {
+  const citations: CitationMetadata[] = [
+    {
+      memoryId: "fact-1",
+      path: "facts/fact-1.md",
+      lineStart: 1,
+      lineEnd: 1,
+      noteDefault: "first line\nsecond line",
+    },
+  ];
+
+  const guidance = buildCitationGuidance(citations);
+  assert.ok(guidance.includes("|note=[first line second line]"));
+  // Ensure the guidance block can be parsed back correctly.
+  const parsed = parseOaiMemCitation(guidance);
+  assert.ok(parsed);
+  assert.equal(parsed.entries.length, 1);
+  assert.equal(parsed.entries[0].note, "first line second line");
 });
