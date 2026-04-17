@@ -608,9 +608,24 @@ async function cmdEnrich(rest: string[]): Promise<void> {
     pipelineConfig.enabled = config.enrichmentEnabled;
     pipelineConfig.maxCandidatesPerEntity = config.enrichmentMaxCandidatesPerEntity;
     pipelineConfig.autoEnrichOnCreate = config.enrichmentAutoOnCreate;
+    // Populate the provider config list so listEnabled() can match registered providers
+    pipelineConfig.providers = [
+      { id: "web-search", enabled: true, costTier: "cheap" },
+    ];
+
+    // Wire the real search backend so isAvailable() reflects actual state
+    const orchestrator = new Orchestrator(config);
+    await orchestrator.initialize();
+    const searchBackend = orchestrator.qmd;
+    const searchFn = searchBackend.isAvailable()
+      ? async (query: string): Promise<string[]> => {
+          const results = await searchBackend.search(query, undefined, 10);
+          return results.map((r) => r.snippet);
+        }
+      : undefined;
 
     const registry = new EnrichmentProviderRegistry();
-    registry.register(new WebSearchProvider());
+    registry.register(new WebSearchProvider({ searchFn }));
 
     const allEnabled = registry.listEnabled(pipelineConfig);
     console.log(`Pipeline enabled: ${pipelineConfig.enabled}`);
@@ -679,8 +694,17 @@ async function cmdEnrich(rest: string[]): Promise<void> {
     low: [],
   };
 
+  // Wire the real search backend into the web-search provider (issue #425 P1)
+  const searchBackend = orchestrator.qmd;
+  const searchFn = searchBackend.isAvailable()
+    ? async (query: string): Promise<string[]> => {
+        const results = await searchBackend.search(query, undefined, 10);
+        return results.map((r) => r.snippet);
+      }
+    : undefined;
+
   const registry = new EnrichmentProviderRegistry();
-  registry.register(new WebSearchProvider());
+  registry.register(new WebSearchProvider({ searchFn }));
 
   // Map entity files to enrichment inputs
   const inputs = targets.map((ef) => ({
@@ -708,10 +732,68 @@ async function cmdEnrich(rest: string[]): Promise<void> {
     return;
   }
 
+  // Persist accepted candidates to storage (issue #425 P1).
+  // Gotcha #43: direct-write paths must trigger reindex.
+  const memoryDir = expandTilde(config.memoryDir);
+  const auditDir = path.join(memoryDir, "enrichment");
+  let totalPersisted = 0;
+  for (const result of results) {
+    for (const candidate of result.acceptedCandidates) {
+      try {
+        await storage.writeMemory(candidate.category, candidate.text, {
+          confidence: candidate.confidence,
+          tags: [...(candidate.tags ?? []), "enrichment", candidate.source],
+          entityRef: result.entityName,
+          source: `enrichment:${candidate.source}`,
+        });
+        totalPersisted++;
+        // Write audit entry for accepted candidate
+        await appendAuditEntry(auditDir, {
+          timestamp: new Date().toISOString(),
+          entityName: result.entityName,
+          provider: result.provider,
+          candidateText: candidate.text,
+          sourceUrl: candidate.sourceUrl,
+          accepted: true,
+        });
+      } catch (err) {
+        console.error(
+          `  Failed to persist candidate for ${result.entityName}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        // Audit rejected-due-to-error candidate
+        try {
+          await appendAuditEntry(auditDir, {
+            timestamp: new Date().toISOString(),
+            entityName: result.entityName,
+            provider: result.provider,
+            candidateText: candidate.text,
+            sourceUrl: candidate.sourceUrl,
+            accepted: false,
+            reason: `persist failed: ${err instanceof Error ? err.message : String(err)}`,
+          });
+        } catch {
+          // Audit write failure is non-fatal
+        }
+      }
+    }
+  }
+
+  // Trigger reindex after direct writes (gotcha #43)
+  if (totalPersisted > 0 && searchBackend.isAvailable()) {
+    try {
+      await searchBackend.update();
+    } catch {
+      // Reindex failure is non-fatal for CLI
+    }
+  }
+
   for (const result of results) {
     console.log(
       `  ${result.entityName} via ${result.provider}: ${result.candidatesAccepted} accepted, ${result.candidatesRejected} rejected (${result.elapsed}ms)`,
     );
+  }
+  if (totalPersisted > 0) {
+    console.log(`\n  ${totalPersisted} candidate(s) persisted to memory store.`);
   }
 }
 

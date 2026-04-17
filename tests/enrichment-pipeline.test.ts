@@ -205,6 +205,11 @@ test("Pipeline: mock provider returns candidates and pipeline processes them", a
   assert.equal(results[0].candidatesAccepted, 2);
   assert.equal(results[0].candidatesRejected, 0);
   assert.ok(results[0].elapsed >= 0);
+
+  // acceptedCandidates must contain the actual candidate objects (issue #425 P1)
+  assert.equal(results[0].acceptedCandidates.length, 2);
+  assert.equal(results[0].acceptedCandidates[0].text, "Entity was founded in 2020");
+  assert.equal(results[0].acceptedCandidates[1].text, "Entity has 50 employees");
 });
 
 test("Pipeline: rate limiting prevents calls beyond limit", async () => {
@@ -275,6 +280,11 @@ test("Pipeline: max candidates trims excess", async () => {
   assert.equal(results[0].candidatesFound, 30);
   assert.equal(results[0].candidatesAccepted, 10);
   assert.equal(results[0].candidatesRejected, 20);
+
+  // acceptedCandidates length must match accepted count
+  assert.equal(results[0].acceptedCandidates.length, 10);
+  assert.equal(results[0].acceptedCandidates[0].text, "Fact 0");
+  assert.equal(results[0].acceptedCandidates[9].text, "Fact 9");
 });
 
 test("Pipeline: maxCandidatesPerEntity = 0 rejects all candidates", async () => {
@@ -295,6 +305,7 @@ test("Pipeline: maxCandidatesPerEntity = 0 rejects all candidates", async () => 
   assert.equal(results[0].candidatesFound, 5);
   assert.equal(results[0].candidatesAccepted, 0);
   assert.equal(results[0].candidatesRejected, 5);
+  assert.equal(results[0].acceptedCandidates.length, 0);
 });
 
 test("Pipeline: disabled config returns empty results", async () => {
@@ -315,6 +326,7 @@ test("Pipeline: provider unavailable is gracefully skipped", async () => {
   assert.equal(results.length, 1);
   assert.equal(results[0].candidatesFound, 0);
   assert.equal(results[0].candidatesAccepted, 0);
+  assert.equal(results[0].acceptedCandidates.length, 0);
 });
 
 test("Pipeline: empty entities list returns empty results", async () => {
@@ -497,4 +509,5 @@ test("Pipeline: provider that throws is gracefully skipped", async () => {
   assert.equal(results.length, 1);
   assert.equal(results[0].candidatesFound, 0);
   assert.equal(results[0].candidatesAccepted, 0);
+  assert.equal(results[0].acceptedCandidates.length, 0);
 });

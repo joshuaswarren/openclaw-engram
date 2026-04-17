@@ -5,7 +5,8 @@
  * to run, executes them in sequence (respecting rate limits), tags
  * candidates, and caps at `maxCandidatesPerEntity`.
  *
- * Actual persistence of accepted candidates is the caller's responsibility.
+ * Accepted candidates are returned in each `EnrichmentResult` via the
+ * `acceptedCandidates` field so that callers can persist them.
  */
 
 import type { LoggerBackend } from "../logger.js";
@@ -114,6 +115,7 @@ export async function runEnrichmentPipeline(
           candidatesFound: 0,
           candidatesAccepted: 0,
           candidatesRejected: 0,
+          acceptedCandidates: [],
           elapsed: Date.now() - start,
         });
         continue;
@@ -130,6 +132,7 @@ export async function runEnrichmentPipeline(
           candidatesFound: 0,
           candidatesAccepted: 0,
           candidatesRejected: 0,
+          acceptedCandidates: [],
           elapsed: Date.now() - start,
         });
         continue;
@@ -150,6 +153,7 @@ export async function runEnrichmentPipeline(
           candidatesFound: 0,
           candidatesAccepted: 0,
           candidatesRejected: 0,
+          acceptedCandidates: [],
           elapsed: Date.now() - start,
         });
         continue;
@@ -179,6 +183,7 @@ export async function runEnrichmentPipeline(
         candidatesFound: candidates.length,
         candidatesAccepted: accepted.length,
         candidatesRejected: rejected,
+        acceptedCandidates: accepted,
         elapsed: Date.now() - start,
       });
     }

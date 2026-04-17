@@ -57,6 +57,7 @@ export interface EnrichmentResult {
   candidatesFound: number;
   candidatesAccepted: number;
   candidatesRejected: number;
+  acceptedCandidates: EnrichmentCandidate[];
   elapsed: number;
 }
 
