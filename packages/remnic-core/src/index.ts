@@ -389,6 +389,8 @@ export {
   type DoctorCheck,
 } from "./connectors/index.js";
 
+export { coerceInstallExtension } from "./connectors/coerce.js";
+
 // ---------------------------------------------------------------------------
 // Spaces + Collaboration
 // ---------------------------------------------------------------------------
@@ -468,6 +470,7 @@ export {
   publisherFor,
   publisherForConnector,
   hostIdForConnector,
+  registerPublisher,
   PUBLISHERS,
   CodexMemoryExtensionPublisher,
   ClaudeCodeMemoryExtensionPublisher,

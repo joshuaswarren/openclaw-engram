@@ -83,7 +83,11 @@ import {
   DEFAULT_GRACE_PERIOD_DAYS,
   publisherForConnector,
   hostIdForConnector,
+  registerPublisher,
   PUBLISHERS,
+  CodexMemoryExtensionPublisher,
+  ClaudeCodeMemoryExtensionPublisher,
+  HermesMemoryExtensionPublisher,
   DEFAULT_TAXONOMY,
   resolveCategory,
   generateResolverDocument,
@@ -105,6 +109,7 @@ import {
   defaultEnrichmentPipelineConfig,
   discoverMemoryExtensions,
   resolveExtensionsRoot,
+  coerceInstallExtension,
 } from "@remnic/core";
 import type {
   BinaryLifecycleConfig,
@@ -124,6 +129,13 @@ import { hasFlag, resolveFlag } from "./cli-args.js";
 import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
 
 export { parseConnectorConfig, stripConfigArgv };
+
+// ── Host-specific publisher registrations ───────────────────────────────────
+// Publisher classes live in @remnic/core, but wiring them into the registry
+// belongs in the host adapter layer (CLAUDE.md gotcha #31).
+registerPublisher("codex", () => new CodexMemoryExtensionPublisher());
+registerPublisher("claude-code", () => new ClaudeCodeMemoryExtensionPublisher());
+registerPublisher("hermes", () => new HermesMemoryExtensionPublisher());
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -1460,9 +1472,10 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
       console.error("Usage: remnic connectors install <id>");
       process.exit(1);
     }
+    const connectorConfig = parseConnectorConfig(rest);
     const result = installConnector({
       connectorId,
-      config: parseConnectorConfig(rest),
+      config: connectorConfig,
       force: rest.includes("--force"),
     });
     if (result.status === "error") {
@@ -1483,8 +1496,15 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
           const available = await pub.isHostAvailable();
           if (available) {
             const memoryDir = resolveMemoryDir();
+            // Finding 2 (PR #423): pass the connector's namespace into
+            // the publish context so publishers use the actual namespace
+            // instead of falling back to "default".
+            const connectorNamespace =
+              typeof connectorConfig?.namespace === "string" && connectorConfig.namespace.length > 0
+                ? connectorConfig.namespace
+                : undefined;
             const pubResult = await pub.publish({
-              config: { memoryDir },
+              config: { memoryDir, namespace: connectorNamespace },
               skillsRoot: path.join(memoryDir, "skills"),
               log: { info: console.log, warn: console.warn, error: console.error },
             });
@@ -1534,30 +1554,49 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     const publisherChecks: Array<{ name: string; ok: boolean; detail: string }> = [];
     const targetHostId = hostIdForConnector(connectorId);
     const factory = PUBLISHERS[targetHostId];
+
+    // Finding 1 (PR #423): skip the extension directory existence check when
+    // the user explicitly opted out via installExtension=false.
+    const connectorInstance = listConnectors().installed.find(
+      (c) => c.connectorId === connectorId,
+    );
+    const savedInstallExt = connectorInstance
+      ? coerceInstallExtension(connectorInstance.config.installExtension)
+      : undefined;
+    const extensionOptedOut = savedInstallExt === false;
+
     if (factory) {
-      try {
-        const pub = factory();
-        const available = await pub.isHostAvailable();
-        const extRoot = available ? await pub.resolveExtensionRoot() : "(host not installed)";
-        const extensionExists = available && extRoot
-          ? fs.existsSync(extRoot)
-          : false;
+      if (extensionOptedOut) {
         publisherChecks.push({
           name: `Publisher: ${targetHostId}`,
-          ok: !available || extensionExists,
-          detail: !available
-            ? "host not installed (skip)"
-            : extensionExists
-            ? `extension at ${extRoot}`
-            : `extension missing at ${extRoot} — run \`remnic connectors install ${connectorId}\``,
+          ok: true,
+          detail: "skipped (installExtension=false)",
         });
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        publisherChecks.push({
-          name: `Publisher: ${targetHostId}`,
-          ok: false,
-          detail: `error: ${msg}`,
-        });
+      } else {
+        try {
+          const pub = factory();
+          const available = await pub.isHostAvailable();
+          const extRoot = available ? await pub.resolveExtensionRoot() : "(host not installed)";
+          const extensionExists = available && extRoot
+            ? fs.existsSync(extRoot)
+            : false;
+          publisherChecks.push({
+            name: `Publisher: ${targetHostId}`,
+            ok: !available || extensionExists,
+            detail: !available
+              ? "host not installed (skip)"
+              : extensionExists
+              ? `extension at ${extRoot}`
+              : `extension missing at ${extRoot} — run \`remnic connectors install ${connectorId}\``,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          publisherChecks.push({
+            name: `Publisher: ${targetHostId}`,
+            ok: false,
+            detail: `error: ${msg}`,
+          });
+        }
       }
     }
 
