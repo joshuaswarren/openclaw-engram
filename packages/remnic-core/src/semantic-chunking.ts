@@ -524,9 +524,12 @@ function buildRecursiveFallback(
   content: string,
   cfg: SemanticChunkingConfig,
 ): SemanticChunkResult {
+  // Cap targetTokens to maxTokens so the recursive fallback path honours the
+  // same constraint as splitLongSegment (PR #439 post-merge cursor[bot] finding).
+  const cappedTarget = Math.min(cfg.targetTokens, cfg.maxTokens);
   const result: ChunkResult = chunkContent(content, {
-    targetTokens: cfg.targetTokens,
-    minTokens: cfg.minTokens,
+    targetTokens: cappedTarget,
+    minTokens: Math.min(cfg.minTokens, cappedTarget),
     overlapSentences: 0,
   });
 

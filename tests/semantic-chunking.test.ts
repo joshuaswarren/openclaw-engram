@@ -530,6 +530,41 @@ test("semanticChunkContent: recursive split respects maxTokens when targetTokens
 });
 
 // ---------------------------------------------------------------------------
+// PR #439 post-merge: buildRecursiveFallback must also cap targetTokens
+// ---------------------------------------------------------------------------
+
+test("semanticChunkContent: recursive fallback path caps targetTokens to maxTokens", async () => {
+  // When embedFn fails and fallbackToRecursive=true, buildRecursiveFallback
+  // is used. It must cap targetTokens to maxTokens the same way
+  // splitLongSegment does (cursor[bot] finding on PR #439).
+  const longText = Array.from(
+    { length: 40 },
+    (_, i) =>
+      `This is sentence number ${i} and it contributes to the total count.`,
+  ).join(" ");
+
+  const result = await semanticChunkContent(longText, failingEmbedFn, {
+    fallbackToRecursive: true,
+    targetTokens: 500,
+    minTokens: 10,
+    maxTokens: 100,
+  });
+
+  assert.equal(result.method, "recursive-fallback");
+  assert.ok(
+    result.chunks.length >= 3,
+    `Expected >= 3 chunks when maxTokens caps targetTokens in fallback, got ${result.chunks.length}`,
+  );
+  for (const chunk of result.chunks) {
+    assert.ok(
+      chunk.tokenCount < 400,
+      `Fallback chunk token count ${chunk.tokenCount} is near uncapped targetTokens (500). ` +
+        `buildRecursiveFallback should cap targetTokens to maxTokens=100.`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Finding 4 (PR #420): even window sizes are rounded up to odd
 // ---------------------------------------------------------------------------
 

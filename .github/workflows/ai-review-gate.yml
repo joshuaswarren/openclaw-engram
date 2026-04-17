@@ -2,9 +2,11 @@ name: AI Review Gate
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, review_requested, review_request_removed]
+    types: [opened, synchronize, reopened, ready_for_review]
   pull_request_review:
     types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created]
 
 permissions:
   contents: read
@@ -13,11 +15,18 @@ permissions:
 
 jobs:
   ai-reviewers:
-    if: github.event.pull_request.draft == false
+    if: >-
+      github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Require AI review bot activity
+      - name: Wait for AI reviewers on push events
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "Waiting 3 minutes for AI reviewers to analyse the diff..."
+          sleep 180
+
+      - name: Check AI review bot activity
         uses: actions/github-script@v7
         env:
           REQUIRED_AI_REVIEWER_GROUPS: >-
@@ -28,8 +37,13 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const pr = context.payload.pull_request?.number ?? context.payload.review?.pull_request_url?.split('/').pop();
-            if (!pr) core.setFailed('Unable to determine pull request number.');
+
+            // Resolve PR number — all supported events include pull_request.
+            const pr = context.payload.pull_request?.number;
+            if (!pr) {
+              core.setFailed('Unable to determine pull request number.');
+              return;
+            }
 
             const groupsRaw = process.env.REQUIRED_AI_REVIEWER_GROUPS || '';
             const groups = groupsRaw
@@ -57,14 +71,20 @@ jobs:
               per_page: 100,
             });
 
-            // Treat either a formal PR review or a PR issue comment as valid AI review activity.
+            const prComments = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner,
+              repo,
+              pull_number: Number(pr),
+              per_page: 100,
+            });
+
             const latestByUser = new Map();
             for (const review of reviews) {
               const login = review.user?.login?.toLowerCase();
               if (!login) continue;
               latestByUser.set(login, review.state);
             }
-            for (const comment of issueComments) {
+            for (const comment of [...issueComments, ...prComments]) {
               const login = comment.user?.login?.toLowerCase();
               if (!login) continue;
               if (!latestByUser.has(login)) latestByUser.set(login, "COMMENTED");
