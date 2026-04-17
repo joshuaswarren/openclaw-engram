@@ -499,4 +499,106 @@ describe("Config integration", () => {
     assert.equal(config.taxonomyEnabled, true);
     assert.equal(config.taxonomyAutoGenResolver, false);
   });
+
+  // Finding 3: String booleans from CLI must be coerced (gotcha #36)
+  it("parseConfig coerces string 'true' to boolean true for taxonomyEnabled", () => {
+    const config = parseConfig({ taxonomyEnabled: "true" });
+    assert.equal(config.taxonomyEnabled, true);
+  });
+
+  it("parseConfig coerces string 'false' to boolean false for taxonomyEnabled", () => {
+    const config = parseConfig({ taxonomyEnabled: "false" });
+    assert.equal(config.taxonomyEnabled, false);
+  });
+
+  it("parseConfig coerces string 'false' to boolean false for taxonomyAutoGenResolver", () => {
+    const config = parseConfig({ taxonomyAutoGenResolver: "false" });
+    assert.equal(config.taxonomyAutoGenResolver, false);
+  });
+
+  it("parseConfig coerces string 'true' to boolean true for taxonomyAutoGenResolver", () => {
+    const config = parseConfig({ taxonomyAutoGenResolver: "true" });
+    assert.equal(config.taxonomyAutoGenResolver, true);
+  });
+
+  it("parseConfig coerces '0'/'1' for taxonomy flags", () => {
+    const config = parseConfig({ taxonomyEnabled: "1", taxonomyAutoGenResolver: "0" });
+    assert.equal(config.taxonomyEnabled, true);
+    assert.equal(config.taxonomyAutoGenResolver, false);
+  });
+});
+
+// ── Duplicate ID detection in loadTaxonomy (Finding 2) ─────────────────────
+
+describe("loadTaxonomy duplicate ID detection", () => {
+  it("rejects duplicate category IDs in user taxonomy.json before map merge", async () => {
+    const custom = {
+      version: 1,
+      categories: [
+        {
+          id: "my-cat",
+          name: "My Cat",
+          description: "First instance",
+          filingRules: ["rule"],
+          priority: 10,
+          memoryCategories: [],
+        },
+        {
+          id: "my-cat",
+          name: "My Cat Dupe",
+          description: "Duplicate instance",
+          filingRules: ["rule2"],
+          priority: 20,
+          memoryCategories: [],
+        },
+      ],
+    };
+    const taxonomyDir = path.join(tmpDir, ".taxonomy");
+    fs.mkdirSync(taxonomyDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(taxonomyDir, "taxonomy.json"),
+      JSON.stringify(custom),
+    );
+
+    await assert.rejects(
+      () => loadTaxonomy(tmpDir),
+      (err: Error) => {
+        return err.message.includes("Duplicate category IDs") && err.message.includes("my-cat");
+      },
+    );
+  });
+
+  it("allows unique category IDs in user taxonomy.json", async () => {
+    const custom = {
+      version: 1,
+      categories: [
+        {
+          id: "alpha",
+          name: "Alpha",
+          description: "First",
+          filingRules: ["rule"],
+          priority: 10,
+          memoryCategories: [],
+        },
+        {
+          id: "beta",
+          name: "Beta",
+          description: "Second",
+          filingRules: ["rule"],
+          priority: 20,
+          memoryCategories: [],
+        },
+      ],
+    };
+    const taxonomyDir = path.join(tmpDir, ".taxonomy");
+    fs.mkdirSync(taxonomyDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(taxonomyDir, "taxonomy.json"),
+      JSON.stringify(custom),
+    );
+
+    const loaded = await loadTaxonomy(tmpDir);
+    assert.ok(loaded.categories.some((c) => c.id === "alpha"));
+    assert.ok(loaded.categories.some((c) => c.id === "beta"));
+  });
 });

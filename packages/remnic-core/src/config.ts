@@ -25,7 +25,7 @@ import { normalizeEntitySchemas } from "./entity-schema.js";
 // boolean-coercion logic that connectors/index.ts already exports. The helper
 // lives in connectors/coerce.ts (a tiny, dependency-free module) so neither
 // config.ts → connectors/index.ts nor the reverse circular import arises.
-import { coerceInstallExtension } from "./connectors/coerce.js";
+import { coerceBool, coerceInstallExtension } from "./connectors/coerce.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
   resolveHomeDir(),
@@ -1929,8 +1929,9 @@ export function parseConfig(raw: unknown): PluginConfig {
     })(),
 
     // MECE Taxonomy (#366)
-    taxonomyEnabled: cfg.taxonomyEnabled === true,
-    taxonomyAutoGenResolver: cfg.taxonomyAutoGenResolver !== false,
+    // Coerce string booleans from CLI (e.g. --config taxonomyEnabled=true) — gotcha #36
+    taxonomyEnabled: coerceBool(cfg.taxonomyEnabled) ?? false,
+    taxonomyAutoGenResolver: coerceBool(cfg.taxonomyAutoGenResolver) ?? true,
 
     // Codex CLI — native memory materialization (#378)
     codexMaterializeMemories: cfg.codexMaterializeMemories !== false,

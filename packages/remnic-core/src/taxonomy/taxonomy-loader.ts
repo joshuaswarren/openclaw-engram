@@ -122,6 +122,23 @@ export async function loadTaxonomy(memoryDir: string): Promise<Taxonomy> {
     ? (obj.categories as TaxonomyCategory[])
     : [];
 
+  // Validate: reject duplicate IDs in user categories before merging.
+  // Without this check, duplicates are silently collapsed with last-write-wins
+  // semantics when inserted into the Map.
+  const userIdCounts = new Map<string, number>();
+  for (const cat of userCategories) {
+    const id = typeof cat.id === "string" ? cat.id : String(cat.id);
+    userIdCounts.set(id, (userIdCounts.get(id) ?? 0) + 1);
+  }
+  const duplicateIds = [...userIdCounts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([id]) => id);
+  if (duplicateIds.length > 0) {
+    throw new Error(
+      `Duplicate category IDs in taxonomy.json: ${duplicateIds.map((id) => `"${id}"`).join(", ")}`,
+    );
+  }
+
   // Merge: user categories override defaults by ID
   const mergedMap = new Map<string, TaxonomyCategory>();
   for (const cat of DEFAULT_TAXONOMY.categories) {
