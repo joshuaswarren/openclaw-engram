@@ -45,6 +45,23 @@ See `AGENTS.md` (root) for the full list. Key reminders:
 | `orchestrator.ts` | Core coordination | Active development (v8.2) |
 | `tools.ts` | Agent-callable tool implementations | Stable |
 | `cli.ts` | CLI command implementations | Stable |
+| `extraction-judge.ts` | LLM-as-judge fact-worthiness gate (#376) | Stable |
+| `semantic-chunking.ts` | Topic-boundary chunking (#368) | Stable |
+| `page-versioning.ts` | Snapshot-based version history (#371) | Stable |
+| `source-attribution.ts` | Citation/attribution helpers (#379) | Stable |
+| `enrichment/` | External enrichment pipeline (#365) | Stable |
+| `binary-lifecycle/` | Binary file management (#367) | Stable |
+| `taxonomy/` | MECE taxonomy resolver (#366) | Stable |
+| `memory-extension/` | Extension publisher contract (#381, #382) | Stable |
+| `memory-extension-host/` | Extension host discovery (#381) | Stable |
+| `recall-mmr.ts` | Maximal marginal relevance reranking | Stable |
+| `recall-qos.ts` | Recall quality-of-service | Stable |
+| `recall-audit.ts` | Recall audit trail | Stable |
+| `session-integrity.ts` | Session integrity checks | Stable |
+| `session-toggles.ts` | Per-session feature toggles | Stable |
+| `compat/` | Provider compatibility checks | Stable |
+| `dedup/` | Deduplication engine | Stable |
+| `curation/` | Memory curation pipeline | Stable |
 
 ## Testing
 

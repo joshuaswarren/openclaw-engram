@@ -577,7 +577,10 @@
             "description": "Install the Remnic Codex memory extension during Codex connector setup."
           },
           "codexHome": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "default": null,
             "description": "Optional Codex home directory override used for connector install and materialization."
           }
@@ -665,6 +668,28 @@
         "type": "string",
         "default": "",
         "description": "Root directory for memory extensions. Empty string derives from memoryDir (go up to Remnic home and append memory_extensions)."
+      },
+      "binaryLifecycleEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable binary file lifecycle management. When true, binary files in the memory directory are mirrored, redirected, and cleaned."
+      },
+      "binaryLifecycleGracePeriodDays": {
+        "type": "number",
+        "default": 7,
+        "minimum": 0,
+        "description": "Days to wait before cleaning local copies of mirrored binary files."
+      },
+      "binaryLifecycleBackendType": {
+        "type": "string",
+        "enum": ["none", "filesystem", "s3"],
+        "default": "none",
+        "description": "Storage backend for binary lifecycle mirror stage."
+      },
+      "binaryLifecycleBackendPath": {
+        "type": "string",
+        "default": "",
+        "description": "Base path for the filesystem storage backend."
       },
       "codexCompat": {
         "type": "object",
@@ -1214,7 +1239,7 @@
       "recallPlannerShadowMode": {
         "type": "boolean",
         "default": false,
-        "description": "Run recall planner in shadow mode \u2014 evaluate but do not apply results."
+        "description": "Run recall planner in shadow mode — evaluate but do not apply results."
       },
       "recallPlannerTelemetryEnabled": {
         "type": "boolean",
@@ -1289,7 +1314,7 @@
       "boxTopicShiftThreshold": {
         "type": "number",
         "default": 0.35,
-        "description": "Jaccard overlap threshold below which a topic shift seals the current box (0\u20131)."
+        "description": "Jaccard overlap threshold below which a topic shift seals the current box (0–1)."
       },
       "boxTimeGapMs": {
         "type": "number",
@@ -1314,7 +1339,7 @@
       "traceWeaverOverlapThreshold": {
         "type": "number",
         "default": 0.4,
-        "description": "Minimum Jaccard topic overlap to assign the same traceId (0\u20131)."
+        "description": "Minimum Jaccard topic overlap to assign the same traceId (0–1)."
       },
       "boxRecallDays": {
         "type": "number",
@@ -1414,7 +1439,7 @@
       "graphRecallShadowEnabled": {
         "type": "boolean",
         "default": false,
-        "description": "Run graph recall in shadow mode \u2014 evaluate but do not inject results."
+        "description": "Run graph recall in shadow mode — evaluate but do not inject results."
       },
       "graphRecallSnapshotEnabled": {
         "type": "boolean",
@@ -1800,7 +1825,7 @@
           },
           "boundaryThresholdStdDevs": {
             "type": "number",
-            "default": 1.0,
+            "default": 1,
             "description": "Standard deviations below mean for boundary detection"
           },
           "embeddingBatchSize": {
@@ -1989,7 +2014,10 @@
       },
       "modelSource": {
         "type": "string",
-        "enum": ["plugin", "gateway"],
+        "enum": [
+          "plugin",
+          "gateway"
+        ],
         "default": "plugin",
         "description": "LLM source: 'plugin' uses Engram's own openai/localLlm config; 'gateway' delegates to a gateway agent's model chain (agents.list[])."
       },
@@ -2069,7 +2097,7 @@
       "traceRecallContent": {
         "type": "boolean",
         "default": false,
-        "description": "If true, include the full recalled memory text in RecallTraceEvent.recalledContent emitted to __openclawEngramTrace subscribers (e.g. Langfuse). Disabled by default \u2014 only enable when you want external trace collectors to capture injected memory context."
+        "description": "If true, include the full recalled memory text in RecallTraceEvent.recalledContent emitted to __openclawEngramTrace subscribers (e.g. Langfuse). Disabled by default — only enable when you want external trace collectors to capture injected memory context."
       },
       "profilingEnabled": {
         "type": "boolean",
@@ -2103,7 +2131,13 @@
       },
       "extractionMinImportanceLevel": {
         "type": "string",
-        "enum": ["trivial", "low", "normal", "high", "critical"],
+        "enum": [
+          "trivial",
+          "low",
+          "normal",
+          "high",
+          "critical"
+        ],
         "default": "low",
         "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
       },
@@ -2517,8 +2551,13 @@
       },
       "semanticConsolidationExcludeCategories": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["correction", "commitment"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "correction",
+          "commitment"
+        ],
         "description": "Memory categories excluded from semantic consolidation."
       },
       "semanticConsolidationIntervalHours": {
@@ -3533,7 +3572,7 @@
       "parallelAgentWeights": {
         "type": "object",
         "default": {
-          "direct": 1.0,
+          "direct": 1,
           "contextual": 0.7,
           "temporal": 0.85
         },
