@@ -419,6 +419,106 @@ test("symlink extension entry is skipped with warning", async () => {
   fs.rmSync(root, { recursive: true });
 });
 
+// ── Symlinked extension files (#428 P1) ────────────────────────────────────
+
+test("symlinked instructions.md is skipped with warning (#428 P1)", async () => {
+  const root = makeTempDir();
+
+  // Create a real instructions.md outside the extension dir
+  const targetFile = path.join(root, "_target-instructions.md");
+  fs.writeFileSync(targetFile, "Should not be read via symlink", "utf-8");
+
+  // Create extension dir with symlinked instructions.md
+  const extDir = path.join(root, "symlink-file-ext");
+  fs.mkdirSync(extDir, { recursive: true });
+  fs.symlinkSync(targetFile, path.join(extDir, "instructions.md"));
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(root, log);
+
+  assert.equal(result.length, 0);
+  assert.ok(warnings.some((w) => w.includes("instructions.md is a symlink")));
+
+  fs.rmSync(root, { recursive: true });
+});
+
+test("symlinked schema.json is ignored with warning (#428 P1)", async () => {
+  const root = makeTempDir();
+
+  // Create a real schema.json outside the extension dir
+  const targetFile = path.join(root, "_target-schema.json");
+  fs.writeFileSync(targetFile, JSON.stringify({ memoryTypes: ["fact"] }), "utf-8");
+
+  // Create extension with real instructions.md but symlinked schema.json
+  const extDir = path.join(root, "symlink-schema-ext");
+  fs.mkdirSync(extDir, { recursive: true });
+  fs.writeFileSync(path.join(extDir, "instructions.md"), "Real instructions", "utf-8");
+  fs.symlinkSync(targetFile, path.join(extDir, "schema.json"));
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(root, log);
+
+  // Extension should still be discovered but schema should be undefined
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "symlink-schema-ext");
+  assert.equal(result[0].schema, undefined);
+  assert.ok(warnings.some((w) => w.includes("schema.json is a symlink")));
+
+  fs.rmSync(root, { recursive: true });
+});
+
+// ── Symlinked root directory (#428 P2) ─────────────────────────────────────
+
+test("symlinked root directory outside expected parent is rejected (#428 P2)", async () => {
+  const parentDir = makeTempDir();
+  const outsideDir = makeTempDir();
+
+  // Create a real extensions directory outside the expected parent
+  const realExtensionsDir = path.join(outsideDir, "memory_extensions");
+  fs.mkdirSync(realExtensionsDir, { recursive: true });
+  createExtension(realExtensionsDir, "sneaky-ext", {
+    instructions: "Should not be discovered",
+  });
+
+  // Create a symlink inside parentDir pointing to the outside location
+  const symlinkRoot = path.join(parentDir, "memory_extensions");
+  fs.symlinkSync(realExtensionsDir, symlinkRoot);
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(symlinkRoot, log);
+
+  // Should reject because realpath resolves outside the expected parent
+  assert.equal(result.length, 0);
+  assert.ok(warnings.some((w) => w.includes("symlink resolving outside")));
+
+  fs.rmSync(parentDir, { recursive: true });
+  fs.rmSync(outsideDir, { recursive: true });
+});
+
+test("symlinked root directory within expected parent is allowed (#428 P2)", async () => {
+  const parentDir = makeTempDir();
+
+  // Create a real extensions directory under the parent
+  const realExtensionsDir = path.join(parentDir, "real_extensions");
+  fs.mkdirSync(realExtensionsDir, { recursive: true });
+  createExtension(realExtensionsDir, "ok-ext", {
+    instructions: "Should be discovered",
+  });
+
+  // Create a symlink under the same parent
+  const symlinkRoot = path.join(parentDir, "memory_extensions");
+  fs.symlinkSync(realExtensionsDir, symlinkRoot);
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(symlinkRoot, log);
+
+  // Should be allowed because realpath resolves within the expected parent
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "ok-ext");
+
+  fs.rmSync(parentDir, { recursive: true });
+});
+
 // ── buildExtensionsFooterForSummary wiring (#382) ──────────────────────────
 
 test("buildExtensionsFooterForSummary returns footer when extensions exist", async () => {
