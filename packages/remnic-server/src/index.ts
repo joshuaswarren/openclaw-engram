@@ -136,6 +136,8 @@ export async function startServer(options?: {
     principal: serverConfig.principal,
     maxBodyBytes: serverConfig.maxBodyBytes,
     adminConsoleEnabled: serverConfig.adminConsoleEnabled ?? false,
+    citationsEnabled: config.citationsEnabled,
+    citationsAutoDetect: config.citationsAutoDetect,
   });
 
   const { host, port } = await httpServer.start();
