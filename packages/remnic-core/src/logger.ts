@@ -15,9 +15,16 @@ const NOOP_LOGGER: LoggerBackend = {
 let _backend: LoggerBackend = NOOP_LOGGER;
 let _debug = false;
 
-export function initLogger(backend: LoggerBackend, debug: boolean): void {
-  _backend = backend;
-  _debug = debug;
+const CONSOLE_LOGGER: LoggerBackend = {
+  info: console.log.bind(console),
+  warn: console.warn.bind(console),
+  error: console.error.bind(console),
+  debug: console.debug.bind(console),
+};
+
+export function initLogger(backend?: LoggerBackend, debug?: boolean): void {
+  _backend = backend ?? CONSOLE_LOGGER;
+  _debug = debug ?? false;
 }
 
 export const log = {
