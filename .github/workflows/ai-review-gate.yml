@@ -22,6 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Wait for AI reviewers on push events
+        if: github.event_name == 'pull_request'
+        run: |
+          echo "Waiting 3 minutes for AI reviewers to analyse the diff..."
+          sleep 180
+
       - name: Check AI review bot activity
         uses: actions/github-script@v7
         env:
@@ -48,11 +54,6 @@ jobs:
               return;
             }
 
-            // On pull_request events (opened, synchronize) the workflow fires
-            // within seconds — before any AI reviewer can post. Enforce the
-            // gate only when triggered by an actual review or comment event.
-            const isPushEvent = context.eventName === 'pull_request';
-
             const groupsRaw = process.env.REQUIRED_AI_REVIEWER_GROUPS || '';
             const groups = groupsRaw
               .split(',')
@@ -65,6 +66,7 @@ jobs:
               return;
             }
 
+            // Also check PR-level comments (line comments on the diff).
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner,
               repo,
@@ -79,13 +81,20 @@ jobs:
               per_page: 100,
             });
 
+            const prComments = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner,
+              repo,
+              pull_number: Number(pr),
+              per_page: 100,
+            });
+
             const latestByUser = new Map();
             for (const review of reviews) {
               const login = review.user?.login?.toLowerCase();
               if (!login) continue;
               latestByUser.set(login, review.state);
             }
-            for (const comment of issueComments) {
+            for (const comment of [...issueComments, ...prComments]) {
               const login = comment.user?.login?.toLowerCase();
               if (!login) continue;
               if (!latestByUser.has(login)) latestByUser.set(login, "COMMENTED");
@@ -106,14 +115,6 @@ jobs:
             core.info(`Found review activity from: ${present.map(p => `${p.matched}(${p.state})`).join(', ') || 'none'}`);
 
             if (present.length === 0) {
-              if (isPushEvent) {
-                // On push/sync events, reviewers haven't had time to post.
-                // Pass with a notice — enforcement happens when a reviewer
-                // posts (re-triggering this workflow) and at merge time via
-                // scripts/pre-merge-check.sh.
-                core.notice('AI reviewers have not posted yet — this is expected on initial push. Gate will re-run when reviewers post.');
-                return;
-              }
               const expected = groups.map(group => group.join(' OR ')).join('; ');
               core.setFailed(`No required AI review activity found. Expected one of: ${expected}`);
               return;
