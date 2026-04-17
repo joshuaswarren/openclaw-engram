@@ -132,20 +132,33 @@ async function stageRedirect(
   const mdFiles = await findMarkdownFiles(memoryDir);
 
   for (const asset of candidates) {
-    let found = false;
+    let matchCount = 0;
+    let writeFailCount = 0;
     for (const mdPath of mdFiles) {
       try {
         const content = await fsp.readFile(mdPath, "utf-8");
+
+        // Build the match path relative to this markdown file's directory.
+        // Markdown links like `![img](./image.png)` are file-relative, but
+        // asset.originalPath is memory-root relative (e.g. `sub/image.png`).
+        // Resolve the asset path relative to the markdown file's directory
+        // so both forms match correctly.
+        const mdDir = path.dirname(mdPath);
+        const assetAbsolute = path.join(memoryDir, asset.originalPath);
+        const relativeToMd = path.relative(mdDir, assetAbsolute);
+        // Normalise to forward slashes for regex matching (markdown uses /).
+        const relativeForward = relativeToMd.split(path.sep).join("/");
+        const escaped = escapeRegex(relativeForward);
+
         // Build a regex that matches markdown image/link references to the file.
         // Handles: ![alt](./path) , ![alt](path) , [text](./path)
-        const escaped = escapeRegex(asset.originalPath);
         const pattern = new RegExp(
           `(!?\\[[^\\]]*\\]\\()(\\.\\/)?(${escaped})(\\))`,
           "g",
         );
 
         if (!pattern.test(content)) continue;
-        found = true;
+        matchCount++;
 
         if (!dryRun) {
           // Reset lastIndex after test().
@@ -156,17 +169,30 @@ async function stageRedirect(
           await fsp.writeFile(mdPath, updated, "utf-8");
         }
       } catch (err) {
+        // Track write failures separately so we don't transition status
+        // when some markdown rewrites failed (P1: block redirect on failure).
+        writeFailCount++;
         const msg = `redirect scan failed for ${mdPath}: ${err instanceof Error ? err.message : String(err)}`;
         log.error(`[binary-lifecycle] ${msg}`);
         errors.push(msg);
       }
     }
 
-    if (found) {
+    // Only transition to "redirected" when at least one reference was found
+    // AND all matched files were rewritten successfully.
+    if (matchCount > 0 && writeFailCount === 0) {
       asset.status = "redirected";
       asset.redirectedAt = new Date().toISOString();
       redirected++;
       log.info(`[binary-lifecycle] redirected: ${asset.originalPath}${dryRun ? " [dry-run]" : ""}`);
+    } else if (matchCount > 0 && writeFailCount > 0) {
+      // Some rewrites failed — set error status so the asset is not cleaned
+      // prematurely. It can be retried on the next pipeline run.
+      asset.status = "error";
+      log.warn(
+        `[binary-lifecycle] redirect partial failure for ${asset.originalPath}: ` +
+          `${matchCount} match(es), ${writeFailCount} write failure(s) — status set to error`,
+      );
     }
   }
 

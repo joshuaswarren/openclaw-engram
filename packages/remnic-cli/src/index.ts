@@ -2295,7 +2295,9 @@ async function cmdBinary(rest: string[]): Promise<void> {
     scanPatterns: DEFAULT_SCAN_PATTERNS,
     backend: {
       type: config.binaryLifecycleBackendType,
-      basePath: config.binaryLifecycleBackendPath || undefined,
+      basePath: config.binaryLifecycleBackendPath
+        ? expandTilde(config.binaryLifecycleBackendPath)
+        : undefined,
     },
   };
 

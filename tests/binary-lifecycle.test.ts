@@ -549,3 +549,139 @@ test("scanner finds binaries in nested subdirectories", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// P1: redirect status blocked when markdown rewrite fails
+// ---------------------------------------------------------------------------
+
+test("redirect stage sets error status when a markdown write fails", async () => {
+  const dir = await mkdtemp(tmpPrefix());
+  const backendDir = await mkdtemp(tmpPrefix());
+  try {
+    // Create a binary file and a markdown file referencing it.
+    await writeFile(path.join(dir, "fail.png"), Buffer.alloc(64));
+    await writeFile(
+      path.join(dir, "notes.md"),
+      "![img](./fail.png)",
+    );
+
+    const config = makeConfig({
+      backend: { type: "filesystem", basePath: backendDir },
+    });
+    const backend = createBackend(config.backend);
+
+    // Run mirror first to get the asset into "mirrored" status.
+    const result1 = await runBinaryLifecyclePipeline(dir, config, backend, noopLog);
+    assert.equal(result1.mirrored, 1);
+    assert.equal(result1.redirected, 1);
+
+    // Now set up a scenario where rewrite fails: reset status to mirrored
+    // and make the markdown file read-only so writeFile fails.
+    const manifest = await readManifest(dir);
+    manifest.assets[0].status = "mirrored";
+    delete (manifest.assets[0] as Record<string, unknown>).redirectedAt;
+    await writeManifest(dir, manifest);
+
+    // Restore original content and make the file unwritable.
+    await writeFile(path.join(dir, "notes.md"), "![img](./fail.png)");
+    fs.chmodSync(path.join(dir, "notes.md"), 0o444);
+
+    const errorLog: string[] = [];
+    const log = {
+      info: (_msg: string) => {},
+      warn: (_msg: string) => {},
+      error: (msg: string) => { errorLog.push(msg); },
+    };
+
+    const result2 = await runBinaryLifecyclePipeline(dir, config, backend, log);
+
+    // Redirect should have failed — asset should NOT be "redirected".
+    assert.equal(result2.redirected, 0);
+    assert.ok(result2.errors.length > 0, "should report rewrite errors");
+
+    // Verify the asset status is "error", not "redirected".
+    const manifest2 = await readManifest(dir);
+    assert.equal(manifest2.assets[0].status, "error");
+
+    // Restore permissions for cleanup.
+    fs.chmodSync(path.join(dir, "notes.md"), 0o644);
+  } finally {
+    // Ensure cleanup can work even if chmod failed above.
+    try { fs.chmodSync(path.join(dir, "notes.md"), 0o644); } catch { /* ignore */ }
+    await rm(dir, { recursive: true, force: true });
+    await rm(backendDir, { recursive: true, force: true });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// P2: redirect matches asset paths relative to each markdown file
+// ---------------------------------------------------------------------------
+
+test("redirect stage resolves asset paths relative to markdown file directory", async () => {
+  const dir = await mkdtemp(tmpPrefix());
+  const backendDir = await mkdtemp(tmpPrefix());
+  try {
+    // Create a subdirectory with both a binary and a markdown file.
+    // The asset.originalPath will be "sub/image.png" (memory-root relative),
+    // but sub/note.md references it as "./image.png" (file-relative).
+    await mkdir(path.join(dir, "sub"), { recursive: true });
+    await writeFile(path.join(dir, "sub", "image.png"), Buffer.alloc(64));
+    await writeFile(
+      path.join(dir, "sub", "note.md"),
+      "Look: ![pic](./image.png) here.",
+    );
+
+    const config = makeConfig({
+      backend: { type: "filesystem", basePath: backendDir },
+      gracePeriodDays: 0,
+    });
+    const backend = createBackend(config.backend);
+
+    const result = await runBinaryLifecyclePipeline(dir, config, backend, noopLog);
+
+    assert.equal(result.mirrored, 1);
+    // The redirect should succeed because the pipeline now resolves
+    // "sub/image.png" relative to sub/note.md's directory as "./image.png".
+    assert.equal(result.redirected, 1);
+
+    // Verify the markdown was updated.
+    const mdContent = await readFile(path.join(dir, "sub", "note.md"), "utf-8");
+    assert.ok(!mdContent.includes("./image.png"), "original file-relative ref should be replaced");
+    assert.ok(mdContent.includes(backendDir), "redirect path should contain backend path");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(backendDir, { recursive: true, force: true });
+  }
+});
+
+test("redirect stage handles markdown in parent dir referencing asset in subdir", async () => {
+  const dir = await mkdtemp(tmpPrefix());
+  const backendDir = await mkdtemp(tmpPrefix());
+  try {
+    // Binary in a subdirectory, markdown at root level.
+    // asset.originalPath = "images/photo.png"
+    // root.md references it as "./images/photo.png" (file-relative from root).
+    await mkdir(path.join(dir, "images"), { recursive: true });
+    await writeFile(path.join(dir, "images", "photo.png"), Buffer.alloc(64));
+    await writeFile(
+      path.join(dir, "root.md"),
+      "See: ![photo](./images/photo.png) end.",
+    );
+
+    const config = makeConfig({
+      backend: { type: "filesystem", basePath: backendDir },
+    });
+    const backend = createBackend(config.backend);
+
+    const result = await runBinaryLifecyclePipeline(dir, config, backend, noopLog);
+
+    assert.equal(result.mirrored, 1);
+    assert.equal(result.redirected, 1);
+
+    const mdContent = await readFile(path.join(dir, "root.md"), "utf-8");
+    assert.ok(!mdContent.includes("./images/photo.png"), "original ref should be replaced");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+    await rm(backendDir, { recursive: true, force: true });
+  }
+});
