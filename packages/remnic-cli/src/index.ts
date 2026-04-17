@@ -1235,11 +1235,14 @@ async function cmdConnectors(action: string, rest: string[], json: boolean): Pro
     }
   } else if (action === "marketplace") {
     const subAction = nonFlagArgs[0];
-    // Strip the subAction token so downstream positional parsing picks up the
-    // real argument (e.g. the install source or validate path), not the
-    // subcommand name itself.  Only the first occurrence is removed.
+    // Use the original `rest` (not strippedRest) because marketplace uses
+    // `--config <path>` for a file path, not `--config key=value` pairs.
+    // `stripConfigArgv` would silently remove that flag, breaking config
+    // overrides for marketplace subcommands.
+    // Strip only the subAction token so downstream positional parsing picks
+    // up the real argument (e.g. the install source or validate path).
     let subActionRemoved = false;
-    const marketplaceRest = strippedRest.filter((a) => {
+    const marketplaceRest = rest.filter((a) => {
       if (!subActionRemoved && a === subAction) {
         subActionRemoved = true;
         return false;
@@ -1264,11 +1267,15 @@ async function cmdConnectorsMarketplace(
   const rawConfig = fs.existsSync(configPath)
     ? JSON.parse(fs.readFileSync(configPath, "utf8"))
     : {};
-  const config = parseConfig(rawConfig);
+  // Unwrap the plugin-scoped config block (remnic or engram wrapper) so
+  // parseConfig receives the correct inner object — same pattern used by
+  // other CLI entrypoints (resolveMemoryDir, cmdBriefing, etc.).
+  const pluginConfig = rawConfig.remnic ?? rawConfig.engram ?? rawConfig;
+  const config = parseConfig(pluginConfig);
 
   if (subAction === "generate") {
     const outputDir = resolveFlagStrict(rest, "--output") ?? process.cwd();
-    const manifest = generateMarketplaceManifest(config);
+    const manifest = generateMarketplaceManifest();
     await writeMarketplaceManifest(outputDir, manifest);
     const outPath = path.join(outputDir, "marketplace.json");
     if (json) {

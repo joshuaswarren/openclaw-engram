@@ -36,8 +36,7 @@ function cleanupDir(dir: string) {
 // ── generateMarketplaceManifest ─────────────────────────────────────────────
 
 test("generateMarketplaceManifest produces valid manifest with correct version", () => {
-  const config = makeConfig();
-  const manifest = generateMarketplaceManifest(config, { packageVersion: "9.3.11" });
+  const manifest = generateMarketplaceManifest({ packageVersion: "9.3.11" });
 
   assert.equal(manifest.version, MARKETPLACE_SCHEMA_VERSION);
   assert.equal(manifest.name, "remnic");
@@ -54,9 +53,8 @@ test("generateMarketplaceManifest produces valid manifest with correct version",
 });
 
 test("generateMarketplaceManifest defaults to 0.0.0 when no version supplied", () => {
-  const config = makeConfig();
   // Force no version discovery by passing undefined
-  const manifest = generateMarketplaceManifest(config, { packageVersion: undefined });
+  const manifest = generateMarketplaceManifest({ packageVersion: undefined });
 
   // Should fall back to readPackageVersion() or 0.0.0
   assert.ok(typeof manifest.plugins[0].version === "string");
@@ -64,8 +62,7 @@ test("generateMarketplaceManifest defaults to 0.0.0 when no version supplied", (
 });
 
 test("generateMarketplaceManifest output passes validation", () => {
-  const config = makeConfig();
-  const manifest = generateMarketplaceManifest(config, { packageVersion: "1.0.0" });
+  const manifest = generateMarketplaceManifest({ packageVersion: "1.0.0" });
   const validation = checkMarketplaceManifest(manifest);
 
   assert.ok(validation.valid, `validation failed: ${validation.errors.join("; ")}`);

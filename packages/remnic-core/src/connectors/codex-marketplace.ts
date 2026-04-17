@@ -113,7 +113,6 @@ const VALID_INSTALL_TYPES = new Set<string>(["github", "git", "local", "url"]);
  * or falls back to a default version string.
  */
 export function generateMarketplaceManifest(
-  config: PluginConfig,
   options?: { packageVersion?: string },
 ): MarketplaceManifest {
   const version = options?.packageVersion ?? readPackageVersion() ?? "0.0.0";
