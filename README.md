@@ -821,7 +821,7 @@ remnic enrich <entity-name|--all|audit|providers> [--dry-run]   # Run enrichment
 remnic binary scan                                # Scan for binary files in memory directory
 remnic binary status                              # Show binary lifecycle status
 remnic binary run [--dry-run]                     # Run lifecycle (redirect/clean) for binaries
-remnic binary clean [--dry-run]                   # Clean up mirrored/redirected binaries
+remnic binary clean --force                       # Force-clean binaries past grace period
 
 # Access layer
 remnic daemon start                # Start HTTP API + managed daemon

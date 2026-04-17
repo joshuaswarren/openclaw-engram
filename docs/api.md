@@ -24,7 +24,7 @@ The canonical CLI is `remnic`. The legacy `engram` binary remains as a forwarder
 | `remnic versions <list\|show\|diff\|revert> [file] [version]` | Page version history management |
 | `remnic taxonomy <show\|resolver\|add\|remove> [args]` | MECE taxonomy knowledge directory management |
 | `remnic enrich <entity-name\|--all\|audit\|providers> [--dry-run]` | External entity enrichment pipeline |
-| `remnic binary <scan\|status\|run\|clean> [--dry-run]` | Binary file lifecycle operations |
+| `remnic binary <scan\|status\|run\|clean> [--dry-run\|--force]` | Binary file lifecycle operations |
 
 All commands accept `--json` for machine-readable output. The CLI resolves configuration from:
 
@@ -273,7 +273,8 @@ Search the LCM conversation archive for matching content using full-text search.
 Generate a structured end-of-day summary from memory content.
 
 **Parameters:**
-- `date` (string, optional) — ISO date string (defaults to today)
+- `memories` (string, optional) — Pre-collected memory text; when omitted or empty, auto-gathers today's facts and hourly summaries from storage
+- `sessionKey` (string, optional) — Session identifier
 - `namespace` (string, optional) — Target namespace
 
 **Returns:** Structured summary of the day's memory activity.
@@ -537,7 +538,7 @@ Run via `openclaw engram <command>`:
 | `versions <list\|show\|diff\|revert> [file] [version]` | Page version history management |
 | `taxonomy <show\|resolver\|add\|remove> [args]` | MECE taxonomy knowledge directory management |
 | `enrich <entity-name\|--all\|audit\|providers> [--dry-run]` | External entity enrichment pipeline |
-| `binary <scan\|status\|run\|clean> [--dry-run]` | Binary file lifecycle operations |
+| `binary <scan\|status\|run\|clean> [--dry-run\|--force]` | Binary file lifecycle operations |
 
 ## Error Responses
 

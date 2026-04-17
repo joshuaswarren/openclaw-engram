@@ -938,7 +938,7 @@ of truth for similarity logic across read-time and write-time code paths.
 |---------|---------|-------------|
 | `enrichmentEnabled` | `false` | Enable external entity enrichment pipeline |
 | `enrichmentAutoOnCreate` | `false` | Auto-enrich newly created entities |
-| `enrichmentMaxCandidatesPerEntity` | `5` | Max enrichment candidates per entity per run |
+| `enrichmentMaxCandidatesPerEntity` | `20` | Max enrichment candidates per entity per run |
 
 ## Binary Lifecycle (issue #367)
 
@@ -1460,7 +1460,7 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `taxonomyAutoGenResolver` | `true` | `true` |
 | `enrichmentEnabled` | `false` | `false` |
 | `enrichmentAutoOnCreate` | `false` | `false` |
-| `enrichmentMaxCandidatesPerEntity` | `5` | `5` |
+| `enrichmentMaxCandidatesPerEntity` | `20` | `20` |
 | `binaryLifecycleEnabled` | `false` | `false` |
 | `binaryLifecycleGracePeriodDays` | `7` | `7` |
 | `binaryLifecycleBackendType` | `"none"` | `"none"` |

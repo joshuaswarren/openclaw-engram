@@ -3573,6 +3573,28 @@
         "default": 20,
         "minimum": 0,
         "description": "Maximum enrichment candidates accepted per entity per run. Set to 0 to accept none."
+      },
+      "binaryLifecycleEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable binary file lifecycle management. When true, binary files in the memory directory are mirrored, redirected, and cleaned."
+      },
+      "binaryLifecycleGracePeriodDays": {
+        "type": "number",
+        "default": 7,
+        "minimum": 0,
+        "description": "Days to wait before cleaning local copies of mirrored binary files."
+      },
+      "binaryLifecycleBackendType": {
+        "type": "string",
+        "enum": ["none", "filesystem", "s3"],
+        "default": "none",
+        "description": "Storage backend for binary lifecycle mirror stage."
+      },
+      "binaryLifecycleBackendPath": {
+        "type": "string",
+        "default": "",
+        "description": "Base path for the filesystem storage backend."
       }
     }
   },
