@@ -489,6 +489,58 @@ test("defaultEnrichmentPipelineConfig returns disabled config", () => {
 // Provider error handling
 // ---------------------------------------------------------------------------
 
+test("Pipeline: failed provider calls count toward rate-limit buckets", async () => {
+  // PR #425 review finding 2: if a provider throws after sending the request,
+  // the attempt must still be counted so the rate limiter stays accurate.
+  let callCount = 0;
+  const provider: EnrichmentProvider = {
+    id: "flaky",
+    costTier: "cheap",
+    async enrich() {
+      callCount++;
+      throw new Error("Transient failure");
+    },
+    async isAvailable() {
+      return true;
+    },
+  };
+
+  const registry = new EnrichmentProviderRegistry();
+  registry.register(provider);
+
+  const config = enabledConfig({
+    providers: [
+      {
+        id: "flaky",
+        enabled: true,
+        costTier: "cheap",
+        rateLimit: { maxPerMinute: 2, maxPerDay: 100 },
+      },
+    ],
+    importanceThresholds: {
+      critical: ["flaky"],
+      high: ["flaky"],
+      normal: ["flaky"],
+      low: ["flaky"],
+    },
+  });
+
+  // 5 entities but maxPerMinute=2 — even though all calls fail, only 2
+  // should be attempted because failures count toward the rate limit.
+  const entities = Array.from({ length: 5 }, (_, i) =>
+    makeEntity({ name: `Entity${i}`, importanceLevel: "normal" }),
+  );
+
+  const results = await runEnrichmentPipeline(entities, registry, config, NOOP_LOG);
+  assert.equal(callCount, 2, "Only 2 provider calls should have been made (failures count toward rate limit)");
+  assert.equal(results.length, 5, "All 5 entities should have result entries");
+
+  // All 5 should report 0 candidates (2 failed, 3 rate-limited)
+  for (const r of results) {
+    assert.equal(r.candidatesFound, 0);
+  }
+});
+
 test("Pipeline: provider that throws is gracefully skipped", async () => {
   const provider: EnrichmentProvider = {
     id: "mock",
