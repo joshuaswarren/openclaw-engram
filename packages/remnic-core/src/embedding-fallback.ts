@@ -141,6 +141,32 @@ export class EmbeddingFallback {
   }
 
   /**
+   * Embed an array of texts and return their embedding vectors.
+   *
+   * This is the public batch-embed interface used by semantic chunking
+   * (Finding 1, PR #420 post-merge).  Each text is embedded individually
+   * through the existing embed() private method.  If the provider is
+   * unavailable or any single embedding fails, the method throws so the
+   * caller can fall back to recursive chunking.
+   */
+  async embedTexts(texts: string[]): Promise<number[][]> {
+    const provider = await this.resolveProvider();
+    if (!provider) {
+      throw new Error("Embedding provider is not available");
+    }
+
+    const vectors: number[][] = [];
+    for (const text of texts) {
+      const vec = await this.embed(text, provider, { mode: "lookup" });
+      if (!vec) {
+        throw new Error("Embedding returned null for input text");
+      }
+      vectors.push(vec);
+    }
+    return vectors;
+  }
+
+  /**
    * Nearest-neighbor search against the embedding index.
    *
    * @param query         The query string to embed and search for.

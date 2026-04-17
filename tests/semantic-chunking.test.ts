@@ -489,3 +489,70 @@ test("semanticChunkContent: two sentences exceeding maxTokens triggers recursive
   assert.equal(result.method, "recursive-fallback");
   assert.ok(result.chunks.length >= 2, `Expected multiple chunks, got ${result.chunks.length}`);
 });
+
+// ---------------------------------------------------------------------------
+// Finding 2 (PR #420): splitLongSegment caps targetTokens to maxTokens
+// ---------------------------------------------------------------------------
+
+test("semanticChunkContent: recursive split respects maxTokens when targetTokens is larger", async () => {
+  // Create a long single-topic text that will be split recursively.
+  // targetTokens=500 with maxTokens=100 should produce chunks much
+  // smaller than 500 tokens because splitLongSegment now caps
+  // targetTokens to maxTokens.
+  const longSentences = Array.from(
+    { length: 40 },
+    (_, i) =>
+      `This is sentence number ${i} and it contributes to the total count.`,
+  );
+  const text = longSentences.join(" ");
+
+  const result = await semanticChunkContent(text, uniformEmbedFn, {
+    targetTokens: 500,
+    minTokens: 10,
+    maxTokens: 100,
+  });
+
+  // Without the maxTokens cap, splitLongSegment would forward
+  // targetTokens=500 to the recursive chunker, producing 1-2 huge chunks.
+  // With the cap, it uses targetTokens=100 instead, producing many smaller
+  // chunks.  Verify that we got multiple chunks and none approaches 500.
+  assert.ok(
+    result.chunks.length >= 3,
+    `Expected >= 3 chunks when maxTokens caps targetTokens, got ${result.chunks.length}`,
+  );
+  for (const chunk of result.chunks) {
+    assert.ok(
+      chunk.tokenCount < 400,
+      `Chunk token count ${chunk.tokenCount} is near uncapped targetTokens (500). ` +
+        `splitLongSegment should have capped targetTokens to maxTokens=100.`,
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Finding 4 (PR #420): even window sizes are rounded up to odd
+// ---------------------------------------------------------------------------
+
+test("movingAverage: even windowSize is rounded up to next odd", () => {
+  // With windowSize=4, it should be treated as windowSize=5 (halfW=2).
+  // With windowSize=5, halfW=2, so the two should produce identical results.
+  const series = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const resultEven = movingAverage(series, 4);
+  const resultOdd = movingAverage(series, 5);
+  assert.deepEqual(
+    resultEven,
+    resultOdd,
+    "Even windowSize=4 should produce the same result as odd windowSize=5",
+  );
+});
+
+test("movingAverage: windowSize=2 behaves as windowSize=3", () => {
+  const series = [10, 20, 30, 40, 50];
+  const resultTwo = movingAverage(series, 2);
+  const resultThree = movingAverage(series, 3);
+  assert.deepEqual(
+    resultTwo,
+    resultThree,
+    "Even windowSize=2 should be rounded to 3",
+  );
+});

@@ -16,6 +16,7 @@ import { resolveHomeDir } from "./runtime/env.js";
 import { migrateFromEngram } from "./migrate/from-engram.js";
 import { SmartBuffer } from "./buffer.js";
 import { chunkContent, type ChunkingConfig } from "./chunking.js";
+import { semanticChunkContent, type SemanticChunkResult } from "./semantic-chunking.js";
 import { ExtractionEngine } from "./extraction.js";
 import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
@@ -9771,9 +9772,31 @@ export class Orchestrator {
         continue;
       }
 
-      // Check if chunking is enabled and content should be chunked
+      // Check if chunking is enabled and content should be chunked.
+      // When semanticChunkingEnabled is true, prefer the embedding-based
+      // semantic chunker which produces more coherent topic-aligned segments.
+      // Falls back to the recursive sentence-boundary chunker on failure.
       if (this.config.chunkingEnabled) {
-        const chunkResult = chunkContent(fact.content, chunkingConfig);
+        let chunkResult: { chunked: boolean; chunks: { content: string; index: number; tokenCount: number }[] };
+
+        if (this.config.semanticChunkingEnabled) {
+          try {
+            const embedFn = this.embeddingFallback.embedTexts.bind(this.embeddingFallback);
+            const semanticResult: SemanticChunkResult = await semanticChunkContent(
+              fact.content,
+              embedFn,
+              this.config.semanticChunkingConfig,
+            );
+            chunkResult = semanticResult;
+          } catch (err) {
+            log.debug(
+              `semantic chunking failed, falling back to recursive chunker: ${err}`,
+            );
+            chunkResult = chunkContent(fact.content, chunkingConfig);
+          }
+        } else {
+          chunkResult = chunkContent(fact.content, chunkingConfig);
+        }
 
         if (chunkResult.chunked && chunkResult.chunks.length > 1) {
           // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
