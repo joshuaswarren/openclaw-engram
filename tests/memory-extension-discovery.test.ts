@@ -519,6 +519,87 @@ test("symlinked root directory within expected parent is allowed (#428 P2)", asy
   fs.rmSync(parentDir, { recursive: true });
 });
 
+// ── Symlink root normalization (#431) ─────────────────────────────────────
+
+test("symlinked root with intermediate parent symlink is accepted (#431 Finding 2)", async () => {
+  // Simulates macOS /var -> /private/var: the parent itself contains a symlink
+  // so path.dirname(root) != realpath(path.dirname(root)).
+  const base = makeTempDir();
+
+  // Create a real parent directory
+  const realParent = path.join(base, "real-parent");
+  fs.mkdirSync(realParent, { recursive: true });
+
+  // Create a symlink that acts as an intermediate directory symlink
+  // (like /var -> /private/var on macOS)
+  const symlinkParent = path.join(base, "symlink-parent");
+  fs.symlinkSync(realParent, symlinkParent);
+
+  // Create a real extensions directory under the real parent
+  const realExtDir = path.join(realParent, "memory_extensions");
+  fs.mkdirSync(realExtDir, { recursive: true });
+  createExtension(realExtDir, "ok-ext", {
+    instructions: "Should be discovered despite intermediate symlink",
+  });
+
+  // Create symlink root under the symlink-parent path
+  // root = <base>/symlink-parent/memory_extensions -> <base>/real-parent/memory_extensions
+  // path.dirname(root) = <base>/symlink-parent (unresolved)
+  // realpath(root) = <base>/real-parent/memory_extensions (resolved)
+  // Without the fix, containment check fails because resolved path starts with
+  // real-parent but expectedParent is symlink-parent.
+  const symlinkRoot = path.join(symlinkParent, "memory_extensions");
+  // symlinkRoot is not itself a symlink — it's a real dir accessed through a symlinked parent.
+  // But we need the root to be a symlink for the guard to trigger, so create one.
+  const symlinkRootLink = path.join(symlinkParent, "ext-link");
+  fs.symlinkSync(realExtDir, symlinkRootLink);
+
+  const { log, warnings } = collectWarnings();
+  const result = await discoverMemoryExtensions(symlinkRootLink, log);
+
+  // Should be allowed: realpath of both root and parent resolve consistently
+  assert.equal(result.length, 1);
+  assert.equal(result[0].name, "ok-ext");
+  assert.equal(warnings.filter((w) => w.includes("symlink resolving outside")).length, 0);
+
+  fs.rmSync(base, { recursive: true });
+});
+
+test("symlinked root with relative path is handled correctly (#431 Finding 1)", async () => {
+  // When root is relative like "./memory_extensions", path.dirname returns "."
+  // which without normalization can't match the absolute resolved path.
+  const base = makeTempDir();
+
+  // Create a real extensions dir and a symlink to it
+  const realExtDir = path.join(base, "real_exts");
+  fs.mkdirSync(realExtDir, { recursive: true });
+  createExtension(realExtDir, "rel-ext", {
+    instructions: "Should be discovered via relative symlink root",
+  });
+
+  const symlinkRoot = path.join(base, "link-exts");
+  fs.symlinkSync(realExtDir, symlinkRoot);
+
+  // Use a relative path for the symlink root by changing to the base dir
+  const originalCwd = process.cwd();
+  try {
+    process.chdir(base);
+    const relativeRoot = "./link-exts";
+
+    const { log, warnings } = collectWarnings();
+    const result = await discoverMemoryExtensions(relativeRoot, log);
+
+    // Should be accepted: both sides normalize through path.resolve + realpath
+    assert.equal(result.length, 1);
+    assert.equal(result[0].name, "rel-ext");
+    assert.equal(warnings.filter((w) => w.includes("symlink resolving outside")).length, 0);
+  } finally {
+    process.chdir(originalCwd);
+  }
+
+  fs.rmSync(base, { recursive: true });
+});
+
 // ── buildExtensionsFooterForSummary wiring (#382) ──────────────────────────
 
 test("buildExtensionsFooterForSummary returns footer when extensions exist", async () => {

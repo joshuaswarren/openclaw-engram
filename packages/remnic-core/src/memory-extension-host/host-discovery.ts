@@ -58,7 +58,16 @@ export async function discoverMemoryExtensions(
     } catch {
       return [];
     }
-    const expectedParent = path.dirname(root);
+    // Normalize the parent path through realpath so that:
+    // 1. Relative roots (e.g. "memory_extensions") become absolute (#431 Finding 1)
+    // 2. Intermediate symlinks (e.g. macOS /var -> /private/var) are resolved (#431 Finding 2)
+    let expectedParent: string;
+    try {
+      expectedParent = await realpath(path.resolve(path.dirname(root)));
+    } catch {
+      // Parent directory doesn't exist or is inaccessible — reject.
+      return [];
+    }
     if (!resolved.startsWith(expectedParent + path.sep) && resolved !== expectedParent) {
       log.warn?.(
         `[memory-extensions] root "${root}" is a symlink resolving outside the expected parent directory, skipping`,
