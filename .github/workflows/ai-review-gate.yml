@@ -7,8 +7,6 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created]
-  issue_comment:
-    types: [created]
 
 permissions:
   contents: read
@@ -18,10 +16,7 @@ permissions:
 jobs:
   ai-reviewers:
     if: >-
-      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
-      (github.event_name == 'pull_request_review') ||
-      (github.event_name == 'pull_request_review_comment') ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+      github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -43,15 +38,8 @@ jobs:
             const owner = context.repo.owner;
             const repo = context.repo.repo;
 
-            // Resolve PR number from whichever event triggered us.
-            let pr;
-            if (context.payload.pull_request) {
-              pr = context.payload.pull_request.number;
-            } else if (context.payload.review) {
-              pr = context.payload.review.pull_request_url?.split('/').pop();
-            } else if (context.payload.issue?.pull_request) {
-              pr = context.payload.issue.number;
-            }
+            // Resolve PR number — all supported events include pull_request.
+            const pr = context.payload.pull_request?.number;
             if (!pr) {
               core.setFailed('Unable to determine pull request number.');
               return;
@@ -69,7 +57,6 @@ jobs:
               return;
             }
 
-            // Also check PR-level comments (line comments on the diff).
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner,
               repo,

@@ -80,7 +80,9 @@ MISSING_REVIEWERS=()
 for reviewer in "${REQUIRED_REVIEWERS[@]}"; do
   # Strip [bot] suffix for matching against check-run app slugs.
   reviewer_base="${reviewer%%\[bot\]}"
-  if ! echo "$ALL_REVIEWERS" | grep -qiF "$reviewer_base"; then
+  # Use exact line match (-x) to avoid substring false positives.
+  if ! echo "$ALL_REVIEWERS" | grep -qxiF "$reviewer" && \
+     ! echo "$ALL_REVIEWERS" | grep -qxiF "$reviewer_base"; then
     MISSING_REVIEWERS+=("$reviewer")
   fi
 done
