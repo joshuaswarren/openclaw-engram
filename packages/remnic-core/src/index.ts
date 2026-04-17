@@ -452,6 +452,25 @@ export {
 } from "./memory-extension/index.js";
 
 // ---------------------------------------------------------------------------
+// MECE Taxonomy (#366)
+// ---------------------------------------------------------------------------
+
+export {
+  DEFAULT_TAXONOMY,
+  resolveCategory,
+  generateResolverDocument,
+  loadTaxonomy,
+  saveTaxonomy,
+  validateSlug,
+  validateTaxonomy,
+  getTaxonomyDir,
+  getTaxonomyFilePath,
+  type Taxonomy,
+  type TaxonomyCategory,
+  type ResolverDecision,
+} from "./taxonomy/index.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 

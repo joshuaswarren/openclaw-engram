@@ -1928,6 +1928,10 @@ export function parseConfig(raw: unknown): PluginConfig {
       return { installExtension, codexHome };
     })(),
 
+    // MECE Taxonomy (#366)
+    taxonomyEnabled: cfg.taxonomyEnabled === true,
+    taxonomyAutoGenResolver: cfg.taxonomyAutoGenResolver !== false,
+
     // Codex CLI — native memory materialization (#378)
     codexMaterializeMemories: cfg.codexMaterializeMemories !== false,
     codexMaterializeNamespace:
