@@ -16,7 +16,7 @@ let _backend: LoggerBackend = NOOP_LOGGER;
 let _debug = false;
 
 const CONSOLE_LOGGER: LoggerBackend = {
-  info: console.log.bind(console),
+  info: console.info.bind(console),
   warn: console.warn.bind(console),
   error: console.error.bind(console),
   debug: console.debug.bind(console),
