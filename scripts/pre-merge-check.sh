@@ -6,9 +6,11 @@ set -euo pipefail
 # Usage: scripts/pre-merge-check.sh <PR_NUMBER>
 #
 # Why this exists: PRs were being merged seconds after creation, before
-# cursor[bot] and chatgpt-codex-connector[bot] had time to post reviews.
-# This script blocks merging until reviewers have weighed in and all
-# threads are resolved.
+# AI reviewers had time to post reviews. This script blocks merging until
+# reviewers have weighed in and all threads are resolved.
+#
+# Reviewer activity is detected via PR reviews, PR comments, and completed
+# check runs (Cursor Bugbot and Kilo Code Review run as GitHub App checks).
 
 PR_NUMBER="${1:?Usage: scripts/pre-merge-check.sh <PR_NUMBER>}"
 REPO="${REMNIC_REPO:-joshuaswarren/remnic}"
@@ -56,14 +58,29 @@ if [[ "$UNRESOLVED" -gt 0 ]]; then
   exit 1
 fi
 
-# 2. Check that AI reviewers have actually posted
+# 2. Check that AI reviewers have actually posted (via reviews, comments, or check runs)
 REVIEWS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/reviews" --jq '.[].user.login' 2>/dev/null || echo "")
 COMMENTS=$(gh api "repos/${REPO}/pulls/${PR_NUMBER}/comments" --paginate --jq '.[].user.login' 2>/dev/null || echo "")
-ALL_REVIEWERS=$(printf '%s\n%s' "$REVIEWS" "$COMMENTS" | sort -u)
+
+# Some bots (Cursor Bugbot, Kilo Code Review) post as check runs via GitHub
+# Apps rather than as PR comments. A completed check run counts as reviewer
+# activity. The app.slug field maps to reviewer aliases (e.g. "cursor" matches
+# cursor[bot]).
+HEAD_SHA=$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid 2>/dev/null || echo "")
+CHECK_RUN_APPS=""
+if [[ -n "$HEAD_SHA" ]]; then
+  CHECK_RUN_APPS=$(gh api "repos/${REPO}/commits/${HEAD_SHA}/check-runs" \
+    --jq '.check_runs[] | select(.conclusion == "success" or .conclusion == "failure" or .conclusion == "neutral") | .app.slug' \
+    2>/dev/null || echo "")
+fi
+
+ALL_REVIEWERS=$(printf '%s\n%s\n%s' "$REVIEWS" "$COMMENTS" "$CHECK_RUN_APPS" | sort -u)
 
 MISSING_REVIEWERS=()
 for reviewer in "${REQUIRED_REVIEWERS[@]}"; do
-  if ! echo "$ALL_REVIEWERS" | grep -qF "$reviewer"; then
+  # Strip [bot] suffix for matching against check-run app slugs.
+  reviewer_base="${reviewer%%\[bot\]}"
+  if ! echo "$ALL_REVIEWERS" | grep -qiF "$reviewer_base"; then
     MISSING_REVIEWERS+=("$reviewer")
   fi
 done
