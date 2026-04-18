@@ -336,6 +336,47 @@ test("daemon parses QMD v2 markdown results with paths containing ` - ` separato
   assert.equal(out[1]?.path, "openclaw-engram-hot-facts/2026-03-01/some - path - with - dashes/work-2.md");
 });
 
+test("daemon parses QMD v2 markdown results with titles containing ` - ` separators", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 3 results for "title dash test":',
+            "",
+            "#aabb11 90% openclaw-engram-hot-facts/2026-04-12/fact.md - API notes - follow-up",
+            "#ccdd22 75% openclaw-engram-hot-facts/2026-03-01/my - folder/config.json - Settings - production - v2",
+            "#eeff33 60% openclaw-engram-hot-facts/2026-02-15/report.txt - Summary - Q1 2026",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  const out = await client.search("title dash test", undefined, 5);
+  assert.equal(out.length, 3);
+
+  // Path ends at .md, title gets the rest including ` - `
+  assert.equal(out[0]?.docid, "aabb11");
+  assert.equal(out[0]?.score, 0.90);
+  assert.equal(out[0]?.path, "openclaw-engram-hot-facts/2026-04-12/fact.md");
+
+  // Path with ` - ` in directory AND ` - ` in title
+  assert.equal(out[1]?.docid, "ccdd22");
+  assert.equal(out[1]?.score, 0.75);
+  assert.equal(out[1]?.path, "openclaw-engram-hot-facts/2026-03-01/my - folder/config.json");
+
+  // Non-.md extension (.txt) also works
+  assert.equal(out[2]?.docid, "eeff33");
+  assert.equal(out[2]?.score, 0.60);
+  assert.equal(out[2]?.path, "openclaw-engram-hot-facts/2026-02-15/report.txt");
+});
+
 test("parseMcpSearchResult deduplicates markdown fallback hits against structured results", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
