@@ -406,6 +406,9 @@ test("bench publish routes through the stored package feed helpers", async () =>
   assert.match(source, /writeBenchmarkPublishFeed,/);
   assert.match(source, /async function publishBenchPackageResults\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /publish requires --target remnic-ai/);
+  assert.match(source, /if \(feed\.benchmarks\.length === 0\) \{/);
+  assert.match(source, /no publishable benchmark results found in \$\{resultsDir\}/);
+  assert.match(source, /remnic-ai requires stored full runs for published benchmarks/);
   assert.match(source, /Published \$\{feed\.benchmarks\.length\} benchmark entries for \$\{parsed\.target\} to \$\{writtenPath\}/);
   assert.match(source, /if \(parsed\.action === "publish"\) \{\s*await publishBenchPackageResults\(parsed\);/s);
   assert.match(parserSource, /export type BenchPublishTarget = "remnic-ai";/);

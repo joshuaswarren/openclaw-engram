@@ -876,6 +876,12 @@ async function publishBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
 
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
   const feed = await buildBenchmarkPublishFeed(resultsDir, parsed.target);
+  if (feed.benchmarks.length === 0) {
+    console.error(
+      `ERROR: no publishable benchmark results found in ${resultsDir}. remnic-ai requires stored full runs for published benchmarks.`,
+    );
+    process.exit(1);
+  }
   const outputPath = parsed.output ?? defaultBenchmarkPublishPath(parsed.target);
   const writtenPath = await writeBenchmarkPublishFeed(feed, outputPath);
 

@@ -277,43 +277,58 @@ test("renderBenchmarkResultExport returns JSON and aggregate-metric CSV represen
 test("renderBenchmarkResultExport handles older results without seed metadata", () => {
   const result = buildResult("older-run", "2026-04-18T08:00:00.000Z");
   delete (result.meta as { seeds?: number[] }).seeds;
+  result.config.remnicConfig = {
+    authToken: "secret-token",
+    endpoint: "https://internal.example.com",
+  };
 
   const html = renderBenchmarkResultExport(result, "html");
 
   assert.match(html, /Older-run|older-run/i);
   assert.match(html, /Seeds/);
   assert.match(html, /Unknown/);
+  assert.match(html, /\[redacted 2 keys\]/);
+  assert.doesNotMatch(html, /secret-token/);
+  assert.doesNotMatch(html, /internal\.example\.com/);
 });
 
-test("buildBenchmarkPublishFeed keeps only the latest stored result per benchmark", async () => {
+test("buildBenchmarkPublishFeed keeps only the latest full published result per benchmark", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-publish-"));
   const olderLongMemEval = buildResult("run-old", "2026-04-18T07:00:00.000Z");
   olderLongMemEval.results.aggregates = {
     answerAccuracy: { mean: 0.5, median: 0.5, stdDev: 0, min: 0.5, max: 0.5 },
   };
 
-  const newerLongMemEval = buildResult("run-new", "2026-04-18T08:00:00.000Z");
-  newerLongMemEval.results.aggregates = {
+  const newerPublishedQuick = buildResult("run-quick", "2026-04-18T09:00:00.000Z");
+  newerPublishedQuick.meta.mode = "quick";
+  newerPublishedQuick.results.aggregates = {
     answerAccuracy: { mean: 0.8, median: 0.8, stdDev: 0, min: 0.8, max: 0.8 },
+  };
+
+  const newerRemnicFull = buildResult("run-remnic", "2026-04-18T10:00:00.000Z");
+  newerRemnicFull.meta.benchmarkTier = "remnic";
+  newerRemnicFull.results.aggregates = {
+    answerAccuracy: { mean: 0.9, median: 0.9, stdDev: 0, min: 0.9, max: 0.9 },
   };
 
   const locomo = buildResult("run-locomo", "2026-04-18T06:00:00.000Z", "locomo");
   locomo.results.tasks = [{ taskId: "1", question: "q", expected: "e", actual: "a", scores: { exactMatch: 1 }, latencyMs: 10, tokens: { input: 1, output: 1 } }];
 
   await writeFile(path.join(root, "old.json"), `${JSON.stringify(olderLongMemEval)}\n`);
-  await writeFile(path.join(root, "new.json"), `${JSON.stringify(newerLongMemEval)}\n`);
+  await writeFile(path.join(root, "new-quick.json"), `${JSON.stringify(newerPublishedQuick)}\n`);
+  await writeFile(path.join(root, "new-remnic.json"), `${JSON.stringify(newerRemnicFull)}\n`);
   await writeFile(path.join(root, "locomo.json"), `${JSON.stringify(locomo)}\n`);
 
   const feed = await buildBenchmarkPublishFeed(root, "remnic-ai");
 
   assert.equal(feed.target, "remnic-ai");
-  assert.equal(feed.sourceResultsDir, root);
   assert.deepEqual(
     feed.benchmarks.map((entry) => [entry.benchmark, entry.resultId]),
-    [["longmemeval", "run-new"], ["locomo", "run-locomo"]],
+    [["longmemeval", "run-old"], ["locomo", "run-locomo"]],
   );
-  assert.equal(feed.benchmarks[0]?.aggregateMetrics.answerAccuracy?.mean, 0.8);
+  assert.equal(feed.benchmarks[0]?.aggregateMetrics.answerAccuracy?.mean, 0.5);
   assert.equal(feed.benchmarks[1]?.taskCount, 1);
+  assert.equal("source" in (feed.benchmarks[0] ?? {}), false);
 });
 
 test("defaultBenchmarkPublishPath resolves under the Remnic published directory", () => {
@@ -350,7 +365,6 @@ test("writeBenchmarkPublishFeed persists the generated feed as JSON", async () =
   const feed = {
     target: "remnic-ai" as const,
     generatedAt: "2026-04-18T09:00:00.000Z",
-    sourceResultsDir: "/tmp/results",
     benchmarks: [],
   };
 
