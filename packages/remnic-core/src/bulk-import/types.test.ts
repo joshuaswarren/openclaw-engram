@@ -69,6 +69,44 @@ describe("parseIsoTimestamp", () => {
     assert.ok(ts! > 0);
   });
 
+  it("rejects overflowed offset timestamp (Feb 31)", () => {
+    assert.equal(parseIsoTimestamp("2024-02-31T10:00:00+00:00"), null);
+  });
+
+  it("rejects overflowed UTC timestamp (Feb 30)", () => {
+    assert.equal(parseIsoTimestamp("2024-02-30T10:00:00Z"), null);
+  });
+
+  it("rejects offset hour exceeding 14", () => {
+    assert.equal(parseIsoTimestamp("2024-01-15T10:00:00+25:00"), null);
+  });
+
+  it("rejects offset hour of 15", () => {
+    assert.equal(parseIsoTimestamp("2024-01-15T10:00:00+15:00"), null);
+  });
+
+  it("rejects offset minute exceeding 59", () => {
+    assert.equal(parseIsoTimestamp("2024-01-15T10:00:00+05:61"), null);
+  });
+
+  it("rejects overflowed month (month 13)", () => {
+    assert.equal(parseIsoTimestamp("2024-13-15T10:00:00+00:00"), null);
+  });
+
+  it("rejects overflowed day for April (Apr 31)", () => {
+    assert.equal(parseIsoTimestamp("2024-04-31T10:00:00+05:30"), null);
+  });
+
+  it("accepts valid Feb 29 in leap year with offset", () => {
+    const ts = parseIsoTimestamp("2024-02-29T10:00:00+05:30");
+    assert.equal(typeof ts, "number");
+    assert.ok(ts! > 0);
+  });
+
+  it("rejects Feb 29 in non-leap year with offset", () => {
+    assert.equal(parseIsoTimestamp("2023-02-29T10:00:00+05:30"), null);
+  });
+
   it("returns null for non-ISO string", () => {
     assert.equal(parseIsoTimestamp("June 15, 2024"), null);
   });

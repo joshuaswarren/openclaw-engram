@@ -31,12 +31,17 @@ export function validateBatchSize(value: number | undefined): number {
       `batchSize must be a finite number, received ${String(value)}`,
     );
   }
+  if (!Number.isInteger(value)) {
+    throw new Error(
+      `batchSize must be an integer, received ${value}`,
+    );
+  }
   if (value < MIN_BATCH_SIZE || value > MAX_BATCH_SIZE) {
     throw new Error(
       `batchSize must be between ${MIN_BATCH_SIZE} and ${MAX_BATCH_SIZE}, received ${value}`,
     );
   }
-  return Math.floor(value);
+  return value;
 }
 
 /**

@@ -263,8 +263,25 @@ describe("validateBatchSize", () => {
     assert.equal(validateBatchSize(10), 10);
   });
 
-  it("floors fractional values", () => {
-    assert.equal(validateBatchSize(5.7), 5);
+  it("throws for fractional values", () => {
+    assert.throws(
+      () => validateBatchSize(5.7),
+      (err: Error) => {
+        assert.ok(err.message.includes("integer"));
+        return true;
+      },
+    );
+  });
+
+  it("throws for fractional value like 20.5", () => {
+    assert.throws(
+      () => validateBatchSize(20.5),
+      (err: Error) => {
+        assert.ok(err.message.includes("integer"));
+        assert.ok(err.message.includes("20.5"));
+        return true;
+      },
+    );
   });
 
   it("accepts minimum boundary (1)", () => {
