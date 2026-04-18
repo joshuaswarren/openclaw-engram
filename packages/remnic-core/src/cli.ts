@@ -851,25 +851,15 @@ export async function runTrainingExportCliCommand(
     );
   }
 
-  // 2. Parse date filters
+  // 2. Parse date filters (strict: reject overflowed dates like Feb 31)
   let since: Date | undefined;
   if (opts.since !== undefined) {
-    since = new Date(opts.since);
-    if (!Number.isFinite(since.getTime())) {
-      throw new Error(
-        `Invalid --since value "${opts.since}". Provide an ISO 8601 date string.`,
-      );
-    }
+    since = parseStrictCliDate(opts.since, "--since");
   }
 
   let until: Date | undefined;
   if (opts.until !== undefined) {
-    until = new Date(opts.until);
-    if (!Number.isFinite(until.getTime())) {
-      throw new Error(
-        `Invalid --until value "${opts.until}". Provide an ISO 8601 date string.`,
-      );
-    }
+    until = parseStrictCliDate(opts.until, "--until");
   }
 
   // 3. Convert memories to records
@@ -2108,6 +2098,44 @@ async function readRuntimePolicySnapshot(
     values: snapshot.values,
     sourceAdjustmentCount: Math.max(0, Math.floor(snapshot.sourceAdjustmentCount)),
   };
+}
+
+/**
+ * Parse a date string strictly: rejects overflowed calendar values
+ * like "2026-02-31" that JavaScript normalizes silently.
+ *
+ * Accepts YYYY-MM-DD and full ISO 8601 datetime strings.
+ */
+export function parseStrictCliDate(value: string, flagName: string): Date {
+  const d = new Date(value);
+  if (!Number.isFinite(d.getTime())) {
+    throw new Error(
+      `Invalid ${flagName} value "${value}". Provide an ISO 8601 date string (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss).`,
+    );
+  }
+
+  // Verify day/month round-trip to catch overflow (e.g. Feb 31 -> Mar 3).
+  // Only check when the input looks like an ISO date prefix.
+  const datePrefix = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (datePrefix) {
+    const inputYear = Number(datePrefix[1]);
+    const inputMonth = Number(datePrefix[2]);
+    const inputDay = Number(datePrefix[3]);
+
+    // getUTCMonth is 0-indexed; getUTCDate is 1-indexed.
+    // Use UTC methods because Date parses YYYY-MM-DD as UTC.
+    if (
+      d.getUTCFullYear() !== inputYear ||
+      d.getUTCMonth() + 1 !== inputMonth ||
+      d.getUTCDate() !== inputDay
+    ) {
+      throw new Error(
+        `Invalid ${flagName} value "${value}": date components overflow (e.g. month has fewer days). Provide a valid calendar date.`,
+      );
+    }
+  }
+
+  return d;
 }
 
 function parseSinceDurationMs(since: string): number {

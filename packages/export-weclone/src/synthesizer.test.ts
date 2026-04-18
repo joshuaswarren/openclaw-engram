@@ -463,6 +463,35 @@ describe("synthesizeTrainingPairs", () => {
     assert.equal(pairs[0].confidence, 0.95);
   });
 
+  it("handles instruction with many nested open-parens without slowdown (CodeQL ReDoS fix)", () => {
+    // Regression: /\(([^)]+)\)/ causes O(n^2) backtracking on inputs
+    // with many '((' because [^)] matches '('. Fixed to /\(([^()]+)\)/.
+    const malicious = "(" + "(".repeat(5000);
+    const records = [
+      makeRecord({
+        instruction: malicious,
+        category: "fact",
+        output: "Should not hang.",
+      }),
+    ];
+
+    const start = performance.now();
+    const pairs = synthesizeTrainingPairs(records);
+    const elapsed = performance.now() - start;
+
+    assert.ok(pairs.length >= 1);
+    // No parenthesized content found, so topic should be "this"
+    assert.ok(
+      pairs[0].instruction.toLowerCase().includes("this"),
+      `expected fallback topic 'this', got: "${pairs[0].instruction}"`,
+    );
+    // Must complete in under 50ms (was 600ms+ before the fix at n=10000)
+    assert.ok(
+      elapsed < 50,
+      `regex should be O(n), took ${elapsed.toFixed(1)}ms`,
+    );
+  });
+
   it("does not produce generic 'this' questions when tags are available", () => {
     // Regression test: the old bug had parseCategory(record.instruction) which
     // always fell back to subTopic="this" because instructions are natural

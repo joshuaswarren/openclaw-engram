@@ -139,7 +139,7 @@ function resolveTemplateKey(category: string | undefined): string {
  * Otherwise fall back to "this".
  */
 function extractTopic(instruction: string): string {
-  const tagMatch = instruction.match(/\(([^)]+)\)/);
+  const tagMatch = instruction.match(/\(([^()]+)\)/);
   if (tagMatch) {
     return tagMatch[1].trim().toLowerCase();
   }
