@@ -38,6 +38,7 @@ remnic query "hello" --explain  # Test query with tier breakdown
 | `remnic spaces` | Manage memory namespaces |
 | `remnic bench list` | List published benchmark packs |
 | `remnic bench run` | Run one or more published benchmark packs |
+| `remnic bench compare` | Compare two stored benchmark results |
 
 Run `remnic --help` for the full command list.
 
@@ -50,6 +51,7 @@ kept as a compatibility alias.
 remnic bench list
 remnic bench run --quick longmemeval
 remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
+remnic bench compare base-run candidate-run
 remnic benchmark run --quick longmemeval
 ```
 

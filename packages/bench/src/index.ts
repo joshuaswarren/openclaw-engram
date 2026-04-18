@@ -104,3 +104,8 @@ export {
 } from "./stats/bootstrap.js";
 export { cohensD, interpretEffectSize } from "./stats/effect-size.js";
 export { compareResults } from "./stats/comparison.js";
+export {
+  loadBenchmarkResult,
+  listBenchmarkResults,
+  resolveBenchmarkResultReference,
+} from "./results-store.js";
