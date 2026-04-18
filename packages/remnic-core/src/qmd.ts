@@ -661,11 +661,12 @@ class QmdDaemonSession {
 const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(.+)/;
 
 /**
- * Known file extensions for QMD memory paths. Non-greedy `.+?` finds the
- * FIRST known extension followed by ` - `, which is safe because version
- * numbers like `v1.2` don't appear in the extension allow-list.
+ * Splits `collection/path.ext - Title text` into path and title.
+ * Non-greedy `.+?` finds the FIRST dot-extension (2+ alphabetic chars)
+ * followed by ` - `, accepting any indexed file type while skipping
+ * version-like segments (e.g. `v1.2` where `.2` is a single digit).
  */
-const QMD_PATH_TITLE_RE = /^(.+?\.(?:md|txt|json|yaml|yml|html))\s+-\s+(.*)$/;
+const QMD_PATH_TITLE_RE = /^(.+?\.[a-zA-Z]{2,10})\s+-\s+(.*)$/;
 
 function parseQmdMarkdownResultText(
   text: string,

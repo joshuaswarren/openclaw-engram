@@ -452,6 +452,41 @@ test("daemon parses QMD v2 markdown results when title contains a filename", asy
   assert.equal(out[1]?.path, "openclaw-engram-hot-facts/2026-03-01/note.txt");
 });
 
+test("daemon parses QMD v2 markdown results with non-standard file extensions", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 3 results for "extension test":',
+            "",
+            "#aa1122 88% openclaw-engram-hot-facts/2026-04-10/helper.ts - TypeScript utility",
+            "#bb3344 72% openclaw-engram-hot-facts/2026-03-15/analysis.py - Python analysis script",
+            "#cc5566 65% openclaw-engram-hot-facts/2026-02-20/guide.mdx - MDX documentation",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  const out = await client.search("extension test", undefined, 5);
+  assert.equal(out.length, 3);
+
+  assert.equal(out[0]?.docid, "aa1122");
+  assert.equal(out[0]?.path, "openclaw-engram-hot-facts/2026-04-10/helper.ts");
+
+  assert.equal(out[1]?.docid, "bb3344");
+  assert.equal(out[1]?.path, "openclaw-engram-hot-facts/2026-03-15/analysis.py");
+
+  assert.equal(out[2]?.docid, "cc5566");
+  assert.equal(out[2]?.path, "openclaw-engram-hot-facts/2026-02-20/guide.mdx");
+});
+
 test("parseMcpSearchResult deduplicates markdown fallback hits against structured results", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
