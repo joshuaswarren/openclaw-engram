@@ -1717,6 +1717,15 @@ export class Orchestrator {
   }
 
   async initialize(): Promise<void> {
+    // Recreate the deferred-ready gate on every initialize() call.
+    // The same Orchestrator instance may be reused across stop/start cycles
+    // (src/index.ts does this). Without this reset, the second cycle's
+    // `await orchestrator.deferredReady` resolves immediately (already settled
+    // from the first cycle) while the new deferredInitialize() is still running.
+    this.deferredReady = new Promise<void>((resolve) => {
+      this.resolveDeferredReady = resolve;
+    });
+
     try {
       await migrateFromEngram({
         quiet: true,
@@ -1819,9 +1828,19 @@ export class Orchestrator {
           }
         });
     } catch (err) {
-      // Resolve deferredReady so callers that `await orchestrator.deferredReady`
-      // after catching the initialize() error never hang on a permanently-pending
-      // promise. The deferred-init phase will not run, so resolve immediately.
+      // Resolve both gates so callers never hang on permanently-pending promises
+      // after catching the initialize() error:
+      //
+      // - initPromise: recall(), generateDaySummary(), etc. await this as a
+      //   readiness gate with a 15s timeout. Leaving it pending means every
+      //   subsequent call pays that timeout penalty.
+      //
+      // - deferredReady: CLI callers await this for full QMD readiness. Without
+      //   resolution it hangs forever since deferredInitialize() never ran.
+      if (this.resolveInit) {
+        this.resolveInit();
+        this.resolveInit = null;
+      }
       if (this.resolveDeferredReady) {
         this.resolveDeferredReady();
         this.resolveDeferredReady = null;
