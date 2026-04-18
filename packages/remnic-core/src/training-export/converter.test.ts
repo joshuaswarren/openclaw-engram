@@ -633,6 +633,125 @@ describe("convertMemoriesToRecords", () => {
     assert.equal(records.length, 1);
   });
 
+  // --- Fix 11: Reject symlinked memoryDir root ---
+
+  it("throws when memoryDir root is a symlink", async () => {
+    const dir = await makeTmpDir();
+    // Create a real directory to be the symlink target
+    const realDir = await makeTmpDir();
+    await writeSyntheticMemory(realDir, "facts", "mem.md", {
+      id: "mem",
+      content: "Should not be reachable via symlink.",
+    });
+
+    // Create a symlink at a new path pointing to the real directory
+    const symlinkPath = path.join(dir, "symlinked-memory");
+    await symlink(realDir, symlinkPath);
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: symlinkPath }),
+      (err: Error) => {
+        assert.match(err.message, /memoryDir must not be a symlink/);
+        return true;
+      },
+    );
+  });
+
+  it("does not throw when memoryDir root is a real directory", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "A normal memory.",
+    });
+
+    // Should succeed — real directory, not a symlink
+    const records = await convertMemoriesToRecords({ memoryDir: dir });
+    assert.equal(records.length, 1);
+  });
+
+  // --- Fix 12: Reject invalid minConfidence values (NaN, out of range) ---
+
+  it("throws when minConfidence is NaN", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: dir, minConfidence: NaN }),
+      (err: Error) => {
+        assert.match(err.message, /minConfidence must be a finite number between 0 and 1/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when minConfidence is Infinity", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: dir, minConfidence: Infinity }),
+      (err: Error) => {
+        assert.match(err.message, /minConfidence must be a finite number between 0 and 1/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when minConfidence is negative", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: dir, minConfidence: -0.5 }),
+      (err: Error) => {
+        assert.match(err.message, /minConfidence must be a finite number between 0 and 1/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when minConfidence is greater than 1", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: dir, minConfidence: 1.5 }),
+      (err: Error) => {
+        assert.match(err.message, /minConfidence must be a finite number between 0 and 1/);
+        return true;
+      },
+    );
+  });
+
+  it("accepts minConfidence at boundary values 0 and 1", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      confidence: 0.5,
+      content: "Some content.",
+    });
+
+    // minConfidence=0 should not throw and should include everything
+    const recordsMin = await convertMemoriesToRecords({ memoryDir: dir, minConfidence: 0 });
+    assert.equal(recordsMin.length, 1);
+
+    // minConfidence=1 should not throw (but will filter out 0.5 confidence)
+    const recordsMax = await convertMemoriesToRecords({ memoryDir: dir, minConfidence: 1 });
+    assert.equal(recordsMax.length, 0);
+  });
+
   it("excludes memories with unparseable created date when until filter is active", async () => {
     const dir = await makeTmpDir();
     await mkdir(path.join(dir, "facts"), { recursive: true });

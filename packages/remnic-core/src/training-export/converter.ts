@@ -194,6 +194,35 @@ export async function convertMemoriesToRecords(
     throw new Error("until is an Invalid Date — provide a valid Date object");
   }
 
+  // Validate minConfidence is a finite number in [0, 1] (CLAUDE.md #51)
+  // NaN comparisons always return false, which would silently disable the filter
+  if (
+    options.minConfidence !== undefined &&
+    (!Number.isFinite(options.minConfidence) ||
+      options.minConfidence < 0 ||
+      options.minConfidence > 1)
+  ) {
+    throw new Error(
+      `minConfidence must be a finite number between 0 and 1, got: ${options.minConfidence}`,
+    );
+  }
+
+  // Reject symlinked memoryDir root — a symlink could redirect the entire
+  // memory tree to an attacker-controlled location, bypassing per-file checks
+  let rootLinkStat: import("node:fs").Stats;
+  try {
+    rootLinkStat = await lstat(memoryDir);
+  } catch {
+    throw new Error(
+      `memoryDir does not exist: ${memoryDir}`,
+    );
+  }
+  if (rootLinkStat.isSymbolicLink()) {
+    throw new Error(
+      `memoryDir must not be a symlink: ${memoryDir}`,
+    );
+  }
+
   // Validate memoryDir exists and is a directory (CLAUDE.md #24)
   let dirStat: import("node:fs").Stats;
   try {
