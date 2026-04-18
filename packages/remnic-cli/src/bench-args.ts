@@ -1,7 +1,19 @@
 import path from "node:path";
 import { expandTilde } from "./path-utils.js";
 
-export type BenchAction = "help" | "list" | "run" | "compare" | "check" | "report";
+export type BenchAction =
+  | "help"
+  | "list"
+  | "run"
+  | "compare"
+  | "results"
+  | "baseline"
+  | "export"
+  | "check"
+  | "report";
+
+export type BenchBaselineAction = "save" | "list";
+export type BenchExportFormat = "json" | "csv";
 
 export interface ParsedBenchArgs {
   action: BenchAction;
@@ -9,9 +21,14 @@ export interface ParsedBenchArgs {
   quick: boolean;
   all: boolean;
   json: boolean;
+  detail: boolean;
   datasetDir?: string;
   resultsDir?: string;
+  baselinesDir?: string;
   threshold?: number;
+  baselineAction?: BenchBaselineAction;
+  format?: BenchExportFormat;
+  output?: string;
 }
 
 export function readBenchOptionValue(argv: string[], flag: string): string | undefined {
@@ -32,7 +49,14 @@ export function collectBenchmarks(argv: string[]): string[] {
   const benchmarks: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
-    if (arg === "--dataset-dir" || arg === "--results-dir" || arg === "--threshold") {
+    if (
+      arg === "--dataset-dir" ||
+      arg === "--results-dir" ||
+      arg === "--baselines-dir" ||
+      arg === "--threshold" ||
+      arg === "--format" ||
+      arg === "--output"
+    ) {
       index += 1;
       continue;
     }
@@ -49,7 +73,14 @@ export function parseBenchActionArgs(argv: string[]): {
 } {
   const [first, ...rest] = argv;
   const action: BenchAction =
-    first === "list" || first === "run" || first === "compare" || first === "check" || first === "report"
+    first === "list" ||
+    first === "run" ||
+    first === "compare" ||
+    first === "results" ||
+    first === "baseline" ||
+    first === "export" ||
+    first === "check" ||
+    first === "report"
       ? first
       : first === undefined || first === "--help" || first === "-h"
         ? "help"
@@ -63,10 +94,24 @@ export function parseBenchActionArgs(argv: string[]): {
 
 export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const { action, args } = parseBenchActionArgs(argv);
-  const benchmarks = collectBenchmarks(args);
+  const baselineAction =
+    action === "baseline"
+      ? args[0] === "save" || args[0] === "list"
+        ? args[0]
+        : undefined
+      : undefined;
+  if (action === "baseline" && baselineAction === undefined) {
+    throw new Error("ERROR: baseline requires a subcommand: save or list.");
+  }
+
+  const benchmarkArgs = action === "baseline" ? args.slice(1) : args;
+  const benchmarks = collectBenchmarks(benchmarkArgs);
   const datasetDir = readBenchOptionValue(args, "--dataset-dir");
   const resultsDir = readBenchOptionValue(args, "--results-dir");
+  const baselinesDir = readBenchOptionValue(args, "--baselines-dir");
   const thresholdRaw = readBenchOptionValue(args, "--threshold");
+  const formatRaw = readBenchOptionValue(args, "--format");
+  const output = readBenchOptionValue(args, "--output");
   let threshold: number | undefined;
   if (thresholdRaw !== undefined) {
     threshold = Number(thresholdRaw);
@@ -75,14 +120,27 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     }
   }
 
+  let format: BenchExportFormat | undefined;
+  if (formatRaw !== undefined) {
+    if (formatRaw !== "json" && formatRaw !== "csv") {
+      throw new Error('ERROR: --format must be "json" or "csv".');
+    }
+    format = formatRaw;
+  }
+
   return {
     action,
     benchmarks,
     quick: args.includes("--quick"),
     all: args.includes("--all"),
     json: args.includes("--json"),
+    detail: args.includes("--detail"),
     datasetDir: datasetDir ? path.resolve(expandTilde(datasetDir)) : undefined,
     resultsDir: resultsDir ? path.resolve(expandTilde(resultsDir)) : undefined,
+    baselinesDir: baselinesDir ? path.resolve(expandTilde(baselinesDir)) : undefined,
     threshold,
+    baselineAction,
+    format,
+    output: output ? path.resolve(expandTilde(output)) : undefined,
   };
 }

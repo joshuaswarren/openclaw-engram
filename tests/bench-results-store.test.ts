@@ -4,9 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import {
+  defaultBenchmarkBaselineDir,
+  listBenchmarkBaselines,
   listBenchmarkResults,
+  loadBenchmarkBaseline,
   loadBenchmarkResult,
+  renderBenchmarkResultExport,
   resolveBenchmarkResultReference,
+  saveBenchmarkBaseline,
 } from "../packages/bench/src/results-store.ts";
 import type { BenchmarkResult } from "../packages/bench/src/types.ts";
 
@@ -145,4 +150,116 @@ test("resolveBenchmarkResultReference falls back to id matching when a same-name
   } finally {
     process.chdir(cwd);
   }
+});
+
+test("saveBenchmarkBaseline persists a named baseline and listBenchmarkBaselines returns newest first", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-baselines-"));
+  const firstPath = await saveBenchmarkBaseline(
+    root,
+    "main",
+    buildResult("run-main", "2026-04-18T04:00:00.000Z"),
+    { id: "run-main", path: "/tmp/run-main.json" },
+  );
+
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  const secondPath = await saveBenchmarkBaseline(
+    root,
+    "candidate",
+    buildResult("run-candidate", "2026-04-18T05:00:00.000Z"),
+    { id: "run-candidate", path: "/tmp/run-candidate.json" },
+  );
+
+  const stored = await loadBenchmarkBaseline(firstPath);
+  const listed = await listBenchmarkBaselines(root);
+
+  assert.equal(stored.name, "main");
+  assert.equal(stored.source?.id, "run-main");
+  assert.equal(listed[0]?.name, "candidate");
+  assert.equal(listed[0]?.path, secondPath);
+  assert.equal(listed[1]?.name, "main");
+});
+
+test("saveBenchmarkBaseline rejects invalid baseline names instead of sanitizing them", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-baseline-invalid-"));
+
+  await assert.rejects(
+    () => saveBenchmarkBaseline(root, "main branch", buildResult("run-main", "2026-04-18T06:00:00.000Z")),
+    /Invalid baseline name/,
+  );
+});
+
+test("listBenchmarkBaselines rejects baseline paths that exist as files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-baseline-file-list-"));
+  const baselinePath = path.join(root, "baselines.json");
+  await writeFile(baselinePath, "not a directory");
+
+  await assert.rejects(
+    () => listBenchmarkBaselines(baselinePath),
+    /Invalid benchmark baseline directory: .* is not a directory\./,
+  );
+});
+
+test("saveBenchmarkBaseline rejects baseline paths that exist as files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-baseline-file-save-"));
+  const baselinePath = path.join(root, "baselines.json");
+  await writeFile(baselinePath, "not a directory");
+
+  await assert.rejects(
+    () => saveBenchmarkBaseline(
+      baselinePath,
+      "main",
+      buildResult("run-main", "2026-04-18T06:30:00.000Z"),
+    ),
+    /Invalid benchmark baseline directory: .* is not a directory\./,
+  );
+});
+
+test("defaultBenchmarkBaselineDir resolves under the Remnic home directory", () => {
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  const customHomeDir = path.join(path.sep, "tmp", "remnic-home");
+
+  process.env.HOME = customHomeDir;
+  delete process.env.USERPROFILE;
+
+  try {
+    const baselineDir = defaultBenchmarkBaselineDir();
+    assert.equal(
+      baselineDir,
+      path.join(customHomeDir, ".remnic", "bench", "baselines"),
+    );
+  } finally {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+
+    if (originalUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
+  }
+});
+
+test("renderBenchmarkResultExport returns JSON and aggregate-metric CSV representations", () => {
+  const result = buildResult("candidate-run", "2026-04-18T07:00:00.000Z");
+  result.results.aggregates = {
+    answerAccuracy: {
+      mean: 0.8,
+      median: 0.8,
+      stdDev: 0.1,
+      min: 0.6,
+      max: 0.9,
+    },
+  };
+
+  const json = renderBenchmarkResultExport(result, "json");
+  const csv = renderBenchmarkResultExport(result, "csv");
+
+  assert.match(json, /"candidate-run"/);
+  assert.match(csv, /^result_id,benchmark,timestamp,mode,metric,mean,median,std_dev,min,max$/m);
+  assert.match(csv, /candidate-run,longmemeval,2026-04-18T07:00:00.000Z,full,answerAccuracy,0.8,0.8,0.1,0.6,0.9/);
 });

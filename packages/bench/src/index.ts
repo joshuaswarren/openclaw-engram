@@ -105,7 +105,12 @@ export {
 export { cohensD, interpretEffectSize } from "./stats/effect-size.js";
 export { compareResults } from "./stats/comparison.js";
 export {
+  defaultBenchmarkBaselineDir,
   loadBenchmarkResult,
+  loadBenchmarkBaseline,
+  listBenchmarkBaselines,
   listBenchmarkResults,
+  renderBenchmarkResultExport,
   resolveBenchmarkResultReference,
+  saveBenchmarkBaseline,
 } from "./results-store.js";

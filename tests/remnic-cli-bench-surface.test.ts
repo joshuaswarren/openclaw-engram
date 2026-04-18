@@ -9,7 +9,7 @@ test("remnic CLI source wires the new bench command and keeps benchmark as an al
   assert.match(source, /case "bench": \{/);
   assert.match(source, /case "benchmark": \{/);
   assert.match(source, /await cmdBench\(rest\);/);
-  assert.match(source, /remnic bench <list\|run\|compare>/);
+  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export>/);
   assert.match(source, /benchmark is kept as a compatibility alias/i);
 });
 
@@ -85,9 +85,10 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /from "\.\/bench-args\.js";/);
   assert.match(parserSource, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
   assert.match(parserSource, /function collectBenchmarks\(argv: string\[\]\): string\[\]/);
-  assert.match(parserSource, /const benchmarks = collectBenchmarks\(args\);/);
+  assert.match(parserSource, /const benchmarkArgs = action === "baseline" \? args\.slice\(1\) : args;/);
+  assert.match(parserSource, /const benchmarks = collectBenchmarks\(benchmarkArgs\);/);
   assert.match(parserSource, /requires a value\./);
-  assert.match(parserSource, /if \(arg === "--dataset-dir" \|\| arg === "--results-dir" \|\| arg === "--threshold"\) \{\s*index \+= 1;\s*continue;\s*\}/s);
+  assert.match(parserSource, /arg === "--dataset-dir"[\s\S]*arg === "--results-dir"[\s\S]*arg === "--baselines-dir"[\s\S]*arg === "--threshold"[\s\S]*arg === "--format"[\s\S]*arg === "--output"/);
   assert.match(parserSource, /datasetDir: datasetDir \? path\.resolve\(expandTilde\(datasetDir\)\) : undefined/);
   assert.match(source, /resolveBenchDatasetDir\(\s*benchmarkId,\s*parsed\.quick,\s*parsed\.datasetDir/s);
   assert.match(source, /const outputDir = resolveBenchOutputDir\(\);/);
@@ -110,12 +111,43 @@ test("bench compare routes through stored package results with threshold and res
   assert.match(source, /parsed\.resultsDir \?\? resolveBenchOutputDir\(\)/);
   assert.match(source, /compareResults\(\s*baseline,\s*candidate,\s*parsed\.threshold \?\? 0\.05/s);
   assert.match(source, /benchmark mismatch: \$\{baseline\.meta\.benchmark\} vs \$\{candidate\.meta\.benchmark\}/);
-  assert.match(parserSource, /export type BenchAction = "help" \| "list" \| "run" \| "compare" \| "check" \| "report";/);
+  assert.match(parserSource, /export type BenchAction =[\s\S]*"results"[\s\S]*"baseline"[\s\S]*"export"[\s\S]*"check"[\s\S]*"report";/);
   assert.match(parserSource, /const resultsDir = readBenchOptionValue\(args, "--results-dir"\);/);
   assert.match(parserSource, /const thresholdRaw = readBenchOptionValue\(args, "--threshold"\);/);
   assert.match(parserSource, /ERROR: --threshold must be a non-negative number\./);
   assert.match(parserSource, /resultsDir: resultsDir \? path\.resolve\(expandTilde\(resultsDir\)\) : undefined/);
   assert.match(parserSource, /threshold,/);
+});
+
+test("bench results, baseline, and export route through the stored package results helpers", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
+
+  assert.match(source, /defaultBenchmarkBaselineDir,/);
+  assert.match(source, /listBenchmarkBaselines,/);
+  assert.match(source, /loadBenchmarkBaseline,/);
+  assert.match(source, /listBenchmarkResults,/);
+  assert.match(source, /renderBenchmarkResultExport,/);
+  assert.match(source, /saveBenchmarkBaseline,/);
+  assert.match(source, /async function showBenchPackageResults\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /async function manageBenchBaselines\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /async function exportBenchPackageResult\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /if \(parsed\.action === "results"\) \{\s*await showBenchPackageResults\(parsed\);/s);
+  assert.match(source, /if \(parsed\.action === "baseline"\) \{\s*await manageBenchBaselines\(parsed\);/s);
+  assert.match(source, /if \(parsed\.action === "export"\) \{\s*await exportBenchPackageResult\(parsed\);/s);
+  assert.match(source, /baseline save <name> \[run\]/);
+  assert.match(source, /bench export <run> --format <json\|csv>/);
+  assert.match(source, /const baselineDir = parsed\.baselinesDir \?\? resolveBenchBaselineDir\(\)/);
+  assert.match(source, /const rendered = renderBenchmarkResultExport\(result, parsed\.format\);/);
+  assert.match(source, /printBenchPackageSummary\(result, summary\.path, "Stored result"\);/);
+  assert.match(parserSource, /export type BenchBaselineAction = "save" \| "list";/);
+  assert.match(parserSource, /export type BenchExportFormat = "json" \| "csv";/);
+  assert.match(parserSource, /const baselinesDir = readBenchOptionValue\(args, "--baselines-dir"\);/);
+  assert.match(parserSource, /const formatRaw = readBenchOptionValue\(args, "--format"\);/);
+  assert.match(parserSource, /const output = readBenchOptionValue\(args, "--output"\);/);
+  assert.match(parserSource, /detail: args\.includes\("--detail"\),/);
+  assert.match(parserSource, /baselinesDir: baselinesDir \? path\.resolve\(expandTilde\(baselinesDir\)\) : undefined/);
+  assert.match(parserSource, /output: output \? path\.resolve\(expandTilde\(output\)\) : undefined/);
 });
 
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {
@@ -157,6 +189,47 @@ test("parseBenchArgs supports compare-specific results-dir and threshold options
   assert.deepEqual(parsed.benchmarks, ["base-run", "candidate-run"]);
   assert.match(parsed.resultsDir ?? "", /bench-results$/);
   assert.equal(parsed.threshold, 0.2);
+});
+
+test("parseBenchArgs supports results, baseline, and export surfaces", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const resultsArgs = parseBenchArgs([
+    "results",
+    "candidate-run",
+    "--detail",
+    "--results-dir",
+    "~/bench-results",
+  ]);
+  assert.equal(resultsArgs.action, "results");
+  assert.deepEqual(resultsArgs.benchmarks, ["candidate-run"]);
+  assert.equal(resultsArgs.detail, true);
+  assert.match(resultsArgs.resultsDir ?? "", /bench-results$/);
+
+  const baselineArgs = parseBenchArgs([
+    "baseline",
+    "save",
+    "main",
+    "candidate-run",
+    "--baselines-dir",
+    "~/bench-baselines",
+  ]);
+  assert.equal(baselineArgs.action, "baseline");
+  assert.equal(baselineArgs.baselineAction, "save");
+  assert.deepEqual(baselineArgs.benchmarks, ["main", "candidate-run"]);
+  assert.match(baselineArgs.baselinesDir ?? "", /bench-baselines$/);
+
+  const exportArgs = parseBenchArgs([
+    "export",
+    "candidate-run",
+    "--format",
+    "csv",
+    "--output",
+    "./candidate.csv",
+  ]);
+  assert.equal(exportArgs.action, "export");
+  assert.equal(exportArgs.format, "csv");
+  assert.match(exportArgs.output ?? "", /candidate\.csv$/);
 });
 
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
