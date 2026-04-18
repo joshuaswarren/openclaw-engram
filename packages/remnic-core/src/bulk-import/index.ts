@@ -1,0 +1,31 @@
+// ---------------------------------------------------------------------------
+// Bulk-import — public surface
+// ---------------------------------------------------------------------------
+
+export {
+  type BulkImportSource,
+  type ImportTurn,
+  type BulkImportOptions,
+  type ImportSourceRole,
+  type BulkImportResult,
+  type BulkImportError,
+  type BulkImportSourceAdapter,
+  type ImportTurnValidationIssue,
+  isImportRole,
+  parseIsoTimestamp,
+  validateImportTurn,
+} from "./types.js";
+
+export {
+  registerBulkImportSource,
+  getBulkImportSource,
+  listBulkImportSources,
+  clearBulkImportSources,
+} from "./registry.js";
+
+export {
+  runBulkImportPipeline,
+  formatBatchTranscript,
+  type ProcessBatchFn,
+  type ProcessBatchResult,
+} from "./pipeline.js";

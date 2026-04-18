@@ -543,6 +543,31 @@ export {
 } from "./enrichment/index.js";
 
 // ---------------------------------------------------------------------------
+// Bulk-import pipeline (#460)
+// ---------------------------------------------------------------------------
+
+export {
+  type BulkImportSource,
+  type ImportTurn,
+  type BulkImportOptions,
+  type ImportSourceRole,
+  type BulkImportResult,
+  type BulkImportError,
+  type BulkImportSourceAdapter,
+  type ImportTurnValidationIssue,
+  isImportRole,
+  validateImportTurn,
+  registerBulkImportSource,
+  getBulkImportSource,
+  listBulkImportSources,
+  clearBulkImportSources,
+  runBulkImportPipeline,
+  formatBatchTranscript,
+  type ProcessBatchFn,
+  type ProcessBatchResult,
+} from "./bulk-import/index.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
