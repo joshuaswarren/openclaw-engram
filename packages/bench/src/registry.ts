@@ -39,6 +39,18 @@ import {
   memoryAgentBenchDefinition,
   runMemoryAgentBenchBenchmark,
 } from "./benchmarks/published/memoryagentbench/runner.js";
+import {
+  taxonomyAccuracyDefinition,
+  runTaxonomyAccuracyBenchmark,
+} from "./benchmarks/remnic/taxonomy-accuracy/runner.js";
+import {
+  extractionJudgeCalibrationDefinition,
+  runExtractionJudgeCalibrationBenchmark,
+} from "./benchmarks/remnic/extraction-judge-calibration/runner.js";
+import {
+  enrichmentFidelityDefinition,
+  runEnrichmentFidelityBenchmark,
+} from "./benchmarks/remnic/enrichment-fidelity/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -80,6 +92,18 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...memoryAgentBenchDefinition,
     run: runMemoryAgentBenchBenchmark,
+  },
+  {
+    ...taxonomyAccuracyDefinition,
+    run: runTaxonomyAccuracyBenchmark,
+  },
+  {
+    ...extractionJudgeCalibrationDefinition,
+    run: runExtractionJudgeCalibrationBenchmark,
+  },
+  {
+    ...enrichmentFidelityDefinition,
+    run: runEnrichmentFidelityBenchmark,
   },
 ];
 

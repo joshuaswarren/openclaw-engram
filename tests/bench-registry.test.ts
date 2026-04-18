@@ -6,7 +6,7 @@ import {
   listBenchmarks,
 } from "../packages/bench/src/index.js";
 
-test("listBenchmarks exposes the published benchmark catalog from @remnic/bench", () => {
+test("listBenchmarks exposes the published and remnic benchmark catalog from @remnic/bench", () => {
   const benchmarks = listBenchmarks();
 
   assert.deepEqual(
@@ -21,12 +21,31 @@ test("listBenchmarks exposes the published benchmark catalog from @remnic/bench"
       "personamem",
       "membench",
       "memoryagentbench",
+      "taxonomy-accuracy",
+      "extraction-judge-calibration",
+      "enrichment-fidelity",
     ],
   );
-  assert.ok(benchmarks.every((benchmark) => benchmark.tier === "published"));
+  assert.deepEqual(
+    benchmarks.map((benchmark) => benchmark.tier),
+    [
+      "published",
+      "published",
+      "published",
+      "published",
+      "published",
+      "published",
+      "published",
+      "published",
+      "published",
+      "remnic",
+      "remnic",
+      "remnic",
+    ],
+  );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity",
   );
 });
 
@@ -116,6 +135,39 @@ test("getBenchmark returns membench metadata with a runnable benchmark entry", (
   assert.equal(benchmark?.id, "membench");
   assert.equal(benchmark?.status, "ready");
   assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.meta.category, "retrieval");
+});
+
+test("getBenchmark returns taxonomy-accuracy metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("taxonomy-accuracy");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "taxonomy-accuracy");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "retrieval");
+});
+
+test("getBenchmark returns extraction-judge-calibration metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("extraction-judge-calibration");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "extraction-judge-calibration");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "retrieval");
+});
+
+test("getBenchmark returns enrichment-fidelity metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("enrichment-fidelity");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "enrichment-fidelity");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
   assert.equal(benchmark?.meta.category, "retrieval");
 });
 
