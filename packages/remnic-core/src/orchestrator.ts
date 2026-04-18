@@ -1178,6 +1178,14 @@ export class Orchestrator {
    * reflect reality should `await orchestrator.deferredReady` after
    * `initialize()`. Gateway callers can ignore it — recall() degrades
    * gracefully when QMD isn't ready yet.
+   *
+   * Also resolves (without error) when `initialize()` throws before reaching
+   * the deferred-init phase, so callers never hang on a permanently-pending
+   * promise.
+   *
+   * Host adapters that need to tie deferred init to their stop() lifecycle
+   * should `await orchestrator.deferredReady` before proceeding with teardown
+   * to prevent background QMD/warmup/cron tasks from racing with shutdown.
    */
   deferredReady: Promise<void> = Promise.resolve();
   private resolveDeferredReady: (() => void) | null = null;
@@ -1709,106 +1717,117 @@ export class Orchestrator {
   }
 
   async initialize(): Promise<void> {
-    await migrateFromEngram({
-      quiet: true,
-      logger: (message) => log.info(message),
-    });
-    await this.storage.ensureDirectories();
-    await this.storage.loadAliases();
-    if (this.config.namespacesEnabled) {
-      const namespaces = new Set<string>([
-        this.config.defaultNamespace,
-        this.config.sharedNamespace,
-        ...this.config.namespacePolicies.map((p) => p.name),
-      ]);
-      for (const ns of namespaces) {
-        const sm = await this.storageRouter.storageFor(ns);
-        await sm.ensureDirectories();
-        await sm.loadAliases().catch(() => undefined);
-      }
-    }
-    await this.relevance.load();
-    await this.negatives.load();
-    await this.lastRecall.load();
-    await this.tierMigrationStatus.load();
-    await this.sessionObserver.load();
-    this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
-    this.utilityRuntimeValues = await loadUtilityRuntimeValues({
-      memoryDir: this.config.memoryDir,
-      memoryUtilityLearningEnabled: this.config.memoryUtilityLearningEnabled,
-      promotionByOutcomeEnabled: this.config.promotionByOutcomeEnabled,
-    });
-
-    // Initialize content-hash dedup index
-    if (this.config.factDeduplicationEnabled) {
-      const stateDir = path.join(this.config.memoryDir, "state");
-      this.contentHashIndex = new ContentHashIndex(stateDir);
-      await this.contentHashIndex.load();
-      log.info(
-        `content-hash dedup: loaded ${this.contentHashIndex.size} hashes`,
-      );
-    }
-    await this.transcript.initialize();
-    await this.summarizer.initialize();
-    if (this.sharedContext) {
-      await this.sharedContext.ensureStructure();
-    }
-    if (this.compounding) {
-      await this.compounding.ensureDirs();
-    }
-
-    // Buffer and compaction cleanup are fast and needed for basic operation —
-    // load them before the init gate so turn buffering works immediately.
     try {
-      await this.buffer.load();
-    } catch (bufErr) {
-      log.error(
-        `buffer.load() failed (init gate will still open): ${bufErr}`,
-      );
-    }
-    if (this.config.compactionResetEnabled) {
-      try {
-        const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
-        const files = await readdir(wsDir).catch(() => [] as string[]);
-        for (const f of files) {
-          if (!f.startsWith(".compaction-reset-signal-")) continue;
-          const fp = path.join(wsDir, f);
-          const s = await stat(fp).catch(() => null);
-          if (s && Date.now() - s.mtimeMs >= COMPACTION_SIGNAL_MAX_AGE_MS) {
-            await unlink(fp).catch(() => {});
-            log.debug(`initialize: removed stale compaction signal ${f}`);
-          }
-        }
-      } catch (err) {
-        log.debug("initialize: stale signal sweep failed:", err);
-      }
-    }
-
-    // Open the init gate — essential state (storage, aliases, relevance,
-    // transcript, summarizer, buffer) is loaded. QMD probe, collection setup,
-    // warmup, and remaining heavy operations run in the background after this
-    // point. recall() already degrades gracefully when QMD isn't ready (falls
-    // back to non-search retrieval), so there's no correctness risk.
-    if (this.resolveInit) {
-      this.resolveInit();
-      this.resolveInit = null;
-      log.info("init gate opened (essential state loaded)");
-    }
-
-    // Deferred init: QMD, warmup, conversation index, caches, cron.
-    // Runs in background so gateway_start returns fast. On low-power hardware
-    // (Umbrel, RPi) the QMD operations alone can take 30-60s and cause gateway
-    // restart loops when they block the startup path. See issue #462.
-    this.deferredInitialize()
-      .catch((err) => {
-        log.error(`deferred initialization failed (non-fatal): ${err}`);
-      })
-      .finally(() => {
-        if (this.resolveDeferredReady) {
-          this.resolveDeferredReady();
-          this.resolveDeferredReady = null;
-        }
+      await migrateFromEngram({
+        quiet: true,
+        logger: (message) => log.info(message),
       });
+      await this.storage.ensureDirectories();
+      await this.storage.loadAliases();
+      if (this.config.namespacesEnabled) {
+        const namespaces = new Set<string>([
+          this.config.defaultNamespace,
+          this.config.sharedNamespace,
+          ...this.config.namespacePolicies.map((p) => p.name),
+        ]);
+        for (const ns of namespaces) {
+          const sm = await this.storageRouter.storageFor(ns);
+          await sm.ensureDirectories();
+          await sm.loadAliases().catch(() => undefined);
+        }
+      }
+      await this.relevance.load();
+      await this.negatives.load();
+      await this.lastRecall.load();
+      await this.tierMigrationStatus.load();
+      await this.sessionObserver.load();
+      this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+      this.utilityRuntimeValues = await loadUtilityRuntimeValues({
+        memoryDir: this.config.memoryDir,
+        memoryUtilityLearningEnabled: this.config.memoryUtilityLearningEnabled,
+        promotionByOutcomeEnabled: this.config.promotionByOutcomeEnabled,
+      });
+
+      // Initialize content-hash dedup index
+      if (this.config.factDeduplicationEnabled) {
+        const stateDir = path.join(this.config.memoryDir, "state");
+        this.contentHashIndex = new ContentHashIndex(stateDir);
+        await this.contentHashIndex.load();
+        log.info(
+          `content-hash dedup: loaded ${this.contentHashIndex.size} hashes`,
+        );
+      }
+      await this.transcript.initialize();
+      await this.summarizer.initialize();
+      if (this.sharedContext) {
+        await this.sharedContext.ensureStructure();
+      }
+      if (this.compounding) {
+        await this.compounding.ensureDirs();
+      }
+
+      // Buffer and compaction cleanup are fast and needed for basic operation —
+      // load them before the init gate so turn buffering works immediately.
+      try {
+        await this.buffer.load();
+      } catch (bufErr) {
+        log.error(
+          `buffer.load() failed (init gate will still open): ${bufErr}`,
+        );
+      }
+      if (this.config.compactionResetEnabled) {
+        try {
+          const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
+          const files = await readdir(wsDir).catch(() => [] as string[]);
+          for (const f of files) {
+            if (!f.startsWith(".compaction-reset-signal-")) continue;
+            const fp = path.join(wsDir, f);
+            const s = await stat(fp).catch(() => null);
+            if (s && Date.now() - s.mtimeMs >= COMPACTION_SIGNAL_MAX_AGE_MS) {
+              await unlink(fp).catch(() => {});
+              log.debug(`initialize: removed stale compaction signal ${f}`);
+            }
+          }
+        } catch (err) {
+          log.debug("initialize: stale signal sweep failed:", err);
+        }
+      }
+
+      // Open the init gate — essential state (storage, aliases, relevance,
+      // transcript, summarizer, buffer) is loaded. QMD probe, collection setup,
+      // warmup, and remaining heavy operations run in the background after this
+      // point. recall() already degrades gracefully when QMD isn't ready (falls
+      // back to non-search retrieval), so there's no correctness risk.
+      if (this.resolveInit) {
+        this.resolveInit();
+        this.resolveInit = null;
+        log.info("init gate opened (essential state loaded)");
+      }
+
+      // Deferred init: QMD, warmup, conversation index, caches, cron.
+      // Runs in background so gateway_start returns fast. On low-power hardware
+      // (Umbrel, RPi) the QMD operations alone can take 30-60s and cause gateway
+      // restart loops when they block the startup path. See issue #462.
+      this.deferredInitialize()
+        .catch((err) => {
+          log.error(`deferred initialization failed (non-fatal): ${err}`);
+        })
+        .finally(() => {
+          if (this.resolveDeferredReady) {
+            this.resolveDeferredReady();
+            this.resolveDeferredReady = null;
+          }
+        });
+    } catch (err) {
+      // Resolve deferredReady so callers that `await orchestrator.deferredReady`
+      // after catching the initialize() error never hang on a permanently-pending
+      // promise. The deferred-init phase will not run, so resolve immediately.
+      if (this.resolveDeferredReady) {
+        this.resolveDeferredReady();
+        this.resolveDeferredReady = null;
+      }
+      throw err;
+    }
   }
 
   private async deferredInitialize(): Promise<void> {

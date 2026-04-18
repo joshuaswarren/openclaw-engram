@@ -3418,6 +3418,19 @@ const pluginDefinition = {
         // and skip all cleanup — including Opik — to avoid detaching a live exporter.
         if (!didCountStart) return;
         didCountStart = false;
+
+        // Wait for the deferred initialization (QMD probe, warmup, cron) to
+        // settle before tearing down. Without this, fire-and-forget tasks
+        // from deferredInitialize() continue after stop() completes and can
+        // race with a subsequent start() — duplicate cron registrations,
+        // background QMD updates after the service is marked stopped, etc.
+        // The promise always resolves (never rejects), so this is safe.
+        try {
+          await orchestrator.deferredReady;
+        } catch {
+          // deferredReady should never reject, but guard defensively.
+        }
+
         // Decrement the process-global active-service count.  When it reaches
         // zero, all Remnic services have stopped and it's safe to clear the CLI
         // guard so a subsequent reload cycle can re-register CLI commands.
