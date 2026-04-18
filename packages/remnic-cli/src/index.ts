@@ -301,8 +301,8 @@ Commands:
   baseline save <name> [run]
                            Save a stored run as a named baseline
   baseline list            List saved baselines
-  export <run> --format <json|csv>
-                           Export one stored run as JSON or aggregate-metrics CSV
+  export <run> --format <json|csv|html>
+                           Export one stored run as JSON, aggregate-metrics CSV, or static HTML
   ui                       Launch the local benchmark overview UI
   check                    Legacy latency regression gate (compatibility)
   report                   Legacy latency report generator (compatibility)
@@ -316,7 +316,7 @@ Options:
   --baselines-dir <path>   Override the named baseline directory
   --threshold <value>      Regression threshold for compare (default: 0.05)
   --detail                 Include per-task details for bench results
-  --format <json|csv>      Output format for bench export
+  --format <json|csv|html> Output format for bench export
   --output <path>          Write bench export output to a file
   --json                   Output JSON for \`list\`
 
@@ -330,6 +330,7 @@ Examples:
   remnic bench baseline save main candidate-run
   remnic bench baseline list
   remnic bench export candidate-run --format csv --output ./candidate.csv
+  remnic bench export candidate-run --format html --output ./report.html
   remnic bench run --custom ./my-bench.yaml
   remnic bench ui --results-dir ~/.remnic/bench/results
   remnic benchmark run --quick longmemeval`;
@@ -782,12 +783,12 @@ async function manageBenchBaselines(parsed: ParsedBenchArgs): Promise<void> {
 async function exportBenchPackageResult(parsed: ParsedBenchArgs): Promise<void> {
   if (parsed.benchmarks.length !== 1) {
     console.error(
-      "ERROR: export requires exactly one stored result reference. Usage: remnic bench export <run> --format <json|csv> [--output <path>] [--results-dir <path>]",
+      "ERROR: export requires exactly one stored result reference. Usage: remnic bench export <run> --format <json|csv|html> [--output <path>] [--results-dir <path>]",
     );
     process.exit(1);
   }
   if (!parsed.format) {
-    console.error('ERROR: export requires --format json or --format csv.');
+    console.error('ERROR: export requires --format json, csv, or html.');
     process.exit(1);
   }
 

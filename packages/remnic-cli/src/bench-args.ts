@@ -14,7 +14,7 @@ export type BenchAction =
   | "report";
 
 export type BenchBaselineAction = "save" | "list";
-export type BenchExportFormat = "json" | "csv";
+export type BenchExportFormat = "json" | "csv" | "html";
 
 export interface ParsedBenchArgs {
   action: BenchAction;
@@ -127,8 +127,8 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
 
   let format: BenchExportFormat | undefined;
   if (formatRaw !== undefined) {
-    if (formatRaw !== "json" && formatRaw !== "csv") {
-      throw new Error('ERROR: --format must be "json" or "csv".');
+    if (formatRaw !== "json" && formatRaw !== "csv" && formatRaw !== "html") {
+      throw new Error('ERROR: --format must be "json", "csv", or "html".');
     }
     format = formatRaw;
   }

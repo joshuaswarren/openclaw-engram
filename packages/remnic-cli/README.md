@@ -52,6 +52,7 @@ remnic bench list
 remnic bench run --quick longmemeval
 remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
 remnic bench compare base-run candidate-run
+remnic bench export candidate-run --format html --output ./report.html
 remnic benchmark run --quick longmemeval
 ```
 

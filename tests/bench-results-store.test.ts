@@ -258,8 +258,26 @@ test("renderBenchmarkResultExport returns JSON and aggregate-metric CSV represen
 
   const json = renderBenchmarkResultExport(result, "json");
   const csv = renderBenchmarkResultExport(result, "csv");
+  const html = renderBenchmarkResultExport(result, "html");
 
   assert.match(json, /"candidate-run"/);
   assert.match(csv, /^result_id,benchmark,timestamp,mode,metric,mean,median,std_dev,min,max$/m);
   assert.match(csv, /candidate-run,longmemeval,2026-04-18T07:00:00.000Z,full,answerAccuracy,0.8,0.8,0.1,0.6,0.9/);
+  assert.match(html, /<!doctype html>/i);
+  assert.match(html, /<title>Remnic Bench Report: longmemeval<\/title>/);
+  assert.match(html, /candidate-run/);
+  assert.match(html, /answerAccuracy/);
+  assert.match(html, /Aggregate Metrics/);
+  assert.match(html, /Task Count/);
+});
+
+test("renderBenchmarkResultExport handles older results without seed metadata", () => {
+  const result = buildResult("older-run", "2026-04-18T08:00:00.000Z");
+  delete (result.meta as { seeds?: number[] }).seeds;
+
+  const html = renderBenchmarkResultExport(result, "html");
+
+  assert.match(html, /Older-run|older-run/i);
+  assert.match(html, /Seeds/);
+  assert.match(html, /Unknown/);
 });

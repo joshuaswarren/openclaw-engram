@@ -32,7 +32,7 @@ export interface StoredBenchmarkBaselineSummary {
   mode: BenchmarkMode;
 }
 
-export type BenchmarkExportFormat = "json" | "csv";
+export type BenchmarkExportFormat = "json" | "csv" | "html";
 
 const BASELINE_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
@@ -301,12 +301,205 @@ function csvEscape(value: string | number): string {
   return text;
 }
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll(`"`, "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function renderHtmlKeyValueRows(entries: Array<[string, string | number]>): string {
+  return entries.map(([label, value]) => `        <tr><th>${escapeHtml(label)}</th><td>${escapeHtml(String(value))}</td></tr>`).join("\n");
+}
+
+function renderBenchmarkResultHtml(result: BenchmarkResult): string {
+  const seeds = Array.isArray(result.meta.seeds)
+    ? result.meta.seeds.join(", ")
+    : "Unknown";
+  const aggregateRows = Object.keys(result.results.aggregates)
+    .sort()
+    .map((metric) => {
+      const aggregate = result.results.aggregates[metric]!;
+      return `          <tr><th>${escapeHtml(metric)}</th><td>${escapeHtml(String(aggregate.mean))}</td><td>${escapeHtml(String(aggregate.median))}</td><td>${escapeHtml(String(aggregate.stdDev))}</td><td>${escapeHtml(String(aggregate.min))}</td><td>${escapeHtml(String(aggregate.max))}</td></tr>`;
+    })
+    .join("\n");
+
+  const statisticsBlock = result.results.statistics
+    ? `\n    <section>\n      <h2>Statistics</h2>\n      <pre>${escapeHtml(JSON.stringify(result.results.statistics, null, 2))}</pre>\n    </section>`
+    : "";
+
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Remnic Bench Report: ${escapeHtml(result.meta.benchmark)}</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: #f5f7fb;
+        color: #18202a;
+      }
+      main {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+      header {
+        margin-bottom: 24px;
+      }
+      h1, h2 {
+        margin: 0 0 12px;
+      }
+      p {
+        margin: 0;
+        line-height: 1.5;
+      }
+      section {
+        background: #ffffff;
+        border: 1px solid #d8dee8;
+        border-radius: 12px;
+        padding: 20px;
+        margin-top: 16px;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th, td {
+        text-align: left;
+        padding: 10px 12px;
+        border-top: 1px solid #e5eaf1;
+        vertical-align: top;
+      }
+      thead th {
+        border-top: none;
+        font-size: 0.85rem;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: #526173;
+      }
+      tbody th {
+        width: 30%;
+      }
+      pre {
+        margin: 0;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        background: #f5f7fb;
+        border-radius: 10px;
+        padding: 14px;
+        border: 1px solid #e5eaf1;
+      }
+      .muted {
+        color: #526173;
+        margin-top: 6px;
+      }
+      .empty {
+        color: #526173;
+        font-style: italic;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Remnic Bench Report</h1>
+        <p>${escapeHtml(result.meta.benchmark)} · ${escapeHtml(result.meta.id)}</p>
+        <p class="muted">Generated from a stored benchmark result export.</p>
+      </header>
+      <section>
+        <h2>Run Summary</h2>
+        <table>
+          <tbody>
+${renderHtmlKeyValueRows([
+  ["Result ID", result.meta.id],
+  ["Benchmark", result.meta.benchmark],
+  ["Benchmark Tier", result.meta.benchmarkTier],
+  ["Timestamp", result.meta.timestamp],
+  ["Mode", result.meta.mode],
+  ["Run Count", result.meta.runCount],
+  ["Task Count", result.results.tasks.length],
+  ["Remnic Version", result.meta.remnicVersion],
+  ["Benchmark Version", result.meta.version],
+  ["Git SHA", result.meta.gitSha],
+  ["Seeds", seeds],
+])}
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>Aggregate Metrics</h2>
+${aggregateRows.length > 0
+    ? `        <table>\n          <thead>\n            <tr><th>Metric</th><th>Mean</th><th>Median</th><th>Std Dev</th><th>Min</th><th>Max</th></tr>\n          </thead>\n          <tbody>\n${aggregateRows}\n          </tbody>\n        </table>`
+    : '        <p class="empty">No aggregate metrics recorded for this run.</p>'}
+      </section>
+      <section>
+        <h2>Cost</h2>
+        <table>
+          <tbody>
+${renderHtmlKeyValueRows([
+  ["Total Tokens", result.cost.totalTokens],
+  ["Input Tokens", result.cost.inputTokens],
+  ["Output Tokens", result.cost.outputTokens],
+  ["Estimated Cost (USD)", result.cost.estimatedCostUsd],
+  ["Total Latency (ms)", result.cost.totalLatencyMs],
+  ["Mean Query Latency (ms)", result.cost.meanQueryLatencyMs],
+])}
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>Environment</h2>
+        <table>
+          <tbody>
+${renderHtmlKeyValueRows([
+  ["OS", result.environment.os],
+  ["Node Version", result.environment.nodeVersion],
+  ["Hardware", result.environment.hardware ?? "Unknown"],
+])}
+          </tbody>
+        </table>
+      </section>
+      <section>
+        <h2>Configuration</h2>
+        <table>
+          <tbody>
+${renderHtmlKeyValueRows([
+  ["Adapter Mode", result.config.adapterMode],
+])}
+          </tbody>
+        </table>
+        <pre>${escapeHtml(JSON.stringify({
+    systemProvider: result.config.systemProvider,
+    judgeProvider: result.config.judgeProvider,
+    remnicConfig: result.config.remnicConfig,
+  }, null, 2))}</pre>
+      </section>${statisticsBlock}
+    </main>
+  </body>
+</html>
+`;
+}
+
 export function renderBenchmarkResultExport(
   result: BenchmarkResult,
   format: BenchmarkExportFormat,
 ): string {
   if (format === "json") {
     return `${JSON.stringify(result, null, 2)}\n`;
+  }
+
+  if (format === "html") {
+    return renderBenchmarkResultHtml(result);
   }
 
   const rows = [
