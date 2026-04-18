@@ -3513,6 +3513,23 @@ const pluginDefinition = {
           // in the gateway's registry; clearing GUARD here would allow a
           // subsequent register() to register CLI again, duplicating commands
           // on top of the still-live registration (thread PRRT_kwDORJXyws5159Kz).
+
+          // Check if a secondary already completed init during the deferredReady
+          // await above.  Without this, the stop-during-init path bypasses the
+          // full-stop takeover check (gated by !currentInitPromise) and proceeds
+          // to await currentInitPromise / shared teardown with secondaryTookOver
+          // still false — tearing down a live secondary's resources.
+          // We detect takeover the same way as the full-stop path: if
+          // INIT_PROMISE changed (a new secondary entered start()) or if
+          // SERVICE_STARTED is set by someone other than our own init (which
+          // aborted via didCountStart=false), a secondary is live.
+          if (
+            (globalThis as any)[keys.INIT_PROMISE] &&
+            (globalThis as any)[keys.INIT_PROMISE] !== currentInitPromise
+          ) {
+            secondaryTookOver = true;
+          }
+
           //
           // Await the in-flight init (didCountStart=false signals it to abort at
           // its next checkpoint). Ignore errors — we only care about settlement.
