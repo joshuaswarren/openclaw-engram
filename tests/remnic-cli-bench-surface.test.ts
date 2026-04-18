@@ -5,7 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 test("remnic CLI source wires the new bench command and keeps benchmark as an alias", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
@@ -222,16 +222,11 @@ test("parseBenchArgs preserves unexpected trailing providers args for CLI valida
 
 test("bench providers discover rejects unexpected trailing positional args", () => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
-  const tsxBin = join(__dirname, "../node_modules/.bin/tsx");
-  const cliEntry = pathToFileURL(join(__dirname, "../packages/remnic-cli/src/index.ts")).href;
+  const nodeBin = process.execPath;
+  const helperPath = join(__dirname, "../scripts/run-bench-cli.mjs");
   const isolatedHome = mkdtempSync(join(tmpdir(), "remnic-bench-providers-"));
-  const script = `
-import { main } from ${JSON.stringify(cliEntry)};
-await main(["bench", "providers", "discover", "foo"]);
-`;
 
-  const result = spawnSync(tsxBin, ["--input-type=module"], {
-    input: script,
+  const result = spawnSync(nodeBin, [helperPath, "providers", "discover", "foo"], {
     encoding: "utf8",
     timeout: 20_000,
     cwd: join(__dirname, ".."),
