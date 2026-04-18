@@ -1,0 +1,251 @@
+// ---------------------------------------------------------------------------
+// Tests — WeClone export parser
+// ---------------------------------------------------------------------------
+
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import { parseWeCloneExport } from "./parser.js";
+
+// ---------------------------------------------------------------------------
+// Helpers — synthetic test data (no real conversations)
+// ---------------------------------------------------------------------------
+
+function makeMsg(
+  sender: string,
+  text: string,
+  timestamp: string,
+  extra?: { reply_to_id?: string; message_id?: string },
+) {
+  return { sender, text, timestamp, ...extra };
+}
+
+const T1 = "2025-01-10T08:00:00.000Z";
+const T2 = "2025-01-10T08:05:00.000Z";
+const T3 = "2025-01-10T08:10:00.000Z";
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+describe("parseWeCloneExport", () => {
+  it("parses a valid Telegram export with messages array", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "hello", T1),
+        makeMsg("Bob", "hey there", T2),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns.length, 2);
+    assert.equal(result.metadata.source, "weclone-telegram");
+    assert.equal(result.metadata.messageCount, 2);
+  });
+
+  it("parses export with platform field from options", () => {
+    const input = {
+      messages: [
+        makeMsg("Alice", "hi", T1),
+      ],
+    };
+    const result = parseWeCloneExport(input, { platform: "whatsapp" });
+    assert.equal(result.metadata.source, "weclone-whatsapp");
+  });
+
+  it("parses a raw array of messages (no wrapper object)", () => {
+    const input = [
+      makeMsg("Alice", "one", T1),
+      makeMsg("Bob", "two", T2),
+    ];
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns.length, 2);
+    // Default platform is telegram when not specified
+    assert.equal(result.metadata.source, "weclone-telegram");
+  });
+
+  it("maps first sender as 'user' role by default", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "question", T1),
+        makeMsg("Bob", "answer", T2),
+        makeMsg("Alice", "thanks", T3),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns[0].role, "user");
+    assert.equal(result.turns[1].role, "other");
+    assert.equal(result.turns[2].role, "user");
+  });
+
+  it("maps bot-like sender names to 'assistant' role", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "hello", T1),
+        makeMsg("ChatGPT Bot", "how can I help?", T2),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns[0].role, "user");
+    assert.equal(result.turns[1].role, "assistant");
+  });
+
+  it("respects selfSender option for role assignment", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "first", T1),
+        makeMsg("Bob", "second", T2),
+      ],
+    };
+    const result = parseWeCloneExport(input, { selfSender: "Bob" });
+    assert.equal(result.turns[0].role, "other");
+    assert.equal(result.turns[1].role, "user");
+  });
+
+  it("respects assistantSenders option", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "hello", T1),
+        makeMsg("MyCustomBot", "hi there", T2),
+      ],
+    };
+    const result = parseWeCloneExport(input, {
+      assistantSenders: ["MyCustomBot"],
+    });
+    assert.equal(result.turns[1].role, "assistant");
+  });
+
+  it("maps reply_to_id to replyToId", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "question", T1, { message_id: "m1" }),
+        makeMsg("Bob", "reply", T2, { reply_to_id: "m1" }),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns[0].replyToId, undefined);
+    assert.equal(result.turns[1].replyToId, "m1");
+  });
+
+  it("builds metadata with correct date range", () => {
+    const input = {
+      platform: "discord",
+      messages: [
+        makeMsg("Alice", "early", T1),
+        makeMsg("Bob", "mid", T2),
+        makeMsg("Alice", "late", T3),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.metadata.dateRange.from, T1);
+    assert.equal(result.metadata.dateRange.to, T3);
+    assert.equal(result.metadata.messageCount, 3);
+  });
+
+  it("uses export_date from the export object", () => {
+    const exportDate = "2025-02-01T00:00:00.000Z";
+    const input = {
+      platform: "telegram",
+      export_date: exportDate,
+      messages: [makeMsg("Alice", "hi", T1)],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.metadata.exportDate, exportDate);
+  });
+
+  it("rejects empty messages array", () => {
+    assert.throws(
+      () => parseWeCloneExport({ messages: [] }),
+      /messages array must not be empty/,
+    );
+  });
+
+  it("rejects non-object input", () => {
+    assert.throws(
+      () => parseWeCloneExport(null),
+      /input must be a non-null object/,
+    );
+    assert.throws(
+      () => parseWeCloneExport("string"),
+      /input must be a non-null object/,
+    );
+    assert.throws(
+      () => parseWeCloneExport(42),
+      /input must be a non-null object/,
+    );
+  });
+
+  it("rejects input without messages property", () => {
+    assert.throws(
+      () => parseWeCloneExport({ foo: "bar" }),
+      /must have a 'messages' array/,
+    );
+  });
+
+  it("skips invalid messages in non-strict mode", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "valid", T1),
+        { sender: "", text: "missing sender", timestamp: T2 },
+        makeMsg("Alice", "also valid", T3),
+      ],
+    };
+    const result = parseWeCloneExport(input, { strict: false });
+    assert.equal(result.turns.length, 2);
+    assert.equal(result.turns[0].content, "valid");
+    assert.equal(result.turns[1].content, "also valid");
+  });
+
+  it("throws on invalid messages in strict mode", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "valid", T1),
+        { sender: "", text: "missing sender", timestamp: T2 },
+      ],
+    };
+    assert.throws(
+      () => parseWeCloneExport(input, { strict: true }),
+      /invalid/,
+    );
+  });
+
+  it("throws on invalid timestamp in strict mode", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "hello", "not-a-date"),
+      ],
+    };
+    assert.throws(
+      () => parseWeCloneExport(input, { strict: true }),
+      /failed validation/,
+    );
+  });
+
+  it("rejects invalid platform in options", () => {
+    const input = { messages: [makeMsg("Alice", "hi", T1)] };
+    assert.throws(
+      () =>
+        parseWeCloneExport(input, {
+          platform: "invalid" as "telegram",
+        }),
+      /invalid platform/,
+    );
+  });
+
+  it("sets participantId and participantName from sender", () => {
+    const input = {
+      platform: "telegram",
+      messages: [makeMsg("Alice", "hello", T1)],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns[0].participantId, "Alice");
+    assert.equal(result.turns[0].participantName, "Alice");
+  });
+});
