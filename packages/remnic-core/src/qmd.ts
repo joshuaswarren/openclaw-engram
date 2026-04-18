@@ -657,7 +657,7 @@ class QmdDaemonSession {
   }
 }
 
-const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(\S+)\s+-\s+(.*)$/;
+const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(.+?)\s+-\s+(.*)$/;
 
 function parseQmdMarkdownResultText(
   text: string,
@@ -717,9 +717,13 @@ function parseMcpSearchResult(
           const textResults = parsed?.results ?? parsed?.documents;
           if (Array.isArray(textResults)) pushDocs(textResults);
         } catch {
+          const existingDocids = new Set(results.map((r) => r.docid));
           const parsed = parseQmdMarkdownResultText(item.text, transport);
-          if (parsed.length > 0) {
-            results.push(...parsed);
+          for (const p of parsed) {
+            if (!existingDocids.has(p.docid)) {
+              results.push(p);
+              existingDocids.add(p.docid);
+            }
           }
         }
       }

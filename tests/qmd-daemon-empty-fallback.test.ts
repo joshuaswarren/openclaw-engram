@@ -274,6 +274,81 @@ test("daemon parses QMD v2 markdown results with uppercase hex docids", async ()
   assert.equal(out[1]?.path, "openclaw-engram-hot-facts/namespaces/work/2026-03-01/mixed-2.md");
 });
 
+test("daemon parses QMD v2 markdown results with paths containing spaces", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 2 results for "spaced path test":',
+            "",
+            "#aa1122 85% openclaw-engram-hot-facts/2026-04-12/my folder/preference-1.md - Preference with spaces",
+            "#bb3344 60% openclaw-engram-hot-facts/2026-03-01/some path with spaces/work-2.md - Work item in spaced dir",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  const out = await client.search("spaced path test", undefined, 5);
+  assert.equal(out.length, 2);
+  assert.equal(out[0]?.docid, "aa1122");
+  assert.equal(out[0]?.score, 0.85);
+  assert.equal(out[0]?.path, "openclaw-engram-hot-facts/2026-04-12/my folder/preference-1.md");
+  assert.equal(out[1]?.docid, "bb3344");
+  assert.equal(out[1]?.score, 0.60);
+  assert.equal(out[1]?.path, "openclaw-engram-hot-facts/2026-03-01/some path with spaces/work-2.md");
+});
+
+test("parseMcpSearchResult deduplicates markdown fallback hits against structured results", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      // Structured results AND markdown text for the same query
+      structuredContent: {
+        results: [
+          {
+            docid: "ca5902",
+            file: "openclaw-engram-hot-facts/2026-04-12/preference-123.md",
+            snippet: "structured snippet",
+            score: 0.93,
+          },
+        ],
+      },
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 2 results for "dedup test":',
+            "",
+            // Duplicate of the structured result above
+            "#ca5902 93% openclaw-engram-hot-facts/2026-04-12/preference-123.md - User prefers dark mode",
+            // Unique result only in markdown
+            "#fbcb6e 50% openclaw-engram-hot-facts/2026-02-05/honcho-456.md - Honcho integration details",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  const out = await client.search("dedup test", undefined, 5);
+  // Should have 2 results: one from structured, one unique from markdown.
+  // The duplicate ca5902 from markdown should be skipped.
+  assert.equal(out.length, 2);
+  assert.equal(out[0]?.docid, "ca5902");
+  assert.equal(out[0]?.snippet, "structured snippet"); // from structured, not markdown
+  assert.equal(out[1]?.docid, "fbcb6e");
+  assert.equal(out[1]?.score, 0.50);
+});
+
 test("probe attempts daemon connectivity even when CLI probe fails", async () => {
   const client = new QmdClient("openclaw-engram", 5, { daemonUrl: "http://127.0.0.1:9020" }) as any;
   let cliCalls = 0;
