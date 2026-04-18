@@ -4,6 +4,10 @@
 
 import type { BenchmarkDefinition, BenchmarkResult, ResolvedRunBenchmarkOptions } from "./types.js";
 import {
+  memoryArenaDefinition,
+  runMemoryArenaBenchmark,
+} from "./benchmarks/published/memory-arena/runner.js";
+import {
   longMemEvalDefinition,
   runLongMemEvalBenchmark,
 } from "./benchmarks/published/longmemeval/runner.js";
@@ -27,17 +31,8 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
     },
   },
   {
-    id: "memory-arena",
-    title: "MemoryArena",
-    tier: "published",
-    status: "planned",
-    runnerAvailable: false,
-    meta: {
-      name: "memory-arena",
-      version: "1.0.0",
-      description: "Interdependent multi-session task benchmark.",
-      category: "agentic",
-    },
+    ...memoryArenaDefinition,
+    run: runMemoryArenaBenchmark,
   },
   {
     id: "amemgym",
