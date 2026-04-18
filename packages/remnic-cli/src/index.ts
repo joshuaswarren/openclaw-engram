@@ -462,6 +462,7 @@ async function launchBenchUi(resultsDir: string): Promise<void> {
   const child = childProcess.spawn(pnpmCmd, ["exec", "vite", "--host", "127.0.0.1"], {
     cwd: benchUiDir,
     stdio: "inherit",
+    shell: process.platform === "win32",
     env: {
       ...process.env,
       REMNIC_BENCH_RESULTS_DIR: resultsDir,

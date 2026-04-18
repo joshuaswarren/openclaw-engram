@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -122,6 +122,20 @@ test("getBenchmarkCards keeps delta null when a benchmark has only one run", () 
   assert.equal(cards.length, 1);
   assert.equal(cards[0]?.previous, null);
   assert.equal(cards[0]?.delta, null);
+});
+
+test("benchmark detail renders single-run task deltas as null", async () => {
+  const source = await readFile("packages/bench-ui/src/pages/BenchmarkDetail.tsx", "utf8");
+
+  assert.match(source, /delta:\s*null,/);
+});
+
+test("compare view guards against cross-benchmark run pairs", async () => {
+  const source = await readFile("packages/bench-ui/src/pages/Compare.tsx", "utf8");
+
+  assert.match(source, /summary\.benchmark === baselineSummary\.benchmark/);
+  assert.match(source, /baselineSummary\.benchmark === candidateSummary\.benchmark/);
+  assert.match(source, /setCandidateId\(""\)/);
 });
 
 test("buildProviderRows keeps the newest benchmark score for each provider", () => {

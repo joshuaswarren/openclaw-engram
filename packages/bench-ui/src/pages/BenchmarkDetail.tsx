@@ -36,7 +36,7 @@ export function BenchmarkDetail({ payload }: { payload: BenchResultSummaryPayloa
     taskId: task.taskId,
     baseline: null,
     candidate: task.primaryScore,
-    delta: task.primaryScore,
+    delta: null,
     question: task.question,
     latencyMs: task.latencyMs,
   }));

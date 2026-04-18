@@ -32,6 +32,10 @@ export function TrendChart({ points }: { points: TrendPoint[] }) {
   const width = 720;
   const height = 220;
   const path = pathForPoints(points, width, height);
+  const scores = points.map((point) => point.score);
+  const max = Math.max(...scores);
+  const min = Math.min(...scores);
+  const span = max === min ? 1 : max - min;
 
   return (
     <section className="panel trend-chart">
@@ -55,10 +59,6 @@ export function TrendChart({ points }: { points: TrendPoint[] }) {
         <path d={path} fill="none" stroke="url(#trendStroke)" strokeWidth="4" />
         {points.map((point, index) => {
           const x = (index / Math.max(points.length - 1, 1)) * width;
-          const values = points.map((entry) => entry.score);
-          const max = Math.max(...values);
-          const min = Math.min(...values);
-          const span = max === min ? 1 : max - min;
           const normalized = (point.score - min) / span;
           const y = height - normalized * height;
 

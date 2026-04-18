@@ -1,3 +1,5 @@
+import { compareMetricNames, compareStrings } from "./sort-utils";
+
 export interface BenchMetricHighlight {
   name: string;
   mean: number;
@@ -133,40 +135,12 @@ export interface ProviderRow {
   benchmarkScores: Record<string, number | null>;
 }
 
-const metricPriority = [
-  "score",
-  "accuracy",
-  "f1",
-  "exact_match",
-  "llm_judge",
-  "semantic_similarity",
-  "precision",
-  "recall",
-];
-
-function compareStrings(left: string, right: string): number {
-  return left.localeCompare(right);
-}
-
 function compareRuns(left: BenchResultSummary, right: BenchResultSummary): number {
   if (left.timestamp === right.timestamp) {
     return compareStrings(left.id, right.id);
   }
 
   return right.timestamp.localeCompare(left.timestamp);
-}
-
-function compareMetricNames(left: string, right: string): number {
-  const leftIndex = metricPriority.indexOf(left);
-  const rightIndex = metricPriority.indexOf(right);
-
-  if (leftIndex !== rightIndex) {
-    if (leftIndex === -1) return 1;
-    if (rightIndex === -1) return -1;
-    return leftIndex - rightIndex;
-  }
-
-  return compareStrings(left, right);
 }
 
 function latestTimestamp(runs: BenchResultSummary[]): number {

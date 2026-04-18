@@ -14,8 +14,31 @@ export function Compare({ payload }: { payload: BenchResultSummaryPayload }) {
     setCandidateId(defaults.candidateId ?? "");
   }, [defaults.baselineId, defaults.candidateId]);
 
+  const baselineSummary =
+    payload.summaries.find((summary) => summary.id === baselineId) ?? null;
+  const candidateSummary =
+    payload.summaries.find((summary) => summary.id === candidateId) ?? null;
+
+  useEffect(() => {
+    if (
+      baselineSummary &&
+      candidateSummary &&
+      baselineSummary.benchmark !== candidateSummary.benchmark
+    ) {
+      setCandidateId("");
+    }
+  }, [baselineSummary, candidateSummary]);
+
+  const candidateOptions = baselineSummary
+    ? payload.summaries.filter(
+        (summary) => summary.benchmark === baselineSummary.benchmark,
+      )
+    : payload.summaries;
+
   const comparison =
-    baselineId.length > 0 && candidateId.length > 0
+    baselineSummary &&
+    candidateSummary &&
+    baselineSummary.benchmark === candidateSummary.benchmark
       ? buildCompareModel(payload, baselineId, candidateId)
       : null;
 
@@ -45,7 +68,7 @@ export function Compare({ payload }: { payload: BenchResultSummaryPayload }) {
           <span>Candidate run</span>
           <select value={candidateId} onChange={(event) => setCandidateId(event.target.value)}>
             <option value="">Select candidate</option>
-            {payload.summaries.map((summary) => (
+            {candidateOptions.map((summary) => (
               <option key={summary.id} value={summary.id}>
                 {summary.id} · {summary.benchmark}
               </option>
