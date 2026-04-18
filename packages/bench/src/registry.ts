@@ -72,9 +72,9 @@ import {
   runIngestionSchemaCompletenessBenchmark,
 } from "./benchmarks/remnic/ingestion-schema-completeness/runner.js";
 import {
-  ingestionBacklinkF1Definition,
-  runIngestionBacklinkF1Benchmark,
-} from "./benchmarks/remnic/ingestion-backlink-f1/runner.js";
+  ingestionSetupFrictionDefinition,
+  runIngestionSetupFrictionBenchmark,
+} from "./benchmarks/remnic/ingestion-setup-friction/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -151,8 +151,8 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
     run: runIngestionSchemaCompletenessBenchmark,
   },
   {
-    ...ingestionBacklinkF1Definition,
-    run: runIngestionBacklinkF1Benchmark,
+    ...ingestionSetupFrictionDefinition,
+    run: runIngestionSetupFrictionBenchmark as (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>,
   },
 ];
 
