@@ -740,10 +740,13 @@ export function resolveRunConfig(opts: {
   }
   const runCount = opts.runCount ?? 5;
   const baseSeed = DEFAULT_SEEDS[0];
-  const seeds = opts.seeds
+  const rawSeeds = opts.seeds
     ?? (runCount <= DEFAULT_SEEDS.length
       ? DEFAULT_SEEDS.slice(0, runCount)
       : Array.from({ length: runCount }, (_, i) => baseSeed + i));
+  const seeds = rawSeeds.length >= runCount
+    ? rawSeeds.slice(0, runCount)
+    : [...rawSeeds, ...Array.from({ length: runCount - rawSeeds.length }, (_, i) => baseSeed + rawSeeds.length + i)];
   return { mode: "full", runCount, seeds };
 }
 
@@ -788,7 +791,7 @@ export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkRe
 
   const system = opts.systemProvider
     ? await createProvider(opts.systemProvider)
-    : undefined;
+    : await createDefaultAdapter();
   const judge = opts.judgeProvider
     ? await createProvider(opts.judgeProvider)
     : undefined;
@@ -800,12 +803,12 @@ export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkRe
     for (const seed of runConfig.seeds) {
       const result = await runner.run(
         system,
-        judge,
         {
           limit: opts.limit,
           datasetDir: path.join(datasetBase, name),
           mode: runConfig.mode,
           seed,
+          judge,
         },
       );
 
@@ -1881,7 +1884,9 @@ git commit -m "feat(bench-ui): scaffold React + Tailwind dashboard package"
 - Create: `packages/bench-ui/src/components/RunTable.tsx`
 - Create: `packages/bench-ui/src/lib/data.ts`
 
-- [ ] **Step 1: Implement data loader that reads results JSON from `~/.remnic/bench/results/`**
+- [ ] **Step 1: Implement data loader via Vite dev server API proxy**
+
+The React app cannot read the local filesystem directly. During `vite dev`, a small server middleware (Vite plugin) exposes `GET /api/results` which reads `~/.remnic/bench/results/*.json` and returns them as a JSON array. For the static HTML export, the CLI pre-bundles the data as an inlined JSON blob at build time.
 
 - [ ] **Step 2: Build ScoreCard component (benchmark name, score, delta, CI)**
 
