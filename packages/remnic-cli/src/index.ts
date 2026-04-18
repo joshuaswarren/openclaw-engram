@@ -18,6 +18,8 @@
  *   token generate    Generate auth token for a connector
  *   token list        List all auth tokens
  *   token revoke      Revoke auth token for a connector
+ *   bench list        List published benchmark packs
+ *   bench run         Run published benchmark packs
  *   tree              Generate context tree
  *   onboard [dir]     Onboard project directory
  *   curate <path>     Curate files into memory
@@ -30,6 +32,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as childProcess from "node:child_process";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   parseConfig,
   Orchestrator,
@@ -122,13 +125,26 @@ import {
   saveBaseline,
   checkRegression,
   type BenchConfig,
+  type BenchmarkDefinition,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
+import {
+  type BenchAction,
+  type ParsedBenchArgs,
+  parseBenchActionArgs,
+  parseBenchArgs,
+} from "./bench-args.js";
+import { expandTilde, resolveHomeDir } from "./path-utils.js";
 export { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
 
 export { parseConnectorConfig, stripConfigArgv };
+export {
+  type BenchAction,
+  type ParsedBenchArgs,
+  parseBenchArgs,
+} from "./bench-args.js";
 
 // ── Host-specific publisher registrations ───────────────────────────────────
 // Publisher classes live in @remnic/core, but wiring them into the registry
@@ -156,8 +172,10 @@ type CommandName =
   | "dedup"
   | "connectors"
   | "space"
+  | "bench"
   | "benchmark"
   | "briefing"
+  | "versions"
   | "binary"
   | "taxonomy"
   | "enrich"
@@ -167,32 +185,17 @@ type CommandName =
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
 type ReviewAction = "approve" | "dismiss" | "flag";
+export interface BenchCatalogEntry {
+  id: string;
+  title: string;
+  category: "agentic" | "retrieval" | "conversational";
+  summary: string;
+}
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 function readCompatEnv(primary: string, legacy: string): string | undefined {
   return process.env[primary] ?? process.env[legacy];
-}
-
-function resolveHomeDir(): string {
-  return process.env.HOME ?? process.env.USERPROFILE ?? "~";
-}
-
-/** Expand a leading `~`, `~/`, `$HOME/`, or `${HOME}/` to the real home directory. */
-function expandTilde(p: string): string {
-  if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
-    return resolveHomeDir() + p.slice(1);
-  }
-  const home = resolveHomeDir();
-  // Handle literal $HOME or ${HOME} prefixes common in launchd/systemd env files
-  // where shell variable expansion does not occur.
-  if (p === "$HOME" || p.startsWith("$HOME/") || p.startsWith("$HOME\\")) {
-    return home + p.slice(5);
-  }
-  if (p === "${HOME}" || p.startsWith("${HOME}/") || p.startsWith("${HOME}\\")) {
-    return home + p.slice(7);
-  }
-  return p;
 }
 
 const PID_DIR = path.join(resolveHomeDir(), ".remnic");
@@ -201,6 +204,297 @@ const PID_FILE = path.join(PID_DIR, "server.pid");
 const LEGACY_PID_FILE = path.join(LEGACY_PID_DIR, "server.pid");
 const LOG_FILE = path.join(PID_DIR, "server.log");
 const LEGACY_LOG_FILE = path.join(LEGACY_PID_DIR, "server.log");
+const CLI_MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
+const CLI_REPO_ROOT = path.resolve(CLI_MODULE_DIR, "../../..");
+const EVAL_RUNNER_PATH = path.join(CLI_REPO_ROOT, "evals", "run.ts");
+
+export const BENCHMARK_CATALOG: BenchCatalogEntry[] = [
+  {
+    id: "ama-bench",
+    title: "AMA-Bench",
+    category: "agentic",
+    summary: "Agent Memory Abilities benchmark for long-horizon agent workflows.",
+  },
+  {
+    id: "memory-arena",
+    title: "Memory Arena",
+    category: "agentic",
+    summary: "Interdependent multi-session tasks that stress operational recall.",
+  },
+  {
+    id: "amemgym",
+    title: "AMemGym",
+    category: "agentic",
+    summary: "Interactive personalization benchmark for agent memory adaptation.",
+  },
+  {
+    id: "longmemeval",
+    title: "LongMemEval",
+    category: "retrieval",
+    summary: "Long-term memory retrieval benchmark across core memory abilities.",
+  },
+  {
+    id: "locomo",
+    title: "LoCoMo",
+    category: "conversational",
+    summary: "Long-conversation memory benchmark for persistent dialogue context.",
+  },
+];
+
+const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
+
+export function getBenchUsageText(): string {
+  return `Usage: remnic bench <list|run> [options] [benchmark...]
+       remnic benchmark <list|run|check|report> [options] [benchmark...]
+
+Commands:
+  list                     List published benchmark packs
+  run [benchmark...]       Run one or more benchmark packs
+  check                    Legacy latency regression gate (compatibility)
+  report                   Legacy latency report generator (compatibility)
+
+Options:
+  --quick                  Run a lightweight quick pass (maps to --lightweight --limit 1)
+  --all                    Run every published benchmark
+  --dataset-dir <path>     Override the benchmark dataset directory for full runs
+  --json                   Output JSON for \`list\`
+
+Examples:
+  remnic bench list
+  remnic bench run --quick longmemeval
+  remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
+  remnic benchmark run --quick longmemeval`;
+}
+
+export function buildBenchRunnerArgs(
+  parsed: ParsedBenchArgs,
+  benchmarkId: string,
+): string[] {
+  const args = [EVAL_RUNNER_PATH, "--benchmark", benchmarkId];
+  if (parsed.quick) {
+    args.push("--lightweight", "--limit", "1");
+  }
+  if (parsed.datasetDir) {
+    args.push("--dataset-dir", parsed.datasetDir);
+  }
+  return args;
+}
+
+function coerceBenchCategory(
+  benchmarkId: string,
+  category: string | undefined,
+): BenchCatalogEntry["category"] {
+  if (
+    category === "agentic" ||
+    category === "retrieval" ||
+    category === "conversational"
+  ) {
+    return category;
+  }
+
+  return (
+    BENCHMARK_CATALOG.find((entry) => entry.id === benchmarkId)?.category ??
+    "retrieval"
+  );
+}
+
+async function listBenchmarksFromPackage(): Promise<BenchCatalogEntry[] | undefined> {
+  const result = await loadBenchDefinitionsFromPackage();
+  if (!result) {
+    return undefined;
+  }
+
+  return result.map((entry) => ({
+    id: entry.id,
+    title: entry.title ?? entry.id,
+    category: coerceBenchCategory(entry.id, entry.meta?.category),
+    summary: entry.meta?.description ?? "",
+  }));
+}
+
+async function loadBenchDefinitionsFromPackage(): Promise<BenchmarkDefinition[] | undefined> {
+  try {
+    const benchModule = await import("@remnic/bench") as {
+      listBenchmarks?: () => BenchmarkDefinition[];
+    };
+    if (!benchModule.listBenchmarks) return undefined;
+    const result = benchModule.listBenchmarks();
+    return Array.isArray(result) ? result : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function resolveAllBenchmarks(): Promise<string[]> {
+  const packageBenchmarks = await loadBenchDefinitionsFromPackage();
+  if (packageBenchmarks) {
+    return packageBenchmarks
+      .filter((entry) => entry.runnerAvailable)
+      .map((entry) => entry.id);
+  }
+
+  if (!fs.existsSync(EVAL_RUNNER_PATH)) {
+    return [];
+  }
+
+  return BENCHMARK_CATALOG.map((entry) => entry.id);
+}
+
+async function resolveKnownBenchmarkIds(): Promise<Set<string>> {
+  const knownIds = new Set(BENCHMARK_IDS);
+  const packageBenchmarks = await loadBenchDefinitionsFromPackage();
+  if (packageBenchmarks) {
+    for (const benchmark of packageBenchmarks) {
+      knownIds.add(benchmark.id);
+    }
+  }
+  return knownIds;
+}
+
+async function runBenchViaFallback(
+  parsed: ParsedBenchArgs,
+  benchmarkId: string,
+): Promise<void> {
+  if (!fs.existsSync(EVAL_RUNNER_PATH)) {
+    console.error(
+      "Benchmark runner not found. Expected eval runner at evals/run.ts or a phase-1 @remnic/bench runtime export.",
+    );
+    process.exit(1);
+  }
+
+  const tsxCandidates = [
+    path.join(CLI_REPO_ROOT, "node_modules", ".bin", "tsx"),
+    path.join(CLI_REPO_ROOT, "packages", "remnic-cli", "node_modules", ".bin", "tsx"),
+  ];
+  const tsxCmd = tsxCandidates.find((candidate) => fs.existsSync(candidate)) ?? "tsx";
+  childProcess.execFileSync(tsxCmd, buildBenchRunnerArgs(parsed, benchmarkId), {
+    stdio: "inherit",
+    env: process.env,
+  });
+}
+
+function resolveBenchOutputDir(): string {
+  return path.join(resolveHomeDir(), ".remnic", "bench", "results");
+}
+
+function resolveBenchDatasetDir(
+  benchmarkId: string,
+  quick: boolean,
+  datasetDirOverride?: string,
+): string | undefined {
+  if (datasetDirOverride) {
+    return datasetDirOverride;
+  }
+
+  if (quick) {
+    return undefined;
+  }
+
+  const repoDatasetDir = path.join(CLI_REPO_ROOT, "evals", "datasets", benchmarkId);
+  try {
+    return fs.statSync(repoDatasetDir).isDirectory() ? repoDatasetDir : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function printBenchPackageSummary(
+  result: {
+    meta: { benchmark: string; mode: string };
+    results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
+    cost: { meanQueryLatencyMs: number };
+  },
+  outputPath: string,
+): void {
+  console.log(`Benchmark: ${result.meta.benchmark}`);
+  console.log(`Mode: ${result.meta.mode}`);
+  console.log(`Tasks: ${result.results.tasks.length}`);
+  console.log(`Mean query latency: ${result.cost.meanQueryLatencyMs.toFixed(1)}ms`);
+  for (const [metric, aggregate] of Object.entries(result.results.aggregates).sort()) {
+    console.log(`  ${metric.padEnd(20)} ${aggregate.mean.toFixed(4)}`);
+  }
+  console.log(`Results saved: ${outputPath}`);
+}
+
+async function runBenchViaPackage(
+  parsed: ParsedBenchArgs,
+  benchmarkId: string,
+): Promise<boolean> {
+  let benchModule: {
+    getBenchmark?: (id: string) => {
+      runnerAvailable?: boolean;
+    } | undefined;
+    runBenchmark?: (id: string, options: {
+      mode?: "full" | "quick";
+      datasetDir?: string;
+      outputDir?: string;
+      limit?: number;
+      adapterMode?: string;
+      system: {
+        destroy(): Promise<void>;
+      };
+    }) => Promise<{
+      meta: { benchmark: string; mode: string };
+      results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
+      cost: { meanQueryLatencyMs: number };
+    }>;
+    writeBenchmarkResult?: (result: unknown, outputDir: string) => Promise<string>;
+    createLightweightAdapter?: () => Promise<{ destroy(): Promise<void> }>;
+    createRemnicAdapter?: () => Promise<{ destroy(): Promise<void> }>;
+  };
+  try {
+    benchModule = await import("@remnic/bench") as unknown as typeof benchModule;
+  } catch {
+    return false;
+  }
+
+  const definition = benchModule.getBenchmark?.(benchmarkId);
+  if (!definition?.runnerAvailable || !benchModule.runBenchmark || !benchModule.writeBenchmarkResult) {
+    return false;
+  }
+
+  const createAdapter = parsed.quick
+    ? benchModule.createLightweightAdapter
+    : benchModule.createRemnicAdapter;
+
+  if (!createAdapter) {
+    return false;
+  }
+
+  const outputDir = resolveBenchOutputDir();
+  const datasetDir = resolveBenchDatasetDir(
+    benchmarkId,
+    parsed.quick,
+    parsed.datasetDir,
+  );
+  if (!parsed.quick && !datasetDir) {
+    throw new Error(
+      `full benchmark runs for "${benchmarkId}" require dataset files. Pass --dataset-dir <path> or run from a Remnic repo checkout with evals/datasets/${benchmarkId}.`,
+    );
+  }
+
+  const system = await createAdapter();
+
+  try {
+    const result = await benchModule.runBenchmark(benchmarkId, {
+      mode: parsed.quick ? "quick" : "full",
+      datasetDir,
+      outputDir,
+      limit: parsed.quick ? 1 : undefined,
+      adapterMode: parsed.quick ? "lightweight" : "direct",
+      system,
+    });
+    const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
+    if (parsed.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      printBenchPackageSummary(result, writtenPath);
+    }
+    return true;
+  } finally {
+    await system.destroy();
+  }
+}
 
 // ── Config helpers ───────────────────────────────────────────────────────────
 
@@ -1898,9 +2192,9 @@ async function cmdSpace(action: string, rest: string[], json: boolean): Promise<
   }
 }
 
-// ── M7 benchmark command ───────────────────────────────────────────────────────
+// ── Benchmark commands ─────────────────────────────────────────────────────────
 
-async function cmdBenchmark(action: string, rest: string[], json: boolean): Promise<void> {
+async function cmdLegacyBenchmark(action: string, rest: string[], json: boolean): Promise<void> {
   initLogger();
   const configPath = resolveConfigPath();
   const raw = fs.existsSync(configPath)
@@ -1979,6 +2273,67 @@ async function cmdBenchmark(action: string, rest: string[], json: boolean): Prom
   } else {
     console.log("Usage: remnic benchmark <run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]");
     process.exit(1);
+  }
+}
+
+async function cmdBench(rest: string[]): Promise<void> {
+  const benchAction = parseBenchActionArgs(rest);
+  let parsed: ParsedBenchArgs;
+  try {
+    parsed = parseBenchArgs(rest);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  if (parsed.action === "help") {
+    console.log(getBenchUsageText());
+    return;
+  }
+
+  if (parsed.action === "check" || parsed.action === "report") {
+    await cmdLegacyBenchmark(parsed.action, benchAction.args, parsed.json);
+    return;
+  }
+
+  if (parsed.action === "list") {
+    const catalog = await listBenchmarksFromPackage() ?? BENCHMARK_CATALOG;
+    if (parsed.json) {
+      console.log(JSON.stringify(catalog, null, 2));
+      return;
+    }
+
+    console.log("Published benchmarks:");
+    for (const entry of catalog) {
+      console.log(`  ${entry.id.padEnd(14)} ${entry.category.padEnd(14)} ${entry.summary}`);
+    }
+    return;
+  }
+
+  const selectedBenchmarks = parsed.all
+    ? await resolveAllBenchmarks()
+    : parsed.benchmarks;
+  if (selectedBenchmarks.length === 0) {
+    console.error(
+      parsed.all
+        ? "ERROR: no runnable benchmarks are available for --all in this install. Use 'remnic bench list' to inspect the catalog."
+        : "ERROR: specify benchmark name(s) or --all. Use 'remnic bench list' to see available.",
+    );
+    process.exit(1);
+  }
+
+  const knownBenchmarkIds = await resolveKnownBenchmarkIds();
+  const unknown = selectedBenchmarks.filter((benchmarkId) => !knownBenchmarkIds.has(benchmarkId));
+  if (unknown.length > 0) {
+    console.error(`ERROR: unknown benchmark(s): ${unknown.join(", ")}. Use 'remnic bench list' to see available.`);
+    process.exit(1);
+  }
+
+  for (const benchmarkId of selectedBenchmarks) {
+    const handledByPackage = await runBenchViaPackage(parsed, benchmarkId);
+    if (!handledByPackage) {
+      await runBenchViaFallback(parsed, benchmarkId);
+    }
   }
 }
 
@@ -3273,10 +3628,13 @@ Options:
       break;
     }
 
+    case "bench": {
+      await cmdBench(rest);
+      break;
+    }
+
     case "benchmark": {
-      const action = rest[0] ?? "run";
-      const json = rest.includes("--json");
-      await cmdBenchmark(action, rest.slice(1), json);
+      await cmdBench(rest);
       break;
     }
 
@@ -3368,7 +3726,9 @@ Usage:
   remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
-  remnic benchmark <run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
+  remnic bench <list|run> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--json]
+    benchmark is kept as a compatibility alias. check/report remain under that alias.
+  remnic benchmark <list|run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
     Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
     Focus: person:<name>, project:<name>, topic:<name>.

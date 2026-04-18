@@ -36,9 +36,29 @@ remnic query "hello" --explain  # Test query with tier breakdown
 | `remnic dedup` | Find and merge duplicate memories |
 | `remnic sync` | Diff-aware sync with external sources |
 | `remnic spaces` | Manage memory namespaces |
-| `remnic bench` | Run memory retrieval benchmarks |
+| `remnic bench list` | List published benchmark packs |
+| `remnic bench run` | Run one or more published benchmark packs |
 
 Run `remnic --help` for the full command list.
+
+## Benchmarks
+
+The phase-1 benchmark surface is exposed through `remnic bench`, with `remnic benchmark`
+kept as a compatibility alias.
+
+```bash
+remnic bench list
+remnic bench run --quick longmemeval
+remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
+remnic benchmark run --quick longmemeval
+```
+
+`--quick` uses the lightweight benchmark path with a single-item limit so you can
+smoke-test the harness without running a full benchmark pass. When a benchmark
+ships a bundled smoke fixture, `--quick` uses that tracked fixture by default;
+full runs need a real benchmark dataset. In a repo checkout the CLI will use
+`evals/datasets/<benchmark>` automatically; in packaged installs pass
+`--dataset-dir <path>` explicitly.
 
 ## Connecting agents
 

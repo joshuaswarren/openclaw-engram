@@ -13,9 +13,23 @@ const ROOT = path.resolve(__dirname, "../..");
 // Bridge mode detection — packages/plugin-openclaw/src/bridge.ts
 // ---------------------------------------------------------------------------
 
-test("detectBridgeMode defaults to embedded when no daemon running", async () => {
-  // Clear any env override
+test("detectBridgeMode defaults to embedded when no daemon running", async (t) => {
+  const previousHome = process.env.HOME;
+  const previousPath = process.env.PATH;
+  const tempHome = await mkdtemp(path.join(os.tmpdir(), "bridge-mode-default-"));
+
+  process.env.HOME = tempHome;
+  process.env.PATH = "/definitely-missing-bridge-tools";
+  delete process.env.REMNIC_BRIDGE_MODE;
   delete process.env.ENGRAM_BRIDGE_MODE;
+
+  t.after(() => {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  });
+
   const { detectBridgeMode } = await import(path.join(ROOT, "packages/plugin-openclaw/src/bridge.ts"));
   const config = detectBridgeMode();
   // Without a daemon running, should default to embedded

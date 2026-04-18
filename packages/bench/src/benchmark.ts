@@ -1,39 +1,34 @@
 /**
- * @remnic/bench — Benchmark runner
- *
- * Runs retrieval queries through the EngramAccessService recall() API
- * and measures latency per tier (exact → full search).
+ * Public benchmark execution helpers.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import { EngramAccessService } from "@remnic/core";
+import { getRegisteredBenchmark, listBenchmarks, getBenchmark } from "./registry.js";
 import type {
   BenchConfig,
   BenchTier,
+  BenchmarkDefinition,
   BenchmarkReport,
+  BenchmarkResult,
   BenchmarkSuiteResult,
   ExplainResult,
   RecallMetrics,
   RegressionDetail,
   RegressionGateResult,
+  RunBenchmarkOptions,
   SavedBaseline,
   TierDetail,
 } from "./types.js";
 
-// ── Constants ──────────────────────────────────────────────────────────────────
+export { listBenchmarks, getBenchmark } from "./registry.js";
+export { writeBenchmarkResult } from "./reporter.js";
 
-const DEFAULT_BASELINE_PATH = path.join(
-  process.cwd(),
-  "benchmarks",
-  "baseline.json",
-);
-const DEFAULT_REPORT_PATH = path.join(
-  process.cwd(),
-  "benchmarks",
-  "report.json",
-);
+const DEFAULT_BASELINE_PATH = path.join(process.cwd(), "benchmarks", "baseline.json");
+const DEFAULT_REPORT_PATH = path.join(process.cwd(), "benchmarks", "report.json");
 const BASELINE_VERSION = 1;
+const DEFAULT_TOLERANCE = 10;
 
 const DEFAULT_QUERIES = [
   "What is the storage?",
@@ -46,10 +41,6 @@ const DEFAULT_QUERIES = [
   "What is the architecture?",
 ];
 
-const DEFAULT_TOLERANCE = 10; // 10 % regression tolerance
-
-// ── Shape of the access-service recall response (subset we use) ─────────────────
-
 interface MemorySummary {
   id: string;
   path: string;
@@ -60,26 +51,55 @@ interface MemorySummary {
 
 interface RecallResponse {
   results: MemorySummary[];
-  count: number;
-  latencyMs?: number;
 }
-
-// ── High-resolution timer ──────────────────────────────────────────────────────
 
 function hrTimeMs(): number {
-  const [s, ns] = process.hrtime();
-  return s * 1_000 + Math.round(ns / 1_000_000);
+  const [seconds, nanos] = process.hrtime();
+  return seconds * 1_000 + Math.round(nanos / 1_000_000);
 }
 
-// ── Baseline I/O ───────────────────────────────────────────────────────────────
+export async function runBenchmark(
+  benchmarkId: string,
+  options: RunBenchmarkOptions,
+): Promise<BenchmarkResult> {
+  const registeredBenchmark = getRegisteredBenchmark(benchmarkId);
+  if (!registeredBenchmark) {
+    throw new Error(
+      `Unknown benchmark "${benchmarkId}". Available benchmarks: ${listBenchmarks()
+        .map((benchmark) => benchmark.id)
+        .join(", ")}`,
+    );
+  }
 
-export function loadBaseline(
-  baselinePath?: string,
-): SavedBaseline | undefined {
-  const p = baselinePath ?? DEFAULT_BASELINE_PATH;
-  if (!fs.existsSync(p)) return undefined;
+  if (!registeredBenchmark.run) {
+    throw new Error(
+      `Benchmark "${benchmarkId}" is listed but has not been migrated into @remnic/bench yet.`,
+    );
+  }
+
+  return registeredBenchmark.run({
+    ...options,
+    mode: options.mode ?? "quick",
+    benchmark: benchmarkDefinition(registeredBenchmark.id),
+  });
+}
+
+function benchmarkDefinition(id: string): BenchmarkDefinition {
+  const definition = getBenchmark(id);
+  if (!definition) {
+    throw new Error(`Benchmark definition disappeared for "${id}".`);
+  }
+  return definition;
+}
+
+export function loadBaseline(baselinePath?: string): SavedBaseline | undefined {
+  const resolvedPath = baselinePath ?? DEFAULT_BASELINE_PATH;
+  if (!fs.existsSync(resolvedPath)) {
+    return undefined;
+  }
+
   try {
-    const raw = JSON.parse(fs.readFileSync(p, "utf8"));
+    const raw = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
     if (raw.version !== BASELINE_VERSION) {
       console.warn(
         `Baseline version mismatch: expected ${BASELINE_VERSION}, got ${raw.version}`,
@@ -91,15 +111,10 @@ export function loadBaseline(
   }
 }
 
-export function saveBaseline(
-  baselinePath: string,
-  baseline: SavedBaseline,
-): void {
+export function saveBaseline(baselinePath: string, baseline: SavedBaseline): void {
   fs.mkdirSync(path.dirname(baselinePath), { recursive: true });
-  fs.writeFileSync(baselinePath, JSON.stringify(baseline, null, 2) + "\n");
+  fs.writeFileSync(baselinePath, `${JSON.stringify(baseline, null, 2)}\n`);
 }
-
-// ── Tiered retrieval ───────────────────────────────────────────────────────────
 
 async function recallWithTiers(
   service: EngramAccessService,
@@ -108,99 +123,114 @@ async function recallWithTiers(
   const tiers: BenchTier[] = [];
   const tierDetails: TierDetail[] = [];
 
-  // Tier 0 — exact match (standard recall)
-  const t0 = hrTimeMs();
-  const r0 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
-  const d0 = hrTimeMs() - t0;
+  const exactStart = hrTimeMs();
+  const exactResponse = (await service.recall({
+    query,
+    mode: "auto",
+  })) as unknown as RecallResponse;
+  const exactLatency = hrTimeMs() - exactStart;
 
-  // Tier 0 — check for exact/strong match
-  if (r0.results && r0.results.length > 0) {
-    const hasExactMatch = r0.results.some((m) =>
-      m.preview.toLowerCase().includes(query.toLowerCase()),
-    );
-    if (hasExactMatch) {
-      tiers.push("exact_match");
-      tierDetails.push({
-        tier: "exact_match",
-        latencyMs: d0,
-        resultsCount: r0.results.length,
-      });
-      return { tiers, tierDetails };
-    }
+  if (
+    exactResponse.results?.some((memory) =>
+      memory.preview.toLowerCase().includes(query.toLowerCase()),
+    )
+  ) {
+    tiers.push("exact_match");
+    tierDetails.push({
+      tier: "exact_match",
+      latencyMs: exactLatency,
+      resultsCount: exactResponse.results.length,
+    });
+    return { tiers, tierDetails };
   }
 
-  // Tier 1 — keyword / category overlap
-  const t1 = hrTimeMs();
-  const r1 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
-  const d1 = hrTimeMs() - t1;
-  const queryWords = query.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
-  const hasKeywordMatch = (r1.results ?? []).some((m) =>
-    queryWords.some((kw) => m.preview.toLowerCase().includes(kw)),
-  );
-  if (hasKeywordMatch) {
+  const keywordStart = hrTimeMs();
+  const keywordResponse = (await service.recall({
+    query,
+    mode: "auto",
+  })) as unknown as RecallResponse;
+  const keywordLatency = hrTimeMs() - keywordStart;
+  const queryWords = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((word) => word.length > 2);
+
+  if (
+    keywordResponse.results?.some((memory) =>
+      queryWords.some((word) => memory.preview.toLowerCase().includes(word)),
+    )
+  ) {
     tiers.push("category_match");
     tierDetails.push({
       tier: "category_match",
-      latencyMs: d1,
-      resultsCount: r1.results.length,
+      latencyMs: keywordLatency,
+      resultsCount: keywordResponse.results.length,
     });
     return { tiers, tierDetails };
   }
 
-  // Tier 2 — high-confidence (category-based heuristic — memories with tags)
-  const t2 = hrTimeMs();
-  const r2 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
-  const d2 = hrTimeMs() - t2;
-  const tagged = (r2.results ?? []).filter((m) => m.tags && m.tags.length > 0);
-  if (tagged.length > 0) {
+  const confidenceStart = hrTimeMs();
+  const confidenceResponse = (await service.recall({
+    query,
+    mode: "auto",
+  })) as unknown as RecallResponse;
+  const confidenceLatency = hrTimeMs() - confidenceStart;
+  const taggedResults = (confidenceResponse.results ?? []).filter(
+    (memory) => memory.tags?.length > 0,
+  );
+
+  if (taggedResults.length > 0) {
     tiers.push("high_confidence");
     tierDetails.push({
       tier: "high_confidence",
-      latencyMs: d2,
-      resultsCount: tagged.length,
+      latencyMs: confidenceLatency,
+      resultsCount: taggedResults.length,
     });
     return { tiers, tierDetails };
   }
 
-  // Tier 3 — semantic search (any results from standard recall)
-  const t3 = hrTimeMs();
-  const r3 = (await service.recall({ query, mode: "auto" })) as unknown as RecallResponse;
-  const d3 = hrTimeMs() - t3;
-  if (r3.results && r3.results.length > 0) {
+  const semanticStart = hrTimeMs();
+  const semanticResponse = (await service.recall({
+    query,
+    mode: "auto",
+  })) as unknown as RecallResponse;
+  const semanticLatency = hrTimeMs() - semanticStart;
+
+  if ((semanticResponse.results ?? []).length > 0) {
     tiers.push("semantic_search");
     tierDetails.push({
       tier: "semantic_search",
-      latencyMs: d3,
-      resultsCount: r3.results.length,
+      latencyMs: semanticLatency,
+      resultsCount: semanticResponse.results.length,
     });
     return { tiers, tierDetails };
   }
 
-  // Tier 4 — full search fallback
-  const t4 = hrTimeMs();
-  const r4 = (await service.recall({ query, mode: "full" })) as unknown as RecallResponse;
-  const d4 = hrTimeMs() - t4;
-  if (r4.results && r4.results.length > 0) {
+  const fullStart = hrTimeMs();
+  const fullResponse = (await service.recall({
+    query,
+    mode: "full",
+  })) as unknown as RecallResponse;
+  const fullLatency = hrTimeMs() - fullStart;
+
+  if ((fullResponse.results ?? []).length > 0) {
     tiers.push("full_search");
     tierDetails.push({
       tier: "full_search",
-      latencyMs: d4,
-      resultsCount: r4.results.length,
+      latencyMs: fullLatency,
+      resultsCount: fullResponse.results.length,
     });
     return { tiers, tierDetails };
   }
 
-  // No results
   tiers.push("no_results");
   tierDetails.push({
     tier: "no_results",
-    latencyMs: d0 + d1 + d2 + d3 + d4,
+    latencyMs: exactLatency + keywordLatency + confidenceLatency + semanticLatency + fullLatency,
     resultsCount: 0,
   });
   return { tiers, tierDetails };
 }
-
-// ── Explain mode ───────────────────────────────────────────────────────────────
 
 export async function runExplain(
   service: EngramAccessService,
@@ -208,17 +238,15 @@ export async function runExplain(
 ): Promise<ExplainResult> {
   const start = hrTimeMs();
   const { tiers, tierDetails } = await recallWithTiers(service, query);
-  const totalDuration = hrTimeMs() - start;
+  const totalDurationMs = hrTimeMs() - start;
   return {
     query,
     tiersUsed: tiers,
     tierResults: tierDetails,
-    durationMs: tierDetails[0]?.latencyMs ?? totalDuration,
-    totalDurationMs: totalDuration,
+    durationMs: tierDetails[0]?.latencyMs ?? totalDurationMs,
+    totalDurationMs,
   };
 }
-
-// ── Single benchmark ───────────────────────────────────────────────────────────
 
 async function runSingle(
   service: EngramAccessService,
@@ -226,19 +254,17 @@ async function runSingle(
 ): Promise<RecallMetrics> {
   const start = hrTimeMs();
   const { tiers, tierDetails } = await recallWithTiers(service, queryText);
-  const duration = hrTimeMs() - start;
+  const totalDurationMs = hrTimeMs() - start;
   return {
     query: queryText,
-    latencyMs: duration,
+    latencyMs: totalDurationMs,
     tiersUsed: tiers,
-    throughput: duration > 0 ? 1 / (duration / 1_000) : 0,
-    resultsCount: tierDetails.reduce((sum, t) => sum + t.resultsCount, 0),
-    totalDurationMs: duration,
+    throughput: totalDurationMs > 0 ? 1 / (totalDurationMs / 1_000) : 0,
+    resultsCount: tierDetails.reduce((sum, tier) => sum + tier.resultsCount, 0),
+    totalDurationMs,
     tierDetails,
   };
 }
-
-// ── Full suite ─────────────────────────────────────────────────────────────────
 
 export async function runBenchSuite(
   service: EngramAccessService,
@@ -253,46 +279,36 @@ export async function runBenchSuite(
   const results: RecallMetrics[] = [];
   const suiteStart = hrTimeMs();
 
-  for (const q of queries) {
+  for (const query of queries) {
     if (explain) {
-      const ex = await runExplain(service, q);
+      const explained = await runExplain(service, query);
       results.push({
-        query: ex.query,
-        latencyMs: ex.durationMs,
-        tiersUsed: ex.tiersUsed,
-        throughput:
-          ex.totalDurationMs > 0
-            ? 1 / (ex.totalDurationMs / 1_000)
-            : 0,
-        resultsCount: ex.tierResults.reduce(
-          (sum, t) => sum + t.resultsCount,
+        query: explained.query,
+        latencyMs: explained.durationMs,
+        tiersUsed: explained.tiersUsed,
+        throughput: explained.totalDurationMs > 0 ? 1 / (explained.totalDurationMs / 1_000) : 0,
+        resultsCount: explained.tierResults.reduce(
+          (sum, tier) => sum + tier.resultsCount,
           0,
         ),
-        totalDurationMs: ex.totalDurationMs,
-        tierDetails: ex.tierResults,
+        totalDurationMs: explained.totalDurationMs,
+        tierDetails: explained.tierResults,
       });
     } else {
-      results.push(await runSingle(service, q));
+      results.push(await runSingle(service, query));
     }
   }
 
-  const totalDuration = hrTimeMs() - suiteStart;
-
-  // Build per-query metrics map
+  const totalDurationMs = hrTimeMs() - suiteStart;
   const metrics: Record<string, number> = {};
-  for (const r of results) {
-    metrics[r.query] = r.latencyMs;
+  for (const result of results) {
+    metrics[result.query] = result.latencyMs;
   }
 
   const report = generateReport(results, reportPath);
   const baseline = loadBaseline(baselinePath);
-  const regressionResult = checkRegression(
-    metrics,
-    baseline,
-    regressionTolerance,
-  );
+  const regressionResult = checkRegression(metrics, baseline, regressionTolerance);
 
-  // Auto-save baseline if none exists
   if (!baseline) {
     saveBaseline(baselinePath, {
       version: BASELINE_VERSION,
@@ -304,30 +320,34 @@ export async function runBenchSuite(
   return {
     results,
     report,
-    totalDurationMs: totalDuration,
+    totalDurationMs,
     regressions: regressionResult.regressions,
   };
 }
-
-// ── Regression gate ────────────────────────────────────────────────────────────
 
 export function checkRegression(
   metrics: Record<string, number>,
   baseline: SavedBaseline | undefined,
   tolerance: number,
 ): RegressionGateResult {
-  if (!baseline) return { passed: true, regressions: [] };
+  if (!baseline) {
+    return { passed: true, regressions: [] };
+  }
 
   const regressions: RegressionDetail[] = [];
-  for (const [metricName, currentValue] of Object.entries(metrics)) {
-    const baselineValue = baseline.metrics[metricName];
-    if (baselineValue === undefined) continue;
+  for (const [metric, currentValue] of Object.entries(metrics)) {
+    const baselineValue = baseline.metrics[metric];
+    if (baselineValue === undefined) {
+      continue;
+    }
+
     const changePercent =
       baselineValue > 0
         ? ((currentValue - baselineValue) / baselineValue) * 100
         : 0;
+
     regressions.push({
-      metric: metricName,
+      metric,
       currentValue,
       baselineValue,
       tolerance,
@@ -336,12 +356,10 @@ export function checkRegression(
   }
 
   return {
-    passed: regressions.every((r) => r.passed),
+    passed: regressions.every((regression) => regression.passed),
     regressions,
   };
 }
-
-// ── Report generation ──────────────────────────────────────────────────────────
 
 export function generateReport(
   results: RecallMetrics[],
@@ -349,23 +367,20 @@ export function generateReport(
 ): BenchmarkReport {
   const report: BenchmarkReport = {
     timestamp: new Date().toISOString(),
-    queries: results.map((r) => ({
-      query: r.query,
-      tiersUsed: r.tiersUsed,
-      durationMs: r.latencyMs,
-      resultsCount: r.resultsCount,
-      throughput: r.throughput,
-      tierDetails: r.tierDetails,
+    queries: results.map((result) => ({
+      query: result.query,
+      tiersUsed: result.tiersUsed,
+      durationMs: result.latencyMs,
+      resultsCount: result.resultsCount,
+      throughput: result.throughput,
+      tierDetails: result.tierDetails,
     })),
-    totalDurationMs: results.reduce(
-      (sum, r) => sum + r.totalDurationMs,
-      0,
-    ),
+    totalDurationMs: results.reduce((sum, result) => sum + result.totalDurationMs, 0),
   };
 
   if (reportPath) {
     fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-    fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
+    fs.writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
   }
 
   return report;

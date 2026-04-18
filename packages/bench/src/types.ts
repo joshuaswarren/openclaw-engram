@@ -1,16 +1,141 @@
 /**
- * @remnic/bench — Public types
- *
- * Retrieval latency ladder:
- *   Tier 0 — exact match (skip full search)
- *   Tier 1 — keyword / category overlap
- *   Tier 2 — high-confidence facts
- *   Tier 3 — semantic vector search
- *   Tier 4 — full retrieval pipeline
+ * @remnic/bench — Phase 1 benchmark engine types
  */
 
-// ── Tiers ──────────────────────────────────────────────────────────────────────
+export type BenchmarkMode = "full" | "quick";
+export type BenchmarkTier = "published" | "remnic" | "custom";
+export type BenchmarkStatus = "ready" | "planned";
+export type BenchmarkCategory = "agentic" | "retrieval" | "conversational";
+export type BuiltInProvider = "openai" | "anthropic" | "ollama" | "litellm";
 
+export interface ProviderConfig {
+  provider: BuiltInProvider;
+  model: string;
+  baseUrl?: string;
+}
+
+export interface TaskTokenUsage {
+  input: number;
+  output: number;
+}
+
+export interface TaskResult {
+  taskId: string;
+  question: string;
+  expected: string;
+  actual: string;
+  scores: Record<string, number>;
+  latencyMs: number;
+  tokens: TaskTokenUsage;
+  details?: Record<string, unknown>;
+}
+
+export interface MetricAggregate {
+  mean: number;
+  median: number;
+  stdDev: number;
+  min: number;
+  max: number;
+}
+
+export type AggregateMetrics = Record<string, MetricAggregate>;
+
+export interface StatisticalReport {
+  confidenceIntervals: Record<
+    string,
+    { lower: number; upper: number; level: 0.95 }
+  >;
+  bootstrapSamples: number;
+  effectSizes?: Record<
+    string,
+    {
+      cohensD: number;
+      interpretation: "negligible" | "small" | "medium" | "large";
+    }
+  >;
+  pairedComparison?: {
+    baselineId: string;
+    pValue: number;
+    ciOnDelta: { lower: number; upper: number };
+  };
+}
+
+export interface BenchmarkResult {
+  meta: {
+    id: string;
+    benchmark: string;
+    benchmarkTier: BenchmarkTier;
+    version: string;
+    remnicVersion: string;
+    gitSha: string;
+    timestamp: string;
+    mode: BenchmarkMode;
+    runCount: number;
+    seeds: number[];
+  };
+  config: {
+    systemProvider: ProviderConfig | null;
+    judgeProvider: ProviderConfig | null;
+    adapterMode: string;
+    remnicConfig: Record<string, unknown>;
+  };
+  cost: {
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    estimatedCostUsd: number;
+    totalLatencyMs: number;
+    meanQueryLatencyMs: number;
+  };
+  results: {
+    tasks: TaskResult[];
+    aggregates: AggregateMetrics;
+    statistics?: StatisticalReport;
+  };
+  environment: {
+    os: string;
+    nodeVersion: string;
+    hardware?: string;
+  };
+}
+
+export interface BenchmarkMeta {
+  name: string;
+  version: string;
+  description: string;
+  category: BenchmarkCategory;
+  citation?: string;
+}
+
+export interface BenchmarkDefinition {
+  id: string;
+  title: string;
+  tier: BenchmarkTier;
+  status: BenchmarkStatus;
+  runnerAvailable: boolean;
+  meta: BenchmarkMeta;
+}
+
+export interface RunBenchmarkOptions {
+  mode?: BenchmarkMode;
+  datasetDir?: string;
+  outputDir?: string;
+  limit?: number;
+  seed?: number;
+  adapterMode?: string;
+  system: import("./adapters/types.js").BenchMemoryAdapter;
+  systemProvider?: ProviderConfig | null;
+  judgeProvider?: ProviderConfig | null;
+  remnicConfig?: Record<string, unknown>;
+}
+
+export interface ResolvedRunBenchmarkOptions extends RunBenchmarkOptions {
+  mode: BenchmarkMode;
+  benchmark: BenchmarkDefinition;
+}
+
+// Legacy latency-benchmark surface retained for CLI compatibility while the
+// richer phase-1 benchmark suite lands incrementally.
 export type BenchTier =
   | "exact_match"
   | "category_match"
@@ -20,15 +145,11 @@ export type BenchTier =
   | "full_search"
   | "no_results";
 
-// ── Per-tier detail ────────────────────────────────────────────────────────────
-
 export interface TierDetail {
   tier: BenchTier;
   latencyMs: number;
   resultsCount: number;
 }
-
-// ── Explain result (single query) ──────────────────────────────────────────────
 
 export interface ExplainResult {
   query: string;
@@ -37,8 +158,6 @@ export interface ExplainResult {
   durationMs: number;
   totalDurationMs: number;
 }
-
-// ── Recall metrics (single query, possibly iterated) ───────────────────────────
 
 export interface RecallMetrics {
   query: string;
@@ -49,8 +168,6 @@ export interface RecallMetrics {
   totalDurationMs: number;
   tierDetails: TierDetail[];
 }
-
-// ── Benchmark suite result ─────────────────────────────────────────────────────
 
 export interface BenchmarkReport {
   timestamp: string;
@@ -72,8 +189,6 @@ export interface BenchmarkSuiteResult {
   regressions: RegressionDetail[];
 }
 
-// ── Baseline & regression ──────────────────────────────────────────────────────
-
 export interface SavedBaseline {
   version: number;
   timestamp: string;
@@ -92,8 +207,6 @@ export interface RegressionDetail {
   tolerance: number;
   passed: boolean;
 }
-
-// ── Config ─────────────────────────────────────────────────────────────────────
 
 export interface BenchConfig {
   queries?: string[];

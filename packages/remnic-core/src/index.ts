@@ -379,6 +379,13 @@ export {
   doctorConnector,
   loadRegistry,
   saveRegistry,
+  generateMarketplaceManifest,
+  validateMarketplaceManifest,
+  checkMarketplaceManifest,
+  writeMarketplaceManifest,
+  installFromMarketplace,
+  MARKETPLACE_SCHEMA_VERSION,
+  MARKETPLACE_MANIFEST_FILENAME,
   type ConnectorManifest,
   type ConnectorCapability,
   type ConnectorInstance,
@@ -388,6 +395,13 @@ export {
   type RemoveResult,
   type DoctorResult,
   type DoctorCheck,
+  type MarketplaceManifest,
+  type MarketplaceEntry,
+  type MarketplaceConfig,
+  type MarketplaceInstallType,
+  type MarketplaceInstallResult,
+  type MarketplaceValidation,
+  type MarketplaceLogger,
 } from "./connectors/index.js";
 
 export { coerceInstallExtension } from "./connectors/coerce.js";

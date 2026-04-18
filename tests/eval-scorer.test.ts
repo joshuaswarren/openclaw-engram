@@ -81,6 +81,7 @@ describe("eval scorer", () => {
     it("returns 1.0 for empty relevant set", () => {
       assert.equal(recallAtK(["a"], [], 1), 1.0);
     });
+
   });
 
   describe("containsAnswer", () => {
