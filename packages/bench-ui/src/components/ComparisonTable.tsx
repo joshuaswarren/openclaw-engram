@@ -27,12 +27,12 @@ export function ComparisonTable({ rows }: { rows: CompareMetricRow[] }) {
           {rows.map((row) => (
             <tr key={row.name}>
               <td>{row.name}</td>
-              <td>{formatMetricValue(row.baseline)}</td>
-              <td>{formatMetricValue(row.candidate)}</td>
-              <td>{formatMetricValue(row.delta)}</td>
+              <td>{formatMetricValue(row.baseline, row.name)}</td>
+              <td>{formatMetricValue(row.candidate, row.name)}</td>
+              <td>{formatMetricValue(row.delta, row.name)}</td>
               <td>
                 {row.ciLower !== null && row.ciUpper !== null
-                  ? `${formatMetricValue(row.ciLower)} to ${formatMetricValue(row.ciUpper)}`
+                  ? `${formatMetricValue(row.ciLower, row.name)} to ${formatMetricValue(row.ciUpper, row.name)}`
                   : "n/a"}
               </td>
               <td>

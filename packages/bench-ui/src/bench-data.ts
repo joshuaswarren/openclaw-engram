@@ -166,9 +166,21 @@ export function humanizeIdentifier(value: string): string {
     .join(" ");
 }
 
-export function formatMetricValue(value: number | null): string {
+const rawCountMetrics = new Set([
+  "search_hits",
+]);
+
+function isRawCountMetric(metricName?: string): boolean {
+  return typeof metricName === "string" && rawCountMetrics.has(metricName);
+}
+
+export function formatMetricValue(value: number | null, metricName?: string): string {
   if (value === null) {
     return "n/a";
+  }
+
+  if (isRawCountMetric(metricName)) {
+    return Number.isInteger(value) ? value.toString() : value.toFixed(2);
   }
 
   if (Math.abs(value) <= 1.25) {
@@ -236,7 +248,10 @@ export function getBenchmarkCards(payload: BenchResultSummaryPayload): Benchmark
   const cards: BenchmarkCard[] = [];
 
   for (const benchmark of listBenchmarks(payload)) {
-    const runs = payload.summaries.filter((summary) => summary.benchmark === benchmark);
+    const runs = payload.summaries
+      .filter((summary) => summary.benchmark === benchmark)
+      .slice()
+      .sort(compareRuns);
     const latest = runs[0];
     if (!latest) {
       continue;

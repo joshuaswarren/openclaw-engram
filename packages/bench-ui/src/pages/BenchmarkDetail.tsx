@@ -40,7 +40,9 @@ export function BenchmarkDetail({ payload }: { payload: BenchResultSummaryPayloa
     question: task.question,
     latencyMs: task.latencyMs,
   }));
-  const lowScoring = taskRows.filter((task) => (task.candidate ?? 1) < 0.6);
+  const lowScoring = taskRows
+    .filter((task) => (task.candidate ?? 1) < 0.6)
+    .sort((left, right) => (left.candidate ?? 1) - (right.candidate ?? 1));
 
   return (
     <section className="page">

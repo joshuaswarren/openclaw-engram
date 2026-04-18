@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  formatMetricValue,
   buildProviderRows,
   getBenchmarkCards,
   type BenchResultSummaryPayload,
@@ -124,10 +125,85 @@ test("getBenchmarkCards keeps delta null when a benchmark has only one run", () 
   assert.equal(cards[0]?.delta, null);
 });
 
+test("formatMetricValue keeps raw count metrics as counts", () => {
+  assert.equal(formatMetricValue(7, "search_hits"), "7");
+  assert.equal(formatMetricValue(0.75, "accuracy"), "75.0%");
+});
+
+test("getBenchmarkCards sorts benchmark runs before choosing latest and previous", () => {
+  const payload: BenchResultSummaryPayload = {
+    resultsDir: "/tmp/results",
+    summaries: [
+      {
+        id: "older-run",
+        benchmark: "longmemeval",
+        benchmarkTier: "published",
+        timestamp: "2026-04-17T10:00:00.000Z",
+        mode: "quick",
+        totalLatencyMs: 1400,
+        meanQueryLatencyMs: 700,
+        taskCount: 2,
+        metricHighlights: [{ name: "accuracy", mean: 0.42 }],
+        primaryMetric: "accuracy",
+        primaryScore: 0.42,
+        runCount: 1,
+        estimatedCostUsd: 0.18,
+        totalTokens: 120,
+        inputTokens: 75,
+        outputTokens: 45,
+        systemProvider: "openai/gpt-5.4",
+        judgeProvider: "openai/gpt-5.4-mini",
+        providerKey: "openai/gpt-5.4__openai/gpt-5.4-mini",
+        adapterMode: "standalone",
+        aggregateMetrics: [],
+        taskSummaries: [],
+        filePath: "/tmp/results/older-run.json",
+      },
+      {
+        id: "latest-run",
+        benchmark: "longmemeval",
+        benchmarkTier: "published",
+        timestamp: "2026-04-18T10:00:00.000Z",
+        mode: "quick",
+        totalLatencyMs: 1234,
+        meanQueryLatencyMs: 617,
+        taskCount: 2,
+        metricHighlights: [{ name: "accuracy", mean: 0.91 }],
+        primaryMetric: "accuracy",
+        primaryScore: 0.91,
+        runCount: 1,
+        estimatedCostUsd: 0.14,
+        totalTokens: 110,
+        inputTokens: 70,
+        outputTokens: 40,
+        systemProvider: "openai/gpt-5.4",
+        judgeProvider: "openai/gpt-5.4-mini",
+        providerKey: "openai/gpt-5.4__openai/gpt-5.4-mini",
+        adapterMode: "standalone",
+        aggregateMetrics: [],
+        taskSummaries: [],
+        filePath: "/tmp/results/latest-run.json",
+      },
+    ],
+  };
+
+  const cards = getBenchmarkCards(payload);
+
+  assert.equal(cards[0]?.latest.id, "latest-run");
+  assert.equal(cards[0]?.previous?.id, "older-run");
+});
+
 test("benchmark detail renders single-run task deltas as null", async () => {
   const source = await readFile("packages/bench-ui/src/pages/BenchmarkDetail.tsx", "utf8");
 
   assert.match(source, /delta:\s*null,/);
+});
+
+test("benchmark detail sorts low scorers ascending before slicing", async () => {
+  const source = await readFile("packages/bench-ui/src/pages/BenchmarkDetail.tsx", "utf8");
+
+  assert.match(source, /\.sort\(\(left, right\) => \(left\.candidate \?\? 1\) - \(right\.candidate \?\? 1\)\)/);
+  assert.match(source, /lowScoring\.slice\(0, 5\)/);
 });
 
 test("compare view guards against cross-benchmark run pairs", async () => {
