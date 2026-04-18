@@ -80,6 +80,25 @@ function envOverrides(): Partial<ServerConfig["server"]> & { remnic?: Record<str
   return { ...overrides, ...(Object.keys(remnic).length > 0 ? { remnic } : {}) };
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Like `setTimeout` wrapped in a Promise, but respects an `AbortSignal`.
+ * Resolves immediately (without throwing) when the signal fires so the
+ * caller can check `signal.aborted` and exit cleanly.
+ */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 // ── Server startup ──────────────────────────────────────────────────────────
 
 export interface ServerResult {
@@ -88,6 +107,8 @@ export interface ServerResult {
   httpServer: EngramAccessHttpServer;
   host: string;
   port: number;
+  /** Cancel any pending startup-sync retry timers. Called automatically on shutdown. */
+  cancelStartupSync: () => void;
 }
 
 export async function startServer(options?: {
@@ -149,12 +170,20 @@ export async function startServer(options?: {
   // Fire-and-forget: wait for deferred init (QMD probe, collection setup,
   // warmup) then check QMD availability and retry if needed. This does NOT
   // block the server listener — connections are accepted immediately above.
+  // An AbortController allows the shutdown handler to cancel pending retries.
+  const startupSyncAbort = new AbortController();
+
   orchestrator.deferredReady.then(() => {
     if (!orchestrator.qmd.isAvailable()) {
       const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
       (async () => {
         for (const delay of RETRY_DELAYS_MS) {
-          await new Promise<void>((r) => setTimeout(r, delay));
+          await abortableDelay(delay, startupSyncAbort.signal);
+
+          if (startupSyncAbort.signal.aborted) {
+            log.debug("QMD startup-sync retry: cancelled by shutdown");
+            return;
+          }
 
           const synced = await orchestrator.startupSearchSync();
           if (!synced) {
@@ -174,7 +203,7 @@ export async function startServer(options?: {
     log.warn(`Deferred init error: ${err}`);
   });
 
-  return { config, service, httpServer, host, port };
+  return { config, service, httpServer, host, port, cancelStartupSync: () => startupSyncAbort.abort() };
 }
 
 // ── CLI entry point ──────────────────────────────────────────────────────────
@@ -237,6 +266,7 @@ Environment:
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     console.log(`\nReceived ${signal}, shutting down...`);
+    result.cancelStartupSync();
     await result.httpServer.stop();
     process.exit(0);
   };

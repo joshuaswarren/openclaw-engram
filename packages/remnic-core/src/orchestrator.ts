@@ -2093,7 +2093,8 @@ export class Orchestrator {
         }
         log.info("startupSearchSync: sync complete");
       } catch (err) {
-        log.warn(`startupSearchSync: update failed (non-fatal): ${err}`);
+        log.warn(`startupSearchSync: update failed: ${err}`);
+        return false;
       }
     }
 
