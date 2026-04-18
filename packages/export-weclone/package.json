@@ -1,0 +1,39 @@
+{
+  "name": "@remnic/export-weclone",
+  "version": "1.0.0",
+  "description": "Export Remnic memories as WeClone-compatible Alpaca-format fine-tuning datasets",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts",
+    "test": "tsx --test 'src/**/*.test.ts'",
+    "prepublishOnly": "npm run build"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "dependencies": {
+    "@remnic/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.7.0",
+    "tsx": "^4.0.0"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuaswarren/remnic.git",
+    "directory": "packages/export-weclone"
+  },
+  "keywords": ["remnic", "memory", "weclone", "fine-tuning", "export", "alpaca"]
+}
