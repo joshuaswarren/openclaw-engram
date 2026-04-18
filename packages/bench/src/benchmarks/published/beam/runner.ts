@@ -369,7 +369,19 @@ function isChatCollection(value: unknown): value is BeamConversation["chat"] {
   if (!Array.isArray(value)) {
     return false;
   }
-  return value.every((entry) => isChatTurn(entry) || isChatBatch(entry));
+  if (value.length === 0) {
+    return true;
+  }
+
+  if (isChatTurn(value[0])) {
+    return value.every((entry) => isChatTurn(entry));
+  }
+
+  if (isChatBatch(value[0])) {
+    return value.every((entry) => isChatBatch(entry));
+  }
+
+  return false;
 }
 
 function isChatBatch(value: unknown): value is BeamChatTurn[] {

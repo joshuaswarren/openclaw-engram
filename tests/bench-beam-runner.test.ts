@@ -181,3 +181,52 @@ test("runBenchmark rejects empty beam datasets after applying limit", async () =
     /BEAM dataset is empty after applying the requested limit/,
   );
 });
+
+test("runBenchmark rejects beam datasets with mixed chat nesting", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-mixed-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-mixed-1",
+        chat: [
+          {
+            id: 1,
+            role: "user",
+            content: "This top-level array mixes turns and batches.",
+          },
+          [
+            {
+              id: 2,
+              role: "assistant",
+              content: "This nested batch should be rejected.",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Who spoke in the second turn?",
+              answer: "assistant",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runBenchmark("beam", {
+        mode: "full",
+        datasetDir,
+        system: adapter,
+      }),
+    /must include chat data as a list of turns or turn batches/,
+  );
+});
