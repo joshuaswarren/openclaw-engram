@@ -51,14 +51,27 @@ export {
   createRemnicAdapter,
 } from "./adapters/remnic-adapter.js";
 export type {
+  AnthropicProviderConfig,
   CompletionOpts,
   CompletionResult,
   DiscoveredModel,
   TokenUsage,
   LlmProvider,
+  OllamaProviderConfig,
+  OpenAiCompatibleProviderConfig,
+  ProviderBaseConfig,
+  ProviderDiscoveryResult,
+  ProviderFactoryConfig,
 } from "./providers/types.js";
 
 export { BENCHMARK_RESULT_SCHEMA } from "./schema.js";
+export { createAnthropicProvider } from "./providers/anthropic.js";
+export {
+  createProvider,
+  discoverAllProviders,
+} from "./providers/factory.js";
+export { createLiteLlmProvider } from "./providers/litellm.js";
+export { createOllamaProvider } from "./providers/ollama.js";
 export { createOpenAiCompatibleProvider } from "./providers/openai-compatible.js";
 export {
   buildBenchmarkRunSeeds,
