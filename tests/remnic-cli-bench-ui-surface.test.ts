@@ -27,5 +27,6 @@ test("CLI source wires remnic bench ui to the local bench-ui package", async () 
   assert.match(source, /async function launchBenchUi\(resultsDir: string\): Promise<void>/);
   assert.match(source, /const benchUiDir = path\.join\(CLI_REPO_ROOT, "packages", "bench-ui"\);/);
   assert.match(source, /REMNIC_BENCH_RESULTS_DIR: resultsDir/);
+  assert.match(source, /shell:\s*process\.platform === "win32"/);
   assert.match(source, /childProcess\.spawn\(pnpmCmd, \["exec", "vite", "--host", "127\.0\.0\.1"\]/);
 });
