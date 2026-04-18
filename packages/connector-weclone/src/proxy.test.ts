@@ -685,4 +685,132 @@ describe("WeCloneProxy", () => {
     const body = JSON.parse(await readResponse(res));
     assert.equal(body.error, "bad_request");
   });
+
+  it("trailing slash in wecloneApiUrl does not produce double-slash URLs", async () => {
+    let receivedUrl = "";
+
+    const weclone = await createMockServer((req, res) => {
+      receivedUrl = req.url ?? "";
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [
+              { message: { role: "assistant", content: "OK" } },
+            ],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    // Config with trailing slash -- should NOT produce /v1//chat/completions
+    const proxy = createWeCloneProxy(
+      testConfig(weclone.port, remnic.port, {
+        wecloneApiUrl: `http://127.0.0.1:${weclone.port}/v1/`,
+      })
+    );
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          messages: [{ role: "user", content: "Hi" }],
+        }),
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(
+      receivedUrl,
+      "/v1/chat/completions",
+      "Upstream URL must not contain double slashes"
+    );
+    assert.ok(
+      !receivedUrl.includes("//"),
+      "URL path must not contain double slashes"
+    );
+  });
+
+  it("transparent proxy sets Content-Length and ends response correctly", async () => {
+    const responsePayload = JSON.stringify({
+      data: [{ id: "model-1" }, { id: "model-2" }],
+    });
+
+    const weclone = await createMockServer((_req, res) => {
+      // Simulate upstream with transfer-encoding: chunked
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Transfer-Encoding": "chunked",
+      });
+      res.write(responsePayload.slice(0, 10));
+      res.write(responsePayload.slice(10));
+      res.end();
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/models`);
+    assert.equal(res.status, 200);
+    assert.equal(
+      res.headers.get("content-type"),
+      "application/json",
+      "Content-Type should be forwarded"
+    );
+    assert.equal(
+      res.headers.get("content-length"),
+      String(Buffer.byteLength(responsePayload)),
+      "Content-Length should be set to actual body length"
+    );
+    assert.equal(
+      res.headers.get("transfer-encoding"),
+      null,
+      "transfer-encoding hop-by-hop header must be stripped"
+    );
+
+    const body = JSON.parse(await readResponse(res));
+    assert.equal(body.data.length, 2);
+    assert.equal(body.data[0].id, "model-1");
+  });
+
+  it("transparent proxy returns 502 when upstream is unreachable", async () => {
+    const fakeWeclonePort = 59998;
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(fakeWeclonePort, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/models`);
+    assert.equal(res.status, 502);
+    const body = JSON.parse(await readResponse(res));
+    assert.equal(body.error, "upstream_unreachable");
+  });
 });

@@ -189,9 +189,28 @@ function getOrigin(urlStr: string): string {
 }
 
 /**
+ * Headers that must not be forwarded from the upstream response.
+ * These are hop-by-hop headers that apply to a single transport connection
+ * and would conflict with our fully-buffered response write.
+ */
+const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
+  "transfer-encoding",
+  "connection",
+  "keep-alive",
+  "upgrade",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+]);
+
+/**
  * Forward a request transparently to the WeClone API.
  * Uses the origin of wecloneApiUrl so that incoming paths
  * (e.g. /v1/models) map 1:1 to upstream paths.
+ *
+ * Reads the full upstream response before writing to the client
+ * to avoid partial-header or hanging-body issues.
  */
 async function transparentProxy(
   wecloneApiUrl: string,
@@ -204,7 +223,7 @@ async function transparentProxy(
   const origin = getOrigin(wecloneApiUrl);
   const targetUrl = `${origin}${path}`;
 
-  // Remove hop-by-hop headers
+  // Remove hop-by-hop request headers
   const forwardHeaders = { ...headers };
   delete forwardHeaders["host"];
   delete forwardHeaders["connection"];
@@ -219,9 +238,22 @@ async function transparentProxy(
 
   try {
     const upstream = await fetch(targetUrl, fetchInit);
-    res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
+
+    // Read full body before sending any headers to the client
     const responseBody = await upstream.arrayBuffer();
-    res.end(Buffer.from(responseBody));
+    const responseBuffer = Buffer.from(responseBody);
+
+    // Build response headers, filtering hop-by-hop and setting Content-Length
+    const responseHeaders: Record<string, string> = {};
+    for (const [key, value] of upstream.headers.entries()) {
+      if (!HOP_BY_HOP_RESPONSE_HEADERS.has(key.toLowerCase())) {
+        responseHeaders[key] = value;
+      }
+    }
+    responseHeaders["content-length"] = String(responseBuffer.length);
+
+    res.writeHead(upstream.status, responseHeaders);
+    res.end(responseBuffer);
   } catch (_err) {
     res.writeHead(502, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ error: "upstream_unreachable" }));
@@ -232,6 +264,10 @@ async function transparentProxy(
  * Create a WeClone proxy instance.
  */
 export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy {
+  // Normalize wecloneApiUrl: strip trailing slashes to prevent double-slash
+  // when appending path segments like /chat/completions.
+  const wecloneApiUrl = config.wecloneApiUrl.replace(/\/+$/, "");
+
   const sessionMapper: SessionMapper =
     config.sessionStrategy === "caller-id"
       ? new CallerIdSessionMapper()
@@ -315,7 +351,7 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
       };
 
       // Forward to WeClone
-      const targetUrl = `${config.wecloneApiUrl}/chat/completions`;
+      const targetUrl = `${wecloneApiUrl}/chat/completions`;
       const forwardHeaders: Record<string, string> = {
         "Content-Type": "application/json",
       };
@@ -425,7 +461,7 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
     // --- All other paths: transparent proxy ---
     const body = method !== "GET" && method !== "HEAD" ? await readBody(req) : null;
     const flat = flattenHeaders(req.headers);
-    await transparentProxy(config.wecloneApiUrl, method, url, flat, body, res);
+    await transparentProxy(wecloneApiUrl, method, url, flat, body, res);
   };
 
   return {
