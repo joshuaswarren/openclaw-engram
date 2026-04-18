@@ -413,6 +413,147 @@ describe("convertMemoriesToRecords", () => {
     assert.equal(filteredRecords[0].sourceIds?.[0], "dated");
   });
 
+  // --- Fix 6: Reject symlinked source directories before scanning ---
+
+  it("skips symlinked source directories (e.g. facts/ is a symlink)", async () => {
+    const dir = await makeTmpDir();
+
+    // Create a real corrections/ directory with a memory
+    await writeSyntheticMemory(dir, "corrections", "real.md", {
+      id: "real-corr",
+      category: "correction",
+      content: "A real correction.",
+    });
+
+    // Create an external directory with memory files
+    const externalDir = await makeTmpDir();
+    await writeSyntheticMemory(externalDir, ".", "secret.md", {
+      id: "secret",
+      content: "Leaked from symlinked source directory.",
+    });
+
+    // Make facts/ a symlink to the external directory
+    await symlink(externalDir, path.join(dir, "facts"));
+
+    const records = await convertMemoriesToRecords({ memoryDir: dir });
+    // Only the real corrections file should be included; facts/ symlink is skipped
+    assert.equal(records.length, 1);
+    assert.equal(records[0].sourceIds?.[0], "real-corr");
+  });
+
+  it("skips symlinked entities/ directory when includeEntities is true", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "real.md", {
+      id: "real-fact",
+      content: "A real fact.",
+    });
+
+    // Create an external directory with entity files
+    const externalDir = await makeTmpDir();
+    await writeSyntheticMemory(externalDir, ".", "secret-entity.md", {
+      id: "secret-entity",
+      category: "entity",
+      content: "Leaked entity.",
+    });
+
+    // Make entities/ a symlink to the external directory
+    await symlink(externalDir, path.join(dir, "entities"));
+
+    const records = await convertMemoriesToRecords({
+      memoryDir: dir,
+      includeEntities: true,
+    });
+    // Only the real fact should be included; entities/ symlink is skipped
+    assert.equal(records.length, 1);
+    assert.equal(records[0].sourceIds?.[0], "real-fact");
+  });
+
+  // --- Fix 7: Propagate non-ENOENT readdir errors ---
+
+  it("propagates EACCES errors from readdir instead of swallowing", async () => {
+    const dir = await makeTmpDir();
+    // Create facts/ then remove read permission
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    const { chmod } = await import("node:fs/promises");
+    // Remove all permissions from the facts directory
+    await chmod(path.join(dir, "facts"), 0o000);
+
+    try {
+      await assert.rejects(
+        () => convertMemoriesToRecords({ memoryDir: dir }),
+        (err: Error) => {
+          assert.equal((err as NodeJS.ErrnoException).code, "EACCES");
+          return true;
+        },
+      );
+    } finally {
+      // Restore permissions so cleanup can proceed
+      await chmod(path.join(dir, "facts"), 0o755);
+    }
+  });
+
+  // --- Fix 8: Entity file handling produces correct category and sourceId ---
+
+  it("entity files get category 'entity' even when frontmatter defaults to 'fact'", async () => {
+    const dir = await makeTmpDir();
+    // Write an entity file with no explicit category (defaults to "fact" in parser)
+    await mkdir(path.join(dir, "entities"), { recursive: true });
+    await writeFile(
+      path.join(dir, "entities", "person-bob.md"),
+      "---\nid: entity-bob\nconfidence: 0.9\ncreated: 2026-01-15T10:00:00.000Z\n---\n\nBob is a test entity.",
+      "utf-8",
+    );
+
+    const records = await convertMemoriesToRecords({
+      memoryDir: dir,
+      includeEntities: true,
+    });
+    assert.equal(records.length, 1);
+    assert.equal(records[0].category, "entity");
+    assert.match(records[0].instruction, /entity information/);
+  });
+
+  it("entity files derive sourceId from filename when frontmatter ID is missing", async () => {
+    const dir = await makeTmpDir();
+    await mkdir(path.join(dir, "entities"), { recursive: true });
+    // Write an entity file with no id field
+    await writeFile(
+      path.join(dir, "entities", "org-acme-corp.md"),
+      "---\ncategory: entity\nconfidence: 0.9\ncreated: 2026-01-15T10:00:00.000Z\n---\n\nAcme Corp is an organization.",
+      "utf-8",
+    );
+
+    const records = await convertMemoriesToRecords({
+      memoryDir: dir,
+      includeEntities: true,
+    });
+    assert.equal(records.length, 1);
+    // sourceId should be derived from the filename (minus .md extension)
+    assert.deepEqual(records[0].sourceIds, ["org-acme-corp"]);
+  });
+
+  it("entity files with explicit category preserve it", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "entities", "relationship.md", {
+      id: "rel-1",
+      category: "relationship",
+      content: "Alice and Bob are colleagues.",
+    });
+
+    const records = await convertMemoriesToRecords({
+      memoryDir: dir,
+      includeEntities: true,
+    });
+    assert.equal(records.length, 1);
+    // Explicit "relationship" category should be preserved, not overridden
+    assert.equal(records[0].category, "relationship");
+  });
+
   it("excludes memories with unparseable created date when until filter is active", async () => {
     const dir = await makeTmpDir();
     await mkdir(path.join(dir, "facts"), { recursive: true });

@@ -80,8 +80,13 @@ async function collectMarkdownFiles(dir: string): Promise<string[]> {
     let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(d, { withFileTypes: true });
-    } catch {
-      return; // subdirectory does not exist or is unreadable
+    } catch (err: unknown) {
+      // ENOENT means directory doesn't exist — that's fine (e.g. no facts/ yet)
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+        return;
+      }
+      // Other errors (EACCES, EIO, etc.) indicate real problems — propagate
+      throw err;
     }
     // Sort entries by name for deterministic output order
     entries.sort((a, b) => a.name.localeCompare(b.name));
@@ -92,8 +97,12 @@ async function collectMarkdownFiles(dir: string): Promise<string[]> {
       let linkStat: import("node:fs").Stats;
       try {
         linkStat = await lstat(full);
-      } catch {
-        continue; // unreadable entry — skip
+      } catch (err: unknown) {
+        // ENOENT: entry disappeared between readdir and lstat — skip
+        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+          continue;
+        }
+        throw err;
       }
       if (linkStat.isSymbolicLink()) {
         continue;
@@ -200,6 +209,20 @@ export async function convertMemoriesToRecords(
 
   const allFiles: string[] = [];
   for (const dir of dirs) {
+    // Reject symlinked source directories — a symlinked facts/ could point
+    // outside memoryDir, enabling data exfiltration
+    try {
+      const dirLinkStat = await lstat(dir);
+      if (dirLinkStat.isSymbolicLink()) {
+        continue; // skip symlinked source directory entirely
+      }
+    } catch (err: unknown) {
+      // ENOENT means directory doesn't exist — that's fine
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      throw err;
+    }
     const files = await collectMarkdownFiles(dir);
     allFiles.push(...files);
   }
@@ -210,8 +233,13 @@ export async function convertMemoriesToRecords(
     let raw: string;
     try {
       raw = await readFile(filePath, "utf-8");
-    } catch {
-      continue; // skip unreadable files
+    } catch (err: unknown) {
+      // ENOENT means the file was removed between listing and reading — skip
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+        continue;
+      }
+      // Other errors (EACCES, EIO, etc.) indicate real problems — propagate
+      throw err;
     }
 
     const parsed = parseFrontmatter(raw);
@@ -219,6 +247,21 @@ export async function convertMemoriesToRecords(
     if (!parsed.content) continue; // skip empty content
 
     parsed.filePath = filePath;
+
+    // Entity files from entities/ directory: override default category and
+    // derive sourceId from filename when frontmatter ID is missing
+    const entitiesPrefix = path.join(memoryDir, "entities") + path.sep;
+    if (filePath.startsWith(entitiesPrefix)) {
+      // Default category from parseFrontmatter is "fact" — override to "entity"
+      // if the frontmatter didn't explicitly set a different category
+      if (parsed.category === "fact") {
+        parsed.category = "entity";
+      }
+      // Derive ID from filename when frontmatter ID is empty
+      if (!parsed.id) {
+        parsed.id = path.basename(filePath, ".md");
+      }
+    }
 
     // --- Apply filters ---
 
