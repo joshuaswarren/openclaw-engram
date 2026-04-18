@@ -153,6 +153,7 @@ export interface RunBenchmarkOptions {
   seed?: number;
   adapterMode?: string;
   system: import("./adapters/types.js").BenchMemoryAdapter;
+  ingestionAdapter?: import("./ingestion-types.js").IngestionBenchAdapter;
   systemProvider?: ProviderConfig | null;
   judgeProvider?: ProviderConfig | null;
   remnicConfig?: Record<string, unknown>;
