@@ -1192,6 +1192,14 @@ export class Orchestrator {
   private deferredInitAbort: AbortController | null = null;
 
   /**
+   * Whether the deferred init's QMD startup sync completed successfully.
+   * When false after deferredReady resolves, the server retry loop should
+   * attempt startupSearchSync() even if `qmd.isAvailable()` is true —
+   * availability only means probe succeeded, not that the index is current.
+   */
+  deferredSyncSucceeded = false;
+
+  /**
    * Abort deferred initialization so background QMD sync/warmup stops
    * promptly on shutdown. Safe to call multiple times or before init.
    */
@@ -1947,9 +1955,16 @@ export class Orchestrator {
           await this.qmd.update();
         }
         log.info("QMD startup sync: complete");
+        this.deferredSyncSucceeded = true;
       } catch (err) {
         log.warn(`QMD startup sync failed (non-fatal): ${err}`);
+        // deferredSyncSucceeded stays false — server retry will attempt sync
       }
+    } else if (!(this.qmd.isAvailable())) {
+      // QMD not available at deferred init time — server retry will handle it
+    } else {
+      // QMD available but maintenance disabled — consider sync not needed
+      this.deferredSyncSucceeded = true;
     }
 
     if (signal.aborted) return;
@@ -2009,6 +2024,8 @@ export class Orchestrator {
     cacheWarmups.push(this.storage.readAllEntityFiles().then(() => {}).catch(() => {}));
     await Promise.all(cacheWarmups);
 
+    if (signal.aborted) return;
+
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
       try {
         const init = await this.conversationIndexBackend.initialize();
@@ -2027,6 +2044,8 @@ export class Orchestrator {
         this.config.conversationIndexEnabled = false;
       }
     }
+
+    if (signal.aborted) return;
 
     if (this.config.localLlmEnabled) {
       try {

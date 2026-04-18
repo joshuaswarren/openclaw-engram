@@ -176,35 +176,50 @@ export async function startServer(options?: {
   const startupSyncAbort = new AbortController();
 
   orchestrator.deferredReady.then(() => {
-    if (!orchestrator.qmd.isAvailable() && orchestrator.qmd.debugStatus() !== "backend=noop") {
-      const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
-      (async () => {
-        for (const delay of RETRY_DELAYS_MS) {
-          await abortableDelay(delay, startupSyncAbort.signal);
+    // Skip retries when search is intentionally disabled (noop backend).
+    if (orchestrator.qmd.debugStatus() === "backend=noop") {
+      log.debug("QMD startup-sync: search backend is noop, skipping retries");
+      return;
+    }
 
-          if (startupSyncAbort.signal.aborted) {
-            log.debug("QMD startup-sync retry: cancelled by shutdown");
-            return;
-          }
+    // Retry when either: (a) QMD is not available yet (cold-start race), or
+    // (b) QMD is available but the deferred init sync step failed silently
+    // (e.g., update errors swallowed by backend, throttle skip, transient
+    // network failure). Without (b), the daemon permanently serves stale
+    // recall after a failed sync despite healthy QMD probe.
+    const needsRetry = !orchestrator.qmd.isAvailable() || !orchestrator.deferredSyncSucceeded;
+    if (!needsRetry) {
+      log.debug("QMD startup-sync: deferred init completed successfully, no retries needed");
+      return;
+    }
 
-          const synced = await orchestrator.startupSearchSync();
-          if (!synced) {
-            if (orchestrator.qmd.debugStatus() === "backend=noop") {
-              log.debug("QMD startup-sync retry: search intentionally disabled; stopping retries");
-              return;
-            }
-            log.debug(`QMD startup-sync retry: not available yet (next retry in ${RETRY_DELAYS_MS[RETRY_DELAYS_MS.indexOf(delay) + 1] ?? "n/a"}ms)`);
-            continue;
-          }
+    const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+    (async () => {
+      for (const delay of RETRY_DELAYS_MS) {
+        await abortableDelay(delay, startupSyncAbort.signal);
 
-          return; // sync succeeded, stop retrying
+        if (startupSyncAbort.signal.aborted) {
+          log.debug("QMD startup-sync retry: cancelled by shutdown");
+          return;
         }
 
-        log.warn("QMD startup-sync retry: exhausted all retries; search index may be stale");
-      })().catch((err) => {
-        log.warn(`QMD startup-sync retry: unexpected error: ${err}`);
-      });
-    }
+        const synced = await orchestrator.startupSearchSync();
+        if (!synced) {
+          if (orchestrator.qmd.debugStatus() === "backend=noop") {
+            log.debug("QMD startup-sync retry: search intentionally disabled; stopping retries");
+            return;
+          }
+          log.debug(`QMD startup-sync retry: not available yet (next retry in ${RETRY_DELAYS_MS[RETRY_DELAYS_MS.indexOf(delay) + 1] ?? "n/a"}ms)`);
+          continue;
+        }
+
+        return; // sync succeeded, stop retrying
+      }
+
+      log.warn("QMD startup-sync retry: exhausted all retries; search index may be stale");
+    })().catch((err) => {
+      log.warn(`QMD startup-sync retry: unexpected error: ${err}`);
+    });
   }).catch((err) => {
     log.warn(`Deferred init error: ${err}`);
   });
