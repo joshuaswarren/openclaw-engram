@@ -135,7 +135,7 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   },
   {
     ...ingestionEntityRecallDefinition,
-    run: runIngestionEntityRecallBenchmark as (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>,
+    run: runIngestionEntityRecallBenchmark,
   },
 ];
 

@@ -63,15 +63,14 @@ export function entityRecall(
 }
 
 export function linkMatches(extracted: ExtractedLink, gold: GoldLink): boolean {
-  const sourceMatch =
-    normalize(extracted.source) === normalize(gold.source) ||
-    normalize(extracted.source) === normalize(gold.target);
-  const targetMatch =
-    normalize(extracted.target) === normalize(gold.target) ||
-    normalize(extracted.target) === normalize(gold.source);
-
   if (gold.bidirectional) {
-    return sourceMatch && targetMatch && normalize(extracted.relation) === normalize(gold.relation);
+    const directMatch =
+      normalize(extracted.source) === normalize(gold.source) &&
+      normalize(extracted.target) === normalize(gold.target);
+    const reverseMatch =
+      normalize(extracted.source) === normalize(gold.target) &&
+      normalize(extracted.target) === normalize(gold.source);
+    return (directMatch || reverseMatch) && normalize(extracted.relation) === normalize(gold.relation);
   }
 
   return (
@@ -145,6 +144,14 @@ export function schemaCompleteness(
       totalApplicable++;
       const passes = matchedPage?.hasTimeline ?? false;
       if (passes) totalPassing++;
+    }
+
+    if (gp.expectSeeAlso && gp.expectSeeAlso.length > 0) {
+      for (const expected of gp.expectSeeAlso) {
+        totalApplicable++;
+        const passes = matchedPage?.seeAlso.some((sa) => normalize(sa) === normalize(expected)) ?? false;
+        if (passes) totalPassing++;
+      }
     }
   }
 
