@@ -12,7 +12,12 @@ import type {
 } from "./ingestion-types.js";
 
 function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "");
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function entityNameMatches(extracted: string, gold: GoldEntity): boolean {
@@ -39,7 +44,24 @@ export function entityRecall(
 
   const matched = new Set<string>();
   const consumedExtracted = new Set<number>();
+
+  // Pass 1: exact-name matches first to avoid alias-order sensitivity.
   for (const ge of gold) {
+    const idx = extracted.findIndex(
+      (ee, i) =>
+        !consumedExtracted.has(i) &&
+        normalize(ee.type) === normalize(ge.type) &&
+        normalize(ee.name) === normalize(ge.name),
+    );
+    if (idx >= 0) {
+      matched.add(ge.id);
+      consumedExtracted.add(idx);
+    }
+  }
+
+  // Pass 2: alias fallback for unmatched gold entities.
+  for (const ge of gold) {
+    if (matched.has(ge.id)) continue;
     const idx = extracted.findIndex((ee, i) => !consumedExtracted.has(i) && matchEntity(ee, ge));
     if (idx >= 0) {
       matched.add(ge.id);
@@ -91,7 +113,7 @@ export function backlinkF1(
     return { precision: 1, recall: 1, f1: 1 };
   }
   if (extracted.length === 0) return { precision: 0, recall: 0, f1: 0 };
-  if (gold.length === 0) return { precision: 0, recall: 0, f1: 0 };
+  if (gold.length === 0) return { precision: 0, recall: 1, f1: 0 };
 
   const matchedGold = new Set<number>();
   let correctExtracted = 0;
