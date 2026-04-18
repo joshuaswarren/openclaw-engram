@@ -1464,10 +1464,10 @@ export class Orchestrator {
       this.resolveInit = resolve;
     });
 
-    // Create deferred-ready gate — CLI callers await this for full QMD readiness
-    this.deferredReady = new Promise<void>((resolve) => {
-      this.resolveDeferredReady = resolve;
-    });
+    // deferredReady is NOT created here — the property initializer provides a
+    // safe default (Promise.resolve()), and initialize() recreates it on every
+    // call. Creating a pending promise in the constructor would be orphaned
+    // since initialize() unconditionally overwrites it.
   }
 
   /** Get or create a BoxBuilder for the given namespace storage root (namespace-isolated). */
@@ -1958,20 +1958,26 @@ export class Orchestrator {
     }
     await Promise.all(warmupPromises);
 
-    // Pre-warm knowledge index, memory, and entity caches in background
+    // Pre-warm knowledge index, memory, and entity caches.
+    // Awaited so callers of `deferredReady` can rely on warmups being complete
+    // and shutdown sequencing does not race with in-flight cache builds.
+    const cacheWarmups: Promise<void>[] = [];
     if (this.config.knowledgeIndexEnabled) {
-      (async () => {
-        try {
-          const t0 = Date.now();
-          await this.storage.buildKnowledgeIndex(this.config);
-          log.info(`Knowledge Index warmup: complete in ${Date.now() - t0}ms`);
-        } catch (err) {
-          log.debug(`Knowledge Index warmup failed (non-fatal): ${err}`);
-        }
-      })().catch(() => {});
+      cacheWarmups.push(
+        (async () => {
+          try {
+            const t0 = Date.now();
+            await this.storage.buildKnowledgeIndex(this.config);
+            log.info(`Knowledge Index warmup: complete in ${Date.now() - t0}ms`);
+          } catch (err) {
+            log.debug(`Knowledge Index warmup failed (non-fatal): ${err}`);
+          }
+        })(),
+      );
     }
-    this.storage.readAllMemories().catch(() => {});
-    this.storage.readAllEntityFiles().catch(() => {});
+    cacheWarmups.push(this.storage.readAllMemories().then(() => {}).catch(() => {}));
+    cacheWarmups.push(this.storage.readAllEntityFiles().then(() => {}).catch(() => {}));
+    await Promise.all(cacheWarmups);
 
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
       const init = await this.conversationIndexBackend.initialize();

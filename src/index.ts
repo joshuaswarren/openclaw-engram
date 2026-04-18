@@ -3452,29 +3452,58 @@ const pluginDefinition = {
           ((globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] || 0) - 1,
         );
         (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] = remainingServices;
-        // Opik cleanup: placed after the guard so secondary stop()s never detach
-        // the process-wide exporter while Engram is still running.
-        // Wrapped in try-catch (like accessHttpServer.stop()) so a throwing
-        // unsubscribe does not leave SERVICE_STARTED=true and prevent restart.
-        try {
-          activeOpikExporter?.unsubscribe();
-        } catch (err) {
-          log.debug(`engram opik exporter unsubscribe failed: ${err}`);
+
+        // Uses the pre-await snapshot (initPromiseAtStopEntry) so a secondary
+        // that finishes start() during the deferredReady await doesn't cause
+        // us to misclassify a stop-during-init as a full stop.
+        const currentInitPromise = initPromiseAtStopEntry;
+        // Track whether a secondary completed init during stop()'s await window
+        // (either the deferredReady await or the currentInitPromise await below).
+        // Used to guard SERVICE_STARTED=false, hook/guard cleanup, AND shared
+        // service teardown (HTTP server, watchers, globals).
+        let secondaryTookOver = false;
+
+        // Check if a secondary started during the deferredReady await.
+        // When stop() was called with no in-flight init (full stop),
+        // INIT_PROMISE was null. If it's now non-null, a secondary entered
+        // start() while we were awaiting deferredReady. Without this check
+        // we'd tear down the secondary's live resources.
+        // Note: we only check INIT_PROMISE here, not SERVICE_STARTED,
+        // because SERVICE_STARTED is expected to be true from our own
+        // start() in the full-stop case.
+        if (!currentInitPromise && (globalThis as any)[keys.INIT_PROMISE]) {
+          secondaryTookOver = true;
         }
-        activeOpikExporter = null;
-        try {
-          await accessHttpServer.stop();
-        } catch (err) {
-          log.debug(`engram access HTTP stop failed: ${err}`);
+
+        // Shared service teardown: Opik, HTTP server, watchers, globals.
+        // Guarded by secondaryTookOver — if a secondary became live during the
+        // deferredReady await, we must not tear down its resources.
+        if (!secondaryTookOver) {
+          // Opik cleanup: placed after the guard so secondary stop()s never detach
+          // the process-wide exporter while Engram is still running.
+          // Wrapped in try-catch so a throwing unsubscribe does not leave
+          // SERVICE_STARTED=true and prevent restart.
+          try {
+            activeOpikExporter?.unsubscribe();
+          } catch (err) {
+            log.debug(`engram opik exporter unsubscribe failed: ${err}`);
+          }
+          activeOpikExporter = null;
+          try {
+            await accessHttpServer.stop();
+          } catch (err) {
+            log.debug(`engram access HTTP stop failed: ${err}`);
+          }
+          stopDreamWatcher?.();
+          stopDreamWatcher = null;
+          stopHeartbeatWatcher?.();
+          stopHeartbeatWatcher = null;
+          removeDreamingObserver?.();
+          removeDreamingObserver = null;
+          delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
+          delete (globalThis as any)[keys.ACCESS_SERVICE];
         }
-        stopDreamWatcher?.();
-        stopDreamWatcher = null;
-        stopHeartbeatWatcher?.();
-        stopHeartbeatWatcher = null;
-        removeDreamingObserver?.();
-        removeDreamingObserver = null;
-        delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
-        delete (globalThis as any)[keys.ACCESS_SERVICE];
+
         // REGISTERED_GUARD policy:
         //
         // Full stop (INIT_PROMISE is null when stop() was called):
@@ -3487,29 +3516,6 @@ const pluginDefinition = {
         //   unregister CLI commands. Clearing GUARD here would allow a
         //   subsequent register() to register CLI again on top of the
         //   still-live registration, duplicating the CLI command tree.
-        //
-        // Uses the pre-await snapshot (initPromiseAtStopEntry) so a secondary
-        // that finishes start() during the deferredReady await doesn't cause
-        // us to misclassify a stop-during-init as a full stop.
-        const currentInitPromise = initPromiseAtStopEntry;
-        // Track whether a secondary completed init during stop()'s await window
-        // (either the deferredReady await or the currentInitPromise await below).
-        // Used to guard SERVICE_STARTED=false and hook/guard cleanup.
-        let secondaryTookOver = false;
-
-        // Check if a secondary started during the deferredReady await.
-        // When stop() was called with no in-flight init (full stop),
-        // INIT_PROMISE was null. If it's now non-null, a secondary entered
-        // start() while we were awaiting deferredReady. Without this check
-        // we'd misclassify the current state and tear down the secondary's
-        // live resources (HTTP server, watchers, etc.).
-        // Note: we only check INIT_PROMISE here, not SERVICE_STARTED,
-        // because SERVICE_STARTED is expected to be true from our own
-        // start() in the full-stop case.
-        if (!currentInitPromise && (globalThis as any)[keys.INIT_PROMISE]) {
-          secondaryTookOver = true;
-        }
-
         if (!currentInitPromise) {
           if (!secondaryTookOver) {
             (globalThis as any)[keys.REGISTERED_GUARD] = false;
