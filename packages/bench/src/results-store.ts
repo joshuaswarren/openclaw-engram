@@ -39,7 +39,18 @@ function isBenchmarkResult(value: unknown): value is BenchmarkResult {
     typeof meta.id === "string" &&
     typeof meta.benchmark === "string" &&
     typeof meta.timestamp === "string" &&
-    isBenchmarkMode(meta.mode)
+    isBenchmarkMode(meta.mode) &&
+    typeof (value as { config?: unknown }).config === "object" &&
+    (value as { config?: unknown }).config !== null &&
+    typeof (value as { cost?: unknown }).cost === "object" &&
+    (value as { cost?: unknown }).cost !== null &&
+    typeof (value as { environment?: unknown }).environment === "object" &&
+    (value as { environment?: unknown }).environment !== null &&
+    typeof (value as { results?: { tasks?: unknown; aggregates?: unknown } }).results === "object" &&
+    (value as { results?: unknown }).results !== null &&
+    Array.isArray((value as { results?: { tasks?: unknown } }).results?.tasks) &&
+    typeof (value as { results?: { aggregates?: unknown } }).results?.aggregates === "object" &&
+    (value as { results?: { aggregates?: unknown } }).results?.aggregates !== null
   );
 }
 
@@ -101,7 +112,7 @@ export async function resolveBenchmarkResultReference(
       const result = await loadBenchmarkResult(reference);
       return toSummary(result, reference);
     } catch {
-      return undefined;
+      // Fall through to id/basename matching under the results directory.
     }
   }
 

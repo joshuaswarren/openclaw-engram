@@ -87,6 +87,27 @@ test("loadBenchmarkResult rejects invalid benchmark result files", async () => {
   );
 });
 
+test("loadBenchmarkResult rejects incomplete benchmark result payloads", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-incomplete-"));
+  const invalidPath = path.join(root, "incomplete.json");
+  await writeFile(
+    invalidPath,
+    JSON.stringify({
+      meta: {
+        id: "incomplete-run",
+        benchmark: "longmemeval",
+        timestamp: "2026-04-18T00:00:00.000Z",
+        mode: "full",
+      },
+    }),
+  );
+
+  await assert.rejects(
+    () => loadBenchmarkResult(invalidPath),
+    /Invalid benchmark result file/,
+  );
+});
+
 test("resolveBenchmarkResultReference matches by id, basename, or direct path", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-resolve-"));
   const filePath = path.join(root, "candidate.json");
@@ -102,4 +123,26 @@ test("resolveBenchmarkResultReference matches by id, basename, or direct path", 
   assert.equal(byId?.id, "candidate-run");
   assert.equal(byBasename?.id, "candidate-run");
   assert.equal(byPath?.path, filePath);
+});
+
+test("resolveBenchmarkResultReference falls back to id matching when a same-named direct path is invalid", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-fallback-"));
+  const storedPath = path.join(root, "stored.json");
+  await writeFile(
+    storedPath,
+    `${JSON.stringify(buildResult("candidate-run", "2026-04-18T03:00:00.000Z"))}\n`,
+  );
+
+  const cwd = process.cwd();
+  const conflictingPath = path.join(root, "candidate-run");
+  await writeFile(conflictingPath, "not benchmark json");
+
+  try {
+    process.chdir(root);
+    const resolved = await resolveBenchmarkResultReference(root, "candidate-run");
+    assert.equal(resolved?.id, "candidate-run");
+    assert.equal(resolved?.path, storedPath);
+  } finally {
+    process.chdir(cwd);
+  }
 });
