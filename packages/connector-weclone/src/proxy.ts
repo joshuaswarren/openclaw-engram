@@ -27,13 +27,27 @@ interface ChatMessage {
 }
 
 /**
- * Read the entire body of an IncomingMessage as a string.
+ * Read the entire body of an IncomingMessage as a string (UTF-8).
+ * Used for paths that need to parse JSON (e.g. chat completions).
  */
 function readBody(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+    req.on("error", reject);
+  });
+}
+
+/**
+ * Read the entire body of an IncomingMessage as raw bytes.
+ * Used for the transparent proxy path to avoid corrupting binary/multipart uploads.
+ */
+function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 }
@@ -192,9 +206,14 @@ function getOrigin(urlStr: string): string {
  * Headers that must not be forwarded from the upstream response.
  * These are hop-by-hop headers that apply to a single transport connection
  * and would conflict with our fully-buffered response write.
+ *
+ * `content-encoding` is included because fetch() auto-decompresses the body.
+ * When we buffer with arrayBuffer() and relay, the bytes are already decoded;
+ * forwarding `content-encoding: gzip` would label decompressed bytes as gzip.
  */
 const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
   "transfer-encoding",
+  "content-encoding",
   "connection",
   "keep-alive",
   "upgrade",
@@ -217,7 +236,7 @@ async function transparentProxy(
   method: string,
   path: string,
   headers: Record<string, string>,
-  body: string | null,
+  body: Buffer | null,
   res: http.ServerResponse
 ): Promise<void> {
   const origin = getOrigin(wecloneApiUrl);
@@ -371,6 +390,16 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
 
         // --- Streaming path ---
         if (parsed.stream === true) {
+          // If upstream returned an error, pass through as-is (don't force SSE headers)
+          if (!upstream.ok) {
+            const errBody = await upstream.arrayBuffer();
+            res.writeHead(upstream.status, {
+              "content-type": upstream.headers.get("content-type") || "application/json",
+            });
+            res.end(Buffer.from(errBody));
+            return;
+          }
+
           res.writeHead(upstream.status, {
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-cache",
@@ -459,7 +488,8 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
     }
 
     // --- All other paths: transparent proxy ---
-    const body = method !== "GET" && method !== "HEAD" ? await readBody(req) : null;
+    // Use raw bytes to avoid corrupting binary/multipart uploads
+    const body = method !== "GET" && method !== "HEAD" ? await readRawBody(req) : null;
     const flat = flattenHeaders(req.headers);
     await transparentProxy(wecloneApiUrl, method, url, flat, body, res);
   };

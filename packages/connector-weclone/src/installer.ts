@@ -39,12 +39,11 @@ Steps:
    Ensure it is listening at: ${config.remnicDaemonUrl}
 
 3. Start the connector proxy
-   npx @remnic/connector-weclone --port ${config.proxyPort} \\
-     --weclone-api ${config.wecloneApiUrl} \\
-     --remnic-daemon ${config.remnicDaemonUrl}
+   remnic-weclone-proxy --config ~/.remnic/connectors/weclone.json
 
    The proxy will listen on port ${config.proxyPort} and forward
    requests to WeClone after injecting Remnic memory context.
+   (All settings are read from the config file.)
 
 4. Update your bot / client configuration
    Change the API base URL from:

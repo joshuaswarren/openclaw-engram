@@ -1,6 +1,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
+import { gzipSync } from "node:zlib";
 import { createWeCloneProxy } from "./proxy.js";
 import type { WeCloneConnectorConfig } from "./config.js";
 
@@ -812,5 +813,135 @@ describe("WeCloneProxy", () => {
     assert.equal(res.status, 502);
     const body = JSON.parse(await readResponse(res));
     assert.equal(body.error, "upstream_unreachable");
+  });
+
+  it("passes through upstream error body for stream requests instead of SSE headers", async () => {
+    const errorPayload = JSON.stringify({ error: { message: "Unauthorized", type: "auth_error" } });
+
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        // Return a 401 JSON error, not SSE
+        res.writeHead(401, { "Content-Type": "application/json" });
+        res.end(errorPayload);
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          stream: true,
+          messages: [{ role: "user", content: "Hello" }],
+        }),
+      }
+    );
+
+    assert.equal(res.status, 401, "Upstream error status should be forwarded");
+    assert.equal(
+      res.headers.get("content-type"),
+      "application/json",
+      "Error response should have JSON content-type, not text/event-stream"
+    );
+    const body = JSON.parse(await readResponse(res));
+    assert.equal(body.error.message, "Unauthorized");
+  });
+
+  it("strips content-encoding from transparent proxy responses", async () => {
+    const payload = JSON.stringify({ data: "test" });
+    const compressed = gzipSync(Buffer.from(payload));
+
+    const weclone = await createMockServer((_req, res) => {
+      // Serve actually-gzipped body with the matching header.
+      // fetch() auto-decompresses, so the proxy receives decoded bytes.
+      // The proxy must NOT forward content-encoding to the client.
+      res.writeHead(200, {
+        "Content-Type": "application/json",
+        "Content-Encoding": "gzip",
+        "Content-Length": String(compressed.length),
+      });
+      res.end(compressed);
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(`http://127.0.0.1:${proxy.port}/v1/models`);
+    assert.equal(res.status, 200);
+    assert.equal(
+      res.headers.get("content-encoding"),
+      null,
+      "content-encoding must be stripped from buffered proxy responses"
+    );
+    assert.equal(
+      res.headers.get("content-type"),
+      "application/json",
+      "Other headers should still be forwarded"
+    );
+    // Verify the body is readable as decompressed JSON
+    const body = JSON.parse(await readResponse(res));
+    assert.equal(body.data, "test", "Body should be decompressed and readable");
+  });
+});
+
+describe("WeClone Installer", () => {
+  it("generates instructions with --config flag matching CLI", async () => {
+    // Dynamic import to avoid circular dependency issues
+    const { generateWeCloneInstructions } = await import("./installer.js");
+    const result = generateWeCloneInstructions({
+      wecloneApiUrl: "http://localhost:8000/v1",
+      proxyPort: 8100,
+      remnicDaemonUrl: "http://localhost:4318",
+      sessionStrategy: "single",
+      memoryInjection: {
+        maxTokens: 1500,
+        position: "system-append",
+        template: "[Memory]\n{memories}\n[/Memory]",
+      },
+    });
+
+    assert.ok(
+      result.instructions.includes("--config"),
+      "Instructions should reference the --config flag"
+    );
+    assert.ok(
+      !result.instructions.includes("--port"),
+      "Instructions must not reference unsupported --port flag"
+    );
+    assert.ok(
+      !result.instructions.includes("--weclone-api"),
+      "Instructions must not reference unsupported --weclone-api flag"
+    );
+    assert.ok(
+      !result.instructions.includes("--remnic-daemon"),
+      "Instructions must not reference unsupported --remnic-daemon flag"
+    );
+    assert.ok(
+      result.instructions.includes("remnic-weclone-proxy"),
+      "Instructions should reference the correct binary name"
+    );
   });
 });
