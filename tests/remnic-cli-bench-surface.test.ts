@@ -175,7 +175,7 @@ test("bench providers discovery is exposed as a package-backed CLI surface", asy
   const readme = await readFile("packages/remnic-cli/README.md", "utf8");
 
   assert.match(source, /discoverAllProviders,/);
-  assert.match(source, /Usage: remnic bench <list\|run\|compare\|results\|baseline\|export\|ui\|providers>/);
+  assert.match(source, /Usage: remnic bench <list\|run\|compare\|results\|baseline\|export\|publish\|ui\|providers>/);
   assert.match(source, /remnic bench providers discover/);
   assert.match(source, /async function discoverBenchProviders\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /providers discover does not accept positional arguments/);
