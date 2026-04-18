@@ -109,6 +109,8 @@ export interface ServerResult {
   port: number;
   /** Cancel any pending startup-sync retry timers. Called automatically on shutdown. */
   cancelStartupSync: () => void;
+  /** Abort deferred orchestrator initialization (QMD sync, warmup, cache). */
+  abortDeferredInit: () => void;
 }
 
 export async function startServer(options?: {
@@ -207,7 +209,7 @@ export async function startServer(options?: {
     log.warn(`Deferred init error: ${err}`);
   });
 
-  return { config, service, httpServer, host, port, cancelStartupSync: () => startupSyncAbort.abort() };
+  return { config, service, httpServer, host, port, cancelStartupSync: () => startupSyncAbort.abort(), abortDeferredInit: () => orchestrator.abortDeferredInit() };
 }
 
 // ── CLI entry point ──────────────────────────────────────────────────────────
@@ -271,6 +273,7 @@ Environment:
   const shutdown = async (signal: string) => {
     console.log(`\nReceived ${signal}, shutting down...`);
     result.cancelStartupSync();
+    result.abortDeferredInit();
     await result.httpServer.stop();
     process.exit(0);
   };
