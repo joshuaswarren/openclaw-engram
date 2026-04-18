@@ -9,6 +9,7 @@ import {
   MEMBENCH_SMOKE_FIXTURE,
   type MemBenchCase,
 } from "./fixture.js";
+import type { Message } from "../../../adapters/types.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -283,7 +284,7 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
   };
 }
 
-function parseTurn(turn: unknown, location: string) {
+function parseTurn(turn: unknown, location: string): Message {
   if (!isPlainObject(turn)) {
     throw new Error(`MemBench turn ${location} must be an object.`);
   }
