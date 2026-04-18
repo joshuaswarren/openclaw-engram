@@ -437,6 +437,7 @@ function printBenchPackageSummary(
     cost: { meanQueryLatencyMs: number };
   },
   outputPath: string,
+  outputLabel = "Results saved",
 ): void {
   console.log(`Benchmark: ${result.meta.benchmark}`);
   console.log(`Mode: ${result.meta.mode}`);
@@ -445,14 +446,14 @@ function printBenchPackageSummary(
   for (const [metric, aggregate] of Object.entries(result.results.aggregates).sort()) {
     console.log(`  ${metric.padEnd(20)} ${aggregate.mean.toFixed(4)}`);
   }
-  console.log(`Results saved: ${outputPath}`);
+  console.log(`${outputLabel}: ${outputPath}`);
 }
 
 function printStoredBenchResultSummary(
   result: Awaited<ReturnType<typeof loadBenchmarkResult>>,
   summary: { id: string; path: string },
 ): void {
-  printBenchPackageSummary(result, summary.path);
+  printBenchPackageSummary(result, summary.path, "Stored result");
   console.log(`Run id: ${summary.id}`);
 }
 

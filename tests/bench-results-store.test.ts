@@ -216,8 +216,32 @@ test("saveBenchmarkBaseline rejects baseline paths that exist as files", async (
 });
 
 test("defaultBenchmarkBaselineDir resolves under the Remnic home directory", () => {
-  const baselineDir = defaultBenchmarkBaselineDir();
-  assert.match(baselineDir, /\.remnic[\/\\]bench[\/\\]baselines$/);
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  const customHomeDir = path.join(path.sep, "tmp", "remnic-home");
+
+  process.env.HOME = customHomeDir;
+  delete process.env.USERPROFILE;
+
+  try {
+    const baselineDir = defaultBenchmarkBaselineDir();
+    assert.equal(
+      baselineDir,
+      path.join(customHomeDir, ".remnic", "bench", "baselines"),
+    );
+  } finally {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+
+    if (originalUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
+  }
 });
 
 test("renderBenchmarkResultExport returns JSON and aggregate-metric CSV representations", () => {

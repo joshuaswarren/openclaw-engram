@@ -139,6 +139,7 @@ test("bench results, baseline, and export route through the stored package resul
   assert.match(source, /bench export <run> --format <json\|csv>/);
   assert.match(source, /const baselineDir = parsed\.baselinesDir \?\? resolveBenchBaselineDir\(\)/);
   assert.match(source, /const rendered = renderBenchmarkResultExport\(result, parsed\.format\);/);
+  assert.match(source, /printBenchPackageSummary\(result, summary\.path, "Stored result"\);/);
   assert.match(parserSource, /export type BenchBaselineAction = "save" \| "list";/);
   assert.match(parserSource, /export type BenchExportFormat = "json" \| "csv";/);
   assert.match(parserSource, /const baselinesDir = readBenchOptionValue\(args, "--baselines-dir"\);/);

@@ -37,7 +37,8 @@ export type BenchmarkExportFormat = "json" | "csv";
 const BASELINE_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 export function defaultBenchmarkBaselineDir(): string {
-  return path.join(os.homedir(), ".remnic", "bench", "baselines");
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
+  return path.join(homeDir, ".remnic", "bench", "baselines");
 }
 
 function compareResultSummaries(
