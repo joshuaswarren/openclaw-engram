@@ -86,7 +86,11 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /datasetDir: datasetDir \? path\.resolve\(expandTilde\(datasetDir\)\) : undefined/);
   assert.match(source, /const benchmarks = collectBenchmarks\(args\);/);
   assert.match(source, /resolveBenchDatasetDir\(\s*benchmarkId,\s*parsed\.quick,\s*parsed\.datasetDir/s);
+  assert.match(source, /const outputDir = resolveBenchOutputDir\(\);/);
+  assert.match(source, /const datasetDir = resolveBenchDatasetDir\(/);
+  assert.match(source, /if \(!parsed\.quick && !datasetDir\) \{\s*throw new Error\(/s);
   assert.match(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
+  assert.match(source, /const system = await createAdapter\(\);/);
 });
 
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {

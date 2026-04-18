@@ -45,7 +45,7 @@ export const longMemEvalDefinition: BenchmarkDefinition = {
 export async function runLongMemEvalBenchmark(
   options: ResolvedRunBenchmarkOptions,
 ): Promise<BenchmarkResult> {
-  const dataset = await loadDataset(options.datasetDir, options.limit);
+  const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
 
   for (const item of dataset) {
@@ -168,6 +168,7 @@ export async function runLongMemEvalBenchmark(
 }
 
 async function loadDataset(
+  mode: "full" | "quick",
   datasetDir: string | undefined,
   limit?: number,
 ): Promise<LongMemEvalItem[]> {
@@ -192,6 +193,12 @@ async function loadDataset(
 
     throw new Error(
       `LongMemEval dataset not found under ${datasetDir}. Tried longmemeval_oracle.json, longmemeval_s_cleaned.json, and longmemeval.json. Errors: ${datasetErrors.join(" | ")}`,
+    );
+  }
+
+  if (mode === "full") {
+    throw new Error(
+      "LongMemEval full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
     );
   }
 

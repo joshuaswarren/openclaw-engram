@@ -543,21 +543,21 @@ async function runBenchViaPackage(
     return false;
   }
 
+  const outputDir = resolveBenchOutputDir();
+  const datasetDir = resolveBenchDatasetDir(
+    benchmarkId,
+    parsed.quick,
+    parsed.datasetDir,
+  );
+  if (!parsed.quick && !datasetDir) {
+    throw new Error(
+      `full benchmark runs for "${benchmarkId}" require dataset files. Pass --dataset-dir <path> or run from a Remnic repo checkout with evals/datasets/${benchmarkId}.`,
+    );
+  }
+
   const system = await createAdapter();
 
   try {
-    const outputDir = resolveBenchOutputDir();
-    const datasetDir = resolveBenchDatasetDir(
-      benchmarkId,
-      parsed.quick,
-      parsed.datasetDir,
-    );
-    if (!parsed.quick && !datasetDir) {
-      console.error(
-        `ERROR: full benchmark runs for "${benchmarkId}" require dataset files. Pass --dataset-dir <path> or run from a Remnic repo checkout with evals/datasets/${benchmarkId}.`,
-      );
-      process.exit(1);
-    }
     const result = await benchModule.runBenchmark(benchmarkId, {
       mode: parsed.quick ? "quick" : "full",
       datasetDir,

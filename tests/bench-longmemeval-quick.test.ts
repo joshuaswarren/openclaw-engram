@@ -127,6 +127,19 @@ test("runBenchmark fails fast when full mode is given an explicit missing datase
   );
 });
 
+test("runBenchmark rejects full mode when no datasetDir is provided", async () => {
+  const adapter = new FakeMemoryAdapter();
+
+  await assert.rejects(
+    () =>
+      runBenchmark("longmemeval", {
+        mode: "full",
+        system: adapter,
+      }),
+    /LongMemEval full mode requires datasetDir/,
+  );
+});
+
 test("runBenchmark fails fast when full mode is given an explicit unreadable dataset file", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-longmemeval-bad-"));
   const datasetDir = path.join(tmpDir, "datasets");
