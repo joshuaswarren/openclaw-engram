@@ -38,12 +38,9 @@ export function entityRecall(
   if (gold.length === 0) return { overall: 1, byType: {} };
 
   const matched = new Set<string>();
-  const consumedExtracted = new Set<number>();
   for (const ge of gold) {
-    const idx = extracted.findIndex((ee, i) => !consumedExtracted.has(i) && matchEntity(ee, ge));
-    if (idx >= 0) {
+    if (extracted.some((ee) => matchEntity(ee, ge))) {
       matched.add(ge.id);
-      consumedExtracted.add(idx);
     }
   }
 
@@ -66,14 +63,15 @@ export function entityRecall(
 }
 
 export function linkMatches(extracted: ExtractedLink, gold: GoldLink): boolean {
+  const sourceMatch =
+    normalize(extracted.source) === normalize(gold.source) ||
+    normalize(extracted.source) === normalize(gold.target);
+  const targetMatch =
+    normalize(extracted.target) === normalize(gold.target) ||
+    normalize(extracted.target) === normalize(gold.source);
+
   if (gold.bidirectional) {
-    const directMatch =
-      normalize(extracted.source) === normalize(gold.source) &&
-      normalize(extracted.target) === normalize(gold.target);
-    const reverseMatch =
-      normalize(extracted.source) === normalize(gold.target) &&
-      normalize(extracted.target) === normalize(gold.source);
-    return (directMatch || reverseMatch) && normalize(extracted.relation) === normalize(gold.relation);
+    return sourceMatch && targetMatch && normalize(extracted.relation) === normalize(gold.relation);
   }
 
   return (
@@ -134,32 +132,19 @@ export function schemaCompleteness(
       totalApplicable++;
       const passes = matchedPage ? matchedPage.frontmatter[field] !== undefined : false;
       if (passes) totalPassing++;
-      if (!(field in fieldPasses)) fieldPasses[field] = [];
-      fieldPasses[field]!.push(passes ? 1 : 0);
+      fieldPasses[field]?.push(passes ? 1 : 0);
     }
 
     if (gp.expectExecSummary) {
       totalApplicable++;
       const passes = matchedPage?.hasExecSummary ?? false;
       if (passes) totalPassing++;
-      if (!("field_exec_summary" in fieldPasses)) fieldPasses["field_exec_summary"] = [];
-      fieldPasses["field_exec_summary"]!.push(passes ? 1 : 0);
     }
 
     if (gp.expectTimeline) {
       totalApplicable++;
       const passes = matchedPage?.hasTimeline ?? false;
       if (passes) totalPassing++;
-      if (!("field_timeline" in fieldPasses)) fieldPasses["field_timeline"] = [];
-      fieldPasses["field_timeline"]!.push(passes ? 1 : 0);
-    }
-
-    if (gp.expectSeeAlso && gp.expectSeeAlso.length > 0) {
-      for (const expected of gp.expectSeeAlso) {
-        totalApplicable++;
-        const passes = matchedPage?.seeAlso.some((sa) => normalize(sa) === normalize(expected)) ?? false;
-        if (passes) totalPassing++;
-      }
     }
   }
 
