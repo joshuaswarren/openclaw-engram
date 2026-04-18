@@ -27,10 +27,17 @@ test("workspace scripts expose bench list, bench run, and a quick smoke path", a
   const pkg = JSON.parse(await readFile("package.json", "utf8")) as {
     scripts?: Record<string, string>;
   };
+  const helper = await readFile("scripts/run-bench-cli.mjs", "utf8");
 
-  assert.equal(pkg.scripts?.["bench:list"], "tsx packages/remnic-cli/src/index.ts bench list");
-  assert.equal(pkg.scripts?.["bench:run"], "tsx packages/remnic-cli/src/index.ts bench run");
-  assert.equal(pkg.scripts?.["bench:quick"], "tsx packages/remnic-cli/src/index.ts bench run --quick longmemeval");
+  assert.equal(pkg.scripts?.["bench:list"], "node scripts/run-bench-cli.mjs list");
+  assert.equal(pkg.scripts?.["bench:run"], "node scripts/run-bench-cli.mjs run");
+  assert.equal(pkg.scripts?.["bench:quick"], "node scripts/run-bench-cli.mjs run --quick longmemeval");
+
+  assert.match(helper, /packages", "remnic-core", "dist", "index\.js"/);
+  assert.match(helper, /packages", "bench", "dist", "index\.js"/);
+  assert.match(helper, /\["--filter", "@remnic\/core", "build"\]/);
+  assert.match(helper, /\["--filter", "@remnic\/bench", "build"\]/);
+  assert.match(helper, /\["exec", "tsx", "packages\/remnic-cli\/src\/index\.ts", "bench"/);
 });
 
 test("CLI README documents bench list and quick-run examples", async () => {
@@ -47,6 +54,9 @@ test("CLI uses package-owned adapters for migrated benchmark runs", async () => 
 
   assert.match(source, /createLightweightAdapter/);
   assert.match(source, /createRemnicAdapter/);
+  assert.match(source, /async function runBenchViaPackage/);
+  assert.match(source, /try \{\s*benchModule = await import\("@remnic\/bench"\)/s);
+  assert.match(source, /\} catch \{\s*return false;\s*\}/s);
   assert.doesNotMatch(source, /evals\/adapter\/engram-adapter\.ts/);
 });
 

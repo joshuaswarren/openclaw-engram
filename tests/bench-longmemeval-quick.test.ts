@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   runBenchmark,
   writeBenchmarkResult,
@@ -110,6 +110,39 @@ test("runBenchmark executes longmemeval in quick mode and writes a result JSON f
   assert.equal(path.dirname(writtenPath), outputDir);
   assert.equal(written.meta.benchmark, "longmemeval");
   assert.equal(written.results.tasks.length, 1);
+});
+
+test("runBenchmark fails fast when full mode is given an explicit missing datasetDir", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-longmemeval-missing-"));
+  const adapter = new FakeMemoryAdapter();
+
+  await assert.rejects(
+    () =>
+      runBenchmark("longmemeval", {
+        mode: "full",
+        datasetDir: path.join(tmpDir, "does-not-exist"),
+        system: adapter,
+      }),
+    /LongMemEval dataset not found under/,
+  );
+});
+
+test("runBenchmark fails fast when full mode is given an explicit unreadable dataset file", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-longmemeval-bad-"));
+  const datasetDir = path.join(tmpDir, "datasets");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(path.join(datasetDir, "longmemeval_oracle.json"), "{not json");
+
+  await assert.rejects(
+    () =>
+      runBenchmark("longmemeval", {
+        mode: "full",
+        datasetDir,
+        system: adapter,
+      }),
+    /LongMemEval dataset not found under/,
+  );
 });
 
 test("writeBenchmarkResult sanitizes remnicVersion in the output filename", async () => {

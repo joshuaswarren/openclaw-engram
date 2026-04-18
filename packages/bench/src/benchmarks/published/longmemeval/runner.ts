@@ -172,6 +172,7 @@ async function loadDataset(
   limit?: number,
 ): Promise<LongMemEvalItem[]> {
   if (datasetDir) {
+    const datasetErrors: string[] = [];
     for (const filename of [
       "longmemeval_oracle.json",
       "longmemeval_s_cleaned.json",
@@ -181,10 +182,17 @@ async function loadDataset(
         const raw = await readFile(path.join(datasetDir, filename), "utf8");
         const parsed = JSON.parse(raw) as LongMemEvalItem[];
         return limit ? parsed.slice(0, limit) : parsed;
-      } catch {
+      } catch (error) {
+        datasetErrors.push(
+          `${filename}: ${error instanceof Error ? error.message : String(error)}`,
+        );
         continue;
       }
     }
+
+    throw new Error(
+      `LongMemEval dataset not found under ${datasetDir}. Tried longmemeval_oracle.json, longmemeval_s_cleaned.json, and longmemeval.json. Errors: ${datasetErrors.join(" | ")}`,
+    );
   }
 
   const bundledFixture = limit

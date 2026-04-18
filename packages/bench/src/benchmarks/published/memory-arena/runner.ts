@@ -114,6 +114,11 @@ async function run(
       for (let qi = 0; qi < task.questions.length; qi++) {
         const question = task.questions[qi];
         const expectedAnswer = task.answers[qi];
+        if (expectedAnswer === undefined) {
+          throw new Error(
+            `MemoryArena task ${domain}:${task.id} is missing answer index ${qi} for question "${question.slice(0, 120)}"`,
+          );
+        }
         const expectedStr = answerToString(expectedAnswer);
 
         // Store the question as context (simulates the agent receiving the task)

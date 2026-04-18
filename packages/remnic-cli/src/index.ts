@@ -432,7 +432,7 @@ async function runBenchViaPackage(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
 ): Promise<boolean> {
-  const benchModule = await import("@remnic/bench") as unknown as {
+  let benchModule: {
     getBenchmark?: (id: string) => {
       runnerAvailable?: boolean;
     } | undefined;
@@ -454,6 +454,11 @@ async function runBenchViaPackage(
     createLightweightAdapter?: () => Promise<{ destroy(): Promise<void> }>;
     createRemnicAdapter?: () => Promise<{ destroy(): Promise<void> }>;
   };
+  try {
+    benchModule = await import("@remnic/bench") as unknown as typeof benchModule;
+  } catch {
+    return false;
+  }
 
   const definition = benchModule.getBenchmark?.(benchmarkId);
   if (!definition?.runnerAvailable || !benchModule.runBenchmark || !benchModule.writeBenchmarkResult) {
