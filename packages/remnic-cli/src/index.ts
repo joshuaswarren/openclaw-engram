@@ -916,6 +916,13 @@ async function runBenchViaPackage(
     return false;
   }
 
+  if (definition.meta?.category === "ingestion") {
+    throw new Error(
+      `Benchmark "${benchmarkId}" requires an ingestion adapter which is not yet available via the CLI. ` +
+      `Run ingestion benchmarks programmatically by passing an ingestionAdapter to runBenchmark().`,
+    );
+  }
+
   const createAdapter = parsed.quick
     ? benchModule.createLightweightAdapter
     : benchModule.createRemnicAdapter;

@@ -40,6 +40,8 @@ export async function runIngestionBacklinkF1Benchmark(
 
   const fixtureDir = await mkdtemp(path.join(tmpdir(), "bench-email-"));
   try {
+    await options.ingestionAdapter!.reset();
+
     for (const file of fixture.files) {
       const filePath = path.join(fixtureDir, file.relativePath);
       await mkdir(path.dirname(filePath), { recursive: true });
@@ -47,10 +49,10 @@ export async function runIngestionBacklinkF1Benchmark(
     }
 
     const { result: ingestionLog, durationMs } = await timed(() =>
-      options.ingestionAdapter.ingest(fixtureDir),
+      options.ingestionAdapter!.ingest(fixtureDir),
     );
 
-    const graph = await options.ingestionAdapter.getMemoryGraph();
+    const graph = await options.ingestionAdapter!.getMemoryGraph();
     const { precision, recall, f1 } = backlinkF1(graph.links, fixture.goldGraph.links);
 
     const scores: Record<string, number> = {
