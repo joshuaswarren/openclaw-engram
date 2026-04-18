@@ -64,7 +64,9 @@ export function recallAtK(
 
   const topK = retrieved.slice(0, k).map(normalizeText);
   const relevantSet = new Set(relevant.map(normalizeText));
-  const hits = topK.filter((candidate) => relevantSet.has(candidate)).length;
+  const hits = new Set(
+    topK.filter((candidate) => relevantSet.has(candidate)),
+  ).size;
 
   return hits / relevantSet.size;
 }

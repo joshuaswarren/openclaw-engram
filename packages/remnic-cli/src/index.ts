@@ -343,34 +343,53 @@ function coerceBenchCategory(
 }
 
 async function listBenchmarksFromPackage(): Promise<BenchCatalogEntry[] | undefined> {
+  const result = await loadBenchDefinitionsFromPackage();
+  if (!result) {
+    return undefined;
+  }
+
+  return result.map((entry) => ({
+    id: entry.id,
+    title: entry.title ?? entry.id,
+    category: coerceBenchCategory(entry.id, entry.meta?.category),
+    summary: entry.meta?.description ?? "",
+  }));
+}
+
+interface PackageBenchDefinition {
+  id: string;
+  title?: string;
+  tier?: string;
+  runnerAvailable?: boolean;
+  meta?: { description?: string; category?: string };
+}
+
+async function loadBenchDefinitionsFromPackage(): Promise<PackageBenchDefinition[] | undefined> {
   try {
     const benchModule = await import("@remnic/bench") as {
-      listBenchmarks?: () => Promise<Array<{
-        id: string;
-        title?: string;
-        tier?: string;
-        meta?: { description?: string; category?: string };
-      }>> | Array<{
-        id: string;
-        title?: string;
-        tier?: string;
-        meta?: { description?: string; category?: string };
-      }>;
+      listBenchmarks?: () => Promise<PackageBenchDefinition[]> | PackageBenchDefinition[];
     };
     if (!benchModule.listBenchmarks) return undefined;
     const result = await benchModule.listBenchmarks();
-    if (!Array.isArray(result)) {
-      return undefined;
-    }
-    return result.map((entry) => ({
-      id: entry.id,
-      title: entry.title ?? entry.id,
-      category: coerceBenchCategory(entry.id, entry.meta?.category),
-      summary: entry.meta?.description ?? "",
-    }));
+    return Array.isArray(result) ? result : undefined;
   } catch {
     return undefined;
   }
+}
+
+async function resolveAllBenchmarks(): Promise<string[]> {
+  const packageBenchmarks = await loadBenchDefinitionsFromPackage();
+  if (packageBenchmarks) {
+    return packageBenchmarks
+      .filter((entry) => entry.runnerAvailable)
+      .map((entry) => entry.id);
+  }
+
+  if (!fs.existsSync(EVAL_RUNNER_PATH)) {
+    return [];
+  }
+
+  return BENCHMARK_CATALOG.map((entry) => entry.id);
 }
 
 async function runBenchViaFallback(
@@ -2306,9 +2325,15 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
-  const selectedBenchmarks = parsed.all ? BENCHMARK_CATALOG.map((entry) => entry.id) : parsed.benchmarks;
+  const selectedBenchmarks = parsed.all
+    ? await resolveAllBenchmarks()
+    : parsed.benchmarks;
   if (selectedBenchmarks.length === 0) {
-    console.error("ERROR: specify benchmark name(s) or --all. Use 'remnic bench list' to see available.");
+    console.error(
+      parsed.all
+        ? "ERROR: no runnable benchmarks are available for --all in this install. Use 'remnic bench list' to inspect the catalog."
+        : "ERROR: specify benchmark name(s) or --all. Use 'remnic bench list' to see available.",
+    );
     process.exit(1);
   }
 

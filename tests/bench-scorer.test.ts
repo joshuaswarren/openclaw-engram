@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   aggregateScores,
   aggregateTaskScores,
+  recallAtK,
 } from "../packages/bench/src/scorer.ts";
 
 test("aggregateScores projects legacy mean/min/max values from aggregateTaskScores", () => {
@@ -25,4 +26,8 @@ test("aggregateScores projects legacy mean/min/max values from aggregateTaskScor
 test("aggregateScores and aggregateTaskScores both handle empty input", () => {
   assert.deepEqual(aggregateTaskScores([]), {});
   assert.deepEqual(aggregateScores([]), {});
+});
+
+test("recallAtK deduplicates repeated hits so recall does not exceed 1.0", () => {
+  assert.equal(recallAtK(["a", "a"], ["a"], 2), 1.0);
 });

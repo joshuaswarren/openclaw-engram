@@ -60,6 +60,15 @@ test("CLI uses package-owned adapters for migrated benchmark runs", async () => 
   assert.doesNotMatch(source, /evals\/adapter\/engram-adapter\.ts/);
 });
 
+test("--all selection resolves to runnable package benchmarks when package metadata is available", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+
+  assert.match(source, /async function resolveAllBenchmarks\(\)/);
+  assert.match(source, /packageBenchmarks\s*\n\s*\.filter\(\(entry\) => entry\.runnerAvailable\)/s);
+  assert.match(source, /const selectedBenchmarks = parsed\.all\s+\? await resolveAllBenchmarks\(\)/s);
+  assert.match(source, /no runnable benchmarks are available for --all in this install/i);
+});
+
 test("legacy benchmark check/report reuse the normalized action args instead of re-slicing rest", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
 
