@@ -797,23 +797,25 @@ export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkRe
     const runner = await getBenchmark(name);
     console.log(`\nRunning: ${runner.meta.name} (${runner.meta.category})...`);
 
-    const result = await runner.run(
-      system,
-      judge,
-      {
-        limit: opts.limit,
-        datasetDir: path.join(datasetBase, name),
-        mode: runConfig.mode,
-        seed: runConfig.seeds[0],
-      },
-    );
+    for (const seed of runConfig.seeds) {
+      const result = await runner.run(
+        system,
+        judge,
+        {
+          limit: opts.limit,
+          datasetDir: path.join(datasetBase, name),
+          mode: runConfig.mode,
+          seed,
+        },
+      );
 
-    const filePath = await writeResult(result, outputDir);
-    if (!opts.json) {
-      printSummary(result);
-      console.log(`Results saved: ${filePath}`);
+      const filePath = await writeResult(result, outputDir);
+      if (!opts.json) {
+        printSummary(result);
+        console.log(`Results saved: ${filePath}`);
+      }
+      results.push(result);
     }
-    results.push(result);
   }
 
   return results;
@@ -1298,7 +1300,9 @@ export function compareResults(
     const bMean = baseMetrics[key].mean;
     const cMean = candMetrics[key].mean;
     const delta = cMean - bMean;
-    const percentChange = bMean !== 0 ? delta / bMean : 0;
+    const percentChange = bMean !== 0
+      ? delta / bMean
+      : (delta !== 0 ? Infinity * Math.sign(delta) : 0);
 
     const bScores = baseline.results.tasks.map(t => t.scores[key] ?? 0);
     const cScores = candidate.results.tasks.map(t => t.scores[key] ?? 0);
@@ -1514,6 +1518,7 @@ export async function loadResult(filePath: string): Promise<BenchmarkResult> {
 export async function listResults(
   outputDir: string,
 ): Promise<Array<{ id: string; path: string; benchmark: string; timestamp: string; mode: string }>> {
+  if (!existsSync(outputDir)) return [];
   const files = await readdir(outputDir);
   const results: Array<{ id: string; path: string; benchmark: string; timestamp: string; mode: string }> = [];
 
