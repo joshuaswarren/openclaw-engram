@@ -58,6 +58,7 @@ export const CALENDAR_GOLD_GRAPH: GoldGraph = {
     { source: "Maya Torres", target: "Daily Standup", relation: "organizes", bidirectional: false },
     { source: "Ben Alder", target: "Daily Standup", relation: "attends", bidirectional: false },
     { source: "Wei Chen", target: "Daily Standup", relation: "attends", bidirectional: false },
+    { source: "Daily Standup", target: "Main Office", relation: "at-location", bidirectional: false },
     { source: "Maya Torres", target: "Sprint Planning", relation: "organizes", bidirectional: false },
     { source: "Maya Torres", target: "Client Demo", relation: "organizes", bidirectional: false },
     { source: "Client Demo", target: "ClientCo", relation: "for-client", bidirectional: false },
@@ -66,9 +67,9 @@ export const CALENDAR_GOLD_GRAPH: GoldGraph = {
   pages: [
     {
       title: "Team Offsite",
-      requiredFields: ["title", "type", "state", "created"],
+      requiredFields: ["title", "type", "state", "created", "see-also"],
       expectTimeline: true,
-      expectExecSummary: false,
+      expectExecSummary: true,
       expectSeeAlso: ["Maya Torres", "Lake House Retreat"],
     },
   ],
