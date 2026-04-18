@@ -9,7 +9,7 @@ test("remnic CLI source wires the new bench command and keeps benchmark as an al
   assert.match(source, /case "bench": \{/);
   assert.match(source, /case "benchmark": \{/);
   assert.match(source, /await cmdBench\(rest\);/);
-  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export\|providers>/);
+  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export\|ui\|providers>/);
   assert.match(source, /benchmark is kept as a compatibility alias/i);
 });
 
@@ -171,7 +171,7 @@ test("bench providers discovery is exposed as a package-backed CLI surface", asy
   const readme = await readFile("packages/remnic-cli/README.md", "utf8");
 
   assert.match(source, /discoverAllProviders,/);
-  assert.match(source, /Usage: remnic bench <list\|run\|compare\|results\|baseline\|export\|providers>/);
+  assert.match(source, /Usage: remnic bench <list\|run\|compare\|results\|baseline\|export\|ui\|providers>/);
   assert.match(source, /remnic bench providers discover/);
   assert.match(source, /async function discoverBenchProviders\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /if \(parsed\.action === "providers"\) \{\s*await discoverBenchProviders\(parsed\);/s);
@@ -181,6 +181,16 @@ test("bench providers discovery is exposed as a package-backed CLI surface", asy
   assert.match(parserSource, /first === "providers"/);
   assert.match(parserSource, /const providerAction =[\s\S]*args\[0\] === "discover"/);
   assert.match(readme, /remnic bench providers discover/);
+});
+
+test("bench surface retains local UI compatibility alongside providers discovery", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
+
+  assert.match(parserSource, /\| "ui"/);
+  assert.match(parserSource, /first === "ui"/);
+  assert.match(source, /ui\s+Launch the local benchmark overview UI/);
+  assert.match(source, /if \(parsed\.action === "ui"\) \{\s*await launchBenchUi\(parsed\.resultsDir \?\? resolveBenchOutputDir\(\)\);\s*return;\s*\}/s);
 });
 
 test("parseBenchArgs supports the providers discovery surface", async () => {

@@ -20,6 +20,7 @@
  *   token revoke      Revoke auth token for a connector
  *   bench list        List published benchmark packs
  *   bench run         Run published benchmark packs
+ *   bench ui          Launch the local benchmark overview UI
  *   tree              Generate context tree
  *   onboard [dir]     Onboard project directory
  *   curate <path>     Curate files into memory
@@ -446,6 +447,41 @@ async function runBenchViaFallback(
 
 function resolveBenchOutputDir(): string {
   return path.join(resolveHomeDir(), ".remnic", "bench", "results");
+}
+
+async function launchBenchUi(resultsDir: string): Promise<void> {
+  const benchUiDir = path.join(CLI_REPO_ROOT, "packages", "bench-ui");
+  const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+
+  if (!fs.existsSync(path.join(benchUiDir, "package.json"))) {
+    console.error("ERROR: @remnic/bench-ui is not available in this checkout.");
+    process.exit(1);
+  }
+
+  console.log(`Launching bench UI with results from ${resultsDir}`);
+  console.log("Press Ctrl+C to stop the local server.");
+
+  const child = childProcess.spawn(pnpmCmd, ["exec", "vite", "--host", "127.0.0.1"], {
+    cwd: benchUiDir,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+    env: {
+      ...process.env,
+      REMNIC_BENCH_RESULTS_DIR: resultsDir,
+    },
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0 || signal === "SIGINT" || signal === "SIGTERM") {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`bench UI exited with code ${code ?? "unknown"}`));
+    });
+  });
 }
 
 function resolveBenchBaselineDir(): string {
@@ -2732,6 +2768,11 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.action === "ui") {
+    await launchBenchUi(parsed.resultsDir ?? resolveBenchOutputDir());
+    return;
+  }
+
   if (parsed.action === "providers") {
     await discoverBenchProviders(parsed);
     return;
@@ -4183,9 +4224,9 @@ Usage:
   remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
-  remnic bench <list|run|compare|results|baseline|export|providers> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv>] [--output <path>] [--json]
+  remnic bench <list|run|compare|results|baseline|export|ui|providers> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv>] [--output <path>] [--json]
     benchmark is kept as a compatibility alias. check/report remain under that alias.
-  remnic benchmark <list|run|compare|results|baseline|export|providers|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
+  remnic benchmark <list|run|compare|results|baseline|export|ui|providers|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
     Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
     Focus: person:<name>, project:<name>, topic:<name>.
