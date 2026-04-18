@@ -9,6 +9,7 @@ export default defineConfig({
   clean: true,
   external: [
     "openclaw",
+    "openai",
     "@remnic/core",
     "@lancedb/lancedb",
     "meilisearch",

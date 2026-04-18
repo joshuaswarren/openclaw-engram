@@ -1,6 +1,6 @@
 {
   "name": "@remnic/plugin-openclaw",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "OpenClaw adapter for Remnic memory — thin wrapper delegating to @remnic/core",
   "type": "module",
   "main": "dist/index.js",
@@ -28,7 +28,9 @@
     "check-types": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
-  "dependencies": {},
+  "dependencies": {
+    "openai": "^6.0.0"
+  },
   "peerDependencies": {
     "openclaw": ">=2026.4.8"
   },
