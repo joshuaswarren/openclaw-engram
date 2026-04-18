@@ -2083,13 +2083,20 @@ export class Orchestrator {
     }
 
     // Run index update — namespace-aware when enabled.
-    // qmd.update() swallows errors internally (logs + records fail timestamp),
-    // so we snapshot lastUpdateFailedAtMs before the call and compare after
-    // to detect silent failures that would otherwise be misclassified as success.
+    // qmd.update() swallows errors internally, so we: (1) reset throttles to
+    // ensure the update actually runs (not skipped by stale backoff from a
+    // previous failed attempt), and (2) verify both timestamps to confirm the
+    // update executed and didn't fail silently.
     if (this.config.qmdMaintenanceEnabled) {
       try {
+        if ("resetUpdateThrottles" in this.qmd) {
+          (this.qmd as any).resetUpdateThrottles();
+        }
         const failTsBefore = "lastUpdateFailedAtMs" in this.qmd
           ? (this.qmd as any).lastUpdateFailedAtMs as number | null
+          : null;
+        const runTsBefore = "lastUpdateRanAtMs" in this.qmd
+          ? (this.qmd as any).lastUpdateRanAtMs as number | null
           : null;
         log.info("startupSearchSync: updating index to match current disk state");
         if (this.config.namespacesEnabled) {
@@ -2100,8 +2107,15 @@ export class Orchestrator {
         const failTsAfter = "lastUpdateFailedAtMs" in this.qmd
           ? (this.qmd as any).lastUpdateFailedAtMs as number | null
           : null;
+        const runTsAfter = "lastUpdateRanAtMs" in this.qmd
+          ? (this.qmd as any).lastUpdateRanAtMs as number | null
+          : null;
         if (failTsAfter !== null && failTsAfter !== failTsBefore) {
           log.warn("startupSearchSync: update silently failed (detected via fail timestamp)");
+          return false;
+        }
+        if (!this.config.namespacesEnabled && runTsAfter === runTsBefore) {
+          log.warn("startupSearchSync: update was throttled/skipped (no run timestamp change)");
           return false;
         }
         log.info("startupSearchSync: sync complete");

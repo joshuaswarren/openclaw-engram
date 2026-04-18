@@ -800,6 +800,19 @@ export class QmdClient implements SearchBackend {
   get lastUpdateFailedAtMs(): number | null {
     return this._lastUpdateFailAtMs;
   }
+
+  get lastUpdateRanAtMs(): number | null {
+    return this.lastUpdateRunAtMs;
+  }
+
+  resetUpdateThrottles(): void {
+    this._lastUpdateFailAtMs = null;
+    this.lastUpdateRunAtMs = null;
+    const gs = getGlobalQmdState();
+    gs.lastGlobalUpdateRunAtMs = null;
+    gs.lastGlobalUpdateFailAtMs = null;
+  }
+
   private readonly updateTimeoutMs: number;
   private readonly updateMinIntervalMs: number;
   private readonly slowLog?: { enabled: boolean; thresholdMs: number };
