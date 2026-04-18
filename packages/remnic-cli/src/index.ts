@@ -300,6 +300,21 @@ function readBenchOptionValue(argv: string[], flag: string): string | undefined 
   return value;
 }
 
+function collectBenchmarks(argv: string[]): string[] {
+  const benchmarks: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--dataset-dir") {
+      index += 1;
+      continue;
+    }
+    if (!arg.startsWith("-")) {
+      benchmarks.push(arg);
+    }
+  }
+  return benchmarks;
+}
+
 function parseBenchActionArgs(argv: string[]): {
   action: BenchAction;
   args: string[];
@@ -320,7 +335,7 @@ function parseBenchActionArgs(argv: string[]): {
 
 export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const { action, args } = parseBenchActionArgs(argv);
-  const benchmarks = args.filter((arg) => !arg.startsWith("-"));
+  const benchmarks = collectBenchmarks(args);
   const datasetDir = readBenchOptionValue(args, "--dataset-dir");
 
   return {

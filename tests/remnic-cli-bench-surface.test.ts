@@ -80,10 +80,35 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
 
   assert.match(source, /--dataset-dir <path>\s+Override the benchmark dataset directory for full runs/);
   assert.match(source, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
+  assert.match(source, /function collectBenchmarks\(argv: string\[\]\): string\[\]/);
   assert.match(source, /requires a value\./);
+  assert.match(source, /if \(arg === "--dataset-dir"\) \{\s*index \+= 1;\s*continue;\s*\}/s);
   assert.match(source, /datasetDir: datasetDir \? path\.resolve\(expandTilde\(datasetDir\)\) : undefined/);
+  assert.match(source, /const benchmarks = collectBenchmarks\(args\);/);
   assert.match(source, /resolveBenchDatasetDir\(\s*benchmarkId,\s*parsed\.quick,\s*parsed\.datasetDir/s);
   assert.match(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
+});
+
+test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/index.ts");
+
+  const parsed = parseBenchArgs([
+    "run",
+    "longmemeval",
+    "--dataset-dir",
+    "~/datasets/longmemeval",
+  ]);
+  assert.deepEqual(parsed.benchmarks, ["longmemeval"]);
+  assert.match(parsed.datasetDir ?? "", /datasets[\/\\]longmemeval$/);
+
+  const optionFirst = parseBenchArgs([
+    "run",
+    "--dataset-dir",
+    "/tmp/bench-dataset",
+    "longmemeval",
+  ]);
+  assert.deepEqual(optionFirst.benchmarks, ["longmemeval"]);
+  assert.equal(optionFirst.datasetDir, "/tmp/bench-dataset");
 });
 
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
