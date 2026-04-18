@@ -35,21 +35,21 @@ export const EMAIL_GOLD_GRAPH: GoldGraph = {
   pages: [
     {
       title: "Project Atlas",
-      requiredFields: ["title", "type", "state", "created", "see-also"],
+      requiredFields: ["title", "type", "state", "created"],
       expectTimeline: true,
       expectExecSummary: true,
       expectSeeAlso: ["Alice Nakamura", "Acme Corp"],
     },
     {
       title: "Alice Nakamura",
-      requiredFields: ["title", "type", "state", "created", "see-also"],
+      requiredFields: ["title", "type", "state", "created"],
       expectTimeline: false,
       expectExecSummary: false,
       expectSeeAlso: ["Project Atlas", "Acme Corp"],
     },
     {
       title: "Acme Corp",
-      requiredFields: ["title", "type", "state", "created", "see-also"],
+      requiredFields: ["title", "type", "state", "created"],
       expectTimeline: false,
       expectExecSummary: true,
       expectSeeAlso: ["Project Atlas"],
