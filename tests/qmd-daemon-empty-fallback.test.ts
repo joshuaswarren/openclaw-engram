@@ -202,6 +202,46 @@ test("daemon parser uses path field when file is absent", async () => {
   assert.equal(out[0]?.path, "/tmp/facts/fact-daemon-path.md");
 });
 
+test("daemon parses QMD v2 markdown-formatted text results", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 3 results for "test query":',
+            "",
+            "#ca5902 93% openclaw-engram-hot-facts/2026-04-12/preference-123.md - User prefers dark mode",
+            "#fbcb6e 50% openclaw-engram-hot-facts/2026-02-05/honcho-456.md - Honcho integration details",
+            "#abc123 72% openclaw-engram-hot-facts/2026-03-15/work-789.md - Work schedule preferences",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  let subprocessCalls = 0;
+  client.searchViaSubprocess = async () => {
+    subprocessCalls += 1;
+    return [];
+  };
+
+  const out = await client.search("test query", undefined, 5);
+  assert.equal(subprocessCalls, 0);
+  assert.equal(out.length, 3);
+  assert.equal(out[0]?.docid, "ca5902");
+  assert.equal(out[0]?.score, 0.93);
+  assert.equal(out[0]?.path, "qmd://openclaw-engram-hot-facts/2026-04-12/preference-123.md");
+  assert.equal(out[1]?.docid, "fbcb6e");
+  assert.equal(out[1]?.score, 0.50);
+  assert.equal(out[2]?.docid, "abc123");
+  assert.equal(out[2]?.score, 0.72);
+});
+
 test("probe attempts daemon connectivity even when CLI probe fails", async () => {
   const client = new QmdClient("openclaw-engram", 5, { daemonUrl: "http://127.0.0.1:9020" }) as any;
   let cliCalls = 0;
