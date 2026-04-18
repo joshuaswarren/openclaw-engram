@@ -1856,6 +1856,27 @@ export class Orchestrator {
       }
     }
 
+    // Sync QMD index with current disk state so recall finds recently-written
+    // facts. Without this, the index stays stale from the last extraction-
+    // triggered update — which can be days ago if the daemon restarted without
+    // new extractions. This is the root cause of "0 memories" recall results
+    // despite thousands of facts on disk.
+    if (this.qmd.isAvailable() && this.config.qmdMaintenanceEnabled) {
+      try {
+        log.info("QMD startup sync: updating index to match current disk state");
+        if (this.config.namespacesEnabled) {
+          await this.namespaceSearchRouter.updateNamespaces(
+            this.configuredNamespaces(),
+          );
+        } else {
+          await this.qmd.update();
+        }
+        log.info("QMD startup sync: complete");
+      } catch (err) {
+        log.warn(`QMD startup sync failed (non-fatal): ${err}`);
+      }
+    }
+
     // Warmup: run cheap searches to pre-load QMD embedding models and the
     // embedding-fallback JSON index so the first real recall is fast.
     const warmupPromises: Promise<void>[] = [];
