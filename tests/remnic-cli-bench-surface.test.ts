@@ -253,8 +253,10 @@ test("bench providers discover rejects unexpected trailing positional args", asy
       benchModuleEntry,
       `
 export function compareResults() {}
+export async function buildBenchmarkPublishFeed() { return { target: "remnic-ai", generatedAt: new Date(0).toISOString(), benchmarks: [] }; }
 export function checkRegression() { return null; }
 export function defaultBenchmarkBaselineDir() { return ""; }
+export function defaultBenchmarkPublishPath() { return ""; }
 export async function discoverAllProviders() { return []; }
 export async function listBenchmarkBaselines() { return []; }
 export async function listBenchmarkResults() { return []; }
@@ -267,6 +269,7 @@ export async function loadBenchmarkResult() { return null; }
 export function renderBenchmarkResultExport() { return ""; }
 export async function resolveBenchmarkResultReference() { return null; }
 export async function saveBenchmarkBaseline() { return null; }
+export async function writeBenchmarkPublishFeed() { return ""; }
 `,
     );
   }
