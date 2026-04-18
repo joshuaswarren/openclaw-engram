@@ -33,12 +33,41 @@ export interface StoredBenchmarkBaselineSummary {
 }
 
 export type BenchmarkExportFormat = "json" | "csv" | "html";
+export type BenchmarkPublishTarget = "remnic-ai";
+
+export interface PublishedBenchmarkFeedEntry {
+  benchmark: string;
+  benchmarkTier: BenchmarkResult["meta"]["benchmarkTier"];
+  resultId: string;
+  timestamp: string;
+  mode: BenchmarkMode;
+  remnicVersion: string;
+  gitSha: string;
+  taskCount: number;
+  aggregateMetrics: BenchmarkResult["results"]["aggregates"];
+  cost: BenchmarkResult["cost"];
+  environment: BenchmarkResult["environment"];
+}
+
+export interface PublishedBenchmarkFeed {
+  target: BenchmarkPublishTarget;
+  generatedAt: string;
+  benchmarks: PublishedBenchmarkFeedEntry[];
+}
 
 const BASELINE_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 export function defaultBenchmarkBaselineDir(): string {
   const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
   return path.join(homeDir, ".remnic", "bench", "baselines");
+}
+
+export function defaultBenchmarkPublishPath(target: BenchmarkPublishTarget): string {
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
+  switch (target) {
+    case "remnic-ai":
+      return path.join(homeDir, ".remnic", "published", "benchmarks.json");
+  }
 }
 
 function compareResultSummaries(
@@ -293,6 +322,82 @@ export async function resolveBenchmarkResultReference(
   return basenameMatch;
 }
 
+function comparePublishedBenchmarkEntries(
+  left: PublishedBenchmarkFeedEntry,
+  right: PublishedBenchmarkFeedEntry,
+): number {
+  if (left.timestamp === right.timestamp) {
+    return left.benchmark.localeCompare(right.benchmark);
+  }
+  return right.timestamp.localeCompare(left.timestamp);
+}
+
+function isPublishableResultForTarget(
+  result: BenchmarkResult,
+  target: BenchmarkPublishTarget,
+): boolean {
+  switch (target) {
+    case "remnic-ai":
+      return result.meta.benchmarkTier === "published" && result.meta.mode === "full";
+  }
+}
+
+function toPublishedBenchmarkFeedEntry(
+  result: BenchmarkResult,
+): PublishedBenchmarkFeedEntry {
+  return {
+    benchmark: result.meta.benchmark,
+    benchmarkTier: result.meta.benchmarkTier,
+    resultId: result.meta.id,
+    timestamp: result.meta.timestamp,
+    mode: result.meta.mode,
+    remnicVersion: result.meta.remnicVersion,
+    gitSha: result.meta.gitSha,
+    taskCount: result.results.tasks.length,
+    aggregateMetrics: result.results.aggregates,
+    cost: result.cost,
+    environment: result.environment,
+  };
+}
+
+export async function buildBenchmarkPublishFeed(
+  outputDir: string,
+  target: BenchmarkPublishTarget,
+): Promise<PublishedBenchmarkFeed> {
+  const summaries = await listBenchmarkResults(outputDir);
+  const latestByBenchmark = new Map<string, PublishedBenchmarkFeedEntry>();
+
+  for (const summary of summaries) {
+    if (latestByBenchmark.has(summary.benchmark)) {
+      continue;
+    }
+
+    const result = await loadBenchmarkResult(summary.path);
+    if (!isPublishableResultForTarget(result, target)) {
+      continue;
+    }
+    latestByBenchmark.set(
+      summary.benchmark,
+      toPublishedBenchmarkFeedEntry(result),
+    );
+  }
+
+  return {
+    target,
+    generatedAt: new Date().toISOString(),
+    benchmarks: [...latestByBenchmark.values()].sort(comparePublishedBenchmarkEntries),
+  };
+}
+
+export async function writeBenchmarkPublishFeed(
+  feed: PublishedBenchmarkFeed,
+  outputPath: string,
+): Promise<string> {
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${JSON.stringify(feed, null, 2)}\n`);
+  return outputPath;
+}
+
 function csvEscape(value: string | number): string {
   const text = String(value);
   if (/[",\n]/.test(text)) {
@@ -329,6 +434,15 @@ function renderBenchmarkResultHtml(result: BenchmarkResult): string {
   const statisticsBlock = result.results.statistics
     ? `\n    <section>\n      <h2>Statistics</h2>\n      <pre>${escapeHtml(JSON.stringify(result.results.statistics, null, 2))}</pre>\n    </section>`
     : "";
+  const remnicConfigKeyCount = Object.keys(result.config.remnicConfig ?? {}).length;
+  const renderedConfig = {
+    systemProvider: result.config.systemProvider,
+    judgeProvider: result.config.judgeProvider,
+    remnicConfig:
+      remnicConfigKeyCount === 0
+        ? "[empty]"
+        : `[redacted ${remnicConfigKeyCount} key${remnicConfigKeyCount === 1 ? "" : "s"}]`,
+  };
 
   return `<!doctype html>
 <html lang="en">
@@ -478,11 +592,7 @@ ${renderHtmlKeyValueRows([
 ])}
           </tbody>
         </table>
-        <pre>${escapeHtml(JSON.stringify({
-    systemProvider: result.config.systemProvider,
-    judgeProvider: result.config.judgeProvider,
-    remnicConfig: result.config.remnicConfig,
-  }, null, 2))}</pre>
+        <pre>${escapeHtml(JSON.stringify(renderedConfig, null, 2))}</pre>
       </section>${statisticsBlock}
     </main>
   </body>

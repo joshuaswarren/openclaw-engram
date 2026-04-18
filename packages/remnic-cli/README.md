@@ -40,8 +40,9 @@ remnic query "hello" --explain  # Test query with tier breakdown
 | `remnic bench run` | Run one or more published benchmark packs |
 | `remnic bench compare` | Compare two stored benchmark results |
 | `remnic bench baseline` | Save or list named benchmark baselines |
-| `remnic bench export` | Export a stored benchmark result as JSON or CSV |
+| `remnic bench export` | Export a stored benchmark result as JSON, CSV, or HTML |
 | `remnic bench providers discover` | Auto-detect local provider backends |
+| `remnic bench publish --target remnic-ai` | Build the Remnic.ai benchmark feed from stored results |
 
 Run `remnic --help` for the full command list.
 
@@ -60,6 +61,7 @@ remnic bench baseline list
 remnic bench export candidate-run --format csv --output ./candidate.csv
 remnic bench export candidate-run --format html --output ./report.html
 remnic bench providers discover
+remnic bench publish --target remnic-ai
 remnic benchmark run --quick longmemeval
 ```
 

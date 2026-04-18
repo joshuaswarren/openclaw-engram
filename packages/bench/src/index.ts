@@ -110,7 +110,9 @@ export {
 export { cohensD, interpretEffectSize } from "./stats/effect-size.js";
 export { compareResults } from "./stats/comparison.js";
 export {
+  buildBenchmarkPublishFeed,
   defaultBenchmarkBaselineDir,
+  defaultBenchmarkPublishPath,
   loadBenchmarkResult,
   loadBenchmarkBaseline,
   listBenchmarkBaselines,
@@ -118,6 +120,7 @@ export {
   renderBenchmarkResultExport,
   resolveBenchmarkResultReference,
   saveBenchmarkBaseline,
+  writeBenchmarkPublishFeed,
 } from "./results-store.js";
 export {
   loadCustomBenchmarkFile,
