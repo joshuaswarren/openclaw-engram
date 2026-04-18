@@ -1,8 +1,32 @@
 import { useEffect, useState } from "react";
-import type { BenchResultSummaryPayload } from "../bench-data";
+import type { BenchResultSummary, BenchResultSummaryPayload } from "../bench-data";
 import { buildCompareModel, pickDefaultCompareIds } from "../bench-data";
 import { ComparisonTable } from "../components/ComparisonTable";
 import { TaskBreakdown } from "../components/TaskBreakdown";
+
+export function canCompareBenchRuns(
+  baselineSummary: BenchResultSummary | null,
+  candidateSummary: BenchResultSummary | null,
+): boolean {
+  return (
+    baselineSummary !== null &&
+    candidateSummary !== null &&
+    baselineSummary.benchmark === candidateSummary.benchmark
+  );
+}
+
+export function filterComparableCandidateRuns(
+  payload: BenchResultSummaryPayload,
+  baselineSummary: BenchResultSummary | null,
+): BenchResultSummary[] {
+  if (!baselineSummary) {
+    return payload.summaries;
+  }
+
+  return payload.summaries.filter(
+    (summary) => summary.benchmark === baselineSummary.benchmark,
+  );
+}
 
 export function Compare({ payload }: { payload: BenchResultSummaryPayload }) {
   const defaults = pickDefaultCompareIds(payload);
@@ -20,27 +44,16 @@ export function Compare({ payload }: { payload: BenchResultSummaryPayload }) {
     payload.summaries.find((summary) => summary.id === candidateId) ?? null;
 
   useEffect(() => {
-    if (
-      baselineSummary &&
-      candidateSummary &&
-      baselineSummary.benchmark !== candidateSummary.benchmark
-    ) {
+    if (baselineSummary && candidateSummary && !canCompareBenchRuns(baselineSummary, candidateSummary)) {
       setCandidateId("");
     }
   }, [baselineSummary, candidateSummary]);
 
-  const candidateOptions = baselineSummary
-    ? payload.summaries.filter(
-        (summary) => summary.benchmark === baselineSummary.benchmark,
-      )
-    : payload.summaries;
+  const candidateOptions = filterComparableCandidateRuns(payload, baselineSummary);
 
-  const comparison =
-    baselineSummary &&
-    candidateSummary &&
-    baselineSummary.benchmark === candidateSummary.benchmark
-      ? buildCompareModel(payload, baselineId, candidateId)
-      : null;
+  const comparison = canCompareBenchRuns(baselineSummary, candidateSummary)
+    ? buildCompareModel(payload, baselineId, candidateId)
+    : null;
 
   return (
     <section className="page">

@@ -143,11 +143,6 @@ function compareRuns(left: BenchResultSummary, right: BenchResultSummary): numbe
   return right.timestamp.localeCompare(left.timestamp);
 }
 
-function latestTimestamp(runs: BenchResultSummary[]): number {
-  const newest = runs[0];
-  return newest ? Date.parse(newest.timestamp) : 0;
-}
-
 function withinRange(timestamp: string, range: TrendRange, anchor: number): boolean {
   if (range === "all") {
     return true;
@@ -279,7 +274,7 @@ export function getTrendPoints(
   benchmark: string,
   range: TrendRange,
 ): TrendPoint[] {
-  const anchor = latestTimestamp(payload.summaries);
+  const anchor = Date.now();
   const runs = payload.summaries
     .filter((summary) => summary.primaryScore !== null)
     .filter((summary) => benchmark === "all" || summary.benchmark === benchmark)
@@ -300,7 +295,7 @@ export function filterRuns(
   payload: BenchResultSummaryPayload,
   filters: RunFilters,
 ): BenchResultSummary[] {
-  const anchor = latestTimestamp(payload.summaries);
+  const anchor = Date.now();
 
   return payload.summaries.filter((summary) => {
     if (filters.benchmark !== "all" && summary.benchmark !== filters.benchmark) {

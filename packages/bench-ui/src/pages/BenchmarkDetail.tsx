@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
-import type { BenchResultSummaryPayload } from "../bench-data";
+import type { BenchResultSummary, BenchResultSummaryPayload, TaskDeltaRow } from "../bench-data";
 import {
   benchmarkRuns,
   buildHistogram,
@@ -10,6 +10,25 @@ import {
 } from "../bench-data";
 import { CostSummary } from "../components/CostSummary";
 import { TaskBreakdown } from "../components/TaskBreakdown";
+
+export function buildBenchmarkDetailTaskRows(selected: BenchResultSummary): TaskDeltaRow[] {
+  return selected.taskSummaries.map((task) => ({
+    taskId: task.taskId,
+    baseline: null,
+    candidate: task.primaryScore,
+    delta: null,
+    question: task.question,
+    latencyMs: task.latencyMs,
+  }));
+}
+
+export function selectLowestScoringTasks(taskRows: TaskDeltaRow[], limit = 5): TaskDeltaRow[] {
+  return taskRows
+    .filter((task) => (task.candidate ?? 1) < 0.6)
+    .slice()
+    .sort((left, right) => (left.candidate ?? 1) - (right.candidate ?? 1))
+    .slice(0, limit);
+}
 
 export function BenchmarkDetail({ payload }: { payload: BenchResultSummaryPayload }) {
   const { benchmarkId } = useParams();
@@ -32,17 +51,8 @@ export function BenchmarkDetail({ payload }: { payload: BenchResultSummaryPayloa
   }
 
   const histogram = buildHistogram(selected);
-  const taskRows = selected.taskSummaries.map((task) => ({
-    taskId: task.taskId,
-    baseline: null,
-    candidate: task.primaryScore,
-    delta: null,
-    question: task.question,
-    latencyMs: task.latencyMs,
-  }));
-  const lowScoring = taskRows
-    .filter((task) => (task.candidate ?? 1) < 0.6)
-    .sort((left, right) => (left.candidate ?? 1) - (right.candidate ?? 1));
+  const taskRows = buildBenchmarkDetailTaskRows(selected);
+  const lowScoring = selectLowestScoringTasks(taskRows);
 
   return (
     <section className="page">
@@ -111,7 +121,7 @@ export function BenchmarkDetail({ payload }: { payload: BenchResultSummaryPayloa
         </div>
         {lowScoring.length > 0 ? (
           <ul className="failure-list">
-            {lowScoring.slice(0, 5).map((task) => (
+            {lowScoring.map((task) => (
               <li key={task.taskId}>
                 <strong>{task.taskId}</strong>
                 <span>{formatMetricValue(task.candidate)}</span>
