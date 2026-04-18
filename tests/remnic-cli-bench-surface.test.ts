@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 test("remnic CLI source wires the new bench command and keeps benchmark as an alias", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
@@ -174,6 +179,7 @@ test("bench providers discovery is exposed as a package-backed CLI surface", asy
   assert.match(source, /Usage: remnic bench <list\|run\|compare\|results\|baseline\|export\|ui\|providers>/);
   assert.match(source, /remnic bench providers discover/);
   assert.match(source, /async function discoverBenchProviders\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /providers discover does not accept positional arguments/);
   assert.match(source, /if \(parsed\.action === "providers"\) \{\s*await discoverBenchProviders\(parsed\);/s);
   assert.match(parserSource, /export type BenchAction =[\s\S]*"providers"[\s\S]*"check"[\s\S]*"report";/);
   assert.match(parserSource, /export type BenchProviderAction = "discover";/);
@@ -202,6 +208,50 @@ test("parseBenchArgs supports the providers discovery surface", async () => {
   assert.equal(parsed.providerAction, "discover");
   assert.equal(parsed.json, true);
   assert.deepEqual(parsed.benchmarks, []);
+});
+
+test("parseBenchArgs preserves unexpected trailing providers args for CLI validation", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const parsed = parseBenchArgs(["providers", "discover", "foo"]);
+
+  assert.equal(parsed.action, "providers");
+  assert.equal(parsed.providerAction, "discover");
+  assert.deepEqual(parsed.benchmarks, ["foo"]);
+});
+
+test("bench providers discover rejects unexpected trailing positional args", () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const tsxBin = join(__dirname, "../node_modules/.bin/tsx");
+  const cliEntry = pathToFileURL(join(__dirname, "../packages/remnic-cli/src/index.ts")).href;
+  const isolatedHome = mkdtempSync(join(tmpdir(), "remnic-bench-providers-"));
+  const script = `
+import { main } from ${JSON.stringify(cliEntry)};
+await main(["bench", "providers", "discover", "foo"]);
+`;
+
+  const result = spawnSync(tsxBin, ["--input-type=module"], {
+    input: script,
+    encoding: "utf8",
+    timeout: 20_000,
+    cwd: join(__dirname, ".."),
+    env: {
+      ...process.env,
+      HOME: isolatedHome,
+    },
+  });
+
+  if (result.error) throw result.error;
+
+  assert.equal(
+    result.status,
+    1,
+    `Expected providers discover to fail with trailing args.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+  );
+  assert.match(
+    `${result.stdout}\n${result.stderr}`,
+    /providers discover does not accept positional arguments/,
+  );
 });
 
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {

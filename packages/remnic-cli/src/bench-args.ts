@@ -10,7 +10,6 @@ export type BenchAction =
   | "results"
   | "baseline"
   | "export"
-  | "ui"
   | "providers"
   | "check"
   | "report";
@@ -87,7 +86,6 @@ export function parseBenchActionArgs(argv: string[]): {
     first === "results" ||
     first === "baseline" ||
     first === "export" ||
-    first === "ui" ||
     first === "providers" ||
     first === "check" ||
     first === "report"

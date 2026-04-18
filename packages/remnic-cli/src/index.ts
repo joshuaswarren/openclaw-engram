@@ -816,6 +816,13 @@ async function exportBenchPackageResult(parsed: ParsedBenchArgs): Promise<void> 
 }
 
 async function discoverBenchProviders(parsed: ParsedBenchArgs): Promise<void> {
+  if (parsed.benchmarks.length > 0) {
+    console.error(
+      "ERROR: providers discover does not accept positional arguments. Usage: remnic bench providers discover [--json]",
+    );
+    process.exit(1);
+  }
+
   const discovered = await discoverAllProviders();
 
   if (parsed.json) {
