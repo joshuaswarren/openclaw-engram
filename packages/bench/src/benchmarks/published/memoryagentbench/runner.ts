@@ -615,11 +615,16 @@ function splitLongChunk(chunk: string, maxLength: number): string[] {
   let remaining = chunk;
   while (remaining.length > maxLength) {
     let splitIndex = remaining.lastIndexOf("\n", maxLength);
+    let keepTrailingPunctuation = false;
     if (splitIndex < maxLength * 0.5) {
       splitIndex = remaining.lastIndexOf(". ", maxLength);
+      keepTrailingPunctuation = splitIndex >= maxLength * 0.5;
     }
     if (splitIndex < maxLength * 0.5) {
       splitIndex = maxLength;
+      keepTrailingPunctuation = false;
+    } else if (keepTrailingPunctuation) {
+      splitIndex += 1;
     }
 
     segments.push(remaining.slice(0, splitIndex).trim());

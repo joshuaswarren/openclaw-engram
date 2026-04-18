@@ -218,6 +218,47 @@ test("runBenchmark uses the best-matching MemoryAgentBench answer variant for ju
   assert.equal(result.results.tasks[0]?.scores.f1 > 0, true);
 });
 
+test("runBenchmark keeps sentence-ending punctuation on the preceding MemoryAgentBench chunk", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-chunking-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter();
+  const longSentence = `${"A".repeat(1_190)}. ${"B".repeat(40)}`;
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: longSentence,
+        questions: ["What token fills the second sentence?"],
+        answers: [["B"]],
+        metadata: {
+          source: "eventqa_sentence_chunking",
+          qa_pair_ids: ["mab-chunk-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+  const storedMessages = [...adapter.sessions.values()][0];
+
+  assert.equal(storedMessages?.length, 2);
+  assert.equal(storedMessages?.[0]?.content.endsWith("."), true);
+  assert.equal(storedMessages?.[1]?.content.startsWith("."), false);
+  assert.equal(
+    result.results.tasks[0]?.actual.includes(`${"A".repeat(1_190)}.\n${"B".repeat(40)}`),
+    true,
+  );
+});
+
 test("runBenchmark rejects memoryagentbench full mode without datasetDir", async () => {
   const adapter = new FakeMemoryAdapter();
 
