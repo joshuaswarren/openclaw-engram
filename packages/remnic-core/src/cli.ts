@@ -2114,24 +2114,42 @@ export function parseStrictCliDate(value: string, flagName: string): Date {
     );
   }
 
+  // Reject non-ISO strings (e.g. "December 25, 2026") that Date() happily parses.
+  if (!/^\d{4}-\d{2}-\d{2}/.test(value)) {
+    throw new Error(
+      `Invalid ${flagName} value "${value}": expected ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ).`,
+    );
+  }
+
   // Verify day/month round-trip to catch overflow (e.g. Feb 31 -> Mar 3).
-  // Only check when the input looks like an ISO date prefix.
+  // Only check when the input is UTC-form — bare date (YYYY-MM-DD) or ends
+  // with "Z".  When the input carries a timezone offset (contains "+" or "-"
+  // after the date portion), the UTC date can legitimately differ from the
+  // input date, so skip the overflow check.
   const datePrefix = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (datePrefix) {
-    const inputYear = Number(datePrefix[1]);
-    const inputMonth = Number(datePrefix[2]);
-    const inputDay = Number(datePrefix[3]);
+    // Determine whether the input has an explicit non-UTC timezone offset.
+    // Look for "+" or "-" after the "T" time separator (but not the leading
+    // "-" in the year or month/day separators).
+    const timePart = value.indexOf("T") !== -1 ? value.slice(value.indexOf("T")) : "";
+    const hasTimezoneOffset = timePart.length > 0 && /[+-]\d{2}:\d{2}$/.test(timePart);
 
-    // getUTCMonth is 0-indexed; getUTCDate is 1-indexed.
-    // Use UTC methods because Date parses YYYY-MM-DD as UTC.
-    if (
-      d.getUTCFullYear() !== inputYear ||
-      d.getUTCMonth() + 1 !== inputMonth ||
-      d.getUTCDate() !== inputDay
-    ) {
-      throw new Error(
-        `Invalid ${flagName} value "${value}": date components overflow (e.g. month has fewer days). Provide a valid calendar date.`,
-      );
+    if (!hasTimezoneOffset) {
+      const inputYear = Number(datePrefix[1]);
+      const inputMonth = Number(datePrefix[2]);
+      const inputDay = Number(datePrefix[3]);
+
+      // getUTCMonth is 0-indexed; getUTCDate is 1-indexed.
+      // Use UTC methods because Date parses YYYY-MM-DD as UTC.
+      if (
+        d.getUTCFullYear() !== inputYear ||
+        d.getUTCMonth() + 1 !== inputMonth ||
+        d.getUTCDate() !== inputDay
+      ) {
+        throw new Error(
+          `Invalid ${flagName} value "${value}": date components overflow (e.g. month has fewer days). Provide a valid calendar date.`,
+        );
+      }
     }
   }
 
