@@ -11,6 +11,7 @@ import type {
   BenchmarkResult,
   ResolvedRunBenchmarkOptions,
 } from "../../../types.js";
+import type { IngestionBenchAdapter } from "../../../ingestion-types.js";
 import { entityRecall } from "../../../ingestion-scorer.js";
 import { aggregateTaskScores, timed } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -31,17 +32,12 @@ export const ingestionEntityRecallDefinition: BenchmarkDefinition = {
 };
 
 export async function runIngestionEntityRecallBenchmark(
-  options: ResolvedRunBenchmarkOptions,
+  options: ResolvedRunBenchmarkOptions & { ingestionAdapter: IngestionBenchAdapter },
 ): Promise<BenchmarkResult> {
-  if (!options.ingestionAdapter) {
-    throw new Error("ingestionAdapter is required for ingestion benchmarks");
-  }
   const fixture = emailFixture.generate();
 
   const fixtureDir = await mkdtemp(path.join(tmpdir(), "bench-email-"));
   try {
-    await options.ingestionAdapter!.reset();
-
     for (const file of fixture.files) {
       const filePath = path.join(fixtureDir, file.relativePath);
       await mkdir(path.dirname(filePath), { recursive: true });
@@ -49,7 +45,7 @@ export async function runIngestionEntityRecallBenchmark(
     }
 
     const { result: ingestionLog, durationMs } = await timed(() =>
-      options.ingestionAdapter!.ingest(fixtureDir),
+      options.ingestionAdapter.ingest(fixtureDir),
     );
 
     const graph = await options.ingestionAdapter.getMemoryGraph();
