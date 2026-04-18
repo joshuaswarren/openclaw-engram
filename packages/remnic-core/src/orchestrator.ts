@@ -1802,21 +1802,81 @@ export class Orchestrator {
         }
       }
 
+      // QMD probe + collection check: determines the final QMD state (real
+      // client vs NoopSearchBackend). Must complete BEFORE the init gate opens
+      // so that recall() — which awaits initPromise — always observes the final
+      // QMD state. Without this ordering, a concurrent recall() could read
+      // this.qmd while it's still the real client, then get errors when
+      // deferredInitialize() swaps it to NoopSearchBackend mid-query.
+      try {
+        const available = await this.qmd.probe();
+        if (available) {
+          log.info(`Search backend: available ${this.qmd.debugStatus()}`);
+          const namespaces = this.config.namespacesEnabled
+            ? this.configuredNamespaces()
+            : [this.config.defaultNamespace];
+          const states = await Promise.all(
+            namespaces.map(async (namespace) => ({
+              namespace,
+              state: this.config.namespacesEnabled
+                ? await this.namespaceSearchRouter.ensureNamespaceCollection(
+                    namespace,
+                  )
+                : await this.qmd.ensureCollection(this.config.memoryDir),
+            })),
+          );
+          const defaultState =
+            states.find(
+              (entry) => entry.namespace === this.config.defaultNamespace,
+            )?.state ?? "unknown";
+          if (defaultState === "missing") {
+            this.qmd = new NoopSearchBackend();
+            log.warn(
+              "Search collection missing for Remnic memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
+            );
+          } else if (defaultState === "unknown") {
+            log.warn(
+              "Search collection check unavailable; keeping search retrieval enabled for fail-open behavior",
+            );
+          } else if (defaultState === "skipped") {
+            log.debug(
+              "Search collection check skipped (remote or daemon-only mode)",
+            );
+          }
+          for (const entry of states) {
+            if (entry.namespace === this.config.defaultNamespace) continue;
+            if (entry.state === "missing") {
+              log.warn(
+                `Search collection missing for namespace '${entry.namespace}'; namespace retrieval will fail open to non-search paths`,
+              );
+            }
+          }
+        } else if (this.qmd instanceof NoopSearchBackend) {
+          log.debug(`Search backend: noop (search intentionally disabled)`);
+        } else {
+          log.warn(`Search backend: not available ${this.qmd.debugStatus()}`);
+        }
+      } catch (err) {
+        log.error(`QMD probe/collection check failed (non-fatal): ${err}`);
+      }
+
       // Open the init gate — essential state (storage, aliases, relevance,
-      // transcript, summarizer, buffer) is loaded. QMD probe, collection setup,
-      // warmup, and remaining heavy operations run in the background after this
-      // point. recall() already degrades gracefully when QMD isn't ready (falls
-      // back to non-search retrieval), so there's no correctness risk.
+      // transcript, summarizer, buffer) is loaded AND QMD state is finalized
+      // (probe + collection check complete, NoopSearchBackend swap done if
+      // needed). Warmup, sync, caches, and remaining heavy operations run in
+      // the background after this point via deferredInitialize().
       if (this.resolveInit) {
         this.resolveInit();
         this.resolveInit = null;
-        log.info("init gate opened (essential state loaded)");
+        log.info("init gate opened (essential state + QMD state loaded)");
       }
 
-      // Deferred init: QMD, warmup, conversation index, caches, cron.
+      // Deferred init: QMD sync, warmup, conversation index, caches, cron.
       // Runs in background so gateway_start returns fast. On low-power hardware
-      // (Umbrel, RPi) the QMD operations alone can take 30-60s and cause gateway
+      // (Umbrel, RPi) QMD warmup/sync alone can take 30-60s and cause gateway
       // restart loops when they block the startup path. See issue #462.
+      // Note: QMD probe + collection check (including NoopSearchBackend swap)
+      // already ran above before the init gate, so this.qmd is finalized.
       //
       // Capture the resolver by value so a concurrent re-initialize() cannot
       // overwrite this.resolveDeferredReady before .finally() runs — that would
@@ -1854,57 +1914,8 @@ export class Orchestrator {
   }
 
   private async deferredInitialize(): Promise<void> {
-    try {
-      const available = await this.qmd.probe();
-      if (available) {
-        log.info(`Search backend: available ${this.qmd.debugStatus()}`);
-        const namespaces = this.config.namespacesEnabled
-          ? this.configuredNamespaces()
-          : [this.config.defaultNamespace];
-        const states = await Promise.all(
-          namespaces.map(async (namespace) => ({
-            namespace,
-            state: this.config.namespacesEnabled
-              ? await this.namespaceSearchRouter.ensureNamespaceCollection(
-                  namespace,
-                )
-              : await this.qmd.ensureCollection(this.config.memoryDir),
-          })),
-        );
-        const defaultState =
-          states.find(
-            (entry) => entry.namespace === this.config.defaultNamespace,
-          )?.state ?? "unknown";
-        if (defaultState === "missing") {
-          this.qmd = new NoopSearchBackend();
-          log.warn(
-            "Search collection missing for Remnic memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
-          );
-        } else if (defaultState === "unknown") {
-          log.warn(
-            "Search collection check unavailable; keeping search retrieval enabled for fail-open behavior",
-          );
-        } else if (defaultState === "skipped") {
-          log.debug(
-            "Search collection check skipped (remote or daemon-only mode)",
-          );
-        }
-        for (const entry of states) {
-          if (entry.namespace === this.config.defaultNamespace) continue;
-          if (entry.state === "missing") {
-            log.warn(
-              `Search collection missing for namespace '${entry.namespace}'; namespace retrieval will fail open to non-search paths`,
-            );
-          }
-        }
-      } else if (this.qmd instanceof NoopSearchBackend) {
-        log.debug(`Search backend: noop (search intentionally disabled)`);
-      } else {
-        log.warn(`Search backend: not available ${this.qmd.debugStatus()}`);
-      }
-    } catch (err) {
-      log.error(`QMD probe/collection check failed (non-fatal): ${err}`);
-    }
+    // QMD probe + collection check (including NoopSearchBackend swap) already
+    // ran in initialize() before the init gate opened, so this.qmd is final.
 
     // Sync QMD index with current disk state so recall finds recently-written
     // facts. Without this, the index stays stale from the last extraction-
