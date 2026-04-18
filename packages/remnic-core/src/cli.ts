@@ -2810,16 +2810,15 @@ export async function runBulkImportCliCommand(
     platform: opts.platform,
   });
 
-  if (!opts.dryRun) {
+  const processBatch: ProcessBatchFn = async () => {
+    // The real extraction callback will be wired when the
+    // orchestrator integration lands in a later PR.
+    // The pipeline never calls processBatch in dryRun mode,
+    // so reaching here means a non-dryRun invocation.
     throw new Error(
-      "Bulk import persistence is not yet wired — use --dry-run to validate input, or implement a processBatch callback via the programmatic API",
+      "Bulk import persistence is not yet wired. " +
+        "Use --dryRun to validate without persisting.",
     );
-  }
-
-  const processBatch: ProcessBatchFn = async (turns) => {
-    // Phase 1 stub — the real extraction callback will be wired
-    // when the orchestrator integration lands in a later PR.
-    return { memoriesCreated: turns.length, duplicatesSkipped: 0 };
   };
 
   const result = await runBulkImportPipeline(

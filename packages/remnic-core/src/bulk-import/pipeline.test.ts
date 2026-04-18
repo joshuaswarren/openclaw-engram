@@ -174,6 +174,28 @@ describe("runBulkImportPipeline", () => {
     assert.equal(calls[0].length, 2);
   });
 
+  it("reports zero memoriesCreated when processBatch always throws", async () => {
+    const source = makeSource(4);
+    const notWiredFn: ProcessBatchFn = async () => {
+      throw new Error(
+        "Bulk import persistence is not yet wired. " +
+          "Use --dryRun to validate without persisting.",
+      );
+    };
+    const result = await runBulkImportPipeline(
+      source,
+      { batchSize: 2 },
+      notWiredFn,
+    );
+    assert.equal(result.memoriesCreated, 0);
+    assert.equal(result.duplicatesSkipped, 0);
+    assert.equal(result.turnsProcessed, 4);
+    assert.equal(result.batchesProcessed, 2);
+    assert.equal(result.errors.length, 2);
+    assert.ok(result.errors[0].message.includes("not yet wired"));
+    assert.ok(result.errors[1].message.includes("not yet wired"));
+  });
+
   it("accumulates duplicatesSkipped from processBatch", async () => {
     const source = makeSource(4);
     const dupFn: ProcessBatchFn = async () => ({
