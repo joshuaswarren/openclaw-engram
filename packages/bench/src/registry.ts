@@ -35,6 +35,10 @@ import {
   memBenchDefinition,
   runMemBenchBenchmark,
 } from "./benchmarks/published/membench/runner.js";
+import {
+  memoryAgentBenchDefinition,
+  runMemoryAgentBenchBenchmark,
+} from "./benchmarks/published/memoryagentbench/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -72,6 +76,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...memBenchDefinition,
     run: runMemBenchBenchmark,
+  },
+  {
+    ...memoryAgentBenchDefinition,
+    run: runMemoryAgentBenchBenchmark,
   },
 ];
 
