@@ -39,6 +39,9 @@ remnic query "hello" --explain  # Test query with tier breakdown
 | `remnic bench list` | List published benchmark packs |
 | `remnic bench run` | Run one or more published benchmark packs |
 | `remnic bench compare` | Compare two stored benchmark results |
+| `remnic bench baseline` | Save or list named benchmark baselines |
+| `remnic bench export` | Export a stored benchmark result as JSON or CSV |
+| `remnic bench providers discover` | Auto-detect local provider backends |
 
 Run `remnic --help` for the full command list.
 
@@ -52,6 +55,10 @@ remnic bench list
 remnic bench run --quick longmemeval
 remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
 remnic bench compare base-run candidate-run
+remnic bench baseline save main candidate-run
+remnic bench baseline list
+remnic bench export candidate-run --format csv --output ./candidate.csv
+remnic bench providers discover
 remnic benchmark run --quick longmemeval
 ```
 

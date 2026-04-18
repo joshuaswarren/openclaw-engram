@@ -121,6 +121,7 @@ import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 import {
   compareResults,
   defaultBenchmarkBaselineDir,
+  discoverAllProviders,
   listBenchmarkBaselines,
   listBenchmarkResults,
   loadBenchmarkBaseline,
@@ -289,8 +290,8 @@ type PackageBenchModule = {
 };
 
 export function getBenchUsageText(): string {
-  return `Usage: remnic bench <list|run|compare|results|baseline|export> [options] [benchmark...]
-       remnic benchmark <list|run|compare|results|baseline|export|check|report> [options] [benchmark...]
+  return `Usage: remnic bench <list|run|compare|results|baseline|export|providers> [options] [benchmark...]
+       remnic benchmark <list|run|compare|results|baseline|export|providers|check|report> [options] [benchmark...]
 
 Commands:
   list                     List published benchmark packs
@@ -302,6 +303,7 @@ Commands:
   baseline list            List saved baselines
   export <run> --format <json|csv>
                            Export one stored run as JSON or aggregate-metrics CSV
+  providers discover       Auto-detect available local provider backends
   check                    Legacy latency regression gate (compatibility)
   report                   Legacy latency report generator (compatibility)
 
@@ -328,6 +330,7 @@ Examples:
   remnic bench baseline save main candidate-run
   remnic bench baseline list
   remnic bench export candidate-run --format csv --output ./candidate.csv
+  remnic bench providers discover
   remnic bench run --custom ./my-bench.yaml
   remnic benchmark run --quick longmemeval`;
 }
@@ -772,6 +775,37 @@ async function exportBenchPackageResult(parsed: ParsedBenchArgs): Promise<void> 
   }
 
   process.stdout.write(rendered);
+}
+
+async function discoverBenchProviders(parsed: ParsedBenchArgs): Promise<void> {
+  const discovered = await discoverAllProviders();
+
+  if (parsed.json) {
+    console.log(JSON.stringify(discovered, null, 2));
+    return;
+  }
+
+  if (discovered.length === 0) {
+    console.log("No local bench providers were discovered.");
+    return;
+  }
+
+  console.log("Discovered bench providers:");
+  for (const entry of discovered) {
+    console.log(`  ${entry.provider}`);
+    for (const model of entry.models) {
+      const capabilities = model.capabilities.join(", ");
+      const details = [
+        model.contextLength > 0 ? `context=${model.contextLength}` : undefined,
+        model.parameterCount ? `params=${model.parameterCount}` : undefined,
+        model.quantization ? `quant=${model.quantization}` : undefined,
+        capabilities.length > 0 ? `caps=${capabilities}` : undefined,
+      ].filter((value): value is string => Boolean(value));
+      console.log(
+        `    - ${model.id}${details.length > 0 ? ` (${details.join(", ")})` : ""}`,
+      );
+    }
+  }
 }
 
 async function runBenchViaPackage(
@@ -2696,6 +2730,11 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.action === "providers") {
+    await discoverBenchProviders(parsed);
+    return;
+  }
+
   if (parsed.action === "list") {
     const catalog = await listBenchmarksFromPackage() ?? BENCHMARK_CATALOG;
     if (parsed.json) {
@@ -4142,9 +4181,9 @@ Usage:
   remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
-  remnic bench <list|run|compare|results|baseline|export> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv>] [--output <path>] [--json]
+  remnic bench <list|run|compare|results|baseline|export|providers> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv>] [--output <path>] [--json]
     benchmark is kept as a compatibility alias. check/report remain under that alias.
-  remnic benchmark <list|run|compare|results|baseline|export|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
+  remnic benchmark <list|run|compare|results|baseline|export|providers|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
     Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
     Focus: person:<name>, project:<name>, topic:<name>.

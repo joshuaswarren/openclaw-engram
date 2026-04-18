@@ -9,11 +9,13 @@ export type BenchAction =
   | "results"
   | "baseline"
   | "export"
+  | "providers"
   | "check"
   | "report";
 
 export type BenchBaselineAction = "save" | "list";
 export type BenchExportFormat = "json" | "csv";
+export type BenchProviderAction = "discover";
 
 export interface ParsedBenchArgs {
   action: BenchAction;
@@ -27,6 +29,7 @@ export interface ParsedBenchArgs {
   baselinesDir?: string;
   threshold?: number;
   baselineAction?: BenchBaselineAction;
+  providerAction?: BenchProviderAction;
   format?: BenchExportFormat;
   output?: string;
   custom?: string;
@@ -81,6 +84,7 @@ export function parseBenchActionArgs(argv: string[]): {
     first === "results" ||
     first === "baseline" ||
     first === "export" ||
+    first === "providers" ||
     first === "check" ||
     first === "report"
       ? first
@@ -102,11 +106,20 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
         ? args[0]
         : undefined
       : undefined;
+  const providerAction =
+    action === "providers"
+      ? args[0] === "discover"
+        ? args[0]
+        : undefined
+      : undefined;
   if (action === "baseline" && baselineAction === undefined) {
     throw new Error("ERROR: baseline requires a subcommand: save or list.");
   }
+  if (action === "providers" && providerAction === undefined) {
+    throw new Error("ERROR: providers requires a subcommand: discover.");
+  }
 
-  const benchmarkArgs = action === "baseline" ? args.slice(1) : args;
+  const benchmarkArgs = action === "baseline" || action === "providers" ? args.slice(1) : args;
   const benchmarks = collectBenchmarks(benchmarkArgs);
   const datasetDir = readBenchOptionValue(args, "--dataset-dir");
   const resultsDir = readBenchOptionValue(args, "--results-dir");
@@ -144,6 +157,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     threshold,
     custom: customRaw ? path.resolve(expandTilde(customRaw)) : undefined,
     baselineAction,
+    providerAction,
     format,
     output: output ? path.resolve(expandTilde(output)) : undefined,
   };
