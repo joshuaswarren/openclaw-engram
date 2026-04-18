@@ -729,13 +729,13 @@ function parseMcpSearchResult(
           const textResults = parsed?.results ?? parsed?.documents;
           if (Array.isArray(textResults)) pushDocs(textResults);
         } catch {
-          const existingDocids = new Set(results.map((r) => r.docid.toLowerCase()));
+          const existingKeys = new Set(results.map((r) => `${r.docid.toLowerCase()}|${r.path}`));
           const parsed = parseQmdMarkdownResultText(item.text, transport);
           for (const p of parsed) {
-            const key = p.docid.toLowerCase();
-            if (!existingDocids.has(key)) {
+            const key = `${p.docid.toLowerCase()}|${p.path}`;
+            if (!existingKeys.has(key)) {
               results.push(p);
-              existingDocids.add(key);
+              existingKeys.add(key);
             }
           }
         }
