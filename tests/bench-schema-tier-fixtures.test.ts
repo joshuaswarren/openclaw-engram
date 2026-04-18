@@ -57,6 +57,26 @@ test("schema tier fixture builders are deterministic for the same seed", () => {
   assert.deepEqual(buildSchemaTierSmokeFixture(448), buildSchemaTierSmokeFixture(448));
 });
 
+test("schema tier fixture builders return deep-cloned retrieval cases", () => {
+  const first = buildSchemaTierFixture(448);
+  const second = buildSchemaTierFixture(448);
+
+  first.personalizationCases[0]?.expectedPageIds.push("mutated-page");
+  if (first.temporalCases[0]) {
+    first.temporalCases[0].window.start = "1999-01-01T00:00:00.000Z";
+  }
+  if (first.abstentionCases[0]) {
+    first.abstentionCases[0].reason = "cross_tenant";
+  }
+
+  assert.deepEqual(second.personalizationCases[0]?.expectedPageIds, ["alex-project-atlas-launch"]);
+  assert.deepEqual(second.temporalCases[0]?.window, {
+    start: "2026-07-16T00:00:00.000Z",
+    end: "2026-07-17T00:00:00.000Z",
+  });
+  assert.equal(second.abstentionCases[0]?.reason, "missing_fact");
+});
+
 test("schema tier smoke fixture preserves shared semantics while trimming the corpus", () => {
   assert.equal(SCHEMA_TIER_SMOKE_FIXTURE.clean.pages.length, 4);
   assert.equal(SCHEMA_TIER_SMOKE_FIXTURE.dirty.pages.length, 4);

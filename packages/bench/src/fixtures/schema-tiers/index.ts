@@ -226,28 +226,42 @@ function deepClonePages(pages: SchemaTierPage[]): SchemaTierPage[] {
   }));
 }
 
-function buildDirtyCorpus(cleanPages: SchemaTierPage[]): SchemaTierPage[] {
-  return cleanPages.map((page) => {
-    const dirtyPage = {
-      ...page,
-      aliases: [...page.aliases],
-      frontmatter: {
-        ...page.frontmatter,
-        seeAlso: page.frontmatter.seeAlso ? [...page.frontmatter.seeAlso] : undefined,
-        timeline: page.frontmatter.timeline ? [...page.frontmatter.timeline] : undefined,
-      },
-      seeAlso: [...page.seeAlso],
-      timeline: [...page.timeline],
-      dirtySignals: [] as string[],
-    };
+function deepClonePersonalizationCases(
+  cases: PersonalizationRetrievalCase[],
+): PersonalizationRetrievalCase[] {
+  return cases.map((item) => ({
+    ...item,
+    expectedPageIds: [...item.expectedPageIds],
+  }));
+}
 
-    switch (page.id) {
+function deepCloneTemporalCases(cases: TemporalRetrievalCase[]): TemporalRetrievalCase[] {
+  return cases.map((item) => ({
+    ...item,
+    window: { ...item.window },
+    expectedPageIds: [...item.expectedPageIds],
+  }));
+}
+
+function deepCloneAbstentionCases(cases: AbstentionRetrievalCase[]): AbstentionRetrievalCase[] {
+  return cases.map((item) => ({ ...item }));
+}
+
+function buildDirtyCorpus(cleanPages: SchemaTierPage[]): SchemaTierPage[] {
+  return deepClonePages(cleanPages).map((dirtyPage) => {
+    dirtyPage.dirtySignals = [];
+
+    switch (dirtyPage.id) {
       case "alex-project-atlas-launch":
         dirtyPage.title = "project atlas launch plan";
         delete dirtyPage.frontmatter.type;
         dirtyPage.seeAlso = ["alex-team-Retro"];
         dirtyPage.frontmatter.seeAlso = ["alex-team-Retro"];
-        dirtyPage.dirtySignals.push("missing-frontmatter-type", "backlink-casing-drift");
+        dirtyPage.dirtySignals.push(
+          "missing-frontmatter-type",
+          "backlink-casing-drift",
+          "title-casing-drift",
+        );
         break;
       case "alex-partner-onboarding-brief":
         delete dirtyPage.frontmatter.created;
@@ -361,9 +375,9 @@ export function buildSchemaTierFixture(seed = DEFAULT_SCHEMA_TIER_SEED): SchemaT
     seed,
     clean: { pages: cleanPages },
     dirty: { pages: dirtyPages },
-    personalizationCases: [...PERSONALIZATION_CASES],
-    temporalCases: [...TEMPORAL_CASES],
-    abstentionCases: [...ABSTENTION_CASES],
+    personalizationCases: deepClonePersonalizationCases(PERSONALIZATION_CASES),
+    temporalCases: deepCloneTemporalCases(TEMPORAL_CASES),
+    abstentionCases: deepCloneAbstentionCases(ABSTENTION_CASES),
   };
 }
 
