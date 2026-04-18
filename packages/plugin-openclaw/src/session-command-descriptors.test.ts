@@ -68,3 +68,73 @@ test("buildSessionCommandDescriptors wires toggle and status handlers", async ()
   await clear.handler({ sessionKey: "session-a", agentId: "main" });
   assert.equal(disabled.has("session-a:main"), false);
 });
+
+test("top-level descriptor satisfies OpenClaw registerCommand validator and dispatches subcommands", async () => {
+  const disabled = new Map<string, boolean>();
+  const runtime = {
+    toggles: {
+      async isDisabled() {
+        return false;
+      },
+      async resolve(sessionKey: string, agentId: string) {
+        const key = `${sessionKey}:${agentId}`;
+        return {
+          disabled: disabled.get(key) === true,
+          source: disabled.has(key) ? ("primary" as const) : ("none" as const),
+        };
+      },
+      async setDisabled(sessionKey: string, agentId: string, next: boolean) {
+        disabled.set(`${sessionKey}:${agentId}`, next);
+      },
+      async clear(sessionKey: string, agentId: string) {
+        disabled.delete(`${sessionKey}:${agentId}`);
+      },
+      async list() {
+        return [];
+      },
+    },
+    getLastRecall() {
+      return null;
+    },
+    getLastRecallSummary() {
+      return null;
+    },
+    async flushSession() {},
+  };
+
+  const [group] = buildSessionCommandDescriptors("openclaw-remnic", runtime);
+  const descriptor = group as unknown as {
+    name: string;
+    description: string;
+    acceptsArgs: boolean;
+    handler: (ctx?: { sessionKey?: string; agentId?: string; args?: readonly string[] }) => Promise<string>;
+  };
+
+  // Shape required by openclaw's validatePluginCommandDefinition
+  // (see openclaw/dist/command-registration:*).
+  assert.equal(typeof descriptor.handler, "function");
+  assert.equal(typeof descriptor.description, "string");
+  assert.ok(descriptor.description.trim().length > 0);
+  assert.equal(descriptor.acceptsArgs, true);
+
+  await descriptor.handler({ args: ["off"], sessionKey: "session-b", agentId: "main" });
+  assert.equal(disabled.get("session-b:main"), true);
+
+  const statusText = await descriptor.handler({
+    args: ["status"],
+    sessionKey: "session-b",
+    agentId: "main",
+  });
+  assert.match(statusText, /disabled/);
+
+  const unknownText = await descriptor.handler({
+    args: ["bogus"],
+    sessionKey: "session-b",
+    agentId: "main",
+  });
+  assert.match(unknownText, /Unknown Remnic subcommand "bogus"/);
+
+  // No args => defaults to status.
+  const defaultText = await descriptor.handler({ sessionKey: "session-b", agentId: "main" });
+  assert.match(defaultText, /Remnic recall is/);
+});
