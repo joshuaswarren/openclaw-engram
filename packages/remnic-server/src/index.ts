@@ -119,37 +119,8 @@ export async function startServer(options?: {
   const orchestrator = new Orchestrator(config);
   await orchestrator.initialize();
 
-  // Wait for the deferred portion of init (QMD probe, collection setup,
-  // warmup) to complete before checking availability. Without this,
-  // isAvailable() returns false because the QMD probe hasn't run yet
-  // and the retry always fires unnecessarily.
-  await orchestrator.deferredReady;
-
-  // If QMD wasn't available after deferred init completes (e.g. daemon still
-  // loading on cold start), schedule background retries so the search index is
-  // synced once QMD becomes ready. Uses the orchestrator's namespace-aware
-  // startupSearchSync() so namespace-specific collections are also synced.
-  if (!orchestrator.qmd.isAvailable()) {
-    const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
-    (async () => {
-      for (const delay of RETRY_DELAYS_MS) {
-        await new Promise<void>((r) => setTimeout(r, delay));
-
-        const synced = await orchestrator.startupSearchSync();
-        if (!synced) {
-          log.debug(`QMD startup-sync retry: not available yet (next retry in ${RETRY_DELAYS_MS[RETRY_DELAYS_MS.indexOf(delay) + 1] ?? "n/a"}ms)`);
-          continue;
-        }
-
-        return; // sync succeeded, stop retrying
-      }
-
-      log.warn("QMD startup-sync retry: exhausted all retries; search index may be stale");
-    })().catch((err) => {
-      log.warn(`QMD startup-sync retry: unexpected error: ${err}`);
-    });
-  }
-
+  // Start the HTTP server immediately so health checks, MCP handshakes,
+  // and liveness probes can connect while deferred init is still running.
   const service = new EngramAccessService(orchestrator);
 
   const authToken = serverConfig.authToken ?? readCompatEnv("REMNIC_AUTH_TOKEN", "ENGRAM_AUTH_TOKEN") ?? "";
@@ -174,6 +145,34 @@ export async function startServer(options?: {
   });
 
   const { host, port } = await httpServer.start();
+
+  // Fire-and-forget: wait for deferred init (QMD probe, collection setup,
+  // warmup) then check QMD availability and retry if needed. This does NOT
+  // block the server listener — connections are accepted immediately above.
+  orchestrator.deferredReady.then(() => {
+    if (!orchestrator.qmd.isAvailable()) {
+      const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+      (async () => {
+        for (const delay of RETRY_DELAYS_MS) {
+          await new Promise<void>((r) => setTimeout(r, delay));
+
+          const synced = await orchestrator.startupSearchSync();
+          if (!synced) {
+            log.debug(`QMD startup-sync retry: not available yet (next retry in ${RETRY_DELAYS_MS[RETRY_DELAYS_MS.indexOf(delay) + 1] ?? "n/a"}ms)`);
+            continue;
+          }
+
+          return; // sync succeeded, stop retrying
+        }
+
+        log.warn("QMD startup-sync retry: exhausted all retries; search index may be stale");
+      })().catch((err) => {
+        log.warn(`QMD startup-sync retry: unexpected error: ${err}`);
+      });
+    }
+  }).catch((err) => {
+    log.warn(`Deferred init error: ${err}`);
+  });
 
   return { config, service, httpServer, host, port };
 }
