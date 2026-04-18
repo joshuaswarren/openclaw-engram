@@ -134,6 +134,7 @@ import {
   parseBenchActionArgs,
   parseBenchArgs,
 } from "./bench-args.js";
+import { expandTilde, resolveHomeDir } from "./path-utils.js";
 export { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
@@ -195,27 +196,6 @@ export interface BenchCatalogEntry {
 
 function readCompatEnv(primary: string, legacy: string): string | undefined {
   return process.env[primary] ?? process.env[legacy];
-}
-
-function resolveHomeDir(): string {
-  return process.env.HOME ?? process.env.USERPROFILE ?? "~";
-}
-
-/** Expand a leading `~`, `~/`, `$HOME/`, or `${HOME}/` to the real home directory. */
-function expandTilde(p: string): string {
-  if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
-    return resolveHomeDir() + p.slice(1);
-  }
-  const home = resolveHomeDir();
-  // Handle literal $HOME or ${HOME} prefixes common in launchd/systemd env files
-  // where shell variable expansion does not occur.
-  if (p === "$HOME" || p.startsWith("$HOME/") || p.startsWith("$HOME\\")) {
-    return home + p.slice(5);
-  }
-  if (p === "${HOME}" || p.startsWith("${HOME}/") || p.startsWith("${HOME}\\")) {
-    return home + p.slice(7);
-  }
-  return p;
 }
 
 const PID_DIR = path.join(resolveHomeDir(), ".remnic");
