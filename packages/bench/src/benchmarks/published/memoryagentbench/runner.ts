@@ -130,7 +130,7 @@ export async function runMemoryAgentBenchBenchmark(
         options.system.judge,
         question,
         recalledText,
-        answerVariants[0]!,
+        bestExpectedAnswer,
       );
 
       const scores: Record<string, number> = {

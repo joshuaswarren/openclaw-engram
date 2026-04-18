@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import type {
   BenchMemoryAdapter,
+  BenchJudge,
   Message,
   SearchResult,
 } from "../packages/bench/src/index.js";
@@ -12,6 +13,11 @@ import { runBenchmark } from "../packages/bench/src/index.js";
 
 class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
+  readonly judge?: BenchJudge;
+
+  constructor(judge?: BenchJudge) {
+    this.judge = judge;
+  }
 
   async store(sessionId: string, messages: Message[]): Promise<void> {
     const existing = this.sessions.get(sessionId) ?? [];
@@ -156,6 +162,60 @@ test("runBenchmark executes memoryagentbench in full mode from split dataset fil
   assert.equal(result.results.tasks[0]?.details.competency, "accurate_retrieval");
   assert.equal(result.results.tasks[1]?.expected, "Aurora");
   assert.equal(result.results.tasks[1]?.details.competency, "conflict_resolution");
+});
+
+test("runBenchmark uses the best-matching MemoryAgentBench answer variant for judge scoring", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-judge-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const judgeCalls: Array<{
+    expected: string;
+    predicted: string;
+    question: string;
+  }> = [];
+  const adapter = new FakeMemoryAdapter({
+    async score(question, predicted, expected) {
+      judgeCalls.push({ question, predicted, expected });
+      return expected === "quarterly roadmap review" ? 0.91 : 0.13;
+    },
+  });
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context:
+          "Notes:\\nThe team met for the quarterly roadmap review and wrote action items.",
+        questions: ["Which meeting generated the action items?"],
+        answers: [["roadmap meeting", "quarterly roadmap review"]],
+        metadata: {
+          source: "eventqa_judge_variant",
+          qa_pair_ids: ["mab-judge-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(judgeCalls.length, 1);
+  assert.deepEqual(judgeCalls[0], {
+    question: "Which meeting generated the action items?",
+    predicted:
+      "Notes:\\nThe team met for the quarterly roadmap review and wrote action items.",
+    expected: "quarterly roadmap review",
+  });
+  assert.equal(result.results.tasks[0]?.details.bestExpectedAnswer, "quarterly roadmap review");
+  assert.equal(result.results.tasks[0]?.expected, "roadmap meeting");
+  assert.equal(result.results.tasks[0]?.scores.llm_judge, 0.91);
+  assert.equal(result.results.tasks[0]?.scores.f1 > 0, true);
 });
 
 test("runBenchmark rejects memoryagentbench full mode without datasetDir", async () => {
