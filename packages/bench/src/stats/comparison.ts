@@ -61,11 +61,15 @@ export function compareResults(
       delta,
       percentChange: percentChange(aggregate.mean, baselineAggregate.mean),
       effectSize: {
-        cohensD: cohensD(candidateScores, baselineScores),
-        interpretation: interpretEffectSize(
-          cohensD(candidateScores, baselineScores),
-        ),
+        cohensD: 0,
+        interpretation: "negligible",
       },
+    };
+
+    const effectSizeValue = cohensD(candidateScores, baselineScores);
+    metricDelta.effectSize = {
+      cohensD: effectSizeValue,
+      interpretation: interpretEffectSize(effectSizeValue),
     };
 
     if (candidateScores.length === baselineScores.length && candidateScores.length > 0) {

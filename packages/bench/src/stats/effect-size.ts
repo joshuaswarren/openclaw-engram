@@ -26,12 +26,21 @@ export function cohensD(
   const baselineMean = mean(baselineValues);
   const candidateVariance = sampleVariance(candidateValues, candidateMean);
   const baselineVariance = sampleVariance(baselineValues, baselineMean);
+  const pooledDegreesOfFreedom =
+    candidateValues.length + baselineValues.length - 2;
+
+  if (pooledDegreesOfFreedom <= 0) {
+    return candidateMean === baselineMean
+      ? 0
+      : Math.sign(candidateMean - baselineMean) * Infinity;
+  }
+
   const pooledVariance =
     ((candidateValues.length - 1) * candidateVariance +
       (baselineValues.length - 1) * baselineVariance) /
-    (candidateValues.length + baselineValues.length - 2);
+    pooledDegreesOfFreedom;
 
-  if (pooledVariance === 0) {
+  if (!Number.isFinite(pooledVariance) || pooledVariance === 0) {
     return candidateMean === baselineMean
       ? 0
       : Math.sign(candidateMean - baselineMean) * Infinity;
@@ -43,6 +52,9 @@ export function cohensD(
 export function interpretEffectSize(
   cohensDValue: number,
 ): EffectSizeInterpretation {
+  if (Number.isNaN(cohensDValue)) {
+    throw new Error("effect size interpretation requires a numeric value");
+  }
   const absolute = Math.abs(cohensDValue);
   if (absolute < 0.2) return "negligible";
   if (absolute < 0.5) return "small";

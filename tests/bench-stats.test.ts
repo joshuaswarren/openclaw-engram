@@ -150,6 +150,15 @@ test("cohensD and interpretEffectSize classify large separations", () => {
   assert.equal(interpretEffectSize(d), "large");
 });
 
+test("cohensD handles singleton samples without producing NaN", () => {
+  const equalSingletons = cohensD([0.5], [0.5]);
+  const shiftedSingletons = cohensD([0.9], [0.1]);
+
+  assert.equal(equalSingletons, 0);
+  assert.equal(shiftedSingletons, Infinity);
+  assert.equal(interpretEffectSize(shiftedSingletons), "large");
+});
+
 test("compareResults reports improvements with effect sizes and paired delta intervals", () => {
   const baseline = buildBenchmarkResult("longmemeval", [0.2, 0.3, 0.4]);
   const candidate = buildBenchmarkResult("longmemeval", [0.6, 0.7, 0.8]);
