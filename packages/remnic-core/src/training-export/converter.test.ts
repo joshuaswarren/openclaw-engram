@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtemp, mkdir, writeFile, open } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, open, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -326,5 +326,116 @@ describe("convertMemoriesToRecords", () => {
     // includeTopics=undefined (default) should not throw
     const records2 = await convertMemoriesToRecords({ memoryDir: dir });
     assert.equal(records2.length, 1);
+  });
+
+  // --- Fix 4: Reject symlinked markdown files during directory scan ---
+
+  it("skips symlinked files to prevent data exfiltration", async () => {
+    const dir = await makeTmpDir();
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+
+    // Create a real memory that should be included
+    await writeSyntheticMemory(dir, "facts", "real.md", {
+      id: "real",
+      content: "A real memory file.",
+    });
+
+    // Create an external file outside memoryDir
+    const externalDir = await makeTmpDir();
+    const externalFile = path.join(externalDir, "secret.txt");
+    await writeFile(externalFile, "---\nid: secret\ncategory: fact\nconfidence: 0.9\ncreated: 2026-01-15T10:00:00.000Z\n---\n\nSecret data that should not be exported.", "utf-8");
+
+    // Create a symlink inside facts/ pointing to the external file
+    await symlink(externalFile, path.join(dir, "facts", "linked.md"));
+
+    const records = await convertMemoriesToRecords({ memoryDir: dir });
+    // Only the real file should be included; the symlink should be skipped
+    assert.equal(records.length, 1);
+    assert.equal(records[0].sourceIds?.[0], "real");
+  });
+
+  it("skips symlinked directories during recursive scan", async () => {
+    const dir = await makeTmpDir();
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+
+    await writeSyntheticMemory(dir, "facts", "real.md", {
+      id: "real",
+      content: "A real memory file.",
+    });
+
+    // Create an external directory with a memory file
+    const externalDir = await makeTmpDir();
+    await mkdir(path.join(externalDir, "leaked"), { recursive: true });
+    await writeFile(
+      path.join(externalDir, "leaked", "secret.md"),
+      "---\nid: leaked\ncategory: fact\nconfidence: 0.9\ncreated: 2026-01-15T10:00:00.000Z\n---\n\nLeaked from symlinked directory.",
+      "utf-8",
+    );
+
+    // Create a symlink to the external directory inside facts/
+    await symlink(path.join(externalDir, "leaked"), path.join(dir, "facts", "linked-dir"));
+
+    const records = await convertMemoriesToRecords({ memoryDir: dir });
+    assert.equal(records.length, 1);
+    assert.equal(records[0].sourceIds?.[0], "real");
+  });
+
+  // --- Fix 5: Exclude undated memories from date-filtered exports ---
+
+  it("excludes memories with missing created date when since filter is active", async () => {
+    const dir = await makeTmpDir();
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+
+    // Memory with a valid date — should be included
+    await writeSyntheticMemory(dir, "facts", "dated.md", {
+      id: "dated",
+      created: "2026-02-15T10:00:00.000Z",
+      content: "A dated memory.",
+    });
+
+    // Memory with no created field — write raw to omit created
+    await writeFile(
+      path.join(dir, "facts", "undated.md"),
+      "---\nid: undated\ncategory: fact\nconfidence: 0.9\n---\n\nAn undated memory.",
+      "utf-8",
+    );
+
+    // Without date filter: both should appear
+    const allRecords = await convertMemoriesToRecords({ memoryDir: dir });
+    assert.equal(allRecords.length, 2);
+
+    // With since filter: only the dated memory should appear
+    const filteredRecords = await convertMemoriesToRecords({
+      memoryDir: dir,
+      since: new Date("2026-01-01T00:00:00.000Z"),
+    });
+    assert.equal(filteredRecords.length, 1);
+    assert.equal(filteredRecords[0].sourceIds?.[0], "dated");
+  });
+
+  it("excludes memories with unparseable created date when until filter is active", async () => {
+    const dir = await makeTmpDir();
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+
+    // Memory with a valid date — should be included
+    await writeSyntheticMemory(dir, "facts", "dated.md", {
+      id: "dated",
+      created: "2026-01-15T10:00:00.000Z",
+      content: "A dated memory.",
+    });
+
+    // Memory with garbage created field
+    await writeFile(
+      path.join(dir, "facts", "garbled.md"),
+      "---\nid: garbled\ncategory: fact\nconfidence: 0.9\ncreated: not-a-date\n---\n\nMemory with garbled date.",
+      "utf-8",
+    );
+
+    const filteredRecords = await convertMemoriesToRecords({
+      memoryDir: dir,
+      until: new Date("2026-12-31T00:00:00.000Z"),
+    });
+    assert.equal(filteredRecords.length, 1);
+    assert.equal(filteredRecords[0].sourceIds?.[0], "dated");
   });
 });

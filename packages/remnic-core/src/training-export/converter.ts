@@ -9,7 +9,7 @@
  * The `input` field is empty string (synthesis is left to adapters).
  */
 
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat, lstat } from "node:fs/promises";
 import path from "node:path";
 
 import type { TrainingExportOptions, TrainingExportRecord } from "./types.js";
@@ -87,6 +87,17 @@ async function collectMarkdownFiles(dir: string): Promise<string[]> {
     entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const full = path.join(d, entry.name);
+      // Reject symlinks to prevent data exfiltration (a symlink could
+      // point outside memoryDir, e.g. facts/private.md -> ~/.ssh/id_rsa)
+      let linkStat: import("node:fs").Stats;
+      try {
+        linkStat = await lstat(full);
+      } catch {
+        continue; // unreadable entry — skip
+      }
+      if (linkStat.isSymbolicLink()) {
+        continue;
+      }
       if (entry.isDirectory()) {
         await walk(full);
       } else if (entry.name.endsWith(".md")) {
@@ -232,7 +243,10 @@ export async function convertMemoriesToRecords(
     // since filter (half-open: created >= since)
     if (options.since) {
       const created = parseIsoDate(parsed.created);
-      if (created && created.getTime() < options.since.getTime()) {
+      // Exclude memories with missing/unparseable dates when date filtering
+      // is active — including them contradicts the user's date-range intent
+      if (!created) continue;
+      if (created.getTime() < options.since.getTime()) {
         continue;
       }
     }
@@ -240,7 +254,8 @@ export async function convertMemoriesToRecords(
     // until filter (exclusive upper bound per CLAUDE.md #35: created < until)
     if (options.until) {
       const created = parseIsoDate(parsed.created);
-      if (created && created.getTime() >= options.until.getTime()) {
+      if (!created) continue;
+      if (created.getTime() >= options.until.getTime()) {
         continue;
       }
     }
