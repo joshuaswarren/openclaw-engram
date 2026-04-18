@@ -1742,16 +1742,48 @@ export class Orchestrator {
       await this.compounding.ensureDirs();
     }
 
-    // Open the init gate early — essential state (storage, aliases, relevance,
-    // transcript, summarizer) is loaded. The slow QMD collection setup and
-    // remaining steps run after the gate opens. recall() already degrades
-    // gracefully when QMD isn't ready, so there's no correctness risk.
+    // Buffer and compaction cleanup are fast and needed for basic operation —
+    // load them before the init gate so turn buffering works immediately.
+    await this.buffer.load();
+    if (this.config.compactionResetEnabled) {
+      try {
+        const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
+        const files = await readdir(wsDir).catch(() => [] as string[]);
+        for (const f of files) {
+          if (!f.startsWith(".compaction-reset-signal-")) continue;
+          const fp = path.join(wsDir, f);
+          const s = await stat(fp).catch(() => null);
+          if (s && Date.now() - s.mtimeMs >= COMPACTION_SIGNAL_MAX_AGE_MS) {
+            await unlink(fp).catch(() => {});
+            log.debug(`initialize: removed stale compaction signal ${f}`);
+          }
+        }
+      } catch (err) {
+        log.debug("initialize: stale signal sweep failed:", err);
+      }
+    }
+
+    // Open the init gate — essential state (storage, aliases, relevance,
+    // transcript, summarizer, buffer) is loaded. QMD probe, collection setup,
+    // warmup, and remaining heavy operations run in the background after this
+    // point. recall() already degrades gracefully when QMD isn't ready (falls
+    // back to non-search retrieval), so there's no correctness risk.
     if (this.resolveInit) {
       this.resolveInit();
       this.resolveInit = null;
       log.info("init gate opened (essential state loaded)");
     }
 
+    // Deferred init: QMD, warmup, conversation index, caches, cron.
+    // Runs in background so gateway_start returns fast. On low-power hardware
+    // (Umbrel, RPi) the QMD operations alone can take 30-60s and cause gateway
+    // restart loops when they block the startup path. See issue #462.
+    this.deferredInitialize().catch((err) => {
+      log.error(`deferred initialization failed (non-fatal): ${err}`);
+    });
+  }
+
+  private async deferredInitialize(): Promise<void> {
     {
       const available = await this.qmd.probe();
       if (available) {
@@ -1803,11 +1835,7 @@ export class Orchestrator {
     }
 
     // Warmup: run cheap searches to pre-load QMD embedding models and the
-    // embedding-fallback JSON index. Without this, the first recall after
-    // startup loads ML models + parses a 300 MB JSON file (30-60 s each),
-    // causing it to exceed RECALL_TIMEOUT_MS. This is especially important
-    // for the http-serve CLI path where initialize() runs once at startup and
-    // every subsequent recall must be fast.
+    // embedding-fallback JSON index so the first real recall is fast.
     const warmupPromises: Promise<void>[] = [];
     if (this.qmd.isAvailable()) {
       const warmupNs = this.config.defaultNamespace;
@@ -1824,9 +1852,6 @@ export class Orchestrator {
       );
     }
     if (this.config.embeddingFallbackEnabled) {
-      // Only probe availability — do NOT load the full index at warmup.
-      // embeddings.json can be hundreds of MB; parsing it into JS number arrays
-      // consumes gigabytes of V8 heap and triggers GC stalls / OOM crashes.
       warmupPromises.push(
         this.embeddingFallback
           .isAvailable()
@@ -1842,15 +1867,7 @@ export class Orchestrator {
     }
     await Promise.all(warmupPromises);
 
-    // Fire-and-forget: pre-warm the readAllMemories() static cache for all
-    // configured namespace storages.  With 80k+ memory files the cold scan takes
-    // 13-60 s; running it in the background at startup ensures the cache is hot
-    // before the first recall request arrives, eliminating the cold-start penalty.
-    // Also pre-warms buildKnowledgeIndex() to prime knowledgeIndexCache on the
-    // base storage (avoids the 13 s readAllEntityFiles() penalty on first recall).
-    // Warm the Knowledge Index (readAllEntityFiles + scoring) on the base storage.
-    // knowledgeIndexCache is an instance-level cache — warming it here populates it
-    // before the first recall so ki=13s cold penalty doesn't hit real requests.
+    // Pre-warm knowledge index, memory, and entity caches in background
     if (this.config.knowledgeIndexEnabled) {
       (async () => {
         try {
@@ -1862,9 +1879,6 @@ export class Orchestrator {
         }
       })().catch(() => {});
     }
-
-    // Pre-warm memory and entity caches in background so first recall
-    // doesn't pay the cold load penalty
     this.storage.readAllMemories().catch(() => {});
     this.storage.readAllEntityFiles().catch(() => {});
 
@@ -1882,41 +1896,12 @@ export class Orchestrator {
       }
     }
 
-    await this.buffer.load();
-
-    // Validate local LLM model configuration
     if (this.config.localLlmEnabled) {
       await this.validateLocalLlmModel();
     }
 
-    // Sweep stale compaction-reset signal files (>1 hour old).
-    // This prevents orphaned signals from persisting when agents are removed
-    // or sessions never call recall() again after a compaction.
-    // NOTE: This sweep only covers the config-level workspace. Per-agent signals
-    // (written to ctx.workspaceDir) are cleaned up by recall() on each session
-    // start, with a 1-hour TTL enforced at read time. Agent-specific workspaces
-    // are not known at initialize() time.
-    if (this.config.compactionResetEnabled) {
-      try {
-        const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
-        const files = await readdir(wsDir).catch(() => [] as string[]);
-        for (const f of files) {
-          if (!f.startsWith(".compaction-reset-signal-")) continue;
-          const fp = path.join(wsDir, f);
-          const s = await stat(fp).catch(() => null);
-          if (s && Date.now() - s.mtimeMs >= COMPACTION_SIGNAL_MAX_AGE_MS) {
-            await unlink(fp).catch(() => {});
-            log.debug(`initialize: removed stale compaction signal ${f}`);
-          }
-        }
-      } catch (err) {
-        log.debug("initialize: stale signal sweep failed:", err);
-      }
-    }
+    log.info("orchestrator initialized (full — deferred steps complete)");
 
-    log.info("orchestrator initialized (full)");
-
-    // Fire-and-forget: auto-register day-summary cron job if enabled
     if (this.config.daySummaryEnabled) {
       this.autoRegisterDaySummaryCron().catch((err) => {
         log.debug(`day-summary cron auto-register failed (non-fatal): ${err}`);
