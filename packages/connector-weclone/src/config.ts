@@ -1,0 +1,132 @@
+/**
+ * WeClone connector configuration.
+ *
+ * Validates user-provided config and applies defaults for optional fields.
+ */
+
+export interface MemoryInjectionConfig {
+  maxTokens: number;
+  position: "system-append" | "system-prepend";
+  template: string;
+}
+
+export interface WeCloneConnectorConfig {
+  wecloneApiUrl: string;
+  wecloneModelName?: string;
+  proxyPort: number;
+  remnicDaemonUrl: string;
+  sessionStrategy: "caller-id" | "single";
+  memoryInjection: MemoryInjectionConfig;
+}
+
+export const DEFAULT_CONFIG: WeCloneConnectorConfig = {
+  wecloneApiUrl: "http://localhost:8000/v1",
+  wecloneModelName: "weclone-avatar",
+  proxyPort: 8100,
+  remnicDaemonUrl: "http://localhost:4318",
+  sessionStrategy: "single",
+  memoryInjection: {
+    maxTokens: 1500,
+    position: "system-append",
+    template: "[Memory Context]\n{memories}\n[End Memory Context]",
+  },
+};
+
+const VALID_SESSION_STRATEGIES = ["caller-id", "single"] as const;
+const VALID_POSITIONS = ["system-append", "system-prepend"] as const;
+
+/**
+ * Parse and validate a raw config object into a WeCloneConnectorConfig.
+ *
+ * Rejects missing required fields and invalid values with clear messages.
+ * Applies defaults for all optional fields.
+ */
+export function parseConfig(raw: unknown): WeCloneConnectorConfig {
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error("Config must be a non-null object");
+  }
+
+  const obj = raw as Record<string, unknown>;
+
+  // --- Required fields ---
+  if (typeof obj.wecloneApiUrl !== "string" || obj.wecloneApiUrl.length === 0) {
+    throw new Error(
+      "Config 'wecloneApiUrl' is required and must be a non-empty string"
+    );
+  }
+
+  if (typeof obj.proxyPort !== "number" || !Number.isInteger(obj.proxyPort) || obj.proxyPort <= 0) {
+    throw new Error(
+      "Config 'proxyPort' is required and must be a positive integer"
+    );
+  }
+
+  if (typeof obj.remnicDaemonUrl !== "string" || obj.remnicDaemonUrl.length === 0) {
+    throw new Error(
+      "Config 'remnicDaemonUrl' is required and must be a non-empty string"
+    );
+  }
+
+  // --- Optional fields with validation ---
+  const wecloneModelName =
+    obj.wecloneModelName !== undefined
+      ? String(obj.wecloneModelName)
+      : DEFAULT_CONFIG.wecloneModelName;
+
+  let sessionStrategy = DEFAULT_CONFIG.sessionStrategy;
+  if (obj.sessionStrategy !== undefined) {
+    if (!VALID_SESSION_STRATEGIES.includes(obj.sessionStrategy as typeof VALID_SESSION_STRATEGIES[number])) {
+      throw new Error(
+        `Config 'sessionStrategy' must be one of: ${VALID_SESSION_STRATEGIES.join(", ")}. ` +
+          `Got: ${JSON.stringify(obj.sessionStrategy)}`
+      );
+    }
+    sessionStrategy = obj.sessionStrategy as typeof sessionStrategy;
+  }
+
+  // --- Memory injection ---
+  let memoryInjection = { ...DEFAULT_CONFIG.memoryInjection };
+  if (obj.memoryInjection !== undefined) {
+    if (typeof obj.memoryInjection !== "object" || obj.memoryInjection === null) {
+      throw new Error("Config 'memoryInjection' must be an object");
+    }
+    const mi = obj.memoryInjection as Record<string, unknown>;
+
+    if (mi.maxTokens !== undefined) {
+      if (typeof mi.maxTokens !== "number" || !Number.isInteger(mi.maxTokens) || mi.maxTokens <= 0) {
+        throw new Error(
+          "Config 'memoryInjection.maxTokens' must be a positive integer"
+        );
+      }
+      memoryInjection.maxTokens = mi.maxTokens;
+    }
+
+    if (mi.position !== undefined) {
+      if (!VALID_POSITIONS.includes(mi.position as typeof VALID_POSITIONS[number])) {
+        throw new Error(
+          `Config 'memoryInjection.position' must be one of: ` +
+            `${VALID_POSITIONS.join(", ")}. Got: ${JSON.stringify(mi.position)}`
+        );
+      }
+      memoryInjection.position = mi.position as typeof memoryInjection.position;
+    }
+
+    if (mi.template !== undefined) {
+      if (typeof mi.template !== "string" || mi.template.length === 0) {
+        throw new Error(
+          "Config 'memoryInjection.template' must be a non-empty string"
+        );
+      }
+      memoryInjection.template = mi.template;
+    }
+  }
+
+  return {
+    wecloneApiUrl: obj.wecloneApiUrl,
+    wecloneModelName,
+    proxyPort: obj.proxyPort,
+    remnicDaemonUrl: obj.remnicDaemonUrl,
+    sessionStrategy,
+    memoryInjection,
+  };
+}
