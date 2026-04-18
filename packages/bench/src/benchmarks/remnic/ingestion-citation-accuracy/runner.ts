@@ -73,6 +73,8 @@ export async function runIngestionCitationAccuracyBenchmark(
 
   const fixtureDir = await mkdtemp(path.join(tmpdir(), "bench-citation-"));
   try {
+    await options.ingestionAdapter!.reset();
+
     for (const file of fixture.files) {
       const filePath = path.join(fixtureDir, file.relativePath);
       await mkdir(path.dirname(filePath), { recursive: true });
@@ -80,7 +82,7 @@ export async function runIngestionCitationAccuracyBenchmark(
     }
 
     const { result: ingestionLog, durationMs } = await timed(() =>
-      options.ingestionAdapter.ingest(fixtureDir),
+      options.ingestionAdapter!.ingest(fixtureDir),
     );
 
     const graph = await options.ingestionAdapter.getMemoryGraph();
@@ -105,7 +107,7 @@ export async function runIngestionCitationAccuracyBenchmark(
       }
     }
 
-    const citationAccuracy = scoredClaims > 0 ? validCitations / scoredClaims : 0;
+    const citationAccuracy = scoredClaims > 0 ? validCitations / scoredClaims : -1;
 
     const scores: Record<string, number> = {
       citation_accuracy: citationAccuracy,
