@@ -176,3 +176,8 @@ export {
   backlinkF1,
   schemaCompleteness,
 } from "./ingestion-scorer.js";
+
+export { emailFixture } from "./fixtures/inbox/email.js";
+export { projectFolderFixture } from "./fixtures/inbox/project-folder.js";
+export { calendarFixture } from "./fixtures/inbox/calendar.js";
+export { chatFixture } from "./fixtures/inbox/chat.js";
