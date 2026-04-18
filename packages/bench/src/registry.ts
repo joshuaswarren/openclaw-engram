@@ -160,7 +160,7 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   },
   {
     ...ingestionSetupFrictionDefinition,
-    run: runIngestionSetupFrictionBenchmark as (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>,
+    run: runIngestionSetupFrictionBenchmark,
   },
 ];
 
