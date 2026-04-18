@@ -2082,14 +2082,27 @@ export class Orchestrator {
       return false;
     }
 
-    // Run index update — namespace-aware when enabled
+    // Run index update — namespace-aware when enabled.
+    // qmd.update() swallows errors internally (logs + records fail timestamp),
+    // so we snapshot lastUpdateFailedAtMs before the call and compare after
+    // to detect silent failures that would otherwise be misclassified as success.
     if (this.config.qmdMaintenanceEnabled) {
       try {
+        const failTsBefore = "lastUpdateFailedAtMs" in this.qmd
+          ? (this.qmd as any).lastUpdateFailedAtMs as number | null
+          : null;
         log.info("startupSearchSync: updating index to match current disk state");
         if (this.config.namespacesEnabled) {
           await this.namespaceSearchRouter.updateNamespaces(namespaces);
         } else {
           await this.qmd.update();
+        }
+        const failTsAfter = "lastUpdateFailedAtMs" in this.qmd
+          ? (this.qmd as any).lastUpdateFailedAtMs as number | null
+          : null;
+        if (failTsAfter !== null && failTsAfter !== failTsBefore) {
+          log.warn("startupSearchSync: update silently failed (detected via fail timestamp)");
+          return false;
         }
         log.info("startupSearchSync: sync complete");
       } catch (err) {
