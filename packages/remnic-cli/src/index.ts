@@ -120,13 +120,19 @@ import type {
 import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 import {
   compareResults,
+  defaultBenchmarkBaselineDir,
+  listBenchmarkBaselines,
+  listBenchmarkResults,
+  loadBenchmarkBaseline,
   runBenchSuite,
   runExplain,
   loadBaseline,
   saveBaseline,
   checkRegression,
   loadBenchmarkResult,
+  renderBenchmarkResultExport,
   resolveBenchmarkResultReference,
+  saveBenchmarkBaseline,
   type BenchConfig,
   type BenchmarkDefinition,
 } from "@remnic/bench";
@@ -247,13 +253,19 @@ export const BENCHMARK_CATALOG: BenchCatalogEntry[] = [
 const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
 
 export function getBenchUsageText(): string {
-  return `Usage: remnic bench <list|run|compare> [options] [benchmark...]
-       remnic benchmark <list|run|compare|check|report> [options] [benchmark...]
+  return `Usage: remnic bench <list|run|compare|results|baseline|export> [options] [benchmark...]
+       remnic benchmark <list|run|compare|results|baseline|export|check|report> [options] [benchmark...]
 
 Commands:
   list                     List published benchmark packs
   run [benchmark...]       Run one or more benchmark packs
   compare <base> <cand>    Compare two stored benchmark runs by id or file path
+  results [run]            List stored runs or inspect a stored run
+  baseline save <name> [run]
+                           Save a stored run as a named baseline
+  baseline list            List saved baselines
+  export <run> --format <json|csv>
+                           Export one stored run as JSON or aggregate-metrics CSV
   check                    Legacy latency regression gate (compatibility)
   report                   Legacy latency report generator (compatibility)
 
@@ -262,7 +274,11 @@ Options:
   --all                    Run every published benchmark
   --dataset-dir <path>     Override the benchmark dataset directory for full runs
   --results-dir <path>     Override the stored benchmark results directory
+  --baselines-dir <path>   Override the named baseline directory
   --threshold <value>      Regression threshold for compare (default: 0.05)
+  --detail                 Include per-task details for bench results
+  --format <json|csv>      Output format for bench export
+  --output <path>          Write bench export output to a file
   --json                   Output JSON for \`list\`
 
 Examples:
@@ -270,6 +286,11 @@ Examples:
   remnic bench run --quick longmemeval
   remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
   remnic bench compare base-run candidate-run
+  remnic bench results
+  remnic bench results candidate-run --detail
+  remnic bench baseline save main candidate-run
+  remnic bench baseline list
+  remnic bench export candidate-run --format csv --output ./candidate.csv
   remnic benchmark run --quick longmemeval`;
 }
 
@@ -384,6 +405,10 @@ function resolveBenchOutputDir(): string {
   return path.join(resolveHomeDir(), ".remnic", "bench", "results");
 }
 
+function resolveBenchBaselineDir(): string {
+  return defaultBenchmarkBaselineDir();
+}
+
 function resolveBenchDatasetDir(
   benchmarkId: string,
   quick: boolean,
@@ -421,6 +446,37 @@ function printBenchPackageSummary(
     console.log(`  ${metric.padEnd(20)} ${aggregate.mean.toFixed(4)}`);
   }
   console.log(`Results saved: ${outputPath}`);
+}
+
+function printStoredBenchResultSummary(
+  result: Awaited<ReturnType<typeof loadBenchmarkResult>>,
+  summary: { id: string; path: string },
+): void {
+  printBenchPackageSummary(result, summary.path);
+  console.log(`Run id: ${summary.id}`);
+}
+
+function printStoredBenchResultDetails(
+  result: Awaited<ReturnType<typeof loadBenchmarkResult>>,
+  summary: { id: string; path: string },
+): void {
+  printStoredBenchResultSummary(result, summary);
+  if (result.results.tasks.length === 0) {
+    console.log("Tasks: none");
+    return;
+  }
+
+  console.log("Task breakdown:");
+  for (const task of result.results.tasks) {
+    const scores = Object.entries(task.scores)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([metric, value]) => `${metric}=${value.toFixed(4)}`)
+      .join(", ");
+    console.log(
+      `  ${task.taskId}: ${task.latencyMs.toFixed(1)}ms` +
+      `${scores.length > 0 ? ` [${scores}]` : ""}`,
+    );
+  }
 }
 
 function printBenchComparisonSummary(
@@ -513,6 +569,170 @@ async function compareBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
   if (comparison.verdict === "regression") {
     process.exit(1);
   }
+}
+
+async function showBenchPackageResults(parsed: ParsedBenchArgs): Promise<void> {
+  const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+
+  if (parsed.benchmarks.length === 0) {
+    const summaries = await listBenchmarkResults(resultsDir);
+    if (parsed.json) {
+      console.log(JSON.stringify(summaries, null, 2));
+      return;
+    }
+    if (summaries.length === 0) {
+      console.log(`No stored benchmark runs found in ${resultsDir}`);
+      return;
+    }
+
+    console.log("Stored benchmark runs:");
+    for (const summary of summaries) {
+      console.log(
+        `  ${summary.id.padEnd(24)} ${summary.benchmark.padEnd(16)} ${summary.mode.padEnd(5)} ${summary.timestamp}`,
+      );
+    }
+    return;
+  }
+
+  if (parsed.benchmarks.length !== 1) {
+    console.error(
+      "ERROR: results accepts at most one stored result reference. Usage: remnic bench results [run] [--detail] [--results-dir <path>] [--json]",
+    );
+    process.exit(1);
+  }
+
+  const reference = parsed.benchmarks[0]!;
+  const summary = await resolveBenchmarkResultReference(resultsDir, reference);
+  if (!summary) {
+    console.error(`ERROR: benchmark result not found: ${reference}`);
+    process.exit(1);
+  }
+
+  const result = await loadBenchmarkResult(summary.path);
+  if (parsed.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  if (parsed.detail) {
+    printStoredBenchResultDetails(result, summary);
+  } else {
+    printStoredBenchResultSummary(result, summary);
+  }
+}
+
+async function manageBenchBaselines(parsed: ParsedBenchArgs): Promise<void> {
+  const baselineDir = parsed.baselinesDir ?? resolveBenchBaselineDir();
+
+  if (parsed.baselineAction === "list") {
+    const baselines = await listBenchmarkBaselines(baselineDir);
+    if (parsed.json) {
+      console.log(JSON.stringify(baselines, null, 2));
+      return;
+    }
+    if (baselines.length === 0) {
+      console.log(`No saved baselines found in ${baselineDir}`);
+      return;
+    }
+
+    console.log("Saved baselines:");
+    for (const baseline of baselines) {
+      console.log(
+        `  ${baseline.name.padEnd(20)} ${baseline.benchmark.padEnd(16)} ${baseline.mode.padEnd(5)} ${baseline.timestamp}`,
+      );
+    }
+    return;
+  }
+
+  if (parsed.baselineAction !== "save") {
+    console.error("ERROR: baseline requires a subcommand: save or list.");
+    process.exit(1);
+  }
+
+  if (parsed.benchmarks.length < 1 || parsed.benchmarks.length > 2) {
+    console.error(
+      "ERROR: baseline save requires a name and optionally one stored result reference. Usage: remnic bench baseline save <name> [run] [--results-dir <path>] [--baselines-dir <path>] [--json]",
+    );
+    process.exit(1);
+  }
+
+  const [name, explicitReference] = parsed.benchmarks;
+  const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const sourceSummary = explicitReference
+    ? await resolveBenchmarkResultReference(resultsDir, explicitReference)
+    : (await listBenchmarkResults(resultsDir))[0];
+
+  if (!sourceSummary) {
+    console.error(
+      explicitReference
+        ? `ERROR: benchmark result not found: ${explicitReference}`
+        : `ERROR: no stored benchmark runs found in ${resultsDir}`,
+    );
+    process.exit(1);
+  }
+
+  const result = await loadBenchmarkResult(sourceSummary.path);
+  let writtenPath: string;
+  try {
+    writtenPath = await saveBenchmarkBaseline(
+      baselineDir,
+      name!,
+      result,
+      { id: sourceSummary.id, path: sourceSummary.path },
+    );
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
+
+  if (parsed.json) {
+    const baseline = await loadBenchmarkBaseline(writtenPath);
+    console.log(JSON.stringify({
+      name: baseline.name,
+      path: writtenPath,
+      source: baseline.source,
+      benchmark: baseline.result.meta.benchmark,
+      timestamp: baseline.savedAt,
+    }, null, 2));
+    return;
+  }
+
+  console.log(`Saved baseline "${name}" to ${writtenPath}`);
+  console.log(`  Source run: ${sourceSummary.id}`);
+  console.log(`  Benchmark: ${result.meta.benchmark}`);
+}
+
+async function exportBenchPackageResult(parsed: ParsedBenchArgs): Promise<void> {
+  if (parsed.benchmarks.length !== 1) {
+    console.error(
+      "ERROR: export requires exactly one stored result reference. Usage: remnic bench export <run> --format <json|csv> [--output <path>] [--results-dir <path>]",
+    );
+    process.exit(1);
+  }
+  if (!parsed.format) {
+    console.error('ERROR: export requires --format json or --format csv.');
+    process.exit(1);
+  }
+
+  const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const reference = parsed.benchmarks[0]!;
+  const summary = await resolveBenchmarkResultReference(resultsDir, reference);
+  if (!summary) {
+    console.error(`ERROR: benchmark result not found: ${reference}`);
+    process.exit(1);
+  }
+
+  const result = await loadBenchmarkResult(summary.path);
+  const rendered = renderBenchmarkResultExport(result, parsed.format);
+
+  if (parsed.output) {
+    fs.mkdirSync(path.dirname(parsed.output), { recursive: true });
+    fs.writeFileSync(parsed.output, rendered);
+    console.log(`Exported ${summary.id} as ${parsed.format} to ${parsed.output}`);
+    return;
+  }
+
+  process.stdout.write(rendered);
 }
 
 async function runBenchViaPackage(
@@ -2400,6 +2620,21 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.action === "results") {
+    await showBenchPackageResults(parsed);
+    return;
+  }
+
+  if (parsed.action === "baseline") {
+    await manageBenchBaselines(parsed);
+    return;
+  }
+
+  if (parsed.action === "export") {
+    await exportBenchPackageResult(parsed);
+    return;
+  }
+
   if (parsed.action === "list") {
     const catalog = await listBenchmarksFromPackage() ?? BENCHMARK_CATALOG;
     if (parsed.json) {
@@ -3830,9 +4065,9 @@ Usage:
   remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
-  remnic bench <list|run|compare> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--threshold <value>] [--json]
+  remnic bench <list|run|compare|results|baseline|export> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv>] [--output <path>] [--json]
     benchmark is kept as a compatibility alias. check/report remain under that alias.
-  remnic benchmark <list|run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
+  remnic benchmark <list|run|compare|results|baseline|export|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
     Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
     Focus: person:<name>, project:<name>, topic:<name>.

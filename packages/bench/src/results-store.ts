@@ -1,5 +1,6 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { BenchmarkMode, BenchmarkResult } from "./types.js";
 
@@ -11,12 +12,50 @@ export interface StoredBenchmarkResultSummary {
   mode: BenchmarkMode;
 }
 
+export interface StoredBenchmarkBaseline {
+  name: string;
+  savedAt: string;
+  result: BenchmarkResult;
+  source?: {
+    id: string;
+    path: string;
+  };
+}
+
+export interface StoredBenchmarkBaselineSummary {
+  name: string;
+  path: string;
+  benchmark: string;
+  timestamp: string;
+  resultId: string;
+  resultTimestamp: string;
+  mode: BenchmarkMode;
+}
+
+export type BenchmarkExportFormat = "json" | "csv";
+
+const BASELINE_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+export function defaultBenchmarkBaselineDir(): string {
+  return path.join(os.homedir(), ".remnic", "bench", "baselines");
+}
+
 function compareResultSummaries(
   left: StoredBenchmarkResultSummary,
   right: StoredBenchmarkResultSummary,
 ): number {
   if (left.timestamp === right.timestamp) {
     return left.id.localeCompare(right.id);
+  }
+  return right.timestamp.localeCompare(left.timestamp);
+}
+
+function compareBaselineSummaries(
+  left: StoredBenchmarkBaselineSummary,
+  right: StoredBenchmarkBaselineSummary,
+): number {
+  if (left.timestamp === right.timestamp) {
+    return left.name.localeCompare(right.name);
   }
   return right.timestamp.localeCompare(left.timestamp);
 }
@@ -54,6 +93,40 @@ function isBenchmarkResult(value: unknown): value is BenchmarkResult {
   );
 }
 
+function isStoredBenchmarkBaseline(value: unknown): value is StoredBenchmarkBaseline {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const baseline = value as StoredBenchmarkBaseline;
+  if (
+    typeof baseline.name !== "string" ||
+    typeof baseline.savedAt !== "string" ||
+    !isBenchmarkResult(baseline.result)
+  ) {
+    return false;
+  }
+
+  if (baseline.source === undefined) {
+    return true;
+  }
+
+  return (
+    typeof baseline.source === "object" &&
+    baseline.source !== null &&
+    typeof baseline.source.id === "string" &&
+    typeof baseline.source.path === "string"
+  );
+}
+
+function assertValidBaselineName(name: string): void {
+  if (!BASELINE_NAME_PATTERN.test(name)) {
+    throw new Error(
+      `Invalid baseline name "${name}". Use only letters, numbers, "_" and "-".`,
+    );
+  }
+}
+
 function toSummary(
   result: BenchmarkResult,
   filePath: string,
@@ -64,6 +137,21 @@ function toSummary(
     benchmark: result.meta.benchmark,
     timestamp: result.meta.timestamp,
     mode: result.meta.mode,
+  };
+}
+
+function toBaselineSummary(
+  baseline: StoredBenchmarkBaseline,
+  filePath: string,
+): StoredBenchmarkBaselineSummary {
+  return {
+    name: baseline.name,
+    path: filePath,
+    benchmark: baseline.result.meta.benchmark,
+    timestamp: baseline.savedAt,
+    resultId: baseline.result.meta.id,
+    resultTimestamp: baseline.result.meta.timestamp,
+    mode: baseline.result.meta.mode,
   };
 }
 
@@ -103,6 +191,67 @@ export async function listBenchmarkResults(
   return results.sort(compareResultSummaries);
 }
 
+export async function saveBenchmarkBaseline(
+  baselineDir: string,
+  name: string,
+  result: BenchmarkResult,
+  source?: {
+    id: string;
+    path: string;
+  },
+): Promise<string> {
+  assertValidBaselineName(name);
+  await mkdir(baselineDir, { recursive: true });
+
+  const filePath = path.join(baselineDir, `${name}.json`);
+  const payload: StoredBenchmarkBaseline = {
+    name,
+    savedAt: new Date().toISOString(),
+    result,
+    source,
+  };
+  await writeFile(filePath, `${JSON.stringify(payload, null, 2)}\n`);
+  return filePath;
+}
+
+export async function loadBenchmarkBaseline(
+  filePath: string,
+): Promise<StoredBenchmarkBaseline> {
+  const content = await readFile(filePath, "utf8");
+  const parsed: unknown = JSON.parse(content);
+  if (!isStoredBenchmarkBaseline(parsed)) {
+    throw new Error(`Invalid benchmark baseline file: ${filePath}`);
+  }
+  return parsed;
+}
+
+export async function listBenchmarkBaselines(
+  baselineDir: string,
+): Promise<StoredBenchmarkBaselineSummary[]> {
+  if (!fs.existsSync(baselineDir)) {
+    return [];
+  }
+
+  const entries = await readdir(baselineDir, { withFileTypes: true });
+  const baselines: StoredBenchmarkBaselineSummary[] = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    const filePath = path.join(baselineDir, entry.name);
+    try {
+      const baseline = await loadBenchmarkBaseline(filePath);
+      baselines.push(toBaselineSummary(baseline, filePath));
+    } catch {
+      continue;
+    }
+  }
+
+  return baselines.sort(compareBaselineSummaries);
+}
+
 export async function resolveBenchmarkResultReference(
   outputDir: string,
   reference: string,
@@ -126,4 +275,54 @@ export async function resolveBenchmarkResultReference(
     (summary) => path.basename(summary.path) === reference,
   );
   return basenameMatch;
+}
+
+function csvEscape(value: string | number): string {
+  const text = String(value);
+  if (/[",\n]/.test(text)) {
+    return `"${text.replaceAll(`"`, `""`)}"`;
+  }
+  return text;
+}
+
+export function renderBenchmarkResultExport(
+  result: BenchmarkResult,
+  format: BenchmarkExportFormat,
+): string {
+  if (format === "json") {
+    return `${JSON.stringify(result, null, 2)}\n`;
+  }
+
+  const rows = [
+    [
+      "result_id",
+      "benchmark",
+      "timestamp",
+      "mode",
+      "metric",
+      "mean",
+      "median",
+      "std_dev",
+      "min",
+      "max",
+    ].join(","),
+  ];
+
+  for (const metric of Object.keys(result.results.aggregates).sort()) {
+    const aggregate = result.results.aggregates[metric]!;
+    rows.push([
+      result.meta.id,
+      result.meta.benchmark,
+      result.meta.timestamp,
+      result.meta.mode,
+      metric,
+      aggregate.mean,
+      aggregate.median,
+      aggregate.stdDev,
+      aggregate.min,
+      aggregate.max,
+    ].map(csvEscape).join(","));
+  }
+
+  return `${rows.join("\n")}\n`;
 }
