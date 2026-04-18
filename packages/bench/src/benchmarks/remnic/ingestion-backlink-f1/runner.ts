@@ -11,7 +11,6 @@ import type {
   BenchmarkResult,
   ResolvedRunBenchmarkOptions,
 } from "../../../types.js";
-import type { IngestionBenchAdapter } from "../../../ingestion-types.js";
 import { backlinkF1 } from "../../../ingestion-scorer.js";
 import { aggregateTaskScores, timed } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -32,8 +31,11 @@ export const ingestionBacklinkF1Definition: BenchmarkDefinition = {
 };
 
 export async function runIngestionBacklinkF1Benchmark(
-  options: ResolvedRunBenchmarkOptions & { ingestionAdapter: IngestionBenchAdapter },
+  options: ResolvedRunBenchmarkOptions,
 ): Promise<BenchmarkResult> {
+  if (!options.ingestionAdapter) {
+    throw new Error("ingestionAdapter is required for ingestion benchmarks");
+  }
   const fixture = emailFixture.generate();
 
   const fixtureDir = await mkdtemp(path.join(tmpdir(), "bench-email-"));
