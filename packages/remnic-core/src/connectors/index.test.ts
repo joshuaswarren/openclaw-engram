@@ -1202,15 +1202,14 @@ test(
   },
 );
 
-// ── PR #400 PRRT_kwDORJXyws56U9U0 round 6: non-token connectors must not write to tokens.json ──
+// ── Codex CLI token auth regression coverage ────────────────────────────────
 //
-// Regression test: installing a connector that does NOT require token auth
-// (e.g. "codex-cli", connectionType "mcp") must leave tokens.json with NO
-// entry for that connector. Only connectors with requiresToken:true may write
-// to the token store.
+// Codex CLI hook auth depends on a dedicated bearer token entry in tokens.json.
+// Installing codex-cli must therefore mint a token, but still keep that token
+// out of the saved connector config file.
 
 test(
-  "installConnector does NOT write a token entry for connectors that do not require token auth (PRRT_kwDORJXyws56U9U0 r6)",
+  "installConnector writes a remnic_cx_ token entry for codex-cli and keeps connector config token-free",
   async (t) => {
     const sandbox = makeSandbox(t);
 
@@ -1222,7 +1221,6 @@ test(
         CODEX_HOME: sandbox.codexHome,
       },
       () => {
-        // codex-cli is an MCP connector with requiresToken: false (default).
         const result = installConnector({
           connectorId: "codex-cli",
           config: { installExtension: false },
@@ -1230,22 +1228,25 @@ test(
 
         assert.equal(result.status, "installed", `expected status "installed", got: "${result.status}"`);
 
-        // tokens.json must contain NO entry for codex-cli.
+        // tokens.json must contain a codex-cli entry.
         const store = loadTokenStore();
         const codexEntry = store.tokens.find((e) => e.connector === "codex-cli");
-        assert.equal(
+        assert.ok(
           codexEntry,
-          undefined,
-          "tokens.json must NOT contain an entry for a non-token-auth connector (codex-cli)",
+          "tokens.json must contain a token entry for codex-cli after install",
+        );
+        assert.ok(
+          codexEntry!.token.startsWith("remnic_cx_"),
+          `codex-cli token must start with \"remnic_cx_\", got: \"${codexEntry!.token.slice(0, 20)}...\"`,
         );
 
-        // The saved connector.json must also not contain a token field.
+        // The saved connector.json must not contain a token field.
         assert.ok(result.configPath, "configPath should be set");
         const saved = JSON.parse(fs.readFileSync(result.configPath as string, "utf8")) as Record<string, unknown>;
         assert.equal(
           "token" in saved,
           false,
-          "connector.json must NOT contain a 'token' field",
+          "codex-cli connector.json must NOT contain a 'token' field",
         );
       },
     );

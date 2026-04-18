@@ -203,5 +203,6 @@ test("Codex hooks prefer ~/.remnic/tokens.json with Engram fallback", () => {
   assert.ok(content.includes("tokens.json"), "Must read from token file");
   assert.ok(content.includes(".remnic"), "Must prefer Remnic token path");
   assert.ok(content.includes(".engram"), "Must preserve Engram token fallback");
-  assert.ok(content.includes("codex"), "Must look for codex token key");
+  assert.ok(content.includes("codex-cli"), "Must look for codex-cli token key");
+  assert.ok(content.includes("codex"), "Must preserve legacy codex token fallback");
 });

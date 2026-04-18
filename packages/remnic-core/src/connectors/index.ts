@@ -245,6 +245,7 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
     homepage: "https://openai.com/codex",
     author: "OpenAI",
     tags: ["official", "ai", "codex"],
+    requiresToken: true,
   },
   {
     id: "cursor",
