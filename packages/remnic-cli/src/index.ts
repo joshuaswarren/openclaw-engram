@@ -716,6 +716,7 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
   const config = parseConfig(remnicCfg);
   const orchestrator = new Orchestrator(config);
   await orchestrator.initialize();
+  await orchestrator.deferredReady;
   const service = new EngramAccessService(orchestrator);
 
   if (explain) {

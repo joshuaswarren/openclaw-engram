@@ -1759,7 +1759,13 @@ export class Orchestrator {
 
     // Buffer and compaction cleanup are fast and needed for basic operation —
     // load them before the init gate so turn buffering works immediately.
-    await this.buffer.load();
+    try {
+      await this.buffer.load();
+    } catch (bufErr) {
+      log.error(
+        `buffer.load() failed (init gate will still open): ${bufErr}`,
+      );
+    }
     if (this.config.compactionResetEnabled) {
       try {
         const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
