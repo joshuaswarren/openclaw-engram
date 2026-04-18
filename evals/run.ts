@@ -105,6 +105,14 @@ Options:
       ? Object.keys(RUNNERS)
       : [benchmarkName];
 
+  if (datasetDirOverride && benchmarkNames.length > 1) {
+    console.error(
+      "ERROR: --dataset-dir cannot be used with --benchmark all. Run one benchmark at a time when overriding datasets.",
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   for (const name of benchmarkNames) {
     if (!RUNNERS[name]) {
       console.error(`ERROR: Unknown benchmark "${name}". Available: ${Object.keys(RUNNERS).join(", ")}, all`);
