@@ -9,7 +9,7 @@ test("remnic CLI source wires the new bench command and keeps benchmark as an al
   assert.match(source, /case "bench": \{/);
   assert.match(source, /case "benchmark": \{/);
   assert.match(source, /await cmdBench\(rest\);/);
-  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export>/);
+  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export\|providers>/);
   assert.match(source, /benchmark is kept as a compatibility alias/i);
 });
 
@@ -87,7 +87,7 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /async function runCustomBenchViaPackage\(parsed: ParsedBenchArgs\): Promise<boolean>/);
   assert.match(parserSource, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
   assert.match(parserSource, /function collectBenchmarks\(argv: string\[\]\): string\[\]/);
-  assert.match(parserSource, /const benchmarkArgs = action === "baseline" \? args\.slice\(1\) : args;/);
+  assert.match(parserSource, /const benchmarkArgs = action === "baseline" \|\| action === "providers" \? args\.slice\(1\) : args;/);
   assert.match(parserSource, /const benchmarks = collectBenchmarks\(benchmarkArgs\);/);
   assert.match(parserSource, /requires a value\./);
   assert.match(parserSource, /arg === "--dataset-dir"[\s\S]*arg === "--results-dir"[\s\S]*arg === "--baselines-dir"[\s\S]*arg === "--threshold"[\s\S]*arg === "--custom"[\s\S]*arg === "--format"[\s\S]*arg === "--output"/);
@@ -163,6 +163,35 @@ test("bench results, baseline, and export route through the stored package resul
   assert.match(parserSource, /detail: args\.includes\("--detail"\),/);
   assert.match(parserSource, /baselinesDir: baselinesDir \? path\.resolve\(expandTilde\(baselinesDir\)\) : undefined/);
   assert.match(parserSource, /output: output \? path\.resolve\(expandTilde\(output\)\) : undefined/);
+});
+
+test("bench providers discovery is exposed as a package-backed CLI surface", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
+  const readme = await readFile("packages/remnic-cli/README.md", "utf8");
+
+  assert.match(source, /discoverAllProviders,/);
+  assert.match(source, /Usage: remnic bench <list\|run\|compare\|results\|baseline\|export\|providers>/);
+  assert.match(source, /remnic bench providers discover/);
+  assert.match(source, /async function discoverBenchProviders\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /if \(parsed\.action === "providers"\) \{\s*await discoverBenchProviders\(parsed\);/s);
+  assert.match(parserSource, /export type BenchAction =[\s\S]*"providers"[\s\S]*"check"[\s\S]*"report";/);
+  assert.match(parserSource, /export type BenchProviderAction = "discover";/);
+  assert.match(parserSource, /providerAction\?: BenchProviderAction;/);
+  assert.match(parserSource, /first === "providers"/);
+  assert.match(parserSource, /const providerAction =[\s\S]*args\[0\] === "discover"/);
+  assert.match(readme, /remnic bench providers discover/);
+});
+
+test("parseBenchArgs supports the providers discovery surface", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const parsed = parseBenchArgs(["providers", "discover", "--json"]);
+
+  assert.equal(parsed.action, "providers");
+  assert.equal(parsed.providerAction, "discover");
+  assert.equal(parsed.json, true);
+  assert.deepEqual(parsed.benchmarks, []);
 });
 
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {
