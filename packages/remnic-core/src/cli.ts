@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { access, readFile, readdir, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -833,6 +834,11 @@ function isWorkProjectStatus(value: string | undefined): value is "active" | "on
 export async function runTrainingExportCliCommand(
   opts: TrainingExportCliCommandOptions,
 ): Promise<void> {
+  // Expand ~ in memoryDir (Node.js fs does NOT expand ~; CLAUDE.md #17)
+  const expandedMemoryDir = opts.memoryDir.startsWith("~")
+    ? opts.memoryDir.replace("~", os.homedir())
+    : opts.memoryDir;
+
   // 1. Validate format is registered (reject invalid per CLAUDE.md #51)
   const adapter = getTrainingExportAdapter(opts.format);
   if (!adapter) {
@@ -868,7 +874,7 @@ export async function runTrainingExportCliCommand(
 
   // 3. Convert memories to records
   const records = await convertMemoriesToRecords({
-    memoryDir: opts.memoryDir,
+    memoryDir: expandedMemoryDir,
     since,
     until,
     minConfidence: opts.minConfidence,

@@ -138,12 +138,14 @@ function detectFormality(text: string): "formal" | "casual" | "mixed" {
 
   let formalScore = 0;
   for (const marker of FORMAL_MARKERS) {
-    if (lower.includes(marker)) formalScore++;
+    // Word-boundary matching prevents false positives
+    // (e.g., "tho" matching inside "those" or "method")
+    if (new RegExp(`\\b${marker}\\b`, "i").test(lower)) formalScore++;
   }
 
   let casualScore = 0;
   for (const marker of CASUAL_MARKERS) {
-    if (lower.includes(marker)) casualScore++;
+    if (new RegExp(`\\b${marker}\\b`, "i").test(lower)) casualScore++;
   }
 
   // Threshold: need at least 2 markers to declare a style
@@ -176,10 +178,11 @@ function findCommonPhrases(samples: string[]): string[] {
   const phraseCount = new Map<string, number>();
 
   for (const sample of samples) {
-    // Tokenize: split on whitespace, strip punctuation from edges
+    // Tokenize: split on whitespace, strip punctuation from edges.
+    // Two separate replaces avoid polynomial backtracking (CodeQL ReDoS).
     const words = sample
       .split(/\s+/)
-      .map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, ""))
+      .map((w) => w.replace(/^[^a-zA-Z0-9]+/, "").replace(/[^a-zA-Z0-9]+$/, ""))
       .filter((w) => w.length > 0);
 
     // Build 2-gram and 3-gram phrases

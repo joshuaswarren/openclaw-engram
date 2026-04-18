@@ -99,4 +99,47 @@ describe("extractStyleMarkers", () => {
     const markers = extractStyleMarkers(samples);
     assert.equal(markers.formality, "mixed");
   });
+
+  it("does not false-positive 'tho' inside 'those' or 'method'", () => {
+    const samples = [
+      "Those methods are well documented.",
+      "The author thoroughly reviewed the code.",
+    ];
+    const markers = extractStyleMarkers(samples);
+    // "those", "method", "author", "thoroughly" should not trigger casual markers
+    assert.equal(markers.formality, "mixed");
+  });
+
+  it("does not false-positive 'bro' inside 'broken' or 'broadly'", () => {
+    const samples = [
+      "The broken pipe was broadly reported across servers.",
+      "Browsing through the documentation revealed the issue.",
+    ];
+    const markers = extractStyleMarkers(samples);
+    assert.equal(markers.formality, "mixed");
+  });
+
+  it("punctuation-strip regex does not ReDoS on pathological input", () => {
+    // 1000 forward slashes should complete well under 100ms
+    const pathological = "/".repeat(1000);
+    const samples = [pathological, pathological, pathological];
+    const start = Date.now();
+    const markers = extractStyleMarkers(samples);
+    const elapsed = Date.now() - start;
+    assert.ok(
+      elapsed < 100,
+      `expected < 100ms, took ${elapsed}ms (possible ReDoS)`,
+    );
+    assert.deepEqual(markers.commonPhrases, []);
+  });
+
+  it("still detects standalone casual markers with word boundaries", () => {
+    // "tho" and "bro" as standalone words should still count
+    const samples = [
+      "i know tho, it's kind of a thing bro",
+      "yeah tho that's what i was saying",
+    ];
+    const markers = extractStyleMarkers(samples);
+    assert.equal(markers.formality, "casual");
+  });
 });

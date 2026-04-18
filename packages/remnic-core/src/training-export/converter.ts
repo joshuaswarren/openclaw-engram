@@ -208,7 +208,8 @@ export async function convertMemoriesToRecords(
     // since filter (half-open: created >= since)
     if (options.since) {
       const created = parseIsoDate(parsed.created);
-      if (created && created.getTime() < options.since.getTime()) {
+      // Exclude memories with missing/unparseable dates when date filters are active
+      if (!created || created.getTime() < options.since.getTime()) {
         continue;
       }
     }
@@ -216,7 +217,8 @@ export async function convertMemoriesToRecords(
     // until filter (exclusive upper bound per CLAUDE.md #35: created < until)
     if (options.until) {
       const created = parseIsoDate(parsed.created);
-      if (created && created.getTime() >= options.until.getTime()) {
+      // Exclude memories with missing/unparseable dates when date filters are active
+      if (!created || created.getTime() >= options.until.getTime()) {
         continue;
       }
     }

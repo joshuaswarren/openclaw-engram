@@ -160,6 +160,52 @@ describe("convertMemoriesToRecords", () => {
     assert.equal(records.length, 0);
   });
 
+  it("excludes memories with missing dates when date filters are active", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "dated.md", {
+      id: "dated",
+      created: "2026-01-15T00:00:00.000Z",
+      content: "Memory with a valid date.",
+    });
+    // Write a memory with no created date (empty string in frontmatter)
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+    const noDateMd = [
+      "---",
+      "id: no-date",
+      "category: fact",
+      "created: ",
+      "updated: ",
+      "source: test",
+      "confidence: 0.9",
+      "confidenceTier: explicit",
+      "tags: []",
+      "---",
+      "",
+      "Memory with no date.",
+    ].join("\n");
+    await writeFile(path.join(dir, "facts", "no-date.md"), noDateMd, "utf-8");
+
+    // With a since filter, dateless memory should be excluded
+    const withSince = await convertMemoriesToRecords({
+      memoryDir: dir,
+      since: new Date("2025-01-01T00:00:00.000Z"),
+    });
+    assert.equal(withSince.length, 1);
+    assert.equal(withSince[0].sourceIds?.[0], "dated");
+
+    // With an until filter, dateless memory should be excluded
+    const withUntil = await convertMemoriesToRecords({
+      memoryDir: dir,
+      until: new Date("2027-01-01T00:00:00.000Z"),
+    });
+    assert.equal(withUntil.length, 1);
+    assert.equal(withUntil[0].sourceIds?.[0], "dated");
+
+    // Without date filters, dateless memory should be included
+    const noFilter = await convertMemoriesToRecords({ memoryDir: dir });
+    assert.equal(noFilter.length, 2);
+  });
+
   it("handles empty memory directory", async () => {
     const dir = await makeTmpDir();
     // Don't create any subdirectories
