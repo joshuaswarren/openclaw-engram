@@ -16,6 +16,7 @@ METHOD:PUBLISH
 
 BEGIN:VEVENT
 UID:daily-standup-001@bench.synthetic
+DTSTAMP:20260201T120000Z
 SUMMARY:Daily Standup
 DTSTART;TZID=America/New_York:20260202T093000
 DTEND;TZID=America/New_York:20260202T094500
@@ -30,6 +31,7 @@ END:VEVENT
 
 BEGIN:VEVENT
 UID:sprint-planning-2026-02-09@bench.synthetic
+DTSTAMP:20260201T120000Z
 SUMMARY:Sprint Planning — Sprint 4
 DTSTART;TZID=America/New_York:20260209T100000
 DTEND;TZID=America/New_York:20260209T120000
@@ -45,6 +47,7 @@ END:VEVENT
 
 BEGIN:VEVENT
 UID:sprint-retro-2026-02-21@bench.synthetic
+DTSTAMP:20260201T120000Z
 SUMMARY:Sprint Retrospective — Sprint 3
 DTSTART;TZID=America/New_York:20260221T143000
 DTEND;TZID=America/New_York:20260221T153000
@@ -59,6 +62,7 @@ END:VEVENT
 
 BEGIN:VEVENT
 UID:client-demo-2026-03-05@bench.synthetic
+DTSTAMP:20260201T120000Z
 SUMMARY:Client Demo — Atlas Platform Q1 Showcase
 DTSTART;TZID=America/New_York:20260305T140000
 DTEND;TZID=America/New_York:20260305T153000
@@ -76,6 +80,7 @@ END:VEVENT
 
 BEGIN:VEVENT
 UID:team-offsite-day1-2026-04-10@bench.synthetic
+DTSTAMP:20260201T120000Z
 SUMMARY:Team Offsite — Day 1
 DTSTART;TZID=America/New_York:20260410T090000
 DTEND;TZID=America/New_York:20260410T180000
@@ -92,6 +97,7 @@ END:VEVENT
 
 BEGIN:VEVENT
 UID:team-offsite-day2-2026-04-11@bench.synthetic
+DTSTAMP:20260201T120000Z
 SUMMARY:Team Offsite — Day 2
 DTSTART;TZID=America/New_York:20260411T090000
 DTEND;TZID=America/New_York:20260411T150000
@@ -111,7 +117,7 @@ END:VCALENDAR
 const CALENDAR_FILES = [
   {
     relativePath: "calendar/team-calendar-2026.ics",
-    content: VCALENDAR_CONTENT,
+    content: VCALENDAR_CONTENT.replace(/\r?\n/g, "\r\n"),
   },
 ];
 
