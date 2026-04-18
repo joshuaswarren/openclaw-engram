@@ -3419,6 +3419,19 @@ const pluginDefinition = {
         if (!didCountStart) return;
         didCountStart = false;
 
+        // Snapshot takeover-relevant state BEFORE any await points.
+        // The deferredReady await below can take seconds (QMD warmup, cron).
+        // During that window a secondary registry can finish start() and set
+        // SERVICE_STARTED / clear INIT_PROMISE. If we read those globals
+        // AFTER the await, we'd observe the secondary's state and skip the
+        // takeover guard — then proceed to tear down the secondary's live
+        // resources (HTTP server, watchers, etc.). By snapshotting before the
+        // await we compare against the state as it was when stop() was
+        // called, making the takeover check immune to concurrent start().
+        const initPromiseAtStopEntry = (globalThis as any)[
+          keys.INIT_PROMISE
+        ] as Promise<void> | null;
+
         // Wait for the deferred initialization (QMD probe, warmup, cron) to
         // settle before tearing down. Without this, fire-and-forget tasks
         // from deferredInitialize() continue after stop() completes and can
@@ -3464,32 +3477,51 @@ const pluginDefinition = {
         delete (globalThis as any)[keys.ACCESS_SERVICE];
         // REGISTERED_GUARD policy:
         //
-        // Full stop (INIT_PROMISE is null when stop() is called):
+        // Full stop (INIT_PROMISE is null when stop() was called):
         //   Clear GUARD so a subsequent register() in a fresh session can
         //   re-register CLI commands after a stop/reload cycle.
         //
-        // Stop-during-init (INIT_PROMISE is non-null):
+        // Stop-during-init (INIT_PROMISE is non-null when stop() was called):
         //   Leave GUARD as-is. The CLI registered by the original register()
         //   call is still present in the gateway's registry — stop() does not
         //   unregister CLI commands. Clearing GUARD here would allow a
         //   subsequent register() to register CLI again on top of the
         //   still-live registration, duplicating the CLI command tree.
-        const currentInitPromise = (globalThis as any)[
-          keys.INIT_PROMISE
-        ] as Promise<void> | null;
-        // Track whether a secondary completed init during stop()'s await window.
-        // Used below to guard the SERVICE_STARTED=false assignment.
+        //
+        // Uses the pre-await snapshot (initPromiseAtStopEntry) so a secondary
+        // that finishes start() during the deferredReady await doesn't cause
+        // us to misclassify a stop-during-init as a full stop.
+        const currentInitPromise = initPromiseAtStopEntry;
+        // Track whether a secondary completed init during stop()'s await window
+        // (either the deferredReady await or the currentInitPromise await below).
+        // Used to guard SERVICE_STARTED=false and hook/guard cleanup.
         let secondaryTookOver = false;
+
+        // Check if a secondary started during the deferredReady await.
+        // When stop() was called with no in-flight init (full stop),
+        // INIT_PROMISE was null. If it's now non-null, a secondary entered
+        // start() while we were awaiting deferredReady. Without this check
+        // we'd misclassify the current state and tear down the secondary's
+        // live resources (HTTP server, watchers, etc.).
+        // Note: we only check INIT_PROMISE here, not SERVICE_STARTED,
+        // because SERVICE_STARTED is expected to be true from our own
+        // start() in the full-stop case.
+        if (!currentInitPromise && (globalThis as any)[keys.INIT_PROMISE]) {
+          secondaryTookOver = true;
+        }
+
         if (!currentInitPromise) {
-          (globalThis as any)[keys.REGISTERED_GUARD] = false;
-          // Clear CLI guard only when ALL Remnic services have stopped.
-          // In multi-plugin installs, one plugin stopping must not clear the
-          // guard while the other is still running — that would let a
-          // subsequent register() duplicate CLI commands.  When the refcount
-          // reaches zero, the gateway's reload cycle can safely re-register.
-          if (remainingServices === 0) {
-            (globalThis as any)[CLI_REGISTERED_GUARD] = false;
-            (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = false;
+          if (!secondaryTookOver) {
+            (globalThis as any)[keys.REGISTERED_GUARD] = false;
+            // Clear CLI guard only when ALL Remnic services have stopped.
+            // In multi-plugin installs, one plugin stopping must not clear the
+            // guard while the other is still running — that would let a
+            // subsequent register() duplicate CLI commands.  When the refcount
+            // reaches zero, the gateway's reload cycle can safely re-register.
+            if (remainingServices === 0) {
+              (globalThis as any)[CLI_REGISTERED_GUARD] = false;
+              (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = false;
+            }
           }
         } else {
           // Stop-during-init: leave GUARD as-is.
