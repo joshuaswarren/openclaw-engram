@@ -2807,6 +2807,7 @@ export async function runBulkImportCliCommand(
   }
   const parsed = await adapter.parse(inputParsed, {
     strict: opts.strict === true,
+    platform: opts.platform,
   });
 
   if (!opts.dryRun) {

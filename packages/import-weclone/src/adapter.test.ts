@@ -66,6 +66,36 @@ describe("wecloneImportAdapter", () => {
     assert.equal(result.turns.length, 1);
   });
 
+  it("parse forwards platform option to parser", () => {
+    const input = {
+      messages: [
+        {
+          sender: "Alice",
+          text: "hello",
+          timestamp: "2025-01-10T08:00:00.000Z",
+        },
+      ],
+    };
+    const result = wecloneImportAdapter.parse(input, { platform: "discord" });
+    assert.equal(result.metadata.source, "weclone-discord");
+  });
+
+  it("parse rejects invalid platform option", () => {
+    const input = {
+      messages: [
+        {
+          sender: "Alice",
+          text: "hello",
+          timestamp: "2025-01-10T08:00:00.000Z",
+        },
+      ],
+    };
+    assert.throws(
+      () => wecloneImportAdapter.parse(input, { platform: "signal" }),
+      /invalid platform/,
+    );
+  });
+
   it("implements BulkImportSourceAdapter interface correctly", () => {
     assert.equal(typeof wecloneImportAdapter.name, "string");
     assert.equal(typeof wecloneImportAdapter.parse, "function");

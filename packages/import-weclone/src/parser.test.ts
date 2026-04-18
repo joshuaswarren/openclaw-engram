@@ -239,6 +239,25 @@ describe("parseWeCloneExport", () => {
     );
   });
 
+  it("rejects invalid platform in export data", () => {
+    const input = {
+      platform: "signal",
+      messages: [makeMsg("Alice", "hi", T1)],
+    };
+    assert.throws(
+      () => parseWeCloneExport(input),
+      /invalid platform 'signal' in export data/,
+    );
+  });
+
+  it("defaults to telegram when neither options nor export specify platform", () => {
+    const input = {
+      messages: [makeMsg("Alice", "hi", T1)],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.metadata.source, "weclone-telegram");
+  });
+
   it("sets participantId and participantName from sender", () => {
     const input = {
       platform: "telegram",

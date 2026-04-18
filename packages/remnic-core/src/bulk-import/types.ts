@@ -51,7 +51,7 @@ export interface BulkImportSourceAdapter {
   name: string;
   parse(
     input: unknown,
-    options?: { strict?: boolean },
+    options?: { strict?: boolean; platform?: string },
   ): Promise<BulkImportSource> | BulkImportSource;
 }
 

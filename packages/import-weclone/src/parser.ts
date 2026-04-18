@@ -271,9 +271,15 @@ function resolvePlatform(
     }
     return optionsPlatform;
   }
-  if (exportPlatform !== undefined && VALID_PLATFORMS.has(exportPlatform)) {
+  if (exportPlatform !== undefined) {
+    if (!VALID_PLATFORMS.has(exportPlatform)) {
+      throw new Error(
+        `WeClone import: invalid platform '${exportPlatform}' in export data. ` +
+        `Valid: ${[...VALID_PLATFORMS].join(", ")}`,
+      );
+    }
     return exportPlatform as WeClonePlatform;
   }
-  // Default to telegram if unspecified
+  // Default to telegram when neither options nor export specify a platform
   return "telegram";
 }
