@@ -33,12 +33,45 @@ export interface StoredBenchmarkBaselineSummary {
 }
 
 export type BenchmarkExportFormat = "json" | "csv" | "html";
+export type BenchmarkPublishTarget = "remnic-ai";
+
+export interface PublishedBenchmarkFeedEntry {
+  benchmark: string;
+  benchmarkTier: BenchmarkResult["meta"]["benchmarkTier"];
+  resultId: string;
+  timestamp: string;
+  mode: BenchmarkMode;
+  remnicVersion: string;
+  gitSha: string;
+  taskCount: number;
+  aggregateMetrics: BenchmarkResult["results"]["aggregates"];
+  cost: BenchmarkResult["cost"];
+  environment: BenchmarkResult["environment"];
+  source: {
+    path: string;
+  };
+}
+
+export interface PublishedBenchmarkFeed {
+  target: BenchmarkPublishTarget;
+  generatedAt: string;
+  sourceResultsDir: string;
+  benchmarks: PublishedBenchmarkFeedEntry[];
+}
 
 const BASELINE_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 export function defaultBenchmarkBaselineDir(): string {
   const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
   return path.join(homeDir, ".remnic", "bench", "baselines");
+}
+
+export function defaultBenchmarkPublishPath(target: BenchmarkPublishTarget): string {
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
+  switch (target) {
+    case "remnic-ai":
+      return path.join(homeDir, ".remnic", "published", "benchmarks.json");
+  }
 }
 
 function compareResultSummaries(
@@ -291,6 +324,74 @@ export async function resolveBenchmarkResultReference(
     (summary) => path.basename(summary.path) === reference,
   );
   return basenameMatch;
+}
+
+function comparePublishedBenchmarkEntries(
+  left: PublishedBenchmarkFeedEntry,
+  right: PublishedBenchmarkFeedEntry,
+): number {
+  if (left.timestamp === right.timestamp) {
+    return left.benchmark.localeCompare(right.benchmark);
+  }
+  return right.timestamp.localeCompare(left.timestamp);
+}
+
+function toPublishedBenchmarkFeedEntry(
+  result: BenchmarkResult,
+  filePath: string,
+): PublishedBenchmarkFeedEntry {
+  return {
+    benchmark: result.meta.benchmark,
+    benchmarkTier: result.meta.benchmarkTier,
+    resultId: result.meta.id,
+    timestamp: result.meta.timestamp,
+    mode: result.meta.mode,
+    remnicVersion: result.meta.remnicVersion,
+    gitSha: result.meta.gitSha,
+    taskCount: result.results.tasks.length,
+    aggregateMetrics: result.results.aggregates,
+    cost: result.cost,
+    environment: result.environment,
+    source: {
+      path: filePath,
+    },
+  };
+}
+
+export async function buildBenchmarkPublishFeed(
+  outputDir: string,
+  target: BenchmarkPublishTarget,
+): Promise<PublishedBenchmarkFeed> {
+  const summaries = await listBenchmarkResults(outputDir);
+  const latestByBenchmark = new Map<string, PublishedBenchmarkFeedEntry>();
+
+  for (const summary of summaries) {
+    if (latestByBenchmark.has(summary.benchmark)) {
+      continue;
+    }
+
+    const result = await loadBenchmarkResult(summary.path);
+    latestByBenchmark.set(
+      summary.benchmark,
+      toPublishedBenchmarkFeedEntry(result, summary.path),
+    );
+  }
+
+  return {
+    target,
+    generatedAt: new Date().toISOString(),
+    sourceResultsDir: outputDir,
+    benchmarks: [...latestByBenchmark.values()].sort(comparePublishedBenchmarkEntries),
+  };
+}
+
+export async function writeBenchmarkPublishFeed(
+  feed: PublishedBenchmarkFeed,
+  outputPath: string,
+): Promise<string> {
+  await mkdir(path.dirname(outputPath), { recursive: true });
+  await writeFile(outputPath, `${JSON.stringify(feed, null, 2)}\n`);
+  return outputPath;
 }
 
 function csvEscape(value: string | number): string {

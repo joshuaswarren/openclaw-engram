@@ -11,12 +11,14 @@ export type BenchAction =
   | "baseline"
   | "export"
   | "providers"
+  | "publish"
   | "check"
   | "report";
 
 export type BenchBaselineAction = "save" | "list";
 export type BenchExportFormat = "json" | "csv" | "html";
 export type BenchProviderAction = "discover";
+export type BenchPublishTarget = "remnic-ai";
 
 export interface ParsedBenchArgs {
   action: BenchAction;
@@ -34,6 +36,7 @@ export interface ParsedBenchArgs {
   format?: BenchExportFormat;
   output?: string;
   custom?: string;
+  target?: BenchPublishTarget;
 }
 
 export function readBenchOptionValue(argv: string[], flag: string): string | undefined {
@@ -61,7 +64,8 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--threshold" ||
       arg === "--custom" ||
       arg === "--format" ||
-      arg === "--output"
+      arg === "--output" ||
+      arg === "--target"
     ) {
       index += 1;
       continue;
@@ -87,6 +91,7 @@ export function parseBenchActionArgs(argv: string[]): {
     first === "baseline" ||
     first === "export" ||
     first === "providers" ||
+    first === "publish" ||
     first === "check" ||
     first === "report"
       ? first
@@ -130,6 +135,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const customRaw = readBenchOptionValue(args, "--custom");
   const formatRaw = readBenchOptionValue(args, "--format");
   const output = readBenchOptionValue(args, "--output");
+  const targetRaw = readBenchOptionValue(args, "--target");
   let threshold: number | undefined;
   if (thresholdRaw !== undefined) {
     threshold = Number(thresholdRaw);
@@ -144,6 +150,14 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
       throw new Error('ERROR: --format must be "json", "csv", or "html".');
     }
     format = formatRaw;
+  }
+
+  let target: BenchPublishTarget | undefined;
+  if (targetRaw !== undefined) {
+    if (targetRaw !== "remnic-ai") {
+      throw new Error('ERROR: --target must be "remnic-ai".');
+    }
+    target = targetRaw;
   }
 
   return {
@@ -162,5 +176,6 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     providerAction,
     format,
     output: output ? path.resolve(expandTilde(output)) : undefined,
+    target,
   };
 }

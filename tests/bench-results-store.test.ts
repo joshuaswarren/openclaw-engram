@@ -2,9 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import {
+  buildBenchmarkPublishFeed,
   defaultBenchmarkBaselineDir,
+  defaultBenchmarkPublishPath,
   listBenchmarkBaselines,
   listBenchmarkResults,
   loadBenchmarkBaseline,
@@ -12,6 +14,7 @@ import {
   renderBenchmarkResultExport,
   resolveBenchmarkResultReference,
   saveBenchmarkBaseline,
+  writeBenchmarkPublishFeed,
 } from "../packages/bench/src/results-store.ts";
 import type { BenchmarkResult } from "../packages/bench/src/types.ts";
 
@@ -280,4 +283,82 @@ test("renderBenchmarkResultExport handles older results without seed metadata", 
   assert.match(html, /Older-run|older-run/i);
   assert.match(html, /Seeds/);
   assert.match(html, /Unknown/);
+});
+
+test("buildBenchmarkPublishFeed keeps only the latest stored result per benchmark", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-publish-"));
+  const olderLongMemEval = buildResult("run-old", "2026-04-18T07:00:00.000Z");
+  olderLongMemEval.results.aggregates = {
+    answerAccuracy: { mean: 0.5, median: 0.5, stdDev: 0, min: 0.5, max: 0.5 },
+  };
+
+  const newerLongMemEval = buildResult("run-new", "2026-04-18T08:00:00.000Z");
+  newerLongMemEval.results.aggregates = {
+    answerAccuracy: { mean: 0.8, median: 0.8, stdDev: 0, min: 0.8, max: 0.8 },
+  };
+
+  const locomo = buildResult("run-locomo", "2026-04-18T06:00:00.000Z", "locomo");
+  locomo.results.tasks = [{ taskId: "1", question: "q", expected: "e", actual: "a", scores: { exactMatch: 1 }, latencyMs: 10, tokens: { input: 1, output: 1 } }];
+
+  await writeFile(path.join(root, "old.json"), `${JSON.stringify(olderLongMemEval)}\n`);
+  await writeFile(path.join(root, "new.json"), `${JSON.stringify(newerLongMemEval)}\n`);
+  await writeFile(path.join(root, "locomo.json"), `${JSON.stringify(locomo)}\n`);
+
+  const feed = await buildBenchmarkPublishFeed(root, "remnic-ai");
+
+  assert.equal(feed.target, "remnic-ai");
+  assert.equal(feed.sourceResultsDir, root);
+  assert.deepEqual(
+    feed.benchmarks.map((entry) => [entry.benchmark, entry.resultId]),
+    [["longmemeval", "run-new"], ["locomo", "run-locomo"]],
+  );
+  assert.equal(feed.benchmarks[0]?.aggregateMetrics.answerAccuracy?.mean, 0.8);
+  assert.equal(feed.benchmarks[1]?.taskCount, 1);
+});
+
+test("defaultBenchmarkPublishPath resolves under the Remnic published directory", () => {
+  const originalHome = process.env.HOME;
+  const originalUserProfile = process.env.USERPROFILE;
+  const customHomeDir = path.join(path.sep, "tmp", "remnic-publish-home");
+
+  process.env.HOME = customHomeDir;
+  delete process.env.USERPROFILE;
+
+  try {
+    const publishPath = defaultBenchmarkPublishPath("remnic-ai");
+    assert.equal(
+      publishPath,
+      path.join(customHomeDir, ".remnic", "published", "benchmarks.json"),
+    );
+  } finally {
+    if (originalHome === undefined) {
+      delete process.env.HOME;
+    } else {
+      process.env.HOME = originalHome;
+    }
+
+    if (originalUserProfile === undefined) {
+      delete process.env.USERPROFILE;
+    } else {
+      process.env.USERPROFILE = originalUserProfile;
+    }
+  }
+});
+
+test("writeBenchmarkPublishFeed persists the generated feed as JSON", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-feed-write-"));
+  const feed = {
+    target: "remnic-ai" as const,
+    generatedAt: "2026-04-18T09:00:00.000Z",
+    sourceResultsDir: "/tmp/results",
+    benchmarks: [],
+  };
+
+  const outputPath = path.join(root, "published", "benchmarks.json");
+  const writtenPath = await writeBenchmarkPublishFeed(feed, outputPath);
+  const written = JSON.parse(await readFile(writtenPath, "utf8")) as typeof feed;
+
+  assert.equal(writtenPath, outputPath);
+  assert.equal(written.target, "remnic-ai");
+  assert.deepEqual(written.benchmarks, []);
 });

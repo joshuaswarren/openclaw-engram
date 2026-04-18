@@ -12,7 +12,7 @@ test("remnic CLI source wires the new bench command and keeps benchmark as an al
   assert.match(source, /case "bench": \{/);
   assert.match(source, /case "benchmark": \{/);
   assert.match(source, /await cmdBench\(rest\);/);
-  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export\|ui\|providers>/);
+  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export\|publish\|ui\|providers>/);
   assert.match(source, /benchmark is kept as a compatibility alias/i);
 });
 
@@ -52,6 +52,7 @@ test("CLI README documents bench list and quick-run examples", async () => {
   assert.match(readme, /remnic bench run --quick longmemeval/);
   assert.match(readme, /--dataset-dir ~\/datasets\/longmemeval/);
   assert.match(readme, /remnic bench compare base-run candidate-run/);
+  assert.match(readme, /remnic bench publish --target remnic-ai/);
   assert.match(readme, /remnic benchmark run --quick longmemeval/);
   assert.match(readme, /bundled smoke fixture/i);
   assert.match(readme, /full runs need a real benchmark dataset/i);
@@ -127,7 +128,7 @@ test("bench compare routes through stored package results with threshold and res
   assert.match(source, /parsed\.resultsDir \?\? resolveBenchOutputDir\(\)/);
   assert.match(source, /compareResults\(\s*baseline,\s*candidate,\s*parsed\.threshold \?\? 0\.05/s);
   assert.match(source, /benchmark mismatch: \$\{baseline\.meta\.benchmark\} vs \$\{candidate\.meta\.benchmark\}/);
-  assert.match(parserSource, /export type BenchAction =[\s\S]*"results"[\s\S]*"baseline"[\s\S]*"export"[\s\S]*"check"[\s\S]*"report";/);
+  assert.match(parserSource, /export type BenchAction =[\s\S]*"results"[\s\S]*"baseline"[\s\S]*"export"[\s\S]*"publish"[\s\S]*"check"[\s\S]*"report";/);
   assert.match(parserSource, /const resultsDir = readBenchOptionValue\(args, "--results-dir"\);/);
   assert.match(parserSource, /const thresholdRaw = readBenchOptionValue\(args, "--threshold"\);/);
   assert.match(parserSource, /ERROR: --threshold must be a non-negative number\./);
@@ -382,6 +383,45 @@ test("parseBenchArgs supports results, baseline, and export surfaces", async () 
   assert.equal(exportArgs.action, "export");
   assert.equal(exportArgs.format, "html");
   assert.match(exportArgs.output ?? "", /report\.html$/);
+
+  const publishArgs = parseBenchArgs([
+    "publish",
+    "--target",
+    "remnic-ai",
+    "--output",
+    "./benchmarks.json",
+  ]);
+  assert.equal(publishArgs.action, "publish");
+  assert.equal(publishArgs.target, "remnic-ai");
+  assert.deepEqual(publishArgs.benchmarks, []);
+  assert.match(publishArgs.output ?? "", /benchmarks\.json$/);
+});
+
+test("bench publish routes through the stored package feed helpers", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
+
+  assert.match(source, /buildBenchmarkPublishFeed,/);
+  assert.match(source, /defaultBenchmarkPublishPath,/);
+  assert.match(source, /writeBenchmarkPublishFeed,/);
+  assert.match(source, /async function publishBenchPackageResults\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /publish requires --target remnic-ai/);
+  assert.match(source, /Published \$\{feed\.benchmarks\.length\} benchmark entries for \$\{parsed\.target\} to \$\{writtenPath\}/);
+  assert.match(source, /if \(parsed\.action === "publish"\) \{\s*await publishBenchPackageResults\(parsed\);/s);
+  assert.match(parserSource, /export type BenchPublishTarget = "remnic-ai";/);
+  assert.match(parserSource, /arg === "--target"/);
+  assert.match(parserSource, /const targetRaw = readBenchOptionValue\(args, "--target"\);/);
+  assert.match(parserSource, /ERROR: --target must be "remnic-ai"\./);
+  assert.match(parserSource, /target,\s*\n\s*\};/s);
+});
+
+test("parseBenchArgs rejects unknown bench publish targets", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  assert.throws(
+    () => parseBenchArgs(["publish", "--target", "somewhere-else"]),
+    /ERROR: --target must be "remnic-ai"\./,
+  );
 });
 
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {

@@ -20,6 +20,7 @@
  *   token revoke      Revoke auth token for a connector
  *   bench list        List published benchmark packs
  *   bench run         Run published benchmark packs
+ *   bench publish     Generate the Remnic.ai benchmark feed
  *   bench ui          Launch the local benchmark overview UI
  *   tree              Generate context tree
  *   onboard [dir]     Onboard project directory
@@ -120,9 +121,11 @@ import type {
 } from "@remnic/core";
 import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 import {
+  buildBenchmarkPublishFeed,
   compareResults,
   defaultBenchmarkBaselineDir,
   discoverAllProviders,
+  defaultBenchmarkPublishPath,
   listBenchmarkBaselines,
   listBenchmarkResults,
   loadBenchmarkBaseline,
@@ -135,6 +138,7 @@ import {
   renderBenchmarkResultExport,
   resolveBenchmarkResultReference,
   saveBenchmarkBaseline,
+  writeBenchmarkPublishFeed,
   type BenchConfig,
   type BenchmarkDefinition,
 } from "@remnic/bench";
@@ -291,8 +295,8 @@ type PackageBenchModule = {
 };
 
 export function getBenchUsageText(): string {
-  return `Usage: remnic bench <list|run|compare|results|baseline|export|ui|providers> [options] [benchmark...]
-       remnic benchmark <list|run|compare|results|baseline|export|ui|providers|check|report> [options] [benchmark...]
+  return `Usage: remnic bench <list|run|compare|results|baseline|export|publish|ui|providers> [options] [benchmark...]
+       remnic benchmark <list|run|compare|results|baseline|export|publish|ui|providers|check|report> [options] [benchmark...]
 
 Commands:
   list                     List published benchmark packs
@@ -304,6 +308,8 @@ Commands:
   baseline list            List saved baselines
   export <run> --format <json|csv|html>
                            Export one stored run as JSON, aggregate-metrics CSV, or static HTML
+  publish --target remnic-ai
+                           Generate the Remnic.ai benchmark feed from stored runs
   ui                       Launch the local benchmark overview UI
   providers discover       Auto-detect available local provider backends
   check                    Legacy latency regression gate (compatibility)
@@ -320,6 +326,7 @@ Options:
   --detail                 Include per-task details for bench results
   --format <json|csv|html> Output format for bench export
   --output <path>          Write bench export output to a file
+  --target <name>          Publish target for bench publish (remnic-ai)
   --json                   Output JSON for \`list\`
 
 Examples:
@@ -333,6 +340,7 @@ Examples:
   remnic bench baseline list
   remnic bench export candidate-run --format csv --output ./candidate.csv
   remnic bench export candidate-run --format html --output ./report.html
+  remnic bench publish --target remnic-ai
   remnic bench providers discover
   remnic bench run --custom ./my-bench.yaml
   remnic benchmark run --quick longmemeval`;
@@ -851,6 +859,39 @@ async function discoverBenchProviders(parsed: ParsedBenchArgs): Promise<void> {
       );
     }
   }
+}
+
+async function publishBenchPackageResults(parsed: ParsedBenchArgs): Promise<void> {
+  if (parsed.benchmarks.length > 0) {
+    console.error(
+      "ERROR: publish does not accept positional result references. Usage: remnic bench publish --target remnic-ai [--results-dir <path>] [--output <path>] [--json]",
+    );
+    process.exit(1);
+  }
+
+  if (parsed.target !== "remnic-ai") {
+    console.error('ERROR: publish requires --target remnic-ai.');
+    process.exit(1);
+  }
+
+  const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const feed = await buildBenchmarkPublishFeed(resultsDir, parsed.target);
+  const outputPath = parsed.output ?? defaultBenchmarkPublishPath(parsed.target);
+  const writtenPath = await writeBenchmarkPublishFeed(feed, outputPath);
+
+  if (parsed.json) {
+    console.log(JSON.stringify({
+      target: parsed.target,
+      outputPath: writtenPath,
+      benchmarkCount: feed.benchmarks.length,
+      feed,
+    }, null, 2));
+    return;
+  }
+
+  console.log(
+    `Published ${feed.benchmarks.length} benchmark entries for ${parsed.target} to ${writtenPath}`,
+  );
 }
 
 async function runBenchViaPackage(
@@ -2775,6 +2816,11 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.action === "publish") {
+    await publishBenchPackageResults(parsed);
+    return;
+  }
+
   if (parsed.action === "ui") {
     await launchBenchUi(parsed.resultsDir ?? resolveBenchOutputDir());
     return;
@@ -4231,9 +4277,9 @@ Usage:
   remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
-  remnic bench <list|run|compare|results|baseline|export|ui|providers> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv>] [--output <path>] [--json]
+  remnic bench <list|run|compare|results|baseline|export|publish|ui|providers> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv|html>] [--output <path>] [--target remnic-ai] [--json]
     benchmark is kept as a compatibility alias. check/report remain under that alias.
-  remnic benchmark <list|run|compare|results|baseline|export|ui|providers|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
+  remnic benchmark <list|run|compare|results|baseline|export|publish|ui|providers|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
     Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
     Focus: person:<name>, project:<name>, topic:<name>.

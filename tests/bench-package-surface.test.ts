@@ -58,8 +58,11 @@ test("@remnic/bench index exports the phase-2 stats helpers", async () => {
   assert.match(source, /loadBenchmarkResult/);
   assert.match(source, /listBenchmarkResults/);
   assert.match(source, /renderBenchmarkResultExport/);
+  assert.match(source, /buildBenchmarkPublishFeed/);
+  assert.match(source, /defaultBenchmarkPublishPath/);
   assert.match(source, /resolveBenchmarkResultReference/);
   assert.match(source, /saveBenchmarkBaseline/);
+  assert.match(source, /writeBenchmarkPublishFeed/);
   assert.match(source, /buildBenchmarkRunSeeds/);
   assert.match(source, /orchestrateBenchmarkRuns/);
   assert.match(source, /resolveBenchmarkRunCount/);
