@@ -21,10 +21,12 @@
     "src/registry.ts",
     "src/reporter.ts",
     "src/scorer.ts",
+    "src/ingestion-scorer.ts",
     "src/adapters/**/*.ts",
     "src/fixtures/**/*.ts",
     "src/providers/**/*.ts",
     "src/benchmarks/published/**/*.ts",
-    "src/benchmarks/custom/**/*.ts"
+    "src/benchmarks/custom/**/*.ts",
+    "src/benchmarks/remnic/**/*.ts"
   ]
 }

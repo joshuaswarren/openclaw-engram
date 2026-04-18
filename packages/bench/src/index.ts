@@ -65,7 +65,7 @@ export type {
   IngestionBenchAdapter,
 } from "./ingestion-types.js";
 
-export { REQUIRED_FRONTMATTER_FIELDS } from "./ingestion-types.js";
+export { REQUIRED_FRONTMATTER_FIELDS, CONDITIONAL_FRONTMATTER } from "./ingestion-types.js";
 
 export type {
   GeneratedFile,
@@ -168,3 +168,11 @@ export {
   SCHEMA_TIER_FIXTURE,
   SCHEMA_TIER_SMOKE_FIXTURE,
 } from "./fixtures/schema-tiers/index.js";
+
+export {
+  matchEntity,
+  entityRecall,
+  linkMatches,
+  backlinkF1,
+  schemaCompleteness,
+} from "./ingestion-scorer.js";
