@@ -657,6 +657,40 @@ class QmdDaemonSession {
   }
 }
 
+/** Matches `#<hex-docid> <score>% <rest-of-line>` — rest is split in a second pass. */
+const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(.+)/;
+
+/**
+ * Splits `collection/path.ext - Title text` into path and title.
+ * Non-greedy `.+?` finds the FIRST dot-extension (2+ alphabetic chars)
+ * followed by ` - `, accepting any indexed file type while skipping
+ * version-like segments (e.g. `v1.2` where `.2` is a single digit).
+ */
+const QMD_PATH_TITLE_RE = /^(.+?\.[a-zA-Z]{2,10})\s+-\s+(.*)$/;
+
+function parseQmdMarkdownResultText(
+  text: string,
+  transport: QmdSearchResult["transport"],
+): QmdSearchResult[] {
+  const results: QmdSearchResult[] = [];
+  for (const line of text.split("\n")) {
+    const m = QMD_RESULT_LINE_RE.exec(line.trim());
+    if (!m) continue;
+    const rest = m[3]; // "collection/path.md - Title with - dashes"
+    // Find the path by looking for known file extensions followed by " - "
+    const pathTitleSplit = QMD_PATH_TITLE_RE.exec(rest);
+    if (!pathTitleSplit) continue;
+    results.push({
+      docid: m[1],
+      path: pathTitleSplit[1] ?? "unknown",
+      snippet: "",
+      score: parseInt(m[2], 10) / 100,
+      transport,
+    });
+  }
+  return results;
+}
+
 function parseMcpSearchResult(
   result: unknown,
   transport: QmdSearchResult["transport"] = "daemon",
@@ -696,7 +730,15 @@ function parseMcpSearchResult(
           const textResults = parsed?.results ?? parsed?.documents;
           if (Array.isArray(textResults)) pushDocs(textResults);
         } catch {
-          // ignore non-json text
+          const existingKeys = new Set(results.map((r) => `${r.docid.toLowerCase()}|${r.path}`));
+          const parsed = parseQmdMarkdownResultText(item.text, transport);
+          for (const p of parsed) {
+            const key = `${p.docid.toLowerCase()}|${p.path}`;
+            if (!existingKeys.has(key)) {
+              results.push(p);
+              existingKeys.add(key);
+            }
+          }
         }
       }
     }
