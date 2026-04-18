@@ -2102,21 +2102,19 @@ export class Orchestrator {
     }
 
     // Run index update — namespace-aware when enabled.
-    // qmd.update() swallows errors internally, so we: (1) reset throttles to
-    // ensure the update actually runs (not skipped by stale backoff from a
-    // previous failed attempt), and (2) verify both timestamps to confirm the
-    // update executed and didn't fail silently.
+    // qmd.update() swallows errors internally, so we: (1) snapshot fail/run
+    // timestamps, (2) reset throttles so the update isn't skipped by stale
+    // backoff, and (3) verify timestamps after update to confirm it executed
+    // and didn't fail silently.
     if (this.config.qmdMaintenanceEnabled) {
       try {
-        if ("resetUpdateThrottles" in this.qmd) {
-          (this.qmd as any).resetUpdateThrottles();
-        }
         const failTsBefore = "lastUpdateFailedAtMs" in this.qmd
           ? (this.qmd as any).lastUpdateFailedAtMs as number | null
           : null;
-        const runTsBefore = "lastUpdateRanAtMs" in this.qmd
-          ? (this.qmd as any).lastUpdateRanAtMs as number | null
-          : null;
+        const hasRunTs = "lastUpdateRanAtMs" in this.qmd;
+        if ("resetUpdateThrottles" in this.qmd) {
+          (this.qmd as any).resetUpdateThrottles();
+        }
         log.info("startupSearchSync: updating index to match current disk state");
         if (this.config.namespacesEnabled) {
           await this.namespaceSearchRouter.updateNamespaces(namespaces);
@@ -2126,15 +2124,15 @@ export class Orchestrator {
         const failTsAfter = "lastUpdateFailedAtMs" in this.qmd
           ? (this.qmd as any).lastUpdateFailedAtMs as number | null
           : null;
-        const runTsAfter = "lastUpdateRanAtMs" in this.qmd
+        const runTsAfter = hasRunTs
           ? (this.qmd as any).lastUpdateRanAtMs as number | null
           : null;
         if (failTsAfter !== null && failTsAfter !== failTsBefore) {
           log.warn("startupSearchSync: update silently failed (detected via fail timestamp)");
           return false;
         }
-        if (!this.config.namespacesEnabled && runTsBefore !== null && runTsAfter === runTsBefore) {
-          log.warn("startupSearchSync: update was throttled/skipped (no run timestamp change)");
+        if (!this.config.namespacesEnabled && hasRunTs && runTsAfter === null) {
+          log.warn("startupSearchSync: update was throttled/skipped (run timestamp is null after reset + update)");
           return false;
         }
         log.info("startupSearchSync: sync complete");

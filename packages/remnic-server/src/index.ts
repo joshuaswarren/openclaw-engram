@@ -174,7 +174,7 @@ export async function startServer(options?: {
   const startupSyncAbort = new AbortController();
 
   orchestrator.deferredReady.then(() => {
-    if (!orchestrator.qmd.isAvailable()) {
+    if (!orchestrator.qmd.isAvailable() && orchestrator.qmd.debugStatus() !== "backend=noop") {
       const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
       (async () => {
         for (const delay of RETRY_DELAYS_MS) {
