@@ -98,6 +98,10 @@ importers:
         version: link:../remnic-core
 
   packages/plugin-openclaw:
+    dependencies:
+      openai:
+        specifier: ^6.0.0
+        version: 6.33.0(zod@4.0.0)
     devDependencies:
       tsup:
         specifier: ^8.5.1
@@ -1539,6 +1543,10 @@ snapshots:
   openai@6.33.0(zod@3.25.76):
     optionalDependencies:
       zod: 3.25.76
+
+  openai@6.33.0(zod@4.0.0):
+    optionalDependencies:
+      zod: 4.0.0
 
   pathe@2.0.3: {}
 
