@@ -789,9 +789,7 @@ export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkRe
   const datasetBase = opts.datasetDir ?? path.join(process.cwd(), "evals", "datasets");
   const results: BenchmarkResult[] = [];
 
-  const system = opts.systemProvider
-    ? await createProvider(opts.systemProvider)
-    : await createDefaultAdapter();
+  const system = await createDefaultAdapter(opts.systemProvider);
   const judge = opts.judgeProvider
     ? await createProvider(opts.judgeProvider)
     : undefined;
@@ -881,11 +879,19 @@ export function parseBenchArgs(args: string[]): BenchCliArgs {
     if (arg === "--quick") { quick = true; continue; }
     if (arg === "--json") { json = true; continue; }
     if (arg === "--all") { benchmarks.push(...listBenchmarks()); continue; }
-    if (arg === "--limit" && args[i + 1]) { limit = parseInt(args[++i], 10); continue; }
+    if (arg === "--limit" && args[i + 1]) {
+      limit = parseInt(args[++i], 10);
+      if (Number.isNaN(limit)) throw new Error(`Invalid --limit value: "${args[i]}"`);
+      continue;
+    }
     if (arg === "--dataset-dir" && args[i + 1]) { datasetDir = args[++i]; continue; }
     if (arg === "--output-dir" && args[i + 1]) { outputDir = args[++i]; continue; }
     if (arg === "--config" && args[i + 1]) { configFile = args[++i]; continue; }
-    if (arg === "--threshold" && args[i + 1]) { threshold = parseFloat(args[++i]); continue; }
+    if (arg === "--threshold" && args[i + 1]) {
+      threshold = parseFloat(args[++i]);
+      if (Number.isNaN(threshold)) throw new Error(`Invalid --threshold value: "${args[i]}"`);
+      continue;
+    }
     if (!arg.startsWith("--")) { benchmarks.push(arg); }
   }
 
@@ -1721,8 +1727,10 @@ export async function saveBaseline(
   dir: string = DEFAULT_BASELINE_DIR,
 ): Promise<string> {
   await mkdir(dir, { recursive: true });
-  const filePath = path.join(dir, `${name}.json`);
-  await writeFile(filePath, JSON.stringify({ name, timestamp: new Date().toISOString(), results }, null, 2));
+  const safeName = path.basename(name).replace(/[^a-zA-Z0-9_-]/g, "_");
+  if (!safeName) throw new Error(`Invalid baseline name: "${name}"`);
+  const filePath = path.join(dir, `${safeName}.json`);
+  await writeFile(filePath, JSON.stringify({ name: safeName, timestamp: new Date().toISOString(), results }, null, 2));
   return filePath;
 }
 
@@ -1730,7 +1738,9 @@ export async function loadBaseline(
   name: string,
   dir: string = DEFAULT_BASELINE_DIR,
 ): Promise<{ name: string; timestamp: string; results: BenchmarkResult[] }> {
-  const filePath = path.join(dir, `${name}.json`);
+  const safeName = path.basename(name).replace(/[^a-zA-Z0-9_-]/g, "_");
+  if (!safeName) throw new Error(`Invalid baseline name: "${name}"`);
+  const filePath = path.join(dir, `${safeName}.json`);
   return JSON.parse(await readFile(filePath, "utf-8"));
 }
 
