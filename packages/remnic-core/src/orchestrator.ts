@@ -2043,6 +2043,72 @@ export class Orchestrator {
   }
 
   /**
+   * Namespace-aware startup search sync. Re-probes QMD, ensures collections
+   * (namespace-aware when namespacesEnabled), runs update, and warms up search.
+   * Designed for server retry paths that run after the deferred init completes
+   * when QMD was not available during initial startup.
+   *
+   * Returns true if the sync succeeded (QMD now available), false otherwise.
+   */
+  async startupSearchSync(): Promise<boolean> {
+    const available = await this.qmd.probe();
+    if (!available) return false;
+
+    log.info(`startupSearchSync: backend now available ${this.qmd.debugStatus()}`);
+
+    // Clear namespace router cache so re-probe picks up newly available backends
+    if (this.config.namespacesEnabled) {
+      this.namespaceSearchRouter.clearCache();
+    }
+
+    // Ensure collections — namespace-aware when enabled
+    const namespaces = this.config.namespacesEnabled
+      ? this.configuredNamespaces()
+      : [this.config.defaultNamespace];
+
+    const states = await Promise.all(
+      namespaces.map(async (namespace) => ({
+        namespace,
+        state: this.config.namespacesEnabled
+          ? await this.namespaceSearchRouter.ensureNamespaceCollection(namespace)
+          : await this.qmd.ensureCollection(this.config.memoryDir),
+      })),
+    );
+
+    const defaultState =
+      states.find((e) => e.namespace === this.config.defaultNamespace)?.state ?? "unknown";
+    if (defaultState === "missing") {
+      log.warn("startupSearchSync: search collection missing; skipping sync");
+      return false;
+    }
+
+    // Run index update — namespace-aware when enabled
+    if (this.config.qmdMaintenanceEnabled) {
+      try {
+        log.info("startupSearchSync: updating index to match current disk state");
+        if (this.config.namespacesEnabled) {
+          await this.namespaceSearchRouter.updateNamespaces(namespaces);
+        } else {
+          await this.qmd.update();
+        }
+        log.info("startupSearchSync: sync complete");
+      } catch (err) {
+        log.warn(`startupSearchSync: update failed (non-fatal): ${err}`);
+      }
+    }
+
+    // Warmup search to pre-load embedding models
+    try {
+      await this.qmd.search("warmup", this.config.defaultNamespace, 1);
+      log.info("startupSearchSync: warmup complete");
+    } catch (err) {
+      log.debug(`startupSearchSync: warmup search failed (non-fatal): ${err}`);
+    }
+
+    return true;
+  }
+
+  /**
    * Auto-register the engram-day-summary cron job in OpenClaw if it doesn't exist.
    * Fire-and-forget — never blocks init or crashes on failure.
    */

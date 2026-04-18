@@ -125,6 +125,11 @@ export class NamespaceSearchRouter {
     return record.collectionState;
   }
 
+  /** Clear cached backend records so the next access re-probes availability. */
+  clearCache(): void {
+    this.cache.clear();
+  }
+
   private async backendRecordFor(namespace: string): Promise<NamespaceBackendRecord> {
     const key = namespace.trim() || this.config.defaultNamespace;
     const existing = this.cache.get(key);
