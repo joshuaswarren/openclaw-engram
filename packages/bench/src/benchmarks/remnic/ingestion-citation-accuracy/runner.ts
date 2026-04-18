@@ -13,7 +13,7 @@ import type {
 } from "../../../types.js";
 import type { ExtractedPage } from "../../../ingestion-types.js";
 import type { BenchJudge } from "../../../adapters/types.js";
-import { aggregateTaskScores, timed } from "../../../scorer.js";
+import { aggregateTaskScores, llmJudgeScore, timed } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import { emailFixture } from "../../../fixtures/inbox/email.js";
 
@@ -31,8 +31,8 @@ export const ingestionCitationAccuracyDefinition: BenchmarkDefinition = {
   },
 };
 
-function extractClaims(pages: ExtractedPage[]): Array<{ claim: string; sourcePage: string; sourceContent: string }> {
-  const claims: Array<{ claim: string; sourcePage: string; sourceContent: string }> = [];
+function extractClaims(pages: ExtractedPage[]): Array<{ claim: string; sourceContent: string }> {
+  const claims: Array<{ claim: string; sourceContent: string }> = [];
   for (const page of pages) {
     if (!page.content) continue;
     const sentences = page.content
@@ -40,27 +40,10 @@ function extractClaims(pages: ExtractedPage[]): Array<{ claim: string; sourcePag
       .map((s) => s.trim())
       .filter((s) => s.length > 20);
     for (const sentence of sentences) {
-      claims.push({ claim: sentence, sourcePage: page.path, sourceContent: page.content });
+      claims.push({ claim: sentence, sourceContent: page.content });
     }
   }
   return claims;
-}
-
-async function judgeCitation(
-  judge: BenchJudge,
-  claim: string,
-  pageContent: string,
-  originalSources: string,
-): Promise<number> {
-  try {
-    return await judge.score(
-      `Does the page content support this claim with evidence from the original sources? Claim: "${claim}"`,
-      pageContent,
-      originalSources,
-    );
-  } catch {
-    return -1;
-  }
 }
 
 export async function runIngestionCitationAccuracyBenchmark(
@@ -95,9 +78,14 @@ export async function runIngestionCitationAccuracyBenchmark(
     let validCitations = 0;
     let scoredClaims = 0;
 
-    if (judge && claims.length > 0) {
+    if (claims.length > 0) {
       for (const { claim, sourceContent } of claims) {
-        const score = await judgeCitation(judge, claim, sourceContent, originalSources);
+        const score = await llmJudgeScore(
+          judge,
+          `Does the page content support this claim with evidence from the original sources? Claim: "${claim}"`,
+          sourceContent,
+          originalSources,
+        );
         if (score >= 0) {
           scoredClaims += 1;
           if (score >= 0.5) {
@@ -110,10 +98,10 @@ export async function runIngestionCitationAccuracyBenchmark(
     const citationAccuracy = scoredClaims > 0 ? validCitations / scoredClaims : -1;
 
     const scores: Record<string, number> = {
-      citation_accuracy: citationAccuracy,
       total_claims: claims.length,
       valid_citations: validCitations,
     };
+    if (citationAccuracy >= 0) scores.citation_accuracy = citationAccuracy;
 
     const tasks = [
       {
