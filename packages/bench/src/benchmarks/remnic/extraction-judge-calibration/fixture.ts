@@ -1,4 +1,3 @@
-import type { ImportanceLevel } from "@remnic/core";
 import type { JudgeCandidate } from "@remnic/core";
 
 export interface ExtractionJudgeCalibrationCase extends JudgeCandidate {

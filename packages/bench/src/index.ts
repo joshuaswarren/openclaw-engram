@@ -129,3 +129,19 @@ export {
 export {
   runCustomBenchmarkFile,
 } from "./benchmarks/custom/runner.js";
+export type {
+  AbstentionRetrievalCase,
+  PersonalizationRetrievalCase,
+  SchemaTierCorpus,
+  SchemaTierFixture,
+  SchemaTierName,
+  SchemaTierPage,
+  SchemaTierPageFrontmatter,
+  TemporalRetrievalCase,
+} from "./fixtures/schema-tiers/index.js";
+export {
+  buildSchemaTierFixture,
+  buildSchemaTierSmokeFixture,
+  SCHEMA_TIER_FIXTURE,
+  SCHEMA_TIER_SMOKE_FIXTURE,
+} from "./fixtures/schema-tiers/index.js";
