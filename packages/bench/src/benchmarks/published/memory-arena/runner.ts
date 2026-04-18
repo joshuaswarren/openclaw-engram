@@ -204,6 +204,7 @@ async function loadDataset(
     }
 
     const domains: DomainData[] = [];
+    let remainingLimit = normalizedLimit;
     for (const filename of domainFiles) {
       const raw = await readFile(path.join(datasetDir, filename), "utf8");
       const parsedTasks: ArenaTask[] = [];
@@ -213,7 +214,10 @@ async function loadDataset(
         }
         parsedTasks.push(parseTask(line, filename, lineIndex + 1));
       });
-      const tasks = applyLimit(parsedTasks, normalizedLimit);
+      const tasks = applyLimit(parsedTasks, remainingLimit);
+      if (remainingLimit !== undefined) {
+        remainingLimit = Math.max(0, remainingLimit - tasks.length);
+      }
       domains.push({
         domain: filename.replace(/\.jsonl$/, ""),
         tasks,
@@ -229,10 +233,22 @@ async function loadDataset(
     );
   }
 
-  const bundledFixture = MEMORY_ARENA_SMOKE_FIXTURE.map((domain) => ({
+  const bundledFixture: DomainData[] = MEMORY_ARENA_SMOKE_FIXTURE.map((domain) => ({
     ...domain,
-    tasks: applyLimit(domain.tasks, normalizedLimit),
+    tasks: [] as ArenaTask[],
   }));
+  let remainingLimit = normalizedLimit;
+  for (let index = 0; index < bundledFixture.length; index += 1) {
+    const sourceDomain = MEMORY_ARENA_SMOKE_FIXTURE[index]!;
+    const limitedTasks = applyLimit(sourceDomain.tasks, remainingLimit);
+    bundledFixture[index] = {
+      ...bundledFixture[index]!,
+      tasks: limitedTasks,
+    };
+    if (remainingLimit !== undefined) {
+      remainingLimit = Math.max(0, remainingLimit - limitedTasks.length);
+    }
+  }
   return ensureDatasetTasks(bundledFixture);
 }
 
@@ -332,11 +348,30 @@ function isValidExpectedAnswer(answer: unknown): answer is ArenaExpectedAnswer {
     return true;
   }
   if (Array.isArray(answer)) {
-    return answer.every(
-      (item) =>
-        typeof item === "string"
-        || (!!item && typeof item === "object" && !Array.isArray(item)),
-    );
+    return answer.every((item) => typeof item === "string" || isValidArenaAnswerObject(item));
   }
-  return !!answer && typeof answer === "object";
+  return isValidArenaAnswerObject(answer);
+}
+
+function isValidArenaAnswerObject(answer: unknown): answer is ArenaAnswer {
+  if (!answer || typeof answer !== "object" || Array.isArray(answer)) {
+    return false;
+  }
+  const record = answer as Record<string, unknown>;
+  if (
+    "target_asin" in record
+    && record.target_asin !== undefined
+    && typeof record.target_asin !== "string"
+  ) {
+    return false;
+  }
+  if (
+    "attributes" in record
+    && record.attributes !== undefined
+    && (!Array.isArray(record.attributes)
+      || record.attributes.some((item) => typeof item !== "string"))
+  ) {
+    return false;
+  }
+  return true;
 }

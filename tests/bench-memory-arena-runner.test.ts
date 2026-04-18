@@ -150,6 +150,43 @@ test("runBenchmark preserves array-form memory-arena answers in full mode datase
   );
 });
 
+test("runBenchmark applies the memory-arena limit across the full benchmark, not once per domain file", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-global-limit-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "bundled_shopping.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      category: "bundled_shopping",
+      questions: ["Which snack did we agree to buy?"],
+      answers: ["trail mix"],
+    })}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 2,
+      category: "group_travel_planner",
+      questions: ["Which museum stop should we keep in the itinerary?"],
+      answers: [["Art Institute"]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.taskId, "bundled_shopping-t1-q0");
+});
+
 test("runBenchmark rejects memory-arena full mode without datasetDir", async () => {
   const adapter = new FakeMemoryAdapter();
 
@@ -271,6 +308,33 @@ test("runBenchmark rejects malformed memory-arena answers arrays with a benchmar
       category: "bundled_shopping",
       questions: ["What snack should I pack?"],
       answers: [null],
+    })}\n`,
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runBenchmark("memory-arena", {
+        mode: "full",
+        datasetDir,
+        system: adapter,
+      }),
+    /must include an answers array of strings, objects, or arrays of those values/,
+  );
+});
+
+test("runBenchmark rejects memory-arena answer objects with non-array attributes", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-bad-attributes-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "bundled_shopping.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      category: "bundled_shopping",
+      questions: ["What snack should I pack?"],
+      answers: [{ attributes: "trail mix" }],
     })}\n`,
     "utf8",
   );
