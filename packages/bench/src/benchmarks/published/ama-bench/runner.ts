@@ -21,9 +21,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type {
-  BenchmarkRunner,
-  BenchmarkResult,
-  BenchmarkMeta,
+  LegacyBenchmarkRunner,
+  LegacyBenchmarkResult,
+  LegacyBenchmarkMeta,
   MemorySystem,
   TaskScore,
 } from "../../../adapters/types.js";
@@ -75,7 +75,7 @@ async function loadDataset(datasetDir: string, limit?: number): Promise<AMABench
   }
 }
 
-const meta: BenchmarkMeta = {
+const meta: LegacyBenchmarkMeta = {
   name: "ama-bench",
   version: "2.0.0",
   description: "Agent Memory Abilities — 2,496 QA pairs across 208 agentic trajectories in 6 domains",
@@ -86,7 +86,7 @@ const meta: BenchmarkMeta = {
 async function run(
   system: MemorySystem,
   options: { limit?: number; datasetDir: string },
-): Promise<BenchmarkResult> {
+): Promise<LegacyBenchmarkResult> {
   const episodes = await loadDataset(options.datasetDir, options.limit);
   const scores: TaskScore[] = [];
   const overallStart = performance.now();
@@ -196,4 +196,4 @@ async function run(
   });
 }
 
-export const amaBenchRunner: BenchmarkRunner = { meta, run };
+export const amaBenchRunner: LegacyBenchmarkRunner = { meta, run };

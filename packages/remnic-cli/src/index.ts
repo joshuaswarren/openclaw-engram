@@ -125,6 +125,7 @@ import {
   saveBaseline,
   checkRegression,
   type BenchConfig,
+  type BenchmarkDefinition,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
 export { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
@@ -356,21 +357,13 @@ async function listBenchmarksFromPackage(): Promise<BenchCatalogEntry[] | undefi
   }));
 }
 
-interface PackageBenchDefinition {
-  id: string;
-  title?: string;
-  tier?: string;
-  runnerAvailable?: boolean;
-  meta?: { description?: string; category?: string };
-}
-
-async function loadBenchDefinitionsFromPackage(): Promise<PackageBenchDefinition[] | undefined> {
+async function loadBenchDefinitionsFromPackage(): Promise<BenchmarkDefinition[] | undefined> {
   try {
     const benchModule = await import("@remnic/bench") as {
-      listBenchmarks?: () => Promise<PackageBenchDefinition[]> | PackageBenchDefinition[];
+      listBenchmarks?: () => BenchmarkDefinition[];
     };
     if (!benchModule.listBenchmarks) return undefined;
-    const result = await benchModule.listBenchmarks();
+    const result = benchModule.listBenchmarks();
     return Array.isArray(result) ? result : undefined;
   } catch {
     return undefined;
@@ -390,6 +383,17 @@ async function resolveAllBenchmarks(): Promise<string[]> {
   }
 
   return BENCHMARK_CATALOG.map((entry) => entry.id);
+}
+
+async function resolveKnownBenchmarkIds(): Promise<Set<string>> {
+  const knownIds = new Set(BENCHMARK_IDS);
+  const packageBenchmarks = await loadBenchDefinitionsFromPackage();
+  if (packageBenchmarks) {
+    for (const benchmark of packageBenchmarks) {
+      knownIds.add(benchmark.id);
+    }
+  }
+  return knownIds;
 }
 
 async function runBenchViaFallback(
@@ -2337,7 +2341,8 @@ async function cmdBench(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const unknown = selectedBenchmarks.filter((benchmarkId) => !BENCHMARK_IDS.has(benchmarkId));
+  const knownBenchmarkIds = await resolveKnownBenchmarkIds();
+  const unknown = selectedBenchmarks.filter((benchmarkId) => !knownBenchmarkIds.has(benchmarkId));
   if (unknown.length > 0) {
     console.error(`ERROR: unknown benchmark(s): ${unknown.join(", ")}. Use 'remnic bench list' to see available.`);
     process.exit(1);

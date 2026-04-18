@@ -22,9 +22,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type {
-  BenchmarkRunner,
-  BenchmarkResult,
-  BenchmarkMeta,
+  LegacyBenchmarkRunner,
+  LegacyBenchmarkResult,
+  LegacyBenchmarkMeta,
   MemorySystem,
   TaskScore,
 } from "../../../adapters/types.js";
@@ -100,7 +100,7 @@ function extractSessions(conv: Record<string, any>): Array<{ sessionId: string; 
   return sessions;
 }
 
-const meta: BenchmarkMeta = {
+const meta: LegacyBenchmarkMeta = {
   name: "locomo",
   version: "2.0.0",
   description: "Long conversation memory — 1,986 QA pairs across 10 multi-session conversations (ACL 2024)",
@@ -111,7 +111,7 @@ const meta: BenchmarkMeta = {
 async function run(
   system: MemorySystem,
   options: { limit?: number; datasetDir: string },
-): Promise<BenchmarkResult> {
+): Promise<LegacyBenchmarkResult> {
   const conversations = await loadDataset(options.datasetDir);
   const scores: TaskScore[] = [];
   const overallStart = performance.now();
@@ -223,4 +223,4 @@ async function run(
   });
 }
 
-export const locomoRunner: BenchmarkRunner = { meta, run };
+export const locomoRunner: LegacyBenchmarkRunner = { meta, run };

@@ -18,9 +18,9 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type {
-  BenchmarkRunner,
-  BenchmarkResult,
-  BenchmarkMeta,
+  LegacyBenchmarkRunner,
+  LegacyBenchmarkResult,
+  LegacyBenchmarkMeta,
   MemorySystem,
   TaskScore,
 } from "../../../adapters/types.js";
@@ -112,7 +112,7 @@ function findBestAnswer(qa: AMemGymQA, finalState: Record<string, string>): stri
   return qa.answer_choices[0]?.answer ?? "";
 }
 
-const meta: BenchmarkMeta = {
+const meta: LegacyBenchmarkMeta = {
   name: "amemgym",
   version: "2.0.0",
   description: "Interactive memory benchmarking — 200 QA pairs across 20 user profiles with state evolution",
@@ -123,7 +123,7 @@ const meta: BenchmarkMeta = {
 async function run(
   system: MemorySystem,
   options: { limit?: number; datasetDir: string },
-): Promise<BenchmarkResult> {
+): Promise<LegacyBenchmarkResult> {
   const profiles = await loadDataset(options.datasetDir, options.limit);
   const scores: TaskScore[] = [];
   const overallStart = performance.now();
@@ -245,4 +245,4 @@ async function run(
   });
 }
 
-export const amemGymRunner: BenchmarkRunner = { meta, run };
+export const amemGymRunner: LegacyBenchmarkRunner = { meta, run };

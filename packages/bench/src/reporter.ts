@@ -5,7 +5,7 @@
 import { execSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import type { BenchmarkResult as LegacyBenchmarkResult } from "./adapters/types.js";
+import type { LegacyBenchmarkResult } from "./adapters/types.js";
 import type { BenchmarkResult } from "./types.js";
 
 function sanitizeFilenameSegment(value: string): string {

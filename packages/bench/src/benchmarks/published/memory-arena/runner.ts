@@ -18,9 +18,9 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import type {
-  BenchmarkRunner,
-  BenchmarkResult,
-  BenchmarkMeta,
+  LegacyBenchmarkRunner,
+  LegacyBenchmarkResult,
+  LegacyBenchmarkMeta,
   MemorySystem,
   TaskScore,
 } from "../../../adapters/types.js";
@@ -87,7 +87,7 @@ function answerToString(answer: ArenaAnswer): string {
   return parts.join(" | ");
 }
 
-const meta: BenchmarkMeta = {
+const meta: LegacyBenchmarkMeta = {
   name: "memory-arena",
   version: "2.0.0",
   description: "Interdependent multi-session agentic memory — 701 tasks across 5 domains",
@@ -98,7 +98,7 @@ const meta: BenchmarkMeta = {
 async function run(
   system: MemorySystem,
   options: { limit?: number; datasetDir: string },
-): Promise<BenchmarkResult> {
+): Promise<LegacyBenchmarkResult> {
   const domains = await loadDataset(options.datasetDir, options.limit);
   const scores: TaskScore[] = [];
   const overallStart = performance.now();
@@ -200,4 +200,4 @@ async function run(
   });
 }
 
-export const memoryArenaRunner: BenchmarkRunner = { meta, run };
+export const memoryArenaRunner: LegacyBenchmarkRunner = { meta, run };

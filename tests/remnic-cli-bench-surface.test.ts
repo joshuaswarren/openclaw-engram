@@ -66,7 +66,20 @@ test("--all selection resolves to runnable package benchmarks when package metad
   assert.match(source, /async function resolveAllBenchmarks\(\)/);
   assert.match(source, /packageBenchmarks\s*\n\s*\.filter\(\(entry\) => entry\.runnerAvailable\)/s);
   assert.match(source, /const selectedBenchmarks = parsed\.all\s+\? await resolveAllBenchmarks\(\)/s);
+  assert.match(source, /async function resolveKnownBenchmarkIds\(\): Promise<Set<string>>/);
+  assert.match(source, /const knownBenchmarkIds = await resolveKnownBenchmarkIds\(\);/);
+  assert.match(source, /selectedBenchmarks\.filter\(\(benchmarkId\) => !knownBenchmarkIds\.has\(benchmarkId\)\)/);
   assert.match(source, /no runnable benchmarks are available for --all in this install/i);
+});
+
+test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+
+  assert.match(source, /type BenchmarkDefinition,\s*\n\s*\} from "@remnic\/bench";/s);
+  assert.match(source, /async function loadBenchDefinitionsFromPackage\(\): Promise<BenchmarkDefinition\[\] \| undefined>/);
+  assert.match(source, /listBenchmarks\?: \(\) => BenchmarkDefinition\[\];/);
+  assert.doesNotMatch(source, /interface PackageBenchDefinition/);
+  assert.doesNotMatch(source, /listBenchmarks\?: \(\) => Promise<.*BenchmarkDefinition\[\].*\|/s);
 });
 
 test("legacy benchmark check/report reuse the normalized action args instead of re-slicing rest", async () => {

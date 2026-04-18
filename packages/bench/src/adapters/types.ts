@@ -47,7 +47,7 @@ export interface TaskScore {
   latencyMs: number;
 }
 
-export interface BenchmarkMeta {
+export interface LegacyBenchmarkMeta {
   name: string;
   version: string;
   description: string;
@@ -55,8 +55,8 @@ export interface BenchmarkMeta {
   citation?: string;
 }
 
-export interface BenchmarkResult {
-  meta: BenchmarkMeta;
+export interface LegacyBenchmarkResult {
+  meta: LegacyBenchmarkMeta;
   engramVersion: string;
   gitSha: string;
   timestamp: string;
@@ -68,10 +68,10 @@ export interface BenchmarkResult {
   durationMs: number;
 }
 
-export interface BenchmarkRunner {
-  meta: BenchmarkMeta;
+export interface LegacyBenchmarkRunner {
+  meta: LegacyBenchmarkMeta;
   run(
     system: MemorySystem,
     options: { limit?: number; datasetDir: string },
-  ): Promise<BenchmarkResult>;
+  ): Promise<LegacyBenchmarkResult>;
 }
