@@ -8,6 +8,10 @@ import {
   runAmaBenchBenchmark,
 } from "./benchmarks/published/ama-bench/runner.js";
 import {
+  amemGymDefinition,
+  runAMemGymBenchmark,
+} from "./benchmarks/published/amemgym/runner.js";
+import {
   memoryArenaDefinition,
   runMemoryArenaBenchmark,
 } from "./benchmarks/published/memory-arena/runner.js";
@@ -30,17 +34,8 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
     run: runMemoryArenaBenchmark,
   },
   {
-    id: "amemgym",
-    title: "AMemGym",
-    tier: "published",
-    status: "planned",
-    runnerAvailable: false,
-    meta: {
-      name: "amemgym",
-      version: "1.0.0",
-      description: "Interactive personalization benchmark.",
-      category: "agentic",
-    },
+    ...amemGymDefinition,
+    run: runAMemGymBenchmark,
   },
   {
     ...longMemEvalDefinition,
