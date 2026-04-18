@@ -1854,7 +1854,7 @@ export class Orchestrator {
   }
 
   private async deferredInitialize(): Promise<void> {
-    {
+    try {
       const available = await this.qmd.probe();
       if (available) {
         log.info(`Search backend: available ${this.qmd.debugStatus()}`);
@@ -1902,6 +1902,8 @@ export class Orchestrator {
       } else {
         log.warn(`Search backend: not available ${this.qmd.debugStatus()}`);
       }
+    } catch (err) {
+      log.error(`QMD probe/collection check failed (non-fatal): ${err}`);
     }
 
     // Sync QMD index with current disk state so recall finds recently-written
@@ -1980,21 +1982,30 @@ export class Orchestrator {
     await Promise.all(cacheWarmups);
 
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
-      const init = await this.conversationIndexBackend.initialize();
-      if (!init.enabled) {
+      try {
+        const init = await this.conversationIndexBackend.initialize();
+        if (!init.enabled) {
+          this.config.conversationIndexEnabled = false;
+        }
+        if (init.logLevel === "info") {
+          log.info(init.message);
+        } else if (init.logLevel === "warn") {
+          log.warn(init.message);
+        } else {
+          log.debug(init.message);
+        }
+      } catch (err) {
+        log.error(`Conversation index initialization failed (non-fatal): ${err}`);
         this.config.conversationIndexEnabled = false;
-      }
-      if (init.logLevel === "info") {
-        log.info(init.message);
-      } else if (init.logLevel === "warn") {
-        log.warn(init.message);
-      } else {
-        log.debug(init.message);
       }
     }
 
     if (this.config.localLlmEnabled) {
-      await this.validateLocalLlmModel();
+      try {
+        await this.validateLocalLlmModel();
+      } catch (err) {
+        log.error(`Local LLM validation failed (non-fatal): ${err}`);
+      }
     }
 
     // Await cron auto-registration so callers that `await deferredReady` can
