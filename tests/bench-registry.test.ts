@@ -16,8 +16,18 @@ test("listBenchmarks exposes the published benchmark catalog from @remnic/bench"
   assert.ok(benchmarks.every((benchmark) => benchmark.tier === "published"));
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "memory-arena,longmemeval",
+    "ama-bench,memory-arena,longmemeval",
   );
+});
+
+test("getBenchmark returns ama-bench metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("ama-bench");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ama-bench");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.meta.category, "agentic");
 });
 
 test("getBenchmark returns memory-arena metadata with a runnable benchmark entry", () => {

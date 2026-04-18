@@ -1,199 +1,293 @@
 /**
- * AMA-Bench runner — Evaluating Long-Horizon Memory for Agentic Applications.
- *
- * 208 agent trajectories across 6 domains, 2,496 QA pairs total.
- * Each trajectory is a sequence of (action, observation) turns that must be memorized,
- * then the system is probed with questions about what happened.
- *
- * Domains: Game, EMBODIED_AI, OPENWORLD_QA, TEXT2SQL, SOFTWARE, WEB
- * QA types: recall, causal_inference, state_updating, state_abstraction
- *
- * Published baselines (Accuracy, Qwen3-32B backbone):
- *   AMA-Agent: 0.5722  |  MemoRAG: 0.4606  |  HippoRAG2: 0.4480
- *   MemoryBank: 0.3397  |  MemAgent: 0.2768
- *   GPT-5.2 (long-context): 0.7226 (strongest overall)
- *
- * Dataset: https://huggingface.co/datasets/AMA-bench/AMA-bench
- * Paper:   AMA-Bench: Evaluating Long-Horizon Memory for Agentic Applications (2025)
- * Code:    https://github.com/AMA-Bench/AMA-Hub
+ * AMA-Bench runner migrated into @remnic/bench for phase 1.
  */
 
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import {
+  AMA_BENCH_SMOKE_FIXTURE,
+  type AMABenchEpisode,
+} from "./fixture.js";
 import type {
-  LegacyBenchmarkRunner,
-  LegacyBenchmarkResult,
-  LegacyBenchmarkMeta,
-  MemorySystem,
-  TaskScore,
-} from "../../../adapters/types.js";
-import { f1Score, containsAnswer, llmJudgeScore, aggregateScores, timed } from "../../../scorer.js";
-import { enrichResult } from "../../../reporter.js";
+  BenchmarkDefinition,
+  BenchmarkResult,
+  ResolvedRunBenchmarkOptions,
+  TaskResult,
+} from "../../../types.js";
+import {
+  aggregateTaskScores,
+  containsAnswer,
+  f1Score,
+  llmJudgeScore,
+  timed,
+} from "../../../scorer.js";
+import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 
-// ── Dataset types (matches open_end_qa_set.jsonl) ──
-
-interface TrajectoryTurn {
-  turn_idx: number;
-  action: string;
-  observation: string;
-}
-
-interface QAPair {
-  question: string;
-  answer: string;
-  type: string; // recall, causal_inference, state_updating, state_abstraction
-  question_uuid: string;
-}
-
-interface AMABenchEpisode {
-  episode_id: number;
-  task: string;
-  task_type: string;
-  domain: string;
-  success: boolean;
-  num_turns: number;
-  total_tokens: number;
-  trajectory: TrajectoryTurn[];
-  qa_pairs: QAPair[];
-}
-
-async function loadDataset(datasetDir: string, limit?: number): Promise<AMABenchEpisode[]> {
-  const filePath = path.join(datasetDir, "open_end_qa_set.jsonl");
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const episodes = raw
-      .split("\n")
-      .filter((l) => l.trim())
-      .map((l) => JSON.parse(l) as AMABenchEpisode);
-    console.log(`  Loaded ${episodes.length} episodes (${episodes.reduce((s, e) => s + e.qa_pairs.length, 0)} QA pairs)`);
-    return limit ? episodes.slice(0, limit) : episodes;
-  } catch {
-    throw new Error(
-      `AMA-Bench dataset not found at ${filePath}. Download with:\n` +
-      `  git clone --depth 1 https://huggingface.co/datasets/AMA-bench/AMA-bench /tmp/amabench && cp /tmp/amabench/test/open_end_qa_set.jsonl ${datasetDir}/`,
-    );
-  }
-}
-
-const meta: LegacyBenchmarkMeta = {
-  name: "ama-bench",
-  version: "2.0.0",
-  description: "Agent Memory Abilities — 2,496 QA pairs across 208 agentic trajectories in 6 domains",
-  category: "agentic",
-  citation: "AMA-Bench: Evaluating Long-Horizon Memory for Agentic Applications (2025)",
+export const amaBenchDefinition: BenchmarkDefinition = {
+  id: "ama-bench",
+  title: "AMA-Bench",
+  tier: "published",
+  status: "ready",
+  runnerAvailable: true,
+  meta: {
+    name: "ama-bench",
+    version: "2.0.0",
+    description:
+      "Long-horizon agentic memory benchmark across multi-turn trajectories and QA probes.",
+    category: "agentic",
+    citation:
+      "AMA-Bench: Evaluating Long-Horizon Memory for Agentic Applications (2025)",
+  },
 };
 
-async function run(
-  system: MemorySystem,
-  options: { limit?: number; datasetDir: string },
-): Promise<LegacyBenchmarkResult> {
-  const episodes = await loadDataset(options.datasetDir, options.limit);
-  const scores: TaskScore[] = [];
-  const overallStart = performance.now();
+export async function runAmaBenchBenchmark(
+  options: ResolvedRunBenchmarkOptions,
+): Promise<BenchmarkResult> {
+  const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
+  const tasks: TaskResult[] = [];
 
-  for (let ei = 0; ei < episodes.length; ei++) {
-    const ep = episodes[ei];
-    await system.reset();
+  for (const episode of dataset) {
+    await options.system.reset();
 
-    if ((ei + 1) % 10 === 0 || ei === 0) {
-      console.log(`  [ama-bench] Episode ${ei + 1}/${episodes.length} (${ep.domain}, ${ep.num_turns} turns, ${ep.qa_pairs.length} QA)`);
-    }
-
-    const sessionId = `ama-ep-${ep.episode_id}`;
-
-    // Phase 1: Ingest trajectory as alternating user/assistant turns
-    // action → user message, observation → assistant response
-    const messages = ep.trajectory.flatMap((t) => [
-      { role: "user" as const, content: `[Action ${t.turn_idx}]: ${t.action}` },
-      { role: "assistant" as const, content: `[Observation ${t.turn_idx}]: ${t.observation}` },
+    const sessionId = `ama-ep-${episode.episode_id}`;
+    const messages = episode.trajectory.flatMap((turn) => [
+      { role: "user" as const, content: `[Action ${turn.turn_idx}]: ${turn.action}` },
+      {
+        role: "assistant" as const,
+        content: `[Observation ${turn.turn_idx}]: ${turn.observation}`,
+      },
     ]);
 
-    // Store in batches to avoid overwhelming the buffer
-    const BATCH_SIZE = 50;
-    for (let i = 0; i < messages.length; i += BATCH_SIZE) {
-      const batch = messages.slice(i, i + BATCH_SIZE);
-      await system.store(sessionId, batch);
+    for (let index = 0; index < messages.length; index += 50) {
+      await options.system.store(sessionId, messages.slice(index, index + 50));
     }
 
-    // Phase 2: Probe with QA pairs
-    for (const qa of ep.qa_pairs) {
-      const { result: recallText, durationMs } = await timed(async () => {
-        return system.recall(sessionId, qa.question);
-      });
+    for (const qa of episode.qa_pairs) {
+      const { result: recalledText, durationMs } = await timed(async () =>
+        options.system.recall(sessionId, qa.question),
+      );
+      const judgeScore = await llmJudgeScore(
+        options.system.judge,
+        qa.question,
+        recalledText,
+        qa.answer,
+      );
 
-      const f1 = f1Score(recallText, qa.answer);
-      const contains = containsAnswer(recallText, qa.answer);
-      const judgeScore = await llmJudgeScore(system.judge, qa.question, recallText, qa.answer);
-
-      const metrics: Record<string, number> = {
-        f1,
-        contains_answer: contains,
+      const scores: Record<string, number> = {
+        f1: f1Score(recalledText, qa.answer),
+        contains_answer: containsAnswer(recalledText, qa.answer),
       };
-      if (judgeScore >= 0) metrics.llm_judge = judgeScore;
+      if (judgeScore >= 0) {
+        scores.llm_judge = judgeScore;
+      }
 
-      scores.push({
+      tasks.push({
         taskId: qa.question_uuid,
-        metrics,
-        details: {
-          question: qa.question,
-          expected: qa.answer.slice(0, 200), // Truncate for readability in results
-          qa_type: qa.type,
-          domain: ep.domain,
-          episode_id: ep.episode_id,
-          num_turns: ep.num_turns,
-          total_tokens: ep.total_tokens,
-          recalled_length: recallText.length,
-        },
+        question: qa.question,
+        expected: qa.answer,
+        actual: recalledText,
+        scores,
         latencyMs: durationMs,
+        tokens: { input: 0, output: 0 },
+        details: {
+          qaType: qa.type,
+          domain: episode.domain,
+          episodeId: episode.episode_id,
+          task: episode.task,
+          taskType: episode.task_type,
+          numTurns: episode.num_turns,
+          totalTokens: episode.total_tokens,
+          recalledLength: recalledText.length,
+        },
       });
     }
   }
 
-  const durationMs = Math.round(performance.now() - overallStart);
+  const remnicVersion = await getRemnicVersion();
+  const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
 
-  // Overall aggregate
-  const aggregate = aggregateScores(scores.map((s) => s.metrics));
-
-  // Per-domain aggregates
-  const domains = [...new Set(episodes.map((e) => e.domain))];
-  for (const domain of domains) {
-    const domainScores = scores.filter((s) => (s.details as any)?.domain === domain);
-    if (domainScores.length > 0) {
-      const domF1 = domainScores.map((s) => s.metrics.f1);
-      const domContains = domainScores.map((s) => s.metrics.contains_answer);
-      aggregate[`${domain}_f1`] = domF1.reduce((a, b) => a + b, 0) / domF1.length;
-      aggregate[`${domain}_accuracy`] = domContains.reduce((a, b) => a + b, 0) / domContains.length;
-      aggregate[`${domain}_count`] = domainScores.length;
-    }
-  }
-
-  // Per-QA-type aggregates
-  const qaTypes = [...new Set(scores.map((s) => (s.details as any)?.qa_type).filter(Boolean))];
-  for (const qt of qaTypes) {
-    const qtScores = scores.filter((s) => (s.details as any)?.qa_type === qt);
-    if (qtScores.length > 0) {
-      const qtF1 = qtScores.map((s) => s.metrics.f1);
-      aggregate[`${qt}_f1`] = qtF1.reduce((a, b) => a + b, 0) / qtF1.length;
-      aggregate[`${qt}_count`] = qtScores.length;
-    }
-  }
-
-  return enrichResult({
-    meta,
-    engramVersion: "",
-    gitSha: "",
-    timestamp: "",
-    adapterMode: "direct",
-    taskCount: scores.length,
-    scores,
-    aggregate,
-    config: {
-      limit: options.limit,
-      datasetDir: options.datasetDir,
-      episodes_run: episodes.length,
+  return {
+    meta: {
+      id: randomUUID(),
+      benchmark: options.benchmark.id,
+      benchmarkTier: options.benchmark.tier,
+      version: options.benchmark.meta.version,
+      remnicVersion,
+      gitSha: getGitSha(),
+      timestamp: new Date().toISOString(),
+      mode: options.mode,
+      runCount: 1,
+      seeds: [options.seed ?? 0],
     },
-    durationMs,
-  });
+    config: {
+      systemProvider: options.systemProvider ?? null,
+      judgeProvider: options.judgeProvider ?? null,
+      adapterMode: options.adapterMode ?? "direct",
+      remnicConfig: options.remnicConfig ?? {},
+    },
+    cost: {
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCostUsd: 0,
+      totalLatencyMs,
+      meanQueryLatencyMs:
+        tasks.length > 0 ? totalLatencyMs / tasks.length : 0,
+    },
+    results: {
+      tasks,
+      aggregates: aggregateTaskScores(tasks.map((task) => task.scores)),
+    },
+    environment: {
+      os: process.platform,
+      nodeVersion: process.version,
+      hardware: process.arch,
+    },
+  };
 }
 
-export const amaBenchRunner: LegacyBenchmarkRunner = { meta, run };
+async function loadDataset(
+  mode: "full" | "quick",
+  datasetDir: string | undefined,
+  limit?: number,
+): Promise<AMABenchEpisode[]> {
+  const normalizedLimit = normalizeLimit(limit);
+  const ensureDatasetEpisodes = (episodes: AMABenchEpisode[]): AMABenchEpisode[] => {
+    if (episodes.length === 0) {
+      throw new Error(
+        "AMA-Bench dataset is empty after applying the requested limit.",
+      );
+    }
+    return episodes;
+  };
+
+  if (datasetDir) {
+    const filePath = path.join(datasetDir, "open_end_qa_set.jsonl");
+    let raw: string;
+    try {
+      raw = await readFile(filePath, "utf8");
+    } catch (error) {
+      throw new Error(
+        `AMA-Bench dataset not found at ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const episodes: AMABenchEpisode[] = [];
+    raw.split("\n").forEach((line, lineIndex) => {
+      if (line.trim().length === 0) {
+        return;
+      }
+      episodes.push(parseEpisode(line, lineIndex + 1));
+    });
+    return ensureDatasetEpisodes(applyLimit(episodes, normalizedLimit));
+  }
+
+  if (mode === "full") {
+    throw new Error(
+      "AMA-Bench full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
+    );
+  }
+
+  return ensureDatasetEpisodes(
+    applyLimit(AMA_BENCH_SMOKE_FIXTURE, normalizedLimit),
+  );
+}
+
+function normalizeLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error(
+      `AMA-Bench limit must be a non-negative integer when provided; received ${limit}.`,
+    );
+  }
+  return limit;
+}
+
+function applyLimit<T>(items: T[], limit: number | undefined): T[] {
+  if (limit === undefined) {
+    return [...items];
+  }
+  return items.slice(0, limit);
+}
+
+function parseEpisode(line: string, lineNumber: number): AMABenchEpisode {
+  const location = `AMA-Bench dataset line ${lineNumber}`;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch (error) {
+    throw new Error(
+      `AMA-Bench dataset contains invalid JSON on line ${lineNumber}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${location} must be an object.`);
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (!Number.isInteger(record.episode_id)) {
+    throw new Error(`${location} must include an integer episode_id.`);
+  }
+  if (typeof record.task !== "string" || typeof record.task_type !== "string") {
+    throw new Error(`${location} must include string task and task_type fields.`);
+  }
+  if (typeof record.domain !== "string") {
+    throw new Error(`${location} must include a string domain.`);
+  }
+  if (typeof record.success !== "boolean") {
+    throw new Error(`${location} must include a boolean success flag.`);
+  }
+  if (!Number.isFinite(record.num_turns) || !Number.isFinite(record.total_tokens)) {
+    throw new Error(`${location} must include numeric num_turns and total_tokens fields.`);
+  }
+  if (!isValidTrajectory(record.trajectory)) {
+    throw new Error(`${location} must include a trajectory array with action/observation turns.`);
+  }
+  if (!isValidQaPairs(record.qa_pairs)) {
+    throw new Error(`${location} must include a qa_pairs array with question/answer/type/question_uuid strings.`);
+  }
+
+  return {
+    episode_id: record.episode_id as number,
+    task: record.task as string,
+    task_type: record.task_type as string,
+    domain: record.domain as string,
+    success: record.success as boolean,
+    num_turns: record.num_turns as number,
+    total_tokens: record.total_tokens as number,
+    trajectory: record.trajectory as AMABenchEpisode["trajectory"],
+    qa_pairs: record.qa_pairs as AMABenchEpisode["qa_pairs"],
+  };
+}
+
+function isValidTrajectory(value: unknown): value is AMABenchEpisode["trajectory"] {
+  return Array.isArray(value)
+    && value.every(
+      (turn) =>
+        !!turn
+        && typeof turn === "object"
+        && !Array.isArray(turn)
+        && Number.isInteger((turn as Record<string, unknown>).turn_idx)
+        && typeof (turn as Record<string, unknown>).action === "string"
+        && typeof (turn as Record<string, unknown>).observation === "string",
+    );
+}
+
+function isValidQaPairs(value: unknown): value is AMABenchEpisode["qa_pairs"] {
+  return Array.isArray(value)
+    && value.every(
+      (qa) =>
+        !!qa
+        && typeof qa === "object"
+        && !Array.isArray(qa)
+        && typeof (qa as Record<string, unknown>).question === "string"
+        && typeof (qa as Record<string, unknown>).answer === "string"
+        && typeof (qa as Record<string, unknown>).type === "string"
+        && typeof (qa as Record<string, unknown>).question_uuid === "string",
+    );
+}

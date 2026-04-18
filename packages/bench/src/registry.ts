@@ -4,6 +4,10 @@
 
 import type { BenchmarkDefinition, BenchmarkResult, ResolvedRunBenchmarkOptions } from "./types.js";
 import {
+  amaBenchDefinition,
+  runAmaBenchBenchmark,
+} from "./benchmarks/published/ama-bench/runner.js";
+import {
   memoryArenaDefinition,
   runMemoryArenaBenchmark,
 } from "./benchmarks/published/memory-arena/runner.js";
@@ -18,17 +22,8 @@ interface RegisteredBenchmark extends BenchmarkDefinition {
 
 const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
-    id: "ama-bench",
-    title: "AMA-Bench",
-    tier: "published",
-    status: "planned",
-    runnerAvailable: false,
-    meta: {
-      name: "ama-bench",
-      version: "1.0.0",
-      description: "Long-horizon agentic memory benchmark.",
-      category: "agentic",
-    },
+    ...amaBenchDefinition,
+    run: runAmaBenchBenchmark,
   },
   {
     ...memoryArenaDefinition,
