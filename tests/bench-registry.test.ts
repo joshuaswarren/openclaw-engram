@@ -55,6 +55,8 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
     "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,ingestion-entity-recall",
   );
+  // Schema completeness remains gated off until its adapter contract is wired.
+  assert.equal(getBenchmark("ingestion-schema-completeness")?.runnerAvailable, false);
 });
 
 test("getBenchmark returns ama-bench metadata with a runnable benchmark entry", () => {
