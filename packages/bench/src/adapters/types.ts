@@ -51,7 +51,7 @@ export interface LegacyBenchmarkMeta {
   name: string;
   version: string;
   description: string;
-  category: "agentic" | "retrieval" | "conversational";
+  category: "agentic" | "retrieval" | "conversational" | "ingestion";
   citation?: string;
 }
 

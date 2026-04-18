@@ -5,7 +5,7 @@
 export type BenchmarkMode = "full" | "quick";
 export type BenchmarkTier = "published" | "remnic" | "custom";
 export type BenchmarkStatus = "ready" | "planned";
-export type BenchmarkCategory = "agentic" | "retrieval" | "conversational";
+export type BenchmarkCategory = "agentic" | "retrieval" | "conversational" | "ingestion";
 export type BuiltInProvider = "openai" | "anthropic" | "ollama" | "litellm";
 
 export interface ProviderConfig {
