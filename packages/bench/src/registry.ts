@@ -31,6 +31,10 @@ import {
   personaMemDefinition,
   runPersonaMemBenchmark,
 } from "./benchmarks/published/personamem/runner.js";
+import {
+  memBenchDefinition,
+  runMemBenchBenchmark,
+} from "./benchmarks/published/membench/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -64,6 +68,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...personaMemDefinition,
     run: runPersonaMemBenchmark,
+  },
+  {
+    ...memBenchDefinition,
+    run: runMemBenchBenchmark,
   },
 ];
 

@@ -11,12 +11,12 @@ test("listBenchmarks exposes the published benchmark catalog from @remnic/bench"
 
   assert.deepEqual(
     benchmarks.map((benchmark) => benchmark.id),
-    ["ama-bench", "memory-arena", "amemgym", "longmemeval", "locomo", "beam", "personamem"],
+    ["ama-bench", "memory-arena", "amemgym", "longmemeval", "locomo", "beam", "personamem", "membench"],
   );
   assert.ok(benchmarks.every((benchmark) => benchmark.tier === "published"));
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench",
   );
 });
 
@@ -87,6 +87,16 @@ test("getBenchmark returns personamem metadata with a runnable benchmark entry",
   assert.equal(benchmark?.status, "ready");
   assert.equal(benchmark?.runnerAvailable, true);
   assert.equal(benchmark?.meta.category, "conversational");
+});
+
+test("getBenchmark returns membench metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("membench");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "membench");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.meta.category, "retrieval");
 });
 
 test("BenchmarkResult schema captures the phase-1 package contract", () => {
