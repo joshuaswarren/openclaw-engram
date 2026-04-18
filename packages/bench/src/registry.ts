@@ -51,6 +51,14 @@ import {
   enrichmentFidelityDefinition,
   runEnrichmentFidelityBenchmark,
 } from "./benchmarks/remnic/enrichment-fidelity/runner.js";
+import {
+  entityConsolidationDefinition,
+  runEntityConsolidationBenchmark,
+} from "./benchmarks/remnic/entity-consolidation/runner.js";
+import {
+  pageVersioningDefinition,
+  runPageVersioningBenchmark,
+} from "./benchmarks/remnic/page-versioning/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -104,6 +112,14 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...enrichmentFidelityDefinition,
     run: runEnrichmentFidelityBenchmark,
+  },
+  {
+    ...entityConsolidationDefinition,
+    run: runEntityConsolidationBenchmark,
+  },
+  {
+    ...pageVersioningDefinition,
+    run: runPageVersioningBenchmark,
   },
 ];
 
