@@ -109,7 +109,9 @@ async function collectMarkdownFiles(dir: string): Promise<string[]> {
       }
       if (entry.isDirectory()) {
         await walk(full);
-      } else if (entry.name.endsWith(".md")) {
+      } else if (linkStat.isFile() && entry.name.endsWith(".md")) {
+        // Only accept regular files — FIFOs, sockets, device nodes, etc.
+        // could hang or error on readFile
         files.push(full);
       }
     }
@@ -181,6 +183,15 @@ export async function convertMemoriesToRecords(
     throw new Error(
       "includeTopics is not yet implemented — this option will be available in a future release",
     );
+  }
+
+  // Validate since/until Date objects are valid (CLAUDE.md #51)
+  // NaN comparisons always return false, which silently disables filters
+  if (options.since && !Number.isFinite(options.since.getTime())) {
+    throw new Error("since is an Invalid Date — provide a valid Date object");
+  }
+  if (options.until && !Number.isFinite(options.until.getTime())) {
+    throw new Error("until is an Invalid Date — provide a valid Date object");
   }
 
   // Validate memoryDir exists and is a directory (CLAUDE.md #24)

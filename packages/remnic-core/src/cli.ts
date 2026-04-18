@@ -898,11 +898,9 @@ export async function runTrainingExportCliCommand(
   const { writeFile: fsWriteFile } = await import("node:fs/promises");
   const { dirname } = await import("node:path");
   const { mkdirSync } = await import("node:fs");
-  try {
-    mkdirSync(dirname(opts.output), { recursive: true });
-  } catch {
-    // parent already exists
-  }
+  // recursive: true handles existing dirs natively (never throws EEXIST),
+  // so no try-catch needed — let real errors (EACCES, etc.) propagate
+  mkdirSync(dirname(opts.output), { recursive: true });
   await fsWriteFile(opts.output, formatted, "utf-8");
   opts.stdout.write(
     `Exported ${records.length} records to ${opts.output} (${adapter.name} format)\n`,

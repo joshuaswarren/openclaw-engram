@@ -554,6 +554,85 @@ describe("convertMemoriesToRecords", () => {
     assert.equal(records[0].category, "relationship");
   });
 
+  // --- Fix 9: Skip non-regular files (FIFOs, sockets, devices) ---
+
+  it("skips non-regular files like FIFOs during directory scan", async () => {
+    const dir = await makeTmpDir();
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+
+    // Create a real memory that should be included
+    await writeSyntheticMemory(dir, "facts", "real.md", {
+      id: "real",
+      content: "A real memory file.",
+    });
+
+    // Create a FIFO named with .md extension — readFile would hang on this
+    const { execSync } = await import("node:child_process");
+    const fifoPath = path.join(dir, "facts", "pipe.md");
+    try {
+      execSync(`mkfifo ${JSON.stringify(fifoPath)}`);
+    } catch {
+      // mkfifo may not be available (e.g. Windows) — skip test gracefully
+      return;
+    }
+
+    const records = await convertMemoriesToRecords({ memoryDir: dir });
+    // Only the real file should be included; the FIFO should be skipped
+    assert.equal(records.length, 1);
+    assert.equal(records[0].sourceIds?.[0], "real");
+  });
+
+  // --- Fix 10: Validate Date bounds in programmatic API ---
+
+  it("throws when since is an Invalid Date", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: dir, since: new Date("garbage") }),
+      (err: Error) => {
+        assert.match(err.message, /since is an Invalid Date/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when until is an Invalid Date", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: dir, until: new Date("not-a-date") }),
+      (err: Error) => {
+        assert.match(err.message, /until is an Invalid Date/);
+        return true;
+      },
+    );
+  });
+
+  it("does not throw when since/until are valid Date objects", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      created: "2026-06-15T00:00:00.000Z",
+      content: "Some content.",
+    });
+
+    // Should not throw — valid dates
+    const records = await convertMemoriesToRecords({
+      memoryDir: dir,
+      since: new Date("2026-01-01T00:00:00.000Z"),
+      until: new Date("2026-12-31T00:00:00.000Z"),
+    });
+    assert.equal(records.length, 1);
+  });
+
   it("excludes memories with unparseable created date when until filter is active", async () => {
     const dir = await makeTmpDir();
     await mkdir(path.join(dir, "facts"), { recursive: true });
