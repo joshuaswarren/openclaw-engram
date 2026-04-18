@@ -39,10 +39,11 @@ for TOKEN_FILE in "${TOKEN_FILES[@]}"; do
   REMNIC_TOKEN="$(node -e "
     const store = JSON.parse(require('fs').readFileSync(process.argv[1],'utf8'));
     const tokens = store.tokens || [];
+    const cxc = tokens.find(t => t.connector === 'codex-cli');
     const cx = tokens.find(t => t.connector === 'codex');
     const oc = tokens.find(t => t.connector === 'openclaw');
-    let tok = (cx && cx.token) || (oc && oc.token) || '';
-    if (!tok) { tok = store['codex'] || store['openclaw'] || ''; }
+    let tok = (cxc && cxc.token) || (cx && cx.token) || (oc && oc.token) || '';
+    if (!tok) { tok = store['codex-cli'] || store['codex'] || store['openclaw'] || ''; }
     process.stdout.write(tok);
   " "$TOKEN_FILE" 2>/dev/null || echo "")"
   [ -n "$REMNIC_TOKEN" ] && break
@@ -76,7 +77,7 @@ fi
 
 if [ -z "$REMNIC_TOKEN" ]; then
   log "skipping: no token found"
-  echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Remnic: no auth token — run: remnic connectors install codex]"}}'
+  echo '{"continue":true,"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"[Remnic: no auth token — run: remnic connectors install codex-cli]"}}'
   exit 0
 fi
 

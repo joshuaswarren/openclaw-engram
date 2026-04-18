@@ -22,6 +22,7 @@ export interface TokenStore {
 const TOKEN_PREFIXES: Record<string, string> = {
   "openclaw": "remnic_oc_",
   "claude-code": "remnic_cc_",
+  "codex-cli": "remnic_cx_",
   "codex": "remnic_cx_",
   "hermes": "remnic_hm_",
   "replit": "remnic_rl_",

@@ -38,10 +38,11 @@ for TOKEN_FILE in "${HOME}/.remnic/tokens.json" "${HOME}/.engram/tokens.json"; d
     const tokenFile = process.argv[1];
     const store = JSON.parse(fs.readFileSync(tokenFile, 'utf8'));
     const tokens = store.tokens || [];
+    const cxc = tokens.find(t => t.connector === 'codex-cli');
     const cx = tokens.find(t => t.connector === 'codex');
     const oc = tokens.find(t => t.connector === 'openclaw');
-    let tok = (cx && cx.token) || (oc && oc.token) || '';
-    if (!tok) { tok = store['codex'] || store['openclaw'] || ''; }
+    let tok = (cxc && cxc.token) || (cx && cx.token) || (oc && oc.token) || '';
+    if (!tok) { tok = store['codex-cli'] || store['codex'] || store['openclaw'] || ''; }
     process.stdout.write(tok);
   " "$TOKEN_FILE" 2>/dev/null || echo "")"
   [ -n "$REMNIC_TOKEN" ] && break
