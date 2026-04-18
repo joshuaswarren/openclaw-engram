@@ -42,6 +42,8 @@ export async function runIngestionSetupFrictionBenchmark(
 
   const fixtureDir = await mkdtemp(path.join(tmpdir(), "bench-friction-"));
   try {
+    await options.ingestionAdapter!.reset();
+
     for (const file of fixture.files) {
       const filePath = path.join(fixtureDir, file.relativePath);
       await mkdir(path.dirname(filePath), { recursive: true });
@@ -49,7 +51,7 @@ export async function runIngestionSetupFrictionBenchmark(
     }
 
     const { result: ingestionLog, durationMs } = await timed(() =>
-      options.ingestionAdapter.ingest(fixtureDir),
+      options.ingestionAdapter!.ingest(fixtureDir),
     );
 
     const commandsCount = ingestionLog.commandsIssued.length;
