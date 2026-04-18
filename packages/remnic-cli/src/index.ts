@@ -119,11 +119,14 @@ import type {
 } from "@remnic/core";
 import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 import {
+  compareResults,
   runBenchSuite,
   runExplain,
   loadBaseline,
   saveBaseline,
   checkRegression,
+  loadBenchmarkResult,
+  resolveBenchmarkResultReference,
   type BenchConfig,
   type BenchmarkDefinition,
 } from "@remnic/bench";
@@ -244,12 +247,13 @@ export const BENCHMARK_CATALOG: BenchCatalogEntry[] = [
 const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
 
 export function getBenchUsageText(): string {
-  return `Usage: remnic bench <list|run> [options] [benchmark...]
-       remnic benchmark <list|run|check|report> [options] [benchmark...]
+  return `Usage: remnic bench <list|run|compare> [options] [benchmark...]
+       remnic benchmark <list|run|compare|check|report> [options] [benchmark...]
 
 Commands:
   list                     List published benchmark packs
   run [benchmark...]       Run one or more benchmark packs
+  compare <base> <cand>    Compare two stored benchmark runs by id or file path
   check                    Legacy latency regression gate (compatibility)
   report                   Legacy latency report generator (compatibility)
 
@@ -257,12 +261,15 @@ Options:
   --quick                  Run a lightweight quick pass (maps to --lightweight --limit 1)
   --all                    Run every published benchmark
   --dataset-dir <path>     Override the benchmark dataset directory for full runs
+  --results-dir <path>     Override the stored benchmark results directory
+  --threshold <value>      Regression threshold for compare (default: 0.05)
   --json                   Output JSON for \`list\`
 
 Examples:
   remnic bench list
   remnic bench run --quick longmemeval
   remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
+  remnic bench compare base-run candidate-run
   remnic benchmark run --quick longmemeval`;
 }
 
@@ -414,6 +421,98 @@ function printBenchPackageSummary(
     console.log(`  ${metric.padEnd(20)} ${aggregate.mean.toFixed(4)}`);
   }
   console.log(`Results saved: ${outputPath}`);
+}
+
+function printBenchComparisonSummary(
+  comparison: ReturnType<typeof compareResults>,
+  baseline: { id: string; path: string },
+  candidate: { id: string; path: string },
+): void {
+  console.log(`Benchmark: ${comparison.benchmark}`);
+  console.log(`Baseline: ${baseline.id} (${baseline.path})`);
+  console.log(`Candidate: ${candidate.id} (${candidate.path})`);
+  console.log(`Verdict: ${comparison.verdict}`);
+
+  const metrics = Object.entries(comparison.metricDeltas).sort(([left], [right]) =>
+    left.localeCompare(right),
+  );
+  if (metrics.length === 0) {
+    console.log("No overlapping metrics were found between the two results.");
+    return;
+  }
+
+  console.log("Metrics:");
+  for (const [metric, delta] of metrics) {
+    const percent = Number.isFinite(delta.percentChange)
+      ? `${(delta.percentChange * 100).toFixed(2)}%`
+      : delta.percentChange > 0
+        ? "+Infinity%"
+        : "-Infinity%";
+    const direction = delta.delta >= 0 ? "+" : "";
+    console.log(
+      `  ${metric.padEnd(18)} ${delta.baseline.toFixed(4)} -> ${delta.candidate.toFixed(4)} (${direction}${delta.delta.toFixed(4)}, ${percent}, d=${delta.effectSize.cohensD.toFixed(3)} ${delta.effectSize.interpretation})`,
+    );
+    if (delta.ciOnDelta) {
+      console.log(
+        `    CI95 delta: [${delta.ciOnDelta.lower.toFixed(4)}, ${delta.ciOnDelta.upper.toFixed(4)}]`,
+      );
+    }
+  }
+}
+
+async function compareBenchPackageResults(parsed: ParsedBenchArgs): Promise<void> {
+  const refs = parsed.benchmarks;
+  if (refs.length !== 2) {
+    console.error(
+      "ERROR: compare requires exactly two stored result references. Usage: remnic bench compare <baseline> <candidate> [--results-dir <path>] [--threshold <value>] [--json]",
+    );
+    process.exit(1);
+  }
+
+  const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const [baselineRef, candidateRef] = refs;
+  const baselineSummary = await resolveBenchmarkResultReference(resultsDir, baselineRef);
+  const candidateSummary = await resolveBenchmarkResultReference(resultsDir, candidateRef);
+
+  if (!baselineSummary) {
+    console.error(`ERROR: benchmark result not found: ${baselineRef}`);
+    process.exit(1);
+  }
+  if (!candidateSummary) {
+    console.error(`ERROR: benchmark result not found: ${candidateRef}`);
+    process.exit(1);
+  }
+
+  const baseline = await loadBenchmarkResult(baselineSummary.path);
+  const candidate = await loadBenchmarkResult(candidateSummary.path);
+
+  if (baseline.meta.benchmark !== candidate.meta.benchmark) {
+    console.error(
+      `ERROR: benchmark mismatch: ${baseline.meta.benchmark} vs ${candidate.meta.benchmark}. Compare runs from the same benchmark.`,
+    );
+    process.exit(1);
+  }
+
+  const comparison = compareResults(
+    baseline,
+    candidate,
+    parsed.threshold ?? 0.05,
+  );
+
+  if (parsed.json) {
+    console.log(JSON.stringify({
+      benchmark: comparison.benchmark,
+      baseline: baselineSummary,
+      candidate: candidateSummary,
+      comparison,
+    }, null, 2));
+  } else {
+    printBenchComparisonSummary(comparison, baselineSummary, candidateSummary);
+  }
+
+  if (comparison.verdict === "regression") {
+    process.exit(1);
+  }
 }
 
 async function runBenchViaPackage(
@@ -2296,6 +2395,11 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.action === "compare") {
+    await compareBenchPackageResults(parsed);
+    return;
+  }
+
   if (parsed.action === "list") {
     const catalog = await listBenchmarksFromPackage() ?? BENCHMARK_CATALOG;
     if (parsed.json) {
@@ -3726,7 +3830,7 @@ Usage:
   remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
-  remnic bench <list|run> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--json]
+  remnic bench <list|run|compare> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--threshold <value>] [--json]
     benchmark is kept as a compatibility alias. check/report remain under that alias.
   remnic benchmark <list|run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
