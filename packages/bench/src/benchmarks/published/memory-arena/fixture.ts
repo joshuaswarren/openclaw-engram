@@ -4,7 +4,10 @@ export interface ArenaAnswer {
   [key: string]: unknown;
 }
 
-export type ArenaExpectedAnswer = ArenaAnswer | string;
+export type ArenaExpectedAnswer =
+  | ArenaAnswer
+  | string
+  | Array<ArenaAnswer | string>;
 
 export interface ArenaTask {
   id: number;

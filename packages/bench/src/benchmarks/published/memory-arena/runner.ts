@@ -205,10 +205,13 @@ async function loadDataset(
     const domains: DomainData[] = [];
     for (const filename of domainFiles) {
       const raw = await readFile(path.join(datasetDir, filename), "utf8");
-      const parsedTasks = raw
-        .split("\n")
-        .filter((line) => line.trim().length > 0)
-        .map((line, lineIndex) => parseTask(line, filename, lineIndex + 1));
+      const parsedTasks: ArenaTask[] = [];
+      raw.split("\n").forEach((line, lineIndex) => {
+        if (line.trim().length === 0) {
+          return;
+        }
+        parsedTasks.push(parseTask(line, filename, lineIndex + 1));
+      });
       const tasks = limit ? parsedTasks.slice(0, limit) : parsedTasks;
       domains.push({
         domain: filename.replace(/\.jsonl$/, ""),
@@ -265,14 +268,11 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
     !Array.isArray(record.answers)
     || record.answers.some(
       (answer) =>
-        !(
-          typeof answer === "string"
-          || (!!answer && typeof answer === "object" && !Array.isArray(answer))
-        ),
+        !isValidExpectedAnswer(answer),
     )
   ) {
     throw new Error(
-      `${location} must include an answers array of strings or objects.`,
+      `${location} must include an answers array of strings, objects, or arrays of those values.`,
     );
   }
 
@@ -288,6 +288,9 @@ function answerToString(answer: ArenaExpectedAnswer): string {
   if (typeof answer === "string") {
     return answer;
   }
+  if (Array.isArray(answer)) {
+    return answer.map(answerToString).join(" | ");
+  }
 
   const parts: string[] = [];
   if (answer.target_asin) {
@@ -302,4 +305,18 @@ function answerToString(answer: ArenaExpectedAnswer): string {
     }
   }
   return parts.join(" | ");
+}
+
+function isValidExpectedAnswer(answer: unknown): answer is ArenaExpectedAnswer {
+  if (typeof answer === "string") {
+    return true;
+  }
+  if (Array.isArray(answer)) {
+    return answer.every(
+      (item) =>
+        typeof item === "string"
+        || (!!item && typeof item === "object" && !Array.isArray(item)),
+    );
+  }
+  return !!answer && typeof answer === "object";
 }

@@ -122,6 +122,34 @@ test("runBenchmark preserves string-form memory-arena answers in full mode datas
   assert.equal(result.results.tasks[0]?.expected, "trail mix");
 });
 
+test("runBenchmark preserves array-form memory-arena answers in full mode datasets", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-array-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      category: "group_travel_planner",
+      questions: ["Which museum stop should we keep in the itinerary?"],
+      answers: [[{ name: "Art Institute" }, { day: "Saturday" }]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(
+    result.results.tasks[0]?.expected,
+    "name: Art Institute | day: Saturday",
+  );
+});
+
 test("runBenchmark rejects memory-arena full mode without datasetDir", async () => {
   const adapter = new FakeMemoryAdapter();
 
@@ -240,7 +268,34 @@ test("runBenchmark rejects malformed memory-arena answers arrays with a benchmar
         datasetDir,
         system: adapter,
       }),
-    /must include an answers array of strings or objects/,
+    /must include an answers array of strings, objects, or arrays of those values/,
+  );
+});
+
+test("runBenchmark reports original JSONL line numbers when blank lines precede malformed memory-arena rows", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-lines-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "bundled_shopping.jsonl"),
+    `\n${JSON.stringify({
+      id: 1,
+      category: "bundled_shopping",
+      questions: ["What snack should I pack?"],
+      answers: [{ attributes: ["trail mix"] }],
+    })}\n\n{not json}\n`,
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runBenchmark("memory-arena", {
+        mode: "full",
+        datasetDir,
+        system: adapter,
+      }),
+    /contains invalid JSON on line 4/,
   );
 });
 
