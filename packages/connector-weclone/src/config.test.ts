@@ -77,6 +77,30 @@ describe("parseConfig", () => {
     );
   });
 
+  it("rejects proxyPort above 65535", () => {
+    assert.throws(
+      () => parseConfig({ ...validRaw, proxyPort: 70000 }),
+      /proxyPort.*between 1 and 65535/
+    );
+  });
+
+  it("rejects proxyPort of 65536", () => {
+    assert.throws(
+      () => parseConfig({ ...validRaw, proxyPort: 65536 }),
+      /proxyPort/
+    );
+  });
+
+  it("accepts proxyPort at upper boundary (65535)", () => {
+    const config = parseConfig({ ...validRaw, proxyPort: 65535 });
+    assert.equal(config.proxyPort, 65535);
+  });
+
+  it("accepts proxyPort at lower boundary (1)", () => {
+    const config = parseConfig({ ...validRaw, proxyPort: 1 });
+    assert.equal(config.proxyPort, 1);
+  });
+
   it("rejects missing remnicDaemonUrl", () => {
     const { remnicDaemonUrl: _, ...rest } = validRaw;
     assert.throws(() => parseConfig(rest), /remnicDaemonUrl/);

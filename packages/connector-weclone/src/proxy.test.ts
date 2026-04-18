@@ -862,6 +862,68 @@ describe("WeCloneProxy", () => {
     assert.equal(body.error.message, "Unauthorized");
   });
 
+  it("strips hop-by-hop headers from non-streaming chat completions responses", async () => {
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        // Upstream responds with hop-by-hop headers that must be stripped
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "Transfer-Encoding": "chunked",
+          "Connection": "keep-alive",
+        });
+        res.end(
+          JSON.stringify({
+            choices: [
+              { message: { role: "assistant", content: "filtered reply" } },
+            ],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          messages: [{ role: "user", content: "Hi" }],
+        }),
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(
+      res.headers.get("transfer-encoding"),
+      null,
+      "transfer-encoding hop-by-hop header must be stripped from chat completions responses"
+    );
+    // Note: Node.js HTTP server adds its own Connection header at the
+    // transport layer, so we cannot assert it is absent. The important
+    // guarantee is that upstream hop-by-hop headers like transfer-encoding
+    // and content-encoding do not leak through.
+    assert.ok(
+      res.headers.get("content-length"),
+      "content-length should be set on non-streaming chat completions responses"
+    );
+    const body = JSON.parse(await readResponse(res));
+    assert.equal(body.choices[0].message.content, "filtered reply");
+  });
+
   it("strips content-encoding from transparent proxy responses", async () => {
     const payload = JSON.stringify({ data: "test" });
     const compressed = gzipSync(Buffer.from(payload));

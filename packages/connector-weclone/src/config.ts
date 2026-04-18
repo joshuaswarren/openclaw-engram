@@ -56,9 +56,14 @@ export function parseConfig(raw: unknown): WeCloneConnectorConfig {
     );
   }
 
-  if (typeof obj.proxyPort !== "number" || !Number.isInteger(obj.proxyPort) || obj.proxyPort <= 0) {
+  if (
+    typeof obj.proxyPort !== "number" ||
+    !Number.isInteger(obj.proxyPort) ||
+    obj.proxyPort <= 0 ||
+    obj.proxyPort > 65535
+  ) {
     throw new Error(
-      "Config 'proxyPort' is required and must be a positive integer"
+      "Config 'proxyPort' is required and must be an integer between 1 and 65535"
     );
   }
 

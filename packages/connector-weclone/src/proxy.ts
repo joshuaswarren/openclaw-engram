@@ -252,7 +252,7 @@ async function transparentProxy(
     headers: forwardHeaders,
   };
   if (body && method !== "GET" && method !== "HEAD") {
-    fetchInit.body = body;
+    fetchInit.body = body as unknown as BodyInit;
   }
 
   try {
@@ -475,8 +475,15 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
           observeTurn(config.remnicDaemonUrl, sessionKey, query, assistantReply, config.remnicAuthToken);
         }
 
-        // Return upstream response to caller
-        res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
+        // Return upstream response to caller, stripping hop-by-hop headers
+        const chatResponseHeaders: Record<string, string> = {};
+        for (const [key, value] of upstream.headers.entries()) {
+          if (!HOP_BY_HOP_RESPONSE_HEADERS.has(key.toLowerCase())) {
+            chatResponseHeaders[key] = value;
+          }
+        }
+        chatResponseHeaders["content-length"] = String(responseBytes.length);
+        res.writeHead(upstream.status, chatResponseHeaders);
         res.end(responseBytes);
       } catch (_err) {
         res.writeHead(502, { "Content-Type": "application/json" });
