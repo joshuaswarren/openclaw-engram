@@ -2,9 +2,10 @@
  * Training-pair synthesizer.
  *
  * Converts Remnic's flat TrainingExportRecord[] — where
- * `instruction` is a category path and `output` is raw memory
- * content — into natural conversational question-answer pairs
- * suitable for WeClone / LLaMA Factory fine-tuning.
+ * `instruction` is a natural-language description and
+ * `category` identifies the memory type — into natural
+ * conversational question-answer pairs suitable for
+ * WeClone / LLaMA Factory fine-tuning.
  *
  * Uses template-based question generation (no LLM calls).
  */
@@ -21,7 +22,7 @@ export interface SynthesizerOptions {
 const DEFAULT_MAX_PAIRS = 1;
 
 /**
- * Question templates keyed by top-level category.
+ * Question templates keyed by template group.
  * Each array provides variety; the synthesizer picks
  * based on record index for deterministic output.
  */
@@ -54,6 +55,26 @@ const DEFAULT_TEMPLATES = [
 ];
 
 /**
+ * Maps record.category values (from core converter) to
+ * QUESTION_TEMPLATES keys. Categories not listed here
+ * fall through to DEFAULT_TEMPLATES.
+ */
+const CATEGORY_TO_TEMPLATE: Record<string, string> = {
+  preference: "preferences",
+  fact: "expertise",
+  entity: "expertise",
+  skill: "expertise",
+  correction: "opinions",
+  decision: "opinions",
+  principle: "opinions",
+  rule: "opinions",
+  personal: "personal",
+  relationship: "personal",
+  commitment: "personal",
+  moment: "personal",
+};
+
+/**
  * Synthesize natural conversational training pairs from
  * category-tagged memory records.
  */
@@ -67,14 +88,15 @@ export function synthesizeTrainingPairs(
 
   for (let i = 0; i < records.length; i++) {
     const record = records[i];
-    const { topCategory, subTopic } = parseCategory(record.instruction);
-    const templates = QUESTION_TEMPLATES[topCategory] ?? DEFAULT_TEMPLATES;
+    const templateKey = resolveTemplateKey(record.category);
+    const topic = extractTopic(record.instruction);
+    const templates = QUESTION_TEMPLATES[templateKey] ?? DEFAULT_TEMPLATES;
 
     const pairCount = Math.min(maxPairs, templates.length);
 
     for (let j = 0; j < pairCount; j++) {
       const templateIndex = (i + j) % templates.length;
-      const question = templates[templateIndex].replace("{topic}", subTopic);
+      const question = templates[templateIndex].replace("{topic}", topic);
       let output = record.output;
 
       if (style?.usesLowercase) {
@@ -98,24 +120,28 @@ export function synthesizeTrainingPairs(
 // ── Internals ────────────────────────────────────────────
 
 /**
- * Parse a category path like "preferences/food" into its
- * top-level category and sub-topic for template insertion.
+ * Resolve a record's category field to a QUESTION_TEMPLATES key.
+ * Falls back to empty string (which triggers DEFAULT_TEMPLATES).
  */
-function parseCategory(categoryPath: string): {
-  topCategory: string;
-  subTopic: string;
-} {
-  const parts = categoryPath.split("/").filter((p) => p.length > 0);
+function resolveTemplateKey(category: string | undefined): string {
+  if (!category) return "";
+  return CATEGORY_TO_TEMPLATE[category.toLowerCase()] ?? "";
+}
 
-  if (parts.length === 0) {
-    return { topCategory: "", subTopic: "this" };
+/**
+ * Extract a human-readable topic from the instruction string.
+ *
+ * The core converter produces instructions like:
+ *   "Recall a factual memory (food, cooking)"
+ *   "Recall a user preference"
+ *
+ * When parenthesized tags are present, use them as the topic.
+ * Otherwise fall back to "this".
+ */
+function extractTopic(instruction: string): string {
+  const tagMatch = instruction.match(/\(([^)]+)\)/);
+  if (tagMatch) {
+    return tagMatch[1].trim().toLowerCase();
   }
-
-  const topCategory = parts[0].toLowerCase();
-  // Use the last segment as the human-readable topic,
-  // replacing underscores/hyphens with spaces
-  const rawTopic = parts[parts.length - 1];
-  const subTopic = rawTopic.replace(/[-_]/g, " ").toLowerCase() || "this";
-
-  return { topCategory, subTopic };
+  return "this";
 }
