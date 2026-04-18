@@ -270,3 +270,14 @@ test("renderBenchmarkResultExport returns JSON and aggregate-metric CSV represen
   assert.match(html, /Aggregate Metrics/);
   assert.match(html, /Task Count/);
 });
+
+test("renderBenchmarkResultExport handles older results without seed metadata", () => {
+  const result = buildResult("older-run", "2026-04-18T08:00:00.000Z");
+  delete (result.meta as { seeds?: number[] }).seeds;
+
+  const html = renderBenchmarkResultExport(result, "html");
+
+  assert.match(html, /Older-run|older-run/i);
+  assert.match(html, /Seeds/);
+  assert.match(html, /Unknown/);
+});

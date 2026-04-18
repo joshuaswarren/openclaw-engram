@@ -315,6 +315,9 @@ function renderHtmlKeyValueRows(entries: Array<[string, string | number]>): stri
 }
 
 function renderBenchmarkResultHtml(result: BenchmarkResult): string {
+  const seeds = Array.isArray(result.meta.seeds)
+    ? result.meta.seeds.join(", ")
+    : "Unknown";
   const aggregateRows = Object.keys(result.results.aggregates)
     .sort()
     .map((metric) => {
@@ -428,7 +431,7 @@ ${renderHtmlKeyValueRows([
   ["Remnic Version", result.meta.remnicVersion],
   ["Benchmark Version", result.meta.version],
   ["Git SHA", result.meta.gitSha],
-  ["Seeds", result.meta.seeds.join(", ")],
+  ["Seeds", seeds],
 ])}
           </tbody>
         </table>
