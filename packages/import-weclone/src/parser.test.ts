@@ -248,4 +248,60 @@ describe("parseWeCloneExport", () => {
     assert.equal(result.turns[0].participantId, "Alice");
     assert.equal(result.turns[0].participantName, "Alice");
   });
+
+  it("preserves message_id as messageId on WeCloneImportTurn", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "hello", T1, { message_id: "msg-001" }),
+        makeMsg("Bob", "reply", T2, { message_id: "msg-002", reply_to_id: "msg-001" }),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    // WeCloneImportTurn extends ImportTurn with messageId
+    const turns = result.turns as Array<{ messageId?: string; replyToId?: string }>;
+    assert.equal(turns[0].messageId, "msg-001");
+    assert.equal(turns[1].messageId, "msg-002");
+    assert.equal(turns[1].replyToId, "msg-001");
+  });
+
+  it("does NOT classify human names containing 'ai' substring as bots", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "hi", T1),
+        makeMsg("Aidan", "hey", T2),
+        makeMsg("Craig", "hello", T3),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    // "Alice" is the self-sender (first message); Aidan and Craig are other humans
+    assert.equal(result.turns[0].role, "user");
+    assert.equal(result.turns[1].role, "other");
+    assert.equal(result.turns[2].role, "other");
+  });
+
+  it("classifies standalone 'ai' word in sender as bot", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "hi", T1),
+        makeMsg("My AI", "hello", T2),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns[1].role, "assistant");
+  });
+
+  it("classifies 'Caitlin' as human, not bot", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Alice", "hi", T1),
+        makeMsg("Caitlin", "hey", T2),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns[1].role, "other");
+  });
 });

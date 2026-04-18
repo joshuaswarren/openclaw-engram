@@ -2791,7 +2791,21 @@ export async function runBulkImportCliCommand(
   }
 
   const inputRaw = await readFile(opts.file, "utf-8");
-  const parsed = await adapter.parse(inputRaw, {
+  let inputParsed: unknown;
+  try {
+    inputParsed = JSON.parse(inputRaw);
+  } catch (err) {
+    throw new Error(
+      `Failed to parse import file as JSON: ${(err as Error).message}`,
+    );
+  }
+  if (typeof inputParsed !== "object" || inputParsed === null) {
+    throw new Error(
+      "Import file must contain a JSON object or array, got " +
+        (inputParsed === null ? "null" : typeof inputParsed),
+    );
+  }
+  const parsed = await adapter.parse(inputParsed, {
     strict: opts.strict === true,
   });
 

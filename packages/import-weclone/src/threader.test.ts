@@ -5,6 +5,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import type { ImportTurn } from "@remnic/core";
+import type { WeCloneImportTurn } from "./parser.js";
 import { groupIntoThreads } from "./threader.js";
 
 // ---------------------------------------------------------------------------
@@ -61,25 +62,35 @@ describe("groupIntoThreads", () => {
     assert.equal(threads[1].turns[1].content, "later2");
   });
 
-  it("keeps replies in the same thread via replyToId", () => {
-    const turns: ImportTurn[] = [
-      makeTurn({
-        timestamp: "2025-01-10T08:00:00.000Z",
-        content: "original",
-        participantId: "msg-1",
-      }),
-      makeTurn({
-        timestamp: "2025-01-10T08:05:00.000Z",
-        content: "unrelated",
-        participantId: "msg-2",
-      }),
+  it("keeps replies in the same thread via replyToId + messageId", () => {
+    // WeCloneImportTurn extends ImportTurn with messageId
+    const turns: WeCloneImportTurn[] = [
+      {
+        ...makeTurn({
+          timestamp: "2025-01-10T08:00:00.000Z",
+          content: "original",
+          participantId: "Alice",
+        }),
+        messageId: "msg-1",
+      },
+      {
+        ...makeTurn({
+          timestamp: "2025-01-10T08:05:00.000Z",
+          content: "unrelated",
+          participantId: "Bob",
+        }),
+        messageId: "msg-2",
+      },
       // Reply arrives 2 hours later but references msg-1
-      makeTurn({
-        timestamp: "2025-01-10T10:00:00.000Z",
-        content: "reply to original",
-        replyToId: "msg-1",
-        participantId: "msg-3",
-      }),
+      {
+        ...makeTurn({
+          timestamp: "2025-01-10T10:00:00.000Z",
+          content: "reply to original",
+          participantId: "Charlie",
+          replyToId: "msg-1",
+        }),
+        messageId: "msg-3",
+      },
     ];
     const threads = groupIntoThreads(turns);
     // The reply should be grouped with the original message's thread
@@ -151,5 +162,36 @@ describe("groupIntoThreads", () => {
     assert.equal(threads.length, 1);
     assert.equal(threads[0].startTime, "2025-01-10T08:00:00.000Z");
     assert.equal(threads[0].endTime, "2025-01-10T08:20:00.000Z");
+  });
+
+  it("does NOT merge threads when turns lack messageId", () => {
+    // Without messageId, replyToId has nothing to match against
+    const turns: ImportTurn[] = [
+      makeTurn({
+        timestamp: "2025-01-10T08:00:00.000Z",
+        content: "original",
+        participantId: "Alice",
+      }),
+      makeTurn({
+        timestamp: "2025-01-10T08:05:00.000Z",
+        content: "second",
+        participantId: "Bob",
+      }),
+      // 2 hour gap — would be a separate segment
+      makeTurn({
+        timestamp: "2025-01-10T10:05:00.000Z",
+        content: "late reply attempt",
+        participantId: "Charlie",
+        replyToId: "nonexistent-id",
+      }),
+      makeTurn({
+        timestamp: "2025-01-10T10:10:00.000Z",
+        content: "follow-up",
+        participantId: "Alice",
+      }),
+    ];
+    const threads = groupIntoThreads(turns);
+    // Should NOT merge — the replyToId doesn't match any messageId
+    assert.equal(threads.length, 2);
   });
 });

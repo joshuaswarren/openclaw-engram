@@ -9,6 +9,14 @@ import { validateImportTurn, parseIsoTimestamp } from "@remnic/core";
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Extended ImportTurn that carries the original WeClone message_id so that the
+ * threader can resolve reply chains (core's ImportTurn has no messageId field).
+ */
+export interface WeCloneImportTurn extends ImportTurn {
+  messageId?: string;
+}
+
 export type WeClonePlatform = "telegram" | "whatsapp" | "discord" | "slack";
 
 const VALID_PLATFORMS: ReadonlySet<string> = new Set([
@@ -53,7 +61,12 @@ export interface ParseOptions {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const AI_SENDER_HINTS: ReadonlySet<string> = new Set([
+/**
+ * Hints used to detect bot/AI senders.  Each hint is matched as a whole word
+ * (`\b` boundary) so that short tokens like "ai" don't false-positive on
+ * human names such as "Aidan", "Craig", or "Caitlin".
+ */
+const AI_SENDER_HINTS: readonly string[] = [
   "bot",
   "assistant",
   "ai",
@@ -61,12 +74,17 @@ const AI_SENDER_HINTS: ReadonlySet<string> = new Set([
   "gpt",
   "claude",
   "copilot",
-]);
+  "llama",
+];
+
+/** Pre-compiled word-boundary regexps (one per hint). */
+const AI_SENDER_PATTERNS: readonly RegExp[] = AI_SENDER_HINTS.map(
+  (hint) => new RegExp(`\\b${hint}\\b`, "i"),
+);
 
 function looksLikeBot(sender: string): boolean {
-  const lower = sender.toLowerCase();
-  for (const hint of AI_SENDER_HINTS) {
-    if (lower.includes(hint)) return true;
+  for (const pattern of AI_SENDER_PATTERNS) {
+    if (pattern.test(sender)) return true;
   }
   return false;
 }
@@ -155,8 +173,8 @@ export function parseWeCloneExport(
     ?? (firstValidMsg ? firstValidMsg.sender : "");
   const assistantSet = new Set<string>(options?.assistantSenders ?? []);
 
-  // Map messages to ImportTurn[]
-  const turns: ImportTurn[] = [];
+  // Map messages to WeCloneImportTurn[]
+  const turns: WeCloneImportTurn[] = [];
   const warnings: string[] = [];
 
   for (let i = 0; i < rawMessages.length; i += 1) {
@@ -170,13 +188,14 @@ export function parseWeCloneExport(
       continue;
     }
 
-    const turn: ImportTurn = {
+    const turn: WeCloneImportTurn = {
       role: resolveRole(raw.sender, selfSender, assistantSet),
       content: raw.text,
       timestamp: raw.timestamp,
       participantId: raw.sender,
       participantName: raw.sender,
       ...(raw.reply_to_id != null ? { replyToId: raw.reply_to_id } : {}),
+      ...(raw.message_id != null ? { messageId: raw.message_id } : {}),
     };
 
     // Validate the turn using core's validator

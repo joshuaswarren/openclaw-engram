@@ -6,6 +6,7 @@ export { wecloneImportAdapter } from "./adapter.js";
 
 export {
   parseWeCloneExport,
+  type WeCloneImportTurn,
   type WeClonePlatform,
   type WeClonePreprocessedMessage,
   type WeClonePreprocessedExport,

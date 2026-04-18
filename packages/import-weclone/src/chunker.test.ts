@@ -121,4 +121,20 @@ describe("chunkThreads", () => {
     assert.equal(chunks[0].length, 3);
     assert.equal(chunks[1].length, 3);
   });
+
+  it("throws on maxTurnsPerChunk = 0", () => {
+    const threads = [makeThread(5)];
+    assert.throws(
+      () => chunkThreads(threads, { maxTurnsPerChunk: 0 }),
+      /maxTurnsPerChunk must be positive/,
+    );
+  });
+
+  it("throws on negative maxTurnsPerChunk", () => {
+    const threads = [makeThread(5)];
+    assert.throws(
+      () => chunkThreads(threads, { maxTurnsPerChunk: -3 }),
+      /maxTurnsPerChunk must be positive, received -3/,
+    );
+  });
 });

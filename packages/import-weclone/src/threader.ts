@@ -4,6 +4,7 @@
 
 import type { ImportTurn } from "@remnic/core";
 import { parseIsoTimestamp } from "@remnic/core";
+import type { WeCloneImportTurn } from "./parser.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -85,9 +86,9 @@ export function groupIntoThreads(
   }
 
   // Pass 2: merge segments linked by reply chains.
-  // Build a map from participantId -> segment index for all turns.
-  // Then for turns with replyToId, if the referenced participantId is in
-  // a different segment, merge them via union-find.
+  // Build a map from messageId -> segment index for turns that carry a
+  // WeClone message_id.  Then for turns with replyToId, if the referenced
+  // messageId is in a different segment, merge them via union-find.
 
   // Union-find helpers
   const parent: number[] = segments.map((_, i) => i);
@@ -113,12 +114,16 @@ export function groupIntoThreads(
     }
   }
 
-  // Map participantId -> segment index
+  // Map messageId -> segment index.
+  // WeCloneImportTurn carries `messageId` from the source export.  When
+  // present we key by messageId so that `replyToId` lookups resolve correctly.
+  // Falls back to a stringified turn index within the segment as a last resort.
   const idToSegment = new Map<string, number>();
   for (let segIdx = 0; segIdx < segments.length; segIdx += 1) {
-    for (const turn of segments[segIdx]) {
-      if (turn.participantId) {
-        idToSegment.set(turn.participantId, segIdx);
+    for (let turnIdx = 0; turnIdx < segments[segIdx].length; turnIdx += 1) {
+      const turn = segments[segIdx][turnIdx] as WeCloneImportTurn;
+      if (turn.messageId) {
+        idToSegment.set(turn.messageId, segIdx);
       }
     }
   }

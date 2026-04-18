@@ -43,6 +43,12 @@ export function chunkThreads(
   const maxTurns = options?.maxTurnsPerChunk ?? DEFAULT_MAX_TURNS;
   const overlap = options?.overlapTurns ?? DEFAULT_OVERLAP;
 
+  if (maxTurns <= 0) {
+    throw new Error(
+      `maxTurnsPerChunk must be positive, received ${maxTurns}`,
+    );
+  }
+
   // Effective step: how many new turns each chunk advances by
   const step = Math.max(1, maxTurns - overlap);
 
