@@ -605,10 +605,12 @@ cp evals/benchmarks/longmemeval/runner.ts packages/bench/src/benchmarks/publishe
 cp evals/benchmarks/locomo/runner.ts packages/bench/src/benchmarks/published/locomo/runner.ts
 ```
 
-In each copied runner, update imports. Runners move from `evals/benchmarks/<name>/` (2 levels deep) to `packages/bench/src/benchmarks/published/<name>/` (3 levels deep under `src/`), so relative paths need an extra `../`:
+In each copied runner, update imports and migrate to the new `BenchmarkResult` schema. Runners move from `evals/benchmarks/<name>/` (2 levels deep) to `packages/bench/src/benchmarks/published/<name>/` (3 levels deep under `src/`), so relative paths need an extra `../`:
 - `../../adapter/types.js` → `../../../adapters/types.js`
 - `../../scorer.js` → `../../../scorer.js`
 - `../../reporter.js` → `../../../reporter.js`
+
+Additionally, update each runner's `run()` method to return the new `BenchmarkResult` shape (Task 1.1 schema) instead of the legacy shape. Replace `enrichResult()` calls with direct construction of the `BenchmarkResult` object using `buildResultMeta()` from `../../../runner.js` and the new `AggregateMetrics`/`TaskResult` interfaces.
 
 - [ ] **Step 2: Create the benchmark registry**
 
@@ -786,7 +788,8 @@ export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkRe
   const runConfig = resolveRunConfig(opts);
   const defaultResultsDir = path.join(os.homedir(), ".remnic", "bench", "results");
   const outputDir = opts.outputDir ?? defaultResultsDir;
-  const datasetBase = opts.datasetDir ?? path.join(process.cwd(), "evals", "datasets");
+  const pkgDatasets = path.resolve(import.meta.dirname, "..", "evals", "datasets");
+  const datasetBase = opts.datasetDir ?? pkgDatasets;
   const results: BenchmarkResult[] = [];
 
   const system = await createDefaultAdapter(opts.systemProvider);
@@ -794,32 +797,36 @@ export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkRe
     ? await createProvider(opts.judgeProvider)
     : undefined;
 
-  for (const name of opts.benchmarks) {
-    const runner = await getBenchmark(name);
-    console.log(`\nRunning: ${runner.meta.name} (${runner.meta.category})...`);
+  try {
+    for (const name of opts.benchmarks) {
+      const runner = await getBenchmark(name);
+      console.log(`\nRunning: ${runner.meta.name} (${runner.meta.category})...`);
 
-    for (const seed of runConfig.seeds) {
-      const result = await runner.run(
-        system,
-        {
-          limit: opts.limit,
-          datasetDir: path.join(datasetBase, name),
-          mode: runConfig.mode,
-          seed,
-          judge,
-        },
-      );
+      for (const seed of runConfig.seeds) {
+        const result = await runner.run(
+          system,
+          {
+            limit: opts.limit,
+            datasetDir: path.join(datasetBase, name),
+            mode: runConfig.mode,
+            seed,
+            judge,
+          },
+        );
 
-      const filePath = await writeResult(result, outputDir);
-      if (!opts.json) {
-        printSummary(result);
-        console.log(`Results saved: ${filePath}`);
+        const filePath = await writeResult(result, outputDir);
+        if (!opts.json) {
+          printSummary(result);
+          console.log(`Results saved: ${filePath}`);
+        }
+        results.push(result);
       }
-      results.push(result);
     }
-  }
 
-  return results;
+    return results;
+  } finally {
+    await system.cleanup?.();
+  }
 }
 ```
 
