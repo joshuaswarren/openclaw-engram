@@ -1189,6 +1189,18 @@ export class Orchestrator {
    */
   deferredReady: Promise<void> = Promise.resolve();
   private resolveDeferredReady: (() => void) | null = null;
+  private deferredInitAbort: AbortController | null = null;
+
+  /**
+   * Abort deferred initialization so background QMD sync/warmup stops
+   * promptly on shutdown. Safe to call multiple times or before init.
+   */
+  abortDeferredInit(): void {
+    if (this.deferredInitAbort) {
+      this.deferredInitAbort.abort();
+      this.deferredInitAbort = null;
+    }
+  }
 
   /** Set per-session workspace for the next recall() call (compaction reset). @internal */
   setRecallWorkspaceOverride(sessionKey: string, dir: string): void {
@@ -1885,7 +1897,8 @@ export class Orchestrator {
       // promise prematurely while leaving the first cycle's promise pending.
       const resolveDeferred = this.resolveDeferredReady;
       this.resolveDeferredReady = null;
-      this.deferredInitialize()
+      this.deferredInitAbort = new AbortController();
+      this.deferredInitialize(this.deferredInitAbort.signal)
         .catch((err) => {
           log.error(`deferred initialization failed (non-fatal): ${err}`);
         })
@@ -1914,9 +1927,9 @@ export class Orchestrator {
     }
   }
 
-  private async deferredInitialize(): Promise<void> {
-    // QMD probe + collection check (including NoopSearchBackend swap) already
-    // ran in initialize() before the init gate opened, so this.qmd is final.
+  private async deferredInitialize(signal: AbortSignal): Promise<void> {
+
+    if (signal.aborted) return;
 
     // Sync QMD index with current disk state so recall finds recently-written
     // facts. Without this, the index stays stale from the last extraction-
@@ -1938,6 +1951,8 @@ export class Orchestrator {
         log.warn(`QMD startup sync failed (non-fatal): ${err}`);
       }
     }
+
+    if (signal.aborted) return;
 
     // Warmup: run cheap searches to pre-load QMD embedding models and the
     // embedding-fallback JSON index so the first real recall is fast.
@@ -1971,6 +1986,7 @@ export class Orchestrator {
       );
     }
     await Promise.all(warmupPromises);
+    if (signal.aborted) return;
 
     // Pre-warm knowledge index, memory, and entity caches.
     // Awaited so callers of `deferredReady` can rely on warmups being complete
@@ -2019,6 +2035,8 @@ export class Orchestrator {
         log.error(`Local LLM validation failed (non-fatal): ${err}`);
       }
     }
+
+    if (signal.aborted) return;
 
     // Await cron auto-registration so callers that `await deferredReady` can
     // rely on cron jobs being registered when it resolves. Without this, the
@@ -2078,7 +2096,8 @@ export class Orchestrator {
     const defaultState =
       states.find((e) => e.namespace === this.config.defaultNamespace)?.state ?? "unknown";
     if (defaultState === "missing") {
-      log.warn("startupSearchSync: search collection missing; skipping sync");
+      this.qmd = new NoopSearchBackend();
+      log.warn("startupSearchSync: search collection missing; disabling search (fallback retrieval remains enabled)");
       return false;
     }
 
