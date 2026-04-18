@@ -19,6 +19,10 @@ import {
   longMemEvalDefinition,
   runLongMemEvalBenchmark,
 } from "./benchmarks/published/longmemeval/runner.js";
+import {
+  locomoDefinition,
+  runLoCoMoBenchmark,
+} from "./benchmarks/published/locomo/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -42,17 +46,8 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
     run: runLongMemEvalBenchmark,
   },
   {
-    id: "locomo",
-    title: "LoCoMo",
-    tier: "published",
-    status: "planned",
-    runnerAvailable: false,
-    meta: {
-      name: "locomo",
-      version: "1.0.0",
-      description: "Long conversation memory benchmark.",
-      category: "conversational",
-    },
+    ...locomoDefinition,
+    run: runLoCoMoBenchmark,
   },
 ];
 
