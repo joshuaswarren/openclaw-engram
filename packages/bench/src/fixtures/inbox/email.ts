@@ -422,7 +422,7 @@ export const emailFixture: FixtureGenerator = {
 
   generate(): FixtureOutput {
     return {
-      id: "inbox-email",
+      id: this.id,
       description: this.description,
       files: [
         {
