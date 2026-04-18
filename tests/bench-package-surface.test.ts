@@ -65,6 +65,15 @@ test("@remnic/bench index exports the phase-2 stats helpers", async () => {
   assert.match(source, /resolveBenchmarkRunCount/);
 });
 
+test("@remnic/bench index exports the custom benchmark loader and runner", async () => {
+  const source = await readFile("packages/bench/src/index.ts", "utf8");
+
+  assert.match(source, /CustomBenchmarkScoring/);
+  assert.match(source, /loadCustomBenchmarkFile/);
+  assert.match(source, /parseCustomBenchmark/);
+  assert.match(source, /runCustomBenchmarkFile/);
+});
+
 test("@remnic/bench index exports provider factory and discovery helpers", async () => {
   const source = await readFile("packages/bench/src/index.ts", "utf8");
 
