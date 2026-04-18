@@ -49,6 +49,12 @@ export function chunkThreads(
     );
   }
 
+  if (overlap < 0) {
+    throw new Error(
+      `overlapTurns must be non-negative, received ${overlap}`,
+    );
+  }
+
   // Effective step: how many new turns each chunk advances by
   const step = Math.max(1, maxTurns - overlap);
 

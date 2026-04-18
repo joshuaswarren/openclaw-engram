@@ -164,6 +164,28 @@ describe("groupIntoThreads", () => {
     assert.equal(threads[0].endTime, "2025-01-10T08:20:00.000Z");
   });
 
+  it("throws on negative gapThresholdMs", () => {
+    const turns: ImportTurn[] = [
+      makeTurn({ timestamp: "2025-01-10T08:00:00.000Z", content: "a" }),
+      makeTurn({ timestamp: "2025-01-10T08:05:00.000Z", content: "b" }),
+    ];
+    assert.throws(
+      () => groupIntoThreads(turns, { gapThresholdMs: -1000 }),
+      /gapThresholdMs must be positive, received -1000/,
+    );
+  });
+
+  it("throws on zero gapThresholdMs", () => {
+    const turns: ImportTurn[] = [
+      makeTurn({ timestamp: "2025-01-10T08:00:00.000Z", content: "a" }),
+      makeTurn({ timestamp: "2025-01-10T08:05:00.000Z", content: "b" }),
+    ];
+    assert.throws(
+      () => groupIntoThreads(turns, { gapThresholdMs: 0 }),
+      /gapThresholdMs must be positive, received 0/,
+    );
+  });
+
   it("does NOT merge threads when turns lack messageId", () => {
     // Without messageId, replyToId has nothing to match against
     const turns: ImportTurn[] = [

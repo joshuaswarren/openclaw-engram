@@ -55,6 +55,12 @@ export function groupIntoThreads(
   const gapMs = options?.gapThresholdMs ?? DEFAULT_GAP_THRESHOLD_MS;
   const minSize = options?.minThreadSize ?? DEFAULT_MIN_THREAD_SIZE;
 
+  if (options?.gapThresholdMs !== undefined && gapMs <= 0) {
+    throw new Error(
+      `gapThresholdMs must be positive, received ${gapMs}`,
+    );
+  }
+
   // Sort by timestamp (stable)
   const sorted = [...turns].sort((a, b) => {
     const tsA = parseIsoTimestamp(a.timestamp) ?? 0;

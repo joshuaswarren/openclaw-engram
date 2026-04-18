@@ -137,4 +137,20 @@ describe("chunkThreads", () => {
       /maxTurnsPerChunk must be positive, received -3/,
     );
   });
+
+  it("throws on negative overlapTurns", () => {
+    const threads = [makeThread(5)];
+    assert.throws(
+      () => chunkThreads(threads, { maxTurnsPerChunk: 5, overlapTurns: -1 }),
+      /overlapTurns must be non-negative, received -1/,
+    );
+  });
+
+  it("throws on large negative overlapTurns", () => {
+    const threads = [makeThread(10)];
+    assert.throws(
+      () => chunkThreads(threads, { maxTurnsPerChunk: 5, overlapTurns: -100 }),
+      /overlapTurns must be non-negative, received -100/,
+    );
+  });
 });
