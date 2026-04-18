@@ -119,6 +119,16 @@ export class SmartBuffer {
     this.loaded = true;
   }
 
+  /**
+   * Reset the buffer to an empty, usable state.
+   * Called when the persisted buffer file is corrupt and load() fails,
+   * so the buffer can still accept new turns for the rest of the session.
+   */
+  resetToEmpty(): void {
+    this.state = { turns: [], lastExtractionAt: null, extractionCount: 0 };
+    this.loaded = true;
+  }
+
   async save(): Promise<void> {
     await this.storage.saveBuffer(this.state);
   }

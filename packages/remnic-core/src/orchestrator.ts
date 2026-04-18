@@ -1783,6 +1783,7 @@ export class Orchestrator {
         log.error(
           `buffer.load() failed (init gate will still open): ${bufErr}`,
         );
+        this.buffer.resetToEmpty();
       }
       if (this.config.compactionResetEnabled) {
         try {
