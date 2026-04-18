@@ -11,10 +11,13 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "bin": {
+    "remnic-weclone-proxy": "dist/cli.js"
+  },
   "files": ["dist"],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts",
-    "test": "tsx --test 'src/**/*.test.ts'",
+    "build": "tsup src/index.ts src/cli.ts --format esm --dts",
+    "test": "tsx --test src/*.test.ts",
     "prepublishOnly": "npm run build"
   },
   "publishConfig": {

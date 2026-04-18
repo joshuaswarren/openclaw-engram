@@ -513,6 +513,113 @@ describe("WeCloneProxy", () => {
     );
   });
 
+  it("streams SSE responses for stream: true requests", async () => {
+    // WeClone mock returns SSE chunks
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+        });
+        res.write(
+          'data: {"choices":[{"delta":{"role":"assistant"},"index":0}]}\n\n'
+        );
+        res.write(
+          'data: {"choices":[{"delta":{"content":"Hello"},"index":0}]}\n\n'
+        );
+        res.write(
+          'data: {"choices":[{"delta":{"content":" world"},"index":0}]}\n\n'
+        );
+        res.write("data: [DONE]\n\n");
+        res.end();
+      });
+    });
+    cleanups.push(weclone.close);
+
+    let observeReceived = false;
+    let observeContent = "";
+    let requestCount = 0;
+    const remnic = await createMockServer((req, res) => {
+      requestCount++;
+      if (requestCount === 1) {
+        // recall
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ results: [] }));
+      } else {
+        // observe
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          observeReceived = true;
+          const body = JSON.parse(Buffer.concat(chunks).toString()) as {
+            messages?: Array<{ role: string; content: string }>;
+          };
+          const assistantMsg = body.messages?.find(
+            (m: { role: string }) => m.role === "assistant"
+          );
+          observeContent = assistantMsg?.content ?? "";
+          res.writeHead(200);
+          res.end(JSON.stringify({ ok: true }));
+        });
+      }
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          stream: true,
+          messages: [
+            { role: "system", content: "You are helpful." },
+            { role: "user", content: "Say hello" },
+          ],
+        }),
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.equal(
+      res.headers.get("content-type"),
+      "text/event-stream",
+      "Response should have SSE content type"
+    );
+
+    // Read the full streamed response
+    const streamedBody = await res.text();
+    assert.ok(
+      streamedBody.includes("data: [DONE]"),
+      "Streamed response should include [DONE] marker"
+    );
+    assert.ok(
+      streamedBody.includes('"content":"Hello"'),
+      "Streamed response should include content chunks"
+    );
+
+    // Wait for fire-and-forget observe
+    await new Promise((r) => setTimeout(r, 200));
+
+    assert.ok(
+      observeReceived,
+      "Observe should be called with reconstructed content"
+    );
+    assert.equal(
+      observeContent,
+      "Hello world",
+      "Observed content should be the concatenated stream deltas"
+    );
+  });
+
   it("does not expose error details in 502 responses", async () => {
     // WeClone is unreachable (no mock server started on this port)
     const fakeWeclonePort = 59999;

@@ -333,6 +333,64 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
           body: JSON.stringify(modifiedBody),
         });
 
+        // --- Streaming path ---
+        if (parsed.stream === true) {
+          res.writeHead(upstream.status, {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+          });
+
+          const reader = upstream.body?.getReader();
+          if (!reader) {
+            res.end();
+            return;
+          }
+
+          const chunks: Uint8Array[] = [];
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              chunks.push(value);
+              res.write(value);
+            }
+          } finally {
+            res.end();
+          }
+
+          // Best-effort: reconstruct assistant content for observation
+          try {
+            const fullText = Buffer.concat(chunks).toString("utf-8");
+            const contentParts: string[] = [];
+            for (const line of fullText.split("\n")) {
+              if (!line.startsWith("data: ") || line === "data: [DONE]") continue;
+              try {
+                const event = JSON.parse(line.slice(6)) as {
+                  choices?: Array<{ delta?: { content?: string } }>;
+                };
+                const delta = event.choices?.[0]?.delta?.content;
+                if (delta) contentParts.push(delta);
+              } catch {
+                // Malformed SSE chunk -- skip
+              }
+            }
+            if (contentParts.length > 0 && query.length > 0) {
+              observeTurn(
+                config.remnicDaemonUrl,
+                sessionKey,
+                query,
+                contentParts.join(""),
+                config.remnicAuthToken
+              );
+            }
+          } catch {
+            // Observation reconstruction failed -- non-critical
+          }
+          return;
+        }
+
+        // --- Non-streaming path ---
         const responseBuffer = await upstream.arrayBuffer();
         const responseBytes = Buffer.from(responseBuffer);
 
