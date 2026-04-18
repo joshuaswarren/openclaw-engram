@@ -235,13 +235,13 @@ async function loadDataset(
     const datasetErrors: string[] = [];
 
     for (const filename of DATASET_BUNDLE_CANDIDATES) {
-      try {
-        const parsed = await readDatasetFile(path.join(datasetDir, filename), filename);
+      const parsed = await tryReadDatasetFile(
+        path.join(datasetDir, filename),
+        filename,
+        datasetErrors,
+      );
+      if (parsed) {
         return ensureDatasetItems(applyLimit(parsed, normalizedLimit));
-      } catch (error) {
-        datasetErrors.push(
-          `${filename}: ${error instanceof Error ? error.message : String(error)}`,
-        );
       }
     }
 
@@ -429,9 +429,28 @@ function parseMetadata(
   };
 }
 
+async function tryReadDatasetFile(
+  filePath: string,
+  filename: string,
+  datasetErrors: string[],
+): Promise<MemoryAgentBenchItem[] | undefined> {
+  try {
+    return await readDatasetFile(filePath, filename);
+  } catch (error) {
+    datasetErrors.push(
+      `${filename}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
+}
+
 function inferCompetency(source: string): MemoryAgentBenchCompetency {
   const normalizedSource = source.toLowerCase();
-  if (normalizedSource.startsWith("eventqa") || normalizedSource.startsWith("longmemeval")) {
+  if (
+    normalizedSource.startsWith("eventqa") ||
+    normalizedSource.startsWith("longmemeval") ||
+    normalizedSource.startsWith("ruler_")
+  ) {
     return "accurate_retrieval";
   }
   if (normalizedSource.startsWith("icl_") || normalizedSource.startsWith("recsys_")) {

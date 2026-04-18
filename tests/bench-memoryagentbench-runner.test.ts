@@ -164,6 +164,42 @@ test("runBenchmark executes memoryagentbench in full mode from split dataset fil
   assert.equal(result.results.tasks[1]?.details.competency, "conflict_resolution");
 });
 
+test("runBenchmark maps current MemoryAgentBench source aliases like ruler_qa1_197K to accurate_retrieval", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-ruler-alias-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "Accurate_Retrieval.json"),
+    JSON.stringify([
+      {
+        context: "Reference notes:\\nNina stored the archive key inside the cedar box.",
+        questions: ["Where did Nina store the archive key?"],
+        answers: [["the cedar box", "cedar box"]],
+        metadata: {
+          source: "ruler_qa1_197K",
+          qa_pair_ids: ["mab-ruler-q1"],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("memoryagentbench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.expected, "the cedar box");
+  assert.equal(result.results.tasks[0]?.details.competency, "accurate_retrieval");
+  assert.equal(result.results.tasks[0]?.details.source, "ruler_qa1_197K");
+});
+
 test("runBenchmark uses the best-matching MemoryAgentBench answer variant for judge scoring", async () => {
   const tmpDir = await mkdtemp(
     path.join(os.tmpdir(), "remnic-bench-memoryagentbench-judge-"),
@@ -299,6 +335,46 @@ test("runBenchmark rejects empty memoryagentbench datasets after applying limit"
       }),
     /MemoryAgentBench dataset is empty after applying the requested limit/,
   );
+});
+
+test("runBenchmark preserves the empty-after-limit error for MemoryAgentBench bundle files", async () => {
+  const tmpDir = await mkdtemp(
+    path.join(os.tmpdir(), "remnic-bench-memoryagentbench-empty-bundle-"),
+  );
+  const datasetDir = path.join(tmpDir, "datasets", "memoryagentbench");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "memoryagentbench.json"),
+    JSON.stringify([
+      {
+        context: "Bundle sample.",
+        questions: ["What happened?"],
+        answers: [["A bundle sample was recorded."]],
+        metadata: {
+          source: "eventqa_bundle_limit",
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  await assert.rejects(async () => {
+    await runBenchmark("memoryagentbench", {
+      mode: "full",
+      datasetDir,
+      limit: 0,
+      system: adapter,
+    });
+  }, (error: unknown) => {
+    assert.ok(error instanceof Error);
+    assert.match(
+      error.message,
+      /MemoryAgentBench dataset is empty after applying the requested limit/,
+    );
+    assert.doesNotMatch(error.message, /MemoryAgentBench dataset not found under/);
+    return true;
+  });
 });
 
 test("runBenchmark rejects unsupported memoryagentbench metadata sources with a benchmark-specific error", async () => {
