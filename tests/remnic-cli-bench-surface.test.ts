@@ -252,6 +252,7 @@ test("bench providers discover rejects unexpected trailing positional args", asy
       benchModuleEntry,
       `
 export function compareResults() {}
+export function checkRegression() { return null; }
 export function defaultBenchmarkBaselineDir() { return ""; }
 export async function discoverAllProviders() { return []; }
 export async function listBenchmarkBaselines() { return []; }
