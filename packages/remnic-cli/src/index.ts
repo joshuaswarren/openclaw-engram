@@ -20,6 +20,7 @@
  *   token revoke      Revoke auth token for a connector
  *   bench list        List published benchmark packs
  *   bench run         Run published benchmark packs
+ *   bench ui          Launch the local benchmark overview UI
  *   tree              Generate context tree
  *   onboard [dir]     Onboard project directory
  *   curate <path>     Curate files into memory
@@ -289,8 +290,8 @@ type PackageBenchModule = {
 };
 
 export function getBenchUsageText(): string {
-  return `Usage: remnic bench <list|run|compare|results|baseline|export> [options] [benchmark...]
-       remnic benchmark <list|run|compare|results|baseline|export|check|report> [options] [benchmark...]
+  return `Usage: remnic bench <list|run|compare|results|baseline|export|ui> [options] [benchmark...]
+       remnic benchmark <list|run|compare|results|baseline|export|ui|check|report> [options] [benchmark...]
 
 Commands:
   list                     List published benchmark packs
@@ -302,6 +303,7 @@ Commands:
   baseline list            List saved baselines
   export <run> --format <json|csv>
                            Export one stored run as JSON or aggregate-metrics CSV
+  ui                       Launch the local benchmark overview UI
   check                    Legacy latency regression gate (compatibility)
   report                   Legacy latency report generator (compatibility)
 
@@ -329,6 +331,7 @@ Examples:
   remnic bench baseline list
   remnic bench export candidate-run --format csv --output ./candidate.csv
   remnic bench run --custom ./my-bench.yaml
+  remnic bench ui --results-dir ~/.remnic/bench/results
   remnic benchmark run --quick longmemeval`;
 }
 
@@ -441,6 +444,41 @@ async function runBenchViaFallback(
 
 function resolveBenchOutputDir(): string {
   return path.join(resolveHomeDir(), ".remnic", "bench", "results");
+}
+
+async function launchBenchUi(resultsDir: string): Promise<void> {
+  const benchUiDir = path.join(CLI_REPO_ROOT, "packages", "bench-ui");
+  const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+
+  if (!fs.existsSync(path.join(benchUiDir, "package.json"))) {
+    console.error("ERROR: @remnic/bench-ui is not available in this checkout.");
+    process.exit(1);
+  }
+
+  console.log(`Launching bench UI with results from ${resultsDir}`);
+  console.log("Press Ctrl+C to stop the local server.");
+
+  const child = childProcess.spawn(pnpmCmd, ["exec", "vite", "--host", "127.0.0.1"], {
+    cwd: benchUiDir,
+    stdio: "inherit",
+    shell: process.platform === "win32",
+    env: {
+      ...process.env,
+      REMNIC_BENCH_RESULTS_DIR: resultsDir,
+    },
+  });
+
+  await new Promise<void>((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code, signal) => {
+      if (code === 0 || signal === "SIGINT" || signal === "SIGTERM") {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`bench UI exited with code ${code ?? "unknown"}`));
+    });
+  });
 }
 
 function resolveBenchBaselineDir(): string {
@@ -2693,6 +2731,11 @@ async function cmdBench(rest: string[]): Promise<void> {
 
   if (parsed.action === "export") {
     await exportBenchPackageResult(parsed);
+    return;
+  }
+
+  if (parsed.action === "ui") {
+    await launchBenchUi(parsed.resultsDir ?? resolveBenchOutputDir());
     return;
   }
 
