@@ -925,6 +925,7 @@ async function cmdEnrich(rest: string[]): Promise<void> {
     // Wire the real search backend so isAvailable() reflects actual state
     const orchestrator = new Orchestrator(config);
     await orchestrator.initialize();
+    await orchestrator.deferredReady;
     const searchBackend = orchestrator.qmd;
     const searchFn = searchBackend.isAvailable()
       ? async (query: string): Promise<string[]> => {
@@ -968,6 +969,7 @@ async function cmdEnrich(rest: string[]): Promise<void> {
 
   const orchestrator = new Orchestrator(config);
   await orchestrator.initialize();
+  await orchestrator.deferredReady;
   const storage = await orchestrator.getStorage(config.defaultNamespace);
 
   // Gather entities to enrich

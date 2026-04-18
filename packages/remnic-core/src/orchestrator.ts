@@ -1172,6 +1172,16 @@ export class Orchestrator {
   private initPromise: Promise<void> | null = null;
   private resolveInit: (() => void) | null = null;
 
+  /**
+   * Resolves when deferred initialization (QMD probe, warmup, caches, cron)
+   * completes. CLI and http-serve callers that need `qmd.isAvailable()` to
+   * reflect reality should `await orchestrator.deferredReady` after
+   * `initialize()`. Gateway callers can ignore it — recall() degrades
+   * gracefully when QMD isn't ready yet.
+   */
+  deferredReady: Promise<void> = Promise.resolve();
+  private resolveDeferredReady: (() => void) | null = null;
+
   /** Set per-session workspace for the next recall() call (compaction reset). @internal */
   setRecallWorkspaceOverride(sessionKey: string, dir: string): void {
     this._recallWorkspaceOverrides.set(sessionKey, dir);
@@ -1444,6 +1454,11 @@ export class Orchestrator {
     // Create init gate — recall() will await this before proceeding
     this.initPromise = new Promise<void>((resolve) => {
       this.resolveInit = resolve;
+    });
+
+    // Create deferred-ready gate — CLI callers await this for full QMD readiness
+    this.deferredReady = new Promise<void>((resolve) => {
+      this.resolveDeferredReady = resolve;
     });
   }
 
@@ -1778,9 +1793,16 @@ export class Orchestrator {
     // Runs in background so gateway_start returns fast. On low-power hardware
     // (Umbrel, RPi) the QMD operations alone can take 30-60s and cause gateway
     // restart loops when they block the startup path. See issue #462.
-    this.deferredInitialize().catch((err) => {
-      log.error(`deferred initialization failed (non-fatal): ${err}`);
-    });
+    this.deferredInitialize()
+      .catch((err) => {
+        log.error(`deferred initialization failed (non-fatal): ${err}`);
+      })
+      .finally(() => {
+        if (this.resolveDeferredReady) {
+          this.resolveDeferredReady();
+          this.resolveDeferredReady = null;
+        }
+      });
   }
 
   private async deferredInitialize(): Promise<void> {
