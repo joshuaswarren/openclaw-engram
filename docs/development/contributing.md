@@ -70,6 +70,8 @@ Use workspace protocol in `package.json`:
 
 Turborepo ensures correct build order via `turbo.json` task dependencies.
 
+> **Important:** This repo requires [pnpm](https://pnpm.io/) (`npm install -g pnpm`). `npm ci` / `npm install` cannot resolve `workspace:` specifiers. At publish time, `pnpm publish` rewrites `workspace:^` to real version numbers automatically.
+
 ## Code Standards
 
 - **TypeScript strict mode** — all packages

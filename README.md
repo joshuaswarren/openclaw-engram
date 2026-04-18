@@ -92,8 +92,10 @@ Your agent will run the install command, update `openclaw.json`, and restart the
 git clone https://github.com/joshuaswarren/remnic.git \
   ~/.openclaw/extensions/remnic
 cd ~/.openclaw/extensions/remnic
-npm ci && npm run build
+pnpm install && pnpm run build
 ```
+
+> **Note:** This repo uses [pnpm](https://pnpm.io/) workspaces. `npm ci` / `npm install` will fail on `workspace:` specifiers. Install pnpm first: `npm install -g pnpm`.
 
 ### Option 4: Standalone (no OpenClaw)
 
