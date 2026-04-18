@@ -3463,6 +3463,13 @@ const pluginDefinition = {
         // service teardown (HTTP server, watchers, globals).
         let secondaryTookOver = false;
 
+        // --- Takeover detection (both paths) ---
+        // Both the full-stop and stop-during-init paths must complete their
+        // takeover checks BEFORE any shared resource teardown. Otherwise the
+        // stop-during-init path (which awaits currentInitPromise) would let
+        // the shared teardown block run while secondaryTookOver is still false,
+        // tearing down resources that belong to a live secondary.
+
         // Check if a secondary started during the deferredReady await.
         // When stop() was called with no in-flight init (full stop),
         // INIT_PROMISE was null. If it's now non-null, a secondary entered
@@ -3473,35 +3480,6 @@ const pluginDefinition = {
         // start() in the full-stop case.
         if (!currentInitPromise && (globalThis as any)[keys.INIT_PROMISE]) {
           secondaryTookOver = true;
-        }
-
-        // Shared service teardown: Opik, HTTP server, watchers, globals.
-        // Guarded by secondaryTookOver — if a secondary became live during the
-        // deferredReady await, we must not tear down its resources.
-        if (!secondaryTookOver) {
-          // Opik cleanup: placed after the guard so secondary stop()s never detach
-          // the process-wide exporter while Engram is still running.
-          // Wrapped in try-catch so a throwing unsubscribe does not leave
-          // SERVICE_STARTED=true and prevent restart.
-          try {
-            activeOpikExporter?.unsubscribe();
-          } catch (err) {
-            log.debug(`engram opik exporter unsubscribe failed: ${err}`);
-          }
-          activeOpikExporter = null;
-          try {
-            await accessHttpServer.stop();
-          } catch (err) {
-            log.debug(`engram access HTTP stop failed: ${err}`);
-          }
-          stopDreamWatcher?.();
-          stopDreamWatcher = null;
-          stopHeartbeatWatcher?.();
-          stopHeartbeatWatcher = null;
-          removeDreamingObserver?.();
-          removeDreamingObserver = null;
-          delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
-          delete (globalThis as any)[keys.ACCESS_SERVICE];
         }
 
         // REGISTERED_GUARD policy:
@@ -3552,6 +3530,38 @@ const pluginDefinition = {
             secondaryTookOver = true;
           }
         }
+
+        // --- Shared service teardown ---
+        // Runs AFTER both takeover detection paths so secondaryTookOver is
+        // accurate regardless of whether stop() entered the full-stop or
+        // stop-during-init branch. If a secondary became live during any
+        // await window, we skip teardown to avoid destroying its resources.
+        if (!secondaryTookOver) {
+          // Opik cleanup: placed after the guard so secondary stop()s never detach
+          // the process-wide exporter while Engram is still running.
+          // Wrapped in try-catch so a throwing unsubscribe does not leave
+          // SERVICE_STARTED=true and prevent restart.
+          try {
+            activeOpikExporter?.unsubscribe();
+          } catch (err) {
+            log.debug(`engram opik exporter unsubscribe failed: ${err}`);
+          }
+          activeOpikExporter = null;
+          try {
+            await accessHttpServer.stop();
+          } catch (err) {
+            log.debug(`engram access HTTP stop failed: ${err}`);
+          }
+          stopDreamWatcher?.();
+          stopDreamWatcher = null;
+          stopHeartbeatWatcher?.();
+          stopHeartbeatWatcher = null;
+          removeDreamingObserver?.();
+          removeDreamingObserver = null;
+          delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
+          delete (globalThis as any)[keys.ACCESS_SERVICE];
+        }
+
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
         // Skip when a secondary is live — its api objects already have hooks bound
         // and resetting the WeakSet here would cause duplicate hook registration
