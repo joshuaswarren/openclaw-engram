@@ -2133,7 +2133,7 @@ export class Orchestrator {
           log.warn("startupSearchSync: update silently failed (detected via fail timestamp)");
           return false;
         }
-        if (!this.config.namespacesEnabled && runTsAfter === runTsBefore) {
+        if (!this.config.namespacesEnabled && runTsBefore !== null && runTsAfter === runTsBefore) {
           log.warn("startupSearchSync: update was throttled/skipped (no run timestamp change)");
           return false;
         }
