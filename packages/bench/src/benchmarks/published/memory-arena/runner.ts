@@ -206,6 +206,9 @@ async function loadDataset(
     const domains: DomainData[] = [];
     let remainingLimit = normalizedLimit;
     for (const filename of domainFiles) {
+      if (remainingLimit === 0) {
+        break;
+      }
       const raw = await readFile(path.join(datasetDir, filename), "utf8");
       const parsedTasks: ArenaTask[] = [];
       raw.split("\n").forEach((line, lineIndex) => {

@@ -187,6 +187,38 @@ test("runBenchmark applies the memory-arena limit across the full benchmark, not
   assert.equal(result.results.tasks[0]?.taskId, "bundled_shopping-t1-q0");
 });
 
+test("runBenchmark stops reading later memory-arena domain files once the global limit is exhausted", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-stop-after-limit-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "bundled_shopping.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      category: "bundled_shopping",
+      questions: ["Which snack did we agree to buy?"],
+      answers: ["trail mix"],
+    })}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    "{not json}\n",
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.taskId, "bundled_shopping-t1-q0");
+});
+
 test("runBenchmark rejects memory-arena full mode without datasetDir", async () => {
   const adapter = new FakeMemoryAdapter();
 
