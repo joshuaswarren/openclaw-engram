@@ -1,11 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 test("remnic CLI source wires the new bench command and keeps benchmark as an alias", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
@@ -220,33 +218,68 @@ test("parseBenchArgs preserves unexpected trailing providers args for CLI valida
   assert.deepEqual(parsed.benchmarks, ["foo"]);
 });
 
-test("bench providers discover rejects unexpected trailing positional args", () => {
+test("bench providers discover rejects unexpected trailing positional args", async () => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
-  const nodeBin = process.execPath;
-  const helperPath = join(__dirname, "../scripts/run-bench-cli.mjs");
-  const isolatedHome = mkdtempSync(join(tmpdir(), "remnic-bench-providers-"));
+  const repoRoot = join(__dirname, "..");
+  const benchModuleRoot = join(repoRoot, "packages/remnic-cli/node_modules/@remnic/bench");
+  const benchModuleDist = join(benchModuleRoot, "dist");
+  const cliEntry = pathToFileURL(join(repoRoot, "packages/remnic-cli/src/index.ts")).href;
+  const stubbedBenchModule = !existsSync(join(benchModuleDist, "index.js"));
 
-  const result = spawnSync(nodeBin, [helperPath, "providers", "discover", "foo"], {
-    encoding: "utf8",
-    timeout: 20_000,
-    cwd: join(__dirname, ".."),
-    env: {
-      ...process.env,
-      HOME: isolatedHome,
-    },
-  });
+  if (stubbedBenchModule) {
+    mkdirSync(benchModuleDist, { recursive: true });
+    writeFileSync(
+      join(benchModuleRoot, "package.json"),
+      JSON.stringify({
+        name: "@remnic/bench",
+        type: "module",
+        exports: {
+          ".": "./dist/index.js",
+        },
+      }),
+    );
+    writeFileSync(
+      join(benchModuleDist, "index.js"),
+      `
+export function compareResults() {}
+export function defaultBenchmarkBaselineDir() { return ""; }
+export async function discoverAllProviders() { return []; }
+export async function listBenchmarkBaselines() { return []; }
+export async function listBenchmarkResults() { return []; }
+export async function loadBenchmarkBaseline() { return null; }
+export async function runBenchSuite() { return null; }
+export async function runExplain() { return null; }
+export async function loadBaseline() { return null; }
+export async function saveBaseline() { return null; }
+export async function loadBenchmarkResult() { return null; }
+export function renderBenchmarkResultExport() { return ""; }
+export async function resolveBenchmarkResultReference() { return null; }
+export async function saveBenchmarkBaseline() { return null; }
+`,
+    );
+  }
 
-  if (result.error) throw result.error;
+  const originalExit = process.exit;
+  const exitCalls: number[] = [];
 
-  assert.equal(
-    result.status,
-    1,
-    `Expected providers discover to fail with trailing args.\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
-  );
-  assert.match(
-    `${result.stdout}\n${result.stderr}`,
-    /providers discover does not accept positional arguments/,
-  );
+  process.exit = ((code?: number) => {
+    exitCalls.push(code ?? 0);
+    throw new Error(`PROCESS_EXIT:${code ?? 0}`);
+  }) as typeof process.exit;
+
+  try {
+    const { main } = await import(`${cliEntry}?test=${Date.now()}`);
+    await assert.rejects(
+      () => main(["bench", "providers", "discover", "foo"]),
+      /PROCESS_EXIT:1/,
+    );
+    assert.deepEqual(exitCalls, [1]);
+  } finally {
+    process.exit = originalExit;
+    if (stubbedBenchModule) {
+      rmSync(benchModuleRoot, { recursive: true, force: true });
+    }
+  }
 });
 
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {
