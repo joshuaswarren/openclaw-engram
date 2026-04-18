@@ -3,7 +3,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import {
   MEMBENCH_SMOKE_FIXTURE,
@@ -30,6 +30,17 @@ const DATASET_FILENAMES = [
   "membench.jsonl",
   "data.json",
 ] as const;
+
+const UPSTREAM_DATASET_FILENAME_PATTERNS = [
+  /^(?:First|Third)Agent(?:Data)?(?:High|Low)Level\.jsonl?$/i,
+  /^(?:First|Third)Agent(?:High|Low)Level\.jsonl?$/i,
+] as const;
+
+interface MemBenchHints {
+  memoryType?: MemBenchCase["memoryType"];
+  scenario?: MemBenchCase["scenario"];
+  level?: string;
+}
 
 export const memBenchDefinition: BenchmarkDefinition = {
   id: "membench",
@@ -157,14 +168,29 @@ async function loadDataset(
   };
 
   if (datasetDir) {
+    const { filenames, scanError } = await discoverDatasetFiles(datasetDir);
+    if (filenames.length === 0) {
+      throw new Error(buildDatasetNotFoundError(datasetDir, scanError, []));
+    }
+
     const datasetErrors: string[] = [];
-    for (const filename of DATASET_FILENAMES) {
+    const cases: MemBenchCase[] = [];
+    let remainingLimit = normalizedLimit;
+    for (const filename of filenames) {
+      if (remainingLimit === 0) {
+        break;
+      }
+
       try {
         const raw = await readFile(path.join(datasetDir, filename), "utf8");
         const parsed = filename.endsWith(".jsonl")
           ? parseJsonlDataset(raw, filename)
           : parseJsonDataset(raw, filename);
-        return ensureDatasetCases(applyLimit(parsed, normalizedLimit));
+        const limitedCases = applyLimit(parsed, remainingLimit);
+        cases.push(...limitedCases);
+        if (remainingLimit !== undefined) {
+          remainingLimit = Math.max(remainingLimit - limitedCases.length, 0);
+        }
       } catch (error) {
         datasetErrors.push(
           `${filename}: ${error instanceof Error ? error.message : String(error)}`,
@@ -172,9 +198,11 @@ async function loadDataset(
       }
     }
 
-    throw new Error(
-      `MemBench dataset not found under ${datasetDir}. Tried ${DATASET_FILENAMES.join(", ")}. Errors: ${datasetErrors.join(" | ")}`,
-    );
+    if (cases.length > 0) {
+      return ensureDatasetCases(cases);
+    }
+
+    throw new Error(buildDatasetNotFoundError(datasetDir, undefined, datasetErrors));
   }
 
   if (mode === "full") {
@@ -197,9 +225,19 @@ function parseJsonDataset(raw: string, filename: string): MemBenchCase[] {
   }
 
   if (!Array.isArray(parsed)) {
+    const normalizedCases = normalizePublishedDataset(parsed, filename);
+    if (normalizedCases.length > 0) {
+      return normalizedCases;
+    }
+
     throw new Error(
-      `MemBench dataset file ${filename} must contain an array of cases.`,
+      `MemBench dataset file ${filename} must contain an array of cases or a nested published dataset structure.`,
     );
+  }
+
+  const normalizedCases = normalizePublishedDataset(parsed, filename);
+  if (normalizedCases.length > 0) {
+    return normalizedCases;
   }
 
   return parsed.map((entry, index) => parseCase(entry, `${filename}[${index}]`));
@@ -282,6 +320,337 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     question,
     answer,
   };
+}
+
+async function discoverDatasetFiles(
+  datasetDir: string,
+): Promise<{ filenames: string[]; scanError?: string }> {
+  let directoryEntries: string[];
+  try {
+    directoryEntries = await readdir(datasetDir);
+  } catch (error) {
+    return {
+      filenames: [],
+      scanError: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  const filenames = directoryEntries
+    .filter((filename) => isRecognizedDatasetFilename(filename))
+    .sort((left, right) => left.localeCompare(right));
+
+  return { filenames };
+}
+
+function isRecognizedDatasetFilename(filename: string): boolean {
+  if (DATASET_FILENAMES.includes(filename as (typeof DATASET_FILENAMES)[number])) {
+    return true;
+  }
+
+  return UPSTREAM_DATASET_FILENAME_PATTERNS.some((pattern) => pattern.test(filename));
+}
+
+function buildDatasetNotFoundError(
+  datasetDir: string,
+  scanError: string | undefined,
+  datasetErrors: string[],
+): string {
+  const tried = [
+    ...DATASET_FILENAMES,
+    "FirstAgentDataLowLevel.json",
+    "FirstAgentDataHighLevel.json",
+    "ThirdAgentDataLowLevel.json",
+    "ThirdAgentDataHighLevel.json",
+  ].join(", ");
+  const details = [scanError, ...datasetErrors].filter(Boolean).join(" | ");
+  return details.length > 0
+    ? `MemBench dataset not found under ${datasetDir}. Tried ${tried}. Errors: ${details}`
+    : `MemBench dataset not found under ${datasetDir}. Tried ${tried}.`;
+}
+
+function normalizePublishedDataset(
+  parsed: unknown,
+  filename: string,
+): MemBenchCase[] {
+  const hints = inferHintsFromLabel(filename, {});
+  return normalizePublishedNode(parsed, hints, filename);
+}
+
+function normalizePublishedNode(
+  node: unknown,
+  hints: MemBenchHints,
+  location: string,
+): MemBenchCase[] {
+  if (Array.isArray(node)) {
+    return node.flatMap((entry, index) =>
+      normalizePublishedNode(entry, hints, `${location}[${index}]`),
+    );
+  }
+
+  if (!isPlainObject(node)) {
+    return [];
+  }
+
+  const flatCase = normalizeFlatCase(node, hints, location);
+  if (flatCase) {
+    return [flatCase];
+  }
+
+  const leafCases = normalizeTrajectoryQaRecord(node, hints, location);
+  if (leafCases.length > 0) {
+    return leafCases;
+  }
+
+  return Object.entries(node).flatMap(([key, value]) =>
+    normalizePublishedNode(
+      value,
+      inferHintsFromLabel(key, hints),
+      `${location}.${key}`,
+    ),
+  );
+}
+
+function normalizeFlatCase(
+  record: Record<string, unknown>,
+  hints: MemBenchHints,
+  location: string,
+): MemBenchCase | null {
+  if (!("turns" in record) || !("question" in record) || !("answer" in record)) {
+    return null;
+  }
+
+  return parseCase(
+    {
+      id: resolveCaseId(record, location, 0),
+      memoryType: resolveMemoryType(record.memoryType, hints),
+      scenario: resolveScenario(record.scenario, hints),
+      level: resolveLevel(record.level, hints),
+      turns: record.turns,
+      question: record.question,
+      answer: record.answer,
+    },
+    location,
+  );
+}
+
+function normalizeTrajectoryQaRecord(
+  record: Record<string, unknown>,
+  hints: MemBenchHints,
+  location: string,
+): MemBenchCase[] {
+  const trajectory = record.trajectory;
+  const qa = record.qa ?? record.qas ?? record.qa_pairs ?? record.question_answers;
+
+  if (!Array.isArray(trajectory) || !Array.isArray(qa) || qa.length === 0) {
+    return [];
+  }
+
+  const turns = normalizeTrajectoryTurns(trajectory, `${location}.trajectory`);
+  if (!turns) {
+    return [];
+  }
+
+  const qaPairs = normalizeQaPairs(qa, `${location}.qa`);
+  if (qaPairs.length === 0) {
+    return [];
+  }
+
+  return qaPairs.map((pair, index) =>
+    parseCase(
+      {
+        id: pair.id ?? resolveCaseId(record, location, index),
+        memoryType: resolveMemoryType(record.memoryType, hints),
+        scenario: resolveScenario(record.scenario, hints),
+        level: resolveLevel(record.level, hints),
+        turns,
+        question: pair.question,
+        answer: pair.answer,
+      },
+      `${location}.qa[${index}]`,
+    ),
+  );
+}
+
+function normalizeTrajectoryTurns(
+  trajectory: unknown[],
+  location: string,
+): Message[] | null {
+  if (trajectory.length === 0) {
+    return null;
+  }
+
+  const speakerRoles = new Map<string, Message["role"]>();
+  let distinctSpeakers = 0;
+  const turns: Message[] = [];
+
+  for (let index = 0; index < trajectory.length; index += 1) {
+    const turn = trajectory[index];
+    if (!isPlainObject(turn)) {
+      return null;
+    }
+
+    const directMessage = parseDirectMessageTurn(turn);
+    if (directMessage) {
+      turns.push(directMessage);
+      continue;
+    }
+
+    const speaker = typeof turn.speaker === "string" ? turn.speaker : undefined;
+    const text = typeof turn.text === "string"
+      ? turn.text
+      : typeof turn.content === "string"
+        ? turn.content
+        : undefined;
+    if (!speaker || !text) {
+      return null;
+    }
+
+    let role = speakerRoles.get(speaker);
+    if (!role) {
+      role = distinctSpeakers === 0 ? "user" : "assistant";
+      speakerRoles.set(speaker, role);
+      distinctSpeakers += 1;
+    }
+
+    turns.push({ role, content: text });
+  }
+
+  return turns.length > 0 ? turns : null;
+}
+
+function parseDirectMessageTurn(turn: Record<string, unknown>): Message | null {
+  const { role, content } = turn;
+  if ((role === "user" || role === "assistant") && typeof content === "string") {
+    return { role, content };
+  }
+  return null;
+}
+
+function normalizeQaPairs(
+  qa: unknown[],
+  location: string,
+): Array<{ id?: string; question: string; answer: string }> {
+  const pairs: Array<{ id?: string; question: string; answer: string }> = [];
+
+  for (let index = 0; index < qa.length; index += 1) {
+    const item = qa[index];
+    if (!isPlainObject(item)) {
+      continue;
+    }
+
+    const question = firstString(item.question, item.query, item.prompt);
+    const answer = firstString(item.answer, item.expected, item.gold, item.reference);
+    if (!question || !answer) {
+      continue;
+    }
+
+    const id = firstString(item.id, item.qid, item.question_id);
+    pairs.push({ id: id ?? undefined, question, answer });
+  }
+
+  return pairs;
+}
+
+function resolveCaseId(
+  record: Record<string, unknown>,
+  location: string,
+  index: number,
+): string {
+  return firstString(record.id, record.case_id, record.sample_id)
+    ?? `${sanitizeCaseId(location)}-${index}`;
+}
+
+function resolveMemoryType(
+  value: unknown,
+  hints: MemBenchHints,
+): MemBenchCase["memoryType"] {
+  const normalized = normalizeLabel(value);
+  if (normalized.includes("reflective") || normalized.includes("highlevel")) {
+    return "reflective";
+  }
+  if (normalized.includes("factual") || normalized.includes("lowlevel")) {
+    return "factual";
+  }
+  return hints.memoryType ?? "factual";
+}
+
+function resolveScenario(
+  value: unknown,
+  hints: MemBenchHints,
+): MemBenchCase["scenario"] {
+  const normalized = normalizeLabel(value);
+  if (normalized.includes("participant") || normalized.includes("participation") || normalized.includes("firstagent")) {
+    return "participant";
+  }
+  if (normalized.includes("observation") || normalized.includes("thirdagent")) {
+    return "observation";
+  }
+  return hints.scenario ?? "participant";
+}
+
+function resolveLevel(value: unknown, hints: MemBenchHints): string {
+  const direct = typeof value === "string" && value.trim().length > 0
+    ? value
+    : undefined;
+  return direct ?? hints.level ?? "published";
+}
+
+function inferHintsFromLabel(
+  label: string,
+  current: MemBenchHints,
+): MemBenchHints {
+  const normalized = normalizeLabel(label);
+  const next: MemBenchHints = { ...current };
+
+  if (
+    normalized.includes("firstagent")
+    || normalized.includes("participation")
+    || normalized.includes("participant")
+  ) {
+    next.scenario = "participant";
+  } else if (
+    normalized.includes("thirdagent")
+    || normalized.includes("observation")
+  ) {
+    next.scenario = "observation";
+  }
+
+  if (
+    normalized.includes("highlevel")
+    || normalized.includes("reflective")
+  ) {
+    next.memoryType = "reflective";
+    next.level ??= "high_level";
+  } else if (
+    normalized.includes("lowlevel")
+    || normalized.includes("factual")
+  ) {
+    next.memoryType = "factual";
+    next.level ??= "low_level";
+  }
+
+  return next;
+}
+
+function normalizeLabel(value: unknown): string {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function sanitizeCaseId(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(-80);
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return null;
 }
 
 function parseTurn(turn: unknown, location: string): Message {
