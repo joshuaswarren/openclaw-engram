@@ -289,6 +289,266 @@ describe("WeCloneProxy", () => {
     assert.equal(body.method, "GET");
   });
 
+  it("sends auth token to Remnic daemon when configured", async () => {
+    let recallAuthHeader: string | undefined;
+    let observeAuthHeader: string | undefined;
+
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                message: { role: "assistant", content: "Hello!" },
+              },
+            ],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    let requestCount = 0;
+    const remnic = await createMockServer((req, res) => {
+      requestCount++;
+      if (requestCount === 1) {
+        recallAuthHeader = req.headers["authorization"] as string | undefined;
+      } else {
+        observeAuthHeader = req.headers["authorization"] as string | undefined;
+      }
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [{ preview: "Some memory", confidence: 0.9 }] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(
+      testConfig(weclone.port, remnic.port, {
+        remnicAuthToken: "test-secret-token",
+      })
+    );
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    await fetch(`http://127.0.0.1:${proxy.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "weclone-avatar",
+        messages: [
+          { role: "system", content: "You are helpful." },
+          { role: "user", content: "Hi" },
+        ],
+      }),
+    });
+
+    // Wait briefly for fire-and-forget observe
+    await new Promise((r) => setTimeout(r, 100));
+
+    assert.equal(
+      recallAuthHeader,
+      "Bearer test-secret-token",
+      "Recall request should include auth header"
+    );
+    assert.equal(
+      observeAuthHeader,
+      "Bearer test-secret-token",
+      "Observe request should include auth header"
+    );
+  });
+
+  it("sends observe body in messages array format", async () => {
+    let observeBody: Record<string, unknown> | null = null;
+
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                message: { role: "assistant", content: "I remember you!" },
+              },
+            ],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    let requestCount = 0;
+    const remnic = await createMockServer((req, res) => {
+      requestCount++;
+      if (requestCount === 1) {
+        // recall request
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ results: [] }));
+      } else {
+        // observe request
+        const chunks: Buffer[] = [];
+        req.on("data", (c: Buffer) => chunks.push(c));
+        req.on("end", () => {
+          observeBody = JSON.parse(Buffer.concat(chunks).toString());
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ ok: true }));
+        });
+      }
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    await fetch(`http://127.0.0.1:${proxy.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "weclone-avatar",
+        messages: [
+          { role: "system", content: "You are helpful." },
+          { role: "user", content: "Hello friend" },
+        ],
+      }),
+    });
+
+    // Wait for fire-and-forget observe
+    await new Promise((r) => setTimeout(r, 200));
+
+    assert.ok(observeBody, "Observe request should have been sent");
+    assert.ok(
+      Array.isArray((observeBody as Record<string, unknown>).messages),
+      "Observe body should have a messages array"
+    );
+    const messages = (observeBody as Record<string, unknown>).messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    assert.equal(messages.length, 2);
+    assert.equal(messages[0].role, "user");
+    assert.equal(messages[0].content, "Hello friend");
+    assert.equal(messages[1].role, "assistant");
+    assert.equal(messages[1].content, "I remember you!");
+    assert.equal(
+      (observeBody as Record<string, unknown>).sessionKey,
+      "weclone-default",
+      "Observe body should include sessionKey"
+    );
+  });
+
+  it("normalizes recall results with preview field to content", async () => {
+    let receivedBody: Record<string, unknown> | null = null;
+
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        receivedBody = JSON.parse(Buffer.concat(chunks).toString());
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                message: { role: "assistant", content: "Reply" },
+              },
+            ],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    // Remnic returns results with preview field (EngramAccessMemorySummary format)
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          results: [
+            { preview: "User likes dogs", confidence: 0.85, category: "preference" },
+            { content: "User lives in NYC", confidence: 0.7 },
+          ],
+        })
+      );
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          messages: [
+            { role: "system", content: "You are helpful." },
+            { role: "user", content: "What do I like?" },
+          ],
+        }),
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.ok(receivedBody);
+    const messages = (receivedBody as Record<string, unknown>).messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    const systemMsg = messages.find((m) => m.role === "system");
+    assert.ok(systemMsg);
+    assert.ok(
+      systemMsg.content.includes("User likes dogs"),
+      "preview field should be normalized to content"
+    );
+    assert.ok(
+      systemMsg.content.includes("User lives in NYC"),
+      "content field should still work as fallback"
+    );
+  });
+
+  it("does not expose error details in 502 responses", async () => {
+    // WeClone is unreachable (no mock server started on this port)
+    const fakeWeclonePort = 59999;
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(fakeWeclonePort, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          messages: [{ role: "user", content: "Hi" }],
+        }),
+      }
+    );
+
+    assert.equal(res.status, 502);
+    const body = JSON.parse(await readResponse(res));
+    assert.equal(body.error, "upstream_unreachable");
+    assert.equal(
+      body.detail,
+      undefined,
+      "Error response must not expose detail/stack trace"
+    );
+  });
+
   it("returns 400 for invalid JSON body on chat completions", async () => {
     const weclone = await createMockServer((_req, res) => {
       res.writeHead(200);

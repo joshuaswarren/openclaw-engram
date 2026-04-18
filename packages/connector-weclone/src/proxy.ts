@@ -54,17 +54,30 @@ function flattenHeaders(
 }
 
 /**
+ * Build standard headers for Remnic daemon requests.
+ * Includes Authorization if an auth token is configured.
+ */
+function remnicHeaders(authToken?: string): Record<string, string> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authToken) {
+    headers["Authorization"] = `Bearer ${authToken}`;
+  }
+  return headers;
+}
+
+/**
  * Call Remnic daemon recall endpoint for the given session and query.
  */
 async function recallMemories(
   daemonUrl: string,
   sessionKey: string,
-  query: string
+  query: string,
+  authToken?: string
 ): Promise<RecallResult[]> {
   const url = `${daemonUrl}/engram/v1/recall`;
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: remnicHeaders(authToken),
     body: JSON.stringify({ sessionKey, query }),
   });
 
@@ -72,8 +85,13 @@ async function recallMemories(
     throw new Error(`Remnic recall returned ${res.status}: ${await res.text()}`);
   }
 
-  const data = (await res.json()) as { results?: RecallResult[] };
-  return data.results ?? [];
+  const data = (await res.json()) as { results?: Array<{ preview?: string; content?: string; confidence?: number; category?: string }> };
+  const memories: RecallResult[] = (data.results ?? []).map((r) => ({
+    content: r.preview || r.content || "",
+    confidence: r.confidence,
+    category: r.category,
+  }));
+  return memories;
 }
 
 /**
@@ -84,13 +102,20 @@ function observeTurn(
   daemonUrl: string,
   sessionKey: string,
   userMessage: string,
-  assistantMessage: string
+  assistantMessage: string,
+  authToken?: string
 ): void {
   const url = `${daemonUrl}/engram/v1/observe`;
   fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionKey, userMessage, assistantMessage }),
+    headers: remnicHeaders(authToken),
+    body: JSON.stringify({
+      sessionKey,
+      messages: [
+        { role: "user", content: userMessage },
+        { role: "assistant", content: assistantMessage },
+      ],
+    }),
   }).catch(() => {
     // Intentionally swallowed -- observation must not affect the response path
   });
@@ -197,9 +222,9 @@ async function transparentProxy(
     res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
     const responseBody = await upstream.arrayBuffer();
     res.end(Buffer.from(responseBody));
-  } catch (err) {
+  } catch (_err) {
     res.writeHead(502, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ error: "upstream_unreachable", detail: String(err) }));
+    res.end(JSON.stringify({ error: "upstream_unreachable" }));
   }
 }
 
@@ -264,7 +289,8 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
           const memories = await recallMemories(
             config.remnicDaemonUrl,
             sessionKey,
-            query
+            query,
+            config.remnicAuthToken
           );
           memoryBlock = formatMemoryBlock(
             memories,
@@ -323,17 +349,16 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
 
         // Fire-and-forget observe
         if (query.length > 0 && assistantReply.length > 0) {
-          observeTurn(config.remnicDaemonUrl, sessionKey, query, assistantReply);
+          observeTurn(config.remnicDaemonUrl, sessionKey, query, assistantReply, config.remnicAuthToken);
         }
 
         // Return upstream response to caller
         res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
         res.end(responseBytes);
-      } catch (err) {
+      } catch (_err) {
         res.writeHead(502, { "Content-Type": "application/json" });
         res.end(JSON.stringify({
           error: "upstream_unreachable",
-          detail: String(err),
         }));
       }
       return;
@@ -353,10 +378,10 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
     start(): Promise<void> {
       return new Promise((resolve, reject) => {
         server = http.createServer((req, res) => {
-          requestHandler(req, res).catch((err) => {
+          requestHandler(req, res).catch((_err) => {
             if (!res.headersSent) {
               res.writeHead(500, { "Content-Type": "application/json" });
-              res.end(JSON.stringify({ error: "internal", detail: String(err) }));
+              res.end(JSON.stringify({ error: "internal_proxy_error" }));
             }
           });
         });

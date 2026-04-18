@@ -83,4 +83,28 @@ describe("formatMemoryBlock", () => {
     assert.ok(result.includes("Fact X"));
     assert.ok(result.includes("Fact Y"));
   });
+
+  it("does not corrupt output when memory content contains $ patterns", () => {
+    const memories: RecallResult[] = [
+      { content: "Price is $100 and $200", confidence: 0.9 },
+      { content: "Use $& and $` and $' in code", confidence: 0.8 },
+    ];
+    const result = formatMemoryBlock(memories, "[Mem]\n{memories}\n[/Mem]", 1500);
+    assert.ok(
+      result.includes("Price is $100 and $200"),
+      "Dollar signs in content must not be interpreted as replacement patterns"
+    );
+    assert.ok(
+      result.includes("$&"),
+      "$& must appear literally, not as the matched substring"
+    );
+    assert.ok(
+      result.includes("$`"),
+      "$` must appear literally"
+    );
+    assert.ok(
+      result.includes("$'"),
+      "$' must appear literally"
+    );
+  });
 });

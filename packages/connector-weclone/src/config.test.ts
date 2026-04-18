@@ -128,4 +128,31 @@ describe("parseConfig", () => {
       /template.*non-empty string/
     );
   });
+
+  it("accepts remnicAuthToken as optional string", () => {
+    const config = parseConfig({
+      ...validRaw,
+      remnicAuthToken: "my-secret-token",
+    });
+    assert.equal(config.remnicAuthToken, "my-secret-token");
+  });
+
+  it("omits remnicAuthToken when not provided", () => {
+    const config = parseConfig(validRaw);
+    assert.equal(config.remnicAuthToken, undefined);
+  });
+
+  it("rejects empty remnicAuthToken", () => {
+    assert.throws(
+      () => parseConfig({ ...validRaw, remnicAuthToken: "" }),
+      /remnicAuthToken.*non-empty string/
+    );
+  });
+
+  it("rejects non-string remnicAuthToken", () => {
+    assert.throws(
+      () => parseConfig({ ...validRaw, remnicAuthToken: 12345 }),
+      /remnicAuthToken.*non-empty string/
+    );
+  });
 });

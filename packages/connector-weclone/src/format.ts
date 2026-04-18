@@ -55,5 +55,5 @@ export function formatMemoryBlock(
   }
 
   const memoriesText = included.join("\n");
-  return template.replace("{memories}", memoriesText);
+  return template.replace("{memories}", () => memoriesText);
 }

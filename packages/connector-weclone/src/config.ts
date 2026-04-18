@@ -15,6 +15,7 @@ export interface WeCloneConnectorConfig {
   wecloneModelName?: string;
   proxyPort: number;
   remnicDaemonUrl: string;
+  remnicAuthToken?: string;
   sessionStrategy: "caller-id" | "single";
   memoryInjection: MemoryInjectionConfig;
 }
@@ -68,6 +69,16 @@ export function parseConfig(raw: unknown): WeCloneConnectorConfig {
   }
 
   // --- Optional fields with validation ---
+  let remnicAuthToken: string | undefined;
+  if (obj.remnicAuthToken !== undefined) {
+    if (typeof obj.remnicAuthToken !== "string" || obj.remnicAuthToken.length === 0) {
+      throw new Error(
+        "Config 'remnicAuthToken' must be a non-empty string when provided"
+      );
+    }
+    remnicAuthToken = obj.remnicAuthToken;
+  }
+
   const wecloneModelName =
     obj.wecloneModelName !== undefined
       ? String(obj.wecloneModelName)
@@ -126,6 +137,7 @@ export function parseConfig(raw: unknown): WeCloneConnectorConfig {
     wecloneModelName,
     proxyPort: obj.proxyPort,
     remnicDaemonUrl: obj.remnicDaemonUrl,
+    remnicAuthToken,
     sessionStrategy,
     memoryInjection,
   };
