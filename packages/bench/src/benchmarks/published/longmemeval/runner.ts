@@ -172,6 +172,15 @@ async function loadDataset(
   datasetDir: string | undefined,
   limit?: number,
 ): Promise<LongMemEvalItem[]> {
+  const ensureDatasetItems = (items: LongMemEvalItem[]): LongMemEvalItem[] => {
+    if (items.length === 0) {
+      throw new Error(
+        "LongMemEval dataset is empty after applying the requested limit.",
+      );
+    }
+    return items;
+  };
+
   if (datasetDir) {
     const datasetErrors: string[] = [];
     for (const filename of [
@@ -182,7 +191,7 @@ async function loadDataset(
       try {
         const raw = await readFile(path.join(datasetDir, filename), "utf8");
         const parsed = JSON.parse(raw) as LongMemEvalItem[];
-        return limit ? parsed.slice(0, limit) : parsed;
+        return ensureDatasetItems(limit ? parsed.slice(0, limit) : parsed);
       } catch (error) {
         datasetErrors.push(
           `${filename}: ${error instanceof Error ? error.message : String(error)}`,
@@ -206,7 +215,7 @@ async function loadDataset(
     ? LONG_MEM_EVAL_SMOKE_FIXTURE.slice(0, limit)
     : LONG_MEM_EVAL_SMOKE_FIXTURE;
   if (bundledFixture.length > 0) {
-    return bundledFixture;
+    return ensureDatasetItems(bundledFixture);
   }
 
   throw new Error("LongMemEval dataset not found and bundled smoke fixture is empty.");

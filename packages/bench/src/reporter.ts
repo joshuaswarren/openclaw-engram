@@ -20,9 +20,7 @@ export async function writeBenchmarkResult(
   await mkdir(outputDir, { recursive: true });
 
   const safeRemnicVersion = sanitizeFilenameSegment(result.meta.remnicVersion);
-  const timestamp = result.meta.timestamp
-    .replace(/[:.]/g, "-")
-    .slice(0, 19);
+  const timestamp = result.meta.timestamp.replace(/[:.]/g, "-");
   const filePath = path.join(
     outputDir,
     `${result.meta.benchmark}-v${safeRemnicVersion}-${timestamp}.json`,

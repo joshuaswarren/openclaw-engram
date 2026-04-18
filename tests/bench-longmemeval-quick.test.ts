@@ -158,7 +158,26 @@ test("runBenchmark fails fast when full mode is given an explicit unreadable dat
   );
 });
 
-test("writeBenchmarkResult sanitizes remnicVersion in the output filename", async () => {
+test("runBenchmark rejects zero-task datasets after applying limit", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-longmemeval-empty-"));
+  const datasetDir = path.join(tmpDir, "datasets");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(path.join(datasetDir, "longmemeval_oracle.json"), "[]");
+
+  await assert.rejects(
+    () =>
+      runBenchmark("longmemeval", {
+        mode: "full",
+        datasetDir,
+        limit: 0,
+        system: adapter,
+      }),
+    /LongMemEval dataset is empty after applying the requested limit/,
+  );
+});
+
+test("writeBenchmarkResult sanitizes remnicVersion and preserves millisecond precision in filenames", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-reporter-"));
   const outputDir = path.join(tmpDir, "results");
   const result: BenchmarkResult = {
@@ -198,12 +217,28 @@ test("writeBenchmarkResult sanitizes remnicVersion in the output filename", asyn
     },
   };
 
-  const writtenPath = await writeBenchmarkResult(result, outputDir);
-  const written = JSON.parse(await readFile(writtenPath, "utf8")) as BenchmarkResult;
+  const writtenPathA = await writeBenchmarkResult(result, outputDir);
+  const writtenA = JSON.parse(await readFile(writtenPathA, "utf8")) as BenchmarkResult;
+  const writtenPathB = await writeBenchmarkResult(
+    {
+      ...result,
+      meta: {
+        ...result.meta,
+        id: "bench-2",
+        timestamp: "2026-04-18T12:34:56.123Z",
+      },
+    },
+    outputDir,
+  );
 
   assert.equal(
-    path.basename(writtenPath),
-    "longmemeval-v1.2.3_rc_build__meta-2026-04-18T12-34-56.json",
+    path.basename(writtenPathA),
+    "longmemeval-v1.2.3_rc_build__meta-2026-04-18T12-34-56-789Z.json",
   );
-  assert.equal(written.meta.remnicVersion, "1.2.3/rc:build +meta");
+  assert.equal(
+    path.basename(writtenPathB),
+    "longmemeval-v1.2.3_rc_build__meta-2026-04-18T12-34-56-123Z.json",
+  );
+  assert.notEqual(writtenPathA, writtenPathB);
+  assert.equal(writtenA.meta.remnicVersion, "1.2.3/rc:build +meta");
 });
