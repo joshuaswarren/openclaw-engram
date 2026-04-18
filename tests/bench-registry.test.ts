@@ -16,7 +16,7 @@ test("listBenchmarks exposes the published benchmark catalog from @remnic/bench"
   assert.ok(benchmarks.every((benchmark) => benchmark.tier === "published"));
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo",
   );
 });
 
@@ -57,6 +57,16 @@ test("getBenchmark returns amemgym metadata with a runnable benchmark entry", ()
   assert.equal(benchmark?.status, "ready");
   assert.equal(benchmark?.runnerAvailable, true);
   assert.equal(benchmark?.meta.category, "agentic");
+});
+
+test("getBenchmark returns locomo metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("locomo");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "locomo");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.meta.category, "conversational");
 });
 
 test("BenchmarkResult schema captures the phase-1 package contract", () => {
