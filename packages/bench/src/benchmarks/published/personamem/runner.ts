@@ -3,7 +3,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
 import type {
@@ -46,6 +46,11 @@ interface RawPersonaMemRow {
   who?: string;
   updated?: string;
   prev_pref?: string;
+}
+
+interface CsvRowRecord {
+  values: string[];
+  rowNumber: number;
 }
 
 export const personaMemDefinition: BenchmarkDefinition = {
@@ -196,13 +201,11 @@ async function loadDataset(
       const datasetPath = path.join(datasetDir, relativePath);
       try {
         const raw = await readFile(datasetPath, "utf8");
-        const rows = parseCsvRows(raw, relativePath);
-        const limitedRows = applyLimit(rows, normalizedLimit);
-        const datasetRoot = resolveDatasetRoot(datasetDir, relativePath);
+        const rows = parseCsvRows(raw, relativePath, normalizedLimit);
         const samples: PersonaMemSample[] = [];
 
-        for (const row of limitedRows) {
-          samples.push(await hydrateSample(row, datasetRoot));
+        for (const row of rows) {
+          samples.push(await hydrateSample(row, datasetDir));
         }
 
         return ensureDatasetSamples(samples);
@@ -227,16 +230,6 @@ async function loadDataset(
   return ensureDatasetSamples(
     applyLimit(PERSONAMEM_SMOKE_FIXTURE, normalizedLimit),
   );
-}
-
-function resolveDatasetRoot(datasetDir: string, relativePath: string): string {
-  if (relativePath === "benchmark/text/benchmark.csv") {
-    return datasetDir;
-  }
-  if (relativePath === "benchmark/benchmark.csv") {
-    return datasetDir;
-  }
-  return datasetDir;
 }
 
 async function hydrateSample(
@@ -265,10 +258,11 @@ async function hydrateSample(
     );
   }
 
-  const chatHistoryRaw = await readFile(
-    path.resolve(datasetRoot, row.chat_history_32k_link),
-    "utf8",
+  const chatHistoryPath = await resolveDatasetFilePath(
+    datasetRoot,
+    row.chat_history_32k_link,
   );
+  const chatHistoryRaw = await readFile(chatHistoryPath, "utf8");
   const chatHistory = parseChatHistory(
     chatHistoryRaw,
     row.chat_history_32k_link,
@@ -295,8 +289,9 @@ async function hydrateSample(
 function parseCsvRows(
   raw: string,
   filename: string,
+  limit: number | undefined,
 ): RawPersonaMemRow[] {
-  const rows = parseCsv(raw);
+  const rows = parseCsv(raw, limit);
   if (rows.length < 2) {
     throw new Error(
       `PersonaMem-v2 dataset file ${filename} must contain a header row and at least one data row.`,
@@ -305,7 +300,7 @@ function parseCsvRows(
 
   const [header, ...dataRows] = rows;
   const headerIndex = new Map<string, number>();
-  header!.forEach((name, index) => {
+  header.values.forEach((name, index) => {
     headerIndex.set(name, index);
   });
 
@@ -323,12 +318,10 @@ function parseCsvRows(
     }
   }
 
-  return dataRows
-    .filter((row) => row.some((value) => value.trim().length > 0))
-    .map((row, rowIndex) => {
+  return dataRows.map((row) => {
       const valueAt = (column: string): string => {
         const index = headerIndex.get(column);
-        return index === undefined ? "" : (row[index] ?? "");
+        return index === undefined ? "" : (row.values[index] ?? "");
       };
 
       const record: RawPersonaMemRow = {
@@ -350,18 +343,39 @@ function parseCsvRows(
 
       if (record.persona_id.trim().length === 0) {
         throw new Error(
-          `PersonaMem-v2 dataset file ${filename} row ${rowIndex + 2} is missing persona_id.`,
+          `PersonaMem-v2 dataset file ${filename} row ${row.rowNumber} is missing persona_id.`,
         );
       }
       return record;
     });
 }
 
-function parseCsv(raw: string): string[][] {
-  const rows: string[][] = [];
+function parseCsv(raw: string, limit: number | undefined): CsvRowRecord[] {
+  const rows: CsvRowRecord[] = [];
   let currentRow: string[] = [];
   let currentField = "";
   let inQuotes = false;
+  let rowNumber = 1;
+  let dataRowCount = 0;
+
+  const pushRow = (): boolean => {
+    const values = [...currentRow, currentField];
+    const isHeader = rows.length === 0;
+    const isBlank = values.every((value) => value.trim().length === 0);
+
+    if (isHeader || !isBlank) {
+      rows.push({ values, rowNumber });
+      if (!isHeader) {
+        dataRowCount += 1;
+      }
+    }
+
+    currentRow = [];
+    currentField = "";
+    rowNumber += 1;
+
+    return limit !== undefined && dataRowCount >= limit;
+  };
 
   for (let index = 0; index < raw.length; index += 1) {
     const char = raw[index]!;
@@ -387,10 +401,9 @@ function parseCsv(raw: string): string[][] {
       if (char === "\r" && next === "\n") {
         index += 1;
       }
-      currentRow.push(currentField);
-      rows.push(currentRow);
-      currentRow = [];
-      currentField = "";
+      if (pushRow()) {
+        return rows;
+      }
       continue;
     }
 
@@ -398,11 +411,32 @@ function parseCsv(raw: string): string[][] {
   }
 
   if (currentField.length > 0 || currentRow.length > 0) {
-    currentRow.push(currentField);
-    rows.push(currentRow);
+    pushRow();
   }
 
   return rows;
+}
+
+async function resolveDatasetFilePath(
+  datasetRoot: string,
+  relativePath: string,
+): Promise<string> {
+  const rootPath = path.resolve(datasetRoot);
+  const rootRealPath = await realpath(rootPath);
+  const candidatePath = path.resolve(rootPath, relativePath);
+  const candidateRealPath = await realpath(candidatePath);
+  const relativeToRoot = path.relative(rootRealPath, candidateRealPath);
+
+  if (
+    relativeToRoot.startsWith("..")
+    || path.isAbsolute(relativeToRoot)
+  ) {
+    throw new Error(
+      `PersonaMem-v2 dataset file reference "${relativePath}" must stay within datasetDir.`,
+    );
+  }
+
+  return candidateRealPath;
 }
 
 function extractLooseObjectValue(

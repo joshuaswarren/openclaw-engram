@@ -193,3 +193,131 @@ test("runBenchmark rejects personamem full mode without datasetDir", async () =>
     /PersonaMem-v2 full mode requires datasetDir/,
   );
 });
+
+test("runBenchmark rejects personamem chat history links that escape the dataset root", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-escape-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const outsideDir = path.join(tmpDir, "outside");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(outsideDir, { recursive: true });
+
+  await writeFile(
+    path.join(outsideDir, "persona-1.json"),
+    JSON.stringify({
+      chat_history: [{ role: "user", content: "I prefer oolong tea." }],
+    }),
+    "utf8",
+  );
+
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    toCsv(
+      [
+        "persona_id",
+        "chat_history_32k_link",
+        "user_query",
+        "correct_answer",
+      ],
+      [
+        "persona-1",
+        "../../outside/persona-1.json",
+        "{'role': 'user', 'content': 'Which tea do I prefer?'}",
+        "oolong tea",
+      ],
+    ),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runBenchmark("personamem", {
+        mode: "full",
+        datasetDir,
+        system: adapter,
+      }),
+    /must stay within datasetDir/,
+  );
+});
+
+test("runBenchmark honors personamem limit before parsing later CSV rows", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-limit-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+
+  await writeFile(
+    path.join(chatHistoryDir, "persona-1.json"),
+    JSON.stringify({
+      chat_history: [{ role: "user", content: "I always order Earl Grey tea." }],
+    }),
+    "utf8",
+  );
+
+  const headers = [
+    "persona_id",
+    "chat_history_32k_link",
+    "user_query",
+    "correct_answer",
+  ];
+  const validRow = [
+    "persona-1",
+    "data/chat_history_32k/persona-1.json",
+    "{'role': 'user', 'content': 'Which tea do I order?'}",
+    "Earl Grey tea",
+  ];
+  const invalidRow = [
+    "",
+    "data/chat_history_32k/persona-1.json",
+    "{'role': 'user', 'content': 'Which tea do I order?'}",
+    "Earl Grey tea",
+  ];
+
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    `${headers.join(",")}\n${validRow.map(escapeCsvField).join(",")}\n${invalidRow.map(escapeCsvField).join(",")}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("personamem", {
+    mode: "full",
+    datasetDir,
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.expected, "Earl Grey tea");
+});
+
+test("runBenchmark preserves original CSV row numbers after blank personamem rows", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-rows-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(benchmarkDir, { recursive: true });
+
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    [
+      "persona_id,chat_history_32k_link,user_query,correct_answer",
+      "",
+      ",data/chat_history_32k/persona-1.json,\"{'role': 'user', 'content': 'Which tea do I order?'}\",Earl Grey tea",
+    ].join("\n"),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runBenchmark("personamem", {
+        mode: "full",
+        datasetDir,
+        system: adapter,
+      }),
+    /row 3 is missing persona_id/,
+  );
+});
