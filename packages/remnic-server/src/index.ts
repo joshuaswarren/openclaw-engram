@@ -118,6 +118,65 @@ export async function startServer(options?: {
   const config = parseConfig(remnicConfig);
   const orchestrator = new Orchestrator(config);
   await orchestrator.initialize();
+
+  // If QMD wasn't available during initialize() (e.g. daemon still loading on
+  // cold start), schedule background retries so the search index is synced once
+  // QMD becomes ready.  Without this, the server would run with a stale/empty
+  // search index for its entire lifetime.
+  if (!orchestrator.qmd.isAvailable()) {
+    const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+    (async () => {
+      for (const delay of RETRY_DELAYS_MS) {
+        await new Promise<void>((r) => setTimeout(r, delay));
+
+        const available = await orchestrator.qmd.probe();
+        if (!available) {
+          log.debug(`QMD startup-sync retry: not available yet (next retry in ${RETRY_DELAYS_MS[RETRY_DELAYS_MS.indexOf(delay) + 1] ?? "n/a"}ms)`);
+          continue;
+        }
+
+        log.info(`QMD startup-sync retry: backend now available ${orchestrator.qmd.debugStatus()}`);
+
+        // Ensure collection exists
+        try {
+          const collectionState = await orchestrator.qmd.ensureCollection(config.memoryDir);
+          if (collectionState === "missing") {
+            log.warn("QMD startup-sync retry: search collection missing; skipping sync");
+            return;
+          }
+        } catch (err) {
+          log.warn(`QMD startup-sync retry: ensureCollection failed: ${err}`);
+          return;
+        }
+
+        // Run the startup sync (update index to match disk)
+        if (config.qmdMaintenanceEnabled) {
+          try {
+            log.info("QMD startup-sync retry: updating index to match current disk state");
+            await orchestrator.qmd.update();
+            log.info("QMD startup-sync retry: sync complete");
+          } catch (err) {
+            log.warn(`QMD startup-sync retry: update failed (non-fatal): ${err}`);
+          }
+        }
+
+        // Warmup search to pre-load embedding models
+        try {
+          await orchestrator.qmd.search("warmup", config.defaultNamespace, 1);
+          log.info("QMD startup-sync retry: warmup complete");
+        } catch (err) {
+          log.debug(`QMD startup-sync retry: warmup search failed (non-fatal): ${err}`);
+        }
+
+        return; // sync succeeded, stop retrying
+      }
+
+      log.warn("QMD startup-sync retry: exhausted all retries; search index may be stale");
+    })().catch((err) => {
+      log.warn(`QMD startup-sync retry: unexpected error: ${err}`);
+    });
+  }
+
   const service = new EngramAccessService(orchestrator);
 
   const authToken = serverConfig.authToken ?? readCompatEnv("REMNIC_AUTH_TOKEN", "ENGRAM_AUTH_TOKEN") ?? "";
