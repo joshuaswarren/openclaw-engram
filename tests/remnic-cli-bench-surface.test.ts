@@ -82,20 +82,33 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
 
   assert.match(source, /--dataset-dir <path>\s+Override the benchmark dataset directory for full runs/);
+  assert.match(source, /--custom <path>\s+Run a YAML-defined custom benchmark file/);
   assert.match(source, /from "\.\/bench-args\.js";/);
+  assert.match(source, /async function runCustomBenchViaPackage\(parsed: ParsedBenchArgs\): Promise<boolean>/);
   assert.match(parserSource, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
   assert.match(parserSource, /function collectBenchmarks\(argv: string\[\]\): string\[\]/);
   assert.match(parserSource, /const benchmarkArgs = action === "baseline" \? args\.slice\(1\) : args;/);
   assert.match(parserSource, /const benchmarks = collectBenchmarks\(benchmarkArgs\);/);
   assert.match(parserSource, /requires a value\./);
-  assert.match(parserSource, /arg === "--dataset-dir"[\s\S]*arg === "--results-dir"[\s\S]*arg === "--baselines-dir"[\s\S]*arg === "--threshold"[\s\S]*arg === "--format"[\s\S]*arg === "--output"/);
+  assert.match(parserSource, /arg === "--dataset-dir"[\s\S]*arg === "--results-dir"[\s\S]*arg === "--baselines-dir"[\s\S]*arg === "--threshold"[\s\S]*arg === "--custom"[\s\S]*arg === "--format"[\s\S]*arg === "--output"/);
   assert.match(parserSource, /datasetDir: datasetDir \? path\.resolve\(expandTilde\(datasetDir\)\) : undefined/);
+  assert.match(parserSource, /custom: customRaw \? path\.resolve\(expandTilde\(customRaw\)\) : undefined/);
   assert.match(source, /resolveBenchDatasetDir\(\s*benchmarkId,\s*parsed\.quick,\s*parsed\.datasetDir/s);
+  assert.match(source, /if \(parsed\.custom\) \{/);
   assert.match(source, /const outputDir = resolveBenchOutputDir\(\);/);
   assert.match(source, /const datasetDir = resolveBenchDatasetDir\(/);
   assert.match(source, /if \(!parsed\.quick && !datasetDir\) \{\s*throw new Error\(/s);
   assert.match(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
   assert.match(source, /const system = await createAdapter\(\);/);
+});
+
+test("parseBenchArgs supports custom benchmark files without counting them as benchmark ids", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const parsed = parseBenchArgs(["run", "--custom", "~/benchmarks/custom.yaml"]);
+
+  assert.match(parsed.custom ?? "", /benchmarks[\/\\]custom\.yaml$/);
+  assert.deepEqual(parsed.benchmarks, []);
 });
 
 test("bench compare routes through stored package results with threshold and results-dir options", async () => {

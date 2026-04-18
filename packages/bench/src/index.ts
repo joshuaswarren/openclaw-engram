@@ -35,6 +35,11 @@ export type {
   RunBenchmarkOptions,
   ResolvedRunBenchmarkOptions,
 } from "./types.js";
+export type {
+  CustomBenchmarkScoring,
+  CustomBenchmarkSpec,
+  CustomBenchmarkTask,
+} from "./benchmarks/custom/types.js";
 
 export type {
   Message,
@@ -114,3 +119,10 @@ export {
   resolveBenchmarkResultReference,
   saveBenchmarkBaseline,
 } from "./results-store.js";
+export {
+  loadCustomBenchmarkFile,
+  parseCustomBenchmark,
+} from "./benchmarks/custom/loader.js";
+export {
+  runCustomBenchmarkFile,
+} from "./benchmarks/custom/runner.js";

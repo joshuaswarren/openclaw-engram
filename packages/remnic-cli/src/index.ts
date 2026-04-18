@@ -252,6 +252,42 @@ export const BENCHMARK_CATALOG: BenchCatalogEntry[] = [
 
 const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
 
+type PackageBenchModule = {
+  getBenchmark?: (id: string) => {
+    runnerAvailable?: boolean;
+  } | undefined;
+  runBenchmark?: (id: string, options: {
+    mode?: "full" | "quick";
+    datasetDir?: string;
+    outputDir?: string;
+    limit?: number;
+    adapterMode?: string;
+    system: {
+      destroy(): Promise<void>;
+    };
+  }) => Promise<{
+    meta: { benchmark: string; mode: string };
+    results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
+    cost: { meanQueryLatencyMs: number };
+  }>;
+  runCustomBenchmarkFile?: (filePath: string, options: {
+    mode?: "full" | "quick";
+    outputDir?: string;
+    limit?: number;
+    adapterMode?: string;
+    system: {
+      destroy(): Promise<void>;
+    };
+  }) => Promise<{
+    meta: { benchmark: string; mode: string };
+    results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
+    cost: { meanQueryLatencyMs: number };
+  }>;
+  writeBenchmarkResult?: (result: unknown, outputDir: string) => Promise<string>;
+  createLightweightAdapter?: () => Promise<{ destroy(): Promise<void> }>;
+  createRemnicAdapter?: () => Promise<{ destroy(): Promise<void> }>;
+};
+
 export function getBenchUsageText(): string {
   return `Usage: remnic bench <list|run|compare|results|baseline|export> [options] [benchmark...]
        remnic benchmark <list|run|compare|results|baseline|export|check|report> [options] [benchmark...]
@@ -273,6 +309,7 @@ Options:
   --quick                  Run a lightweight quick pass (maps to --lightweight --limit 1)
   --all                    Run every published benchmark
   --dataset-dir <path>     Override the benchmark dataset directory for full runs
+  --custom <path>          Run a YAML-defined custom benchmark file
   --results-dir <path>     Override the stored benchmark results directory
   --baselines-dir <path>   Override the named baseline directory
   --threshold <value>      Regression threshold for compare (default: 0.05)
@@ -291,6 +328,7 @@ Examples:
   remnic bench baseline save main candidate-run
   remnic bench baseline list
   remnic bench export candidate-run --format csv --output ./candidate.csv
+  remnic bench run --custom ./my-bench.yaml
   remnic benchmark run --quick longmemeval`;
 }
 
@@ -740,30 +778,9 @@ async function runBenchViaPackage(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
 ): Promise<boolean> {
-  let benchModule: {
-    getBenchmark?: (id: string) => {
-      runnerAvailable?: boolean;
-    } | undefined;
-    runBenchmark?: (id: string, options: {
-      mode?: "full" | "quick";
-      datasetDir?: string;
-      outputDir?: string;
-      limit?: number;
-      adapterMode?: string;
-      system: {
-        destroy(): Promise<void>;
-      };
-    }) => Promise<{
-      meta: { benchmark: string; mode: string };
-      results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
-      cost: { meanQueryLatencyMs: number };
-    }>;
-    writeBenchmarkResult?: (result: unknown, outputDir: string) => Promise<string>;
-    createLightweightAdapter?: () => Promise<{ destroy(): Promise<void> }>;
-    createRemnicAdapter?: () => Promise<{ destroy(): Promise<void> }>;
-  };
+  let benchModule: PackageBenchModule;
   try {
-    benchModule = await import("@remnic/bench") as unknown as typeof benchModule;
+    benchModule = await import("@remnic/bench") as unknown as PackageBenchModule;
   } catch {
     return false;
   }
@@ -799,6 +816,49 @@ async function runBenchViaPackage(
     const result = await benchModule.runBenchmark(benchmarkId, {
       mode: parsed.quick ? "quick" : "full",
       datasetDir,
+      outputDir,
+      limit: parsed.quick ? 1 : undefined,
+      adapterMode: parsed.quick ? "lightweight" : "direct",
+      system,
+    });
+    const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
+    if (parsed.json) {
+      console.log(JSON.stringify(result, null, 2));
+    } else {
+      printBenchPackageSummary(result, writtenPath);
+    }
+    return true;
+  } finally {
+    await system.destroy();
+  }
+}
+
+async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolean> {
+  let benchModule: PackageBenchModule;
+  try {
+    benchModule = await import("@remnic/bench") as unknown as PackageBenchModule;
+  } catch {
+    return false;
+  }
+
+  if (!benchModule.runCustomBenchmarkFile || !benchModule.writeBenchmarkResult) {
+    return false;
+  }
+
+  const createAdapter = parsed.quick
+    ? benchModule.createLightweightAdapter
+    : benchModule.createRemnicAdapter;
+
+  if (!createAdapter) {
+    return false;
+  }
+
+  const outputDir = resolveBenchOutputDir();
+  const system = await createAdapter();
+
+  try {
+    const result = await benchModule.runCustomBenchmarkFile(parsed.custom!, {
+      mode: parsed.quick ? "quick" : "full",
       outputDir,
       limit: parsed.quick ? 1 : undefined,
       adapterMode: parsed.quick ? "lightweight" : "direct",
@@ -2646,6 +2706,22 @@ async function cmdBench(rest: string[]): Promise<void> {
     console.log("Published benchmarks:");
     for (const entry of catalog) {
       console.log(`  ${entry.id.padEnd(14)} ${entry.category.padEnd(14)} ${entry.summary}`);
+    }
+    return;
+  }
+
+  if (parsed.custom) {
+    if (parsed.all || parsed.benchmarks.length > 0) {
+      console.error("ERROR: --custom cannot be combined with benchmark names or --all.");
+      process.exit(1);
+    }
+
+    const handledByPackage = await runCustomBenchViaPackage(parsed);
+    if (!handledByPackage) {
+      console.error(
+        "Benchmark runner not found. Expected a phase-1 @remnic/bench runtime export for custom benchmarks.",
+      );
+      process.exit(1);
     }
     return;
   }

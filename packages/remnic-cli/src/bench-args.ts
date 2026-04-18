@@ -29,6 +29,7 @@ export interface ParsedBenchArgs {
   baselineAction?: BenchBaselineAction;
   format?: BenchExportFormat;
   output?: string;
+  custom?: string;
 }
 
 export function readBenchOptionValue(argv: string[], flag: string): string | undefined {
@@ -54,6 +55,7 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--results-dir" ||
       arg === "--baselines-dir" ||
       arg === "--threshold" ||
+      arg === "--custom" ||
       arg === "--format" ||
       arg === "--output"
     ) {
@@ -110,6 +112,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const resultsDir = readBenchOptionValue(args, "--results-dir");
   const baselinesDir = readBenchOptionValue(args, "--baselines-dir");
   const thresholdRaw = readBenchOptionValue(args, "--threshold");
+  const customRaw = readBenchOptionValue(args, "--custom");
   const formatRaw = readBenchOptionValue(args, "--format");
   const output = readBenchOptionValue(args, "--output");
   let threshold: number | undefined;
@@ -139,6 +142,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     resultsDir: resultsDir ? path.resolve(expandTilde(resultsDir)) : undefined,
     baselinesDir: baselinesDir ? path.resolve(expandTilde(baselinesDir)) : undefined,
     threshold,
+    custom: customRaw ? path.resolve(expandTilde(customRaw)) : undefined,
     baselineAction,
     format,
     output: output ? path.resolve(expandTilde(output)) : undefined,

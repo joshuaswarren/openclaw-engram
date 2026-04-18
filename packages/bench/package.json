@@ -17,7 +17,8 @@
     "check-types": "tsc --noEmit"
   },
   "dependencies": {
-    "@remnic/core": "workspace:*"
+    "@remnic/core": "workspace:*",
+    "yaml": "^2.4.2"
   },
   "devDependencies": {
     "typescript": "^5.9.3",

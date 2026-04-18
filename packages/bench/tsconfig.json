@@ -22,6 +22,7 @@
     "src/scorer.ts",
     "src/adapters/**/*.ts",
     "src/providers/**/*.ts",
-    "src/benchmarks/published/**/*.ts"
+    "src/benchmarks/published/**/*.ts",
+    "src/benchmarks/custom/**/*.ts"
   ]
 }
