@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -221,25 +221,35 @@ test("parseBenchArgs preserves unexpected trailing providers args for CLI valida
 test("bench providers discover rejects unexpected trailing positional args", async () => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const repoRoot = join(__dirname, "..");
-  const benchModuleRoot = join(repoRoot, "packages/remnic-cli/node_modules/@remnic/bench");
+  const benchModuleLinkRoot = join(repoRoot, "packages/remnic-cli/node_modules/@remnic/bench");
+  const benchModuleRoot = existsSync(benchModuleLinkRoot)
+    ? realpathSync(benchModuleLinkRoot)
+    : benchModuleLinkRoot;
   const benchModuleDist = join(benchModuleRoot, "dist");
+  const benchModuleEntry = join(benchModuleDist, "index.js");
+  const benchPackageJson = join(benchModuleRoot, "package.json");
   const cliEntry = pathToFileURL(join(repoRoot, "packages/remnic-cli/src/index.ts")).href;
-  const stubbedBenchModule = !existsSync(join(benchModuleDist, "index.js"));
+  const stubbedBenchModule = !existsSync(benchModuleEntry);
+  const createdModuleRoot = !existsSync(benchModuleLinkRoot);
+  const createdPackageJson = stubbedBenchModule && !existsSync(benchPackageJson);
+  const createdDistDir = stubbedBenchModule && !existsSync(benchModuleDist);
 
   if (stubbedBenchModule) {
     mkdirSync(benchModuleDist, { recursive: true });
+    if (createdPackageJson) {
+      writeFileSync(
+        benchPackageJson,
+        JSON.stringify({
+          name: "@remnic/bench",
+          type: "module",
+          exports: {
+            ".": "./dist/index.js",
+          },
+        }),
+      );
+    }
     writeFileSync(
-      join(benchModuleRoot, "package.json"),
-      JSON.stringify({
-        name: "@remnic/bench",
-        type: "module",
-        exports: {
-          ".": "./dist/index.js",
-        },
-      }),
-    );
-    writeFileSync(
-      join(benchModuleDist, "index.js"),
+      benchModuleEntry,
       `
 export function compareResults() {}
 export function defaultBenchmarkBaselineDir() { return ""; }
@@ -277,7 +287,16 @@ export async function saveBenchmarkBaseline() { return null; }
   } finally {
     process.exit = originalExit;
     if (stubbedBenchModule) {
-      rmSync(benchModuleRoot, { recursive: true, force: true });
+      rmSync(benchModuleEntry, { force: true });
+      if (createdDistDir) {
+        rmSync(benchModuleDist, { recursive: true, force: true });
+      }
+      if (createdPackageJson) {
+        rmSync(benchPackageJson, { force: true });
+      }
+      if (createdModuleRoot) {
+        rmSync(benchModuleRoot, { recursive: true, force: true });
+      }
     }
   }
 });
