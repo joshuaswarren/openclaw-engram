@@ -92,21 +92,22 @@ export function entityRecall(
 }
 
 export function linkMatches(extracted: ExtractedLink, gold: GoldLink): boolean {
+  const eSrc = normalize(extracted.source);
+  const eTgt = normalize(extracted.target);
+  const gSrc = normalize(gold.source);
+  const gTgt = normalize(gold.target);
+  const relMatch = normalize(extracted.relation) === normalize(gold.relation);
+
+  // Reject self-links when the gold link has distinct endpoints
+  if (eSrc === eTgt && gSrc !== gTgt) return false;
+
   if (gold.bidirectional) {
-    const directMatch =
-      normalize(extracted.source) === normalize(gold.source) &&
-      normalize(extracted.target) === normalize(gold.target);
-    const reverseMatch =
-      normalize(extracted.source) === normalize(gold.target) &&
-      normalize(extracted.target) === normalize(gold.source);
-    return (directMatch || reverseMatch) && normalize(extracted.relation) === normalize(gold.relation);
+    const directMatch = eSrc === gSrc && eTgt === gTgt;
+    const reverseMatch = eSrc === gTgt && eTgt === gSrc;
+    return (directMatch || reverseMatch) && relMatch;
   }
 
-  return (
-    normalize(extracted.source) === normalize(gold.source) &&
-    normalize(extracted.target) === normalize(gold.target) &&
-    normalize(extracted.relation) === normalize(gold.relation)
-  );
+  return eSrc === gSrc && eTgt === gTgt && relMatch;
 }
 
 export function backlinkF1(
