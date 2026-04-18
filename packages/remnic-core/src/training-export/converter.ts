@@ -9,7 +9,7 @@
  * The `input` field is empty string (synthesis is left to adapters).
  */
 
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import type { TrainingExportOptions, TrainingExportRecord } from "./types.js";
@@ -81,8 +81,10 @@ async function collectMarkdownFiles(dir: string): Promise<string[]> {
     try {
       entries = await readdir(d, { withFileTypes: true });
     } catch {
-      return; // directory does not exist or is unreadable
+      return; // subdirectory does not exist or is unreadable
     }
+    // Sort entries by name for deterministic output order
+    entries.sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
       const full = path.join(d, entry.name);
       if (entry.isDirectory()) {
@@ -153,6 +155,28 @@ export async function convertMemoriesToRecords(
   options: TrainingExportOptions,
 ): Promise<TrainingExportRecord[]> {
   const { memoryDir } = options;
+
+  // Gate unimplemented options (CLAUDE.md #51, #55)
+  if (options.includeTopics) {
+    throw new Error(
+      "includeTopics is not yet implemented — this option will be available in a future release",
+    );
+  }
+
+  // Validate memoryDir exists and is a directory (CLAUDE.md #24)
+  let dirStat: import("node:fs").Stats;
+  try {
+    dirStat = await stat(memoryDir);
+  } catch {
+    throw new Error(
+      `memoryDir does not exist: ${memoryDir}`,
+    );
+  }
+  if (!dirStat.isDirectory()) {
+    throw new Error(
+      `memoryDir is not a directory: ${memoryDir}`,
+    );
+  }
 
   // Collect from facts/ and corrections/ subdirectories (mirrors storage.ts)
   const factsDir = path.join(memoryDir, "facts");

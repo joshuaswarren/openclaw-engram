@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, open } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -235,5 +235,96 @@ describe("convertMemoriesToRecords", () => {
     const records = await convertMemoriesToRecords({ memoryDir: dir });
     assert.equal(records.length, 1);
     assert.match(records[0].instruction, /user preference/);
+  });
+
+  // --- Fix 1: Reject invalid memoryDir paths ---
+
+  it("throws when memoryDir does not exist", async () => {
+    const dir = await makeTmpDir();
+    const nonExistent = path.join(dir, "no-such-dir");
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: nonExistent }),
+      (err: Error) => {
+        assert.match(err.message, /memoryDir does not exist/);
+        return true;
+      },
+    );
+  });
+
+  it("throws when memoryDir is a file, not a directory (CLAUDE.md #24)", async () => {
+    const dir = await makeTmpDir();
+    const filePath = path.join(dir, "not-a-dir.txt");
+    const handle = await open(filePath, "w");
+    await handle.writeFile("I am a file, not a directory.");
+    await handle.close();
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: filePath }),
+      (err: Error) => {
+        assert.match(err.message, /memoryDir is not a directory/);
+        return true;
+      },
+    );
+  });
+
+  // --- Fix 2: Deterministic output ordering ---
+
+  it("returns records in deterministic sorted order", async () => {
+    const dir = await makeTmpDir();
+    // Create files with names that would sort differently from filesystem order
+    await writeSyntheticMemory(dir, "facts", "z-last.md", {
+      id: "z-last",
+      content: "Z comes last alphabetically.",
+    });
+    await writeSyntheticMemory(dir, "facts", "a-first.md", {
+      id: "a-first",
+      content: "A comes first alphabetically.",
+    });
+    await writeSyntheticMemory(dir, "facts", "m-middle.md", {
+      id: "m-middle",
+      content: "M is in the middle.",
+    });
+
+    const records = await convertMemoriesToRecords({ memoryDir: dir });
+    assert.equal(records.length, 3);
+    assert.deepEqual(
+      records.map((r) => r.sourceIds?.[0]),
+      ["a-first", "m-middle", "z-last"],
+    );
+  });
+
+  // --- Fix 3: includeTopics gate ---
+
+  it("throws 'not implemented' when includeTopics is true (CLAUDE.md #51, #55)", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: dir, includeTopics: true }),
+      (err: Error) => {
+        assert.match(err.message, /includeTopics is not yet implemented/);
+        return true;
+      },
+    );
+  });
+
+  it("does not throw when includeTopics is false or undefined", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "mem.md", {
+      id: "mem",
+      content: "Some content.",
+    });
+
+    // includeTopics=false should not throw
+    const records1 = await convertMemoriesToRecords({ memoryDir: dir, includeTopics: false });
+    assert.equal(records1.length, 1);
+
+    // includeTopics=undefined (default) should not throw
+    const records2 = await convertMemoriesToRecords({ memoryDir: dir });
+    assert.equal(records2.length, 1);
   });
 });
