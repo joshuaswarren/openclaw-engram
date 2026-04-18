@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 test("remnic CLI source wires the new bench command and keeps benchmark as an alias", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
@@ -9,7 +12,7 @@ test("remnic CLI source wires the new bench command and keeps benchmark as an al
   assert.match(source, /case "bench": \{/);
   assert.match(source, /case "benchmark": \{/);
   assert.match(source, /await cmdBench\(rest\);/);
-  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export>/);
+  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export\|ui\|providers>/);
   assert.match(source, /benchmark is kept as a compatibility alias/i);
 });
 
@@ -87,7 +90,7 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /async function runCustomBenchViaPackage\(parsed: ParsedBenchArgs\): Promise<boolean>/);
   assert.match(parserSource, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
   assert.match(parserSource, /function collectBenchmarks\(argv: string\[\]\): string\[\]/);
-  assert.match(parserSource, /const benchmarkArgs = action === "baseline" \? args\.slice\(1\) : args;/);
+  assert.match(parserSource, /const benchmarkArgs = action === "baseline" \|\| action === "providers" \? args\.slice\(1\) : args;/);
   assert.match(parserSource, /const benchmarks = collectBenchmarks\(benchmarkArgs\);/);
   assert.match(parserSource, /requires a value\./);
   assert.match(parserSource, /arg === "--dataset-dir"[\s\S]*arg === "--results-dir"[\s\S]*arg === "--baselines-dir"[\s\S]*arg === "--threshold"[\s\S]*arg === "--custom"[\s\S]*arg === "--format"[\s\S]*arg === "--output"/);
@@ -163,6 +166,140 @@ test("bench results, baseline, and export route through the stored package resul
   assert.match(parserSource, /detail: args\.includes\("--detail"\),/);
   assert.match(parserSource, /baselinesDir: baselinesDir \? path\.resolve\(expandTilde\(baselinesDir\)\) : undefined/);
   assert.match(parserSource, /output: output \? path\.resolve\(expandTilde\(output\)\) : undefined/);
+});
+
+test("bench providers discovery is exposed as a package-backed CLI surface", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
+  const readme = await readFile("packages/remnic-cli/README.md", "utf8");
+
+  assert.match(source, /discoverAllProviders,/);
+  assert.match(source, /Usage: remnic bench <list\|run\|compare\|results\|baseline\|export\|ui\|providers>/);
+  assert.match(source, /remnic bench providers discover/);
+  assert.match(source, /async function discoverBenchProviders\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /providers discover does not accept positional arguments/);
+  assert.match(source, /if \(parsed\.action === "providers"\) \{\s*await discoverBenchProviders\(parsed\);/s);
+  assert.match(parserSource, /export type BenchAction =[\s\S]*"providers"[\s\S]*"check"[\s\S]*"report";/);
+  assert.match(parserSource, /export type BenchProviderAction = "discover";/);
+  assert.match(parserSource, /providerAction\?: BenchProviderAction;/);
+  assert.match(parserSource, /first === "providers"/);
+  assert.match(parserSource, /const providerAction =[\s\S]*args\[0\] === "discover"/);
+  assert.match(readme, /remnic bench providers discover/);
+});
+
+test("bench surface retains local UI compatibility alongside providers discovery", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
+
+  assert.match(parserSource, /\| "ui"/);
+  assert.match(parserSource, /first === "ui"/);
+  assert.match(source, /ui\s+Launch the local benchmark overview UI/);
+  assert.match(source, /if \(parsed\.action === "ui"\) \{\s*await launchBenchUi\(parsed\.resultsDir \?\? resolveBenchOutputDir\(\)\);\s*return;\s*\}/s);
+});
+
+test("parseBenchArgs supports the providers discovery surface", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const parsed = parseBenchArgs(["providers", "discover", "--json"]);
+
+  assert.equal(parsed.action, "providers");
+  assert.equal(parsed.providerAction, "discover");
+  assert.equal(parsed.json, true);
+  assert.deepEqual(parsed.benchmarks, []);
+});
+
+test("parseBenchArgs preserves unexpected trailing providers args for CLI validation", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const parsed = parseBenchArgs(["providers", "discover", "foo"]);
+
+  assert.equal(parsed.action, "providers");
+  assert.equal(parsed.providerAction, "discover");
+  assert.deepEqual(parsed.benchmarks, ["foo"]);
+});
+
+test("bench providers discover rejects unexpected trailing positional args", async () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = join(__dirname, "..");
+  const benchModuleLinkRoot = join(repoRoot, "packages/remnic-cli/node_modules/@remnic/bench");
+  const benchModuleRoot = existsSync(benchModuleLinkRoot)
+    ? realpathSync(benchModuleLinkRoot)
+    : benchModuleLinkRoot;
+  const benchModuleDist = join(benchModuleRoot, "dist");
+  const benchModuleEntry = join(benchModuleDist, "index.js");
+  const benchPackageJson = join(benchModuleRoot, "package.json");
+  const cliEntry = pathToFileURL(join(repoRoot, "packages/remnic-cli/src/index.ts")).href;
+  const stubbedBenchModule = !existsSync(benchModuleEntry);
+  const createdModuleRoot = !existsSync(benchModuleLinkRoot);
+  const createdPackageJson = stubbedBenchModule && !existsSync(benchPackageJson);
+  const createdDistDir = stubbedBenchModule && !existsSync(benchModuleDist);
+
+  if (stubbedBenchModule) {
+    mkdirSync(benchModuleDist, { recursive: true });
+    if (createdPackageJson) {
+      writeFileSync(
+        benchPackageJson,
+        JSON.stringify({
+          name: "@remnic/bench",
+          type: "module",
+          exports: {
+            ".": "./dist/index.js",
+          },
+        }),
+      );
+    }
+    writeFileSync(
+      benchModuleEntry,
+      `
+export function compareResults() {}
+export function checkRegression() { return null; }
+export function defaultBenchmarkBaselineDir() { return ""; }
+export async function discoverAllProviders() { return []; }
+export async function listBenchmarkBaselines() { return []; }
+export async function listBenchmarkResults() { return []; }
+export async function loadBenchmarkBaseline() { return null; }
+export async function runBenchSuite() { return null; }
+export async function runExplain() { return null; }
+export async function loadBaseline() { return null; }
+export async function saveBaseline() { return null; }
+export async function loadBenchmarkResult() { return null; }
+export function renderBenchmarkResultExport() { return ""; }
+export async function resolveBenchmarkResultReference() { return null; }
+export async function saveBenchmarkBaseline() { return null; }
+`,
+    );
+  }
+
+  const originalExit = process.exit;
+  const exitCalls: number[] = [];
+
+  process.exit = ((code?: number) => {
+    exitCalls.push(code ?? 0);
+    throw new Error(`PROCESS_EXIT:${code ?? 0}`);
+  }) as typeof process.exit;
+
+  try {
+    const { main } = await import(`${cliEntry}?test=${Date.now()}`);
+    await assert.rejects(
+      () => main(["bench", "providers", "discover", "foo"]),
+      /PROCESS_EXIT:1/,
+    );
+    assert.deepEqual(exitCalls, [1]);
+  } finally {
+    process.exit = originalExit;
+    if (stubbedBenchModule) {
+      rmSync(benchModuleEntry, { force: true });
+      if (createdDistDir) {
+        rmSync(benchModuleDist, { recursive: true, force: true });
+      }
+      if (createdPackageJson) {
+        rmSync(benchPackageJson, { force: true });
+      }
+      if (createdModuleRoot) {
+        rmSync(benchModuleRoot, { recursive: true, force: true });
+      }
+    }
+  }
 });
 
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {
