@@ -27,6 +27,36 @@ export interface DiscoveredModel {
   parameterCount?: string;
 }
 
+export interface ProviderBaseConfig {
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+  headers?: Record<string, string>;
+}
+
+export interface OpenAiCompatibleProviderConfig extends ProviderBaseConfig {
+  provider?: "openai" | "litellm";
+}
+
+export interface AnthropicProviderConfig extends ProviderBaseConfig {
+  provider?: "anthropic";
+  anthropicVersion?: string;
+}
+
+export interface OllamaProviderConfig extends ProviderBaseConfig {
+  provider?: "ollama";
+}
+
+export type ProviderFactoryConfig =
+  | (OpenAiCompatibleProviderConfig & { provider: "openai" | "litellm" })
+  | (AnthropicProviderConfig & { provider: "anthropic" })
+  | (OllamaProviderConfig & { provider: "ollama" });
+
+export interface ProviderDiscoveryResult {
+  provider: BuiltInProvider;
+  models: DiscoveredModel[];
+}
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;

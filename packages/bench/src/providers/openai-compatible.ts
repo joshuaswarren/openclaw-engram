@@ -7,15 +7,9 @@ import type {
   CompletionResult,
   DiscoveredModel,
   LlmProvider,
+  OpenAiCompatibleProviderConfig,
   TokenUsage,
 } from "./types.js";
-
-export interface OpenAiCompatibleProviderConfig {
-  model: string;
-  baseUrl?: string;
-  apiKey?: string;
-  headers?: Record<string, string>;
-}
 
 interface ChatCompletionResponse {
   model?: string;
@@ -42,7 +36,7 @@ interface ModelsResponse {
 }
 
 class OpenAiCompatibleProvider implements LlmProvider {
-  readonly provider = "openai" as const;
+  readonly provider: "openai" | "litellm";
   readonly id: string;
   readonly name: string;
 
@@ -56,7 +50,8 @@ class OpenAiCompatibleProvider implements LlmProvider {
 
   constructor(config: OpenAiCompatibleProviderConfig) {
     this.config = config;
-    this.id = `openai:${config.model}`;
+    this.provider = config.provider ?? "openai";
+    this.id = `${this.provider}:${config.model}`;
     this.name = config.model;
   }
 
