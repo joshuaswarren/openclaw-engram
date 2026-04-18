@@ -235,11 +235,43 @@ test("daemon parses QMD v2 markdown-formatted text results", async () => {
   assert.equal(out.length, 3);
   assert.equal(out[0]?.docid, "ca5902");
   assert.equal(out[0]?.score, 0.93);
-  assert.equal(out[0]?.path, "qmd://openclaw-engram-hot-facts/2026-04-12/preference-123.md");
+  assert.equal(out[0]?.path, "openclaw-engram-hot-facts/2026-04-12/preference-123.md");
   assert.equal(out[1]?.docid, "fbcb6e");
   assert.equal(out[1]?.score, 0.50);
   assert.equal(out[2]?.docid, "abc123");
   assert.equal(out[2]?.score, 0.72);
+});
+
+test("daemon parses QMD v2 markdown results with uppercase hex docids", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 2 results for "uppercase test":',
+            "",
+            "#CA5902 88% openclaw-engram-hot-facts/2026-04-12/upper-1.md - Uppercase hex docid",
+            "#FbCb6E 45% openclaw-engram-hot-facts/namespaces/work/2026-03-01/mixed-2.md - Mixed case hex docid",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  const out = await client.search("uppercase test", undefined, 5);
+  assert.equal(out.length, 2);
+  assert.equal(out[0]?.docid, "CA5902");
+  assert.equal(out[0]?.score, 0.88);
+  assert.equal(out[0]?.path, "openclaw-engram-hot-facts/2026-04-12/upper-1.md");
+  assert.equal(out[1]?.docid, "FbCb6E");
+  assert.equal(out[1]?.score, 0.45);
+  // Namespace info is preserved in the path for downstream namespace filtering
+  assert.equal(out[1]?.path, "openclaw-engram-hot-facts/namespaces/work/2026-03-01/mixed-2.md");
 });
 
 test("probe attempts daemon connectivity even when CLI probe fails", async () => {

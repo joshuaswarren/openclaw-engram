@@ -657,7 +657,7 @@ class QmdDaemonSession {
   }
 }
 
-const QMD_RESULT_LINE_RE = /^#([0-9a-f]+)\s+(\d+)%\s+(\S+)\s+-\s+(.*)$/;
+const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(\S+)\s+-\s+(.*)$/;
 
 function parseQmdMarkdownResultText(
   text: string,
@@ -669,7 +669,7 @@ function parseQmdMarkdownResultText(
     if (!m) continue;
     results.push({
       docid: m[1],
-      path: `qmd://${m[3]}`,
+      path: m[3] ?? "unknown",
       snippet: "",
       score: parseInt(m[2], 10) / 100,
       transport,
