@@ -305,6 +305,37 @@ test("daemon parses QMD v2 markdown results with paths containing spaces", async
   assert.equal(out[1]?.path, "openclaw-engram-hot-facts/2026-03-01/some path with spaces/work-2.md");
 });
 
+test("daemon parses QMD v2 markdown results with paths containing ` - ` separator", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 2 results for "dash path test":',
+            "",
+            "#dd1122 90% openclaw-engram-hot-facts/2026-04-12/my - folder/preference-1.md - Preference in dash dir",
+            "#ee3344 75% openclaw-engram-hot-facts/2026-03-01/some - path - with - dashes/work-2.md - Work item in dashed dir",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  const out = await client.search("dash path test", undefined, 5);
+  assert.equal(out.length, 2);
+  assert.equal(out[0]?.docid, "dd1122");
+  assert.equal(out[0]?.score, 0.90);
+  assert.equal(out[0]?.path, "openclaw-engram-hot-facts/2026-04-12/my - folder/preference-1.md");
+  assert.equal(out[1]?.docid, "ee3344");
+  assert.equal(out[1]?.score, 0.75);
+  assert.equal(out[1]?.path, "openclaw-engram-hot-facts/2026-03-01/some - path - with - dashes/work-2.md");
+});
+
 test("parseMcpSearchResult deduplicates markdown fallback hits against structured results", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;

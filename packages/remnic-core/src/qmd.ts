@@ -657,7 +657,7 @@ class QmdDaemonSession {
   }
 }
 
-const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(.+?)\s+-\s+(.*)$/;
+const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(.+)\s+-\s+(.*)$/;
 
 function parseQmdMarkdownResultText(
   text: string,
