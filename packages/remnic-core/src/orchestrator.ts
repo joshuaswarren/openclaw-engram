@@ -1817,15 +1817,19 @@ export class Orchestrator {
       // Runs in background so gateway_start returns fast. On low-power hardware
       // (Umbrel, RPi) the QMD operations alone can take 30-60s and cause gateway
       // restart loops when they block the startup path. See issue #462.
+      //
+      // Capture the resolver by value so a concurrent re-initialize() cannot
+      // overwrite this.resolveDeferredReady before .finally() runs — that would
+      // cause the first cycle's .finally() to resolve the *second* cycle's
+      // promise prematurely while leaving the first cycle's promise pending.
+      const resolveDeferred = this.resolveDeferredReady;
+      this.resolveDeferredReady = null;
       this.deferredInitialize()
         .catch((err) => {
           log.error(`deferred initialization failed (non-fatal): ${err}`);
         })
         .finally(() => {
-          if (this.resolveDeferredReady) {
-            this.resolveDeferredReady();
-            this.resolveDeferredReady = null;
-          }
+          resolveDeferred?.();
         });
     } catch (err) {
       // Resolve both gates so callers never hang on permanently-pending promises
@@ -1987,18 +1991,26 @@ export class Orchestrator {
       await this.validateLocalLlmModel();
     }
 
-    log.info("orchestrator initialized (full — deferred steps complete)");
-
+    // Await cron auto-registration so callers that `await deferredReady` can
+    // rely on cron jobs being registered when it resolves. Without this, the
+    // fire-and-forget pattern lets deferredReady settle while cron writes are
+    // still in flight. Errors are non-fatal — catch individually.
     if (this.config.daySummaryEnabled) {
-      this.autoRegisterDaySummaryCron().catch((err) => {
+      try {
+        await this.autoRegisterDaySummaryCron();
+      } catch (err) {
         log.debug(`day-summary cron auto-register failed (non-fatal): ${err}`);
-      });
+      }
     }
     if (this.config.nightlyGovernanceCronAutoRegister) {
-      this.autoRegisterNightlyGovernanceCron().catch((err) => {
+      try {
+        await this.autoRegisterNightlyGovernanceCron();
+      } catch (err) {
         log.debug(`nightly governance cron auto-register failed (non-fatal): ${err}`);
-      });
+      }
     }
+
+    log.info("orchestrator initialized (full — deferred steps complete)");
   }
 
   /**
