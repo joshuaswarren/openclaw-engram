@@ -65,7 +65,7 @@ export type {
   IngestionBenchAdapter,
 } from "./ingestion-types.js";
 
-export { REQUIRED_FRONTMATTER_FIELDS, CONDITIONAL_FRONTMATTER } from "./ingestion-types.js";
+export { REQUIRED_FRONTMATTER_FIELDS } from "./ingestion-types.js";
 
 export type {
   GeneratedFile,

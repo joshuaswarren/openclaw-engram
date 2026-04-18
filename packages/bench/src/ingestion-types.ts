@@ -75,8 +75,3 @@ export interface IngestionBenchAdapter {
 }
 
 export const REQUIRED_FRONTMATTER_FIELDS = ["title", "type", "state", "created", "see-also"] as const;
-
-export const CONDITIONAL_FRONTMATTER: Record<string, { field: string; requiredWhen: GoldEntityType[] }[]> = {
-  "exec-summary": [{ field: "exec-summary", requiredWhen: ["project", "org", "event"] }],
-  timeline: [{ field: "timeline", requiredWhen: ["project", "event"] }],
-};
