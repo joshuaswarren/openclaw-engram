@@ -25,3 +25,14 @@ export function compareMetricNames(left: string, right: string): number {
 
   return compareStrings(left, right);
 }
+
+export function compareTimestampedRuns<T extends { timestamp: string; id: string }>(
+  left: T,
+  right: T,
+): number {
+  if (left.timestamp === right.timestamp) {
+    return compareStrings(left.id, right.id);
+  }
+
+  return right.timestamp.localeCompare(left.timestamp);
+}

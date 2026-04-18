@@ -1,4 +1,4 @@
-import { compareMetricNames, compareStrings } from "./sort-utils";
+import { compareMetricNames, compareStrings, compareTimestampedRuns } from "./sort-utils";
 
 export interface BenchMetricHighlight {
   name: string;
@@ -135,21 +135,17 @@ export interface ProviderRow {
   benchmarkScores: Record<string, number | null>;
 }
 
-function compareRuns(left: BenchResultSummary, right: BenchResultSummary): number {
-  if (left.timestamp === right.timestamp) {
-    return compareStrings(left.id, right.id);
+function withinRange(timestamp: string, range: TrendRange, anchor: number): boolean {
+  const value = Date.parse(timestamp);
+  if (Number.isNaN(value) || value > anchor) {
+    return false;
   }
 
-  return right.timestamp.localeCompare(left.timestamp);
-}
-
-function withinRange(timestamp: string, range: TrendRange, anchor: number): boolean {
   if (range === "all") {
     return true;
   }
 
   const days = range === "7d" ? 7 : range === "30d" ? 30 : 90;
-  const value = Date.parse(timestamp);
   return value >= anchor - days * 24 * 60 * 60 * 1000;
 }
 
@@ -246,7 +242,7 @@ export function getBenchmarkCards(payload: BenchResultSummaryPayload): Benchmark
     const runs = payload.summaries
       .filter((summary) => summary.benchmark === benchmark)
       .slice()
-      .sort(compareRuns);
+      .sort(compareTimestampedRuns);
     const latest = runs[0];
     if (!latest) {
       continue;
@@ -424,8 +420,9 @@ export function buildHistogram(summary: BenchResultSummary): HistogramBucket[] {
       continue;
     }
 
-    const value = Math.max(0, Math.min(100, Math.round(task.primaryScore * 100)));
-    const index = Math.min(Math.floor(value / 20), buckets.length - 1);
+    const clampedScore = Math.max(0, Math.min(1, task.primaryScore));
+    const index =
+      clampedScore === 1 ? buckets.length - 1 : Math.floor(clampedScore * buckets.length);
     const bucket = buckets[index];
     if (bucket) {
       bucket.count += 1;
@@ -507,5 +504,5 @@ export function benchmarkRuns(
   return payload.summaries
     .filter((summary) => summary.benchmark === benchmark)
     .slice()
-    .sort(compareRuns);
+    .sort(compareTimestampedRuns);
 }

@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
+  buildHistogram,
   formatMetricValue,
   buildProviderRows,
   filterRuns,
@@ -11,7 +12,11 @@ import {
   getTrendPoints,
   type BenchResultSummaryPayload,
 } from "../packages/bench-ui/src/bench-data.js";
-import { buildBenchmarkDetailTaskRows, selectLowestScoringTasks } from "../packages/bench-ui/src/pages/BenchmarkDetail.js";
+import {
+  buildBenchmarkDetailTaskRows,
+  resolveSelectedRunId,
+  selectLowestScoringTasks,
+} from "../packages/bench-ui/src/pages/BenchmarkDetail.js";
 import { canCompareBenchRuns, filterComparableCandidateRuns } from "../packages/bench-ui/src/pages/Compare.js";
 import { loadBenchResultSummaries } from "../packages/bench-ui/src/results.js";
 
@@ -277,6 +282,52 @@ test("getTrendPoints uses wall-clock time for recency windows", async (t) => {
   assert.deepEqual(getTrendPoints(payload, "all", "7d"), []);
 });
 
+test("recency filters exclude future runs beyond the current wall-clock anchor", async (t) => {
+  t.mock.method(Date, "now", () => Date.parse("2026-04-18T12:00:00.000Z"));
+  const payload: BenchResultSummaryPayload = {
+    resultsDir: "/tmp/results",
+    summaries: [
+      {
+        id: "future-run",
+        benchmark: "longmemeval",
+        benchmarkTier: "published",
+        timestamp: "2026-04-19T10:00:00.000Z",
+        mode: "quick",
+        totalLatencyMs: 1234,
+        meanQueryLatencyMs: 617,
+        taskCount: 2,
+        metricHighlights: [{ name: "accuracy", mean: 0.75 }],
+        primaryMetric: "accuracy",
+        primaryScore: 0.75,
+        runCount: 1,
+        estimatedCostUsd: 0.12,
+        totalTokens: 100,
+        inputTokens: 60,
+        outputTokens: 40,
+        systemProvider: "openai/gpt-5.4",
+        judgeProvider: "openai/gpt-5.4-mini",
+        providerKey: "openai/gpt-5.4__openai/gpt-5.4-mini",
+        adapterMode: "standalone",
+        aggregateMetrics: [],
+        taskSummaries: [],
+        filePath: "/tmp/results/future-run.json",
+      },
+    ],
+  };
+
+  assert.deepEqual(
+    filterRuns(payload, {
+      benchmark: "all",
+      systemProvider: "all",
+      judgeProvider: "all",
+      mode: "all",
+      range: "7d",
+    }),
+    [],
+  );
+  assert.deepEqual(getTrendPoints(payload, "all", "7d"), []);
+});
+
 test("benchmark detail helpers keep single-run deltas null and sort low scorers ascending", () => {
   const taskRows = buildBenchmarkDetailTaskRows({
     id: "latest-run",
@@ -315,6 +366,105 @@ test("benchmark detail helpers keep single-run deltas null and sort low scorers 
   assert.deepEqual(
     selectLowestScoringTasks(taskRows).map((row) => row.taskId),
     ["task-6", "task-2", "task-4", "task-5", "task-3"],
+  );
+});
+
+test("resolveSelectedRunId falls back to the current benchmark run list", () => {
+  const runs = [
+    {
+      id: "run-b",
+      benchmark: "longmemeval",
+      benchmarkTier: "published",
+      timestamp: "2026-04-18T10:00:00.000Z",
+      mode: "quick" as const,
+      totalLatencyMs: 1234,
+      meanQueryLatencyMs: 617,
+      taskCount: 1,
+      metricHighlights: [],
+      primaryMetric: "accuracy",
+      primaryScore: 0.75,
+      runCount: 1,
+      estimatedCostUsd: 0.12,
+      totalTokens: 100,
+      inputTokens: 60,
+      outputTokens: 40,
+      systemProvider: "openai/gpt-5.4",
+      judgeProvider: "openai/gpt-5.4-mini",
+      providerKey: "openai/gpt-5.4__openai/gpt-5.4-mini",
+      adapterMode: "standalone",
+      aggregateMetrics: [],
+      taskSummaries: [],
+      filePath: "/tmp/results/run-b.json",
+    },
+    {
+      id: "run-a",
+      benchmark: "longmemeval",
+      benchmarkTier: "published",
+      timestamp: "2026-04-17T10:00:00.000Z",
+      mode: "quick" as const,
+      totalLatencyMs: 1234,
+      meanQueryLatencyMs: 617,
+      taskCount: 1,
+      metricHighlights: [],
+      primaryMetric: "accuracy",
+      primaryScore: 0.6,
+      runCount: 1,
+      estimatedCostUsd: 0.12,
+      totalTokens: 100,
+      inputTokens: 60,
+      outputTokens: 40,
+      systemProvider: "openai/gpt-5.4",
+      judgeProvider: "openai/gpt-5.4-mini",
+      providerKey: "openai/gpt-5.4__openai/gpt-5.4-mini",
+      adapterMode: "standalone",
+      aggregateMetrics: [],
+      taskSummaries: [],
+      filePath: "/tmp/results/run-a.json",
+    },
+  ];
+
+  assert.equal(resolveSelectedRunId(runs, "missing-run"), "run-b");
+  assert.equal(resolveSelectedRunId(runs, "run-a"), "run-a");
+  assert.equal(resolveSelectedRunId([], "missing-run"), "");
+});
+
+test("buildHistogram buckets boundary scores by floor semantics", () => {
+  const summary = {
+    id: "latest-run",
+    benchmark: "longmemeval",
+    benchmarkTier: "published",
+    timestamp: "2026-04-18T10:00:00.000Z",
+    mode: "quick" as const,
+    totalLatencyMs: 1234,
+    meanQueryLatencyMs: 617,
+    taskCount: 6,
+    metricHighlights: [],
+    primaryMetric: "accuracy",
+    primaryScore: 0.75,
+    runCount: 1,
+    estimatedCostUsd: 0.12,
+    totalTokens: 100,
+    inputTokens: 60,
+    outputTokens: 40,
+    systemProvider: "openai/gpt-5.4",
+    judgeProvider: "openai/gpt-5.4-mini",
+    providerKey: "openai/gpt-5.4__openai/gpt-5.4-mini",
+    adapterMode: "standalone",
+    aggregateMetrics: [],
+    taskSummaries: [
+      { taskId: "task-1", question: "", expected: "", actual: "", latencyMs: null, totalTokens: 0, primaryScore: 0.199, scoreEntries: [] },
+      { taskId: "task-2", question: "", expected: "", actual: "", latencyMs: null, totalTokens: 0, primaryScore: 0.2, scoreEntries: [] },
+      { taskId: "task-3", question: "", expected: "", actual: "", latencyMs: null, totalTokens: 0, primaryScore: 0.399, scoreEntries: [] },
+      { taskId: "task-4", question: "", expected: "", actual: "", latencyMs: null, totalTokens: 0, primaryScore: 0.4, scoreEntries: [] },
+      { taskId: "task-5", question: "", expected: "", actual: "", latencyMs: null, totalTokens: 0, primaryScore: 0.8, scoreEntries: [] },
+      { taskId: "task-6", question: "", expected: "", actual: "", latencyMs: null, totalTokens: 0, primaryScore: 1, scoreEntries: [] },
+    ],
+    filePath: "/tmp/results/latest-run.json",
+  };
+
+  assert.deepEqual(
+    buildHistogram(summary).map((bucket) => bucket.count),
+    [1, 2, 1, 0, 2],
   );
 });
 

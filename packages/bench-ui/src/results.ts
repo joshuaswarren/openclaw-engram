@@ -9,7 +9,7 @@ import type {
   BenchTaskScoreEntry,
   BenchTaskSummary,
 } from "./bench-data.js";
-import { compareMetricNames, compareStrings } from "./sort-utils.js";
+import { compareMetricNames, compareStrings, compareTimestampedRuns } from "./sort-utils.js";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -19,14 +19,6 @@ function isRecord(value: unknown): value is JsonRecord {
 
 function toFiniteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function compareSummaries(left: BenchResultSummary, right: BenchResultSummary): number {
-  if (left.timestamp === right.timestamp) {
-    return compareStrings(left.id, right.id);
-  }
-
-  return right.timestamp.localeCompare(left.timestamp);
 }
 
 function providerLabel(value: unknown): string {
@@ -230,7 +222,7 @@ export async function loadBenchResultSummaries(
     }
   }
 
-  summaries.sort(compareSummaries);
+  summaries.sort(compareTimestampedRuns);
 
   return {
     resultsDir,

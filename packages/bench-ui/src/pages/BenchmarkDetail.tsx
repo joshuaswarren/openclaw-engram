@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import type { BenchResultSummary, BenchResultSummaryPayload, TaskDeltaRow } from "../bench-data";
 import {
@@ -30,11 +30,30 @@ export function selectLowestScoringTasks(taskRows: TaskDeltaRow[], limit = 5): T
     .slice(0, limit);
 }
 
+export function resolveSelectedRunId(
+  runs: BenchResultSummary[],
+  selectedRunId: string,
+): string {
+  if (runs.some((run) => run.id === selectedRunId)) {
+    return selectedRunId;
+  }
+
+  return runs[0]?.id ?? "";
+}
+
 export function BenchmarkDetail({ payload }: { payload: BenchResultSummaryPayload }) {
   const { benchmarkId } = useParams();
   const runs = benchmarkId ? benchmarkRuns(payload, benchmarkId) : [];
   const [selectedRunId, setSelectedRunId] = useState<string>(runs[0]?.id ?? "");
-  const selected = runs.find((run) => run.id === selectedRunId) ?? runs[0] ?? null;
+  const resolvedSelectedRunId = resolveSelectedRunId(runs, selectedRunId);
+
+  useEffect(() => {
+    if (selectedRunId !== resolvedSelectedRunId) {
+      setSelectedRunId(resolvedSelectedRunId);
+    }
+  }, [resolvedSelectedRunId, selectedRunId]);
+
+  const selected = runs.find((run) => run.id === resolvedSelectedRunId) ?? runs[0] ?? null;
 
   if (!benchmarkId || !selected) {
     return (
