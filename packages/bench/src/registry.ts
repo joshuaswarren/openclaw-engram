@@ -23,6 +23,10 @@ import {
   locomoDefinition,
   runLoCoMoBenchmark,
 } from "./benchmarks/published/locomo/runner.js";
+import {
+  beamDefinition,
+  runBeamBenchmark,
+} from "./benchmarks/published/beam/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -48,6 +52,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...locomoDefinition,
     run: runLoCoMoBenchmark,
+  },
+  {
+    ...beamDefinition,
+    run: runBeamBenchmark,
   },
 ];
 
