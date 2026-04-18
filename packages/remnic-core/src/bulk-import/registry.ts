@@ -42,7 +42,7 @@ export function registerBulkImportSource(
 export function getBulkImportSource(
   name: string,
 ): BulkImportSourceAdapter | undefined {
-  return adapters.get(name);
+  return adapters.get(name.trim());
 }
 
 /**

@@ -556,6 +556,7 @@ export {
   type BulkImportSourceAdapter,
   type ImportTurnValidationIssue,
   isImportRole,
+  parseIsoTimestamp,
   validateImportTurn,
   registerBulkImportSource,
   getBulkImportSource,

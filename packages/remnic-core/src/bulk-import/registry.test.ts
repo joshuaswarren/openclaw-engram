@@ -123,4 +123,23 @@ describe("bulk-import registry", () => {
     clearBulkImportSources();
     assert.equal(listBulkImportSources().length, 0);
   });
+
+  it("getBulkImportSource trims the name on lookup", () => {
+    registerBulkImportSource(makeAdapter("weclone"));
+    // Lookup with leading/trailing whitespace should still find it
+    const result = getBulkImportSource("  weclone  ");
+    assert.ok(result, "expected adapter to be found with trimmed lookup key");
+    assert.equal(result!.name, "weclone");
+  });
+
+  it("getBulkImportSource trims consistently with registration", () => {
+    // Register with whitespace in name — registerBulkImportSource trims it
+    registerBulkImportSource(makeAdapter("  padded-source  "));
+    // Lookup with same whitespace should work
+    const result1 = getBulkImportSource("  padded-source  ");
+    assert.ok(result1, "expected adapter found via padded lookup");
+    // Lookup with trimmed name should also work
+    const result2 = getBulkImportSource("padded-source");
+    assert.ok(result2, "expected adapter found via trimmed lookup");
+  });
 });

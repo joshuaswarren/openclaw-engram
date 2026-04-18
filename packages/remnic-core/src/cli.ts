@@ -2795,6 +2795,12 @@ export async function runBulkImportCliCommand(
     strict: opts.verbose === true,
   });
 
+  if (!opts.dryRun) {
+    throw new Error(
+      "Bulk import persistence is not yet wired — use --dry-run to validate input, or implement a processBatch callback via the programmatic API",
+    );
+  }
+
   const processBatch: ProcessBatchFn = async (turns) => {
     // Phase 1 stub — the real extraction callback will be wired
     // when the orchestrator integration lands in a later PR.
