@@ -24,6 +24,8 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "taxonomy-accuracy",
       "extraction-judge-calibration",
       "enrichment-fidelity",
+      "entity-consolidation",
+      "page-versioning",
     ],
   );
   assert.deepEqual(
@@ -41,11 +43,13 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "remnic",
       "remnic",
       "remnic",
+      "remnic",
+      "remnic",
     ],
   );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning",
   );
 });
 
@@ -165,6 +169,28 @@ test("getBenchmark returns enrichment-fidelity metadata with a runnable benchmar
 
   assert.ok(benchmark);
   assert.equal(benchmark?.id, "enrichment-fidelity");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "retrieval");
+});
+
+test("getBenchmark returns entity-consolidation metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("entity-consolidation");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "entity-consolidation");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "retrieval");
+});
+
+test("getBenchmark returns page-versioning metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("page-versioning");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "page-versioning");
   assert.equal(benchmark?.status, "ready");
   assert.equal(benchmark?.runnerAvailable, true);
   assert.equal(benchmark?.tier, "remnic");
