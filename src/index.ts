@@ -3418,6 +3418,32 @@ const pluginDefinition = {
         // and skip all cleanup — including Opik — to avoid detaching a live exporter.
         if (!didCountStart) return;
         didCountStart = false;
+
+        // Snapshot takeover-relevant state BEFORE any await points.
+        // The deferredReady await below can take seconds (QMD warmup, cron).
+        // During that window a secondary registry can finish start() and set
+        // SERVICE_STARTED / clear INIT_PROMISE. If we read those globals
+        // AFTER the await, we'd observe the secondary's state and skip the
+        // takeover guard — then proceed to tear down the secondary's live
+        // resources (HTTP server, watchers, etc.). By snapshotting before the
+        // await we compare against the state as it was when stop() was
+        // called, making the takeover check immune to concurrent start().
+        const initPromiseAtStopEntry = (globalThis as any)[
+          keys.INIT_PROMISE
+        ] as Promise<void> | null;
+
+        // Wait for the deferred initialization (QMD probe, warmup, cron) to
+        // settle before tearing down. Without this, fire-and-forget tasks
+        // from deferredInitialize() continue after stop() completes and can
+        // race with a subsequent start() — duplicate cron registrations,
+        // background QMD updates after the service is marked stopped, etc.
+        // The promise always resolves (never rejects), so this is safe.
+        try {
+          await orchestrator.deferredReady;
+        } catch {
+          // deferredReady should never reject, but guard defensively.
+        }
+
         // Decrement the process-global active-service count.  When it reaches
         // zero, all Remnic services have stopped and it's safe to clear the CLI
         // guard so a subsequent reload cycle can re-register CLI commands.
@@ -3426,57 +3452,60 @@ const pluginDefinition = {
           ((globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] || 0) - 1,
         );
         (globalThis as any)[CLI_ACTIVE_SERVICE_COUNT] = remainingServices;
-        // Opik cleanup: placed after the guard so secondary stop()s never detach
-        // the process-wide exporter while Engram is still running.
-        // Wrapped in try-catch (like accessHttpServer.stop()) so a throwing
-        // unsubscribe does not leave SERVICE_STARTED=true and prevent restart.
-        try {
-          activeOpikExporter?.unsubscribe();
-        } catch (err) {
-          log.debug(`engram opik exporter unsubscribe failed: ${err}`);
+
+        // Uses the pre-await snapshot (initPromiseAtStopEntry) so a secondary
+        // that finishes start() during the deferredReady await doesn't cause
+        // us to misclassify a stop-during-init as a full stop.
+        const currentInitPromise = initPromiseAtStopEntry;
+        // Track whether a secondary completed init during stop()'s await window
+        // (either the deferredReady await or the currentInitPromise await below).
+        // Used to guard SERVICE_STARTED=false, hook/guard cleanup, AND shared
+        // service teardown (HTTP server, watchers, globals).
+        let secondaryTookOver = false;
+
+        // --- Takeover detection (both paths) ---
+        // Both the full-stop and stop-during-init paths must complete their
+        // takeover checks BEFORE any shared resource teardown. Otherwise the
+        // stop-during-init path (which awaits currentInitPromise) would let
+        // the shared teardown block run while secondaryTookOver is still false,
+        // tearing down resources that belong to a live secondary.
+
+        // Check if a secondary started during the deferredReady await.
+        // When stop() was called with no in-flight init (full stop),
+        // INIT_PROMISE was null. If it's now non-null, a secondary entered
+        // start() while we were awaiting deferredReady. Without this check
+        // we'd tear down the secondary's live resources.
+        // Note: we only check INIT_PROMISE here, not SERVICE_STARTED,
+        // because SERVICE_STARTED is expected to be true from our own
+        // start() in the full-stop case.
+        if (!currentInitPromise && (globalThis as any)[keys.INIT_PROMISE]) {
+          secondaryTookOver = true;
         }
-        activeOpikExporter = null;
-        try {
-          await accessHttpServer.stop();
-        } catch (err) {
-          log.debug(`engram access HTTP stop failed: ${err}`);
-        }
-        stopDreamWatcher?.();
-        stopDreamWatcher = null;
-        stopHeartbeatWatcher?.();
-        stopHeartbeatWatcher = null;
-        removeDreamingObserver?.();
-        removeDreamingObserver = null;
-        delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
-        delete (globalThis as any)[keys.ACCESS_SERVICE];
+
         // REGISTERED_GUARD policy:
         //
-        // Full stop (INIT_PROMISE is null when stop() is called):
+        // Full stop (INIT_PROMISE is null when stop() was called):
         //   Clear GUARD so a subsequent register() in a fresh session can
         //   re-register CLI commands after a stop/reload cycle.
         //
-        // Stop-during-init (INIT_PROMISE is non-null):
+        // Stop-during-init (INIT_PROMISE is non-null when stop() was called):
         //   Leave GUARD as-is. The CLI registered by the original register()
         //   call is still present in the gateway's registry — stop() does not
         //   unregister CLI commands. Clearing GUARD here would allow a
         //   subsequent register() to register CLI again on top of the
         //   still-live registration, duplicating the CLI command tree.
-        const currentInitPromise = (globalThis as any)[
-          keys.INIT_PROMISE
-        ] as Promise<void> | null;
-        // Track whether a secondary completed init during stop()'s await window.
-        // Used below to guard the SERVICE_STARTED=false assignment.
-        let secondaryTookOver = false;
         if (!currentInitPromise) {
-          (globalThis as any)[keys.REGISTERED_GUARD] = false;
-          // Clear CLI guard only when ALL Remnic services have stopped.
-          // In multi-plugin installs, one plugin stopping must not clear the
-          // guard while the other is still running — that would let a
-          // subsequent register() duplicate CLI commands.  When the refcount
-          // reaches zero, the gateway's reload cycle can safely re-register.
-          if (remainingServices === 0) {
-            (globalThis as any)[CLI_REGISTERED_GUARD] = false;
-            (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = false;
+          if (!secondaryTookOver) {
+            (globalThis as any)[keys.REGISTERED_GUARD] = false;
+            // Clear CLI guard only when ALL Remnic services have stopped.
+            // In multi-plugin installs, one plugin stopping must not clear the
+            // guard while the other is still running — that would let a
+            // subsequent register() duplicate CLI commands.  When the refcount
+            // reaches zero, the gateway's reload cycle can safely re-register.
+            if (remainingServices === 0) {
+              (globalThis as any)[CLI_REGISTERED_GUARD] = false;
+              (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = false;
+            }
           }
         } else {
           // Stop-during-init: leave GUARD as-is.
@@ -3484,6 +3513,23 @@ const pluginDefinition = {
           // in the gateway's registry; clearing GUARD here would allow a
           // subsequent register() to register CLI again, duplicating commands
           // on top of the still-live registration (thread PRRT_kwDORJXyws5159Kz).
+
+          // Check if a secondary already completed init during the deferredReady
+          // await above.  Without this, the stop-during-init path bypasses the
+          // full-stop takeover check (gated by !currentInitPromise) and proceeds
+          // to await currentInitPromise / shared teardown with secondaryTookOver
+          // still false — tearing down a live secondary's resources.
+          // We detect takeover the same way as the full-stop path: if
+          // INIT_PROMISE changed (a new secondary entered start()) or if
+          // SERVICE_STARTED is set by someone other than our own init (which
+          // aborted via didCountStart=false), a secondary is live.
+          if (
+            (globalThis as any)[keys.INIT_PROMISE] &&
+            (globalThis as any)[keys.INIT_PROMISE] !== currentInitPromise
+          ) {
+            secondaryTookOver = true;
+          }
+
           //
           // Await the in-flight init (didCountStart=false signals it to abort at
           // its next checkpoint). Ignore errors — we only care about settlement.
@@ -3501,6 +3547,38 @@ const pluginDefinition = {
             secondaryTookOver = true;
           }
         }
+
+        // --- Shared service teardown ---
+        // Runs AFTER both takeover detection paths so secondaryTookOver is
+        // accurate regardless of whether stop() entered the full-stop or
+        // stop-during-init branch. If a secondary became live during any
+        // await window, we skip teardown to avoid destroying its resources.
+        if (!secondaryTookOver) {
+          // Opik cleanup: placed after the guard so secondary stop()s never detach
+          // the process-wide exporter while Engram is still running.
+          // Wrapped in try-catch so a throwing unsubscribe does not leave
+          // SERVICE_STARTED=true and prevent restart.
+          try {
+            activeOpikExporter?.unsubscribe();
+          } catch (err) {
+            log.debug(`engram opik exporter unsubscribe failed: ${err}`);
+          }
+          activeOpikExporter = null;
+          try {
+            await accessHttpServer.stop();
+          } catch (err) {
+            log.debug(`engram access HTTP stop failed: ${err}`);
+          }
+          stopDreamWatcher?.();
+          stopDreamWatcher = null;
+          stopHeartbeatWatcher?.();
+          stopHeartbeatWatcher = null;
+          removeDreamingObserver?.();
+          removeDreamingObserver = null;
+          delete (globalThis as any)[keys.ACCESS_HTTP_SERVER];
+          delete (globalThis as any)[keys.ACCESS_SERVICE];
+        }
+
         // Clear per-api hook tracking so hooks can be re-bound to fresh api objects.
         // Skip when a secondary is live — its api objects already have hooks bound
         // and resetting the WeakSet here would cause duplicate hook registration

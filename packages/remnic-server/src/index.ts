@@ -117,6 +117,7 @@ export async function startServer(options?: {
 
   const config = parseConfig(remnicConfig);
   const orchestrator = new Orchestrator(config);
+  await orchestrator.initialize();
   const service = new EngramAccessService(orchestrator);
 
   const authToken = serverConfig.authToken ?? readCompatEnv("REMNIC_AUTH_TOKEN", "ENGRAM_AUTH_TOKEN") ?? "";

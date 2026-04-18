@@ -62,6 +62,7 @@ test("initialize skips nightly governance cron auto-register unless explicitly e
     };
 
     await orchestrator.initialize();
+    await orchestrator.deferredReady;
 
     assert.equal(nightlyCalls, 0);
   } finally {
@@ -84,6 +85,7 @@ test("initialize triggers nightly governance cron auto-register when explicitly 
     };
 
     await orchestrator.initialize();
+    await orchestrator.deferredReady;
 
     assert.equal(nightlyCalls, 1);
   } finally {

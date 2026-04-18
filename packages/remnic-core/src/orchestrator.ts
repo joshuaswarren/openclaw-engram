@@ -1172,6 +1172,24 @@ export class Orchestrator {
   private initPromise: Promise<void> | null = null;
   private resolveInit: (() => void) | null = null;
 
+  /**
+   * Resolves when deferred initialization (QMD probe, warmup, caches, cron)
+   * completes. CLI and http-serve callers that need `qmd.isAvailable()` to
+   * reflect reality should `await orchestrator.deferredReady` after
+   * `initialize()`. Gateway callers can ignore it — recall() degrades
+   * gracefully when QMD isn't ready yet.
+   *
+   * Also resolves (without error) when `initialize()` throws before reaching
+   * the deferred-init phase, so callers never hang on a permanently-pending
+   * promise.
+   *
+   * Host adapters that need to tie deferred init to their stop() lifecycle
+   * should `await orchestrator.deferredReady` before proceeding with teardown
+   * to prevent background QMD/warmup/cron tasks from racing with shutdown.
+   */
+  deferredReady: Promise<void> = Promise.resolve();
+  private resolveDeferredReady: (() => void) | null = null;
+
   /** Set per-session workspace for the next recall() call (compaction reset). @internal */
   setRecallWorkspaceOverride(sessionKey: string, dir: string): void {
     this._recallWorkspaceOverrides.set(sessionKey, dir);
@@ -1445,6 +1463,11 @@ export class Orchestrator {
     this.initPromise = new Promise<void>((resolve) => {
       this.resolveInit = resolve;
     });
+
+    // deferredReady is NOT created here — the property initializer provides a
+    // safe default (Promise.resolve()), and initialize() recreates it on every
+    // call. Creating a pending promise in the constructor would be orphaned
+    // since initialize() unconditionally overwrites it.
   }
 
   /** Get or create a BoxBuilder for the given namespace storage root (namespace-isolated). */
@@ -1694,120 +1717,230 @@ export class Orchestrator {
   }
 
   async initialize(): Promise<void> {
-    await migrateFromEngram({
-      quiet: true,
-      logger: (message) => log.info(message),
-    });
-    await this.storage.ensureDirectories();
-    await this.storage.loadAliases();
-    if (this.config.namespacesEnabled) {
-      const namespaces = new Set<string>([
-        this.config.defaultNamespace,
-        this.config.sharedNamespace,
-        ...this.config.namespacePolicies.map((p) => p.name),
-      ]);
-      for (const ns of namespaces) {
-        const sm = await this.storageRouter.storageFor(ns);
-        await sm.ensureDirectories();
-        await sm.loadAliases().catch(() => undefined);
-      }
-    }
-    await this.relevance.load();
-    await this.negatives.load();
-    await this.lastRecall.load();
-    await this.tierMigrationStatus.load();
-    await this.sessionObserver.load();
-    this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
-    this.utilityRuntimeValues = await loadUtilityRuntimeValues({
-      memoryDir: this.config.memoryDir,
-      memoryUtilityLearningEnabled: this.config.memoryUtilityLearningEnabled,
-      promotionByOutcomeEnabled: this.config.promotionByOutcomeEnabled,
+    // Recreate the deferred-ready gate on every initialize() call.
+    // The same Orchestrator instance may be reused across stop/start cycles
+    // (src/index.ts does this). Without this reset, the second cycle's
+    // `await orchestrator.deferredReady` resolves immediately (already settled
+    // from the first cycle) while the new deferredInitialize() is still running.
+    this.deferredReady = new Promise<void>((resolve) => {
+      this.resolveDeferredReady = resolve;
     });
 
-    // Initialize content-hash dedup index
-    if (this.config.factDeduplicationEnabled) {
-      const stateDir = path.join(this.config.memoryDir, "state");
-      this.contentHashIndex = new ContentHashIndex(stateDir);
-      await this.contentHashIndex.load();
-      log.info(
-        `content-hash dedup: loaded ${this.contentHashIndex.size} hashes`,
-      );
-    }
-    await this.transcript.initialize();
-    await this.summarizer.initialize();
-    if (this.sharedContext) {
-      await this.sharedContext.ensureStructure();
-    }
-    if (this.compounding) {
-      await this.compounding.ensureDirs();
-    }
-
-    // Open the init gate early — essential state (storage, aliases, relevance,
-    // transcript, summarizer) is loaded. The slow QMD collection setup and
-    // remaining steps run after the gate opens. recall() already degrades
-    // gracefully when QMD isn't ready, so there's no correctness risk.
-    if (this.resolveInit) {
-      this.resolveInit();
-      this.resolveInit = null;
-      log.info("init gate opened (essential state loaded)");
-    }
-
-    {
-      const available = await this.qmd.probe();
-      if (available) {
-        log.info(`Search backend: available ${this.qmd.debugStatus()}`);
-        const namespaces = this.config.namespacesEnabled
-          ? this.configuredNamespaces()
-          : [this.config.defaultNamespace];
-        const states = await Promise.all(
-          namespaces.map(async (namespace) => ({
-            namespace,
-            state: this.config.namespacesEnabled
-              ? await this.namespaceSearchRouter.ensureNamespaceCollection(
-                  namespace,
-                )
-              : await this.qmd.ensureCollection(this.config.memoryDir),
-          })),
-        );
-        const defaultState =
-          states.find(
-            (entry) => entry.namespace === this.config.defaultNamespace,
-          )?.state ?? "unknown";
-        if (defaultState === "missing") {
-          this.qmd = new NoopSearchBackend();
-          log.warn(
-            "Search collection missing for Remnic memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
-          );
-        } else if (defaultState === "unknown") {
-          log.warn(
-            "Search collection check unavailable; keeping search retrieval enabled for fail-open behavior",
-          );
-        } else if (defaultState === "skipped") {
-          log.debug(
-            "Search collection check skipped (remote or daemon-only mode)",
-          );
+    try {
+      await migrateFromEngram({
+        quiet: true,
+        logger: (message) => log.info(message),
+      });
+      await this.storage.ensureDirectories();
+      await this.storage.loadAliases();
+      if (this.config.namespacesEnabled) {
+        const namespaces = new Set<string>([
+          this.config.defaultNamespace,
+          this.config.sharedNamespace,
+          ...this.config.namespacePolicies.map((p) => p.name),
+        ]);
+        for (const ns of namespaces) {
+          const sm = await this.storageRouter.storageFor(ns);
+          await sm.ensureDirectories();
+          await sm.loadAliases().catch(() => undefined);
         }
-        for (const entry of states) {
-          if (entry.namespace === this.config.defaultNamespace) continue;
-          if (entry.state === "missing") {
+      }
+      await this.relevance.load();
+      await this.negatives.load();
+      await this.lastRecall.load();
+      await this.tierMigrationStatus.load();
+      await this.sessionObserver.load();
+      this.runtimePolicyValues = await this.policyRuntime.loadRuntimeValues();
+      this.utilityRuntimeValues = await loadUtilityRuntimeValues({
+        memoryDir: this.config.memoryDir,
+        memoryUtilityLearningEnabled: this.config.memoryUtilityLearningEnabled,
+        promotionByOutcomeEnabled: this.config.promotionByOutcomeEnabled,
+      });
+
+      // Initialize content-hash dedup index
+      if (this.config.factDeduplicationEnabled) {
+        const stateDir = path.join(this.config.memoryDir, "state");
+        this.contentHashIndex = new ContentHashIndex(stateDir);
+        await this.contentHashIndex.load();
+        log.info(
+          `content-hash dedup: loaded ${this.contentHashIndex.size} hashes`,
+        );
+      }
+      await this.transcript.initialize();
+      await this.summarizer.initialize();
+      if (this.sharedContext) {
+        await this.sharedContext.ensureStructure();
+      }
+      if (this.compounding) {
+        await this.compounding.ensureDirs();
+      }
+
+      // Buffer and compaction cleanup are fast and needed for basic operation —
+      // load them before the init gate so turn buffering works immediately.
+      try {
+        await this.buffer.load();
+      } catch (bufErr) {
+        log.error(
+          `buffer.load() failed (init gate will still open): ${bufErr}`,
+        );
+        this.buffer.resetToEmpty();
+      }
+      if (this.config.compactionResetEnabled) {
+        try {
+          const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
+          const files = await readdir(wsDir).catch(() => [] as string[]);
+          for (const f of files) {
+            if (!f.startsWith(".compaction-reset-signal-")) continue;
+            const fp = path.join(wsDir, f);
+            const s = await stat(fp).catch(() => null);
+            if (s && Date.now() - s.mtimeMs >= COMPACTION_SIGNAL_MAX_AGE_MS) {
+              await unlink(fp).catch(() => {});
+              log.debug(`initialize: removed stale compaction signal ${f}`);
+            }
+          }
+        } catch (err) {
+          log.debug("initialize: stale signal sweep failed:", err);
+        }
+      }
+
+      // QMD probe + collection check: determines the final QMD state (real
+      // client vs NoopSearchBackend). Must complete BEFORE the init gate opens
+      // so that recall() — which awaits initPromise — always observes the final
+      // QMD state. Without this ordering, a concurrent recall() could read
+      // this.qmd while it's still the real client, then get errors when
+      // deferredInitialize() swaps it to NoopSearchBackend mid-query.
+      try {
+        const available = await this.qmd.probe();
+        if (available) {
+          log.info(`Search backend: available ${this.qmd.debugStatus()}`);
+          const namespaces = this.config.namespacesEnabled
+            ? this.configuredNamespaces()
+            : [this.config.defaultNamespace];
+          const states = await Promise.all(
+            namespaces.map(async (namespace) => ({
+              namespace,
+              state: this.config.namespacesEnabled
+                ? await this.namespaceSearchRouter.ensureNamespaceCollection(
+                    namespace,
+                  )
+                : await this.qmd.ensureCollection(this.config.memoryDir),
+            })),
+          );
+          const defaultState =
+            states.find(
+              (entry) => entry.namespace === this.config.defaultNamespace,
+            )?.state ?? "unknown";
+          if (defaultState === "missing") {
+            this.qmd = new NoopSearchBackend();
             log.warn(
-              `Search collection missing for namespace '${entry.namespace}'; namespace retrieval will fail open to non-search paths`,
+              "Search collection missing for Remnic memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
+            );
+          } else if (defaultState === "unknown") {
+            log.warn(
+              "Search collection check unavailable; keeping search retrieval enabled for fail-open behavior",
+            );
+          } else if (defaultState === "skipped") {
+            log.debug(
+              "Search collection check skipped (remote or daemon-only mode)",
             );
           }
+          for (const entry of states) {
+            if (entry.namespace === this.config.defaultNamespace) continue;
+            if (entry.state === "missing") {
+              log.warn(
+                `Search collection missing for namespace '${entry.namespace}'; namespace retrieval will fail open to non-search paths`,
+              );
+            }
+          }
+        } else if (this.qmd instanceof NoopSearchBackend) {
+          log.debug(`Search backend: noop (search intentionally disabled)`);
+        } else {
+          log.warn(`Search backend: not available ${this.qmd.debugStatus()}`);
         }
-      } else if (this.qmd instanceof NoopSearchBackend) {
-        log.debug(`Search backend: noop (search intentionally disabled)`);
-      } else {
-        log.warn(`Search backend: not available ${this.qmd.debugStatus()}`);
+      } catch (err) {
+        log.error(`QMD probe/collection check failed (non-fatal): ${err}`);
+      }
+
+      // Open the init gate — essential state (storage, aliases, relevance,
+      // transcript, summarizer, buffer) is loaded AND QMD state is finalized
+      // (probe + collection check complete, NoopSearchBackend swap done if
+      // needed). Warmup, sync, caches, and remaining heavy operations run in
+      // the background after this point via deferredInitialize().
+      if (this.resolveInit) {
+        this.resolveInit();
+        this.resolveInit = null;
+        log.info("init gate opened (essential state + QMD state loaded)");
+      }
+
+      // Deferred init: QMD sync, warmup, conversation index, caches, cron.
+      // Runs in background so gateway_start returns fast. On low-power hardware
+      // (Umbrel, RPi) QMD warmup/sync alone can take 30-60s and cause gateway
+      // restart loops when they block the startup path. See issue #462.
+      // Note: QMD probe + collection check (including NoopSearchBackend swap)
+      // already ran above before the init gate, so this.qmd is finalized.
+      //
+      // Capture the resolver by value so a concurrent re-initialize() cannot
+      // overwrite this.resolveDeferredReady before .finally() runs — that would
+      // cause the first cycle's .finally() to resolve the *second* cycle's
+      // promise prematurely while leaving the first cycle's promise pending.
+      const resolveDeferred = this.resolveDeferredReady;
+      this.resolveDeferredReady = null;
+      this.deferredInitialize()
+        .catch((err) => {
+          log.error(`deferred initialization failed (non-fatal): ${err}`);
+        })
+        .finally(() => {
+          resolveDeferred?.();
+        });
+    } catch (err) {
+      // Resolve both gates so callers never hang on permanently-pending promises
+      // after catching the initialize() error:
+      //
+      // - initPromise: recall(), generateDaySummary(), etc. await this as a
+      //   readiness gate with a 15s timeout. Leaving it pending means every
+      //   subsequent call pays that timeout penalty.
+      //
+      // - deferredReady: CLI callers await this for full QMD readiness. Without
+      //   resolution it hangs forever since deferredInitialize() never ran.
+      if (this.resolveInit) {
+        this.resolveInit();
+        this.resolveInit = null;
+      }
+      if (this.resolveDeferredReady) {
+        this.resolveDeferredReady();
+        this.resolveDeferredReady = null;
+      }
+      throw err;
+    }
+  }
+
+  private async deferredInitialize(): Promise<void> {
+    // QMD probe + collection check (including NoopSearchBackend swap) already
+    // ran in initialize() before the init gate opened, so this.qmd is final.
+
+    // Sync QMD index with current disk state so recall finds recently-written
+    // facts. Without this, the index stays stale from the last extraction-
+    // triggered update — which can be days ago if the daemon restarted without
+    // new extractions. This is the root cause of "0 memories" recall results
+    // despite thousands of facts on disk.
+    if (this.qmd.isAvailable() && this.config.qmdMaintenanceEnabled) {
+      try {
+        log.info("QMD startup sync: updating index to match current disk state");
+        if (this.config.namespacesEnabled) {
+          await this.namespaceSearchRouter.updateNamespaces(
+            this.configuredNamespaces(),
+          );
+        } else {
+          await this.qmd.update();
+        }
+        log.info("QMD startup sync: complete");
+      } catch (err) {
+        log.warn(`QMD startup sync failed (non-fatal): ${err}`);
       }
     }
 
     // Warmup: run cheap searches to pre-load QMD embedding models and the
-    // embedding-fallback JSON index. Without this, the first recall after
-    // startup loads ML models + parses a 300 MB JSON file (30-60 s each),
-    // causing it to exceed RECALL_TIMEOUT_MS. This is especially important
-    // for the http-serve CLI path where initialize() runs once at startup and
-    // every subsequent recall must be fast.
+    // embedding-fallback JSON index so the first real recall is fast.
     const warmupPromises: Promise<void>[] = [];
     if (this.qmd.isAvailable()) {
       const warmupNs = this.config.defaultNamespace;
@@ -1824,9 +1957,6 @@ export class Orchestrator {
       );
     }
     if (this.config.embeddingFallbackEnabled) {
-      // Only probe availability — do NOT load the full index at warmup.
-      // embeddings.json can be hundreds of MB; parsing it into JS number arrays
-      // consumes gigabytes of V8 heap and triggers GC stalls / OOM crashes.
       warmupPromises.push(
         this.embeddingFallback
           .isAvailable()
@@ -1842,91 +1972,74 @@ export class Orchestrator {
     }
     await Promise.all(warmupPromises);
 
-    // Fire-and-forget: pre-warm the readAllMemories() static cache for all
-    // configured namespace storages.  With 80k+ memory files the cold scan takes
-    // 13-60 s; running it in the background at startup ensures the cache is hot
-    // before the first recall request arrives, eliminating the cold-start penalty.
-    // Also pre-warms buildKnowledgeIndex() to prime knowledgeIndexCache on the
-    // base storage (avoids the 13 s readAllEntityFiles() penalty on first recall).
-    // Warm the Knowledge Index (readAllEntityFiles + scoring) on the base storage.
-    // knowledgeIndexCache is an instance-level cache — warming it here populates it
-    // before the first recall so ki=13s cold penalty doesn't hit real requests.
+    // Pre-warm knowledge index, memory, and entity caches.
+    // Awaited so callers of `deferredReady` can rely on warmups being complete
+    // and shutdown sequencing does not race with in-flight cache builds.
+    const cacheWarmups: Promise<void>[] = [];
     if (this.config.knowledgeIndexEnabled) {
-      (async () => {
-        try {
-          const t0 = Date.now();
-          await this.storage.buildKnowledgeIndex(this.config);
-          log.info(`Knowledge Index warmup: complete in ${Date.now() - t0}ms`);
-        } catch (err) {
-          log.debug(`Knowledge Index warmup failed (non-fatal): ${err}`);
-        }
-      })().catch(() => {});
+      cacheWarmups.push(
+        (async () => {
+          try {
+            const t0 = Date.now();
+            await this.storage.buildKnowledgeIndex(this.config);
+            log.info(`Knowledge Index warmup: complete in ${Date.now() - t0}ms`);
+          } catch (err) {
+            log.debug(`Knowledge Index warmup failed (non-fatal): ${err}`);
+          }
+        })(),
+      );
     }
-
-    // Pre-warm memory and entity caches in background so first recall
-    // doesn't pay the cold load penalty
-    this.storage.readAllMemories().catch(() => {});
-    this.storage.readAllEntityFiles().catch(() => {});
+    cacheWarmups.push(this.storage.readAllMemories().then(() => {}).catch(() => {}));
+    cacheWarmups.push(this.storage.readAllEntityFiles().then(() => {}).catch(() => {}));
+    await Promise.all(cacheWarmups);
 
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
-      const init = await this.conversationIndexBackend.initialize();
-      if (!init.enabled) {
-        this.config.conversationIndexEnabled = false;
-      }
-      if (init.logLevel === "info") {
-        log.info(init.message);
-      } else if (init.logLevel === "warn") {
-        log.warn(init.message);
-      } else {
-        log.debug(init.message);
-      }
-    }
-
-    await this.buffer.load();
-
-    // Validate local LLM model configuration
-    if (this.config.localLlmEnabled) {
-      await this.validateLocalLlmModel();
-    }
-
-    // Sweep stale compaction-reset signal files (>1 hour old).
-    // This prevents orphaned signals from persisting when agents are removed
-    // or sessions never call recall() again after a compaction.
-    // NOTE: This sweep only covers the config-level workspace. Per-agent signals
-    // (written to ctx.workspaceDir) are cleaned up by recall() on each session
-    // start, with a 1-hour TTL enforced at read time. Agent-specific workspaces
-    // are not known at initialize() time.
-    if (this.config.compactionResetEnabled) {
       try {
-        const wsDir = this.config.workspaceDir || defaultWorkspaceDir();
-        const files = await readdir(wsDir).catch(() => [] as string[]);
-        for (const f of files) {
-          if (!f.startsWith(".compaction-reset-signal-")) continue;
-          const fp = path.join(wsDir, f);
-          const s = await stat(fp).catch(() => null);
-          if (s && Date.now() - s.mtimeMs >= COMPACTION_SIGNAL_MAX_AGE_MS) {
-            await unlink(fp).catch(() => {});
-            log.debug(`initialize: removed stale compaction signal ${f}`);
-          }
+        const init = await this.conversationIndexBackend.initialize();
+        if (!init.enabled) {
+          this.config.conversationIndexEnabled = false;
+        }
+        if (init.logLevel === "info") {
+          log.info(init.message);
+        } else if (init.logLevel === "warn") {
+          log.warn(init.message);
+        } else {
+          log.debug(init.message);
         }
       } catch (err) {
-        log.debug("initialize: stale signal sweep failed:", err);
+        log.error(`Conversation index initialization failed (non-fatal): ${err}`);
+        this.config.conversationIndexEnabled = false;
       }
     }
 
-    log.info("orchestrator initialized (full)");
+    if (this.config.localLlmEnabled) {
+      try {
+        await this.validateLocalLlmModel();
+      } catch (err) {
+        log.error(`Local LLM validation failed (non-fatal): ${err}`);
+      }
+    }
 
-    // Fire-and-forget: auto-register day-summary cron job if enabled
+    // Await cron auto-registration so callers that `await deferredReady` can
+    // rely on cron jobs being registered when it resolves. Without this, the
+    // fire-and-forget pattern lets deferredReady settle while cron writes are
+    // still in flight. Errors are non-fatal — catch individually.
     if (this.config.daySummaryEnabled) {
-      this.autoRegisterDaySummaryCron().catch((err) => {
+      try {
+        await this.autoRegisterDaySummaryCron();
+      } catch (err) {
         log.debug(`day-summary cron auto-register failed (non-fatal): ${err}`);
-      });
+      }
     }
     if (this.config.nightlyGovernanceCronAutoRegister) {
-      this.autoRegisterNightlyGovernanceCron().catch((err) => {
+      try {
+        await this.autoRegisterNightlyGovernanceCron();
+      } catch (err) {
         log.debug(`nightly governance cron auto-register failed (non-fatal): ${err}`);
-      });
+      }
     }
+
+    log.info("orchestrator initialized (full — deferred steps complete)");
   }
 
   /**
