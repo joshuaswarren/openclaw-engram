@@ -58,7 +58,7 @@ export interface BulkImportSourceAdapter {
 // ---------------------------------------------------------------------------
 
 const VALID_ROLES: ReadonlySet<string> = new Set(["user", "assistant", "other"]);
-const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
+const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 export interface ImportTurnValidationIssue {
   code: string;
@@ -78,8 +78,14 @@ export function parseIsoTimestamp(value: string): number | null {
   if (typeof value !== "string" || !ISO_TIMESTAMP_RE.test(value)) return null;
   const ts = Date.parse(value);
   if (!Number.isFinite(ts)) return null;
-  const roundTrip = new Date(ts).toISOString();
-  if (roundTrip !== normalizeIsoForComparison(value)) return null;
+
+  // For UTC timestamps (ending in Z), verify with round-trip
+  if (value.endsWith("Z")) {
+    const roundTrip = new Date(ts).toISOString();
+    if (roundTrip !== normalizeIsoForComparison(value)) return null;
+  }
+  // For offset timestamps, Date.parse already validated; ensure the
+  // parsed ms is a reasonable epoch value (not NaN, which isFinite covers)
   return ts;
 }
 

@@ -126,4 +126,58 @@ describe("runBulkImportCliCommand", () => {
     assert.equal(result.turnsProcessed, 1);
     assert.equal(result.memoriesCreated, 0);
   });
+
+  it("strict flag is independent from verbose flag", async () => {
+    let capturedOptions: { strict?: boolean } | undefined;
+    clearBulkImportSources();
+    registerBulkImportSource({
+      name: "spy-source",
+      parse: (_input: unknown, options?: { strict?: boolean }) => {
+        capturedOptions = options;
+        return {
+          turns: [
+            {
+              role: "user" as const,
+              content: "Hello",
+              timestamp: "2024-06-15T10:00:00.000Z",
+            },
+          ],
+          metadata: {
+            source: "spy-source",
+            exportDate: "2024-06-15T00:00:00.000Z",
+            messageCount: 1,
+            dateRange: {
+              from: "2024-01-01T00:00:00.000Z",
+              to: "2024-06-15T00:00:00.000Z",
+            },
+          },
+        };
+      },
+    });
+
+    // verbose=true, strict not set — strict should NOT be true
+    await runBulkImportCliCommand({
+      memoryDir: tmpDir,
+      source: "spy-source",
+      file: tmpFile,
+      dryRun: true,
+      verbose: true,
+      stdout: nullStream(),
+      stderr: nullStream(),
+    });
+    assert.equal(capturedOptions?.strict, false);
+
+    // strict=true, verbose=false — strict should be true
+    await runBulkImportCliCommand({
+      memoryDir: tmpDir,
+      source: "spy-source",
+      file: tmpFile,
+      dryRun: true,
+      verbose: false,
+      strict: true,
+      stdout: nullStream(),
+      stderr: nullStream(),
+    });
+    assert.equal(capturedOptions?.strict, true);
+  });
 });

@@ -26,6 +26,7 @@ export {
 export {
   runBulkImportPipeline,
   formatBatchTranscript,
+  validateBatchSize,
   type ProcessBatchFn,
   type ProcessBatchResult,
 } from "./pipeline.js";

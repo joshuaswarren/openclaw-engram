@@ -51,6 +51,24 @@ describe("parseIsoTimestamp", () => {
     assert.ok(ts! > 0);
   });
 
+  it("parses a valid ISO timestamp with positive timezone offset", () => {
+    const ts = parseIsoTimestamp("2024-01-15T10:30:00+05:30");
+    assert.equal(typeof ts, "number");
+    assert.ok(ts! > 0);
+  });
+
+  it("parses a valid ISO timestamp with negative timezone offset", () => {
+    const ts = parseIsoTimestamp("2024-01-15T10:30:00-08:00");
+    assert.equal(typeof ts, "number");
+    assert.ok(ts! > 0);
+  });
+
+  it("parses a valid ISO timestamp with millis and timezone offset", () => {
+    const ts = parseIsoTimestamp("2024-01-15T10:30:00.000+05:30");
+    assert.equal(typeof ts, "number");
+    assert.ok(ts! > 0);
+  });
+
   it("returns null for non-ISO string", () => {
     assert.equal(parseIsoTimestamp("June 15, 2024"), null);
   });
@@ -165,6 +183,22 @@ describe("validateImportTurn", () => {
   it("accepts timestamp without millis", () => {
     const turn = makeValidTurn({
       timestamp: "2024-06-15T10:30:00Z",
+    });
+    const issues = validateImportTurn(turn);
+    assert.equal(issues.length, 0);
+  });
+
+  it("accepts timestamp with positive timezone offset", () => {
+    const turn = makeValidTurn({
+      timestamp: "2024-01-15T10:30:00+05:30",
+    });
+    const issues = validateImportTurn(turn);
+    assert.equal(issues.length, 0);
+  });
+
+  it("accepts timestamp with negative timezone offset", () => {
+    const turn = makeValidTurn({
+      timestamp: "2024-01-15T10:30:00-08:00",
     });
     const issues = validateImportTurn(turn);
     assert.equal(issues.length, 0);

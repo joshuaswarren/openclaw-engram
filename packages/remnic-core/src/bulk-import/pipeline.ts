@@ -24,10 +24,19 @@ export type ProcessBatchFn = (
   turns: ImportTurn[],
 ) => Promise<ProcessBatchResult>;
 
-function clampBatchSize(value: number | undefined): number {
-  if (!Number.isFinite(value as number)) return DEFAULT_BATCH_SIZE;
-  const clamped = Math.max(MIN_BATCH_SIZE, Math.floor(value as number));
-  return Math.min(clamped, MAX_BATCH_SIZE);
+export function validateBatchSize(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_BATCH_SIZE;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(
+      `batchSize must be a finite number, received ${String(value)}`,
+    );
+  }
+  if (value < MIN_BATCH_SIZE || value > MAX_BATCH_SIZE) {
+    throw new Error(
+      `batchSize must be between ${MIN_BATCH_SIZE} and ${MAX_BATCH_SIZE}, received ${value}`,
+    );
+  }
+  return Math.floor(value);
 }
 
 /**
@@ -54,7 +63,7 @@ export async function runBulkImportPipeline(
   options: BulkImportOptions = {},
   processBatch: ProcessBatchFn,
 ): Promise<BulkImportResult> {
-  const batchSize = clampBatchSize(options.batchSize);
+  const batchSize = validateBatchSize(options.batchSize);
   const dryRun = options.dryRun === true;
 
   const result: BulkImportResult = {

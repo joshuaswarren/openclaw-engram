@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   runBulkImportPipeline,
   formatBatchTranscript,
+  validateBatchSize,
   type ProcessBatchFn,
 } from "./pipeline.js";
 import type {
@@ -250,5 +251,77 @@ describe("formatBatchTranscript", () => {
     ];
     const transcript = formatBatchTranscript(turns);
     assert.ok(transcript.includes("p1: Hey"));
+  });
+});
+
+describe("validateBatchSize", () => {
+  it("returns default when undefined", () => {
+    assert.equal(validateBatchSize(undefined), 20);
+  });
+
+  it("accepts valid batch size", () => {
+    assert.equal(validateBatchSize(10), 10);
+  });
+
+  it("floors fractional values", () => {
+    assert.equal(validateBatchSize(5.7), 5);
+  });
+
+  it("accepts minimum boundary (1)", () => {
+    assert.equal(validateBatchSize(1), 1);
+  });
+
+  it("accepts maximum boundary (1000)", () => {
+    assert.equal(validateBatchSize(1000), 1000);
+  });
+
+  it("throws for NaN", () => {
+    assert.throws(
+      () => validateBatchSize(NaN),
+      (err: Error) => {
+        assert.ok(err.message.includes("finite number"));
+        return true;
+      },
+    );
+  });
+
+  it("throws for Infinity", () => {
+    assert.throws(
+      () => validateBatchSize(Infinity),
+      (err: Error) => {
+        assert.ok(err.message.includes("finite number"));
+        return true;
+      },
+    );
+  });
+
+  it("throws for zero", () => {
+    assert.throws(
+      () => validateBatchSize(0),
+      (err: Error) => {
+        assert.ok(err.message.includes("between 1 and 1000"));
+        return true;
+      },
+    );
+  });
+
+  it("throws for negative value", () => {
+    assert.throws(
+      () => validateBatchSize(-5),
+      (err: Error) => {
+        assert.ok(err.message.includes("between 1 and 1000"));
+        return true;
+      },
+    );
+  });
+
+  it("throws for value exceeding maximum", () => {
+    assert.throws(
+      () => validateBatchSize(1001),
+      (err: Error) => {
+        assert.ok(err.message.includes("between 1 and 1000"));
+        return true;
+      },
+    );
   });
 });

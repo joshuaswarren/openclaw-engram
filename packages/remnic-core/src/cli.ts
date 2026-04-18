@@ -2770,6 +2770,7 @@ export interface BulkImportCliCommandOptions {
   batchSize?: number;
   dryRun?: boolean;
   verbose?: boolean;
+  strict?: boolean;
   stdout: Writable;
   stderr: Writable;
 }
@@ -2792,7 +2793,7 @@ export async function runBulkImportCliCommand(
 
   const inputRaw = await readFile(opts.file, "utf-8");
   const parsed = await adapter.parse(inputRaw, {
-    strict: opts.verbose === true,
+    strict: opts.strict === true,
   });
 
   if (!opts.dryRun) {
