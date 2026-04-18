@@ -10,6 +10,7 @@ import type {
   BenchConfig,
   BenchTier,
   BenchmarkDefinition,
+  BenchmarkMode,
   BenchmarkReport,
   BenchmarkResult,
   BenchmarkSuiteResult,
@@ -29,6 +30,7 @@ const DEFAULT_BASELINE_PATH = path.join(process.cwd(), "benchmarks", "baseline.j
 const DEFAULT_REPORT_PATH = path.join(process.cwd(), "benchmarks", "report.json");
 const BASELINE_VERSION = 1;
 const DEFAULT_TOLERANCE = 10;
+const DEFAULT_FULL_RUN_COUNT = 5;
 
 const DEFAULT_QUERIES = [
   "What is the storage?",
@@ -56,6 +58,62 @@ interface RecallResponse {
 function hrTimeMs(): number {
   const [seconds, nanos] = process.hrtime();
   return seconds * 1_000 + Math.round(nanos / 1_000_000);
+}
+
+export function resolveBenchmarkRunCount(
+  mode: BenchmarkMode,
+  requestedIterations?: number,
+): number {
+  if (mode === "quick") {
+    return 1;
+  }
+
+  if (requestedIterations === undefined) {
+    return DEFAULT_FULL_RUN_COUNT;
+  }
+
+  if (!Number.isInteger(requestedIterations) || requestedIterations <= 0) {
+    throw new Error("benchmark iterations must be a positive integer");
+  }
+
+  return requestedIterations;
+}
+
+export function buildBenchmarkRunSeeds(
+  runCount: number,
+  baseSeed?: number,
+): number[] {
+  if (!Number.isInteger(runCount) || runCount <= 0) {
+    throw new Error("benchmark run count must be a positive integer");
+  }
+
+  const firstSeed = baseSeed ?? 0;
+  if (!Number.isInteger(firstSeed) || firstSeed < 0) {
+    throw new Error("benchmark seed must be a non-negative integer");
+  }
+
+  return Array.from({ length: runCount }, (_, index) => firstSeed + index);
+}
+
+export async function orchestrateBenchmarkRuns<T>(
+  mode: BenchmarkMode,
+  executeRun: (seed: number, runIndex: number) => Promise<T>,
+  requestedIterations?: number,
+  baseSeed?: number,
+): Promise<{ runCount: number; seeds: number[]; runs: T[] }> {
+  const runCount = resolveBenchmarkRunCount(mode, requestedIterations);
+  const seeds = buildBenchmarkRunSeeds(runCount, baseSeed);
+  const runs: T[] = [];
+
+  for (const [runIndex, seed] of seeds.entries()) {
+    runs.push(await executeRun(seed, runIndex));
+  }
+
+  return {
+    runCount,
+    seeds,
+    runs,
+  };
 }
 
 export async function runBenchmark(

@@ -44,6 +44,19 @@ test("legacy adapter benchmark types use explicit Legacy* names to avoid collidi
   assert.doesNotMatch(source, /export interface BenchmarkRunner/);
 });
 
+test("@remnic/bench index exports the phase-2 stats helpers", async () => {
+  const source = await readFile("packages/bench/src/index.ts", "utf8");
+
+  assert.match(source, /bootstrapMeanConfidenceInterval/);
+  assert.match(source, /pairedDeltaConfidenceInterval/);
+  assert.match(source, /cohensD/);
+  assert.match(source, /interpretEffectSize/);
+  assert.match(source, /compareResults/);
+  assert.match(source, /buildBenchmarkRunSeeds/);
+  assert.match(source, /orchestrateBenchmarkRuns/);
+  assert.match(source, /resolveBenchmarkRunCount/);
+});
+
 test("@remnic/bench index exports provider factory and discovery helpers", async () => {
   const source = await readFile("packages/bench/src/index.ts", "utf8");
 

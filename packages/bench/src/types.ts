@@ -40,23 +40,52 @@ export interface MetricAggregate {
 
 export type AggregateMetrics = Record<string, MetricAggregate>;
 
+export interface ConfidenceInterval {
+  lower: number;
+  upper: number;
+  level: number;
+}
+
+export type EffectSizeInterpretation =
+  | "negligible"
+  | "small"
+  | "medium"
+  | "large";
+
+export interface EffectSizeSummary {
+  cohensD: number;
+  interpretation: EffectSizeInterpretation;
+}
+
+export interface ComparisonMetricDelta {
+  baseline: number;
+  candidate: number;
+  delta: number;
+  percentChange: number;
+  effectSize: EffectSizeSummary;
+  ciOnDelta?: ConfidenceInterval;
+}
+
+export interface ComparisonResult {
+  benchmark: string;
+  metricDeltas: Record<string, ComparisonMetricDelta>;
+  verdict: "pass" | "regression" | "improvement";
+}
+
 export interface StatisticalReport {
   confidenceIntervals: Record<
     string,
-    { lower: number; upper: number; level: 0.95 }
+    ConfidenceInterval
   >;
   bootstrapSamples: number;
   effectSizes?: Record<
     string,
-    {
-      cohensD: number;
-      interpretation: "negligible" | "small" | "medium" | "large";
-    }
+    EffectSizeSummary
   >;
   pairedComparison?: {
     baselineId: string;
     pValue: number;
-    ciOnDelta: { lower: number; upper: number };
+    ciOnDelta: ConfidenceInterval;
   };
 }
 

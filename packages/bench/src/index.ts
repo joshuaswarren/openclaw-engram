@@ -23,6 +23,11 @@ export type {
   TaskResult,
   MetricAggregate,
   AggregateMetrics,
+  ComparisonMetricDelta,
+  ComparisonResult,
+  ConfidenceInterval,
+  EffectSizeInterpretation,
+  EffectSizeSummary,
   StatisticalReport,
   BenchmarkResult,
   BenchmarkMeta,
@@ -69,6 +74,9 @@ export { createLiteLlmProvider } from "./providers/litellm.js";
 export { createOllamaProvider } from "./providers/ollama.js";
 export { createOpenAiCompatibleProvider } from "./providers/openai-compatible.js";
 export {
+  buildBenchmarkRunSeeds,
+  orchestrateBenchmarkRuns,
+  resolveBenchmarkRunCount,
   runBenchmark,
   listBenchmarks,
   getBenchmark,
@@ -90,3 +98,9 @@ export {
   timed,
   aggregateTaskScores,
 } from "./scorer.js";
+export {
+  bootstrapMeanConfidenceInterval,
+  pairedDeltaConfidenceInterval,
+} from "./stats/bootstrap.js";
+export { cohensD, interpretEffectSize } from "./stats/effect-size.js";
+export { compareResults } from "./stats/comparison.js";
