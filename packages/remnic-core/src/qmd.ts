@@ -661,12 +661,11 @@ class QmdDaemonSession {
 const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(.+)/;
 
 /**
- * Known file extensions for QMD memory paths. Used to split the "rest" portion
- * of a markdown result line into path and title. The greedy `.+` before the
- * extension ensures we match the LAST occurrence (e.g., in
- * `v1.2 - archived/note.md - Title`, it matches at `note.md`, not `v1.2`).
+ * Known file extensions for QMD memory paths. Non-greedy `.+?` finds the
+ * FIRST known extension followed by ` - `, which is safe because version
+ * numbers like `v1.2` don't appear in the extension allow-list.
  */
-const QMD_PATH_TITLE_RE = /^(.+\.(?:md|txt|json|yaml|yml|html))\s+-\s+(.*)$/;
+const QMD_PATH_TITLE_RE = /^(.+?\.(?:md|txt|json|yaml|yml|html))\s+-\s+(.*)$/;
 
 function parseQmdMarkdownResultText(
   text: string,

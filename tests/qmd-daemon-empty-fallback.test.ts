@@ -405,7 +405,7 @@ test("daemon parses QMD v2 markdown results with version-like dots in path segme
   const out = await client.search("version path test", undefined, 5);
   assert.equal(out.length, 3);
 
-  // "v1.2" should NOT be treated as the path — the greedy match finds "note.md"
+  // "v1.2" is skipped because "2" isn't in the known-extension list
   assert.equal(out[0]?.docid, "aa1100");
   assert.equal(out[0]?.score, 0.88);
   assert.equal(out[0]?.path, "openclaw-engram-hot-facts/v1.2 - archived/note.md");
@@ -419,6 +419,37 @@ test("daemon parses QMD v2 markdown results with version-like dots in path segme
   assert.equal(out[2]?.docid, "cc3300");
   assert.equal(out[2]?.score, 0.60);
   assert.equal(out[2]?.path, "openclaw-engram-hot-facts/release-3.1/2026-04-01/summary.txt");
+});
+
+test("daemon parses QMD v2 markdown results when title contains a filename", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 2 results for "title filename test":',
+            "",
+            "#aabb11 90% openclaw-engram-hot-facts/2026-04-12/fact.md - mentions config.json - follow-up",
+            "#ccdd22 75% openclaw-engram-hot-facts/2026-03-01/note.txt - see also report.html - final draft",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  const out = await client.search("title filename test", undefined, 5);
+  assert.equal(out.length, 2);
+
+  assert.equal(out[0]?.docid, "aabb11");
+  assert.equal(out[0]?.path, "openclaw-engram-hot-facts/2026-04-12/fact.md");
+
+  assert.equal(out[1]?.docid, "ccdd22");
+  assert.equal(out[1]?.path, "openclaw-engram-hot-facts/2026-03-01/note.txt");
 });
 
 test("parseMcpSearchResult deduplicates markdown fallback hits against structured results", async () => {
