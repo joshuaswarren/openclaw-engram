@@ -38,9 +38,12 @@ export function entityRecall(
   if (gold.length === 0) return { overall: 1, byType: {} };
 
   const matched = new Set<string>();
+  const consumedExtracted = new Set<number>();
   for (const ge of gold) {
-    if (extracted.some((ee) => matchEntity(ee, ge))) {
+    const idx = extracted.findIndex((ee, i) => !consumedExtracted.has(i) && matchEntity(ee, ge));
+    if (idx >= 0) {
       matched.add(ge.id);
+      consumedExtracted.add(idx);
     }
   }
 
