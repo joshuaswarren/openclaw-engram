@@ -11,7 +11,7 @@ import type {
   BenchmarkResult,
   ResolvedRunBenchmarkOptions,
 } from "../../../types.js";
-import type { IngestionBenchAdapter, ExtractedPage } from "../../../ingestion-types.js";
+import type { ExtractedPage } from "../../../ingestion-types.js";
 import type { BenchJudge } from "../../../adapters/types.js";
 import { aggregateTaskScores, timed } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -64,8 +64,11 @@ async function judgeCitation(
 }
 
 export async function runIngestionCitationAccuracyBenchmark(
-  options: ResolvedRunBenchmarkOptions & { ingestionAdapter: IngestionBenchAdapter },
+  options: ResolvedRunBenchmarkOptions,
 ): Promise<BenchmarkResult> {
+  if (!options.ingestionAdapter) {
+    throw new Error("ingestionAdapter is required for ingestion benchmarks");
+  }
   const fixture = emailFixture.generate();
 
   const fixtureDir = await mkdtemp(path.join(tmpdir(), "bench-citation-"));
@@ -102,7 +105,7 @@ export async function runIngestionCitationAccuracyBenchmark(
       }
     }
 
-    const citationAccuracy = scoredClaims > 0 ? validCitations / scoredClaims : -1;
+    const citationAccuracy = scoredClaims > 0 ? validCitations / scoredClaims : 0;
 
     const scores: Record<string, number> = {
       citation_accuracy: citationAccuracy,
