@@ -77,14 +77,16 @@ test("--all selection resolves to runnable package benchmarks when package metad
 
 test("bench CLI validates and resolves explicit dataset overrides for full package runs", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
 
   assert.match(source, /--dataset-dir <path>\s+Override the benchmark dataset directory for full runs/);
-  assert.match(source, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
-  assert.match(source, /function collectBenchmarks\(argv: string\[\]\): string\[\]/);
-  assert.match(source, /requires a value\./);
-  assert.match(source, /if \(arg === "--dataset-dir"\) \{\s*index \+= 1;\s*continue;\s*\}/s);
-  assert.match(source, /datasetDir: datasetDir \? path\.resolve\(expandTilde\(datasetDir\)\) : undefined/);
-  assert.match(source, /const benchmarks = collectBenchmarks\(args\);/);
+  assert.match(source, /from "\.\/bench-args\.js";/);
+  assert.match(parserSource, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
+  assert.match(parserSource, /function collectBenchmarks\(argv: string\[\]\): string\[\]/);
+  assert.match(parserSource, /const benchmarks = collectBenchmarks\(args\);/);
+  assert.match(parserSource, /requires a value\./);
+  assert.match(parserSource, /if \(arg === "--dataset-dir"\) \{\s*index \+= 1;\s*continue;\s*\}/s);
+  assert.match(parserSource, /datasetDir: datasetDir \? path\.resolve\(expandTilde\(datasetDir\)\) : undefined/);
   assert.match(source, /resolveBenchDatasetDir\(\s*benchmarkId,\s*parsed\.quick,\s*parsed\.datasetDir/s);
   assert.match(source, /const outputDir = resolveBenchOutputDir\(\);/);
   assert.match(source, /const datasetDir = resolveBenchDatasetDir\(/);
@@ -94,7 +96,7 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
 });
 
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {
-  const { parseBenchArgs } = await import("../packages/remnic-cli/src/index.ts");
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
 
   const parsed = parseBenchArgs([
     "run",
@@ -128,7 +130,7 @@ test("CLI uses the package BenchmarkDefinition contract instead of a local bench
 test("legacy benchmark check/report reuse the normalized action args instead of re-slicing rest", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
 
-  assert.match(source, /function parseBenchActionArgs\(argv: string\[\]\)/);
+  assert.match(source, /parseBenchActionArgs,\s*\n\s*parseBenchArgs,/s);
   assert.match(source, /const benchAction = parseBenchActionArgs\(rest\);/);
   assert.match(source, /await cmdLegacyBenchmark\(parsed\.action,\s*benchAction\.args,\s*parsed\.json\);/);
   assert.doesNotMatch(source, /await cmdLegacyBenchmark\(parsed\.action,\s*rest\.slice\(1\),\s*parsed\.json\);/);

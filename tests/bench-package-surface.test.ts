@@ -22,14 +22,14 @@ test("@remnic/bench publishes compiled entrypoints instead of raw source paths",
   assert.equal(pkg.scripts?.build, "tsup --config tsup.config.ts");
 });
 
-test("compiled bench bundle can still resolve the repo root package.json for Remnic version lookup", async () => {
-  const distEntry = await readFile("packages/bench/dist/index.js", "utf8");
+test("bench reporter resolves the repo root package.json for Remnic version lookup", async () => {
+  const reporterSource = await readFile("packages/bench/src/reporter.ts", "utf8");
   const packageJsonPath = path.resolve("packages/bench/dist", "../../../package.json");
   const pkg = JSON.parse(
     await readFile(packageJsonPath, "utf8"),
   ) as { version?: string };
 
-  assert.match(distEntry, /path2\.resolve\(import\.meta\.dirname, "\.\.\/\.\.\/\.\.\/package\.json"\)/);
+  assert.match(reporterSource, /path\.resolve\(import\.meta\.dirname, "\.\.\/\.\.\/\.\.\/package\.json"\)/);
   assert.equal(typeof pkg.version, "string");
 });
 
