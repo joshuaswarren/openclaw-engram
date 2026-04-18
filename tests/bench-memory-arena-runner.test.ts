@@ -218,6 +218,20 @@ test("runBenchmark rejects empty memory-arena datasets", async () => {
   );
 });
 
+test("runBenchmark treats memory-arena limit zero as an empty run instead of falling back to all tasks", async () => {
+  const adapter = new FakeMemoryAdapter();
+
+  await assert.rejects(
+    () =>
+      runBenchmark("memory-arena", {
+        mode: "quick",
+        limit: 0,
+        system: adapter,
+      }),
+    /MemoryArena dataset is empty after applying the requested limit/,
+  );
+});
+
 test("runBenchmark rejects malformed memory-arena questions arrays with a benchmark-specific error", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-bad-questions-"));
   const datasetDir = path.join(tmpDir, "datasets", "memory-arena");

@@ -170,6 +170,7 @@ async function loadDataset(
   datasetDir: string | undefined,
   limit?: number,
 ): Promise<DomainData[]> {
+  const normalizedLimit = normalizeLimit(limit);
   const ensureDatasetTasks = (domains: DomainData[]): DomainData[] => {
     const taskCount = domains.reduce(
       (sum, domain) => sum + domain.tasks.length,
@@ -212,7 +213,7 @@ async function loadDataset(
         }
         parsedTasks.push(parseTask(line, filename, lineIndex + 1));
       });
-      const tasks = limit ? parsedTasks.slice(0, limit) : parsedTasks;
+      const tasks = applyLimit(parsedTasks, normalizedLimit);
       domains.push({
         domain: filename.replace(/\.jsonl$/, ""),
         tasks,
@@ -230,9 +231,28 @@ async function loadDataset(
 
   const bundledFixture = MEMORY_ARENA_SMOKE_FIXTURE.map((domain) => ({
     ...domain,
-    tasks: limit ? domain.tasks.slice(0, limit) : [...domain.tasks],
+    tasks: applyLimit(domain.tasks, normalizedLimit),
   }));
   return ensureDatasetTasks(bundledFixture);
+}
+
+function normalizeLimit(limit: number | undefined): number | undefined {
+  if (limit === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(limit) || limit < 0) {
+    throw new Error(
+      `MemoryArena limit must be a non-negative integer when provided; received ${limit}.`,
+    );
+  }
+  return limit;
+}
+
+function applyLimit<T>(items: T[], limit: number | undefined): T[] {
+  if (limit === undefined) {
+    return [...items];
+  }
+  return items.slice(0, limit);
 }
 
 function parseTask(line: string, filename: string, lineNumber: number): ArenaTask {
