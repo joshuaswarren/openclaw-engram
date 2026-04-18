@@ -135,10 +135,19 @@ export async function runBenchmark(
     );
   }
 
+  const definition = benchmarkDefinition(registeredBenchmark.id);
+  if (definition.meta.category === "ingestion" && !options.ingestionAdapter) {
+    throw new Error(
+      `Benchmark "${benchmarkId}" requires an ingestion adapter. ` +
+      `Pass ingestionAdapter via RunBenchmarkOptions or use the programmatic API. ` +
+      `The CLI does not yet support ingestion benchmarks.`,
+    );
+  }
+
   return registeredBenchmark.run({
     ...options,
     mode: options.mode ?? "quick",
-    benchmark: benchmarkDefinition(registeredBenchmark.id),
+    benchmark: definition,
   });
 }
 
