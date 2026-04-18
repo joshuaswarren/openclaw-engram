@@ -149,15 +149,17 @@ test("bench results, baseline, and export route through the stored package resul
   assert.match(source, /if \(parsed\.action === "baseline"\) \{\s*await manageBenchBaselines\(parsed\);/s);
   assert.match(source, /if \(parsed\.action === "export"\) \{\s*await exportBenchPackageResult\(parsed\);/s);
   assert.match(source, /baseline save <name> \[run\]/);
-  assert.match(source, /bench export <run> --format <json\|csv>/);
+  assert.match(source, /bench export <run> --format <json\|csv\|html>/);
   assert.match(source, /const baselineDir = parsed\.baselinesDir \?\? resolveBenchBaselineDir\(\)/);
   assert.match(source, /const rendered = renderBenchmarkResultExport\(result, parsed\.format\);/);
+  assert.match(source, /ERROR: export requires --format json, csv, or html\./);
   assert.match(source, /printBenchPackageSummary\(result, summary\.path, "Stored result"\);/);
   assert.match(parserSource, /export type BenchBaselineAction = "save" \| "list";/);
-  assert.match(parserSource, /export type BenchExportFormat = "json" \| "csv";/);
+  assert.match(parserSource, /export type BenchExportFormat = "json" \| "csv" \| "html";/);
   assert.match(parserSource, /const baselinesDir = readBenchOptionValue\(args, "--baselines-dir"\);/);
   assert.match(parserSource, /const formatRaw = readBenchOptionValue\(args, "--format"\);/);
   assert.match(parserSource, /const output = readBenchOptionValue\(args, "--output"\);/);
+  assert.match(parserSource, /ERROR: --format must be "json", "csv", or "html"\./);
   assert.match(parserSource, /detail: args\.includes\("--detail"\),/);
   assert.match(parserSource, /baselinesDir: baselinesDir \? path\.resolve\(expandTilde\(baselinesDir\)\) : undefined/);
   assert.match(parserSource, /output: output \? path\.resolve\(expandTilde\(output\)\) : undefined/);
@@ -236,13 +238,13 @@ test("parseBenchArgs supports results, baseline, and export surfaces", async () 
     "export",
     "candidate-run",
     "--format",
-    "csv",
+    "html",
     "--output",
-    "./candidate.csv",
+    "./report.html",
   ]);
   assert.equal(exportArgs.action, "export");
-  assert.equal(exportArgs.format, "csv");
-  assert.match(exportArgs.output ?? "", /candidate\.csv$/);
+  assert.equal(exportArgs.format, "html");
+  assert.match(exportArgs.output ?? "", /report\.html$/);
 });
 
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
