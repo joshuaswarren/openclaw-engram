@@ -27,6 +27,10 @@ import {
   beamDefinition,
   runBeamBenchmark,
 } from "./benchmarks/published/beam/runner.js";
+import {
+  personaMemDefinition,
+  runPersonaMemBenchmark,
+} from "./benchmarks/published/personamem/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -56,6 +60,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...beamDefinition,
     run: runBeamBenchmark,
+  },
+  {
+    ...personaMemDefinition,
+    run: runPersonaMemBenchmark,
   },
 ];
 
