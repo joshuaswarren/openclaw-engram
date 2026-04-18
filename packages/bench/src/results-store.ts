@@ -127,6 +127,19 @@ function assertValidBaselineName(name: string): void {
   }
 }
 
+function assertUsableBaselineDir(baselineDir: string): void {
+  if (!fs.existsSync(baselineDir)) {
+    return;
+  }
+
+  const stats = fs.statSync(baselineDir);
+  if (!stats.isDirectory()) {
+    throw new Error(
+      `Invalid benchmark baseline directory: ${baselineDir} is not a directory.`,
+    );
+  }
+}
+
 function toSummary(
   result: BenchmarkResult,
   filePath: string,
@@ -201,6 +214,7 @@ export async function saveBenchmarkBaseline(
   },
 ): Promise<string> {
   assertValidBaselineName(name);
+  assertUsableBaselineDir(baselineDir);
   await mkdir(baselineDir, { recursive: true });
 
   const filePath = path.join(baselineDir, `${name}.json`);
@@ -232,6 +246,7 @@ export async function listBenchmarkBaselines(
     return [];
   }
 
+  assertUsableBaselineDir(baselineDir);
   const entries = await readdir(baselineDir, { withFileTypes: true });
   const baselines: StoredBenchmarkBaselineSummary[] = [];
 

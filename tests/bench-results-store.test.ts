@@ -189,6 +189,32 @@ test("saveBenchmarkBaseline rejects invalid baseline names instead of sanitizing
   );
 });
 
+test("listBenchmarkBaselines rejects baseline paths that exist as files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-baseline-file-list-"));
+  const baselinePath = path.join(root, "baselines.json");
+  await writeFile(baselinePath, "not a directory");
+
+  await assert.rejects(
+    () => listBenchmarkBaselines(baselinePath),
+    /Invalid benchmark baseline directory: .* is not a directory\./,
+  );
+});
+
+test("saveBenchmarkBaseline rejects baseline paths that exist as files", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-baseline-file-save-"));
+  const baselinePath = path.join(root, "baselines.json");
+  await writeFile(baselinePath, "not a directory");
+
+  await assert.rejects(
+    () => saveBenchmarkBaseline(
+      baselinePath,
+      "main",
+      buildResult("run-main", "2026-04-18T06:30:00.000Z"),
+    ),
+    /Invalid benchmark baseline directory: .* is not a directory\./,
+  );
+});
+
 test("defaultBenchmarkBaselineDir resolves under the Remnic home directory", () => {
   const baselineDir = defaultBenchmarkBaselineDir();
   assert.match(baselineDir, /\.remnic[\/\\]bench[\/\\]baselines$/);
