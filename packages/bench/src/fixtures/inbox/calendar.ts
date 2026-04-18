@@ -51,7 +51,7 @@ DTEND;TZID=America/New_York:20260221T153000
 LOCATION:Main Office
 ORGANIZER;CN=Maya Torres:mailto:maya.torres@synthetic.example
 ATTENDEE;CN=Ben Alder:mailto:ben.alder@synthetic.example
-ATTENDEE;CN=Wei Chen:mailto=wei.chen@synthetic.example
+ATTENDEE;CN=Wei Chen:mailto:wei.chen@synthetic.example
 DESCRIPTION:Sprint 3 retrospective. Format: Start / Stop / Continue.\\n
  Each person submits three sticky notes before the meeting. Maya will facili
  tate. Action items tracked in the team wiki.
