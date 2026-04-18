@@ -110,40 +110,11 @@ export async function timed<T>(
 export function aggregateTaskScores(
   metricsList: Array<Record<string, number>>,
 ): AggregateMetrics {
-  if (metricsList.length === 0) return {};
-
-  const metricNames = new Set<string>();
-  for (const metrics of metricsList) {
-    for (const metricName of Object.keys(metrics)) {
-      metricNames.add(metricName);
-    }
-  }
-
+  const metricValues = collectMetricValues(metricsList);
   const aggregates: AggregateMetrics = {};
-  for (const metricName of metricNames) {
-    const values = metricsList
-      .map((metrics) => metrics[metricName])
-      .filter((value) => typeof value === "number" && !Number.isNaN(value))
-      .sort((left, right) => left - right);
 
-    if (values.length === 0) continue;
-
-    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
-    const median =
-      values.length % 2 === 0
-        ? (values[values.length / 2 - 1]! + values[values.length / 2]!) / 2
-        : values[Math.floor(values.length / 2)]!;
-    const variance =
-      values.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
-      values.length;
-
-    aggregates[metricName] = {
-      mean,
-      median,
-      stdDev: Math.sqrt(variance),
-      min: values[0]!,
-      max: values[values.length - 1]!,
-    };
+  for (const [metricName, values] of Object.entries(metricValues)) {
+    aggregates[metricName] = summarizeMetricValues(values);
   }
 
   return aggregates;
@@ -153,30 +124,62 @@ export function aggregateTaskScores(
 export function aggregateScores(
   scores: Array<Record<string, number>>,
 ): Record<string, number> {
-  if (scores.length === 0) return {};
+  const detailedAggregates = aggregateTaskScores(scores);
+  const aggregate: Record<string, number> = {};
+
+  for (const [metricName, stats] of Object.entries(detailedAggregates)) {
+    aggregate[`${metricName}_mean`] = stats.mean;
+    aggregate[`${metricName}_min`] = stats.min;
+    aggregate[`${metricName}_max`] = stats.max;
+  }
+
+  return aggregate;
+}
+
+function collectMetricValues(
+  metricsList: Array<Record<string, number>>,
+): Record<string, number[]> {
+  if (metricsList.length === 0) return {};
 
   const metricNames = new Set<string>();
-  for (const metrics of scores) {
+  for (const metrics of metricsList) {
     for (const metricName of Object.keys(metrics)) {
       metricNames.add(metricName);
     }
   }
 
-  const aggregate: Record<string, number> = {};
+  const metricValues: Record<string, number[]> = {};
   for (const metricName of metricNames) {
-    const values = scores
+    const values = metricsList
       .map((metrics) => metrics[metricName])
-      .filter((value) => typeof value === "number" && !Number.isNaN(value));
+      .filter((value) => typeof value === "number" && !Number.isNaN(value))
+      .sort((left, right) => left - right);
 
-    if (values.length === 0) continue;
-
-    aggregate[`${metricName}_mean`] =
-      values.reduce((sum, value) => sum + value, 0) / values.length;
-    aggregate[`${metricName}_min`] = Math.min(...values);
-    aggregate[`${metricName}_max`] = Math.max(...values);
+    if (values.length > 0) {
+      metricValues[metricName] = values;
+    }
   }
 
-  return aggregate;
+  return metricValues;
+}
+
+function summarizeMetricValues(values: number[]): AggregateMetrics[string] {
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const median =
+    values.length % 2 === 0
+      ? (values[values.length / 2 - 1]! + values[values.length / 2]!) / 2
+      : values[Math.floor(values.length / 2)]!;
+  const variance =
+    values.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+    values.length;
+
+  return {
+    mean,
+    median,
+    stdDev: Math.sqrt(variance),
+    min: values[0]!,
+    max: values[values.length - 1]!,
+  };
 }
 
 function normalizeText(value: string | number | unknown): string {

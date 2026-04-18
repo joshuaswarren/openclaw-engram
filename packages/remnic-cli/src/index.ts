@@ -282,7 +282,10 @@ Examples:
   remnic benchmark run --quick longmemeval`;
 }
 
-export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
+function parseBenchActionArgs(argv: string[]): {
+  action: BenchAction;
+  args: string[];
+} {
   const [first, ...rest] = argv;
   const action: BenchAction =
     first === "list" || first === "run" || first === "check" || first === "report"
@@ -290,7 +293,15 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
       : first === undefined || first === "--help" || first === "-h"
         ? "help"
         : "run";
-  const args = action === "run" && action !== first ? argv : rest;
+
+  return {
+    action,
+    args: action === "run" && action !== first ? argv : rest,
+  };
+}
+
+export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
+  const { action, args } = parseBenchActionArgs(argv);
   const benchmarks = args.filter((arg) => !arg.startsWith("-"));
 
   return {
@@ -2263,6 +2274,7 @@ async function cmdLegacyBenchmark(action: string, rest: string[], json: boolean)
 }
 
 async function cmdBench(rest: string[]): Promise<void> {
+  const benchAction = parseBenchActionArgs(rest);
   const parsed = parseBenchArgs(rest);
 
   if (parsed.action === "help") {
@@ -2271,7 +2283,7 @@ async function cmdBench(rest: string[]): Promise<void> {
   }
 
   if (parsed.action === "check" || parsed.action === "report") {
-    await cmdLegacyBenchmark(parsed.action, rest.slice(1), parsed.json);
+    await cmdLegacyBenchmark(parsed.action, benchAction.args, parsed.json);
     return;
   }
 

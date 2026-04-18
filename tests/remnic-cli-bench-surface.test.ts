@@ -49,3 +49,12 @@ test("CLI uses package-owned adapters for migrated benchmark runs", async () => 
   assert.match(source, /createRemnicAdapter/);
   assert.doesNotMatch(source, /evals\/adapter\/engram-adapter\.ts/);
 });
+
+test("legacy benchmark check/report reuse the normalized action args instead of re-slicing rest", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+
+  assert.match(source, /function parseBenchActionArgs\(argv: string\[\]\)/);
+  assert.match(source, /const benchAction = parseBenchActionArgs\(rest\);/);
+  assert.match(source, /await cmdLegacyBenchmark\(parsed\.action,\s*benchAction\.args,\s*parsed\.json\);/);
+  assert.doesNotMatch(source, /await cmdLegacyBenchmark\(parsed\.action,\s*rest\.slice\(1\),\s*parsed\.json\);/);
+});

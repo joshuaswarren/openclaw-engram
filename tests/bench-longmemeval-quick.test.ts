@@ -7,6 +7,7 @@ import {
   runBenchmark,
   writeBenchmarkResult,
   type BenchMemoryAdapter,
+  type BenchmarkResult,
   type Message,
   type SearchResult,
 } from "../packages/bench/src/index.js";
@@ -15,7 +16,8 @@ class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
 
   async store(sessionId: string, messages: Message[]): Promise<void> {
-    this.sessions.set(sessionId, messages);
+    const existing = this.sessions.get(sessionId) ?? [];
+    this.sessions.set(sessionId, [...existing, ...messages]);
   }
 
   async recall(sessionId: string, _query: string): Promise<string> {
@@ -71,6 +73,15 @@ class FakeMemoryAdapter implements BenchMemoryAdapter {
   async destroy(): Promise<void> {}
 }
 
+test("FakeMemoryAdapter.store appends messages for the same session", async () => {
+  const adapter = new FakeMemoryAdapter();
+
+  await adapter.store("session-1", [{ role: "user", content: "first" }]);
+  await adapter.store("session-1", [{ role: "assistant", content: "second" }]);
+
+  assert.equal(await adapter.recall("session-1", "ignored"), "first\nsecond");
+});
+
 test("runBenchmark executes longmemeval in quick mode and writes a result JSON file", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-longmemeval-"));
   const outputDir = path.join(tmpDir, "results");
@@ -99,4 +110,54 @@ test("runBenchmark executes longmemeval in quick mode and writes a result JSON f
   assert.equal(path.dirname(writtenPath), outputDir);
   assert.equal(written.meta.benchmark, "longmemeval");
   assert.equal(written.results.tasks.length, 1);
+});
+
+test("writeBenchmarkResult sanitizes remnicVersion in the output filename", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-reporter-"));
+  const outputDir = path.join(tmpDir, "results");
+  const result: BenchmarkResult = {
+    meta: {
+      id: "bench-1",
+      benchmark: "longmemeval",
+      benchmarkTier: "published",
+      version: "1.0.0",
+      remnicVersion: "1.2.3/rc:build +meta",
+      gitSha: "abc1234",
+      timestamp: "2026-04-18T12:34:56.789Z",
+      mode: "quick",
+      runCount: 1,
+      seeds: [1],
+    },
+    config: {
+      systemProvider: null,
+      judgeProvider: null,
+      adapterMode: "test",
+      remnicConfig: {},
+    },
+    cost: {
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCostUsd: 0,
+      totalLatencyMs: 0,
+      meanQueryLatencyMs: 0,
+    },
+    results: {
+      tasks: [],
+      aggregates: {},
+    },
+    environment: {
+      os: process.platform,
+      nodeVersion: process.version,
+    },
+  };
+
+  const writtenPath = await writeBenchmarkResult(result, outputDir);
+  const written = JSON.parse(await readFile(writtenPath, "utf8")) as BenchmarkResult;
+
+  assert.equal(
+    path.basename(writtenPath),
+    "longmemeval-v1.2.3_rc_build__meta-2026-04-18T12-34-56.json",
+  );
+  assert.equal(written.meta.remnicVersion, "1.2.3/rc:build +meta");
 });

@@ -8,18 +8,24 @@ import path from "node:path";
 import type { BenchmarkResult as LegacyBenchmarkResult } from "./adapters/types.js";
 import type { BenchmarkResult } from "./types.js";
 
+function sanitizeFilenameSegment(value: string): string {
+  const sanitized = value.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
+  return sanitized.length > 0 ? sanitized : "unknown";
+}
+
 export async function writeBenchmarkResult(
   result: BenchmarkResult,
   outputDir: string,
 ): Promise<string> {
   await mkdir(outputDir, { recursive: true });
 
+  const safeRemnicVersion = sanitizeFilenameSegment(result.meta.remnicVersion);
   const timestamp = result.meta.timestamp
     .replace(/[:.]/g, "-")
     .slice(0, 19);
   const filePath = path.join(
     outputDir,
-    `${result.meta.benchmark}-v${result.meta.remnicVersion}-${timestamp}.json`,
+    `${result.meta.benchmark}-v${safeRemnicVersion}-${timestamp}.json`,
   );
 
   await writeFile(filePath, JSON.stringify(result, null, 2) + "\n");
