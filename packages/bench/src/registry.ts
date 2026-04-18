@@ -152,7 +152,6 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   },
   {
     ...ingestionBacklinkF1Definition,
-    runnerAvailable: false,
     run: runIngestionBacklinkF1Benchmark,
   },
 ];
