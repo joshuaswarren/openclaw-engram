@@ -657,7 +657,16 @@ class QmdDaemonSession {
   }
 }
 
-const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(.+?\.\w+)\s+-\s+(.*)$/;
+/** Matches `#<hex-docid> <score>% <rest-of-line>` — rest is split in a second pass. */
+const QMD_RESULT_LINE_RE = /^#([0-9a-fA-F]+)\s+(\d+)%\s+(.+)/;
+
+/**
+ * Known file extensions for QMD memory paths. Used to split the "rest" portion
+ * of a markdown result line into path and title. The greedy `.+` before the
+ * extension ensures we match the LAST occurrence (e.g., in
+ * `v1.2 - archived/note.md - Title`, it matches at `note.md`, not `v1.2`).
+ */
+const QMD_PATH_TITLE_RE = /^(.+\.(?:md|txt|json|yaml|yml|html))\s+-\s+(.*)$/;
 
 function parseQmdMarkdownResultText(
   text: string,
@@ -667,9 +676,13 @@ function parseQmdMarkdownResultText(
   for (const line of text.split("\n")) {
     const m = QMD_RESULT_LINE_RE.exec(line.trim());
     if (!m) continue;
+    const rest = m[3]; // "collection/path.md - Title with - dashes"
+    // Find the path by looking for known file extensions followed by " - "
+    const pathTitleSplit = QMD_PATH_TITLE_RE.exec(rest);
+    if (!pathTitleSplit) continue;
     results.push({
       docid: m[1],
-      path: m[3] ?? "unknown",
+      path: pathTitleSplit[1] ?? "unknown",
       snippet: "",
       score: parseInt(m[2], 10) / 100,
       transport,

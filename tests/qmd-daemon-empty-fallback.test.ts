@@ -377,6 +377,50 @@ test("daemon parses QMD v2 markdown results with titles containing ` - ` separat
   assert.equal(out[2]?.path, "openclaw-engram-hot-facts/2026-02-15/report.txt");
 });
 
+test("daemon parses QMD v2 markdown results with version-like dots in path segments", async () => {
+  const client = new QmdClient("openclaw-engram", 5) as any;
+  client.available = true;
+  client.daemonAvailable = true;
+  client.maybeProbeDaemon = async () => {};
+  client.daemonSession = {
+    callTool: async () => ({
+      content: [
+        {
+          type: "text",
+          text: [
+            'Found 3 results for "version path test":',
+            "",
+            // Path contains "v1.2" which looks like a file extension to a naive regex
+            "#aa1100 88% openclaw-engram-hot-facts/v1.2 - archived/note.md - Archived v1.2 note",
+            // Path contains multiple dot-segments before the real extension
+            "#bb2200 75% openclaw-engram-hot-facts/api.v2.0/config.yaml - API v2 config",
+            // Path with version in directory AND dashes in title
+            "#cc3300 60% openclaw-engram-hot-facts/release-3.1/2026-04-01/summary.txt - Release 3.1 - final notes",
+          ].join("\n"),
+        },
+      ],
+    }),
+  };
+
+  const out = await client.search("version path test", undefined, 5);
+  assert.equal(out.length, 3);
+
+  // "v1.2" should NOT be treated as the path — the greedy match finds "note.md"
+  assert.equal(out[0]?.docid, "aa1100");
+  assert.equal(out[0]?.score, 0.88);
+  assert.equal(out[0]?.path, "openclaw-engram-hot-facts/v1.2 - archived/note.md");
+
+  // Multiple dots in path resolved correctly to the real .yaml extension
+  assert.equal(out[1]?.docid, "bb2200");
+  assert.equal(out[1]?.score, 0.75);
+  assert.equal(out[1]?.path, "openclaw-engram-hot-facts/api.v2.0/config.yaml");
+
+  // Version in directory + dash in title
+  assert.equal(out[2]?.docid, "cc3300");
+  assert.equal(out[2]?.score, 0.60);
+  assert.equal(out[2]?.path, "openclaw-engram-hot-facts/release-3.1/2026-04-01/summary.txt");
+});
+
 test("parseMcpSearchResult deduplicates markdown fallback hits against structured results", async () => {
   const client = new QmdClient("openclaw-engram", 5) as any;
   client.available = true;
