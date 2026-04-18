@@ -3060,7 +3060,7 @@ const pluginDefinition = {
           id: jobId,
           agentId: "generalist",
           model,
-          name: "Engram Hourly Summary",
+          name: "Remnic Hourly Summary",
           enabled: true,
           createdAtMs: Date.now(),
           updatedAtMs: Date.now(),
@@ -3077,7 +3077,7 @@ const pluginDefinition = {
             thinking: "off" as const,
             message:
               "You are OpenClaw automation.\n\n" +
-              "Task: Generate Engram hourly summaries.\n\n" +
+              "Task: Generate Remnic hourly summaries.\n\n" +
               "Call the tool `memory_summarize_hourly` with empty params.\n\n" +
               "Output policy:\n" +
               "- If you generated summaries successfully: output exactly NO_REPLY.\n" +
@@ -3112,7 +3112,7 @@ const pluginDefinition = {
     // vs. reply contexts), each registry gets its own api object and must have
     // tools registered against it. Skipping registration on secondary calls
     // leaves those registries with hooks but zero tools, making
-    // memory_summarize_hourly (and all other Engram tools) invisible to the LLM.
+    // memory_summarize_hourly (and all other Remnic tools) invisible to the LLM.
     //
     // CLI commands, by contrast, live in the central plugin registry (not in
     // per-registry api state), so registering them more than once would create
