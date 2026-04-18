@@ -534,7 +534,7 @@ export async function writeResult(
 ): Promise<string> {
   await mkdir(outputDir, { recursive: true });
   const ts = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
-  const filename = `${result.meta.benchmark}-${result.meta.mode}-${ts}.json`;
+  const filename = `${result.meta.benchmark}-${result.meta.mode}-${ts}-${result.meta.id}.json`;
   const filePath = path.join(outputDir, filename);
   await writeFile(filePath, JSON.stringify(result, null, 2) + "\n");
   return filePath;
@@ -788,8 +788,8 @@ export async function runBenchmarks(opts: RunBenchmarkOpts): Promise<BenchmarkRe
   const runConfig = resolveRunConfig(opts);
   const defaultResultsDir = path.join(os.homedir(), ".remnic", "bench", "results");
   const outputDir = opts.outputDir ?? defaultResultsDir;
-  const pkgDatasets = path.resolve(import.meta.dirname, "..", "evals", "datasets");
-  const datasetBase = opts.datasetDir ?? pkgDatasets;
+  const defaultDatasets = path.join(os.homedir(), ".remnic", "bench", "datasets");
+  const datasetBase = opts.datasetDir ?? defaultDatasets;
   const results: BenchmarkResult[] = [];
 
   const system = await createDefaultAdapter(opts.systemProvider);
@@ -886,15 +886,26 @@ export function parseBenchArgs(args: string[]): BenchCliArgs {
     if (arg === "--quick") { quick = true; continue; }
     if (arg === "--json") { json = true; continue; }
     if (arg === "--all") { benchmarks.push(...listBenchmarks()); continue; }
-    if (arg === "--limit" && args[i + 1]) {
+    if (arg === "--limit") {
+      if (!args[i + 1] || args[i + 1].startsWith("--")) throw new Error("--limit requires a value");
       limit = parseInt(args[++i], 10);
       if (Number.isNaN(limit)) throw new Error(`Invalid --limit value: "${args[i]}"`);
       continue;
     }
-    if (arg === "--dataset-dir" && args[i + 1]) { datasetDir = args[++i]; continue; }
-    if (arg === "--output-dir" && args[i + 1]) { outputDir = args[++i]; continue; }
-    if (arg === "--config" && args[i + 1]) { configFile = args[++i]; continue; }
-    if (arg === "--threshold" && args[i + 1]) {
+    if (arg === "--dataset-dir") {
+      if (!args[i + 1] || args[i + 1].startsWith("--")) throw new Error("--dataset-dir requires a value");
+      datasetDir = args[++i]; continue;
+    }
+    if (arg === "--output-dir") {
+      if (!args[i + 1] || args[i + 1].startsWith("--")) throw new Error("--output-dir requires a value");
+      outputDir = args[++i]; continue;
+    }
+    if (arg === "--config") {
+      if (!args[i + 1] || args[i + 1].startsWith("--")) throw new Error("--config requires a value");
+      configFile = args[++i]; continue;
+    }
+    if (arg === "--threshold") {
+      if (!args[i + 1] || args[i + 1].startsWith("--")) throw new Error("--threshold requires a value");
       threshold = parseFloat(args[++i]);
       if (Number.isNaN(threshold)) throw new Error(`Invalid --threshold value: "${args[i]}"`);
       continue;
@@ -1724,9 +1735,10 @@ git commit -m "feat(bench): add custom YAML benchmark loader"
 // packages/bench/src/baseline.ts
 import { readFile, writeFile, readdir, mkdir } from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import type { BenchmarkResult } from "./schema.js";
 
-const DEFAULT_BASELINE_DIR = path.join(process.cwd(), "bench-baselines");
+const DEFAULT_BASELINE_DIR = path.join(os.homedir(), ".remnic", "bench", "baselines");
 
 export async function saveBaseline(
   name: string,
