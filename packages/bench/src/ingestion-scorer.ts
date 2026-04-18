@@ -183,6 +183,14 @@ export function schemaCompleteness(
         if (passes) totalPassing++;
       }
     }
+
+    if (gp.expectSeeAlso && gp.expectSeeAlso.length > 0) {
+      for (const expected of gp.expectSeeAlso) {
+        totalApplicable++;
+        const passes = matchedPage?.seeAlso.some((sa) => normalize(sa) === normalize(expected)) ?? false;
+        if (passes) totalPassing++;
+      }
+    }
   }
 
   const overall = totalApplicable > 0 ? totalPassing / totalApplicable : 1;
