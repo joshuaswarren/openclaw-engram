@@ -1,58 +1,64 @@
 /**
- * Gold graph for the synthetic inbox email fixture.
- *
- * Entities and links are fully synthetic — no real person or organisation data.
+ * Gold graph for the synthetic email fixture.
  */
 
 import type { GoldGraph } from "../../ingestion-types.js";
 
 export const EMAIL_GOLD_GRAPH: GoldGraph = {
   entities: [
-    // People
-    { id: "person-alice", name: "Alice Nakamura", type: "person", aliases: ["Alice"] },
-    { id: "person-bob", name: "Bob Chen", type: "person", aliases: ["Bob"] },
-    { id: "person-carol", name: "Carol Osei", type: "person", aliases: ["Carol"] },
-    // Orgs
-    { id: "org-acme", name: "Acme Corp", type: "org", aliases: ["Acme"] },
-    { id: "org-betaworks", name: "Betaworks Ltd", type: "org", aliases: ["Betaworks"] },
-    // Projects
-    { id: "project-atlas", name: "Project Atlas", type: "project", aliases: ["Atlas"] },
-    // Topics
-    { id: "topic-budget", name: "Q3 Budget Review", type: "topic", aliases: ["budget review", "Q3 budget"] },
-    { id: "topic-onboarding", name: "Onboarding", type: "topic", aliases: ["onboard"] },
-    // Events
-    { id: "event-kickoff", name: "Atlas Kickoff Meeting", type: "event", aliases: ["kickoff"] },
+    { id: "p-sarah", name: "Sarah Chen", type: "person", aliases: ["Sarah", "S. Chen"] },
+    { id: "p-marcus", name: "Marcus Rivera", type: "person", aliases: ["Marcus", "M. Rivera"] },
+    { id: "p-elena", name: "Elena Volkov", type: "person", aliases: ["Elena", "E. Volkov"] },
+    { id: "p-james", name: "James Okafor", type: "person", aliases: ["James", "J. Okafor"] },
+    { id: "p-priya", name: "Priya Sharma", type: "person", aliases: ["Priya", "P. Sharma"] },
+    { id: "p-david", name: "David Kim", type: "person", aliases: ["David", "D. Kim"] },
+    { id: "p-anna", name: "Anna Lindqvist", type: "person", aliases: ["Anna", "A. Lindqvist"] },
+    { id: "p-tom", name: "Tom Nakamura", type: "person", aliases: ["Tom", "T. Nakamura"] },
+    { id: "o-nexus", name: "Nexus Technologies", type: "org", aliases: ["Nexus", "Nexus Tech"] },
+    { id: "o-meridian", name: "Meridian Partners", type: "org", aliases: ["Meridian"] },
+    { id: "o-atlas", name: "Atlas Consulting", type: "org", aliases: ["Atlas"] },
+    { id: "proj-horizon", name: "Project Horizon", type: "project", aliases: ["Horizon"] },
+    { id: "proj-beacon", name: "Project Beacon", type: "project", aliases: ["Beacon"] },
+    { id: "t-q3-budget", name: "Q3 Budget Review", type: "topic" },
+    { id: "e-launch", name: "Horizon Launch Event", type: "event", aliases: ["launch event", "launch"] },
   ],
   links: [
-    { source: "Alice Nakamura", target: "Acme Corp", relation: "works-at", bidirectional: false },
-    { source: "Bob Chen", target: "Acme Corp", relation: "works-at", bidirectional: false },
-    { source: "Carol Osei", target: "Betaworks Ltd", relation: "works-at", bidirectional: false },
-    { source: "Alice Nakamura", target: "Project Atlas", relation: "leads", bidirectional: false },
-    { source: "Bob Chen", target: "Project Atlas", relation: "contributes-to", bidirectional: false },
-    { source: "Alice Nakamura", target: "Bob Chen", relation: "collaborates-with", bidirectional: true },
-    { source: "Atlas Kickoff Meeting", target: "Project Atlas", relation: "relates-to", bidirectional: false },
+    { source: "p-sarah", target: "o-nexus", relation: "works-at", bidirectional: false },
+    { source: "p-marcus", target: "o-nexus", relation: "works-at", bidirectional: false },
+    { source: "p-elena", target: "o-meridian", relation: "works-at", bidirectional: false },
+    { source: "p-james", target: "o-atlas", relation: "works-at", bidirectional: false },
+    { source: "p-priya", target: "o-nexus", relation: "works-at", bidirectional: false },
+    { source: "p-sarah", target: "proj-horizon", relation: "leads", bidirectional: false },
+    { source: "p-marcus", target: "proj-horizon", relation: "contributes-to", bidirectional: false },
+    { source: "p-elena", target: "proj-horizon", relation: "advises", bidirectional: false },
+    { source: "p-david", target: "proj-beacon", relation: "leads", bidirectional: false },
+    { source: "p-tom", target: "proj-beacon", relation: "contributes-to", bidirectional: false },
+    { source: "proj-horizon", target: "e-launch", relation: "milestone", bidirectional: false },
+    { source: "p-anna", target: "t-q3-budget", relation: "presents", bidirectional: false },
+    { source: "p-sarah", target: "p-elena", relation: "collaborates-with", bidirectional: true },
+    { source: "p-marcus", target: "p-priya", relation: "collaborates-with", bidirectional: true },
   ],
   pages: [
     {
-      title: "Project Atlas",
-      requiredFields: ["title", "type", "state", "created"],
-      expectTimeline: true,
-      expectExecSummary: true,
-      expectSeeAlso: ["Alice Nakamura", "Acme Corp"],
-    },
-    {
-      title: "Alice Nakamura",
-      requiredFields: ["title", "type", "state", "created"],
+      title: "Sarah Chen",
+      requiredFields: ["title", "type", "state", "created", "see-also"],
       expectTimeline: false,
       expectExecSummary: false,
-      expectSeeAlso: ["Project Atlas", "Acme Corp"],
+      expectSeeAlso: ["Project Horizon", "Nexus Technologies"],
     },
     {
-      title: "Acme Corp",
-      requiredFields: ["title", "type", "state", "created"],
+      title: "Project Horizon",
+      requiredFields: ["title", "type", "state", "created", "see-also"],
+      expectTimeline: true,
+      expectExecSummary: true,
+      expectSeeAlso: ["Sarah Chen", "Nexus Technologies", "Horizon Launch Event"],
+    },
+    {
+      title: "Nexus Technologies",
+      requiredFields: ["title", "type", "state", "created", "see-also"],
       expectTimeline: false,
       expectExecSummary: true,
-      expectSeeAlso: ["Project Atlas"],
+      expectSeeAlso: ["Sarah Chen", "Marcus Rivera", "Project Horizon"],
     },
   ],
 };
