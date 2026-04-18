@@ -203,6 +203,27 @@ function getOrigin(urlStr: string): string {
 }
 
 /**
+ * Hop-by-hop request headers that must not be forwarded to upstream.
+ * Per RFC 2616 §13.5.1 / RFC 7230 §6.1 these apply only to the
+ * immediate transport connection. `proxy-authorization` is the most
+ * critical — leaking it would send proxy credentials to the origin.
+ *
+ * `host` is deliberately excluded from this set because it is
+ * always replaced (not just stripped) with the upstream origin
+ * and is handled separately below.
+ */
+const HOP_BY_HOP_REQUEST_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
+
+/**
  * Headers that must not be forwarded from the upstream response.
  * These are hop-by-hop headers that apply to a single transport connection
  * and would conflict with our fully-buffered response write.
@@ -242,10 +263,12 @@ async function transparentProxy(
   const origin = getOrigin(wecloneApiUrl);
   const targetUrl = `${origin}${path}`;
 
-  // Remove hop-by-hop request headers
-  const forwardHeaders = { ...headers };
-  delete forwardHeaders["host"];
-  delete forwardHeaders["connection"];
+  // Remove hop-by-hop request headers and replace host with upstream origin
+  const forwardHeaders: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (key === "host" || HOP_BY_HOP_REQUEST_HEADERS.has(key)) continue;
+    forwardHeaders[key] = value;
+  }
 
   const fetchInit: RequestInit = {
     method,

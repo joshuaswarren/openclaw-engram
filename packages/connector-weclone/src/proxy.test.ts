@@ -1,6 +1,7 @@
 import { describe, it, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import * as http from "node:http";
+import * as net from "node:net";
 import { gzipSync } from "node:zlib";
 import { createWeCloneProxy } from "./proxy.js";
 import type { WeCloneConnectorConfig } from "./config.js";
@@ -922,6 +923,122 @@ describe("WeCloneProxy", () => {
     );
     const body = JSON.parse(await readResponse(res));
     assert.equal(body.choices[0].message.content, "filtered reply");
+  });
+
+  it("strips hop-by-hop request headers from transparent proxy forwarding", async () => {
+    let receivedHeaders: Record<string, string | string[] | undefined> = {};
+
+    const weclone = await createMockServer((req, res) => {
+      receivedHeaders = { ...req.headers };
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ data: [{ id: "model-1" }] }));
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    // Use a raw HTTP request so we can set hop-by-hop headers that
+    // Node's fetch() / undici would reject (Upgrade, Trailer, TE).
+    // We use a raw TCP socket to bypass Node http.ClientRequest
+    // validation as well (it rejects Trailer without chunked TE).
+    const responseBody = await new Promise<string>((resolve, reject) => {
+      const socket = net.createConnection(proxy.port, "127.0.0.1", () => {
+        const rawRequest = [
+          "GET /v1/models HTTP/1.1",
+          `Host: 127.0.0.1:${proxy.port}`,
+          "Content-Type: application/json",
+          "X-Custom-Header: should-survive",
+          "Proxy-Authorization: Basic secret-proxy-creds",
+          "Proxy-Authenticate: Basic realm=proxy",
+          "TE: trailers",
+          "Trailer: X-Checksum",
+          "Upgrade: websocket",
+          "Keep-Alive: timeout=5",
+          "Connection: close",
+          "",
+          "",
+        ].join("\r\n");
+        socket.write(rawRequest);
+      });
+      socket.setTimeout(5000, () => { socket.destroy(); reject(new Error("socket timeout")); });
+      const chunks: Buffer[] = [];
+      socket.on("data", (c: Buffer) => chunks.push(c));
+      socket.on("end", () => resolve(Buffer.concat(chunks).toString("utf-8")));
+      socket.on("error", reject);
+    });
+
+    // Parse HTTP response: skip headers, extract body after blank line
+    const bodyStart = responseBody.indexOf("\r\n\r\n");
+    assert.ok(bodyStart > 0, "Response should have headers and body");
+    // The body might be chunked; extract the JSON payload
+    const rawBody = responseBody.slice(bodyStart + 4);
+    // Handle possible chunked transfer encoding in the response
+    const jsonMatch = rawBody.match(/\{[^]*\}/);
+    assert.ok(jsonMatch, "Response body should contain JSON");
+    const reqBody = JSON.parse(jsonMatch[0]);
+    assert.equal(reqBody.data[0].id, "model-1");
+
+    // Verify hop-by-hop headers were stripped
+    assert.equal(
+      receivedHeaders["proxy-authorization"],
+      undefined,
+      "proxy-authorization must be stripped to prevent credential leakage"
+    );
+    assert.equal(
+      receivedHeaders["proxy-authenticate"],
+      undefined,
+      "proxy-authenticate must be stripped"
+    );
+    assert.equal(
+      receivedHeaders["te"],
+      undefined,
+      "te must be stripped"
+    );
+    assert.equal(
+      receivedHeaders["trailer"],
+      undefined,
+      "trailer must be stripped"
+    );
+    assert.equal(
+      receivedHeaders["upgrade"],
+      undefined,
+      "upgrade must be stripped"
+    );
+    assert.equal(
+      receivedHeaders["keep-alive"],
+      undefined,
+      "keep-alive must be stripped"
+    );
+    // Note: we don't assert connection is absent because fetch() (undici)
+    // adds its own Connection header for transport. The proxy strips the
+    // *original* client Connection header; fetch replaces it with its own.
+
+    // Verify non-hop-by-hop headers survive
+    assert.equal(
+      receivedHeaders["x-custom-header"],
+      "should-survive",
+      "Non-hop-by-hop headers must be forwarded"
+    );
+    assert.equal(
+      receivedHeaders["content-type"],
+      "application/json",
+      "Content-Type must be forwarded"
+    );
+
+    // Host must also be stripped (replaced by fetch with upstream host)
+    assert.notEqual(
+      receivedHeaders["host"],
+      `127.0.0.1:${proxy.port}`,
+      "Original host header must not be forwarded"
+    );
   });
 
   it("strips content-encoding from transparent proxy responses", async () => {
