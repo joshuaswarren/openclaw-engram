@@ -49,13 +49,16 @@ kept as a compatibility alias.
 ```bash
 remnic bench list
 remnic bench run --quick longmemeval
+remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
 remnic benchmark run --quick longmemeval
 ```
 
 `--quick` uses the lightweight benchmark path with a single-item limit so you can
 smoke-test the harness without running a full benchmark pass. When a benchmark
 ships a bundled smoke fixture, `--quick` uses that tracked fixture by default;
-full runs continue to read from `evals/datasets/<benchmark>`.
+full runs need a real benchmark dataset. In a repo checkout the CLI will use
+`evals/datasets/<benchmark>` automatically; in packaged installs pass
+`--dataset-dir <path>` explicitly.
 
 ## Connecting agents
 

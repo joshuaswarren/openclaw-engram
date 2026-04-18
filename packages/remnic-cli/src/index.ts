@@ -188,6 +188,7 @@ export interface ParsedBenchArgs {
   quick: boolean;
   all: boolean;
   json: boolean;
+  datasetDir?: string;
 }
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -275,12 +276,28 @@ Commands:
 Options:
   --quick                  Run a lightweight quick pass (maps to --lightweight --limit 1)
   --all                    Run every published benchmark
+  --dataset-dir <path>     Override the benchmark dataset directory for full runs
   --json                   Output JSON for \`list\`
 
 Examples:
   remnic bench list
   remnic bench run --quick longmemeval
+  remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
   remnic benchmark run --quick longmemeval`;
+}
+
+function readBenchOptionValue(argv: string[], flag: string): string | undefined {
+  const index = argv.indexOf(flag);
+  if (index === -1) {
+    return undefined;
+  }
+
+  const value = argv[index + 1];
+  if (!value || value.startsWith("-")) {
+    throw new Error(`ERROR: ${flag} requires a value.`);
+  }
+
+  return value;
 }
 
 function parseBenchActionArgs(argv: string[]): {
@@ -304,6 +321,7 @@ function parseBenchActionArgs(argv: string[]): {
 export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const { action, args } = parseBenchActionArgs(argv);
   const benchmarks = args.filter((arg) => !arg.startsWith("-"));
+  const datasetDir = readBenchOptionValue(args, "--dataset-dir");
 
   return {
     action,
@@ -311,6 +329,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     quick: args.includes("--quick"),
     all: args.includes("--all"),
     json: args.includes("--json"),
+    datasetDir: datasetDir ? path.resolve(expandTilde(datasetDir)) : undefined,
   };
 }
 
@@ -321,6 +340,9 @@ export function buildBenchRunnerArgs(
   const args = [EVAL_RUNNER_PATH, "--benchmark", benchmarkId];
   if (parsed.quick) {
     args.push("--lightweight", "--limit", "1");
+  }
+  if (parsed.datasetDir) {
+    args.push("--dataset-dir", parsed.datasetDir);
   }
   return args;
 }
@@ -425,12 +447,22 @@ function resolveBenchOutputDir(): string {
 function resolveBenchDatasetDir(
   benchmarkId: string,
   quick: boolean,
+  datasetDirOverride?: string,
 ): string | undefined {
+  if (datasetDirOverride) {
+    return datasetDirOverride;
+  }
+
   if (quick) {
     return undefined;
   }
 
-  return path.join(CLI_REPO_ROOT, "evals", "datasets", benchmarkId);
+  const repoDatasetDir = path.join(CLI_REPO_ROOT, "evals", "datasets", benchmarkId);
+  try {
+    return fs.statSync(repoDatasetDir).isDirectory() ? repoDatasetDir : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function printBenchPackageSummary(
@@ -500,7 +532,17 @@ async function runBenchViaPackage(
 
   try {
     const outputDir = resolveBenchOutputDir();
-    const datasetDir = resolveBenchDatasetDir(benchmarkId, parsed.quick);
+    const datasetDir = resolveBenchDatasetDir(
+      benchmarkId,
+      parsed.quick,
+      parsed.datasetDir,
+    );
+    if (!parsed.quick && !datasetDir) {
+      console.error(
+        `ERROR: full benchmark runs for "${benchmarkId}" require dataset files. Pass --dataset-dir <path> or run from a Remnic repo checkout with evals/datasets/${benchmarkId}.`,
+      );
+      process.exit(1);
+    }
     const result = await benchModule.runBenchmark(benchmarkId, {
       mode: parsed.quick ? "quick" : "full",
       datasetDir,
@@ -2303,7 +2345,13 @@ async function cmdLegacyBenchmark(action: string, rest: string[], json: boolean)
 
 async function cmdBench(rest: string[]): Promise<void> {
   const benchAction = parseBenchActionArgs(rest);
-  const parsed = parseBenchArgs(rest);
+  let parsed: ParsedBenchArgs;
+  try {
+    parsed = parseBenchArgs(rest);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 
   if (parsed.action === "help") {
     console.log(getBenchUsageText());
@@ -3745,7 +3793,7 @@ Usage:
   remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
-  remnic bench <list|run> [benchmark...] [--quick] [--all] [--json]
+  remnic bench <list|run> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--json]
     benchmark is kept as a compatibility alias. check/report remain under that alias.
   remnic benchmark <list|run|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]

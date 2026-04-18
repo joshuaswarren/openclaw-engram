@@ -20,6 +20,7 @@ test("bench surface publishes the phase-1 benchmark catalog and quick-run fallba
     assert.match(source, new RegExp(`id: "${benchmarkId}"`));
   }
   assert.match(source, /args\.push\("--lightweight", "--limit", "1"\)/);
+  assert.match(source, /args\.push\("--dataset-dir", parsed\.datasetDir\)/);
   assert.match(source, /Use 'remnic bench list' to see available\./);
 });
 
@@ -45,8 +46,10 @@ test("CLI README documents bench list and quick-run examples", async () => {
 
   assert.match(readme, /remnic bench list/);
   assert.match(readme, /remnic bench run --quick longmemeval/);
+  assert.match(readme, /--dataset-dir ~\/datasets\/longmemeval/);
   assert.match(readme, /remnic benchmark run --quick longmemeval/);
   assert.match(readme, /bundled smoke fixture/i);
+  assert.match(readme, /full runs need a real benchmark dataset/i);
 });
 
 test("CLI uses package-owned adapters for migrated benchmark runs", async () => {
@@ -70,6 +73,17 @@ test("--all selection resolves to runnable package benchmarks when package metad
   assert.match(source, /const knownBenchmarkIds = await resolveKnownBenchmarkIds\(\);/);
   assert.match(source, /selectedBenchmarks\.filter\(\(benchmarkId\) => !knownBenchmarkIds\.has\(benchmarkId\)\)/);
   assert.match(source, /no runnable benchmarks are available for --all in this install/i);
+});
+
+test("bench CLI validates and resolves explicit dataset overrides for full package runs", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+
+  assert.match(source, /--dataset-dir <path>\s+Override the benchmark dataset directory for full runs/);
+  assert.match(source, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
+  assert.match(source, /requires a value\./);
+  assert.match(source, /datasetDir: datasetDir \? path\.resolve\(expandTilde\(datasetDir\)\) : undefined/);
+  assert.match(source, /resolveBenchDatasetDir\(\s*benchmarkId,\s*parsed\.quick,\s*parsed\.datasetDir/s);
+  assert.match(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
 });
 
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {

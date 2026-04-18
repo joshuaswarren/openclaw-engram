@@ -69,6 +69,7 @@ Options:
   --mcp-url <url>        MCP server URL (default: http://localhost:18789)
   --mcp-token <token>    MCP auth token
   --limit <n>            Max tasks per benchmark
+  --dataset-dir <path>   Override the dataset directory for the selected benchmark
   --output-dir <path>    Results directory (default: evals/results)
   --judge                Enable LLM judge scoring (uses gateway model chain;
                          adds ~15s/question, off by default for speed)
@@ -92,6 +93,7 @@ Options:
   const mcpToken = readArg("--mcp-token");
   const limitStr = readArg("--limit");
   const limit = limitStr ? parseInt(limitStr, 10) : undefined;
+  const datasetDirOverride = readArg("--dataset-dir");
   const outputDir =
     readArg("--output-dir") ??
     path.resolve(import.meta.dirname, "results");
@@ -172,7 +174,9 @@ Options:
   try {
     for (const name of benchmarkNames) {
       const runner = RUNNERS[name];
-      const datasetDir = path.join(datasetsDir, name);
+      const datasetDir = datasetDirOverride
+        ? path.resolve(datasetDirOverride)
+        : path.join(datasetsDir, name);
 
       console.log(`\nRunning: ${runner.meta.name} (${runner.meta.category})...`);
 
