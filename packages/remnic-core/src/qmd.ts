@@ -657,6 +657,27 @@ class QmdDaemonSession {
   }
 }
 
+const QMD_RESULT_LINE_RE = /^#([0-9a-f]+)\s+(\d+)%\s+(\S+)\s+-\s+(.*)$/;
+
+function parseQmdMarkdownResultText(
+  text: string,
+  transport: QmdSearchResult["transport"],
+): QmdSearchResult[] {
+  const results: QmdSearchResult[] = [];
+  for (const line of text.split("\n")) {
+    const m = QMD_RESULT_LINE_RE.exec(line.trim());
+    if (!m) continue;
+    results.push({
+      docid: m[1],
+      path: `qmd://${m[3]}`,
+      snippet: "",
+      score: parseInt(m[2], 10) / 100,
+      transport,
+    });
+  }
+  return results;
+}
+
 function parseMcpSearchResult(
   result: unknown,
   transport: QmdSearchResult["transport"] = "daemon",
@@ -696,7 +717,10 @@ function parseMcpSearchResult(
           const textResults = parsed?.results ?? parsed?.documents;
           if (Array.isArray(textResults)) pushDocs(textResults);
         } catch {
-          // ignore non-json text
+          const parsed = parseQmdMarkdownResultText(item.text, transport);
+          if (parsed.length > 0) {
+            results.push(...parsed);
+          }
         }
       }
     }
