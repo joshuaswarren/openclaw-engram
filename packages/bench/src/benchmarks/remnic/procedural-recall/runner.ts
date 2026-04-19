@@ -24,6 +24,14 @@ import {
   PROCEDURAL_RECALL_INTENT_SMOKE_FIXTURE,
 } from "./fixture.js";
 
+function sliceWithBudget<T>(cases: T[], budget: number): { picked: T[]; remaining: number } {
+  if (!Number.isFinite(budget) || budget <= 0) {
+    return { picked: cases, remaining: 0 };
+  }
+  const n = Math.min(cases.length, Math.floor(budget));
+  return { picked: cases.slice(0, n), remaining: budget - n };
+}
+
 export const proceduralRecallDefinition: BenchmarkDefinition = {
   id: "procedural-recall",
   title: "Procedural Recall",
@@ -45,8 +53,19 @@ export async function runProceduralRecallBenchmark(
 ): Promise<BenchmarkResult> {
   const tasks: TaskResult[] = [];
 
-  const intentCases =
+  const intentSource =
     options.mode === "quick" ? PROCEDURAL_RECALL_INTENT_SMOKE_FIXTURE : PROCEDURAL_RECALL_INTENT_FIXTURE;
+  const e2eSource =
+    options.mode === "quick" ? PROCEDURAL_RECALL_E2E_SMOKE_FIXTURE : PROCEDURAL_RECALL_E2E_FIXTURE;
+
+  const taskBudget =
+    typeof options.limit === "number" && options.limit > 0 && Number.isFinite(options.limit)
+      ? Math.floor(options.limit)
+      : Number.POSITIVE_INFINITY;
+  let remainingBudget = taskBudget;
+  const intentPick = sliceWithBudget(intentSource, remainingBudget);
+  const intentCases = intentPick.picked;
+  remainingBudget = intentPick.remaining;
 
   for (const sample of intentCases) {
     const startedAt = performance.now();
@@ -68,8 +87,7 @@ export async function runProceduralRecallBenchmark(
     });
   }
 
-  const e2eCases =
-    options.mode === "quick" ? PROCEDURAL_RECALL_E2E_SMOKE_FIXTURE : PROCEDURAL_RECALL_E2E_FIXTURE;
+  const e2eCases = sliceWithBudget(e2eSource, remainingBudget).picked;
 
   for (const sample of e2eCases) {
     const startedAt = performance.now();

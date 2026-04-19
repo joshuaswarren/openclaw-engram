@@ -12,6 +12,9 @@ import {
 import { buildProcedurePersistBody, normalizeProcedureSteps, type ProcedureStep } from "./procedure-types.js";
 import { log } from "../logger.js";
 
+/** Must match truncation on `procedure_cluster` structured attribute (dedupe + storage). */
+const PROCEDURE_CLUSTER_ATTR_MAX = 500;
+
 export interface ProcedureMiningResult {
   clustersProcessed: number;
   proceduresWritten: number;
@@ -61,11 +64,12 @@ async function hasExistingClusterWrite(
   storage: StorageManager,
   cluster: string,
 ): Promise<boolean> {
+  const clusterKey = cluster.slice(0, PROCEDURE_CLUSTER_ATTR_MAX);
   const memories = await storage.readAllMemories();
   for (const m of memories) {
     if (m.frontmatter.category !== "procedure") continue;
     const c = m.frontmatter.structuredAttributes?.procedure_cluster;
-    if (c === cluster) return true;
+    if (c === clusterKey) return true;
   }
   return false;
 }
@@ -87,8 +91,14 @@ export async function runProcedureMining(options: {
     return { clustersProcessed: 0, proceduresWritten: 0, skippedReason: "minOccurrences_zero" };
   }
 
+  const trajectoryDir =
+    typeof options.config.causalTrajectoryStoreDir === "string" &&
+    options.config.causalTrajectoryStoreDir.trim().length > 0
+      ? options.config.causalTrajectoryStoreDir.trim()
+      : undefined;
   const { trajectories } = await readCausalTrajectoryRecords({
     memoryDir: options.memoryDir,
+    causalTrajectoryStoreDir: trajectoryDir,
   });
   const recent = filterTrajectoriesByLookbackDays(trajectories, cfg.lookbackDays);
 
@@ -129,7 +139,7 @@ export async function runProcedureMining(options: {
       status: promote ? "active" : "pending_review",
       tags: ["procedure-miner", "causal-trajectory"],
       structuredAttributes: {
-        procedure_cluster: key.slice(0, 500),
+        procedure_cluster: key.slice(0, PROCEDURE_CLUSTER_ATTR_MAX),
         trajectory_ids: group
           .map((g) => g.trajectoryId)
           .join(",")

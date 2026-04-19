@@ -6800,7 +6800,7 @@ export class Orchestrator {
       if (!this.isRecallSectionEnabled("procedure-recall", true)) return null;
       try {
         return await buildProcedureRecallSection(
-          this.storage,
+          profileStorage,
           retrievalQuery,
           this.config,
         );
@@ -9977,24 +9977,9 @@ export class Orchestrator {
       // formats. For all-placeholder templates it cannot detect citations and
       // returns the text unchanged — dedup may miss in that edge case, which
       // is acceptable (no false-positive suppression).
-      if (this.contentHashIndex) {
-        const canonicalContent =
-          citationEnabled &&
-          hasCitationForTemplate(fact.content, citationTemplate)
-            ? stripCitationForTemplate(fact.content, citationTemplate)
-            : fact.content;
-        if (this.contentHashIndex.has(canonicalContent)) {
-          log.debug(
-            `dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`,
-          );
-          dedupedCount++;
-          continue;
-        }
-      }
-
-      // Score importance using local heuristics (Phase 1B).
-      // Routing runs first so that category overrides (which affect scoring)
-      // are applied before the importance gate.
+      //
+      // Routing runs before content-hash dedup and scoring so category overrides
+      // affect both the dedup fingerprint and importance (issue #519 procedure routing).
       let writeCategory = fact.category;
       let targetStorage = storage;
       let routedRuleId: string | undefined;
@@ -10019,6 +10004,28 @@ export class Orchestrator {
           );
         }
       }
+
+      // Procedures: fingerprint the full serialized body (title + steps), not
+      // the title alone, so distinct step lists are not collapsed (issue #519).
+      const canonicalContentForHash =
+        citationEnabled &&
+        hasCitationForTemplate(fact.content, citationTemplate)
+          ? stripCitationForTemplate(fact.content, citationTemplate)
+          : fact.content;
+      const contentHashDedupKey =
+        writeCategory === "procedure"
+          ? buildProcedurePersistBody(fact.content, fact.procedureSteps)
+          : canonicalContentForHash;
+      if (this.contentHashIndex && this.contentHashIndex.has(contentHashDedupKey)) {
+        log.debug(
+          `dedup: skipping duplicate fact "${fact.content.slice(0, 60)}…"`,
+        );
+        dedupedCount++;
+        continue;
+      }
+
+      // Score importance using local heuristics (Phase 1B).
+      // writeCategory / targetStorage already reflect routing.
       const importance = scoreImportance(
         fact.content,
         writeCategory,
@@ -10079,22 +10086,17 @@ export class Orchestrator {
 
       // Procedure extraction gate (issue #519): ≥2 steps + trigger phrasing.
       // Runs even when extractionJudgeEnabled is false (durability judge is unrelated).
+      // Never tied to extractionJudgeShadow — that flag is only for the LLM durability judge.
       if (writeCategory === "procedure") {
         const procGate = validateProcedureExtraction({
           content: fact.content,
           procedureSteps: fact.procedureSteps,
         });
         if (!procGate.durable) {
-          if (this.config.extractionJudgeShadow) {
-            log.info(
-              `extraction-procedure-gate[shadow]: would reject "${fact.content.slice(0, 60)}…" reason="${procGate.reason}"`,
-            );
-          } else {
-            log.debug(
-              `extraction-procedure-gate: rejected "${fact.content.slice(0, 60)}…" reason="${procGate.reason}"`,
-            );
-            continue;
-          }
+          log.debug(
+            `extraction-procedure-gate: rejected "${fact.content.slice(0, 60)}…" reason="${procGate.reason}"`,
+          );
+          continue;
         }
       }
 
@@ -10726,7 +10728,11 @@ export class Orchestrator {
           hasCitationForTemplate(fact.content, citationTemplate)
             ? stripCitationForTemplate(fact.content, citationTemplate)
             : fact.content;
-        this.contentHashIndex.add(canonicalFactContent);
+        const hashRegisterKey =
+          writeCategory === "procedure"
+            ? buildProcedurePersistBody(fact.content, fact.procedureSteps)
+            : canonicalFactContent;
+        this.contentHashIndex.add(hashRegisterKey);
       }
     }
 

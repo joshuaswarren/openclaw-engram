@@ -403,39 +403,45 @@ export function parseConfig(raw: unknown): PluginConfig {
     cfg.procedural && typeof cfg.procedural === "object" && !Array.isArray(cfg.procedural)
       ? (cfg.procedural as Record<string, unknown>)
       : {};
+  const proceduralMinCoerced = coerceNumber(rawProcedural.minOccurrences);
   const proceduralMinRaw =
-    typeof rawProcedural.minOccurrences === "number" && Number.isFinite(rawProcedural.minOccurrences)
-      ? Math.floor(rawProcedural.minOccurrences)
+    proceduralMinCoerced !== undefined
+      ? Math.floor(proceduralMinCoerced)
+      : 3;
+  const successFloorRaw = coerceNumber(rawProcedural.successFloor);
+  const successFloor =
+    successFloorRaw !== undefined &&
+    successFloorRaw >= 0 &&
+    successFloorRaw <= 1
+      ? successFloorRaw
+      : 0.7;
+  const autoPromoteOccRaw = coerceNumber(rawProcedural.autoPromoteOccurrences);
+  const autoPromoteOccurrences =
+    autoPromoteOccRaw !== undefined && Number.isFinite(autoPromoteOccRaw)
+      ? autoPromoteOccRaw <= 0
+        ? 0
+        : Math.min(10_000, Math.max(1, Math.floor(autoPromoteOccRaw)))
+      : 8;
+  const lookbackCoerced = coerceNumber(rawProcedural.lookbackDays);
+  const lookbackDays =
+    lookbackCoerced !== undefined && Number.isFinite(lookbackCoerced)
+      ? Math.min(3650, Math.max(1, Math.floor(lookbackCoerced)))
+      : 30;
+  const recallMaxCoerced = coerceNumber(rawProcedural.recallMaxProcedures);
+  const recallMaxProcedures =
+    recallMaxCoerced !== undefined && Number.isFinite(recallMaxCoerced)
+      ? Math.min(10, Math.max(1, Math.floor(recallMaxCoerced)))
       : 3;
   const procedural: ProceduralConfig = {
     enabled: coerceBool(rawProcedural.enabled) === true,
     /** 0 disables miner emission threshold (no clusters qualify). */
     minOccurrences: Math.min(1000, Math.max(0, proceduralMinRaw)),
-    successFloor:
-      typeof rawProcedural.successFloor === "number" &&
-      Number.isFinite(rawProcedural.successFloor) &&
-      rawProcedural.successFloor >= 0 &&
-      rawProcedural.successFloor <= 1
-        ? rawProcedural.successFloor
-        : 0.7,
-    autoPromoteOccurrences:
-      typeof rawProcedural.autoPromoteOccurrences === "number" &&
-      Number.isFinite(rawProcedural.autoPromoteOccurrences)
-        ? rawProcedural.autoPromoteOccurrences <= 0
-          ? 0
-          : Math.min(10_000, Math.max(1, Math.floor(rawProcedural.autoPromoteOccurrences)))
-        : 8,
+    successFloor,
+    autoPromoteOccurrences,
     autoPromoteEnabled: coerceBool(rawProcedural.autoPromoteEnabled) === true,
-    lookbackDays:
-      typeof rawProcedural.lookbackDays === "number" && Number.isFinite(rawProcedural.lookbackDays)
-        ? Math.min(3650, Math.max(1, Math.floor(rawProcedural.lookbackDays)))
-        : 30,
+    lookbackDays,
     proceduralMiningCronAutoRegister: coerceBool(rawProcedural.proceduralMiningCronAutoRegister) === true,
-    recallMaxProcedures:
-      typeof rawProcedural.recallMaxProcedures === "number" &&
-      Number.isFinite(rawProcedural.recallMaxProcedures)
-        ? Math.min(10, Math.max(1, Math.floor(rawProcedural.recallMaxProcedures)))
-        : 3,
+    recallMaxProcedures,
   };
 
   const memoryDir =

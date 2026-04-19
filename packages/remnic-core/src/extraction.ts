@@ -1036,6 +1036,8 @@ Memory categories — use the MOST SPECIFIC category that fits:
 - commitment: Promises, obligations, deadlines
 - moment: Emotionally significant events
 - skill: Demonstrated capabilities
+- rule: Explicit operational rules or constraints
+- procedure: Repeatable workflows — use when the user describes a multi-step play (≥2 ordered steps). Put the human-readable trigger/context in "content" (e.g. "When you deploy…") and list steps in "procedureSteps" as [{"order":1,"intent":"…"}, …] mirroring the gateway extraction schema.
 
 IMPORTANT: Do NOT label everything as "fact". Use "decision" for architectural choices, "commitment" for deadlines/promises, "principle" for reusable rules, "correction" for when the user rejects a suggestion, etc.
 
@@ -1097,7 +1099,7 @@ Also generate:
 
 Output JSON:
 {
-  "facts": [{"category": "decision", "content": "Chose PostgreSQL over MongoDB for the user service", "importance": 8, "confidence": 0.9, "structuredAttributes": {"chosen": "PostgreSQL", "rejected": "MongoDB"}}, {"category": "commitment", "content": "Must ship v2.0 API by end of March", "importance": 10, "confidence": 1.0, "structuredAttributes": {"deadline": "end of March", "deliverable": "v2.0 API"}}, {"category": "fact", "content": "The store backend uses Redis for session caching", "importance": 6, "confidence": 0.95, "entityRef": "project-acme-store"}, {"category": "principle", "content": "Always run migrations in a transaction to avoid partial schema updates", "importance": 8, "confidence": 0.9}],
+  "facts": [{"category": "decision", "content": "Chose PostgreSQL over MongoDB for the user service", "importance": 8, "confidence": 0.9, "structuredAttributes": {"chosen": "PostgreSQL", "rejected": "MongoDB"}}, {"category": "procedure", "content": "When you cut a hotfix release, follow the checklist", "importance": 8, "confidence": 0.9, "procedureSteps": [{"order": 1, "intent": "Branch from main and cherry-pick the fix"}, {"order": 2, "intent": "Run CI and tag the release"}]}, {"category": "commitment", "content": "Must ship v2.0 API by end of March", "importance": 10, "confidence": 1.0, "structuredAttributes": {"deadline": "end of March", "deliverable": "v2.0 API"}}, {"category": "fact", "content": "The store backend uses Redis for session caching", "importance": 6, "confidence": 0.95, "entityRef": "project-acme-store"}, {"category": "principle", "content": "Always run migrations in a transaction to avoid partial schema updates", "importance": 8, "confidence": 0.9}],
   "entities": [{"name": "person-jane-doe", "type": "person", "facts": ["Works at Acme Corp", "Prefers Python over JavaScript"], "structuredSections": [{"key": "beliefs", "title": "Beliefs", "facts": ["Python is a better fit than JavaScript for backend work."]}]}, {"name": "project-acme-store", "type": "project", "facts": ["Built with Next.js", "Deployed on Vercel"]}],
   "profileUpdates": ["User prefers dark mode in all editors"],
   "questions": [{"question": "Which cloud provider hosts the staging environment?", "context": "Came up during deployment discussion", "priority": 0.5}],

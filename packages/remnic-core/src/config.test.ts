@@ -244,3 +244,22 @@ test("parseConfig recallDirectAnswerEligibleTaxonomyBuckets non-array value fall
     "entities",
   ]);
 });
+
+test("parseConfig procedural numeric fields coerce from CLI-style strings (issue #519)", () => {
+  const result = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: {
+      enabled: true,
+      minOccurrences: "5",
+      successFloor: "0.82",
+      autoPromoteOccurrences: "12",
+      lookbackDays: "14",
+      recallMaxProcedures: "2",
+    },
+  });
+  assert.equal(result.procedural.minOccurrences, 5);
+  assert.equal(result.procedural.successFloor, 0.82);
+  assert.equal(result.procedural.autoPromoteOccurrences, 12);
+  assert.equal(result.procedural.lookbackDays, 14);
+  assert.equal(result.procedural.recallMaxProcedures, 2);
+});
