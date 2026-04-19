@@ -2260,6 +2260,32 @@ const pluginDefinition = {
           ? relative
           : rawPath;
       };
+      // Relativize a path against whichever allowed read root actually
+      // contains it. Required for search results: returning the path
+      // relative to capabilityWorkspaceDir produces forms like
+      // "memory/local/facts/a.md", which resolveReadablePath would then
+      // join to every allowed root (memoryDir + <workspace>/memory),
+      // producing doubled "memory/" segments and failed reads.
+      const relativizeToMemoryRoot = (rawPath: string | undefined): string => {
+        if (!rawPath || typeof rawPath !== "string") return "memory";
+        const resolved = path.isAbsolute(rawPath)
+          ? path.resolve(rawPath)
+          : path.resolve(capabilityWorkspaceDir, rawPath);
+        for (const root of readAllowedRoots) {
+          const relative = path.relative(root, resolved);
+          if (
+            relative !== "" &&
+            !relative.startsWith("..") &&
+            !path.isAbsolute(relative)
+          ) {
+            return relative;
+          }
+        }
+        // Fall back to the workspace-relative form for display if the
+        // path is not inside any allowed root (search may still surface
+        // it as an informational hit even when reads would be rejected).
+        return normalizeWorkspacePath(rawPath);
+      };
       const resolveReadablePath = async (requestedPath: string): Promise<string> => {
         // QMD search results return paths relative to memoryDir (e.g.
         // "facts/alice.md"), not the agent workspace root. Resolve
@@ -2426,7 +2452,7 @@ const pluginDefinition = {
                       : typeof candidate.id === "string"
                         ? candidate.id
                         : `memory-${index + 1}`;
-                  const normalizedPath = normalizeWorkspacePath(rawPath);
+                  const normalizedPath = relativizeToMemoryRoot(rawPath);
                   const startLine =
                     typeof candidate.startLine === "number" && Number.isFinite(candidate.startLine)
                       ? Math.max(1, Math.floor(candidate.startLine))
