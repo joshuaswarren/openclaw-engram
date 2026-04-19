@@ -239,9 +239,11 @@ export class FallbackLlmClient {
     const providerId = parts[0];
     const modelId = parts.slice(1).join("/"); // Handle cases like "openai/gpt-5.2-turbo"
 
-    // Look up explicit config first; fall back to the gateway's materialized
-    // models.json which contains built-in providers (openai-codex, etc.)
-    const providerConfig = providers[providerId] ?? this.resolveFromModelsJson(providerId);
+    // Prefer the gateway's materialized models.json provider entry when
+    // available. It reflects the gateway's actual runtime transport wiring
+    // (base URLs, API families, built-in providers) rather than the raw
+    // user config stubs from openclaw.json.
+    const providerConfig = this.resolveFromModelsJson(providerId) ?? providers[providerId];
     if (!providerConfig) {
       log.warn(`fallback LLM: provider not found: ${providerId}`);
       return null;
@@ -305,10 +307,23 @@ export class FallbackLlmClient {
       return await this.callAnthropic(effectiveConfig, model.modelId, messages, options);
     }
 
-    // For OpenAI-compatible APIs (openai-completions, openai-responses,
-    // openai-codex-responses, ollama, etc.) and unknown formats, use
-    // OpenAI chat completions — the gateway's runtime auth resolver returns
-    // request-ready base URL and credentials for most providers.
+    if (
+      model.providerConfig.api === "openai-responses" ||
+      model.providerConfig.api === "openai-codex-responses" ||
+      model.providerConfig.api === "azure-openai-responses"
+    ) {
+      return await this.callOpenAIResponses(
+        effectiveConfig,
+        model.modelId,
+        messages,
+        options,
+      );
+    }
+
+    // For OpenAI-compatible chat-completions APIs (openai-completions,
+    // ollama, etc.) and unknown formats, use chat completions — the gateway's
+    // runtime auth resolver returns request-ready base URL and credentials for
+    // most providers.
     return await this.callOpenAI(
       effectiveConfig,
       model.modelId,
@@ -440,6 +455,96 @@ export class FallbackLlmClient {
   }
 
   /**
+   * Call an OpenAI-compatible Responses API.
+   */
+  private async callOpenAIResponses(
+    config: ModelProviderConfig,
+    modelId: string,
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
+    options: FallbackLlmOptions,
+  ): Promise<{ content: string; usage?: FallbackLlmResponse["usage"] } | null> {
+    const base = config.baseUrl.replace(/\/$/, "");
+    const url = base.endsWith("/v1")
+      ? `${base}/responses`
+      : `${base}/v1/responses`;
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...config.headers,
+    };
+
+    if (config.apiKey && typeof config.apiKey === "string" && config.authHeader !== false) {
+      headers["Authorization"] = `Bearer ${config.apiKey}`;
+    }
+
+    const instructions = messages
+      .filter((message) => message.role === "system")
+      .map((message) => message.content)
+      .join("\n\n")
+      .trim();
+    const input = messages
+      .filter((message) => message.role !== "system")
+      .map((message) => ({
+        role: message.role,
+        content: [{ type: "input_text", text: message.content }],
+      }));
+
+    const body: Record<string, unknown> = {
+      model: modelId,
+      input,
+      max_output_tokens: Math.max(0, Math.floor(options.maxTokens ?? 4096)),
+      temperature: options.temperature ?? 0.3,
+    };
+    if (instructions.length > 0) {
+      body.instructions = instructions;
+    }
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`OpenAI Responses API error: ${response.status} ${error}`);
+    }
+
+    const data = (await response.json()) as {
+      output_text?: string;
+      output?: Array<{
+        type?: string;
+        text?: string;
+        content?: Array<{
+          type?: string;
+          text?: string;
+        }>;
+      }>;
+      usage?: {
+        input_tokens?: number;
+        output_tokens?: number;
+        total_tokens?: number;
+      };
+    };
+
+    const outputText = extractResponsesOutputText(data);
+    if (!outputText) {
+      throw new Error("Empty response from OpenAI Responses API");
+    }
+
+    return {
+      content: outputText,
+      usage: data.usage
+        ? {
+            inputTokens: data.usage.input_tokens,
+            outputTokens: data.usage.output_tokens,
+            totalTokens: data.usage.total_tokens,
+          }
+        : undefined,
+    };
+  }
+
+  /**
    * Call Anthropic Messages API.
    */
   private async callAnthropic(
@@ -520,4 +625,39 @@ export class FallbackLlmClient {
         : undefined,
     };
   }
+}
+
+function extractResponsesOutputText(data: {
+  output_text?: string;
+  output?: Array<{
+    type?: string;
+    text?: string;
+    content?: Array<{
+      type?: string;
+      text?: string;
+    }>;
+  }>;
+}): string | null {
+  if (typeof data.output_text === "string" && data.output_text.trim().length > 0) {
+    return data.output_text;
+  }
+
+  const chunks: string[] = [];
+  for (const item of data.output ?? []) {
+    if (typeof item.text === "string" && item.text.trim().length > 0) {
+      chunks.push(item.text);
+    }
+    for (const part of item.content ?? []) {
+      if (
+        (part.type === "output_text" || part.type === "text" || part.type === "input_text") &&
+        typeof part.text === "string" &&
+        part.text.trim().length > 0
+      ) {
+        chunks.push(part.text);
+      }
+    }
+  }
+
+  const joined = chunks.join("\n").trim();
+  return joined.length > 0 ? joined : null;
 }
