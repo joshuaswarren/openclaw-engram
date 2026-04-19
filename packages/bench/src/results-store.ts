@@ -384,12 +384,23 @@ export async function deleteBenchmarkResults(
       missing.push(reference);
       continue;
     }
-    if (seenPaths.has(summary.path)) {
+    // Canonicalize before dedupe so a relative path and an absolute
+    // path that point at the same file collapse to a single key.
+    const canonicalPath = path.resolve(summary.path);
+    if (seenPaths.has(canonicalPath)) {
       continue;
     }
+    seenPaths.add(canonicalPath);
 
-    await unlink(summary.path);
-    seenPaths.add(summary.path);
+    try {
+      await unlink(summary.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        // Already removed (e.g. by a concurrent delete) — treat as success.
+      } else {
+        throw error;
+      }
+    }
     deleted.push(summary);
   }
 

@@ -496,6 +496,57 @@ const DOWNLOADABLE_BENCHMARK_DATASETS = [
   "locomo",
 ] as const;
 
+// Required content markers per benchmark. A `files` entry is matched literally;
+// a `glob` entry matches any file in the directory with the given extension.
+// Mirrors the expectations in evals/scripts/download-datasets.sh so `datasets
+// status` reports a partial/interrupted download as "missing" instead of
+// "downloaded" based on directory existence alone.
+const DOWNLOADED_DATASET_MARKERS: Record<string, { files?: string[]; ext?: string }> = {
+  "ama-bench": { files: ["open_end_qa_set.jsonl"] },
+  longmemeval: { files: ["longmemeval_oracle.json"] },
+  amemgym: { files: ["amemgym-v1-base.json"] },
+  locomo: { files: ["locomo10.json"] },
+  "memory-arena": { ext: ".jsonl" },
+};
+
+function isDatasetDownloaded(datasetPath: string, benchmarkId: string): boolean {
+  let stats: fs.Stats;
+  try {
+    stats = fs.statSync(datasetPath);
+  } catch {
+    return false;
+  }
+  if (!stats.isDirectory()) {
+    return false;
+  }
+  const marker = DOWNLOADED_DATASET_MARKERS[benchmarkId];
+  if (!marker) {
+    // Unknown benchmark: fall back to "directory has at least one file".
+    try {
+      return fs.readdirSync(datasetPath).length > 0;
+    } catch {
+      return false;
+    }
+  }
+  if (marker.files) {
+    return marker.files.every((name) => {
+      try {
+        return fs.statSync(path.join(datasetPath, name)).isFile();
+      } catch {
+        return false;
+      }
+    });
+  }
+  if (marker.ext) {
+    try {
+      return fs.readdirSync(datasetPath).some((name) => name.endsWith(marker.ext!));
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 async function launchBenchUi(resultsDir: string): Promise<void> {
   const benchUiDir = path.join(CLI_REPO_ROOT, "packages", "bench-ui");
   const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -947,15 +998,9 @@ async function manageBenchDatasets(parsed: ParsedBenchArgs): Promise<void> {
 
     const status = supported.map((benchmarkId) => {
       const datasetPath = path.join(datasetRoot, benchmarkId);
-      let downloaded = false;
-      try {
-        downloaded = fs.statSync(datasetPath).isDirectory();
-      } catch {
-        downloaded = false;
-      }
       return {
         benchmark: benchmarkId,
-        downloaded,
+        downloaded: isDatasetDownloaded(datasetPath, benchmarkId),
         path: datasetPath,
       };
     });
