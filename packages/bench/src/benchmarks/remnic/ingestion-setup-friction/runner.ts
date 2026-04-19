@@ -18,6 +18,13 @@ import { aggregateTaskScores, timed } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import { emailFixture } from "../../../fixtures/inbox/email.js";
 
+/**
+ * Metrics where a lower value represents better performance.
+ * Pass this set to `compareResults` so regressions are detected correctly.
+ */
+export const INGESTION_SETUP_FRICTION_LOWER_IS_BETTER: ReadonlySet<string> =
+  new Set(["setup_friction", "commands_count", "prompts_count", "errors_count"]);
+
 export const ingestionSetupFrictionDefinition: BenchmarkDefinition = {
   id: "ingestion-setup-friction",
   title: "Ingestion: Setup Friction",

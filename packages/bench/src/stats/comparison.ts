@@ -16,15 +16,20 @@ function percentChange(candidateValue: number, baselineValue: number): number {
 function verdictFromMetricDeltas(
   metricDeltas: Record<string, ComparisonMetricDelta>,
   threshold: number,
+  lowerIsBetter: ReadonlySet<string>,
 ): ComparisonResult["verdict"] {
   let hasImprovement = false;
   let hasRegression = false;
 
-  for (const metric of Object.values(metricDeltas)) {
-    if (metric.percentChange > threshold) {
+  for (const [metricName, metric] of Object.entries(metricDeltas)) {
+    // For lower-is-better metrics, a positive percent change is a regression.
+    const directedChange = lowerIsBetter.has(metricName)
+      ? -metric.percentChange
+      : metric.percentChange;
+    if (directedChange > threshold) {
       hasImprovement = true;
     }
-    if (metric.percentChange < -threshold) {
+    if (directedChange < -threshold) {
       hasRegression = true;
     }
   }
@@ -38,6 +43,7 @@ export function compareResults(
   baseline: BenchmarkResult,
   candidate: BenchmarkResult,
   threshold = 0.05,
+  lowerIsBetter: ReadonlySet<string> = new Set(),
 ): ComparisonResult {
   const metricDeltas: Record<string, ComparisonMetricDelta> = {};
 
@@ -85,6 +91,6 @@ export function compareResults(
   return {
     benchmark: candidate.meta.benchmark,
     metricDeltas,
-    verdict: verdictFromMetricDeltas(metricDeltas, threshold),
+    verdict: verdictFromMetricDeltas(metricDeltas, threshold, lowerIsBetter),
   };
 }
