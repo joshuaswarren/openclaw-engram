@@ -2909,7 +2909,6 @@ export interface BulkImportCliCommandOptions {
   memoryDir: string;
   source: string;
   file: string;
-  namespace?: string;
   batchSize?: number;
   dryRun?: boolean;
   verbose?: boolean;
@@ -3039,7 +3038,6 @@ export async function runBulkImportCliCommand(
       dryRun: opts.dryRun,
       dedup: true,
       trustLevel: "import",
-      namespace: opts.namespace,
     },
     processBatch,
   );
@@ -3862,7 +3860,6 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--source <source>", "Bulk-import source adapter name (e.g. weclone)")
         .option("--file <path>", "Path to the import file (JSON)")
         .option("--platform <platform>", "Optional platform override forwarded to the adapter")
-        .option("--namespace <ns>", "Target namespace", "")
         .option("--batch-size <n>", "Turns per batch", "50")
         .option("--dry-run", "Parse and validate only; do not persist")
         .option("--strict", "Fail on any invalid source row")
@@ -3881,27 +3878,32 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
           const batchSizeRaw = parseInt(String(options.batchSize ?? "50"), 10);
           const batchSize = Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? batchSizeRaw : 50;
-          const namespaceRaw = typeof options.namespace === "string" ? options.namespace.trim() : "";
           const platformRaw = typeof options.platform === "string" ? options.platform.trim() : "";
-          const namespace = namespaceRaw.length > 0 ? namespaceRaw : undefined;
-          const targetMemoryDir = await resolveMemoryDirForNamespace(
-            orchestrator,
-            namespace,
+          // Counts are anchored at the actual write root that extraction
+          // targets (the orchestrator's default-namespace storage), not a
+          // CLI-supplied override. ingestBulkImportBatch uses a session key
+          // that resolves to the default principal → default namespace, so
+          // `writeRoot` always matches where memories land. Namespace-scoped
+          // bulk-import is a separate feature (see follow-up in PR #515) —
+          // it requires threading a namespace override through the write
+          // path of the extraction pipeline, which is not wired today.
+          const defaultStorage = await orchestrator.getStorageForNamespace(
+            orchestrator.config.defaultNamespace,
           );
+          const writeRoot = defaultStorage.dir;
           const ingestBatch: ProcessBatchFn = async (turns) => {
-            const before = await countMemoryMarkdownFiles(targetMemoryDir);
-            await orchestrator.ingestBulkImportBatch(turns, { namespace });
-            const after = await countMemoryMarkdownFiles(targetMemoryDir);
+            const before = await countMemoryMarkdownFiles(writeRoot);
+            await orchestrator.ingestBulkImportBatch(turns, {});
+            const after = await countMemoryMarkdownFiles(writeRoot);
             const memoriesCreated = Math.max(0, after - before);
             return { memoriesCreated, duplicatesSkipped: 0 };
           };
           try {
             const result = await runBulkImportCliCommand({
-              memoryDir: targetMemoryDir,
+              memoryDir: writeRoot,
               source: sourceRaw,
               file: filePathRaw,
               platform: platformRaw.length > 0 ? platformRaw : undefined,
-              namespace,
               batchSize,
               dryRun: options.dryRun === true,
               verbose: options.verbose === true,

@@ -96,13 +96,6 @@ openclaw engram bulk-import \
   --file ./preprocessed_telegram.json \
   --platform telegram
 
-# Specify a target namespace for the imported memories
-openclaw engram bulk-import \
-  --source weclone \
-  --file ./preprocessed_telegram.json \
-  --platform telegram \
-  --namespace personal-chat-history
-
 # Strict mode: fail on any invalid message instead of skipping
 openclaw engram bulk-import \
   --source weclone \
@@ -113,9 +106,11 @@ openclaw engram bulk-import \
 
 Persistence is wired through the Remnic orchestrator's extraction pipeline.
 Each batch is buffered and extracted the same way an organic conversation
-would be; memories land under `memoryDir/facts/` (or the namespace-scoped
-root when `--namespace` is given). Use `--dry-run` to validate an export
-before committing to the extraction cost.
+would be; memories land under the orchestrator's default-namespace root
+(`memoryDir/facts/` by default). Use `--dry-run` to validate an export
+before committing to the extraction cost. Per-invocation namespace
+override for bulk-import writes is not yet wired — see the note in
+[`docs/import-export.md`](../../docs/import-export.md).
 
 ## Programmatic usage
 

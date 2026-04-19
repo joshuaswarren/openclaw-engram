@@ -8337,28 +8337,28 @@ export class Orchestrator {
    * normalizes user/assistant turns into the extraction buffer and awaits
    * settlement, but it intentionally bypasses the captureMode="explicit" gate
    * because bulk-import is itself an explicit user action — the user ran
-   * `bulk-import --source <name> --file ...` and would be surprised to see the
-   * command silently no-op when capture is otherwise restricted.
+   * `bulk-import --source <name> --file ...` and would be surprised to see
+   * the command silently no-op when capture is otherwise restricted.
    *
    * Turns with role="other" are skipped (not supported by the extraction
-   * pipeline). The sessionKey/bufferKey is derived from the namespace hint so
-   * multiple bulk-imports into distinct namespaces are isolated from each
-   * other's buffers.
+   * pipeline). The session key is a fixed `bulk-import:default` so that
+   * `resolvePrincipal` falls through to the default principal and
+   * extraction writes land in the orchestrator's default namespace root —
+   * the single "it works consistently" target for the first bulk-import
+   * release. Namespace-scoped bulk-imports are tracked as a follow-up
+   * because they require threading a namespace override down through
+   * `queueBufferedExtraction` → `runExtraction`, which does not currently
+   * accept one on the write path.
    */
   async ingestBulkImportBatch(
     turns: ImportTurn[],
     options: {
-      namespace?: string;
       deadlineMs?: number;
     } = {},
   ): Promise<void> {
     if (!Array.isArray(turns) || turns.length === 0) return;
 
-    const sessionKey = normalizeReplaySessionKey(
-      options.namespace && options.namespace.length > 0
-        ? `bulk-import:${options.namespace}`
-        : "bulk-import:default",
-    );
+    const sessionKey = normalizeReplaySessionKey("bulk-import:default");
 
     const sessionTurns: BufferTurn[] = [];
     for (const turn of turns) {

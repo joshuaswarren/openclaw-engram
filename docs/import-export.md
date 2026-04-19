@@ -78,13 +78,6 @@ openclaw engram bulk-import \
   --file ./preprocessed_telegram.json \
   --platform telegram
 
-# Target a specific namespace
-openclaw engram bulk-import \
-  --source weclone \
-  --file ./preprocessed_telegram.json \
-  --platform telegram \
-  --namespace personal-chat-history
-
 # Fail on any invalid row instead of skipping it
 openclaw engram bulk-import \
   --source weclone \
@@ -100,9 +93,6 @@ Key flags:
 - `--file <path>` — required; path to the WeClone preprocessed JSON.
 - `--platform <id>` — adapter-specific hint (`telegram`, `whatsapp`,
   `discord`, `slack`). Defaults to `telegram` when omitted.
-- `--namespace <ns>` — route memories into a namespace when namespaces are
-  enabled. Memories land under `memoryDir/namespaces/<ns>/` instead of the
-  default root.
 - `--batch-size <n>` — turns per extraction batch (default 50). Larger
   batches trade per-turn extraction latency for extraction-pass quality;
   smaller batches give more granular progress.
@@ -118,6 +108,13 @@ use, so buffered extraction settings (models, judges, dedup checks) apply.
 Non-dryRun invocations await extraction settlement before reporting the
 per-batch `memoriesCreated` count, derived by snapshotting the memory
 directory before and after each batch.
+
+Namespace routing is not yet supported: imported memories land in the
+orchestrator's configured default namespace. Installations that need to
+isolate imported chat history into a dedicated namespace should configure
+namespaces at the orchestrator level first and switch the default before
+running the import. Per-invocation namespace override for bulk-import
+writes is tracked as a follow-up.
 
 See
 [`packages/import-weclone/README.md`](../packages/import-weclone/README.md)
