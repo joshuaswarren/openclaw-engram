@@ -332,15 +332,11 @@ export async function resolveBenchmarkResultReference(
   outputDir: string,
   reference: string,
 ): Promise<StoredBenchmarkResultSummary | undefined> {
-  if (fs.existsSync(reference)) {
-    try {
-      const result = await loadBenchmarkResult(reference);
-      return toSummary(result, reference);
-    } catch {
-      // Fall through to id/basename matching under the results directory.
-    }
-  }
-
+  // Store-first resolution keeps `runs show <id>` deterministic: a
+  // bare identifier always maps to the stored run rather than an
+  // unrelated file in the current working directory that happens to
+  // share the same name. Only fall back to the filesystem when the
+  // reference is unambiguously path-shaped.
   const summaries = await listBenchmarkResults(outputDir);
   const exactIdMatch = summaries.find((summary) => summary.id === reference);
   if (exactIdMatch) {
@@ -350,7 +346,20 @@ export async function resolveBenchmarkResultReference(
   const basenameMatch = summaries.find(
     (summary) => path.basename(summary.path) === reference,
   );
-  return basenameMatch;
+  if (basenameMatch) {
+    return basenameMatch;
+  }
+
+  if (looksLikeFilesystemPath(reference) && fs.existsSync(reference)) {
+    try {
+      const result = await loadBenchmarkResult(reference);
+      return toSummary(result, reference);
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
 }
 
 // A reference is treated as a filesystem path only when it looks like
