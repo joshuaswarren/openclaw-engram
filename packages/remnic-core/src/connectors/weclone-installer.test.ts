@@ -202,6 +202,109 @@ test("installConnector weclone coerces string port from --config CLI parsing", a
   );
 });
 
+test("installConnector weclone force-reinstall reuses persisted proxyConfigPath even if REMNIC_HOME changed", async (t) => {
+  // Reviewer feedback (codex P2): force-reinstall must target the SAME
+  // on-disk file the previous install wrote, not recompute from the current
+  // REMNIC_HOME. Otherwise the old file is left behind with stale settings
+  // and a revoked token when the env changes between installs.
+  const sandbox = makeSandbox(t);
+  const firstRemnicHome = sandbox.remnicHome;
+  const secondRemnicHome = path.join(sandbox.root, "second-remnic-home");
+  fs.mkdirSync(secondRemnicHome, { recursive: true });
+
+  let firstProxyPath = "";
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: firstRemnicHome,
+    },
+    () => {
+      const first = installConnector({
+        connectorId: "weclone",
+        config: { proxyPort: 8700 },
+      });
+      assert.equal(first.status, "installed");
+      firstProxyPath = resolveWeCloneProxyConfigPath();
+      assert.ok(fs.existsSync(firstProxyPath));
+    },
+  );
+
+  // Now force-reinstall with a DIFFERENT REMNIC_HOME. The proxy config
+  // write must target the ORIGINAL firstProxyPath (persisted via
+  // proxyConfigPath in the registry config), not the env-derived path under
+  // secondRemnicHome.
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: secondRemnicHome,
+    },
+    () => {
+      const envDerived = resolveWeCloneProxyConfigPath();
+      assert.notEqual(envDerived, firstProxyPath, "env derivation must differ after REMNIC_HOME change");
+
+      const second = installConnector({
+        connectorId: "weclone",
+        force: true,
+      });
+      assert.equal(second.status, "installed");
+
+      // The ORIGINAL path must still hold the updated config.
+      assert.ok(fs.existsSync(firstProxyPath), "original proxy file must still exist after force-reinstall");
+      // The env-derived path under the new REMNIC_HOME must NOT have been
+      // created — otherwise we'd have two proxy configs with divergent state.
+      assert.equal(
+        fs.existsSync(envDerived),
+        false,
+        "force-reinstall must NOT create a second proxy config at the new env-derived path",
+      );
+
+      // The first proxy file must retain the original custom port (8700) and
+      // have been rewritten with the fresh token.
+      const proxy = JSON.parse(fs.readFileSync(firstProxyPath, "utf8")) as Record<string, unknown>;
+      assert.equal(proxy.proxyPort, 8700, "force-reinstall must preserve prior port");
+    },
+  );
+});
+
+test("resolveWeCloneProxyConfigPath returns an absolute path even for a relative REMNIC_HOME override", async (t) => {
+  // Reviewer feedback (codex P2): install (path.join) and run (path.resolve)
+  // must agree on normalization. With a relative override like
+  // `REMNIC_HOME=tmp/remnic`, `path.join` keeps it relative while
+  // `path.resolve` makes it absolute — if they disagree, run-time fails
+  // to locate the file install-time wrote. Verified by asserting
+  // absoluteness here.
+  const sandbox = makeSandbox(t);
+  const relativeOverride = path.relative(process.cwd(), sandbox.remnicHome);
+  // Guard: the sandbox path might not be relative-expressible (e.g. on a
+  // different drive on Windows). Skip in that case.
+  if (!relativeOverride || path.isAbsolute(relativeOverride)) {
+    t.skip("Cannot construct a relative REMNIC_HOME for this test environment");
+    return;
+  }
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: relativeOverride,
+    },
+    () => {
+      const resolved = resolveWeCloneProxyConfigPath();
+      assert.equal(path.isAbsolute(resolved), true, "resolveWeCloneProxyConfigPath must return an absolute path");
+      // Must normalize to the same absolute path the sandbox represents.
+      assert.equal(
+        resolved,
+        path.resolve(sandbox.remnicHome, "connectors", "weclone.json"),
+      );
+    },
+  );
+});
+
 test("installConnector weclone force-reinstall preserves prior custom fields", async (t) => {
   const sandbox = makeSandbox(t);
   await withEnv(

@@ -16,8 +16,15 @@ import { homedir } from "node:os";
 
 /**
  * Resolve the default proxy config path. Kept in lockstep with
- * @remnic/core's resolveWeCloneProxyConfigPath() so install/run pair up
+ * @remnic/core's `resolveWeCloneProxyConfigPath()` so install/run pair up
  * without additional wiring from the caller.
+ *
+ * Both sides use `path.resolve()` (absolute) — NOT `path.join()` — so a
+ * relative override like `REMNIC_HOME=tmp/remnic` is normalized against the
+ * current working directory. If core and CLI disagreed on this, a relative
+ * override could write the config in one location and read it from another,
+ * producing spurious "Config not found" errors right after a successful
+ * install.
  */
 function defaultConfigPath(): string {
   const override = process.env.REMNIC_HOME ?? process.env.ENGRAM_HOME;

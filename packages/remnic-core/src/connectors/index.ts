@@ -1260,7 +1260,32 @@ export function installConnector(options: InstallOptions): InstallResult {
   let weCloneProxyHandleRollback: (() => void) | null = null;
   if (options.connectorId === "weclone") {
     try {
-      const proxyConfigPath = resolveWeCloneProxyConfigPath();
+      // Force-reinstall (and any reinstall path) must keep using the exact
+      // proxy config path that was persisted on the previous install. If we
+      // re-derive from the current env each time, a user whose REMNIC_HOME /
+      // ENGRAM_HOME changed between installs would end up with two proxy
+      // config files — the old one stays with stale settings + a revoked
+      // token, the new one gets the live token, and any running proxy still
+      // reading the old file starts failing auth. Read the saved
+      // `proxyConfigPath` from the existing registry config first, and only
+      // fall back to env-derivation for genuine first-time installs.
+      let proxyConfigPath: string | null = null;
+      if (existing && fs.existsSync(configPath)) {
+        try {
+          const savedRegistryConfig = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+          if (
+            typeof savedRegistryConfig.proxyConfigPath === "string" &&
+            savedRegistryConfig.proxyConfigPath.length > 0
+          ) {
+            proxyConfigPath = savedRegistryConfig.proxyConfigPath;
+          }
+        } catch {
+          // Saved registry config unreadable — fall through to env resolution.
+        }
+      }
+      if (proxyConfigPath === null) {
+        proxyConfigPath = resolveWeCloneProxyConfigPath();
+      }
       const prior = readWeCloneProxyConfigIfExists(proxyConfigPath);
       const proxyConfig = buildWeCloneProxyConfig({
         userConfig: safeUserConfig,
@@ -2653,14 +2678,20 @@ const WECLONE_PROXY_CONFIG_FILENAME = "weclone.json";
  * Resolve the path to ~/.remnic/connectors/weclone.json for the current user.
  * Honours REMNIC_HOME / ENGRAM_HOME env overrides so tests can point the
  * install at a temp dir without leaking into the real home directory.
+ *
+ * Always returns an absolute path via `path.resolve` so install-time and
+ * run-time resolution agree even when the override is a relative path like
+ * `tmp/remnic` (which would otherwise be interpreted against the caller's
+ * current working directory). Must stay in lockstep with the proxy CLI's
+ * `defaultConfigPath()` in @remnic/connector-weclone/src/cli.ts.
  */
 export function resolveWeCloneProxyConfigPath(): string {
   const override = process.env.REMNIC_HOME ?? process.env.ENGRAM_HOME;
   if (override && override.length > 0) {
-    return path.join(override, "connectors", WECLONE_PROXY_CONFIG_FILENAME);
+    return path.resolve(override, "connectors", WECLONE_PROXY_CONFIG_FILENAME);
   }
   const home = process.env.HOME ?? os.homedir();
-  return path.join(
+  return path.resolve(
     home,
     WECLONE_PROXY_CONFIG_DIRNAME,
     "connectors",
