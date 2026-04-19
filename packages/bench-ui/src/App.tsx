@@ -5,12 +5,14 @@ import type { BenchResultSummaryPayload } from "./bench-data";
 import { listBenchmarks } from "./bench-data";
 import { BenchmarkDetail } from "./pages/BenchmarkDetail";
 import { Compare } from "./pages/Compare";
+import { Ingestion } from "./pages/Ingestion";
 import { Overview } from "./pages/Overview";
 import { Providers } from "./pages/Providers";
 import { Runs } from "./pages/Runs";
 
 const navigationItems = [
   { label: "Overview", path: "/" },
+  { label: "Ingestion", path: "/ingestion" },
   { label: "Runs", path: "/runs" },
   { label: "Compare", path: "/compare" },
   { label: "Benchmark Detail", path: "/benchmark" },
@@ -153,6 +155,7 @@ export function App() {
       >
         <Routes>
           <Route path="/" element={<Overview payload={payload} />} />
+          <Route path="/ingestion" element={<Ingestion payload={payload} />} />
           <Route path="/runs" element={<Runs payload={payload} />} />
           <Route path="/compare" element={<Compare payload={payload} />} />
           <Route
