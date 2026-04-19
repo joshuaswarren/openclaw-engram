@@ -9,7 +9,7 @@
  * The `input` field is empty string (synthesis is left to adapters).
  */
 
-import { readdir, readFile, stat, lstat } from "node:fs/promises";
+import { readdir, readFile, lstat } from "node:fs/promises";
 import path from "node:path";
 
 import type { TrainingExportOptions, TrainingExportRecord } from "./types.js";
@@ -211,11 +211,18 @@ export async function convertMemoriesToRecords(
     );
   }
 
+  // Normalize memoryDir: strip trailing separators so that lstat sees the
+  // entry itself rather than the directory it points to. Node's lstat on
+  // "link/" resolves through the symlink and reports a directory, not a
+  // symlink — the trailing slash strips the symlink-root guard entirely.
+  const normalizedMemoryDir = memoryDir.replace(/[/\\]+$/, "");
+
   // Reject symlinked memoryDir root — a symlink could redirect the entire
-  // memory tree to an attacker-controlled location, bypassing per-file checks
+  // memory tree to an attacker-controlled location, bypassing per-file checks.
+  // Using the normalized path ensures a trailing slash cannot bypass this check.
   let rootLinkStat: import("node:fs").Stats;
   try {
-    rootLinkStat = await lstat(memoryDir);
+    rootLinkStat = await lstat(normalizedMemoryDir);
   } catch {
     throw new Error(
       `memoryDir does not exist: ${memoryDir}`,
@@ -226,29 +233,21 @@ export async function convertMemoriesToRecords(
       `memoryDir must not be a symlink: ${memoryDir}`,
     );
   }
-
-  // Validate memoryDir exists and is a directory (CLAUDE.md #24)
-  let dirStat: import("node:fs").Stats;
-  try {
-    dirStat = await stat(memoryDir);
-  } catch {
-    throw new Error(
-      `memoryDir does not exist: ${memoryDir}`,
-    );
-  }
-  if (!dirStat.isDirectory()) {
+  // lstat on a non-symlink is identical to stat, so isDirectory() is already
+  // authoritative here — no second stat() call needed (CLAUDE.md #24).
+  if (!rootLinkStat.isDirectory()) {
     throw new Error(
       `memoryDir is not a directory: ${memoryDir}`,
     );
   }
 
   // Collect from facts/ and corrections/ subdirectories (mirrors storage.ts)
-  const factsDir = path.join(memoryDir, "facts");
-  const correctionsDir = path.join(memoryDir, "corrections");
+  const factsDir = path.join(normalizedMemoryDir, "facts");
+  const correctionsDir = path.join(normalizedMemoryDir, "corrections");
 
   const dirs = [factsDir, correctionsDir];
   if (options.includeEntities) {
-    dirs.push(path.join(memoryDir, "entities"));
+    dirs.push(path.join(normalizedMemoryDir, "entities"));
   }
 
   const allFiles: string[] = [];
