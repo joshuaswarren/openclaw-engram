@@ -95,4 +95,5 @@ test("runBenchmark applies retrieval-personalization limit as an exact task cap"
 
   assert.equal(result.results.tasks.length, 1);
   assert.equal(result.results.tasks[0]?.taskId, "clean:alex-scope-q3-launch");
+  assert.equal(result.results.aggregates["dirty_penalty.p_at_1"], undefined);
 });

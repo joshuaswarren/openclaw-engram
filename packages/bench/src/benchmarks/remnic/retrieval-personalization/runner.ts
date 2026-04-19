@@ -191,13 +191,18 @@ function schemaPenalty(queryTokens: Set<string>, page: SchemaTierPage): number {
 function buildTieredAggregates(tasks: TaskResult[]): AggregateMetrics {
   const cleanTasks = tasks.filter((task) => task.details?.tier === "clean");
   const dirtyTasks = tasks.filter((task) => task.details?.tier === "dirty");
-  const pairedDeltas = cleanTasks.map((task, index) => {
-    const dirtyTask = dirtyTasks[index];
-    return {
-      p_at_1: (task.scores.p_at_1 ?? 0) - (dirtyTask?.scores.p_at_1 ?? 0),
-      p_at_3: (task.scores.p_at_3 ?? 0) - (dirtyTask?.scores.p_at_3 ?? 0),
-      p_at_5: (task.scores.p_at_5 ?? 0) - (dirtyTask?.scores.p_at_5 ?? 0),
-    };
+  const dirtyTasksByPairId = new Map(
+    dirtyTasks.map((task) => [pairId(task.taskId), task]),
+  );
+  const pairedDeltas = cleanTasks.flatMap((task) => {
+    const dirtyTask = dirtyTasksByPairId.get(pairId(task.taskId));
+    if (!dirtyTask) return [];
+
+    return [{
+      p_at_1: (task.scores.p_at_1 ?? 0) - (dirtyTask.scores.p_at_1 ?? 0),
+      p_at_3: (task.scores.p_at_3 ?? 0) - (dirtyTask.scores.p_at_3 ?? 0),
+      p_at_5: (task.scores.p_at_5 ?? 0) - (dirtyTask.scores.p_at_5 ?? 0),
+    }];
   });
 
   return {
@@ -218,4 +223,8 @@ function prefixAggregates(
   }
 
   return prefixed;
+}
+
+function pairId(taskId: string): string {
+  return taskId.replace(/^(clean|dirty):/, "");
 }
