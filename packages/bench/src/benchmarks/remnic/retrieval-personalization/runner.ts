@@ -4,15 +4,18 @@
 
 import { randomUUID } from "node:crypto";
 import type {
-  AggregateMetrics,
   BenchmarkDefinition,
   BenchmarkResult,
   ResolvedRunBenchmarkOptions,
   TaskResult,
 } from "../../../types.js";
-import { aggregateTaskScores, precisionAtK } from "../../../scorer.js";
+import { precisionAtK } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import type { SchemaTierPage } from "../../../fixtures/schema-tiers/index.js";
+import {
+  buildTieredAggregates,
+  overlapCount,
+} from "../retrieval-shared.js";
 import {
   RETRIEVAL_PERSONALIZATION_FIXTURE,
   RETRIEVAL_PERSONALIZATION_SMOKE_FIXTURE,
@@ -165,14 +168,6 @@ function tokenize(value: string): Set<string> {
   );
 }
 
-function overlapCount(left: Set<string>, right: Set<string>): number {
-  let count = 0;
-  for (const token of right) {
-    if (left.has(token)) count += 1;
-  }
-  return count;
-}
-
 function schemaPenalty(queryTokens: Set<string>, page: SchemaTierPage): number {
   let penalty = 0;
 
@@ -186,45 +181,4 @@ function schemaPenalty(queryTokens: Set<string>, page: SchemaTierPage): number {
   }
 
   return penalty;
-}
-
-function buildTieredAggregates(tasks: TaskResult[]): AggregateMetrics {
-  const cleanTasks = tasks.filter((task) => task.details?.tier === "clean");
-  const dirtyTasks = tasks.filter((task) => task.details?.tier === "dirty");
-  const dirtyTasksByPairId = new Map(
-    dirtyTasks.map((task) => [pairId(task.taskId), task]),
-  );
-  const pairedDeltas = cleanTasks.flatMap((task) => {
-    const dirtyTask = dirtyTasksByPairId.get(pairId(task.taskId));
-    if (!dirtyTask) return [];
-
-    return [{
-      p_at_1: (task.scores.p_at_1 ?? 0) - (dirtyTask.scores.p_at_1 ?? 0),
-      p_at_3: (task.scores.p_at_3 ?? 0) - (dirtyTask.scores.p_at_3 ?? 0),
-      p_at_5: (task.scores.p_at_5 ?? 0) - (dirtyTask.scores.p_at_5 ?? 0),
-    }];
-  });
-
-  return {
-    ...prefixAggregates("clean", aggregateTaskScores(cleanTasks.map((task) => task.scores))),
-    ...prefixAggregates("dirty", aggregateTaskScores(dirtyTasks.map((task) => task.scores))),
-    ...prefixAggregates("dirty_penalty", aggregateTaskScores(pairedDeltas)),
-  };
-}
-
-function prefixAggregates(
-  prefix: string,
-  aggregates: AggregateMetrics,
-): AggregateMetrics {
-  const prefixed: AggregateMetrics = {};
-
-  for (const [metric, aggregate] of Object.entries(aggregates)) {
-    prefixed[`${prefix}.${metric}`] = aggregate;
-  }
-
-  return prefixed;
-}
-
-function pairId(taskId: string): string {
-  return taskId.replace(/^(clean|dirty):/, "");
 }

@@ -64,6 +64,10 @@ import {
   runRetrievalPersonalizationBenchmark,
 } from "./benchmarks/remnic/retrieval-personalization/runner.js";
 import {
+  retrievalTemporalDefinition,
+  runRetrievalTemporalBenchmark,
+} from "./benchmarks/remnic/retrieval-temporal/runner.js";
+import {
   ingestionEntityRecallDefinition,
   runIngestionEntityRecallBenchmark,
 } from "./benchmarks/remnic/ingestion-entity-recall/runner.js";
@@ -164,6 +168,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...retrievalPersonalizationDefinition,
     run: runRetrievalPersonalizationBenchmark,
+  },
+  {
+    ...retrievalTemporalDefinition,
+    run: runRetrievalTemporalBenchmark,
   },
   {
     ...ingestionEntityRecallDefinition,

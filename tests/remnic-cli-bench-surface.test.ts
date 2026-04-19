@@ -229,11 +229,22 @@ test("bench providers discover rejects unexpected trailing positional args", asy
   const benchModuleDist = join(benchModuleRoot, "dist");
   const benchModuleEntry = join(benchModuleDist, "index.js");
   const benchPackageJson = join(benchModuleRoot, "package.json");
+  const exportModuleLinkRoot = join(repoRoot, "packages/remnic-cli/node_modules/@remnic/export-weclone");
+  const exportModuleRoot = existsSync(exportModuleLinkRoot)
+    ? realpathSync(exportModuleLinkRoot)
+    : exportModuleLinkRoot;
+  const exportModuleDist = join(exportModuleRoot, "dist");
+  const exportModuleEntry = join(exportModuleDist, "index.js");
+  const exportPackageJson = join(exportModuleRoot, "package.json");
   const cliEntry = pathToFileURL(join(repoRoot, "packages/remnic-cli/src/index.ts")).href;
   const stubbedBenchModule = !existsSync(benchModuleEntry);
+  const stubbedExportModule = !existsSync(exportModuleEntry);
   const createdModuleRoot = !existsSync(benchModuleLinkRoot);
   const createdPackageJson = stubbedBenchModule && !existsSync(benchPackageJson);
   const createdDistDir = stubbedBenchModule && !existsSync(benchModuleDist);
+  const createdExportModuleRoot = !existsSync(exportModuleLinkRoot);
+  const createdExportPackageJson = stubbedExportModule && !existsSync(exportPackageJson);
+  const createdExportDistDir = stubbedExportModule && !existsSync(exportModuleDist);
 
   if (stubbedBenchModule) {
     mkdirSync(benchModuleDist, { recursive: true });
@@ -257,6 +268,7 @@ export async function buildBenchmarkPublishFeed() { return { target: "remnic-ai"
 export function checkRegression() { return null; }
 export function defaultBenchmarkBaselineDir() { return ""; }
 export function defaultBenchmarkPublishPath() { return ""; }
+export function getBenchmarkLowerIsBetter() { return false; }
 export async function discoverAllProviders() { return []; }
 export async function listBenchmarkBaselines() { return []; }
 export async function listBenchmarkResults() { return []; }
@@ -270,6 +282,30 @@ export function renderBenchmarkResultExport() { return ""; }
 export async function resolveBenchmarkResultReference() { return null; }
 export async function saveBenchmarkBaseline() { return null; }
 export async function writeBenchmarkPublishFeed() { return ""; }
+`,
+    );
+  }
+
+  if (stubbedExportModule) {
+    mkdirSync(exportModuleDist, { recursive: true });
+    if (createdExportPackageJson) {
+      writeFileSync(
+        exportPackageJson,
+        JSON.stringify({
+          name: "@remnic/export-weclone",
+          type: "module",
+          exports: {
+            ".": "./dist/index.js",
+          },
+        }),
+      );
+    }
+    writeFileSync(
+      exportModuleEntry,
+      `
+export function ensureWecloneExportAdapterRegistered() { return false; }
+export function synthesizeTrainingPairs() { return []; }
+export function sweepPii(records) { return { records, redactions: [] }; }
 `,
     );
   }
@@ -291,6 +327,18 @@ export async function writeBenchmarkPublishFeed() { return ""; }
     assert.deepEqual(exitCalls, [1]);
   } finally {
     process.exit = originalExit;
+    if (stubbedExportModule) {
+      rmSync(exportModuleEntry, { force: true });
+      if (createdExportDistDir) {
+        rmSync(exportModuleDist, { recursive: true, force: true });
+      }
+      if (createdExportPackageJson) {
+        rmSync(exportPackageJson, { force: true });
+      }
+      if (createdExportModuleRoot) {
+        rmSync(exportModuleRoot, { recursive: true, force: true });
+      }
+    }
     if (stubbedBenchModule) {
       rmSync(benchModuleEntry, { force: true });
       if (createdDistDir) {

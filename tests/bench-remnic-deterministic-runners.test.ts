@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { BenchMemoryAdapter, SearchResult, Message } from "../packages/bench/src/index.js";
 import { runBenchmark } from "../packages/bench/src/index.js";
+import { RETRIEVAL_TEMPORAL_FIXTURE } from "../packages/bench/src/benchmarks/remnic/retrieval-temporal/fixture.js";
 
 class NoopMemoryAdapter implements BenchMemoryAdapter {
   async store(_sessionId: string, _messages: Message[]): Promise<void> {}
@@ -96,4 +97,223 @@ test("runBenchmark applies retrieval-personalization limit as an exact task cap"
   assert.equal(result.results.tasks.length, 1);
   assert.equal(result.results.tasks[0]?.taskId, "clean:alex-scope-q3-launch");
   assert.equal(result.results.aggregates["dirty_penalty.p_at_1"], undefined);
+});
+
+test("runBenchmark executes retrieval-temporal in quick mode", async () => {
+  const result = await runBenchmark("retrieval-temporal", {
+    mode: "quick",
+    system: adapter,
+  });
+
+  assert.equal(result.meta.benchmark, "retrieval-temporal");
+  assert.equal(result.meta.benchmarkTier, "remnic");
+  assert.equal(result.results.tasks.length, 2);
+  assert.equal(result.results.aggregates["clean.qrel_at_1"].mean, 1);
+  assert.equal(result.results.aggregates["dirty.qrel_at_1"].mean, 0);
+  assert.equal(result.results.aggregates["dirty_penalty.qrel_at_1"].mean, 1);
+});
+
+test("runBenchmark applies retrieval-temporal limit as an exact task cap", async () => {
+  const result = await runBenchmark("retrieval-temporal", {
+    mode: "quick",
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.taskId, "clean:alex-last-tuesday-meeting");
+  assert.equal(result.results.aggregates["dirty_penalty.qrel_at_1"], undefined);
+});
+
+test("runBenchmark preserves quarter tokens for full retrieval-temporal cases", async () => {
+  const result = await runBenchmark("retrieval-temporal", {
+    mode: "full",
+    system: adapter,
+  });
+
+  const task = result.results.tasks.find((entry) => entry.taskId === "clean:morgan-q3-commitments");
+  assert.ok(task);
+  assert.equal(task.scores.qrel_at_1, 1);
+  assert.deepEqual(
+    task.details?.retrievedPageIds?.slice(0, 2),
+    ["morgan-q3-training-plan", "morgan-coffee-preferences"],
+  );
+});
+
+test("runBenchmark rejects overflowed timeline dates in retrieval-temporal evidence", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:morgan-q3-commitments");
+  assert.ok(temporalCase);
+
+  const targetPage = temporalCase.pages.find((page) => page.id === "morgan-q3-training-plan");
+  assert.ok(targetPage);
+
+  const originalCreated = targetPage.frontmatter.created;
+  const originalTimeline = targetPage.frontmatter.timeline ? [...targetPage.frontmatter.timeline] : undefined;
+
+  try {
+    targetPage.frontmatter.created = undefined;
+    targetPage.frontmatter.timeline = ["2026-08-32 impossible training block"];
+
+    const result = await runBenchmark("retrieval-temporal", {
+      mode: "full",
+      system: adapter,
+    });
+
+    const task = result.results.tasks.find((entry) => entry.taskId === "clean:morgan-q3-commitments");
+    assert.ok(task);
+    assert.equal(task.scores.qrel_at_1, 0);
+  } finally {
+    targetPage.frontmatter.created = originalCreated;
+    targetPage.frontmatter.timeline = originalTimeline;
+  }
+});
+
+test("runBenchmark rejects overflowed window timestamps in retrieval-temporal cases", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:alex-last-tuesday-meeting");
+  assert.ok(temporalCase);
+
+  const originalWindow = { ...temporalCase.window };
+
+  try {
+    temporalCase.window.start = "2026-06-31T00:00:00.000Z";
+
+    await assert.rejects(
+      () => runBenchmark("retrieval-temporal", {
+        mode: "full",
+        system: adapter,
+      }),
+      /retrieval-temporal window must use valid half-open ISO timestamps/,
+    );
+  } finally {
+    temporalCase.window = originalWindow;
+  }
+});
+
+test("runBenchmark rejects overflowed window timestamps even without expected temporal pages", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:alex-last-tuesday-meeting");
+  assert.ok(temporalCase);
+
+  const originalWindow = { ...temporalCase.window };
+  const originalExpectedPageIds = [...temporalCase.expectedPageIds];
+
+  try {
+    temporalCase.window.start = "2026-06-31T00:00:00.000Z";
+    temporalCase.expectedPageIds = [];
+
+    await assert.rejects(
+      () => runBenchmark("retrieval-temporal", {
+        mode: "full",
+        system: adapter,
+      }),
+      /retrieval-temporal window must use valid half-open ISO timestamps/,
+    );
+  } finally {
+    temporalCase.window = originalWindow;
+    temporalCase.expectedPageIds = originalExpectedPageIds;
+  }
+});
+
+test("runBenchmark rejects retrieval-temporal cases whose expectedPageIds do not exist in fixture pages", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:alex-last-tuesday-meeting");
+  assert.ok(temporalCase);
+
+  const originalExpectedPageIds = [...temporalCase.expectedPageIds];
+
+  try {
+    temporalCase.expectedPageIds = ["missing-page-id"];
+
+    await assert.rejects(
+      () => runBenchmark("retrieval-temporal", {
+        mode: "full",
+        system: adapter,
+      }),
+      /retrieval-temporal expectedPageIds must reference pages present in the fixture/,
+    );
+  } finally {
+    temporalCase.expectedPageIds = originalExpectedPageIds;
+  }
+});
+
+test("runBenchmark rejects overflowed created timestamps in retrieval-temporal evidence", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:morgan-q3-commitments");
+  assert.ok(temporalCase);
+
+  const targetPage = temporalCase.pages.find((page) => page.id === "morgan-q3-training-plan");
+  assert.ok(targetPage);
+
+  const originalCreated = targetPage.frontmatter.created;
+  const originalTimeline = targetPage.frontmatter.timeline ? [...targetPage.frontmatter.timeline] : undefined;
+
+  try {
+    targetPage.frontmatter.created = "2026-06-31T07:00:00.000Z";
+    targetPage.frontmatter.timeline = [];
+
+    const result = await runBenchmark("retrieval-temporal", {
+      mode: "full",
+      system: adapter,
+    });
+
+    const task = result.results.tasks.find((entry) => entry.taskId === "clean:morgan-q3-commitments");
+    assert.ok(task);
+    assert.equal(task.scores.qrel_at_1, 0);
+  } finally {
+    targetPage.frontmatter.created = originalCreated;
+    targetPage.frontmatter.timeline = originalTimeline;
+  }
+});
+
+test("runBenchmark rejects timeline entries with extra day digits in retrieval-temporal evidence", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:morgan-q3-commitments");
+  assert.ok(temporalCase);
+
+  const targetPage = temporalCase.pages.find((page) => page.id === "morgan-q3-training-plan");
+  assert.ok(targetPage);
+
+  const originalCreated = targetPage.frontmatter.created;
+  const originalTimeline = targetPage.frontmatter.timeline ? [...targetPage.frontmatter.timeline] : undefined;
+
+  try {
+    targetPage.frontmatter.created = undefined;
+    targetPage.frontmatter.timeline = ["2026-08-032 malformed day"];
+
+    const result = await runBenchmark("retrieval-temporal", {
+      mode: "full",
+      system: adapter,
+    });
+
+    const task = result.results.tasks.find((entry) => entry.taskId === "clean:morgan-q3-commitments");
+    assert.ok(task);
+    assert.equal(task.scores.qrel_at_1, 0);
+  } finally {
+    targetPage.frontmatter.created = originalCreated;
+    targetPage.frontmatter.timeline = originalTimeline;
+  }
+});
+
+test("runBenchmark rejects timeline entries with trailing alpha suffixes in retrieval-temporal evidence", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:morgan-q3-commitments");
+  assert.ok(temporalCase);
+
+  const targetPage = temporalCase.pages.find((page) => page.id === "morgan-q3-training-plan");
+  assert.ok(targetPage);
+
+  const originalCreated = targetPage.frontmatter.created;
+  const originalTimeline = targetPage.frontmatter.timeline ? [...targetPage.frontmatter.timeline] : undefined;
+
+  try {
+    targetPage.frontmatter.created = undefined;
+    targetPage.frontmatter.timeline = ["2026-08-03x malformed day token"];
+
+    const result = await runBenchmark("retrieval-temporal", {
+      mode: "full",
+      system: adapter,
+    });
+
+    const task = result.results.tasks.find((entry) => entry.taskId === "clean:morgan-q3-commitments");
+    assert.ok(task);
+    assert.equal(task.scores.qrel_at_1, 0);
+  } finally {
+    targetPage.frontmatter.created = originalCreated;
+    targetPage.frontmatter.timeline = originalTimeline;
+  }
 });
