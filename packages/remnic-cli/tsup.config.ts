@@ -8,5 +8,5 @@ export default defineConfig({
   outDir: "dist",
   clean: true,
   external: ["yaml"],
-  noExternal: ["@remnic/bench"],
+  noExternal: ["@remnic/bench", "@remnic/export-weclone"],
 });
