@@ -3,6 +3,7 @@ import type {
   CodexCompactionFlushMode,
   CodexCompatConfig,
   DreamingConfig,
+  ProceduralConfig,
   HeartbeatConfig,
   IdentityInjectionMode,
   MemoryOsPresetName,
@@ -144,6 +145,7 @@ export const VALID_MEMORY_CATEGORIES = new Set([
   "moment",
   "skill",
   "rule",
+  "procedure",
 ]);
 
 const DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS = [
@@ -395,6 +397,45 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? (rawCodexCompat.compactionFlushMode as CodexCompactionFlushMode)
         : "auto",
     fingerprintDedup: rawCodexCompat.fingerprintDedup !== false,
+  };
+
+  const rawProcedural =
+    cfg.procedural && typeof cfg.procedural === "object" && !Array.isArray(cfg.procedural)
+      ? (cfg.procedural as Record<string, unknown>)
+      : {};
+  const proceduralMinRaw =
+    typeof rawProcedural.minOccurrences === "number" && Number.isFinite(rawProcedural.minOccurrences)
+      ? Math.floor(rawProcedural.minOccurrences)
+      : 3;
+  const procedural: ProceduralConfig = {
+    enabled: coerceBool(rawProcedural.enabled) === true,
+    /** 0 disables miner emission threshold (no clusters qualify). */
+    minOccurrences: Math.min(1000, Math.max(0, proceduralMinRaw)),
+    successFloor:
+      typeof rawProcedural.successFloor === "number" &&
+      Number.isFinite(rawProcedural.successFloor) &&
+      rawProcedural.successFloor >= 0 &&
+      rawProcedural.successFloor <= 1
+        ? rawProcedural.successFloor
+        : 0.7,
+    autoPromoteOccurrences:
+      typeof rawProcedural.autoPromoteOccurrences === "number" &&
+      Number.isFinite(rawProcedural.autoPromoteOccurrences)
+        ? rawProcedural.autoPromoteOccurrences <= 0
+          ? 0
+          : Math.min(10_000, Math.max(1, Math.floor(rawProcedural.autoPromoteOccurrences)))
+        : 8,
+    autoPromoteEnabled: coerceBool(rawProcedural.autoPromoteEnabled) === true,
+    lookbackDays:
+      typeof rawProcedural.lookbackDays === "number" && Number.isFinite(rawProcedural.lookbackDays)
+        ? Math.min(3650, Math.max(1, Math.floor(rawProcedural.lookbackDays)))
+        : 30,
+    proceduralMiningCronAutoRegister: coerceBool(rawProcedural.proceduralMiningCronAutoRegister) === true,
+    recallMaxProcedures:
+      typeof rawProcedural.recallMaxProcedures === "number" &&
+      Number.isFinite(rawProcedural.recallMaxProcedures)
+        ? Math.min(10, Math.max(1, Math.floor(rawProcedural.recallMaxProcedures)))
+        : 3,
   };
 
   const memoryDir =
@@ -1030,6 +1071,7 @@ export function parseConfig(raw: unknown): PluginConfig {
     activeRecallAllowChainedActiveMemory:
       cfg.activeRecallAllowChainedActiveMemory === true,
     dreaming,
+    procedural,
     heartbeat,
     slotBehavior,
     codexCompat,
@@ -1161,7 +1203,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       ? (cfg.semanticConsolidationExcludeCategories as unknown[]).filter(
           (c): c is string => typeof c === "string" && c.length > 0,
         )
-      : ["correction", "commitment"],
+      : ["correction", "commitment", "procedure"],
     semanticConsolidationIntervalHours:
       typeof cfg.semanticConsolidationIntervalHours === "number"
         ? Math.max(1, Math.floor(cfg.semanticConsolidationIntervalHours))
@@ -1619,7 +1661,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.factArchivalMaxAccessCount === "number" ? cfg.factArchivalMaxAccessCount : 2,
     factArchivalProtectedCategories: Array.isArray(cfg.factArchivalProtectedCategories)
       ? (cfg.factArchivalProtectedCategories as any[]).filter((c) => typeof c === "string")
-      : ["commitment", "preference", "decision", "principle"],
+      : ["commitment", "preference", "decision", "principle", "procedure"],
     // v8.3 lifecycle policy engine (default off)
     lifecyclePolicyEnabled: cfg.lifecyclePolicyEnabled === true,
     lifecycleFilterStaleEnabled: cfg.lifecycleFilterStaleEnabled === true,
@@ -1640,7 +1682,7 @@ export function parseConfig(raw: unknown): PluginConfig {
           (c): c is PluginConfig["lifecycleProtectedCategories"][number] =>
             typeof c === "string" && VALID_MEMORY_CATEGORIES.has(c),
         )
-      : ["decision", "principle", "commitment", "preference"],
+      : ["decision", "principle", "commitment", "preference", "procedure"],
     lifecycleMetricsEnabled:
       typeof cfg.lifecycleMetricsEnabled === "boolean"
         ? cfg.lifecycleMetricsEnabled

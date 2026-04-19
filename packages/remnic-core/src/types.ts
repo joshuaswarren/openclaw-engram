@@ -1,7 +1,7 @@
 export type ReasoningEffort = "none" | "low" | "medium" | "high";
 export type TriggerMode = "smart" | "every_n" | "time_based";
 export type SignalLevel = "none" | "low" | "medium" | "high";
-export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill" | "rule";
+export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill" | "rule" | "procedure";
 export type ConsolidationAction = "ADD" | "MERGE" | "UPDATE" | "INVALIDATE" | "SKIP";
 export type ConfidenceTier = "explicit" | "implied" | "inferred" | "speculative";
 export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
@@ -181,6 +181,23 @@ export interface DreamingConfig {
   narrativeModel: string | null;
   narrativePromptStyle: DreamingNarrativePromptStyle;
   watchFile: boolean;
+}
+
+/** Procedural memory (issue #519): mining + recall gates. All sub-features default off. */
+export interface ProceduralConfig {
+  enabled: boolean;
+  /** Minimum recurrence count before emitting a candidate procedure (0 disables mining threshold). */
+  minOccurrences: number;
+  /** Minimum success rate from trajectory outcomes in [0, 1]. */
+  successFloor: number;
+  /** When auto-promotion is enabled, promote pending_review → active after this many occurrences. */
+  autoPromoteOccurrences: number;
+  autoPromoteEnabled: boolean;
+  lookbackDays: number;
+  /** When true, installer may register the nightly procedural mining cron (default off). */
+  proceduralMiningCronAutoRegister: boolean;
+  /** Max procedure memories to inject on task-initiation recall (1–10). */
+  recallMaxProcedures: number;
 }
 
 export interface HeartbeatConfig {
@@ -424,6 +441,7 @@ export interface PluginConfig {
   activeRecallAttachRecallExplain: boolean;
   activeRecallAllowChainedActiveMemory: boolean;
   dreaming: DreamingConfig;
+  procedural: ProceduralConfig;
   heartbeat: HeartbeatConfig;
   slotBehavior: SlotBehaviorConfig;
   codexCompat: CodexCompatConfig;
@@ -1414,6 +1432,7 @@ export interface MemoryFile {
   frontmatter: MemoryFrontmatter;
   content: string;
 }
+
 
 export interface ExtractedFact {
   category: MemoryCategory;
