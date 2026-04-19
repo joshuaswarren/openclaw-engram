@@ -147,6 +147,59 @@ test("LastRecallStore.record copies memoryIds so caller mutation does not tear t
   assert.deepEqual(snap?.memoryIds, ["m-1"]);
 });
 
+test("LastRecallStore.annotateTierExplain attaches tierExplain to an existing snapshot", async () => {
+  const { store, dir } = await freshStore();
+  await store.record({ sessionKey: "s1", query: "q", memoryIds: ["m-1"] });
+
+  const explain: RecallTierExplain = {
+    tier: "direct-answer",
+    tierReason: "trusted decision, unambiguous",
+    filteredBy: [],
+    candidatesConsidered: 1,
+    latencyMs: 4,
+  };
+  await store.annotateTierExplain("s1", explain);
+
+  const snap = store.get("s1");
+  assert.ok(snap);
+  assert.deepEqual(snap.tierExplain, explain);
+
+  // Round-trips to disk.
+  const raw = await readFile(path.join(dir, "state", "last_recall.json"), "utf-8");
+  const parsed = JSON.parse(raw) as Record<string, { tierExplain?: RecallTierExplain }>;
+  assert.deepEqual(parsed["s1"]?.tierExplain, explain);
+});
+
+test("LastRecallStore.annotateTierExplain is a no-op when the session has no snapshot", async () => {
+  const { store } = await freshStore();
+  await store.annotateTierExplain("ghost", {
+    tier: "direct-answer",
+    tierReason: "",
+    filteredBy: [],
+    candidatesConsidered: 0,
+    latencyMs: 0,
+  });
+  assert.equal(store.get("ghost"), null);
+});
+
+test("LastRecallStore.annotateTierExplain deep-copies the caller's block", async () => {
+  const { store } = await freshStore();
+  await store.record({ sessionKey: "s1", query: "q", memoryIds: [] });
+
+  const filteredBy = ["a"];
+  await store.annotateTierExplain("s1", {
+    tier: "direct-answer",
+    tierReason: "",
+    filteredBy,
+    candidatesConsidered: 0,
+    latencyMs: 0,
+  });
+  filteredBy.push("leak");
+
+  const snap = store.get("s1");
+  assert.deepEqual(snap?.tierExplain?.filteredBy, ["a"]);
+});
+
 test("LastRecallStore.record copies sourceAnchors array and lineRange tuple", async () => {
   const { store } = await freshStore();
   const anchors: RecallTierExplain["sourceAnchors"] = [
