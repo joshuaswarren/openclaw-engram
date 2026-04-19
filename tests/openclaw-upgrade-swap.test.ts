@@ -7,6 +7,7 @@ import { mkdtemp } from "node:fs/promises";
 
 import {
   cleanupRollbackDirectory,
+  createOpenclawUpgradeRollbackFailure,
   restoreDirectoryFromRollback,
   runBestEffortGatewayRestart,
   rollbackOpenclawUpgrade,
@@ -132,4 +133,22 @@ test("runBestEffortGatewayRestart degrades to a warning when launchctl restart f
   assert.equal(result.restarted, false);
   assert.match(result.message, /upgrade completed, but the automatic OpenClaw gateway restart failed/);
   assert.match(result.message, /launchctl kickstart -k gui\/\$\(id -u\)\/ai\.openclaw\.gateway/);
+});
+
+test("createOpenclawUpgradeRollbackFailure preserves both the install and rollback failures", () => {
+  const installError = new Error("package.json parse failed");
+  const rollbackError = new Error("restore rename failed");
+
+  const error = createOpenclawUpgradeRollbackFailure({
+    failurePhase: "installing the published plugin",
+    installError,
+    rollbackError,
+  });
+
+  assert.ok(error instanceof AggregateError);
+  assert.equal(error.errors.length, 2);
+  assert.equal(error.errors[0], installError);
+  assert.equal(error.errors[1], rollbackError);
+  assert.match(error.message, /Automatic rollback also failed: restore rename failed/);
+  assert.match(error.message, /Original upgrade failure: package\.json parse failed/);
 });

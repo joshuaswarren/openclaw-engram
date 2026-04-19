@@ -18,6 +18,10 @@ export interface BestEffortGatewayRestartResult {
   restarted: boolean;
 }
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function swapDirectoryWithRollback(
   stagedDir: string,
   targetDir: string,
@@ -133,6 +137,20 @@ export function rollbackOpenclawUpgrade({
   }
 
   return notes;
+}
+
+export function createOpenclawUpgradeRollbackFailure(options: {
+  failurePhase: string;
+  installError: unknown;
+  rollbackError: unknown;
+}): AggregateError {
+  const { failurePhase, installError, rollbackError } = options;
+  return new AggregateError(
+    [installError, rollbackError],
+    `OpenClaw upgrade failed while ${failurePhase}. ` +
+    `Automatic rollback also failed: ${describeError(rollbackError)}. ` +
+    `Original upgrade failure: ${describeError(installError)}.`,
+  );
 }
 
 export function runBestEffortGatewayRestart(

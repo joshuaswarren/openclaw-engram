@@ -131,6 +131,7 @@ import {
 } from "./bench-args.js";
 import {
   cleanupRollbackDirectory,
+  createOpenclawUpgradeRollbackFailure,
   runBestEffortGatewayRestart,
   rollbackOpenclawUpgrade,
   swapDirectoryWithRollback,
@@ -4548,19 +4549,28 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     });
     cleanupRollbackDirectory(installResult.rollbackDir);
   } catch (installError) {
-    const rollbackDir = installError instanceof PublishedOpenclawPluginInstallError
-      ? installError.rollbackDir
-      : installResult?.rollbackDir;
-    const rollbackNotes = rollbackOpenclawUpgrade({
-      configBackupPath,
-      configPath,
-      pluginBackupDir,
-      pluginDir,
-      rollbackDir,
-    });
     const failurePhase = installResult
       ? "reconfiguring the installed plugin"
       : "installing the published plugin";
+    const rollbackDir = installError instanceof PublishedOpenclawPluginInstallError
+      ? installError.rollbackDir
+      : installResult?.rollbackDir;
+    let rollbackNotes: string[];
+    try {
+      rollbackNotes = rollbackOpenclawUpgrade({
+        configBackupPath,
+        configPath,
+        pluginBackupDir,
+        pluginDir,
+        rollbackDir,
+      });
+    } catch (rollbackError) {
+      throw createOpenclawUpgradeRollbackFailure({
+        failurePhase,
+        installError,
+        rollbackError,
+      });
+    }
     throw new Error(
       `OpenClaw upgrade failed while ${failurePhase}. ` +
       `${rollbackNotes.join("; ")}.`,

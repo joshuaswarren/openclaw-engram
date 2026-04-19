@@ -165,6 +165,18 @@ test("CLI openclaw upgrade rolls back if the published plugin install fails afte
   );
 });
 
+test("CLI openclaw upgrade preserves the original install error if rollback also fails", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("createOpenclawUpgradeRollbackFailure"),
+    "CLI upgrade must construct a combined failure when rollback throws",
+  );
+  assert.ok(
+    /try\s*\{\s*rollbackNotes = rollbackOpenclawUpgrade\(\{[\s\S]*?\}\);\s*\}\s*catch \(rollbackError\)\s*\{\s*throw createOpenclawUpgradeRollbackFailure\(\{[\s\S]*?installError,[\s\S]*?rollbackError,[\s\S]*?\}\);\s*\}/s.test(src),
+    "CLI upgrade must catch rollback failures separately so the original install error is still surfaced",
+  );
+});
+
 test("CLI next-step instructions mention gateway restart", async () => {
   const src = await readCli();
   assert.ok(
