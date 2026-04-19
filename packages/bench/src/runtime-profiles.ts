@@ -21,6 +21,7 @@ import {
   createProviderBackedStructuredJudge,
 } from "./responders.js";
 import type { ProviderFactoryConfig } from "./providers/types.js";
+import { createProvider } from "./providers/factory.js";
 import type { BenchRuntimeProfile, BuiltInProvider, ProviderConfig } from "./types.js";
 export type BenchModelSource = "plugin" | "gateway";
 
@@ -83,11 +84,17 @@ export async function resolveBenchRuntimeProfile(
   const responder = systemProvider
     ? createProviderBackedResponder(asProviderFactoryConfig(systemProvider))
     : undefined;
-  const judge = judgeProvider
-    ? createProviderBackedJudge(asProviderFactoryConfig(judgeProvider))
+  const judgeFactoryConfig = judgeProvider
+    ? asProviderFactoryConfig(judgeProvider)
     : undefined;
-  const structuredJudge = judgeProvider
-    ? createProviderBackedStructuredJudge(asProviderFactoryConfig(judgeProvider))
+  const judgeProviderInstance = judgeFactoryConfig
+    ? createProvider(judgeFactoryConfig)
+    : undefined;
+  const judge = judgeFactoryConfig
+    ? createProviderBackedJudge(judgeFactoryConfig, judgeProviderInstance)
+    : undefined;
+  const structuredJudge = judgeFactoryConfig
+    ? createProviderBackedStructuredJudge(judgeFactoryConfig, judgeProviderInstance)
     : undefined;
 
   if (profile === "baseline") {

@@ -616,13 +616,11 @@ async function runBenchViaFallback(
   runtimeProfile: BenchRuntimeProfile,
 ): Promise<void> {
   if (runtimeProfile === "real") {
-    resolveExistingBenchRemnicConfigPath(parsed.remnicConfigPath);
     throw new Error(
       'Fallback benchmark runner does not support --runtime-profile "real". Build/install @remnic/bench to use package-backed runtime profiles.',
     );
   }
   if (runtimeProfile === "openclaw-chain") {
-    resolveExistingBenchOpenclawConfigPath(parsed.openclawConfigPath);
     throw new Error(
       'Fallback benchmark runner does not support --runtime-profile "openclaw-chain". Build/install @remnic/bench to use package-backed runtime profiles.',
     );
