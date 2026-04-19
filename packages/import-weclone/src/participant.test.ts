@@ -134,6 +134,31 @@ describe("mapParticipants", () => {
     assert.equal(participants[0].name, "Alice Doe");
   });
 
+  it("excludes empty-string participantIds from frequency denominator", () => {
+    // Regression: earlier versions skipped empty-string ids in the stats
+    // loop (`!id`) but still counted them in `totalMessages`
+    // (`!= null`), which inflated the denominator and could demote
+    // frequent participants to "occasional".
+    //
+    // Here Bob has 2 of the 3 non-empty messages (66%) and should
+    // therefore be classified as "frequent".  If the denominator
+    // included the five empty-string turns, Bob's share would drop to
+    // 25% (2/8) but still above the 10% threshold, so use a larger
+    // padding count to expose the bug: Bob 2, Alice 1, 20 empty-string
+    // turns.  Correct: denominator = 3, Bob = 66% -> frequent.
+    // Bug: denominator = 23, Bob = 8.6% -> occasional.
+    const turns: ImportTurn[] = [makeTurn("Alice", T1), makeTurn("Bob", T2), makeTurn("Bob", T3)];
+    for (let i = 0; i < 20; i += 1) {
+      turns.push(makeTurn("", `2025-02-10T${String(i).padStart(2, "0")}:00:00.000Z`));
+    }
+    const participants = mapParticipants(turns);
+    const bob = participants.find((p) => p.id === "Bob");
+    const alice = participants.find((p) => p.id === "Alice");
+    // Bob has most messages -> self.  Alice with 1/3 (33%) is frequent.
+    assert.equal(bob?.relationship, "self");
+    assert.equal(alice?.relationship, "frequent");
+  });
+
   it("sorts results by message count descending", () => {
     const turns: ImportTurn[] = [
       makeTurn("Carol", T1),

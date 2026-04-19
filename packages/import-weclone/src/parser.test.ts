@@ -323,4 +323,60 @@ describe("parseWeCloneExport", () => {
     const result = parseWeCloneExport(input);
     assert.equal(result.turns[1].role, "other");
   });
+
+  it("skips bot-like senders when inferring default selfSender", () => {
+    // The first message is from a bot.  Inferring `selfSender` from the
+    // first sender would mislabel the bot as `user` and demote the human
+    // to `other`.  The parser should pick the first non-bot sender.
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("ChatGPT Bot", "hi! how can I help?", T1),
+        makeMsg("Alice", "tell me a joke", T2),
+        makeMsg("ChatGPT Bot", "why did the chicken...", T3),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    // Alice is the human -> user; the bot turns -> assistant
+    const bot = result.turns.filter((t) => t.participantId === "ChatGPT Bot");
+    const human = result.turns.find((t) => t.participantId === "Alice");
+    assert.equal(human?.role, "user");
+    for (const b of bot) {
+      assert.equal(b.role, "assistant");
+    }
+  });
+
+  it("skips senders listed in assistantSenders when inferring default self", () => {
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("MyCustomBot", "greetings", T1),
+        makeMsg("Alice", "hi", T2),
+      ],
+    };
+    const result = parseWeCloneExport(input, {
+      assistantSenders: ["MyCustomBot"],
+    });
+    const alice = result.turns.find((t) => t.participantId === "Alice");
+    const bot = result.turns.find((t) => t.participantId === "MyCustomBot");
+    assert.equal(alice?.role, "user");
+    assert.equal(bot?.role, "assistant");
+  });
+
+  it("falls back to first valid sender when every sender looks bot-like", () => {
+    // Pathological case: every sender matches bot heuristics.  We still
+    // need SOMEONE to be `user` so downstream extraction has a
+    // first-person perspective; picking the first valid sender is the
+    // least-bad default.
+    const input = {
+      platform: "telegram",
+      messages: [
+        makeMsg("Bot Alpha", "one", T1),
+        makeMsg("Assistant Beta", "two", T2),
+      ],
+    };
+    const result = parseWeCloneExport(input);
+    assert.equal(result.turns[0].role, "user");
+    assert.equal(result.turns[1].role, "assistant");
+  });
 });

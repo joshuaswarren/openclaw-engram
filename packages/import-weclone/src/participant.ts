@@ -94,7 +94,11 @@ export function mapParticipants(turns: ImportTurn[]): ParticipantEntity[] {
     }
   }
 
-  const totalMessages = turns.filter((t) => t.participantId != null).length;
+  // Match the stats-loop filter above (`if (!id) continue;`) so the
+  // denominator only counts turns that actually contributed to a
+  // participant's stats.  Turns with empty-string `participantId`
+  // are excluded from both sides, keeping frequency ratios accurate.
+  const totalMessages = turns.filter((t) => !!t.participantId).length;
 
   const result: ParticipantEntity[] = [];
   for (const [id, s] of stats.entries()) {

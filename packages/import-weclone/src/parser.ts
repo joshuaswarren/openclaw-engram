@@ -167,11 +167,30 @@ export function parseWeCloneExport(
     platformStr,
   );
 
-  // Determine self sender
-  const firstValidMsg = rawMessages.find(isValidMessage);
-  const selfSender = options?.selfSender
-    ?? (firstValidMsg ? firstValidMsg.sender : "");
+  // Determine self sender.  When caller omits `selfSender`, infer it from
+  // the first valid message sender that does NOT look like a bot and is
+  // not explicitly listed in `assistantSenders`.  Falling back to the
+  // very first sender would misclassify bot greetings (e.g. "ChatGPT Bot")
+  // as `user` and demote the actual human to `other`, corrupting roles
+  // for downstream extraction.  If every sender looks bot-like (rare),
+  // fall through to the first valid sender rather than leaving `selfSender`
+  // empty (which would make every message `other` or `assistant`).
   const assistantSet = new Set<string>(options?.assistantSenders ?? []);
+  let inferredSelfSender = "";
+  if (options?.selfSender === undefined) {
+    for (const m of rawMessages) {
+      if (!isValidMessage(m)) continue;
+      if (assistantSet.has(m.sender)) continue;
+      if (looksLikeBot(m.sender)) continue;
+      inferredSelfSender = m.sender;
+      break;
+    }
+    if (inferredSelfSender === "") {
+      const firstValid = rawMessages.find(isValidMessage);
+      inferredSelfSender = firstValid ? firstValid.sender : "";
+    }
+  }
+  const selfSender = options?.selfSender ?? inferredSelfSender;
 
   // Map messages to WeCloneImportTurn[]
   const turns: WeCloneImportTurn[] = [];

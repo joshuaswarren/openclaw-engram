@@ -42,11 +42,19 @@ export function registerBulkImportSource(
 
 /**
  * Retrieve a registered adapter by name.
+ *
+ * Names are trimmed on write (see `registerBulkImportSource`), so we
+ * also trim on read to avoid the asymmetric-lookup footgun where a
+ * whitespace-padded lookup would never find a registered adapter.
+ * Non-string or empty-after-trim inputs return undefined.
  */
 export function getBulkImportSource(
   name: string,
 ): BulkImportSourceAdapter | undefined {
-  return adapters.get(name.trim());
+  if (typeof name !== "string") return undefined;
+  const key = name.trim();
+  if (key.length === 0) return undefined;
+  return adapters.get(key);
 }
 
 /**

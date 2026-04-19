@@ -55,6 +55,14 @@ export function chunkThreads(
     );
   }
 
+  if (overlap >= maxTurns) {
+    throw new Error(
+      `overlapTurns (${overlap}) must be less than maxTurnsPerChunk ` +
+        `(${maxTurns}); otherwise chunks would either never advance ` +
+        `or silently clamp step to 1 and massively inflate work`,
+    );
+  }
+
   // Effective step: how many new turns each chunk advances by
   const step = Math.max(1, maxTurns - overlap);
 

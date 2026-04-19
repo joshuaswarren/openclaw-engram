@@ -153,4 +153,22 @@ describe("chunkThreads", () => {
       /overlapTurns must be non-negative, received -100/,
     );
   });
+
+  it("throws when overlapTurns equals maxTurnsPerChunk", () => {
+    // Without this guard the step clamps to 1 and every long thread
+    // produces near-fully-overlapping chunks, silently blowing up work.
+    const threads = [makeThread(20)];
+    assert.throws(
+      () => chunkThreads(threads, { maxTurnsPerChunk: 5, overlapTurns: 5 }),
+      /overlapTurns \(5\) must be less than maxTurnsPerChunk \(5\)/,
+    );
+  });
+
+  it("throws when overlapTurns exceeds maxTurnsPerChunk", () => {
+    const threads = [makeThread(20)];
+    assert.throws(
+      () => chunkThreads(threads, { maxTurnsPerChunk: 4, overlapTurns: 10 }),
+      /overlapTurns \(10\) must be less than maxTurnsPerChunk \(4\)/,
+    );
+  });
 });
