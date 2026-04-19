@@ -1,5 +1,6 @@
 import path from "node:path";
 import { listJsonFiles, readJsonFile } from "./json-store.js";
+import { throwIfAborted } from "./abort-error.js";
 import {
   resolveAbstractionNodeStoreDir,
   validateAbstractionNode,
@@ -221,9 +222,3 @@ export async function searchHarmonicRetrieval(options: {
     .slice(0, options.maxResults);
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
-  if (!signal?.aborted) return;
-  const err = new Error("harmonic retrieval aborted");
-  Object.defineProperty(err, "name", { value: "AbortError" });
-  throw err;
-}

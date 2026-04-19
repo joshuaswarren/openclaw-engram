@@ -29,6 +29,7 @@ import type { TrustZoneName } from "./trust-zones.js";
 import type { Taxonomy } from "./taxonomy/types.js";
 import { resolveCategory } from "./taxonomy/resolver.js";
 import { normalizeRecallTokens } from "./recall-tokenization.js";
+import { throwIfAborted } from "./abort-error.js";
 import {
   isDirectAnswerEligible,
   type DirectAnswerCandidate,
@@ -178,10 +179,3 @@ export async function tryDirectAnswer(
   });
 }
 
-function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    const err = new Error("direct-answer wiring aborted");
-    Object.defineProperty(err, "name", { value: "AbortError" });
-    throw err;
-  }
-}

@@ -3,6 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { log } from "./logger.js";
 import { getCachedQmdSearch, setCachedQmdSearch } from "./memory-cache.js";
+import {
+  abortError,
+  isAbortError,
+  throwIfAborted,
+} from "./abort-error.js";
 import type { QmdSearchExplain, QmdSearchResult } from "./types.js";
 import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions } from "./search/port.js";
 import { launchProcess, type CommandChildProcess } from "./runtime/child-process.js";
@@ -72,16 +77,6 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function abortError(message: string): Error {
-  const err = new Error(message);
-  Object.defineProperty(err, "name", { value: "AbortError" });
-  return err;
-}
-
-function isAbortError(err: unknown): boolean {
-  return err instanceof Error && err.name === "AbortError";
-}
-
 function errorMessage(err: unknown): string {
   if (typeof err === "string") return err;
   if (err instanceof Error) return err.message;
@@ -103,12 +98,6 @@ function isCallerCancellation(err: unknown, signal?: AbortSignal): boolean {
 
 function isDaemonTimeoutError(err: unknown): boolean {
   return /timed out/i.test(errorMessage(err));
-}
-
-function throwIfAborted(signal?: AbortSignal, message = "operation aborted"): void {
-  if (signal?.aborted) {
-    throw abortError(message);
-  }
 }
 
 function sleepWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
