@@ -36,6 +36,11 @@ Apply under:
   "lifecycleFilterStaleEnabled": true,
   "lifecycleMetricsEnabled": true,
 
+  "procedural": {
+    "enabled": true,
+    "proceduralMiningCronAutoRegister": false
+  },
+
   "proactiveExtractionEnabled": true,
   "contextCompressionActionsEnabled": true,
   "compressionGuidelineLearningEnabled": true,
@@ -72,6 +77,7 @@ Apply under:
 - `debug: true` is recommended while validating; disable later for quieter logs.
 - If you use `conversationIndexBackend: "faiss"`, install `scripts/faiss_requirements.txt` first and optionally set `ENGRAM_FAISS_ENABLE_ST=1` for sentence-transformers embeddings.
 - If you prefer QMD for transcript recall, swap the FAISS fields for `conversationIndexBackend: "qmd"` plus `conversationIndexQmdCollection`.
+- **`procedural.enabled`** turns on issue #519 procedural memory (writes under `procedures/`, recall injection, mining). The sample block above enables it; remove the `procedural` object or set `"enabled": false` if you want this profile without procedural behavior. See [procedural-memory.md](procedural-memory.md).
 
 ## Required Restart
 

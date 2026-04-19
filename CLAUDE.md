@@ -24,6 +24,10 @@
 - `.gitignore`
 - This `CLAUDE.md` file
 
+### Procedural memory (issue #519)
+
+Ships **disabled** until plugin config sets **`procedural.enabled`: `true`** (nested `procedural` object). Operators and agents should read `docs/procedural-memory.md` and the README **Configuration** table before enabling.
+
 ### Before every commit, verify:
 - `git diff --cached` contains NO personal information
 - No hardcoded API keys, URLs with tokens, or credentials
