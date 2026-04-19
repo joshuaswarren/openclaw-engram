@@ -54,17 +54,24 @@ export interface ResolvedBenchRuntimeProfile {
   judgeProvider: ProviderConfig | null;
 }
 
-const GATEWAY_SECRET_SUFFIXES = [
-  "apikey",
-  "authtoken",
-  "accesstoken",
-  "clientsecret",
-  "secretkey",
+const EXACT_SECRET_KEYS = new Set([
   "authorization",
   "password",
   "secret",
   "token",
-] as const;
+] as const);
+
+const SECRET_KEY_SEGMENT_SUFFIXES = new Set([
+  "apikey",
+  "authtoken",
+  "accesstoken",
+  "bearertoken",
+  "clientsecret",
+  "secretkey",
+  "privatekey",
+] as const);
+
+const REDACTED_CONFIG_VALUE = "[redacted]";
 
 export async function resolveBenchRuntimeProfile(
   options: ResolveBenchRuntimeProfileOptions,
@@ -372,6 +379,7 @@ function sanitizePersistedValue(value: unknown): unknown {
   const next: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (isSecretKey(key)) {
+      next[key] = REDACTED_CONFIG_VALUE;
       continue;
     }
     next[key] = sanitizePersistedValue(entry);
@@ -380,8 +388,29 @@ function sanitizePersistedValue(value: unknown): unknown {
 }
 
 function isSecretKey(key: string): boolean {
-  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
-  return GATEWAY_SECRET_SUFFIXES.some((suffix) => normalized === suffix || normalized.endsWith(suffix));
+  const segments = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^a-z0-9]+/i)
+    .map((segment) => segment.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (segments.length === 0) {
+    return false;
+  }
+
+  const normalized = segments.join("");
+  if (EXACT_SECRET_KEYS.has(normalized as (typeof EXACT_SECRET_KEYS extends Set<infer T> ? T : never))) {
+    return true;
+  }
+
+  for (let width = 2; width <= Math.min(3, segments.length); width += 1) {
+    const candidate = segments.slice(-width).join("");
+    if (SECRET_KEY_SEGMENT_SUFFIXES.has(candidate as (typeof SECRET_KEY_SEGMENT_SUFFIXES extends Set<infer T> ? T : never))) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

@@ -33,11 +33,12 @@ test("real runtime profile preserves the configured Remnic retrieval settings", 
         qmdEnabled: true,
         queryExpansionEnabled: true,
         rerankEnabled: true,
-        verifiedRecallEnabled: true,
-        openaiApiKey: "super-secret",
-        secretKey: "secondary-secret",
-      },
-    }),
+      verifiedRecallEnabled: true,
+      openaiApiKey: "super-secret",
+      secretKey: "secondary-secret",
+      sessionToken: "metadata-not-a-secret",
+    },
+  }),
   );
 
   const resolved = await resolveBenchRuntimeProfile({
@@ -50,10 +51,12 @@ test("real runtime profile preserves the configured Remnic retrieval settings", 
   assert.equal(resolved.remnicConfig.queryExpansionEnabled, true);
   assert.equal(resolved.remnicConfig.rerankEnabled, true);
   assert.equal(resolved.remnicConfig.verifiedRecallEnabled, true);
-  assert.equal(resolved.remnicConfig.openaiApiKey, undefined);
-  assert.equal(resolved.remnicConfig.secretKey, undefined);
+  assert.equal(resolved.remnicConfig.openaiApiKey, "[redacted]");
+  assert.equal(resolved.remnicConfig.secretKey, "[redacted]");
+  assert.equal(resolved.remnicConfig.sessionToken, "metadata-not-a-secret");
   assert.equal(resolved.effectiveRemnicConfig.openaiApiKey, "super-secret");
   assert.equal(resolved.effectiveRemnicConfig.secretKey, "secondary-secret");
+  assert.equal(resolved.effectiveRemnicConfig.sessionToken, "metadata-not-a-secret");
   assert.equal(
     (resolved.adapterOptions.configOverrides as { openaiApiKey?: string }).openaiApiKey,
     "super-secret",
@@ -124,7 +127,7 @@ test("openclaw-chain runtime profile loads OpenClaw config and forces gateway ro
     (resolved.remnicConfig.gatewayConfig as {
       models?: { providers?: { openai?: { apiKey?: string } } };
     }).models?.providers?.openai?.apiKey,
-    undefined,
+    "[redacted]",
   );
   assert.equal(
     (resolved.effectiveRemnicConfig.gatewayConfig as {
