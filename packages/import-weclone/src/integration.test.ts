@@ -351,6 +351,51 @@ describe("integration: WeClone → @remnic/core bulk-import", () => {
     assert.equal(result.errors.length, 0);
   });
 
+  it("CLI invokes ingestBatch for each batch and reports per-batch memoriesCreated", async () => {
+    // End-to-end check for #460's persistence wiring: runBulkImportCliCommand
+    // no longer throws "not wired" when non-dryRun is invoked; instead it
+    // delegates to the supplied `ingestBatch` callback, which in production
+    // is backed by `orchestrator.ingestBulkImportBatch`.
+    const { runBulkImportCliCommand } = await import("@remnic/core");
+
+    registerBulkImportSource(wecloneImportAdapter);
+
+    const tmp = mkdtempSync(join(tmpdir(), "weclone-persist-"));
+    const filePath = join(tmp, "export.json");
+    writeFileSync(filePath, JSON.stringify(buildSyntheticExport()));
+
+    const seenBatchSizes: number[] = [];
+
+    try {
+      const result = await runBulkImportCliCommand({
+        memoryDir: tmp,
+        source: "weclone",
+        file: filePath,
+        platform: "telegram",
+        batchSize: 4,
+        // dryRun omitted → non-dryRun path; ingestBatch is the persistence hook.
+        ingestBatch: async (turns: ImportTurn[]) => {
+          seenBatchSizes.push(turns.length);
+          return {
+            memoriesCreated: turns.length,
+            duplicatesSkipped: 0,
+          };
+        },
+        stdout: nullStream(),
+        stderr: nullStream(),
+      });
+
+      // 13 turns at batchSize=4 → 4 batches (4, 4, 4, 1)
+      assert.deepEqual(seenBatchSizes, [4, 4, 4, 1]);
+      assert.equal(result.turnsProcessed, 13);
+      assert.equal(result.batchesProcessed, 4);
+      assert.equal(result.memoriesCreated, 13);
+      assert.equal(result.errors.length, 0);
+    } finally {
+      try { unlinkSync(filePath); } catch { /* ignore */ }
+    }
+  });
+
   it("pipeline flows turns through processBatch in correct batch sizes", async () => {
     // Simulates what the orchestrator integration will do once persistence is
     // wired — the callback receives each batch and records how many turns

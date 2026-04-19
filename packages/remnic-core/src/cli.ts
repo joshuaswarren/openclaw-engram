@@ -2922,6 +2922,14 @@ export interface BulkImportCliCommandOptions {
    * default based on file shape.
    */
   platform?: string;
+  /**
+   * Callback that actually performs extraction + persistence for a batch of
+   * parsed turns. Supplied by the host CLI (which has the orchestrator in
+   * scope). When omitted, non-dryRun invocations fail fast with a clear
+   * error — this protects library callers that have not wired persistence
+   * yet and keeps the contract explicit rather than silently dropping turns.
+   */
+  ingestBatch?: ProcessBatchFn;
   stdout: Writable;
   stderr: Writable;
 }
@@ -2977,17 +2985,18 @@ export async function runBulkImportCliCommand(
     );
   }
 
-  // Guard: persistence isn't wired yet, so non-dryRun invocations must
-  // fail loudly BEFORE reading/parsing the file.  Running the full parse
-  // would incur file I/O and memory pressure (imports can be 100k+
-  // messages) only to inevitably throw.  The adapter check above still
-  // fires first so `--source <unknown>` surfaces the more-actionable
-  // "Unknown bulk-import source" error.  The orchestrator integration
-  // will replace this guard with a real processBatch callback.
-  if (opts.dryRun !== true) {
+  // Guard: library callers that invoke `runBulkImportCliCommand` without an
+  // `ingestBatch` wiring must fail loudly BEFORE reading/parsing the file.
+  // Running the full parse would incur file I/O and memory pressure (imports
+  // can be 100k+ messages) only to inevitably throw inside processBatch. The
+  // adapter check above still fires first so `--source <unknown>` surfaces
+  // the more-actionable "Unknown bulk-import source" error.
+  if (opts.dryRun !== true && typeof opts.ingestBatch !== "function") {
     throw new Error(
-      "Bulk import persistence is not yet wired. " +
-        "Use --dry-run to validate without persisting.",
+      "Bulk import persistence is not wired: no ingestBatch callback " +
+        "was provided by the host CLI. Use --dry-run to validate without " +
+        "persisting, or invoke via `openclaw engram bulk-import` which " +
+        "supplies the orchestrator-backed ingestion path.",
     );
   }
 
@@ -3011,15 +3020,17 @@ export async function runBulkImportCliCommand(
     platform: opts.platform,
   });
 
-  const processBatch: ProcessBatchFn = async () => {
-    // The pipeline never calls processBatch in dryRun mode, so reaching
-    // here would indicate a bug in the pipeline.  Throwing here provides
-    // a defensive failure mode; the guard above is the primary protection.
-    throw new Error(
-      "Bulk import persistence is not yet wired. " +
-        "Use --dry-run to validate without persisting.",
-    );
-  };
+  const processBatch: ProcessBatchFn =
+    opts.ingestBatch ??
+    (async () => {
+      // Defensive fallback: the pipeline never calls processBatch in dryRun
+      // mode and the guard above rejects non-dryRun without an ingestBatch,
+      // so reaching here would indicate a bug in the pipeline contract.
+      throw new Error(
+        "Bulk import persistence is not wired: no ingestBatch callback " +
+          "was provided by the host CLI.",
+      );
+    });
 
   const result = await runBulkImportPipeline(
     parsed,
@@ -3095,6 +3106,45 @@ export async function resolveMemoryDirForNamespace(
     return (await exists(candidate)) ? candidate : orchestrator.config.memoryDir;
   }
   return candidate;
+}
+
+/**
+ * Count memory markdown files (facts + corrections) under a memoryDir.
+ * Used by the bulk-import CLI to derive a batch-level `memoriesCreated`
+ * count by snapshotting before and after extraction settles. Intentionally
+ * simple and swallows per-directory errors so a missing subdir reads as 0.
+ */
+async function countMemoryMarkdownFiles(memoryDir: string): Promise<number> {
+  const roots = [path.join(memoryDir, "facts"), path.join(memoryDir, "corrections")];
+  let count = 0;
+
+  const walk = async (dir: string): Promise<void> => {
+    let entries: Array<{ isDirectory(): boolean; isFile(): boolean; name: string | Buffer }>;
+    try {
+      entries = (await readdir(dir, { withFileTypes: true })) as Array<{
+        isDirectory(): boolean;
+        isFile(): boolean;
+        name: string | Buffer;
+      }>;
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const entryName = typeof entry.name === "string" ? entry.name : entry.name.toString("utf-8");
+      const fullPath = path.join(dir, entryName);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || !entryName.endsWith(".md")) continue;
+      count += 1;
+    }
+  };
+
+  for (const root of roots) {
+    await walk(root);
+  }
+  return count;
 }
 
 async function readAllMemoryFiles(memoryDir: string): Promise<DedupeCandidate[]> {
@@ -3807,8 +3857,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .command("bulk-import")
         .description(
           "Bulk-import chat history via a registered source adapter " +
-            "(e.g. --source weclone). Use --dry-run while the persistence " +
-            "path is still being wired.",
+            "(e.g. --source weclone).",
         )
         .option("--source <source>", "Bulk-import source adapter name (e.g. weclone)")
         .option("--file <path>", "Path to the import file (JSON)")
@@ -3823,28 +3872,41 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const sourceRaw = typeof options.source === "string" ? options.source.trim() : "";
           const filePathRaw = typeof options.file === "string" ? options.file.trim() : "";
           if (sourceRaw.length === 0) {
-            console.log("Missing --source. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json --dry-run");
+            console.log("Missing --source. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json");
             return;
           }
           if (filePathRaw.length === 0) {
-            console.log("Missing --file. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json --dry-run");
+            console.log("Missing --file. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json");
             return;
           }
           const batchSizeRaw = parseInt(String(options.batchSize ?? "50"), 10);
           const batchSize = Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? batchSizeRaw : 50;
           const namespaceRaw = typeof options.namespace === "string" ? options.namespace.trim() : "";
           const platformRaw = typeof options.platform === "string" ? options.platform.trim() : "";
+          const namespace = namespaceRaw.length > 0 ? namespaceRaw : undefined;
+          const targetMemoryDir = await resolveMemoryDirForNamespace(
+            orchestrator,
+            namespace,
+          );
+          const ingestBatch: ProcessBatchFn = async (turns) => {
+            const before = await countMemoryMarkdownFiles(targetMemoryDir);
+            await orchestrator.ingestBulkImportBatch(turns, { namespace });
+            const after = await countMemoryMarkdownFiles(targetMemoryDir);
+            const memoriesCreated = Math.max(0, after - before);
+            return { memoriesCreated, duplicatesSkipped: 0 };
+          };
           try {
             const result = await runBulkImportCliCommand({
-              memoryDir: orchestrator.config.memoryDir,
+              memoryDir: targetMemoryDir,
               source: sourceRaw,
               file: filePathRaw,
               platform: platformRaw.length > 0 ? platformRaw : undefined,
-              namespace: namespaceRaw.length > 0 ? namespaceRaw : undefined,
+              namespace,
               batchSize,
               dryRun: options.dryRun === true,
               verbose: options.verbose === true,
               strict: options.strict === true,
+              ingestBatch,
               stdout: process.stdout,
               stderr: process.stderr,
             });

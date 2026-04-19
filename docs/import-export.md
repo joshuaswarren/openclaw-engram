@@ -44,6 +44,86 @@ Notes:
 - Backups are intended to be driven by your scheduler (OpenClaw cron, launchd, systemd, etc.).
 - Use `--include-transcripts` only if you are comfortable backing up full transcripts.
 
+## Bulk Import (issue #460)
+
+Remnic can bootstrap a memory store directly from WeClone-preprocessed chat
+exports (Telegram, WhatsApp, Discord, Slack) instead of waiting for organic
+memory to accumulate. The import runs each batch of turns through Remnic's
+extraction pipeline, so the resulting memories are the same shape as
+organically captured ones.
+
+The pipeline lives in `@remnic/core` (generic) with format-specific
+adapters in separate packages. Today the WeClone adapter
+(`@remnic/import-weclone`) is shipped; importing that package registers the
+`weclone` source with the core registry as a side effect.
+
+### Prerequisites
+
+Run WeClone's preprocessing pipeline first so PII filtering and platform
+parsing happen upstream. Remnic consumes WeClone's preprocessed JSON
+directly — see the [WeClone docs](https://github.com/xming521/weclone) for
+how to produce it.
+
+```bash
+# Dry-run: parse and validate the export without writing memories
+openclaw engram bulk-import \
+  --source weclone \
+  --file ./preprocessed_telegram.json \
+  --platform telegram \
+  --dry-run
+
+# Persist: run extraction over each batch and store memories on disk
+openclaw engram bulk-import \
+  --source weclone \
+  --file ./preprocessed_telegram.json \
+  --platform telegram
+
+# Target a specific namespace
+openclaw engram bulk-import \
+  --source weclone \
+  --file ./preprocessed_telegram.json \
+  --platform telegram \
+  --namespace personal-chat-history
+
+# Fail on any invalid row instead of skipping it
+openclaw engram bulk-import \
+  --source weclone \
+  --file ./preprocessed_telegram.json \
+  --platform telegram \
+  --strict
+```
+
+Key flags:
+- `--source <name>` — required; name of a registered bulk-import adapter.
+  `weclone` is registered as a side-effect of loading
+  `@remnic/import-weclone`.
+- `--file <path>` — required; path to the WeClone preprocessed JSON.
+- `--platform <id>` — adapter-specific hint (`telegram`, `whatsapp`,
+  `discord`, `slack`). Defaults to `telegram` when omitted.
+- `--namespace <ns>` — route memories into a namespace when namespaces are
+  enabled. Memories land under `memoryDir/namespaces/<ns>/` instead of the
+  default root.
+- `--batch-size <n>` — turns per extraction batch (default 50). Larger
+  batches trade per-turn extraction latency for extraction-pass quality;
+  smaller batches give more granular progress.
+- `--dry-run` — parse and validate only; does not call extraction and does
+  not write memories.
+- `--strict` — treat any adapter-level validation failure as fatal.
+  Without `--strict`, invalid rows are dropped and the error count is
+  reported.
+- `--verbose` — print per-batch error messages to stderr.
+
+Each batch is dispatched through the same extraction path organic turns
+use, so buffered extraction settings (models, judges, dedup checks) apply.
+Non-dryRun invocations await extraction settlement before reporting the
+per-batch `memoriesCreated` count, derived by snapshotting the memory
+directory before and after each batch.
+
+See
+[`packages/import-weclone/README.md`](../packages/import-weclone/README.md)
+for the adapter-specific design notes, programmatic API, and supported
+input schema.
+
 ## Training-data Export (issue #459)
 
 Remnic can emit its structured memories as a fine-tuning dataset, skipping

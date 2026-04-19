@@ -69,7 +69,7 @@ describe("runBulkImportCliCommand", () => {
     }
   });
 
-  it("throws when dryRun is false (persistence not wired)", async () => {
+  it("throws when non-dryRun is invoked without an ingestBatch callback", async () => {
     await assert.rejects(
       () =>
         runBulkImportCliCommand({
@@ -82,19 +82,19 @@ describe("runBulkImportCliCommand", () => {
         }),
       (err: Error) => {
         assert.ok(
-          err.message.includes("not yet wired"),
-          `expected 'not yet wired' in: ${err.message}`,
+          err.message.includes("not wired"),
+          `expected 'not wired' in: ${err.message}`,
         );
         assert.ok(
-          err.message.includes("--dry-run"),
-          `expected '--dry-run' hint in: ${err.message}`,
+          err.message.includes("ingestBatch"),
+          `expected 'ingestBatch' in: ${err.message}`,
         );
         return true;
       },
     );
   });
 
-  it("throws when dryRun is undefined (defaults to non-dryRun)", async () => {
+  it("throws when dryRun is undefined and no ingestBatch is provided", async () => {
     await assert.rejects(
       () =>
         runBulkImportCliCommand({
@@ -106,12 +106,33 @@ describe("runBulkImportCliCommand", () => {
         }),
       (err: Error) => {
         assert.ok(
-          err.message.includes("not yet wired"),
-          `expected 'not yet wired' in: ${err.message}`,
+          err.message.includes("not wired"),
+          `expected 'not wired' in: ${err.message}`,
         );
         return true;
       },
     );
+  });
+
+  it("invokes the ingestBatch callback when persistence is wired", async () => {
+    const seenBatches: number[] = [];
+    const result = await runBulkImportCliCommand({
+      memoryDir: tmpDir,
+      source: "test-source",
+      file: tmpFile,
+      // dryRun omitted: non-dryRun path exercises the ingestBatch callback.
+      ingestBatch: async (turns) => {
+        seenBatches.push(turns.length);
+        return { memoriesCreated: turns.length, duplicatesSkipped: 0 };
+      },
+      stdout: nullStream(),
+      stderr: nullStream(),
+    });
+    assert.deepEqual(seenBatches, [1]);
+    assert.equal(result.turnsProcessed, 1);
+    assert.equal(result.batchesProcessed, 1);
+    assert.equal(result.memoriesCreated, 1);
+    assert.equal(result.errors.length, 0);
   });
 
   it("succeeds in dryRun mode", async () => {

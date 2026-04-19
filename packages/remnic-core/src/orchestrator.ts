@@ -189,6 +189,7 @@ import {
   searchNativeKnowledge,
 } from "./native-knowledge.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
+import type { ImportTurn } from "./bulk-import/types.js";
 import {
   confidenceTier,
   type MemoryIntent,
@@ -8329,6 +8330,58 @@ export class Orchestrator {
         throw firstRejected.reason;
       }
     }
+  }
+
+  /**
+   * Ingest a batch of bulk-import turns (#460). Like ingestReplayBatch, this
+   * normalizes user/assistant turns into the extraction buffer and awaits
+   * settlement, but it intentionally bypasses the captureMode="explicit" gate
+   * because bulk-import is itself an explicit user action — the user ran
+   * `bulk-import --source <name> --file ...` and would be surprised to see the
+   * command silently no-op when capture is otherwise restricted.
+   *
+   * Turns with role="other" are skipped (not supported by the extraction
+   * pipeline). The sessionKey/bufferKey is derived from the namespace hint so
+   * multiple bulk-imports into distinct namespaces are isolated from each
+   * other's buffers.
+   */
+  async ingestBulkImportBatch(
+    turns: ImportTurn[],
+    options: {
+      namespace?: string;
+      deadlineMs?: number;
+    } = {},
+  ): Promise<void> {
+    if (!Array.isArray(turns) || turns.length === 0) return;
+
+    const sessionKey = normalizeReplaySessionKey(
+      options.namespace && options.namespace.length > 0
+        ? `bulk-import:${options.namespace}`
+        : "bulk-import:default",
+    );
+
+    const sessionTurns: BufferTurn[] = [];
+    for (const turn of turns) {
+      if (turn.role !== "user" && turn.role !== "assistant") continue;
+      sessionTurns.push({
+        role: turn.role,
+        content: turn.content,
+        timestamp: turn.timestamp,
+        sessionKey,
+      });
+    }
+    if (sessionTurns.length === 0) return;
+
+    await new Promise<void>((resolve, reject) => {
+      void this.queueBufferedExtraction(sessionTurns, "trigger_mode", {
+        skipDedupeCheck: true,
+        clearBufferAfterExtraction: false,
+        skipCharThreshold: true,
+        bufferKey: sessionKey,
+        extractionDeadlineMs: options.deadlineMs,
+        onTaskSettled: (err) => (err ? reject(err) : resolve()),
+      }).catch(reject);
+    });
   }
 
   async observeSessionHeartbeat(
