@@ -203,6 +203,18 @@ test("CLI openclaw upgrade preserves the original install error if rollback also
   );
 });
 
+test("CLI openclaw upgrade skips rollback work when install fails before any swap or reconfigure", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("const shouldRollback = Boolean(installResult || rollbackDir);"),
+    "CLI upgrade must explicitly detect whether the plugin or config state could have changed",
+  );
+  assert.ok(
+    /if \(!shouldRollback\)\s*\{\s*throw new Error\(\s*`OpenClaw upgrade failed while \$\{failurePhase\}\. ` \+\s*`Original failure: \$\{installErrorText\}\.`/s.test(src),
+    "CLI upgrade must surface the install failure directly when rollback is unnecessary",
+  );
+});
+
 test("CLI openclaw upgrade rejects file-backed pluginDir paths before backup and swap", async () => {
   const src = await readCli();
   assert.ok(

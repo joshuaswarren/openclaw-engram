@@ -4825,6 +4825,16 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     const rollbackDir = installError instanceof PublishedOpenclawPluginInstallError
       ? installError.rollbackDir
       : installResult?.rollbackDir;
+    const shouldRollback = Boolean(installResult || rollbackDir);
+
+    if (!shouldRollback) {
+      throw new Error(
+        `OpenClaw upgrade failed while ${failurePhase}. ` +
+        `Original failure: ${installErrorText}.`,
+        { cause: installError },
+      );
+    }
+
     let rollbackNotes: string[];
     try {
       rollbackNotes = rollbackOpenclawUpgrade({
