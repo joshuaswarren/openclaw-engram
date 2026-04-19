@@ -197,6 +197,10 @@ test("CLI openclaw upgrade preserves the original install error if rollback also
     /try\s*\{\s*rollbackNotes = rollbackOpenclawUpgrade\(\{[\s\S]*?\}\);\s*\}\s*catch \(rollbackError\)\s*\{\s*throw createOpenclawUpgradeRollbackFailure\(\{[\s\S]*?installError,[\s\S]*?rollbackError,[\s\S]*?\}\);\s*\}/s.test(src),
     "CLI upgrade must catch rollback failures separately so the original install error is still surfaced",
   );
+  assert.ok(
+    src.includes("Original failure: ${installErrorText}."),
+    "CLI upgrade must include the original install error text in the post-rollback failure message",
+  );
 });
 
 test("CLI openclaw upgrade rejects file-backed pluginDir paths before backup and swap", async () => {

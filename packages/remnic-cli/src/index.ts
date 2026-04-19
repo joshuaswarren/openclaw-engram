@@ -4819,6 +4819,9 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     const failurePhase = installResult
       ? "reconfiguring the installed plugin"
       : "installing the published plugin";
+    const installErrorText = installError instanceof Error
+      ? installError.message
+      : String(installError);
     const rollbackDir = installError instanceof PublishedOpenclawPluginInstallError
       ? installError.rollbackDir
       : installResult?.rollbackDir;
@@ -4840,6 +4843,7 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     }
     throw new Error(
       `OpenClaw upgrade failed while ${failurePhase}. ` +
+      `Original failure: ${installErrorText}. ` +
       `${rollbackNotes.join("; ")}.`,
       { cause: installError },
     );
