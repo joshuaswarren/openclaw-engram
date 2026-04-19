@@ -2019,13 +2019,33 @@ function assertDirectoryPathOrMissing(targetPath: string, label: string): void {
   }
 }
 
+function describeErrorWithCause(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!(error instanceof Error) || !("cause" in error)) return message;
+
+  const cause = error.cause;
+  if (cause === undefined || cause === null) return message;
+
+  const causeText = cause instanceof Error ? cause.message : String(cause);
+  if (!causeText || causeText === message) return message;
+  return `${message} Cause: ${causeText}`;
+}
+
 class PublishedOpenclawPluginInstallError extends Error {
   readonly rollbackDir?: string;
+  readonly shouldRestoreBackup: boolean;
 
-  constructor(message: string, options: ErrorOptions & { rollbackDir?: string } = {}) {
+  constructor(
+    message: string,
+    options: ErrorOptions & {
+      rollbackDir?: string;
+      shouldRestoreBackup?: boolean;
+    } = {},
+  ) {
     super(message, options);
     this.name = "PublishedOpenclawPluginInstallError";
     this.rollbackDir = options.rollbackDir;
+    this.shouldRestoreBackup = options.shouldRestoreBackup ?? false;
   }
 }
 
@@ -2037,6 +2057,7 @@ function installPublishedOpenclawPlugin(
   const stagedDir = `${pluginDir}.next-${process.pid}-${Date.now()}`;
   const rollbackDir = `${pluginDir}.rollback-${process.pid}-${Date.now()}`;
   let swapRollbackDir: string | undefined;
+  let shouldRestoreBackup = false;
 
   try {
     const packOutput = childProcess.execFileSync("npm", ["pack", spec], {
@@ -2073,7 +2094,14 @@ function installPublishedOpenclawPlugin(
     });
 
     assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");
-    const swapResult = swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);
+    const swapResult = (() => {
+      try {
+        return swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);
+      } catch (swapError) {
+        shouldRestoreBackup = swapError instanceof AggregateError;
+        throw swapError;
+      }
+    })();
     swapRollbackDir = swapResult.rollbackDir;
 
     const installedPackageJsonPath = path.join(pluginDir, "package.json");
@@ -2090,6 +2118,7 @@ function installPublishedOpenclawPlugin(
       {
         cause: error,
         rollbackDir: swapRollbackDir,
+        shouldRestoreBackup,
       },
     );
   } finally {
@@ -4819,13 +4848,17 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     const failurePhase = installResult
       ? "reconfiguring the installed plugin"
       : "installing the published plugin";
-    const installErrorText = installError instanceof Error
-      ? installError.message
-      : String(installError);
-    const rollbackDir = installError instanceof PublishedOpenclawPluginInstallError
-      ? installError.rollbackDir
+    const installErrorText = describeErrorWithCause(installError);
+    const publishedInstallError = installError instanceof PublishedOpenclawPluginInstallError
+      ? installError
+      : undefined;
+    const rollbackDir = publishedInstallError
+      ? publishedInstallError.rollbackDir
       : installResult?.rollbackDir;
-    const shouldRollback = Boolean(installResult || rollbackDir);
+    const shouldRestorePlugin =
+      Boolean(installResult || rollbackDir || publishedInstallError?.shouldRestoreBackup);
+    const shouldRestoreConfig = Boolean(installResult);
+    const shouldRollback = shouldRestorePlugin || shouldRestoreConfig;
 
     if (!shouldRollback) {
       throw new Error(
@@ -4838,9 +4871,9 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     let rollbackNotes: string[];
     try {
       rollbackNotes = rollbackOpenclawUpgrade({
-        configBackupPath,
+        configBackupPath: shouldRestoreConfig ? configBackupPath : undefined,
         configPath,
-        pluginBackupDir,
+        pluginBackupDir: shouldRestorePlugin ? pluginBackupDir : undefined,
         pluginDir,
         rollbackDir,
       });
