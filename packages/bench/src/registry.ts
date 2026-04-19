@@ -68,6 +68,10 @@ import {
   runRetrievalTemporalBenchmark,
 } from "./benchmarks/remnic/retrieval-temporal/runner.js";
 import {
+  retrievalDirectAnswerDefinition,
+  runRetrievalDirectAnswerBenchmark,
+} from "./benchmarks/remnic/retrieval-direct-answer/runner.js";
+import {
   proceduralRecallDefinition,
   runProceduralRecallBenchmark,
 } from "./benchmarks/remnic/procedural-recall/runner.js";
@@ -176,6 +180,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...retrievalTemporalDefinition,
     run: runRetrievalTemporalBenchmark,
+  },
+  {
+    ...retrievalDirectAnswerDefinition,
+    run: runRetrievalDirectAnswerBenchmark,
   },
   {
     ...proceduralRecallDefinition,

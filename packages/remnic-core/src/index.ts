@@ -90,6 +90,20 @@ export {
 } from "./procedural/procedure-types.js";
 
 // ---------------------------------------------------------------------------
+// Direct-answer retrieval tier (issue #518)
+// ---------------------------------------------------------------------------
+
+export {
+  isDirectAnswerEligible,
+  FILTER_LABELS as DIRECT_ANSWER_FILTER_LABELS,
+  type DirectAnswerCandidate,
+  type DirectAnswerConfig,
+  type DirectAnswerInput,
+  type DirectAnswerReason,
+  type DirectAnswerResult,
+} from "./direct-answer.js";
+
+// ---------------------------------------------------------------------------
 // Inline source attribution (issue #369)
 // ---------------------------------------------------------------------------
 
