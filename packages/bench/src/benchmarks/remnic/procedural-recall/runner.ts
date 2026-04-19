@@ -25,8 +25,11 @@ import {
 } from "./fixture.js";
 
 function sliceWithBudget<T>(cases: T[], budget: number): { picked: T[]; remaining: number } {
-  if (!Number.isFinite(budget) || budget <= 0) {
+  if (!Number.isFinite(budget)) {
     return { picked: cases, remaining: 0 };
+  }
+  if (budget <= 0) {
+    return { picked: [], remaining: 0 };
   }
   const n = Math.min(cases.length, Math.floor(budget));
   return { picked: cases.slice(0, n), remaining: budget - n };
