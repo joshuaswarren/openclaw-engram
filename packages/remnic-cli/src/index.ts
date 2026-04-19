@@ -4007,17 +4007,35 @@ export function parseTrainingExportArgs(
     );
   }
 
+  // Parse --dry-run first so we can relax the --output requirement when the
+  // user only wants statistics (Cursor review on PR #509: the help text and
+  // the earlier error message both documented --dry-run as the
+  // --output-optional escape hatch, but the old ordering unconditionally
+  // required --output and made that combination impossible).
+  const dryRun = hasFlag(rest, "--dry-run");
+
   // Accept --out as a short alias for --output (issue #459 spec uses both).
-  const output = resolveFlagStrict(rest, "--output") ?? resolveFlagStrict(rest, "--out");
-  if (!output) {
+  const outputRaw =
+    resolveFlagStrict(rest, "--output") ?? resolveFlagStrict(rest, "--out");
+  if (!outputRaw && !dryRun) {
     throw new Error(
       "--output <path> (or --out <path>) is required for training:export. " +
         "Use --dry-run to print statistics without writing a file.",
     );
   }
+  // In dry-run mode, `runTrainingExport` never touches the filesystem, so
+  // the output field is unused — we still populate it with a sentinel path
+  // so the parsed-args contract has no optional field and downstream code
+  // doesn't need to re-check dryRun before reading `output`.
+  const output = outputRaw ? expandTilde(outputRaw) : "";
 
+  // Expand ~ in BOTH the --memory-dir flag AND the default resolved dir
+  // (CLAUDE.md #17: Node.js `fs` does not expand ~; apply it to every path
+  // input consistently, not just the explicit flag). `resolveMemoryDir`
+  // can surface a tilde-prefixed path from config or env — validating that
+  // without expansion would reject otherwise-valid memory stores.
   const memoryDirFlag = resolveFlagStrict(rest, "--memory-dir");
-  const memoryDir = memoryDirFlag ? expandTilde(memoryDirFlag) : defaultMemoryDir;
+  const memoryDir = expandTilde(memoryDirFlag ?? defaultMemoryDir);
 
   const since = resolveFlagStrict(rest, "--since");
   const until = resolveFlagStrict(rest, "--until");
@@ -4062,11 +4080,10 @@ export function parseTrainingExportArgs(
   // `--privacy-sweep` is on by default for WeClone and any other adapter that
   // will be shared as a training dataset. Off switch: --no-privacy-sweep.
   const privacySweep = !hasFlag(rest, "--no-privacy-sweep");
-  const dryRun = hasFlag(rest, "--dry-run");
 
   return {
     format,
-    output: expandTilde(output),
+    output,
     memoryDir,
     since,
     until,
@@ -4183,6 +4200,17 @@ export async function runTrainingExport(
       redactedCount,
       outputPath: null,
     };
+  }
+
+  // Defensive: the CLI parser requires --output when --dry-run is absent,
+  // but programmatic callers construct ParsedTrainingExportArgs directly.
+  // Fail loudly rather than write to an empty-string path that the shell
+  // might resolve to cwd in surprising ways.
+  if (!args.output) {
+    throw new Error(
+      "runTrainingExport: `output` is required when dryRun is false. " +
+        "Pass dryRun: true to skip file I/O.",
+    );
   }
 
   const formatted = adapter.formatRecords(records);
@@ -4629,8 +4657,8 @@ Usage:
   remnic enrich audit            Show recent enrichment audit log
   remnic enrich providers        List registered providers and their status
   remnic training:export --format <name> --output <path> [options]
-    Export memories as a fine-tuning dataset (issue #459). See
-    `remnic training:export --help` for the full option list.
+    Export memories as a fine-tuning dataset (issue #459). Run
+    'remnic training:export --help' for the full option list.
 
 Options:
   --json    Output in JSON format

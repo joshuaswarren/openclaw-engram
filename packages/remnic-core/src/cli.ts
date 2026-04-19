@@ -2914,6 +2914,14 @@ export interface BulkImportCliCommandOptions {
   dryRun?: boolean;
   verbose?: boolean;
   strict?: boolean;
+  /**
+   * Optional adapter-specific platform hint forwarded to `adapter.parse`.
+   * Some bulk-import adapters (e.g. weclone) accept a platform discriminator
+   * so a single adapter can parse Telegram JSON, WeChat JSON, etc. without
+   * shipping a separate source for each. When undefined, adapters pick a
+   * default based on file shape.
+   */
+  platform?: string;
   stdout: Writable;
   stderr: Writable;
 }
