@@ -314,6 +314,67 @@ test("tryDirectAnswer throws AbortError when signal aborts mid-loop", async () =
   assert.equal(secondTrustZoneConsulted, false);
 });
 
+test("tryDirectAnswer throws when abort lands during trustZoneFor on the only memory", async () => {
+  // Regression for PR #533 P1 review: if abortSignal flips while the
+  // trust-zone await is in-flight on the last (or only) memory, the
+  // function must still throw — not fall through to eligibility with
+  // whatever was scored.
+  const memory = makeMemory({
+    id: "only",
+    tags: ["package-manager", "remnic"],
+    content: "remnic uses pnpm",
+  });
+  const controller = new AbortController();
+  const sources: DirectAnswerSources = {
+    taxonomy: DEFAULT_TAXONOMY,
+    listCandidateMemories: async () => [memory],
+    trustZoneFor: async () => {
+      controller.abort();
+      return "trusted";
+    },
+    importanceFor: () => 0.9,
+  };
+  await assert.rejects(
+    () =>
+      tryDirectAnswer({
+        query: "package manager remnic",
+        namespace: "default",
+        config: BASE_CONFIG,
+        sources,
+        abortSignal: controller.signal,
+      }),
+    (err: Error) => err.name === "AbortError",
+  );
+});
+
+test("tryDirectAnswer throws when abort lands during trustZoneFor on the last of several memories", async () => {
+  const memories = [
+    makeMemory({ id: "first", tags: ["package-manager"], content: "remnic uses pnpm" }),
+    makeMemory({ id: "last", tags: ["package-manager"], content: "remnic uses pnpm" }),
+  ];
+  const controller = new AbortController();
+  const sources: DirectAnswerSources = {
+    taxonomy: DEFAULT_TAXONOMY,
+    listCandidateMemories: async () => memories,
+    trustZoneFor: async (id: string) => {
+      if (id === "last") controller.abort();
+      return "trusted";
+    },
+    importanceFor: () => 0.9,
+  };
+  await assert.rejects(
+    () =>
+      tryDirectAnswer({
+        query: "package manager remnic",
+        namespace: "default",
+        config: BASE_CONFIG,
+        sources,
+        abortSignal: controller.signal,
+      }),
+    (err: Error) => err.name === "AbortError",
+  );
+});
+
 test("tryDirectAnswer throws when signal is already aborted before I/O", async () => {
   const sources = makeMockSources({ memories: [makeMemory()] });
   const controller = new AbortController();

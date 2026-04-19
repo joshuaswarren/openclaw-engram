@@ -119,10 +119,14 @@ export async function tryDirectAnswer(
     // Throw rather than returning a partial verdict — a mid-loop abort
     // that left competing candidates unprocessed could otherwise surface
     // a spurious "eligible" result that the ambiguity gate never got a
-    // chance to reject.
+    // chance to reject.  The check repeats after every await so an
+    // abort that lands during the in-flight I/O on the final memory
+    // (after which no further iteration would exist) still stops us.
     throwIfAborted(abortSignal);
 
     const trustZone = await sources.trustZoneFor(memory.frontmatter.id);
+    throwIfAborted(abortSignal);
+
     // Cheap pre-filter: non-trusted memories can't qualify, so skip
     // taxonomy and importance resolution for them.
     if (trustZone !== "trusted") continue;
@@ -144,6 +148,11 @@ export async function tryDirectAnswer(
       importanceScore,
     });
   }
+
+  // Final check — if abort landed during the trust-zone await for the
+  // last memory, the loop condition no longer fires.  Guard before we
+  // hand candidates to the eligibility gate.
+  throwIfAborted(abortSignal);
 
   return isDirectAnswerEligible({
     query,
