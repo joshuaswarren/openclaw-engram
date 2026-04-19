@@ -44,6 +44,14 @@ test("CLI has cmdOpenclawInstall function", async () => {
   );
 });
 
+test("CLI has cmdOpenclawUpgrade function", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("cmdOpenclawUpgrade"),
+    "CLI must define cmdOpenclawUpgrade function",
+  );
+});
+
 test("CLI --yes / -y / --force flags are supported", async () => {
   const src = await readCli();
   assert.ok(
@@ -94,6 +102,37 @@ test("CLI openclaw subcommand is in the main switch statement", async () => {
   assert.ok(
     src.includes('case "openclaw":'),
     "main switch must handle 'openclaw' command",
+  );
+});
+
+test("CLI wires openclaw upgrade subcommand", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes('subcommand === "upgrade"') ||
+    src.includes("case \"upgrade\"") ||
+    src.includes("cmdOpenclawUpgrade"),
+    "CLI must handle `remnic openclaw upgrade`",
+  );
+});
+
+test("CLI openclaw upgrade supports release and restart flags", async () => {
+  const src = await readCli();
+  assert.ok(src.includes("--version"), "CLI upgrade must handle --version");
+  assert.ok(
+    src.includes("--no-restart") || src.includes("restartGateway"),
+    "CLI upgrade must handle restart control",
+  );
+});
+
+test("CLI openclaw upgrade mentions backups and npm package refresh", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("backup") || src.includes("backups"),
+    "CLI upgrade must mention backups",
+  );
+  assert.ok(
+    src.includes("npm pack") || src.includes("@remnic/plugin-openclaw"),
+    "CLI upgrade must mention the published npm package",
   );
 });
 
