@@ -21,69 +21,107 @@ export interface RemnicAdapterOptions {
   judge?: BenchJudge;
 }
 
+type BenchAdapterMode = "lightweight" | "direct";
+
+interface BenchAdapterBaseConfig {
+  memoryDir: string;
+  workspaceDir: string;
+  lcmEnabled: true;
+}
+
+const BENCH_ADAPTER_SHARED_CONFIG: Record<string, unknown> = {
+  qmdEnabled: false,
+  qmdColdTierEnabled: false,
+  transcriptEnabled: false,
+  hourlySummariesEnabled: false,
+  daySummaryEnabled: false,
+  identityEnabled: false,
+  identityContinuityEnabled: false,
+  namespacesEnabled: false,
+  sharedContextEnabled: false,
+  workTasksEnabled: false,
+  workProjectsEnabled: false,
+  commitmentLedgerEnabled: false,
+  resumeBundlesEnabled: false,
+  nativeKnowledge: { enabled: false },
+  lcmLeafBatchSize: 4,
+  lcmRollupFanIn: 3,
+  lcmFreshTailTurns: 8,
+  lcmMaxDepth: 4,
+  lcmDeterministicMaxTokens: 512,
+  lcmRecallBudgetShare: 1.0,
+  queryExpansionEnabled: false,
+  rerankEnabled: false,
+  memoryBoxesEnabled: false,
+  traceWeaverEnabled: false,
+  threadingEnabled: false,
+  factDeduplicationEnabled: false,
+  knowledgeIndexEnabled: false,
+  entityRetrievalEnabled: false,
+  verifiedRecallEnabled: false,
+  queryAwareIndexingEnabled: false,
+  contradictionDetectionEnabled: false,
+  memoryLinkingEnabled: false,
+  topicExtractionEnabled: false,
+  chunkingEnabled: true,
+  episodeNoteModeEnabled: false,
+};
+
+const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, unknown>> = {
+  direct: {
+    extractionDedupeEnabled: true,
+    extractionMinChars: 10,
+    extractionMinUserTurns: 0,
+    recallPlannerEnabled: true,
+  },
+  lightweight: {
+    extractionDedupeEnabled: false,
+    extractionMinChars: 1000000,
+    extractionMinUserTurns: 1000000,
+    recallPlannerEnabled: false,
+  },
+};
+
+export function buildBenchAdapterConfig(
+  mode: BenchAdapterMode,
+  baseConfig: BenchAdapterBaseConfig,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const modeConfig = {
+    ...BENCH_ADAPTER_SHARED_CONFIG,
+    ...BENCH_ADAPTER_MODE_CONFIG[mode],
+  };
+
+  if (mode === "lightweight") {
+    return {
+      ...baseConfig,
+      ...overrides,
+      ...modeConfig,
+    };
+  }
+
+  return {
+    ...baseConfig,
+    ...modeConfig,
+    ...overrides,
+  };
+}
+
 async function createBenchOrchestrator(
-  mode: "lightweight" | "direct",
+  mode: BenchAdapterMode,
   overrides?: Record<string, unknown>,
 ): Promise<{ tempDir: string; orchestrator: Orchestrator }> {
   const tempDir = await mkdtemp(path.join(tmpdir(), `remnic-bench-${mode}-`));
   await mkdir(path.join(tempDir, "state"), { recursive: true });
 
-  const commonConfig = {
+  const commonConfig: BenchAdapterBaseConfig = {
     memoryDir: tempDir,
     workspaceDir: tempDir,
     lcmEnabled: true,
   };
-  const lightweightConfig =
-    mode === "lightweight"
-      ? {
-          qmdEnabled: false,
-          qmdColdTierEnabled: false,
-          transcriptEnabled: false,
-          hourlySummariesEnabled: false,
-          daySummaryEnabled: false,
-          identityEnabled: false,
-          identityContinuityEnabled: false,
-          namespacesEnabled: false,
-          sharedContextEnabled: false,
-          workTasksEnabled: false,
-          workProjectsEnabled: false,
-          commitmentLedgerEnabled: false,
-          resumeBundlesEnabled: false,
-          nativeKnowledge: { enabled: false },
-          lcmLeafBatchSize: 4,
-          lcmRollupFanIn: 3,
-          lcmFreshTailTurns: 8,
-          lcmMaxDepth: 4,
-          lcmDeterministicMaxTokens: 512,
-          lcmRecallBudgetShare: 1.0,
-          extractionDedupeEnabled: false,
-          extractionMinChars: 1000000,
-          extractionMinUserTurns: 1000000,
-          recallPlannerEnabled: false,
-          queryExpansionEnabled: false,
-          rerankEnabled: false,
-          memoryBoxesEnabled: false,
-          traceWeaverEnabled: false,
-          threadingEnabled: false,
-          factDeduplicationEnabled: false,
-          knowledgeIndexEnabled: false,
-          entityRetrievalEnabled: false,
-          verifiedRecallEnabled: false,
-          queryAwareIndexingEnabled: false,
-          contradictionDetectionEnabled: false,
-          memoryLinkingEnabled: false,
-          topicExtractionEnabled: false,
-          chunkingEnabled: true,
-          episodeNoteModeEnabled: false,
-        }
-      : {};
 
   const orchestrator = new Orchestrator(
-    parseConfig({
-      ...commonConfig,
-      ...lightweightConfig,
-      ...overrides,
-    }),
+    parseConfig(buildBenchAdapterConfig(mode, commonConfig, overrides)),
   );
 
   await orchestrator.initialize();

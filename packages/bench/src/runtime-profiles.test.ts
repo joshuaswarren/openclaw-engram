@@ -106,6 +106,12 @@ test("openclaw-chain runtime profile loads OpenClaw config and forces gateway ro
       primary: "openai/gpt-5.4-mini",
     },
   );
+  assert.equal(
+    (resolved.remnicConfig.gatewayConfig as {
+      models?: { providers?: { openai?: { apiKey?: string } } };
+    }).models?.providers?.openai?.apiKey,
+    undefined,
+  );
 });
 
 test("provider-backed runtime resolution rejects incomplete provider configuration", async () => {

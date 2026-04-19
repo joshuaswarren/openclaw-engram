@@ -50,6 +50,17 @@ export interface ResolvedBenchRuntimeProfile {
   judgeProvider: ProviderConfig | null;
 }
 
+const GATEWAY_SECRET_SUFFIXES = [
+  "apikey",
+  "authtoken",
+  "accesstoken",
+  "clientsecret",
+  "authorization",
+  "password",
+  "secret",
+  "token",
+] as const;
+
 const BASELINE_REMNIC_CONFIG: Record<string, unknown> = {
   qmdEnabled: false,
   qmdColdTierEnabled: false,
@@ -186,7 +197,7 @@ export async function resolveBenchRuntimeProfile(
     {
       ...openclawRuntime.remnicConfig,
       lcmEnabled: true,
-      gatewayConfig,
+      gatewayConfig: openclawRuntime.persistedGatewayConfig,
       modelSource: "gateway",
       ...(gatewayAgentId ? { gatewayAgentId } : {}),
       ...(fastGatewayAgentId ? { fastGatewayAgentId } : {}),
@@ -225,7 +236,11 @@ async function loadRemnicConfigFile(
 
 async function loadOpenclawRuntimeConfig(
   filePath: string | undefined,
-): Promise<{ remnicConfig: Record<string, unknown>; gatewayConfig: GatewayConfig }> {
+): Promise<{
+  remnicConfig: Record<string, unknown>;
+  gatewayConfig: GatewayConfig;
+  persistedGatewayConfig: GatewayConfig;
+}> {
   if (!filePath) {
     throw new Error("openclaw-chain runtime profile requires an OpenClaw config path");
   }
@@ -235,12 +250,15 @@ async function loadOpenclawRuntimeConfig(
   const remnicConfig =
     isPlainObject(entry?.config) ? { ...entry.config } : {};
 
+  const gatewayConfig: GatewayConfig = {
+    ...(isPlainObject(parsed.agents) ? { agents: parsed.agents as GatewayConfig["agents"] } : {}),
+    ...(isPlainObject(parsed.models) ? { models: parsed.models as GatewayConfig["models"] } : {}),
+  };
+
   return {
     remnicConfig,
-    gatewayConfig: {
-      ...(isPlainObject(parsed.agents) ? { agents: parsed.agents as GatewayConfig["agents"] } : {}),
-      ...(isPlainObject(parsed.models) ? { models: parsed.models as GatewayConfig["models"] } : {}),
-    },
+    gatewayConfig,
+    persistedGatewayConfig: sanitizeGatewayConfig(gatewayConfig),
   };
 }
 
@@ -332,6 +350,35 @@ function asNonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0
     ? value.trim()
     : undefined;
+}
+
+function sanitizeGatewayConfig(config: GatewayConfig): GatewayConfig {
+  const sanitized = sanitizeGatewayValue(config);
+  return isPlainObject(sanitized) ? sanitized as GatewayConfig : {};
+}
+
+function sanitizeGatewayValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeGatewayValue(entry));
+  }
+
+  if (!isPlainObject(value)) {
+    return value;
+  }
+
+  const next: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (isGatewaySecretKey(key)) {
+      continue;
+    }
+    next[key] = sanitizeGatewayValue(entry);
+  }
+  return next;
+}
+
+function isGatewaySecretKey(key: string): boolean {
+  const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return GATEWAY_SECRET_SUFFIXES.some((suffix) => normalized === suffix || normalized.endsWith(suffix));
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

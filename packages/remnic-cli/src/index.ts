@@ -1202,11 +1202,26 @@ function resolveConfigPath(cliPath?: string): string {
 
 function resolveExistingBenchRemnicConfigPath(cliPath?: string): string | undefined {
   const configPath = resolveConfigPath(cliPath);
-  return fs.existsSync(configPath) ? configPath : undefined;
+  if (fs.existsSync(configPath)) {
+    return configPath;
+  }
+  if (cliPath) {
+    throw new Error(`Remnic config file not found: ${configPath}`);
+  }
+  return undefined;
 }
 
 function resolveExistingBenchOpenclawConfigPath(cliPath?: string): string {
-  return resolveOpenclawConfigPath(cliPath);
+  const configPath = resolveOpenclawConfigPath(cliPath);
+  if (fs.existsSync(configPath)) {
+    return configPath;
+  }
+  if (cliPath) {
+    throw new Error(`OpenClaw config file not found: ${configPath}`);
+  }
+  throw new Error(
+    `openclaw-chain runtime profile requires an OpenClaw config file. Not found at ${configPath}`,
+  );
 }
 
 function resolveBenchRunProfiles(
