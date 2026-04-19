@@ -496,16 +496,22 @@ const DOWNLOADABLE_BENCHMARK_DATASETS = [
   "locomo",
 ] as const;
 
-// Required content markers per benchmark. A `files` entry is matched literally;
-// a `glob` entry matches any file in the directory with the given extension.
-// Mirrors the expectations in evals/scripts/download-datasets.sh so `datasets
-// status` reports a partial/interrupted download as "missing" instead of
-// "downloaded" based on directory existence alone.
-const DOWNLOADED_DATASET_MARKERS: Record<string, { files?: string[]; ext?: string }> = {
-  "ama-bench": { files: ["open_end_qa_set.jsonl"] },
-  longmemeval: { files: ["longmemeval_oracle.json"] },
-  amemgym: { files: ["amemgym-v1-base.json"] },
-  locomo: { files: ["locomo10.json"] },
+// Required content markers per benchmark. `anyOf` lists the filenames
+// a benchmark runner will accept — a dataset directory is considered
+// "downloaded" as soon as any one of them is present. `ext` matches
+// any file in the directory with the given extension. The filename
+// sets mirror the dataset loaders under packages/bench/src/benchmarks
+// so `datasets status`/`resolveBenchDatasetDir` never disagree with
+// the runner about whether a dataset is ready.
+const DOWNLOADED_DATASET_MARKERS: Record<string, { anyOf?: string[]; ext?: string }> = {
+  "ama-bench": { anyOf: ["open_end_qa_set.jsonl"] },
+  longmemeval: {
+    anyOf: ["longmemeval_oracle.json", "longmemeval_s_cleaned.json", "longmemeval.json"],
+  },
+  amemgym: {
+    anyOf: ["amemgym-v1-base.json", "amemgym-tasks.json", "data.json"],
+  },
+  locomo: { anyOf: ["locomo10.json", "locomo.json"] },
   "memory-arena": { ext: ".jsonl" },
 };
 
@@ -528,8 +534,8 @@ function isDatasetDownloaded(datasetPath: string, benchmarkId: string): boolean 
       return false;
     }
   }
-  if (marker.files) {
-    return marker.files.every((name) => {
+  if (marker.anyOf) {
+    return marker.anyOf.some((name) => {
       try {
         return fs.statSync(path.join(datasetPath, name)).isFile();
       } catch {
