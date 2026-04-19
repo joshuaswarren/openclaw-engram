@@ -23,7 +23,7 @@ The package is **data-only** (no JavaScript runtime) — it's a bundle of Claude
 | File / dir | Purpose |
 |---|---|
 | `.claude-plugin/plugin.json` | Plugin manifest |
-| `hooks/hooks.json` | `SessionStart`, `PostToolUse`, `UserPromptSubmit`, `Stop` hook wiring |
+| `hooks/hooks.json` | `SessionStart`, `PostToolUse` (Write/Edit/MultiEdit), and `UserPromptSubmit` hook wiring |
 | `hooks/bin/*.sh` | Small shell scripts that call the local Remnic daemon |
 | `skills/` | `remnic-recall`, `remnic-remember`, `remnic-search`, `remnic-status`, `remnic-entities`, `remnic-memory-workflow` |
 | `agents/memory-review.md` | Subagent that audits + summarizes memory for long-running sessions |
@@ -34,8 +34,8 @@ The package is **data-only** (no JavaScript runtime) — it's a bundle of Claude
 
 Once installed and a Remnic daemon is running (`remnic daemon start`):
 
-- **Auto-recall** on `SessionStart` — relevant memories are injected into the session prompt before Claude Code's first turn.
-- **Auto-observe** on `PostToolUse` and `UserPromptSubmit` — new facts, decisions, and entities are buffered for extraction without the user lifting a finger.
+- **Auto-recall** on `SessionStart` and on every `UserPromptSubmit` — relevant memories are injected into the session prompt before Claude Code's first turn and before each subsequent user turn.
+- **Auto-observe** on `PostToolUse` for `Write`, `Edit`, and `MultiEdit` tools — new facts, decisions, and entities touched by file edits are buffered for extraction without the user lifting a finger.
 - **Memory skills** — invoke `/remnic-recall`, `/remnic-search`, `/remnic-remember`, `/remnic-entities`, `/remnic-status` directly in Claude Code chats.
 - **Cross-agent sharing** — the same memory store is shared with every other Remnic-connected agent (Codex, OpenClaw, Replit, Hermes, etc.), so what one agent learns is available to all.
 

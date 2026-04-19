@@ -35,8 +35,8 @@ The package is **data + one small materializer** (no runtime JS beyond the insta
 
 Once installed and a Remnic daemon is running (`remnic daemon start`):
 
-- **Auto-recall** on session start — relevant memories are injected before Codex's first turn.
-- **Auto-observe** on tool use and prompt submission — new facts, decisions, and entities are buffered for extraction automatically.
+- **Auto-recall** on `SessionStart` and on every `UserPromptSubmit` — relevant memories are injected before Codex's first turn and before each subsequent user turn.
+- **Auto-observe** on `PostToolUse` for the `Bash` tool and on `Stop` (session end) — new facts, decisions, and entities touched by shell work (or accumulated through the session) are buffered for extraction automatically.
 - **Memory skills** — invoke `/remnic-recall`, `/remnic-search`, `/remnic-remember`, `/remnic-entities`, `/remnic-status` directly in Codex chats.
 - **Cross-agent sharing** — the same memory store is shared with every other Remnic-connected agent (Claude Code, OpenClaw, Replit, Hermes, etc.), so what one agent learns is available to all.
 
