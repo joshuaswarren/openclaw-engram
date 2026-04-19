@@ -26,6 +26,11 @@ export interface FallbackLlmResponse {
   };
 }
 
+export interface FallbackLlmRuntimeContext {
+  agentDir?: string;
+  workspaceDir?: string;
+}
+
 interface ModelRef {
   providerId: string;
   modelId: string;
@@ -40,9 +45,14 @@ interface ModelRef {
  */
 export class FallbackLlmClient {
   private gatewayConfig: GatewayConfig | undefined;
+  private runtimeContext: FallbackLlmRuntimeContext;
 
-  constructor(gatewayConfig?: GatewayConfig) {
+  constructor(
+    gatewayConfig?: GatewayConfig,
+    runtimeContext: FallbackLlmRuntimeContext = {},
+  ) {
     this.gatewayConfig = gatewayConfig;
+    this.runtimeContext = runtimeContext;
   }
 
   /**
@@ -353,6 +363,7 @@ export class FallbackLlmClient {
           baseUrl: model.providerConfig.baseUrl,
         },
         cfg: this.gatewayConfig,
+        workspaceDir: this.runtimeContext.workspaceDir,
       });
 
       if (result?.apiKey || result?.baseUrl) {
@@ -374,7 +385,12 @@ export class FallbackLlmClient {
    * secret refs, etc.). Used as fallback when gateway runtime auth isn't available.
    */
   private async resolveFallbackApiKey(model: ModelRef): Promise<string | undefined> {
-    return resolveProviderApiKey(model.providerId, model.providerConfig.apiKey, this.gatewayConfig);
+    return resolveProviderApiKey(
+      model.providerId,
+      model.providerConfig.apiKey,
+      this.gatewayConfig,
+      this.runtimeContext.agentDir,
+    );
   }
 
   /**

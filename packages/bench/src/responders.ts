@@ -1,5 +1,6 @@
 import {
   FallbackLlmClient,
+  type FallbackLlmRuntimeContext,
   type GatewayConfig,
 } from "@remnic/core";
 import type {
@@ -32,6 +33,12 @@ const SCORE_CUE_REGEX = /\b(score|rated|rating|grade|graded|result|overall|final
 export interface GatewayResponderOptions {
   gatewayConfig?: GatewayConfig;
   agentId?: string;
+  agentDir?: string;
+  workspaceDir?: string;
+  llmFactory?: (
+    gatewayConfig: GatewayConfig,
+    runtimeContext: FallbackLlmRuntimeContext,
+  ) => Pick<FallbackLlmClient, "chatCompletion">;
 }
 
 export function createResponderFromProvider(provider: LlmProvider): BenchResponder {
@@ -145,7 +152,12 @@ export function createGatewayResponder(
     throw new Error("gateway responder requires gatewayConfig");
   }
 
-  const llm = new FallbackLlmClient(options.gatewayConfig);
+  const runtimeContext: FallbackLlmRuntimeContext = {
+    ...(options.agentDir ? { agentDir: options.agentDir } : {}),
+    ...(options.workspaceDir ? { workspaceDir: options.workspaceDir } : {}),
+  };
+  const llm = options.llmFactory?.(options.gatewayConfig, runtimeContext)
+    ?? new FallbackLlmClient(options.gatewayConfig, runtimeContext);
 
   return {
     async respond(question: string, recalledText: string): Promise<BenchResponse> {
