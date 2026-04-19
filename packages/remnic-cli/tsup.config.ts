@@ -7,5 +7,6 @@ export default defineConfig({
   platform: "node",
   outDir: "dist",
   clean: true,
+  external: ["yaml"],
   noExternal: ["@remnic/bench"],
 });

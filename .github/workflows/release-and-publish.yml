@@ -350,6 +350,9 @@ jobs:
           # package metadata (see issue #403).
           PUBLISH_ORDER=(
             packages/remnic-core
+            packages/connector-weclone
+            packages/export-weclone
+            packages/import-weclone
             packages/remnic-server
             packages/remnic-cli
             packages/hermes-provider

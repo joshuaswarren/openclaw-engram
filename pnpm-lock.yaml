@@ -174,6 +174,9 @@ importers:
 
   packages/plugin-openclaw:
     dependencies:
+      '@remnic/core':
+        specifier: workspace:^
+        version: link:../remnic-core
       openai:
         specifier: ^6.0.0
         version: 6.33.0(zod@4.0.0)
@@ -193,6 +196,9 @@ importers:
       '@remnic/export-weclone':
         specifier: workspace:^
         version: link:../export-weclone
+      yaml:
+        specifier: ^2.4.2
+        version: 2.8.3
     devDependencies:
       '@remnic/bench':
         specifier: workspace:*

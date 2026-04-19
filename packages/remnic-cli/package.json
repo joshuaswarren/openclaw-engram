@@ -1,6 +1,6 @@
 {
   "name": "@remnic/cli",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "CLI for Remnic memory — init, query, doctor, daemon management",
   "type": "module",
   "main": "dist/index.js",
@@ -31,7 +31,8 @@
   },
   "dependencies": {
     "@remnic/core": "workspace:^",
-    "@remnic/export-weclone": "workspace:^"
+    "@remnic/export-weclone": "workspace:^",
+    "yaml": "^2.4.2"
   },
   "devDependencies": {
     "@remnic/bench": "workspace:*",
