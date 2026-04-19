@@ -76,9 +76,17 @@ See [Procedural memory](./procedural-memory.md) for configuration, mining, and t
 
 ### Direct-answer retrieval tier (issue #518)
 
-When **`recallDirectAnswerEnabled`** is true, Remnic runs a lightweight eligibility gate alongside QMD to decide whether a single validated memory can answer the query. The gate is an observation pass in the current release: it records *which tier would have served the query* onto the caller's last-recall snapshot, so CLI / HTTP / MCP surfaces can surface the decision. A future release will flip the short-circuit bit and return the direct-answer winner before QMD runs.
+> **Status (current release): design + pure eligibility function + config keys only.** The orchestrator wiring that would populate a `tierExplain` annotation on the caller's last-recall snapshot — and the CLI / HTTP / MCP surfaces that would expose it — are **not yet shipped**. This section documents the design so downstream slices land against a stable contract. Setting `recallDirectAnswerEnabled: true` in the current release is a no-op at recall time.
 
-Eligibility ladder (in order):
+Planned behavior: when **`recallDirectAnswerEnabled`** is true, Remnic will run a lightweight eligibility gate alongside QMD to decide whether a single validated memory can answer the query. The first slice that ships runtime behavior will run the gate in observation mode — it will record *which tier would have served the query* onto the caller's last-recall snapshot, so CLI / HTTP / MCP surfaces can surface the decision. A later slice will flip the short-circuit bit and return the direct-answer winner before QMD runs.
+
+What exists today:
+
+- `packages/remnic-core/src/direct-answer.ts` — pure eligibility function (`evaluateDirectAnswer`) exercised by unit tests and the `retrieval-direct-answer` bench fixture.
+- `packages/remnic-core/src/direct-answer-wiring.ts` — `tryDirectAnswer(...)` source-agnostic binding, callable by tests and bench harnesses but not yet invoked by the orchestrator.
+- The five `recallDirectAnswer*` config keys below (parsed and validated; no runtime callers yet).
+
+Planned eligibility ladder (in order, unchanged between observation and short-circuit modes):
 
 1. `config.recallDirectAnswerEnabled === false` → reason `disabled`
 2. Query normalizes to zero searchable tokens → reason `empty-query`
@@ -88,7 +96,7 @@ Eligibility ladder (in order):
 6. Top two candidates within `recallDirectAnswerAmbiguityMargin` of each other → reason `ambiguous`
 7. Otherwise → reason `eligible`, winner annotated on the snapshot
 
-Config keys:
+Config keys (already parsed by `config.ts`; inert at recall time until the wiring slice lands):
 
 - `recallDirectAnswerEnabled` (default `false`) — master switch
 - `recallDirectAnswerTokenOverlapFloor` (default `0.55`, `0` to disable the gate)
@@ -96,7 +104,7 @@ Config keys:
 - `recallDirectAnswerAmbiguityMargin` (default `0.15`)
 - `recallDirectAnswerEligibleTaxonomyBuckets` (default `["decisions","principles","conventions","runbooks","entities"]`)
 
-See [Retrieval explain](./retrieval-explain.md) for how to read the tier annotation from the CLI, HTTP, and MCP surfaces.
+See [Retrieval explain](./retrieval-explain.md) for the planned shape of the tier annotation and the CLI / HTTP / MCP surfaces that will expose it.
 
 ## Example: Enable Local-only Re-ranking
 

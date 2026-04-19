@@ -293,42 +293,49 @@ stop and widen the fix before pushing.
 
 ## Agent Notes: Retrieval Explain Surface (issue #518)
 
-Two adjacent concepts with similar names — do not conflate them:
+Two adjacent concepts with similar names — do not conflate them when later
+slices land:
 
-1. **`recall/explain`** (pre-existing) — `POST /engram/v1/recall/explain` /
+1. **`recall/explain`** (shipped) — `POST /engram/v1/recall/explain` /
    `engram.recall_explain` MCP tool / `EngramAccessService.recallExplain()`.
-   Returns a graph-path explanation *document* on demand. Reads the same
-   snapshot but enriches it with intent and graph data. Use this when a user
-   asks "why these memories?" for the graph subsystem.
+   Returns a graph-path explanation *document* on demand. Use this when a
+   user asks "why these memories?" for the graph subsystem.
 
-2. **Tier explain** (issue #518) — `GET /engram/v1/recall/tier-explain` /
-   `engram.recall_tier_explain` MCP tool / `remnic recall-explain` CLI /
-   `EngramAccessService.recallTierExplain()`. Returns a *structured
-   per-result annotation* of which retrieval tier served the query
-   (`direct-answer`, `hybrid`, etc.). The annotation is optional on
-   `LastRecallSnapshot.tierExplain` and only populated when
+2. **Tier explain** (issue #518, **not yet shipped**) — planned
+   `GET /engram/v1/recall/tier-explain` / `engram.recall_tier_explain` MCP
+   tool / `remnic recall-explain` CLI / `EngramAccessService.recallTierExplain()`.
+   Will return a *structured per-result annotation* of which retrieval tier
+   served the query (`direct-answer`, `hybrid`, etc.). Planned as an
+   optional `LastRecallSnapshot.tierExplain` field populated only when
    `recallDirectAnswerEnabled: true`.
 
-All three surfaces route through the same `toRecallExplainJson()` /
-`toRecallExplainText()` renderer at
-`packages/remnic-core/src/recall-explain-renderer.ts`. Do not fork
-formatting — extend the renderer.
+What's actually on disk today:
 
-The direct-answer eligibility decision is a **pure function** at
-`packages/remnic-core/src/direct-answer.ts`. It takes caller-resolved
-`DirectAnswerCandidate`s (trustZone + taxonomyBucket + importance
-already looked up upstream) and returns a `DirectAnswerResult`. Tests
-use this function directly with mocks — they do not need to stand up
-a trust-zones store.
+- `packages/remnic-core/src/direct-answer.ts` — pure eligibility function.
+  Takes caller-resolved `DirectAnswerCandidate`s (trustZone + taxonomyBucket
+  + importance already looked up upstream) and returns a
+  `DirectAnswerResult`. Tests use this directly with mocks.
+- `packages/remnic-core/src/direct-answer-wiring.ts` — source-agnostic
+  `tryDirectAnswer(...)` binding. Callers inject a `DirectAnswerSources`
+  accessor (`listCandidateMemories`, `trustZoneFor`, `importanceFor`,
+  taxonomy). **Not yet invoked by the orchestrator.**
+- `packages/remnic-core/src/types.ts` — `RecallTierExplain` interface.
+  Declared but not yet attached to `LastRecallSnapshot` (see
+  `packages/remnic-core/src/recall-state.ts`).
+- Bench fixture under
+  `packages/bench/src/benchmarks/remnic/retrieval-direct-answer/`.
 
-The orchestrator binding lives in
-`packages/remnic-core/src/direct-answer-wiring.ts` (`tryDirectAnswer`).
-It is source-agnostic: callers inject a `DirectAnswerSources` accessor
-for `listCandidateMemories`, `trustZoneFor`, `importanceFor`, and the
-taxonomy. The orchestrator's binding (in
-`Orchestrator.annotateDirectAnswerTier`) is just one caller — bench and
-tests bind their own accessors and never go through the orchestrator.
+What does NOT exist yet, despite being referenced in the design docs:
 
-Abort helpers live in `packages/remnic-core/src/abort-error.ts`.
-`throwIfAborted(signal, message?)` throws an `Error` with
-`name === "AbortError"`. Do not re-implement locally.
+- `packages/remnic-core/src/recall-explain-renderer.ts` (planned shared
+  CLI / HTTP / MCP formatter). When it lands, do not fork formatting —
+  extend the renderer.
+- `Orchestrator.annotateDirectAnswerTier` and any `tierExplain` population
+  on `LastRecallSnapshot`.
+- The `GET /engram/v1/recall/tier-explain` HTTP route, the
+  `remnic.recall_tier_explain` MCP tool, and the `remnic recall-explain`
+  CLI command.
+
+`tryDirectAnswer` currently uses a private `throwIfAborted(signal)` helper
+local to `direct-answer-wiring.ts`. If a shared `abort-error.ts` module is
+introduced later, migrate callers rather than re-implementing locally.

@@ -1,12 +1,17 @@
 # Retrieval Explain
 
-> Issue #518. Shows which retrieval tier served the caller's last recall, plus the reason, filter trail, and source anchors. Orthogonal to the graph-path `recall/explain` operation: this is a per-result annotation, that is a user-invoked RPC.
+> Issue #518. **Status: design spec.** The tier-annotation shape, CLI / HTTP / MCP surfaces, and `LastRecallSnapshot.tierExplain` field described below are **not yet shipped** in the current release. This document defines the contract that downstream slices will land against, so operators and plugin authors can review the surface before it arrives. See [advanced-retrieval.md](./advanced-retrieval.md#direct-answer-retrieval-tier-issue-518) for what ships today (pure eligibility function + config keys).
+>
+> Orthogonal to the graph-path `POST /engram/v1/recall/explain` operation, which already exists and returns a graph explanation document — this design adds a **per-result tier annotation**, not a new graph explainer.
 
-## What it surfaces
+## What it will surface
 
-After a recall, Remnic records a `LastRecallSnapshot` for the calling session (see `packages/remnic-core/src/recall-state.ts`). When the **direct-answer retrieval tier** is enabled (`recallDirectAnswerEnabled: true`), the orchestrator annotates that snapshot with a `RecallTierExplain` block:
+After a recall, Remnic records a `LastRecallSnapshot` for the calling session (see `packages/remnic-core/src/recall-state.ts`). A planned slice will extend the snapshot with an optional `tierExplain` field populated when the **direct-answer retrieval tier** is enabled (`recallDirectAnswerEnabled: true`):
 
 ```ts
+// Planned shape — already defined as `RecallTierExplain` in
+// packages/remnic-core/src/types.ts, but not yet attached to
+// LastRecallSnapshot or populated at runtime.
 interface RecallTierExplain {
   tier: "exact-cache" | "fuzzy-cache" | "direct-answer" | "hybrid" | "rerank-graph" | "agentic";
   tierReason: string;        // human-readable summary
@@ -17,20 +22,22 @@ interface RecallTierExplain {
 }
 ```
 
-In the current release the orchestrator only populates `tier: "direct-answer"` (observation mode). Future slices will populate it for the other tiers.
+The first slice that ships runtime behavior will populate `tier: "direct-answer"` only (observation mode). Later slices will populate it for the other tiers.
 
-## Surfaces
+## Planned surfaces
 
-### CLI
+All three surfaces below are **not yet implemented**. They are documented here as the target contract for the wiring slice. Do not rely on any of them until a subsequent PR lands their implementation; existing `recall/explain` (graph explanation) is unaffected.
+
+### CLI (planned)
 
 ```sh
 remnic recall-explain [--session <key>] [--format text|json]
 ```
 
 - **`--session`**: look up a specific session. Omit to read the most recent snapshot across sessions.
-- **`--format`**: `text` (default) for human output, `json` for a stable machine-readable payload. Any other value is rejected — no silent default.
+- **`--format`**: `text` (default) for human output, `json` for a stable machine-readable payload. Any other value will be rejected — no silent default.
 
-Example text output for a direct-answer hit:
+Planned text output for a direct-answer hit:
 
 ```
 === Recall Explain ===
@@ -52,15 +59,15 @@ source-anchors:
   - /memory/pm.md:10-14
 ```
 
-When no direct-answer verdict has been recorded the output still shows the snapshot metadata followed by `tier-explain: (not populated — direct-answer tier disabled or did not fire)`.
+When no direct-answer verdict has been recorded the output will still show the snapshot metadata followed by `tier-explain: (not populated — direct-answer tier disabled or did not fire)`.
 
-### HTTP
+### HTTP (planned)
 
 ```
 GET /engram/v1/recall/tier-explain[?session=<key>]
 ```
 
-Bearer auth (same as other `/engram/v1/*` routes). Returns JSON matching `toRecallExplainJson()`:
+Bearer auth (same as other `/engram/v1/*` routes). Will return JSON matching `toRecallExplainJson()`:
 
 ```json
 {
@@ -86,19 +93,21 @@ Bearer auth (same as other `/engram/v1/*` routes). Returns JSON matching `toReca
 
 When no snapshot exists yet, `snapshotFound: false`, `hasExplain: false`, and `tierExplain: null`.
 
-This endpoint is **orthogonal** to `POST /engram/v1/recall/explain`, which returns a graph-path explanation document (the pre-existing `recallExplain` operation).
+This endpoint is **orthogonal** to the already-shipped `POST /engram/v1/recall/explain`, which returns a graph-path explanation document (the pre-existing `recallExplain` operation). The two paths will coexist under different verbs and URLs.
 
-### MCP
+### MCP (planned)
 
-New tool:
+Planned new tool:
 
 - `remnic.recall_tier_explain` (canonical) / `engram.recall_tier_explain` (legacy alias)
 - Optional `sessionKey` argument. Omit to read the most recent snapshot.
-- Returns the same JSON payload as the HTTP endpoint.
+- Will return the same JSON payload as the HTTP endpoint.
+
+The existing `engram.recall_explain` MCP tool (graph-path explainer) is unrelated and unchanged.
 
 ## Reading the `filteredBy` list
 
-Labels identify which gate eliminated at least one candidate on the way to the final verdict. They are emitted regardless of eligibility so downstream consumers can see the narrowing steps.
+When populated, labels will identify which gate eliminated at least one candidate on the way to the final verdict. They will be emitted regardless of eligibility so downstream consumers can see the narrowing steps.
 
 - `non-active-status` — a candidate was filtered because its status wasn't `active`
 - `not-trusted-zone` — candidate's trust zone wasn't `trusted`
@@ -109,14 +118,14 @@ Labels identify which gate eliminated at least one candidate on the way to the f
 
 ## Caveats
 
-- `tierExplain` is populated only when `recallDirectAnswerEnabled: true` and direct-answer returned a concrete verdict. Disabled-by-default is intentional — see [advanced-retrieval.md](./advanced-retrieval.md) for the rationale.
-- The current release runs direct-answer in **observation mode** (post-recall, no short-circuit). Recall latency is the sum of the full retrieval path *plus* the eligibility gate (bounded: small corpus ≈ under 10ms, larger corpora scale linearly with memory count).
-- The payload's `tierExplain` is deep-copied defensively (see `recall-explain-renderer.ts`). Clients can mutate their local copy without tearing the store.
+- Once wired, `tierExplain` will populate only when `recallDirectAnswerEnabled: true` and direct-answer returns a concrete verdict. Disabled-by-default is intentional — see [advanced-retrieval.md](./advanced-retrieval.md) for the rationale.
+- The first runtime slice will run direct-answer in **observation mode** (post-recall, no short-circuit). Recall latency will be the sum of the full retrieval path *plus* the eligibility gate (bounded: small corpus ≈ under 10ms, larger corpora scale linearly with memory count).
+- The payload's `tierExplain` is designed to be deep-copied defensively by the shared renderer so clients can mutate their local copy without tearing the store.
 
 ## Related reading
 
-- [Advanced Retrieval](./advanced-retrieval.md) — sibling tiers (query expansion, re-ranking, feedback loop, procedural recall)
-- Module: `packages/remnic-core/src/direct-answer.ts` — pure eligibility gate
-- Module: `packages/remnic-core/src/direct-answer-wiring.ts` — source-agnostic wiring
-- Module: `packages/remnic-core/src/recall-explain-renderer.ts` — shared CLI / HTTP / MCP formatter
-- Bench: `packages/bench/src/benchmarks/remnic/retrieval-direct-answer/` — synthetic precision + latency fixture
+- [Advanced Retrieval](./advanced-retrieval.md) — sibling tiers (query expansion, re-ranking, feedback loop, procedural recall) and current status of the direct-answer slice.
+- Module: `packages/remnic-core/src/direct-answer.ts` — pure eligibility gate (shipped).
+- Module: `packages/remnic-core/src/direct-answer-wiring.ts` — source-agnostic wiring function `tryDirectAnswer` (shipped; not yet invoked by the orchestrator).
+- Type: `packages/remnic-core/src/types.ts` → `RecallTierExplain` (shipped as a type; not yet attached to `LastRecallSnapshot`).
+- Bench: `packages/bench/src/benchmarks/remnic/retrieval-direct-answer/` — synthetic precision + latency fixture.
