@@ -114,6 +114,12 @@ test("provider-backed judge parses fraction and percent score formats", async ()
     createFakeProvider("75%"),
   );
   assert.equal(await percentJudge.score("q", "predicted", "expected"), 0.75);
+
+  const outOfJudge = createProviderBackedJudge(
+    { provider: "openai", model: "gpt-5.4-mini" },
+    createFakeProvider("Score: 8 out of 10"),
+  );
+  assert.equal(await outOfJudge.score("q", "predicted", "expected"), 0.8);
 });
 
 test("provider-backed judge ignores date-like fractions and uses the trailing score", async () => {

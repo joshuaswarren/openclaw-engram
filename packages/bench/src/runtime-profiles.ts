@@ -58,6 +58,7 @@ const GATEWAY_SECRET_SUFFIXES = [
   "authtoken",
   "accesstoken",
   "clientsecret",
+  "secretkey",
   "authorization",
   "password",
   "secret",
