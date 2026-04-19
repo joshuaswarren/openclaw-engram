@@ -682,7 +682,11 @@
       },
       "binaryLifecycleBackendType": {
         "type": "string",
-        "enum": ["none", "filesystem", "s3"],
+        "enum": [
+          "none",
+          "filesystem",
+          "s3"
+        ],
         "default": "none",
         "description": "Storage backend for binary lifecycle mirror stage."
       },
@@ -1869,6 +1873,46 @@
         "type": "boolean",
         "default": false,
         "description": "If true, include temporally-superseded facts in recall results (for audit/history). Default: exclude."
+      },
+      "recallDirectAnswerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, recall checks whether a single validated high-trust memory can answer the query before QMD runs (issue #518). Default off until bench validation."
+      },
+      "recallDirectAnswerTokenOverlapFloor": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.55,
+        "description": "Minimum query↔memory token-overlap ratio for direct-answer eligibility. Set to 0 to disable the gate."
+      },
+      "recallDirectAnswerImportanceFloor": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.7,
+        "description": "Minimum calibrated importance score for direct-answer eligibility. Set to 0 to disable the gate."
+      },
+      "recallDirectAnswerAmbiguityMargin": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.15,
+        "description": "If the second-best candidate scores within this ratio of the top, direct-answer defers to hybrid."
+      },
+      "recallDirectAnswerEligibleTaxonomyBuckets": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "decisions",
+          "principles",
+          "conventions",
+          "runbooks",
+          "entities"
+        ],
+        "description": "Taxonomy category IDs eligible for direct-answer routing."
       },
       "memoryLinkingEnabled": {
         "type": "boolean",
@@ -3905,6 +3949,30 @@
       "label": "Include Superseded Facts In Recall",
       "advanced": true,
       "help": "If enabled, superseded facts still surface in recall (audit/history mode)."
+    },
+    "recallDirectAnswerEnabled": {
+      "label": "Direct-Answer Retrieval Tier",
+      "help": "Route validated high-trust queries to a fast direct-answer path before QMD (issue #518)."
+    },
+    "recallDirectAnswerTokenOverlapFloor": {
+      "label": "Direct-Answer Token Overlap Floor",
+      "advanced": true,
+      "placeholder": "0.55"
+    },
+    "recallDirectAnswerImportanceFloor": {
+      "label": "Direct-Answer Importance Floor",
+      "advanced": true,
+      "placeholder": "0.7"
+    },
+    "recallDirectAnswerAmbiguityMargin": {
+      "label": "Direct-Answer Ambiguity Margin",
+      "advanced": true,
+      "placeholder": "0.15"
+    },
+    "recallDirectAnswerEligibleTaxonomyBuckets": {
+      "label": "Direct-Answer Eligible Taxonomy Buckets",
+      "advanced": true,
+      "help": "Taxonomy category IDs eligible for direct-answer routing."
     },
     "memoryLinkingEnabled": {
       "label": "Memory Linking",

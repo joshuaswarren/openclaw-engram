@@ -35,3 +35,28 @@ export function coerceBool(value: unknown): boolean | undefined {
 export function coerceInstallExtension(value: unknown): boolean | undefined {
   return coerceBool(value);
 }
+
+/**
+ * Generic numeric coercion: accepts a finite number or a string that
+ * parses cleanly to one. Returns `undefined` otherwise so callers can
+ * fall back to a default.
+ *
+ * Rules:
+ * - number: returned as-is only if finite (NaN / ±Infinity → undefined).
+ * - string: trimmed, parsed with `Number()`. Returns `undefined` on
+ *   empty, NaN, or Infinity.
+ *
+ * CLAUDE.md gotcha #28: Coerce CLI values to expected types at input boundaries.
+ */
+export function coerceNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed.length === 0) return undefined;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
