@@ -245,6 +245,36 @@ test("parseConfig recallDirectAnswerEligibleTaxonomyBuckets non-array value fall
   ]);
 });
 
+// ── Issue #548: local LLM thinking-mode suppression ─────────────────────────
+
+test("parseConfig localLlmDisableThinking defaults to true (issue #548)", () => {
+  const result = parseConfig({});
+  assert.equal(result.localLlmDisableThinking, true);
+});
+
+test("parseConfig localLlmDisableThinking=false preserves operator opt-out", () => {
+  const result = parseConfig({ localLlmDisableThinking: false });
+  assert.equal(result.localLlmDisableThinking, false);
+});
+
+test('parseConfig localLlmDisableThinking="false" (CLI string) coerces to boolean false (rule 36)', () => {
+  // `--config localLlmDisableThinking=false` arrives as string; must
+  // coerce or the opt-out silently fails.
+  const result = parseConfig({ localLlmDisableThinking: "false" });
+  assert.equal(result.localLlmDisableThinking, false);
+});
+
+test('parseConfig localLlmDisableThinking="true" (CLI string) coerces to boolean true', () => {
+  const result = parseConfig({ localLlmDisableThinking: "true" });
+  assert.equal(result.localLlmDisableThinking, true);
+});
+
+test('parseConfig localLlmDisableThinking "0"/"no"/"off" all coerce to false', () => {
+  assert.equal(parseConfig({ localLlmDisableThinking: "0" }).localLlmDisableThinking, false);
+  assert.equal(parseConfig({ localLlmDisableThinking: "no" }).localLlmDisableThinking, false);
+  assert.equal(parseConfig({ localLlmDisableThinking: "off" }).localLlmDisableThinking, false);
+});
+
 test("parseConfig procedural numeric fields coerce from CLI-style strings (issue #519)", () => {
   const result = parseConfig({
     openaiApiKey: "sk-test",

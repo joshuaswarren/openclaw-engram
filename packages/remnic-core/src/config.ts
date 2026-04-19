@@ -1411,6 +1411,16 @@ export function parseConfig(raw: unknown): PluginConfig {
           : "http://localhost:1234/v1",
     localLlmFastTimeoutMs:
       typeof cfg.localLlmFastTimeoutMs === "number" ? cfg.localLlmFastTimeoutMs : 15_000,
+    // Thinking-mode suppression on the main local LLM (issue #548).
+    // Default true — extraction / consolidation produce structured
+    // JSON and gain nothing from chain-of-thought; thinking-capable
+    // models burn their token budget on reasoning and blow the
+    // default 60s timeout.  Operators who need thinking on the main
+    // client (e.g. for narrative tasks) can set this to false via
+    // config or --config CLI flag.  The fast-tier `fastLlm` always
+    // disables thinking and is unaffected by this flag.
+    localLlmDisableThinking:
+      coerceBool(cfg.localLlmDisableThinking) ?? true,
     // Gateway config (passed from index.ts for fallback AI)
     gatewayConfig: cfg.gatewayConfig as PluginConfig["gatewayConfig"],
     // Gateway model source (v9.2) — route LLM calls through gateway agent model chain

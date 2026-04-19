@@ -560,6 +560,7 @@ Set `modelSource` to `plugin` (or remove it) to restore the original behavior wh
 | `localLlmFastModel` | `""` | Optional model id for the fast local tier |
 | `localLlmFastUrl` | `http://localhost:1234/v1` | Optional dedicated base URL for the fast local tier |
 | `localLlmFastTimeoutMs` | `15000` | Timeout for the fast local tier |
+| `localLlmDisableThinking` | `true` | Suppress chain-of-thought / thinking mode on the main local LLM by sending `chat_template_kwargs: { enable_thinking: false }` (issue #548). Structured-output tasks like extraction and consolidation gain nothing from reasoning tokens; thinking-capable models (Qwen 3.5, Gemma 4, DeepSeek) commonly blow the 60s timeout before emitting content. Set to `false` to restore thinking for narrative tasks. The fast-tier client always disables thinking regardless of this flag. |
 | `localLlmHomeDir` | `(unset)` | Optional home-dir override used when resolving local helper binaries |
 | `localLmsCliPath` | `(auto)` | Path to `lms` CLI (LM Studio) |
 | `localLmsBinDir` | `(auto)` | LM Studio binary directory |
@@ -1270,6 +1271,7 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `localLlmFastModel` | `""` | `""` |
 | `localLlmFastUrl` | `http://localhost:1234/v1` | `http://localhost:1234/v1` |
 | `localLlmFastTimeoutMs` | `15000` | `15000` |
+| `localLlmDisableThinking` | `true` | `true` (skip reasoning tokens on structured extraction); set `false` if you want thinking on narrative tasks |
 | `hourlySummaryCronAutoRegister` | `false` | `false` |
 | `hourlySummariesExtendedEnabled` | `false` | `false` unless structured hourly summaries are useful |
 | `hourlySummariesIncludeToolStats` | `false` | `false` |

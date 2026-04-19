@@ -641,6 +641,21 @@ export interface PluginConfig {
   localLlmFastModel: string;
   localLlmFastUrl: string;
   localLlmFastTimeoutMs: number;
+  /**
+   * Suppress chain-of-thought / thinking mode on the main local LLM
+   * (issue #548).  When true, Remnic injects
+   * `chat_template_kwargs: { enable_thinking: false }` on every
+   * request so thinking-capable models (Qwen 3.5, Gemma 4, DeepSeek,
+   * etc.) skip reasoning tokens that structured-output tasks like
+   * extraction and consolidation cannot benefit from.  Default: true
+   * — the dominant localLlm use case is JSON-shaped extraction where
+   * thinking is pure latency tax and a common cause of 60s timeouts.
+   * Set to false to restore thinking for narrative tasks.
+   *
+   * The fast-tier client (`fastLlm`) always disables thinking; that
+   * contract is baked into "fast tier" and is unaffected by this flag.
+   */
+  localLlmDisableThinking: boolean;
   // Gateway config for fallback AI
   gatewayConfig?: GatewayConfig;
   // Gateway model source (v9.2) — route LLM calls through gateway agent model chain

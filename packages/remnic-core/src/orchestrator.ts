@@ -1415,6 +1415,14 @@ export class Orchestrator {
     );
     this.judgeVerdictCache = createVerdictCache();
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
+    // Issue #548: the main local-LLM client is used by extraction,
+    // consolidation, and other structured-output tasks that gain
+    // nothing from chain-of-thought reasoning.  Apply the operator's
+    // configured preference (default true) so thinking-capable models
+    // skip reasoning tokens and avoid the common 60s extraction
+    // timeout.  Operators can set `localLlmDisableThinking: false`
+    // when they want thinking enabled for narrative paths.
+    this.localLlm.disableThinking = config.localLlmDisableThinking;
     this.fastLlm = config.localLlmFastEnabled
       ? (() => {
           const client = new LocalLlmClient(
@@ -1426,6 +1434,9 @@ export class Orchestrator {
             },
             this.modelRegistry,
           );
+          // Fast-tier always suppresses thinking — the contract of
+          // `fastLlm` is "low latency at all costs" and that is
+          // independent of the main-client config.
           client.disableThinking = true;
           return client;
         })()
