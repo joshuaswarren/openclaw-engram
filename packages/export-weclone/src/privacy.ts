@@ -74,7 +74,7 @@ export function sweepPii(records: TrainingExportRecord[]): PrivacySweepResult {
   const recordHasRedaction = new Set<number>();
 
   const cleanRecords = records.map((record, idx) => {
-    const cleaned: Record<string, unknown> = { ...record };
+    const cleaned: TrainingExportRecord = { ...record };
 
     for (const field of SCANNED_FIELDS) {
       let value = record[field];
@@ -98,7 +98,7 @@ export function sweepPii(records: TrainingExportRecord[]): PrivacySweepResult {
       cleaned[field] = value;
     }
 
-    return cleaned as TrainingExportRecord;
+    return cleaned;
   });
 
   return {

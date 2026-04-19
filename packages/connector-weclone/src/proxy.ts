@@ -327,9 +327,12 @@ async function transparentProxy(
     headers: forwardHeaders,
   };
   if (body && method !== "GET" && method !== "HEAD") {
-    // Use Uint8Array (a valid BodyInit) instead of Buffer to satisfy
-    // RequestInit typing and forward raw bytes verbatim.
-    fetchInit.body = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+    // Copy into a plain ArrayBuffer so the forwarded request keeps the exact
+    // byte payload while remaining compatible with this package's BodyInit
+    // typing during declaration builds.
+    const rawBody = new ArrayBuffer(body.byteLength);
+    new Uint8Array(rawBody).set(body);
+    fetchInit.body = rawBody;
   }
 
   try {

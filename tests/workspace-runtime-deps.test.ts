@@ -19,10 +19,13 @@ const packageExpectations = [
       "@remnic/core": "workspace:^",
     },
   },
-  // Note: @remnic/plugin-openclaw intentionally has no @remnic/core dependency —
-  // it does not import @remnic/core at runtime. Keeping it would cause the
-  // workspace:^ protocol string to appear verbatim in the published package
-  // metadata when released via npm publish (see issue #403).
+  {
+    label: "OpenClaw plugin",
+    path: new URL("../packages/plugin-openclaw/package.json", testDir),
+    deps: {
+      "@remnic/core": "workspace:^",
+    },
+  },
 ] as const;
 
 test("runtime workspace packages preserve local linking in source manifests", async () => {
