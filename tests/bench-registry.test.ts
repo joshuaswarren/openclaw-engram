@@ -28,6 +28,8 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "page-versioning",
       "retrieval-personalization",
       "ingestion-entity-recall",
+      "ingestion-schema-completeness",
+      "ingestion-backlink-f1",
     ],
   );
   assert.deepEqual(
@@ -49,11 +51,13 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "remnic",
       "remnic",
       "remnic",
+      "remnic",
+      "remnic",
     ],
   );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,ingestion-entity-recall",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,ingestion-entity-recall,ingestion-backlink-f1",
   );
   // Schema completeness remains gated off until its adapter contract is wired.
   assert.equal(getBenchmark("ingestion-schema-completeness")?.runnerAvailable, false);
@@ -212,6 +216,39 @@ test("getBenchmark returns retrieval-personalization metadata with a runnable be
   assert.equal(benchmark?.runnerAvailable, true);
   assert.equal(benchmark?.tier, "remnic");
   assert.equal(benchmark?.meta.category, "retrieval");
+});
+
+test("getBenchmark returns ingestion-entity-recall metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("ingestion-entity-recall");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ingestion-entity-recall");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "ingestion");
+});
+
+test("getBenchmark returns ingestion-backlink-f1 metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("ingestion-backlink-f1");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ingestion-backlink-f1");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "ingestion");
+});
+
+test("getBenchmark returns ingestion-schema-completeness metadata (not yet runnable)", () => {
+  const benchmark = getBenchmark("ingestion-schema-completeness");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ingestion-schema-completeness");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, false);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "ingestion");
 });
 
 test("BenchmarkResult schema captures the phase-1 package contract", () => {

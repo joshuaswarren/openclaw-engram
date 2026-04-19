@@ -67,6 +67,14 @@ import {
   ingestionEntityRecallDefinition,
   runIngestionEntityRecallBenchmark,
 } from "./benchmarks/remnic/ingestion-entity-recall/runner.js";
+import {
+  ingestionSchemaCompletenessDefinition,
+  runIngestionSchemaCompletenessBenchmark,
+} from "./benchmarks/remnic/ingestion-schema-completeness/runner.js";
+import {
+  ingestionBacklinkF1Definition,
+  runIngestionBacklinkF1Benchmark,
+} from "./benchmarks/remnic/ingestion-backlink-f1/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -136,6 +144,15 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...ingestionEntityRecallDefinition,
     run: runIngestionEntityRecallBenchmark,
+  },
+  {
+    ...ingestionSchemaCompletenessDefinition,
+    runnerAvailable: false,
+    run: runIngestionSchemaCompletenessBenchmark,
+  },
+  {
+    ...ingestionBacklinkF1Definition,
+    run: runIngestionBacklinkF1Benchmark,
   },
 ];
 
