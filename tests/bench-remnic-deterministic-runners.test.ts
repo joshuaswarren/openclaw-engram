@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { BenchMemoryAdapter, SearchResult, Message } from "../packages/bench/src/index.js";
 import { runBenchmark } from "../packages/bench/src/index.js";
+import { RETRIEVAL_TEMPORAL_FIXTURE } from "../packages/bench/src/benchmarks/remnic/retrieval-temporal/fixture.js";
 
 class NoopMemoryAdapter implements BenchMemoryAdapter {
   async store(_sessionId: string, _messages: Message[]): Promise<void> {}
@@ -137,4 +138,32 @@ test("runBenchmark preserves quarter tokens for full retrieval-temporal cases", 
     task.details?.retrievedPageIds?.slice(0, 2),
     ["morgan-q3-training-plan", "morgan-coffee-preferences"],
   );
+});
+
+test("runBenchmark rejects overflowed timeline dates in retrieval-temporal evidence", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:morgan-q3-commitments");
+  assert.ok(temporalCase);
+
+  const targetPage = temporalCase.pages.find((page) => page.id === "morgan-q3-training-plan");
+  assert.ok(targetPage);
+
+  const originalCreated = targetPage.frontmatter.created;
+  const originalTimeline = targetPage.frontmatter.timeline ? [...targetPage.frontmatter.timeline] : undefined;
+
+  try {
+    targetPage.frontmatter.created = undefined;
+    targetPage.frontmatter.timeline = ["2026-08-32 impossible training block"];
+
+    const result = await runBenchmark("retrieval-temporal", {
+      mode: "full",
+      system: adapter,
+    });
+
+    const task = result.results.tasks.find((entry) => entry.taskId === "clean:morgan-q3-commitments");
+    assert.ok(task);
+    assert.equal(task.scores.qrel_at_1, 0);
+  } finally {
+    targetPage.frontmatter.created = originalCreated;
+    targetPage.frontmatter.timeline = originalTimeline;
+  }
 });
