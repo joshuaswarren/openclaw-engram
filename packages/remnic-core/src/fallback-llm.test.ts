@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FallbackLlmClient } from "./fallback-llm.ts";
-import { clearModelsJsonCache, __setModelsJsonForTest } from "./models-json.ts";
-import { clearSecretCache } from "./resolve-provider-secret.ts";
+import { FallbackLlmClient } from "./fallback-llm.js";
+import { clearModelsJsonCache, __setModelsJsonForTest } from "./models-json.js";
+import { clearSecretCache } from "./resolve-provider-secret.js";
 
-test("fallback llm prefers materialized models.json provider config over raw gateway stubs", { concurrency: false }, async () => {
+test("fallback llm prefers the active gateway provider config over models.json", { concurrency: false }, async () => {
   __setModelsJsonForTest({
     "custom-provider": {
       baseUrl: "https://materialized.example/v1",
@@ -39,6 +39,61 @@ test("fallback llm prefers materialized models.json provider config over raw gat
   const originalFetch = globalThis.fetch;
   let capturedUrl = "";
   globalThis.fetch = (async (url, init) => {
+    capturedUrl = String(url);
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await llm.chatCompletion(
+      [{ role: "user", content: "Say OK" }],
+      { temperature: 0, maxTokens: 16 },
+    );
+
+    assert.equal(response?.content, "ok");
+    assert.equal(capturedUrl, "https://raw.example/v1/chat/completions");
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearModelsJsonCache();
+    clearSecretCache();
+  }
+});
+
+test("fallback llm falls back to models.json for built-in providers missing from the active config", { concurrency: false }, async () => {
+  __setModelsJsonForTest({
+    "built-in-provider": {
+      baseUrl: "https://materialized.example/v1",
+      api: "openai-completions",
+      apiKey: "materialized-key",
+      models: [],
+    },
+  });
+  clearSecretCache();
+
+  const llm = new FallbackLlmClient({
+    agents: {
+      defaults: {
+        model: {
+          primary: "built-in-provider/demo-model",
+        },
+      },
+    },
+    models: {
+      providers: {},
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = (async (url) => {
     capturedUrl = String(url);
     return new Response(
       JSON.stringify({
@@ -137,6 +192,119 @@ test("fallback llm uses the Responses API for openai-responses transports", { co
         content: [{ type: "input_text", text: "Say OK" }],
       },
     ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearModelsJsonCache();
+    clearSecretCache();
+  }
+});
+
+test("fallback llm ignores echoed input_text blocks in responses output extraction", { concurrency: false }, async () => {
+  clearModelsJsonCache();
+  clearSecretCache();
+
+  const llm = new FallbackLlmClient({
+    agents: {
+      defaults: {
+        model: {
+          primary: "responses-provider/demo-model",
+        },
+      },
+    },
+    models: {
+      providers: {
+        "responses-provider": {
+          baseUrl: "https://responses.example/v1",
+          api: "openai-responses",
+          apiKey: "responses-key",
+          models: [],
+        },
+      },
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        output: [
+          {
+            type: "message",
+            content: [
+              { type: "input_text", text: "repeat the prompt" },
+              { type: "output_text", text: "real answer" },
+            ],
+          },
+        ],
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    )) as typeof fetch;
+
+  try {
+    const response = await llm.chatCompletion(
+      [{ role: "user", content: "Say OK" }],
+      { temperature: 0, maxTokens: 16 },
+    );
+
+    assert.equal(response?.content, "real answer");
+  } finally {
+    globalThis.fetch = originalFetch;
+    clearModelsJsonCache();
+    clearSecretCache();
+  }
+});
+
+test("fallback llm normalizes anthropic-compatible base URLs that omit /v1", { concurrency: false }, async () => {
+  clearModelsJsonCache();
+  clearSecretCache();
+
+  const llm = new FallbackLlmClient({
+    agents: {
+      defaults: {
+        model: {
+          primary: "anthropic-provider/demo-model",
+        },
+      },
+    },
+    models: {
+      providers: {
+        "anthropic-provider": {
+          baseUrl: "https://anthropic.example/api",
+          api: "anthropic-messages",
+          apiKey: "anthropic-key",
+          models: [],
+        },
+      },
+    },
+  });
+
+  const originalFetch = globalThis.fetch;
+  let capturedUrl = "";
+  globalThis.fetch = (async (url) => {
+    capturedUrl = String(url);
+    return new Response(
+      JSON.stringify({
+        content: [{ type: "text", text: "ok from anthropic" }],
+        usage: { input_tokens: 2, output_tokens: 3 },
+      }),
+      {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+  }) as typeof fetch;
+
+  try {
+    const response = await llm.chatCompletion(
+      [{ role: "user", content: "Say OK" }],
+      { temperature: 0, maxTokens: 16 },
+    );
+
+    assert.equal(response?.content, "ok from anthropic");
+    assert.equal(capturedUrl, "https://anthropic.example/api/v1/messages");
   } finally {
     globalThis.fetch = originalFetch;
     clearModelsJsonCache();

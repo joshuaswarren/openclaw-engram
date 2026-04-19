@@ -239,11 +239,11 @@ export class FallbackLlmClient {
     const providerId = parts[0];
     const modelId = parts.slice(1).join("/"); // Handle cases like "openai/gpt-5.2-turbo"
 
-    // Prefer the gateway's materialized models.json provider entry when
-    // available. It reflects the gateway's actual runtime transport wiring
-    // (base URLs, API families, built-in providers) rather than the raw
-    // user config stubs from openclaw.json.
-    const providerConfig = this.resolveFromModelsJson(providerId) ?? providers[providerId];
+    // Respect the active gateway config first so profile-local overrides and
+    // credentials win. Fall back to the materialized models.json only when
+    // the provider is absent from the loaded config (for built-in providers
+    // registered by the gateway at runtime).
+    const providerConfig = providers[providerId] ?? this.resolveFromModelsJson(providerId);
     if (!providerConfig) {
       log.warn(`fallback LLM: provider not found: ${providerId}`);
       return null;
@@ -553,7 +553,10 @@ export class FallbackLlmClient {
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
     options: FallbackLlmOptions,
   ): Promise<{ content: string; usage?: FallbackLlmResponse["usage"] } | null> {
-    const url = `${config.baseUrl.replace(/\/$/, "")}/messages`;
+    const base = config.baseUrl.replace(/\/$/, "");
+    const url = base.endsWith("/v1")
+      ? `${base}/messages`
+      : `${base}/v1/messages`;
 
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
@@ -649,7 +652,7 @@ function extractResponsesOutputText(data: {
     }
     for (const part of item.content ?? []) {
       if (
-        (part.type === "output_text" || part.type === "text" || part.type === "input_text") &&
+        (part.type === "output_text" || part.type === "text") &&
         typeof part.text === "string" &&
         part.text.trim().length > 0
       ) {
