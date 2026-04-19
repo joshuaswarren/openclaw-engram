@@ -45,6 +45,7 @@ export async function runRetrievalTemporalBenchmark(
 
   for (const sample of cases) {
     validateHalfOpenWindow(sample.window.start, sample.window.end);
+    validateExpectedPageIds(sample);
     const startedAt = performance.now();
     const rankedPages = rankPages(sample.query, sample.pages);
     const latencyMs = Math.round(performance.now() - startedAt);
@@ -202,6 +203,17 @@ function validateHalfOpenWindow(
   }
 
   return { startMs, endMs };
+}
+
+function validateExpectedPageIds(sample: RetrievalTemporalCase): void {
+  const pageIds = new Set(sample.pages.map((page) => page.id));
+  const missingPageIds = sample.expectedPageIds.filter((pageId) => !pageIds.has(pageId));
+
+  if (missingPageIds.length > 0) {
+    throw new Error(
+      `retrieval-temporal expectedPageIds must reference pages present in the fixture: ${sample.id} -> ${missingPageIds.join(", ")}`,
+    );
+  }
 }
 
 function collectEvidenceTimestamps(page: SchemaTierPage): number[] {

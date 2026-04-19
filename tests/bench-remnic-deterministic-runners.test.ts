@@ -213,6 +213,27 @@ test("runBenchmark rejects overflowed window timestamps even without expected te
   }
 });
 
+test("runBenchmark rejects retrieval-temporal cases whose expectedPageIds do not exist in fixture pages", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:alex-last-tuesday-meeting");
+  assert.ok(temporalCase);
+
+  const originalExpectedPageIds = [...temporalCase.expectedPageIds];
+
+  try {
+    temporalCase.expectedPageIds = ["missing-page-id"];
+
+    await assert.rejects(
+      () => runBenchmark("retrieval-temporal", {
+        mode: "full",
+        system: adapter,
+      }),
+      /retrieval-temporal expectedPageIds must reference pages present in the fixture/,
+    );
+  } finally {
+    temporalCase.expectedPageIds = originalExpectedPageIds;
+  }
+});
+
 test("runBenchmark rejects overflowed created timestamps in retrieval-temporal evidence", async () => {
   const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:morgan-q3-commitments");
   assert.ok(temporalCase);
