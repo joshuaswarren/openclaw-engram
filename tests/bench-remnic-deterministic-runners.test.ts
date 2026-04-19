@@ -97,3 +97,29 @@ test("runBenchmark applies retrieval-personalization limit as an exact task cap"
   assert.equal(result.results.tasks[0]?.taskId, "clean:alex-scope-q3-launch");
   assert.equal(result.results.aggregates["dirty_penalty.p_at_1"], undefined);
 });
+
+test("runBenchmark executes retrieval-temporal in quick mode", async () => {
+  const result = await runBenchmark("retrieval-temporal", {
+    mode: "quick",
+    system: adapter,
+  });
+
+  assert.equal(result.meta.benchmark, "retrieval-temporal");
+  assert.equal(result.meta.benchmarkTier, "remnic");
+  assert.equal(result.results.tasks.length, 2);
+  assert.equal(result.results.aggregates["clean.qrel_at_1"].mean, 1);
+  assert.equal(result.results.aggregates["dirty.qrel_at_1"].mean, 0);
+  assert.equal(result.results.aggregates["dirty_penalty.qrel_at_1"].mean, 1);
+});
+
+test("runBenchmark applies retrieval-temporal limit as an exact task cap", async () => {
+  const result = await runBenchmark("retrieval-temporal", {
+    mode: "quick",
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.taskId, "clean:alex-last-tuesday-meeting");
+  assert.equal(result.results.aggregates["dirty_penalty.qrel_at_1"], undefined);
+});

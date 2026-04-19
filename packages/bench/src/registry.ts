@@ -63,6 +63,10 @@ import {
   retrievalPersonalizationDefinition,
   runRetrievalPersonalizationBenchmark,
 } from "./benchmarks/remnic/retrieval-personalization/runner.js";
+import {
+  retrievalTemporalDefinition,
+  runRetrievalTemporalBenchmark,
+} from "./benchmarks/remnic/retrieval-temporal/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -128,6 +132,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...retrievalPersonalizationDefinition,
     run: runRetrievalPersonalizationBenchmark,
+  },
+  {
+    ...retrievalTemporalDefinition,
+    run: runRetrievalTemporalBenchmark,
   },
 ];
 
