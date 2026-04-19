@@ -85,3 +85,14 @@ test("runBenchmark executes retrieval-personalization in quick mode", async () =
   assert.equal(result.results.aggregates["dirty.p_at_1"].mean, 0.5);
   assert.equal(result.results.aggregates["dirty_penalty.p_at_1"].mean, 0.5);
 });
+
+test("runBenchmark applies retrieval-personalization limit as an exact task cap", async () => {
+  const result = await runBenchmark("retrieval-personalization", {
+    mode: "quick",
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.taskId, "clean:alex-scope-q3-launch");
+});

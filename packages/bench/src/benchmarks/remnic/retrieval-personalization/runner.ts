@@ -10,7 +10,7 @@ import type {
   ResolvedRunBenchmarkOptions,
   TaskResult,
 } from "../../../types.js";
-import { aggregateTaskScores, recallAtK } from "../../../scorer.js";
+import { aggregateTaskScores, precisionAtK } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import type { SchemaTierPage } from "../../../fixtures/schema-tiers/index.js";
 import {
@@ -54,9 +54,9 @@ export async function runRetrievalPersonalizationBenchmark(
       expected: expectedJson,
       actual: actualJson,
       scores: {
-        p_at_1: recallAtK(rankedPageIds, sample.expectedPageIds, 1),
-        p_at_3: recallAtK(rankedPageIds, sample.expectedPageIds, 3),
-        p_at_5: recallAtK(rankedPageIds, sample.expectedPageIds, 5),
+        p_at_1: precisionAtK(rankedPageIds, sample.expectedPageIds, 1),
+        p_at_3: precisionAtK(rankedPageIds, sample.expectedPageIds, 3),
+        p_at_5: precisionAtK(rankedPageIds, sample.expectedPageIds, 5),
       },
       latencyMs,
       tokens: { input: 0, output: 0 },
@@ -127,8 +127,7 @@ function loadCases(
     throw new Error("retrieval-personalization limit must be a positive integer");
   }
 
-  const groupedLimit = limit * 2;
-  const limited = baseCases.slice(0, groupedLimit);
+  const limited = baseCases.slice(0, limit);
   if (limited.length === 0) {
     throw new Error("retrieval-personalization fixture is empty after applying the requested limit.");
   }

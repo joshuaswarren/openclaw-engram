@@ -71,6 +71,24 @@ export function recallAtK(
   return hits / relevantSet.size;
 }
 
+export function precisionAtK(
+  retrieved: string[],
+  relevant: string[],
+  k: number,
+): number {
+  if (!Number.isInteger(k) || k <= 0) return 0;
+
+  const topK = retrieved.slice(0, k).map(normalizeText);
+  if (topK.length === 0) return 0;
+
+  const relevantSet = new Set(relevant.map(normalizeText));
+  const hits = new Set(
+    topK.filter((candidate) => relevantSet.has(candidate)),
+  ).size;
+
+  return hits / k;
+}
+
 export function containsAnswer(
   predicted: string,
   expected: string | number | unknown,

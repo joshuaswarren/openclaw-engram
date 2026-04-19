@@ -98,6 +98,7 @@ export {
   f1Score,
   rougeL,
   recallAtK,
+  precisionAtK,
   containsAnswer,
   llmJudgeScore,
   timed,
