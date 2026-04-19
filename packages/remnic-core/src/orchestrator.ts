@@ -4033,6 +4033,7 @@ export class Orchestrator {
     });
     const observationQuery = observationQueryPolicy.retrievalQuery || prompt;
     const expectedIdentity = {
+      writeNonce: expectedSnapshot.writeNonce,
       traceId: expectedSnapshot.traceId,
       recordedAt: expectedSnapshot.recordedAt,
     };
@@ -4076,7 +4077,9 @@ export class Orchestrator {
     prompt: string,
     sessionKey: string,
     namespaces: string[],
-    expectedIdentity: { traceId?: string; recordedAt?: string } | undefined,
+    expectedIdentity:
+      | { writeNonce?: string; traceId?: string; recordedAt?: string }
+      | undefined,
     parentAbortSignal?: AbortSignal,
   ): Promise<void> {
     const tierStart = Date.now();
