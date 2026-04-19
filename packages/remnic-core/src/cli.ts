@@ -2977,6 +2977,18 @@ export async function runBulkImportCliCommand(
     );
   }
 
+  // Guard: persistence isn't wired yet, so non-dryRun invocations must
+  // fail loudly BEFORE we read/parse the full file. Large exports would
+  // otherwise incur full parse/validate cost just to hit this check.
+  // The orchestrator integration will replace this guard with a real
+  // processBatch callback.
+  if (opts.dryRun !== true) {
+    throw new Error(
+      "Bulk import persistence is not yet wired. " +
+        "Use --dry-run to validate without persisting.",
+    );
+  }
+
   const inputRaw = await readFile(opts.file, "utf-8");
   let inputParsed: unknown;
   try {
@@ -2996,18 +3008,6 @@ export async function runBulkImportCliCommand(
     strict: opts.strict === true,
     platform: opts.platform,
   });
-
-  // Guard: persistence isn't wired yet, so non-dryRun invocations must
-  // fail loudly before we parse/validate the full file.  Returning a
-  // misleading "success" via silently-swallowed batch errors would hide
-  // the missing integration and produce false telemetry.  The orchestrator
-  // integration will replace this guard with a real processBatch callback.
-  if (opts.dryRun !== true) {
-    throw new Error(
-      "Bulk import persistence is not yet wired. " +
-        "Use --dry-run to validate without persisting.",
-    );
-  }
 
   const processBatch: ProcessBatchFn = async () => {
     // The pipeline never calls processBatch in dryRun mode, so reaching
