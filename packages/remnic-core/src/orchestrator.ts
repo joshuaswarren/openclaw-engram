@@ -1,7 +1,7 @@
 import { log } from "./logger.js";
 import path from "node:path";
 import os from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   mkdir,
@@ -8399,9 +8399,13 @@ export class Orchestrator {
     // Per-batch unique sessionKey keeps threading honest without matching
     // typical prefix/map routing rules.  Combined with writeNamespaceOverride
     // below, the storage target is independent of principal resolution.
+    // Uses crypto.randomBytes (not Math.random) so CodeQL does not flag a
+    // security-context insecure-randomness use even though this value never
+    // leaves the process; the bytes just need to be collision-resistant
+    // across concurrent bulk-import batches.
     const sessionKey =
       `bulk-import:batch:${Date.now().toString(36)}-` +
-      Math.random().toString(36).slice(2, 10);
+      randomBytes(6).toString("hex");
 
     const sessionTurns: BufferTurn[] = [];
     for (const turn of turns) {
