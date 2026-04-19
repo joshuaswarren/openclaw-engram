@@ -3,6 +3,8 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   BenchAggregateMetric,
+  BenchIntegritySplit,
+  BenchIntegritySummary,
   BenchMetricHighlight,
   BenchResultSummary,
   BenchResultSummaryPayload,
@@ -10,6 +12,45 @@ import type {
   BenchTaskSummary,
 } from "./bench-data.js";
 import { compareMetricNames, compareStrings, compareTimestampedRuns } from "./sort-utils.js";
+
+const DEFAULT_CANARY_FLOOR = 0.1;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/u;
+
+function isSha256Hex(value: unknown): value is string {
+  return typeof value === "string" && SHA256_HEX_PATTERN.test(value);
+}
+
+function shortHash(value: unknown): string | null {
+  return isSha256Hex(value) ? value.slice(0, 12) : null;
+}
+
+function resolveSplit(value: unknown): BenchIntegritySplit {
+  return value === "public" || value === "holdout" ? value : "unknown";
+}
+
+function computeIntegritySummary(meta: JsonRecord): BenchIntegritySummary {
+  const canaryScoreRaw = meta.canaryScore;
+  const canaryScore =
+    typeof canaryScoreRaw === "number" && Number.isFinite(canaryScoreRaw)
+      ? canaryScoreRaw
+      : null;
+
+  const sealsPresent =
+    isSha256Hex(meta.qrelsSealedHash) &&
+    isSha256Hex(meta.judgePromptHash) &&
+    isSha256Hex(meta.datasetHash);
+
+  return {
+    split: resolveSplit(meta.splitType),
+    sealsPresent,
+    canaryScore,
+    canaryFloor: DEFAULT_CANARY_FLOOR,
+    canaryUnderFloor: canaryScore === null ? null : canaryScore <= DEFAULT_CANARY_FLOOR,
+    qrelsSealedHashShort: shortHash(meta.qrelsSealedHash),
+    judgePromptHashShort: shortHash(meta.judgePromptHash),
+    datasetHashShort: shortHash(meta.datasetHash),
+  };
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -187,6 +228,7 @@ export function summarizeBenchmarkResult(
       typeof config.adapterMode === "string" ? config.adapterMode : "unknown",
     aggregateMetrics: metrics,
     taskSummaries: tasks,
+    integrity: computeIntegritySummary(meta),
     filePath,
   };
 }

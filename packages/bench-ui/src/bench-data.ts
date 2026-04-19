@@ -35,6 +35,25 @@ export interface BenchTaskSummary {
   scoreEntries: BenchTaskScoreEntry[];
 }
 
+export type BenchIntegritySplit = "public" | "holdout" | "unknown";
+
+export interface BenchIntegritySummary {
+  /** Which split produced this result. `unknown` on legacy results. */
+  split: BenchIntegritySplit;
+  /** True when qrels/judge/dataset hashes are all present and well-formed. */
+  sealsPresent: boolean;
+  /** True when the canary score is non-null and sits at or below the floor. */
+  canaryUnderFloor: boolean | null;
+  /** The canary score recorded with the result, when present. */
+  canaryScore: number | null;
+  /** The canary floor applied — defaults to 0.1. */
+  canaryFloor: number;
+  /** Truncated hashes for display (first 12 chars). */
+  qrelsSealedHashShort: string | null;
+  judgePromptHashShort: string | null;
+  datasetHashShort: string | null;
+}
+
 export interface BenchResultSummary {
   id: string;
   benchmark: string;
@@ -58,6 +77,7 @@ export interface BenchResultSummary {
   adapterMode: string;
   aggregateMetrics: BenchAggregateMetric[];
   taskSummaries: BenchTaskSummary[];
+  integrity: BenchIntegritySummary;
   filePath: string;
 }
 

@@ -5,6 +5,7 @@ import {
   formatTimestamp,
   humanizeIdentifier,
 } from "../bench-data";
+import { IntegrityBadge } from "./IntegrityBadge";
 
 export function ScoreCard({ card }: { card: BenchmarkCard }) {
   return (
@@ -31,6 +32,8 @@ export function ScoreCard({ card }: { card: BenchmarkCard }) {
           {formatDelta(card.delta)}
         </span>
       </div>
+
+      <IntegrityBadge summary={card.latest.integrity} />
 
       <dl className="score-card__meta">
         <div>

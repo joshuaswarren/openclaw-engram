@@ -10,6 +10,7 @@ import {
   filterRuns,
   getBenchmarkCards,
   getTrendPoints,
+  type BenchIntegritySummary,
   type BenchResultSummaryPayload,
 } from "../packages/bench-ui/src/bench-data.js";
 import {
@@ -19,6 +20,17 @@ import {
 } from "../packages/bench-ui/src/pages/BenchmarkDetail.js";
 import { canCompareBenchRuns, filterComparableCandidateRuns } from "../packages/bench-ui/src/pages/Compare.js";
 import { loadBenchResultSummaries } from "../packages/bench-ui/src/results.js";
+
+const FIXTURE_INTEGRITY: BenchIntegritySummary = {
+  split: "unknown",
+  sealsPresent: false,
+  canaryScore: null,
+  canaryFloor: 0.1,
+  canaryUnderFloor: null,
+  qrelsSealedHashShort: null,
+  judgePromptHashShort: null,
+  datasetHashShort: null,
+};
 
 test("bench UI loader summarizes valid benchmark JSON files and ignores invalid entries", async () => {
   const resultsDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-ui-"));
@@ -87,6 +99,62 @@ test("bench UI loader summarizes valid benchmark JSON files and ignores invalid 
   ]);
 });
 
+test("bench UI loader surfaces integrity metadata from result meta", async () => {
+  const resultsDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-ui-integrity-"));
+  await writeFile(
+    path.join(resultsDir, "holdout.json"),
+    JSON.stringify({
+      meta: {
+        id: "holdout-run",
+        benchmark: "longmemeval",
+        timestamp: "2026-04-18T10:00:00.000Z",
+        mode: "full",
+        splitType: "holdout",
+        qrelsSealedHash: "a".repeat(64),
+        judgePromptHash: "b".repeat(64),
+        datasetHash: "c".repeat(64),
+        canaryScore: 0.03,
+      },
+      cost: {},
+      results: { tasks: [], aggregates: {} },
+    }),
+  );
+
+  const payload = await loadBenchResultSummaries(resultsDir);
+  const summary = payload.summaries[0];
+  assert.ok(summary);
+  assert.equal(summary.integrity.split, "holdout");
+  assert.equal(summary.integrity.sealsPresent, true);
+  assert.equal(summary.integrity.canaryScore, 0.03);
+  assert.equal(summary.integrity.canaryUnderFloor, true);
+  assert.equal(summary.integrity.qrelsSealedHashShort, "a".repeat(12));
+});
+
+test("bench UI loader marks legacy results without integrity metadata as unknown split", async () => {
+  const resultsDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-ui-legacy-"));
+  await writeFile(
+    path.join(resultsDir, "legacy.json"),
+    JSON.stringify({
+      meta: {
+        id: "legacy-run",
+        benchmark: "longmemeval",
+        timestamp: "2026-04-18T10:00:00.000Z",
+        mode: "quick",
+      },
+      cost: {},
+      results: { tasks: [], aggregates: {} },
+    }),
+  );
+
+  const payload = await loadBenchResultSummaries(resultsDir);
+  const summary = payload.summaries[0];
+  assert.ok(summary);
+  assert.equal(summary.integrity.split, "unknown");
+  assert.equal(summary.integrity.sealsPresent, false);
+  assert.equal(summary.integrity.canaryScore, null);
+  assert.equal(summary.integrity.canaryUnderFloor, null);
+});
+
 test("bench UI loader returns an empty payload when the results directory is missing", async () => {
   const resultsDir = path.join(os.tmpdir(), "remnic-bench-ui-missing");
   const payload = await loadBenchResultSummaries(resultsDir);
@@ -122,6 +190,7 @@ test("getBenchmarkCards keeps delta null when a benchmark has only one run", () 
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/latest-run.json",
       },
     ],
@@ -166,6 +235,7 @@ test("getBenchmarkCards sorts benchmark runs before choosing latest and previous
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/older-run.json",
       },
       {
@@ -191,6 +261,7 @@ test("getBenchmarkCards sorts benchmark runs before choosing latest and previous
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/latest-run.json",
       },
     ],
@@ -230,6 +301,7 @@ test("filterRuns uses wall-clock time for recency windows", async (t) => {
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/stale-run.json",
       },
     ],
@@ -274,6 +346,7 @@ test("getTrendPoints uses wall-clock time for recency windows", async (t) => {
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/stale-run.json",
       },
     ],
@@ -310,6 +383,7 @@ test("recency filters exclude future runs beyond the current wall-clock anchor",
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/future-run.json",
       },
     ],
@@ -359,6 +433,7 @@ test("benchmark detail helpers keep single-run deltas null and sort low scorers 
       { taskId: "task-5", question: "Q5", expected: "", actual: "", latencyMs: 10, totalTokens: 1, primaryScore: 0.35, scoreEntries: [] },
       { taskId: "task-6", question: "Q6", expected: "", actual: "", latencyMs: 10, totalTokens: 1, primaryScore: 0.05, scoreEntries: [] },
     ],
+    integrity: FIXTURE_INTEGRITY,
     filePath: "/tmp/results/latest-run.json",
   });
 
@@ -394,6 +469,7 @@ test("resolveSelectedRunId falls back to the current benchmark run list", () => 
       adapterMode: "standalone",
       aggregateMetrics: [],
       taskSummaries: [],
+      integrity: FIXTURE_INTEGRITY,
       filePath: "/tmp/results/run-b.json",
     },
     {
@@ -419,6 +495,7 @@ test("resolveSelectedRunId falls back to the current benchmark run list", () => 
       adapterMode: "standalone",
       aggregateMetrics: [],
       taskSummaries: [],
+      integrity: FIXTURE_INTEGRITY,
       filePath: "/tmp/results/run-a.json",
     },
   ];
@@ -459,6 +536,7 @@ test("buildHistogram buckets boundary scores by floor semantics", () => {
       { taskId: "task-5", question: "", expected: "", actual: "", latencyMs: null, totalTokens: 0, primaryScore: 0.8, scoreEntries: [] },
       { taskId: "task-6", question: "", expected: "", actual: "", latencyMs: null, totalTokens: 0, primaryScore: 1, scoreEntries: [] },
     ],
+    integrity: FIXTURE_INTEGRITY,
     filePath: "/tmp/results/latest-run.json",
   };
 
@@ -495,6 +573,7 @@ test("compare helpers constrain candidate options to the selected benchmark", ()
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/baseline-run.json",
       },
       {
@@ -520,6 +599,7 @@ test("compare helpers constrain candidate options to the selected benchmark", ()
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/candidate-run.json",
       },
       {
@@ -545,6 +625,7 @@ test("compare helpers constrain candidate options to the selected benchmark", ()
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/other-run.json",
       },
     ],
@@ -589,6 +670,7 @@ test("buildProviderRows keeps the newest benchmark score for each provider", () 
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/latest-run.json",
       },
       {
@@ -614,6 +696,7 @@ test("buildProviderRows keeps the newest benchmark score for each provider", () 
         adapterMode: "standalone",
         aggregateMetrics: [],
         taskSummaries: [],
+        integrity: FIXTURE_INTEGRITY,
         filePath: "/tmp/results/older-run.json",
       },
     ],
