@@ -18,7 +18,6 @@ function normalize(value: string): string {
   // Unicode letters and digits, so multilingual names are not collapsed).
   return value
     .normalize("NFKC")
-    .trim()
     .toLowerCase()
     .replace(/[\p{P}\p{S}]/gu, " ")
     .replace(/\s+/g, " ")
