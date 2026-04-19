@@ -31,13 +31,29 @@ const packageExpectations = [
 test("runtime workspace packages preserve local linking in source manifests", async () => {
   for (const pkgSpec of packageExpectations) {
     const raw = await readFile(pkgSpec.path, "utf8");
-    const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> };
+    const pkg = JSON.parse(raw) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
 
     for (const [depName, expectedRange] of Object.entries(pkgSpec.deps)) {
       assert.equal(
         pkg.dependencies?.[depName],
         expectedRange,
         `${pkgSpec.label} should use ${expectedRange} for ${depName}`,
+      );
+    }
+
+    if (pkgSpec.label === "CLI") {
+      assert.equal(
+        pkg.dependencies?.["@remnic/export-weclone"],
+        undefined,
+        "CLI should not publish a runtime dependency on @remnic/export-weclone",
+      );
+      assert.equal(
+        pkg.devDependencies?.["@remnic/export-weclone"],
+        "workspace:*",
+        "CLI should keep @remnic/export-weclone as a build-time workspace dependency",
       );
     }
   }

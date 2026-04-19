@@ -1,36 +1,25 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
-import path from "node:path";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-async function publicPackageDirs(): Promise<string[]> {
-  const packagesDir = path.resolve("packages");
-  const dirs = await readdir(packagesDir, { withFileTypes: true });
-  const publicDirs: string[] = [];
-  for (const entry of dirs) {
-    if (!entry.isDirectory()) continue;
-    const pkgPath = path.join(packagesDir, entry.name, "package.json");
-    try {
-      const raw = await readFile(pkgPath, "utf8");
-      const pkg = JSON.parse(raw) as {
-        private?: boolean;
-        publishConfig?: { access?: string };
-      };
-      if (pkg.private) continue;
-      if (pkg.publishConfig?.access !== "public") continue;
-      publicDirs.push(`packages/${entry.name}`);
-    } catch {
-      continue;
-    }
-  }
-  return publicDirs.sort();
-}
+const expectedPublishDirs = [
+  "packages/remnic-core",
+  "packages/remnic-server",
+  "packages/remnic-cli",
+  "packages/hermes-provider",
+  "packages/plugin-openclaw",
+  "packages/shim-openclaw-engram",
+] as const;
 
-test("release workflow publish order includes every public workspace package", async () => {
+test("release workflow publish order matches the supported npm install surfaces", async () => {
   const workflow = await readFile(".github/workflows/release-and-publish.yml", "utf8");
-  const publicDirs = await publicPackageDirs();
+  const publishOrderMatch = workflow.match(/PUBLISH_ORDER=\(\s*([\s\S]*?)\s*\)/);
+  assert.ok(publishOrderMatch, "release workflow must define PUBLISH_ORDER");
+  const publishDirs = [...publishOrderMatch[1].matchAll(/packages\/[A-Za-z0-9_-]+/g)].map((match) => match[0]);
 
-  for (const pkgDir of publicDirs) {
+  assert.deepEqual(publishDirs, [...expectedPublishDirs]);
+
+  for (const pkgDir of expectedPublishDirs) {
     assert.match(
       workflow,
       new RegExp(`\\b${pkgDir.replace("/", "\\/")}\\b`),

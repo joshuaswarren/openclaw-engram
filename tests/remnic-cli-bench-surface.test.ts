@@ -45,6 +45,18 @@ test("workspace scripts expose bench list, bench run, and a quick smoke path", a
   assert.match(helper, /\["exec", "tsx", "packages\/remnic-cli\/src\/index\.ts", "bench"/);
 });
 
+test("CLI prebuild helper hydrates the bundled export adapter before building", async () => {
+  const helper = await readFile("scripts/ensure-cli-bench-build-deps.mjs", "utf8");
+
+  assert.match(helper, /packages", "remnic-core", "dist", "index\.js"/);
+  assert.match(helper, /packages", "bench", "dist", "index\.js"/);
+  assert.match(helper, /packages", "export-weclone", "dist", "index\.js"/);
+  assert.match(helper, /run\(\["--filter", pkgName, "build"\]\);/);
+  assert.match(helper, /ensurePackageBuild\(\s*"@remnic\/core"/);
+  assert.match(helper, /ensurePackageBuild\(\s*"@remnic\/bench"/);
+  assert.match(helper, /ensurePackageBuild\(\s*"@remnic\/export-weclone"/);
+});
+
 test("CLI README documents bench list and quick-run examples", async () => {
   const readme = await readFile("packages/remnic-cli/README.md", "utf8");
 
