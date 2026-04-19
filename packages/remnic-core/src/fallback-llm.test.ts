@@ -169,6 +169,7 @@ test("fallback llm uses the Responses API for openai-responses transports", { co
       [
         { role: "system", content: "Reply with OK only." },
         { role: "user", content: "Say OK" },
+        { role: "assistant", content: "Previous answer" },
       ],
       { temperature: 0, maxTokens: 16 },
     );
@@ -190,6 +191,10 @@ test("fallback llm uses the Responses API for openai-responses transports", { co
       {
         role: "user",
         content: [{ type: "input_text", text: "Say OK" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "output_text", text: "Previous answer" }],
       },
     ]);
   } finally {

@@ -502,7 +502,10 @@ export class FallbackLlmClient {
       .filter((message) => message.role !== "system")
       .map((message) => ({
         role: message.role,
-        content: [{ type: "input_text", text: message.content }],
+        content: [{
+          type: message.role === "assistant" ? "output_text" : "input_text",
+          text: message.content,
+        }],
       }));
 
     const body: Record<string, unknown> = {
