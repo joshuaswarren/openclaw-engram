@@ -176,7 +176,7 @@ test("bench results, baseline, and export route through the stored package resul
   assert.match(source, /if \(parsed\.action === "export"\) \{\s*await exportBenchPackageResult\(parsed\);/s);
   assert.match(source, /baseline save <name> \[run\]/);
   assert.match(source, /bench export <run> --format <json\|csv\|html>/);
-  assert.match(source, /const baselineDir = parsed\.baselinesDir \?\? resolveBenchBaselineDir\(\)/);
+  assert.match(source, /const baselineDir = parsed\.baselinesDir \?\? defaultBenchmarkBaselineDir\(\)/);
   assert.match(source, /const rendered = renderBenchmarkResultExport\(result, parsed\.format\);/);
   assert.match(source, /ERROR: export requires --format json, csv, or html\./);
   assert.match(source, /printBenchPackageSummary\(result, summary\.path, "Stored result"\);/);

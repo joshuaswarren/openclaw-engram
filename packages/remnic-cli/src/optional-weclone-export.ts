@@ -9,12 +9,24 @@ type WecloneExportModule = typeof import("@remnic/export-weclone");
 
 let cached: WecloneExportModule | null | undefined;
 
+function isModuleNotFoundError(err: unknown): boolean {
+  // Only swallow the "package isn't installed" codes. Any other import
+  // failure (syntax error inside the weclone package, init throw, etc.)
+  // must bubble up so broken releases are diagnosable — masking with
+  // the install hint would send users chasing the wrong problem.
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND";
+}
+
 async function tryImportWecloneExport(): Promise<WecloneExportModule | null> {
   try {
     const specifier = "@remnic/" + "export-weclone";
     return (await import(specifier)) as WecloneExportModule;
-  } catch {
-    return null;
+  } catch (err) {
+    if (isModuleNotFoundError(err)) {
+      return null;
+    }
+    throw err;
   }
 }
 

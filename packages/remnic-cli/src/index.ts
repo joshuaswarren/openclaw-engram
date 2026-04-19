@@ -32,7 +32,6 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import * as childProcess from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -572,19 +571,6 @@ async function launchBenchUi(resultsDir: string): Promise<void> {
   });
 }
 
-// Inlined copy of @remnic/bench's defaultBenchmarkBaselineDir so we don't
-// load the optional bench package just to resolve a path. The home-dir
-// fallback chain must match packages/bench/src/results-store.ts exactly
-// (HOME → USERPROFILE → os.homedir()) — diverging here would make the CLI
-// and the bench package resolve different baseline directories when
-// neither env var is set, so baselines saved by one would be invisible
-// to the other. resolveHomeDir()'s literal `~` fallback is the wrong
-// shape for this use case.
-function resolveBenchBaselineDir(): string {
-  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
-  return path.join(homeDir, ".remnic", "bench", "baselines");
-}
-
 // Resolve the dataset root. In a monorepo checkout we keep using
 // evals/datasets so local dev state stays stable; in a published CLI
 // install CLI_REPO_ROOT points under node_modules (not user-writable
@@ -925,8 +911,13 @@ async function showBenchPackageResults(parsed: ParsedBenchArgs): Promise<void> {
 }
 
 async function manageBenchBaselines(parsed: ParsedBenchArgs): Promise<void> {
-  const baselineDir = parsed.baselinesDir ?? resolveBenchBaselineDir();
+  // This handler already needs @remnic/bench for its core work, so we
+  // resolve the default baseline dir from the package too. Inlining the
+  // path helper here created a divergence risk with no payoff, since
+  // the loader runs on the very next line regardless. (cursor feedback
+  // on PR #545)
   const {
+    defaultBenchmarkBaselineDir,
     listBenchmarkBaselines,
     resolveBenchmarkResultReference,
     listBenchmarkResults,
@@ -934,6 +925,7 @@ async function manageBenchBaselines(parsed: ParsedBenchArgs): Promise<void> {
     saveBenchmarkBaseline,
     loadBenchmarkBaseline,
   } = await loadBenchModule();
+  const baselineDir = parsed.baselinesDir ?? defaultBenchmarkBaselineDir();
 
   if (parsed.baselineAction === "list") {
     const baselines = await listBenchmarkBaselines(baselineDir);
@@ -1596,17 +1588,44 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
   const service = new EngramAccessService(orchestrator);
 
   if (explain) {
-    const { runExplain } = await loadBenchModule();
-    const result = await runExplain(service, queryText);
-    if (json) {
-      console.log(JSON.stringify(result, null, 2));
-    } else {
-      console.log(`Query: ${result.query}`);
-      console.log(`Tiers used: ${result.tiersUsed.join(" → ")}`);
-      console.log(`Total duration: ${result.totalDurationMs}ms`);
-      for (const t of result.tierResults) {
-        console.log(`  ${t.tier}: ${t.latencyMs}ms (${t.resultsCount} results)`);
+    // `query --explain` is a core-install feature; if @remnic/bench is
+    // installed we use its full tier-breakdown explainer, otherwise we
+    // fall back to a minimal "run the recall and show timing" path so
+    // the flag keeps working without forcing users to install an
+    // optional package. (Codex feedback on PR #545)
+    const bench = await tryLoadBenchModule();
+    if (bench?.runExplain) {
+      const result = await bench.runExplain(service, queryText);
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Query: ${result.query}`);
+        console.log(`Tiers used: ${result.tiersUsed.join(" → ")}`);
+        console.log(`Total duration: ${result.totalDurationMs}ms`);
+        for (const t of result.tierResults) {
+          console.log(`  ${t.tier}: ${t.latencyMs}ms (${t.resultsCount} results)`);
+        }
       }
+      return;
+    }
+
+    const explainStart = Date.now();
+    const recallResult = await service.recall({ query: queryText, mode: "auto" });
+    const totalDurationMs = Date.now() - explainStart;
+    const memories = (recallResult as { memories?: Array<{ content: string }> }).memories ?? [];
+    const minimalExplain = {
+      query: queryText,
+      totalDurationMs,
+      resultsCount: memories.length,
+      note: "Install @remnic/bench for a full tier-level explain breakdown.",
+    };
+    if (json) {
+      console.log(JSON.stringify(minimalExplain, null, 2));
+    } else {
+      console.log(`Query: ${minimalExplain.query}`);
+      console.log(`Total duration: ${minimalExplain.totalDurationMs}ms`);
+      console.log(`Results: ${minimalExplain.resultsCount}`);
+      console.log(`Note: ${minimalExplain.note}`);
     }
     return;
   }
@@ -4497,16 +4516,33 @@ export async function runTrainingExport(
   redactedCount: number;
   outputPath: string | null;
 }> {
-  // Ensure the WeClone adapter (and any others registered via side-effect
-  // imports) are available before we ask the registry. `ensureWecloneExportAdapterRegistered`
-  // is idempotent — safe to call even when the adapter is already registered
-  // by a previous CLI invocation in the same process. The module itself is
-  // an optional install surface; loadWecloneExportModule() throws a
-  // user-facing install hint if @remnic/export-weclone is missing.
-  const wecloneExport = await loadWecloneExportModule();
-  wecloneExport.ensureWecloneExportAdapterRegistered();
+  // Resolve the adapter from the registry first. If the user picks a
+  // non-weclone format (registered elsewhere), we never touch the
+  // optional @remnic/export-weclone package. If the format isn't
+  // registered yet, we lazily load weclone to register its adapter and
+  // try again — that keeps weclone a true à-la-carte install while
+  // still supporting `--format weclone` out of the box.
+  // (Codex feedback on PR #545.)
+  type WecloneExportModule = Awaited<ReturnType<typeof loadWecloneExportModule>>;
+  let wecloneExport: WecloneExportModule | undefined;
+  const ensureWeclone = async (): Promise<WecloneExportModule> => {
+    if (!wecloneExport) {
+      wecloneExport = await loadWecloneExportModule();
+    }
+    return wecloneExport;
+  };
 
-  const adapter = getTrainingExportAdapter(args.format);
+  let adapter = getTrainingExportAdapter(args.format);
+  if (!adapter) {
+    // Either the format is weclone but the adapter hasn't been
+    // registered in this process yet, or it's genuinely unknown. Try
+    // registering weclone first; if the format still isn't found, fall
+    // through to the normal "unknown format" error with the real list
+    // of registered adapters.
+    const mod = await ensureWeclone();
+    mod.ensureWecloneExportAdapterRegistered();
+    adapter = getTrainingExportAdapter(args.format);
+  }
   if (!adapter) {
     const registered = listTrainingExportAdapters();
     const validList =
@@ -4549,14 +4585,16 @@ export async function runTrainingExport(
   const recordsRead = records.length;
 
   if (args.synthesize) {
-    records = wecloneExport.synthesizeTrainingPairs(records, {
+    const mod = await ensureWeclone();
+    records = mod.synthesizeTrainingPairs(records, {
       maxPairsPerRecord: args.maxPairsPerRecord,
     });
   }
 
   let redactedCount = 0;
   if (args.privacySweep) {
-    const swept = wecloneExport.sweepPii(records);
+    const mod = await ensureWeclone();
+    const swept = mod.sweepPii(records);
     records = swept.cleanRecords;
     redactedCount = swept.redactedCount;
   }

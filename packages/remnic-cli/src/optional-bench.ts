@@ -15,12 +15,25 @@ type BenchModule = typeof import("@remnic/bench");
 
 let cached: BenchModule | null | undefined;
 
+function isModuleNotFoundError(err: unknown): boolean {
+  // Node's ESM loader uses ERR_MODULE_NOT_FOUND; CJS and some bundlers
+  // surface the older MODULE_NOT_FOUND code. Either means "the package
+  // isn't installed" — anything else (syntax error, init throw, etc.)
+  // is a real bug inside @remnic/bench that we must surface, not mask
+  // with an install hint.
+  const code = (err as { code?: unknown } | null)?.code;
+  return code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND";
+}
+
 async function tryImportBench(): Promise<BenchModule | null> {
   try {
     const specifier = "@remnic/" + "bench";
     return (await import(specifier)) as BenchModule;
-  } catch {
-    return null;
+  } catch (err) {
+    if (isModuleNotFoundError(err)) {
+      return null;
+    }
+    throw err;
   }
 }
 
