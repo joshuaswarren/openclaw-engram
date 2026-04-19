@@ -68,6 +68,91 @@ test("toRecallExplainJson treats a null tierExplain the same as missing (hasExpl
   assert.equal(payload.tierExplain, null);
 });
 
+// Regression for codex-connector findings on PR #537: LastRecallStore.load()
+// is unvalidated, so malformed runtime values must never crash the renderer
+// or produce an internally inconsistent payload (hasExplain true while
+// tierExplain null).
+test("toRecallExplainJson treats falsy-but-defined tierExplain as absent (hasExplain false)", () => {
+  for (const bad of ["", 0, false]) {
+    const snapshot = makeSnapshot({
+      tierExplain: bad as unknown as RecallTierExplain | undefined,
+    });
+    const payload = toRecallExplainJson(snapshot);
+    assert.equal(payload.snapshotFound, true, `input=${JSON.stringify(bad)}`);
+    assert.equal(payload.hasExplain, false, `input=${JSON.stringify(bad)}`);
+    assert.equal(payload.tierExplain, null, `input=${JSON.stringify(bad)}`);
+  }
+});
+
+test("toRecallExplainJson defaults malformed array fields instead of throwing", () => {
+  const malformed = {
+    tier: "direct-answer",
+    tierReason: "stale-snapshot",
+    // Bad shape: should be string[]
+    filteredBy: null as unknown as string[],
+    candidatesConsidered: 3,
+    latencyMs: 5,
+  } as unknown as RecallTierExplain;
+  const payload = toRecallExplainJson(makeSnapshot({ tierExplain: malformed }));
+  assert.equal(payload.hasExplain, true);
+  assert.ok(payload.tierExplain);
+  // Normalized to empty array, not a crash
+  assert.deepEqual(payload.tierExplain.filteredBy, []);
+});
+
+test("toRecallExplainJson drops malformed sourceAnchors entries and lineRange", () => {
+  const malformed = {
+    tier: "direct-answer",
+    tierReason: "",
+    filteredBy: [],
+    candidatesConsidered: 0,
+    latencyMs: 0,
+    sourceAnchors: [
+      { path: "/ok.md", lineRange: [1, 2] },
+      { path: "/bad-range.md", lineRange: ["nope", 2] },
+      { noPath: true },
+      "not-an-object",
+    ],
+  } as unknown as RecallTierExplain;
+  const payload = toRecallExplainJson(makeSnapshot({ tierExplain: malformed }));
+  assert.ok(payload.tierExplain?.sourceAnchors);
+  assert.equal(payload.tierExplain.sourceAnchors.length, 2);
+  assert.deepEqual(payload.tierExplain.sourceAnchors[0], {
+    path: "/ok.md",
+    lineRange: [1, 2],
+  });
+  // Bad range dropped, path preserved
+  assert.deepEqual(payload.tierExplain.sourceAnchors[1], {
+    path: "/bad-range.md",
+  });
+});
+
+test("toRecallExplainJson coerces an unknown tier string to a safe fallback instead of crashing", () => {
+  const malformed = {
+    tier: "telepathic-hybrid",
+    tierReason: "",
+    filteredBy: [],
+    candidatesConsidered: 0,
+    latencyMs: 0,
+  } as unknown as RecallTierExplain;
+  const payload = toRecallExplainJson(makeSnapshot({ tierExplain: malformed }));
+  assert.ok(payload.tierExplain);
+  assert.equal(payload.tierExplain.tier, "hybrid");
+});
+
+test("toRecallExplainText renders a malformed tierExplain with empty filtered-by instead of throwing", () => {
+  const malformed = {
+    tier: "direct-answer",
+    tierReason: "stale",
+    filteredBy: null as unknown as string[],
+    candidatesConsidered: 1,
+    latencyMs: 2,
+  } as unknown as RecallTierExplain;
+  const out = toRecallExplainText(makeSnapshot({ tierExplain: malformed }));
+  assert.ok(out.includes("tier: direct-answer"));
+  assert.ok(out.includes("filtered-by: (none)"));
+});
+
 test("toRecallExplainJson serializes tierExplain with all fields", () => {
   const tierExplain = makeTierExplain();
   const payload = toRecallExplainJson(makeSnapshot({ tierExplain }));
