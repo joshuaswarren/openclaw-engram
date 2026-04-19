@@ -15,6 +15,10 @@ import type {
 } from "./types.js";
 import { chunkContent } from "./chunking.js";
 import { rescoreMemoryImportance } from "./importance.js";
+import {
+  parseRecallExplainFormat,
+  renderRecallExplain,
+} from "./recall-explain-renderer.js";
 import { exportJsonBundle } from "./transfer/export-json.js";
 import { exportMarkdownBundle } from "./transfer/export-md.js";
 import { backupMemoryDir } from "./transfer/backup.js";
@@ -3412,6 +3416,41 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               console.log(`  ${cat}: ${count}`);
             }
           }
+        });
+
+      cmd
+        .command("recall-explain")
+        .description(
+          "Show tier explain for the most recent recall (or a specific session)",
+        )
+        .option(
+          "--session <key>",
+          "Session key to look up; omit to use the most recent snapshot across sessions",
+        )
+        .option("--format <fmt>", "Output format: text (default) or json", "text")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const format = parseRecallExplainFormat(options.format);
+          await orchestrator.lastRecall.load();
+          const sessionKey =
+            typeof options.session === "string" && options.session.length > 0
+              ? options.session
+              : undefined;
+          // `orchestrator.lastRecall.getMostRecent()` sorts via
+          // `recordedAt.localeCompare(...)`, which throws if a stale/corrupt
+          // `last_recall.json` contains a non-string `recordedAt`. Degrade to
+          // the "no snapshot" response so the CLI stays usable even against
+          // malformed on-disk state (and let renderRecallExplain's own
+          // defensive normalization handle any surviving bad fields).
+          let snapshot: ReturnType<typeof orchestrator.lastRecall.get> = null;
+          try {
+            snapshot = sessionKey
+              ? orchestrator.lastRecall.get(sessionKey)
+              : orchestrator.lastRecall.getMostRecent();
+          } catch {
+            snapshot = null;
+          }
+          console.log(renderRecallExplain(snapshot, format));
         });
 
       cmd
