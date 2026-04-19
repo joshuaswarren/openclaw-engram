@@ -1084,6 +1084,267 @@ describe("WeCloneProxy", () => {
     const body = JSON.parse(await readResponse(res));
     assert.equal(body.data, "test", "Body should be decompressed and readable");
   });
+
+  it("matches chat completions route when URL has a query string", async () => {
+    let recallCalled = false;
+    let receivedBody: Record<string, unknown> | null = null;
+
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        receivedBody = JSON.parse(Buffer.concat(chunks).toString());
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "Hi" } }],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      recallCalled = true;
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [{ preview: "memory X", confidence: 0.9 }] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    // Simulate Azure-OpenAI style query string; route matching must not fall
+    // through to the transparent proxy.
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions?api-version=2024-01-01`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          messages: [
+            { role: "system", content: "You are helpful." },
+            { role: "user", content: "Hello" },
+          ],
+        }),
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.ok(recallCalled, "Recall must be invoked for chat URLs with query strings");
+    const msgs = (receivedBody as Record<string, unknown>).messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    const sys = msgs.find((m) => m.role === "system");
+    assert.ok(sys && sys.content.includes("memory X"), "Memory must be injected");
+  });
+
+  it("handles multimodal user message content (array of parts)", async () => {
+    let recallQuery: string | undefined;
+    let observeBody: Record<string, unknown> | null = null;
+
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "Describing the image." } }],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    let reqCount = 0;
+    const remnic = await createMockServer((req, res) => {
+      reqCount++;
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        const parsed = JSON.parse(Buffer.concat(chunks).toString()) as {
+          query?: string;
+          messages?: Array<{ role: string; content: unknown }>;
+        };
+        if (reqCount === 1) {
+          recallQuery = parsed.query;
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ results: [] }));
+        } else {
+          observeBody = parsed as unknown as Record<string, unknown>;
+          res.writeHead(200);
+          res.end(JSON.stringify({ ok: true }));
+        }
+      });
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    await fetch(`http://127.0.0.1:${proxy.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "weclone-avatar",
+        messages: [
+          { role: "system", content: "You are helpful." },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "What is in this image?" },
+              { type: "image_url", image_url: { url: "https://example.invalid/i.png" } },
+            ],
+          },
+        ],
+      }),
+    });
+
+    await new Promise((r) => setTimeout(r, 200));
+
+    assert.equal(
+      typeof recallQuery,
+      "string",
+      "Recall query must be a string even for multimodal content"
+    );
+    assert.equal(
+      recallQuery,
+      "What is in this image?",
+      "Text parts from multimodal content must be extracted for recall"
+    );
+    assert.ok(observeBody, "Observe must be sent");
+    const messages = (observeBody as Record<string, unknown>).messages as Array<{
+      role: string;
+      content: unknown;
+    }>;
+    assert.equal(messages[0].role, "user");
+    assert.equal(
+      messages[0].content,
+      "What is in this image?",
+      "Observe user content must be plain text extracted from multimodal parts"
+    );
+  });
+
+  it("normalizes trailing slashes on remnicDaemonUrl", async () => {
+    let recallUrl = "";
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "ok" } }],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((req, res) => {
+      if (!recallUrl) recallUrl = req.url ?? "";
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(
+      testConfig(weclone.port, remnic.port, {
+        // Trailing slash must not produce `//engram/v1/recall`.
+        remnicDaemonUrl: `http://127.0.0.1:${remnic.port}/`,
+      })
+    );
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    await fetch(`http://127.0.0.1:${proxy.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "weclone-avatar",
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+
+    assert.equal(
+      recallUrl,
+      "/engram/v1/recall",
+      "Recall path must not have double-slash from trailing-slash config"
+    );
+  });
+
+  it("preserves configured base path when forwarding to WeClone", async () => {
+    let receivedUrl = "";
+    const weclone = await createMockServer((req, res) => {
+      receivedUrl = req.url ?? "";
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        if (receivedUrl.startsWith("/weclone/v1/chat/completions")) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              choices: [{ message: { role: "assistant", content: "ok" } }],
+            })
+          );
+        } else if (receivedUrl.startsWith("/weclone/v1/models")) {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ data: [{ id: "m" }] }));
+        } else {
+          res.writeHead(404);
+          res.end();
+        }
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(
+      testConfig(weclone.port, remnic.port, {
+        wecloneApiUrl: `http://127.0.0.1:${weclone.port}/weclone/v1`,
+      })
+    );
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    // Chat completions: should prepend /weclone/v1.
+    const chatRes = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "m",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }
+    );
+    assert.equal(chatRes.status, 200);
+    assert.equal(
+      receivedUrl,
+      "/weclone/v1/chat/completions",
+      "Chat path must be prefixed with configured base path"
+    );
+
+    // Transparent proxy: GET /v1/models should also be prefixed.
+    const modelsRes = await fetch(`http://127.0.0.1:${proxy.port}/v1/models`);
+    assert.equal(modelsRes.status, 200);
+    assert.equal(
+      receivedUrl,
+      "/weclone/v1/models",
+      "Transparent proxy must also preserve base path"
+    );
+  });
 });
 
 describe("WeClone Installer", () => {

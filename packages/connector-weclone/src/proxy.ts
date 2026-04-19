@@ -136,12 +136,40 @@ function observeTurn(
 }
 
 /**
- * Extract the last user message from a chat completion messages array.
+ * Coerce an OpenAI chat message `content` into a plain text string.
+ *
+ * OpenAI chat messages can be either a string or an array of content
+ * parts (e.g. `[{type:"text",text:"..."},{type:"image_url",...}]`) for
+ * multimodal inputs. Recall/observe only operate on text, so we extract
+ * and concatenate the `text` parts. Returns an empty string if no text
+ * is present (e.g. image-only turn) so we skip recall rather than sending
+ * non-string payloads to the Remnic daemon.
  */
-function lastUserMessage(messages: ChatMessage[]): string {
+function extractTextContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  const parts: string[] = [];
+  for (const part of content) {
+    if (
+      part &&
+      typeof part === "object" &&
+      (part as { type?: unknown }).type === "text"
+    ) {
+      const text = (part as { text?: unknown }).text;
+      if (typeof text === "string") parts.push(text);
+    }
+  }
+  return parts.join("\n");
+}
+
+/**
+ * Extract the last user message's text content from a chat completion
+ * messages array. Handles both string and multimodal array content.
+ */
+function lastUserMessage(messages: Array<{ role: string; content: unknown }>): string {
   for (let i = messages.length - 1; i >= 0; i--) {
     if (messages[i].role === "user") {
-      return messages[i].content;
+      return extractTextContent(messages[i].content);
     }
   }
   return "";
@@ -188,17 +216,43 @@ function injectMemories(
 }
 
 /**
- * Derive the origin (scheme + host + port) from a URL string.
- * e.g. "http://localhost:8000/v1" -> "http://localhost:8000"
+ * Strip trailing slashes from a URL without using a regex quantifier
+ * on the same character, which CodeQL flags as polynomial ReDoS
+ * (`js/polynomial-redos`). A simple loop is O(n) and cannot backtrack.
  */
-function getOrigin(urlStr: string): string {
+function stripTrailingSlashes(s: string): string {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47 /* '/' */) {
+    end--;
+  }
+  return end === s.length ? s : s.slice(0, end);
+}
+
+/**
+ * Parse a URL string into { origin, basePath } where `basePath` is the
+ * configured path prefix (e.g. "/weclone/v1") with any trailing slashes
+ * stripped. Falls back safely for malformed inputs.
+ */
+function splitBaseUrl(urlStr: string): { origin: string; basePath: string } {
   try {
     const parsed = new URL(urlStr);
-    return parsed.origin;
+    const basePath = stripTrailingSlashes(parsed.pathname);
+    return { origin: parsed.origin, basePath };
   } catch {
-    // Fallback: strip trailing path components
-    const match = urlStr.match(/^(https?:\/\/[^/]+)/);
-    return match ? match[1] : urlStr;
+    // Fallback: strip trailing path components without ReDoS-prone regex.
+    // Split on the first "/" after the scheme.
+    const schemeEnd = urlStr.indexOf("://");
+    if (schemeEnd === -1) {
+      return { origin: stripTrailingSlashes(urlStr), basePath: "" };
+    }
+    const afterScheme = urlStr.slice(schemeEnd + 3);
+    const pathStart = afterScheme.indexOf("/");
+    if (pathStart === -1) {
+      return { origin: urlStr, basePath: "" };
+    }
+    const origin = urlStr.slice(0, schemeEnd + 3 + pathStart);
+    const basePath = stripTrailingSlashes(afterScheme.slice(pathStart));
+    return { origin, basePath };
   }
 }
 
@@ -246,27 +300,57 @@ const HOP_BY_HOP_RESPONSE_HEADERS = new Set([
 
 /**
  * Forward a request transparently to the WeClone API.
- * Uses the origin of wecloneApiUrl so that incoming paths
- * (e.g. /v1/models) map 1:1 to upstream paths.
+ *
+ * If the configured WeClone URL has a non-empty base path (e.g.
+ * "https://host/weclone/v1"), the proxy forwards incoming request paths
+ * such that "/v1/models" maps to "https://host/weclone/v1/models". For
+ * URLs without a base path, paths map 1:1 to the upstream origin.
+ *
+ * The request body (if any) is forwarded as raw bytes via Uint8Array so
+ * that multipart/binary uploads are not corrupted.
  *
  * Reads the full upstream response before writing to the client
  * to avoid partial-header or hanging-body issues.
  */
 async function transparentProxy(
-  wecloneApiUrl: string,
+  weclone: { origin: string; basePath: string },
   method: string,
   path: string,
   headers: Record<string, string>,
   body: Buffer | null,
   res: http.ServerResponse
 ): Promise<void> {
-  const origin = getOrigin(wecloneApiUrl);
-  const targetUrl = `${origin}${path}`;
+  // Map the client-facing path into an upstream path.
+  //
+  // The proxy exposes an OpenAI-compatible `/v1/...` surface. When the
+  // configured `wecloneApiUrl` itself already ends in `/v1` (or any
+  // path prefix), treat the configured prefix as the upstream mount
+  // point and rewrite `/v1/<rest>` to `<basePath>/<rest>`.
+  //
+  // - basePath "" (no prefix): forward path as-is.
+  // - basePath "/v1": "/v1/models" -> "/v1/models" (no change).
+  // - basePath "/weclone/v1": "/v1/models" -> "/weclone/v1/models".
+  //
+  // Split off any query string so rewriting operates on the pathname only.
+  const qIdx = path.indexOf("?");
+  const rawPath = qIdx === -1 ? path : path.slice(0, qIdx);
+  const querySuffix = qIdx === -1 ? "" : path.slice(qIdx);
+  let upstreamPathname = rawPath;
+  if (weclone.basePath.length > 0) {
+    if (rawPath === "/v1" || rawPath.startsWith("/v1/")) {
+      upstreamPathname = `${weclone.basePath}${rawPath.slice(3)}`;
+    } else if (!rawPath.startsWith(weclone.basePath)) {
+      upstreamPathname = `${weclone.basePath}${rawPath}`;
+    }
+  }
+  const targetUrl = `${weclone.origin}${upstreamPathname}${querySuffix}`;
 
   // Remove hop-by-hop request headers and replace host with upstream origin
   const forwardHeaders: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
     if (key === "host" || HOP_BY_HOP_REQUEST_HEADERS.has(key)) continue;
+    // content-length is recomputed by fetch() for the forwarded body
+    if (key === "content-length") continue;
     forwardHeaders[key] = value;
   }
 
@@ -275,7 +359,9 @@ async function transparentProxy(
     headers: forwardHeaders,
   };
   if (body && method !== "GET" && method !== "HEAD") {
-    fetchInit.body = body as unknown as BodyInit;
+    // Use Uint8Array (a valid BodyInit) instead of Buffer to satisfy
+    // RequestInit typing and forward raw bytes verbatim.
+    fetchInit.body = new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
   }
 
   try {
@@ -306,9 +392,14 @@ async function transparentProxy(
  * Create a WeClone proxy instance.
  */
 export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy {
-  // Normalize wecloneApiUrl: strip trailing slashes to prevent double-slash
-  // when appending path segments like /chat/completions.
-  const wecloneApiUrl = config.wecloneApiUrl.replace(/\/+$/, "");
+  // Normalize upstream URLs: strip trailing slashes to prevent double-slash
+  // when appending path segments. Use a loop (not regex) to avoid the
+  // polynomial-ReDoS class flagged by CodeQL for `/\/+$/`.
+  const wecloneApiUrl = stripTrailingSlashes(config.wecloneApiUrl);
+  const remnicDaemonUrl = stripTrailingSlashes(config.remnicDaemonUrl);
+  // Pre-split the WeClone URL so transparentProxy and the chat path can
+  // honor a configured base path (e.g. "/weclone/v1").
+  const wecloneParts = splitBaseUrl(wecloneApiUrl);
 
   const sessionMapper: SessionMapper =
     config.sessionStrategy === "caller-id"
@@ -325,8 +416,21 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
     const url = req.url ?? "/";
     const method = (req.method ?? "GET").toUpperCase();
 
+    // Parse the request URL into a pathname (stripping query string and
+    // normalizing trailing slash). Using pathname for route matching avoids
+    // silently falling through when clients append query params like
+    // `?api-version=2023-05-15` (common with Azure OpenAI-compatible SDKs).
+    let pathname = url;
+    const queryStart = url.indexOf("?");
+    if (queryStart !== -1) pathname = url.slice(0, queryStart);
+    // Normalize trailing slash for route matching only (not for forwarding).
+    const normalizedPathname =
+      pathname.length > 1 && pathname.endsWith("/")
+        ? pathname.slice(0, -1)
+        : pathname;
+
     // --- Health check ---
-    if (url === "/health" && method === "GET") {
+    if (normalizedPathname === "/health" && method === "GET") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         status: "ok",
@@ -336,7 +440,7 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
     }
 
     // --- Chat completions with memory injection ---
-    if (url === "/v1/chat/completions" && method === "POST") {
+    if (normalizedPathname === "/v1/chat/completions" && method === "POST") {
       let bodyStr: string;
       try {
         bodyStr = await readBody(req);
@@ -357,15 +461,20 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
 
       const headers = req.headers as Record<string, string | string[] | undefined>;
       const sessionKey = sessionMapper.resolve(headers, parsed);
-      const messages = (parsed.messages ?? []) as ChatMessage[];
-      const query = lastUserMessage(messages);
+      // Messages may contain multimodal content-parts arrays; keep them
+      // untyped and validate strings at each use site.
+      const rawMessages = (parsed.messages ?? []) as Array<{
+        role: string;
+        content: unknown;
+      }>;
+      const query = lastUserMessage(rawMessages);
 
       // Recall memories (graceful degradation on failure)
       let memoryBlock = "";
       if (query.length > 0) {
         try {
           const memories = await recallMemories(
-            config.remnicDaemonUrl,
+            remnicDaemonUrl,
             sessionKey,
             query,
             config.remnicAuthToken
@@ -380,20 +489,56 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
         }
       }
 
-      // Inject memories into messages
-      const modifiedMessages = injectMemories(
-        messages,
+      // Build a string-content view for memory injection only. The
+      // forwarded payload preserves the original message shapes so
+      // multimodal parts are not flattened on the way to WeClone.
+      const stringMessages: ChatMessage[] = rawMessages.map((m) => ({
+        role: m.role,
+        content: extractTextContent(m.content),
+      }));
+      const modifiedStringMessages = injectMemories(
+        stringMessages,
         memoryBlock,
         config.memoryInjection.position
       );
 
+      // Merge: keep original (possibly multimodal) messages, but use the
+      // modified system prompt text from the injection step.
+      const outMessages: Array<{ role: string; content: unknown }> = [];
+      // If injection added a leading synthetic system message (no original
+      // system existed), surface it as a string-content message.
+      const hadSystem = rawMessages.some((m) => m.role === "system");
+      if (!hadSystem && modifiedStringMessages[0]?.role === "system") {
+        outMessages.push({
+          role: "system",
+          content: modifiedStringMessages[0].content,
+        });
+      }
+      for (const m of rawMessages) {
+        if (m.role === "system") {
+          const updated = modifiedStringMessages.find((s) => s.role === "system");
+          outMessages.push({
+            role: "system",
+            content: updated ? updated.content : extractTextContent(m.content),
+          });
+        } else {
+          outMessages.push(m);
+        }
+      }
+
       const modifiedBody = {
         ...parsed,
-        messages: modifiedMessages,
+        messages: outMessages,
       };
 
-      // Forward to WeClone
-      const targetUrl = `${wecloneApiUrl}/chat/completions`;
+      // Forward to WeClone. If `wecloneApiUrl` has a path prefix (the
+      // common `/v1` or custom mounts like `/weclone/v1`), forward to
+      // `${basePath}/chat/completions`. If the configured URL has no
+      // base path at all, default to the standard OpenAI `/v1/chat/completions`.
+      const chatBase = wecloneParts.basePath.length > 0
+        ? wecloneParts.basePath
+        : "/v1";
+      const targetUrl = `${wecloneParts.origin}${chatBase}/chat/completions`;
       const forwardHeaders: Record<string, string> = {
         "Content-Type": "application/json",
       };
@@ -465,7 +610,7 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
             }
             if (contentParts.length > 0 && query.length > 0) {
               observeTurn(
-                config.remnicDaemonUrl,
+                remnicDaemonUrl,
                 sessionKey,
                 query,
                 contentParts.join(""),
@@ -495,7 +640,7 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
 
         // Fire-and-forget observe
         if (query.length > 0 && assistantReply.length > 0) {
-          observeTurn(config.remnicDaemonUrl, sessionKey, query, assistantReply, config.remnicAuthToken);
+          observeTurn(remnicDaemonUrl, sessionKey, query, assistantReply, config.remnicAuthToken);
         }
 
         // Return upstream response to caller, stripping hop-by-hop headers
@@ -518,10 +663,10 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
     }
 
     // --- All other paths: transparent proxy ---
-    // Use raw bytes to avoid corrupting binary/multipart uploads
+    // Use raw bytes to avoid corrupting binary/multipart uploads.
     const body = method !== "GET" && method !== "HEAD" ? await readRawBody(req) : null;
     const flat = flattenHeaders(req.headers);
-    await transparentProxy(wecloneApiUrl, method, url, flat, body, res);
+    await transparentProxy(wecloneParts, method, url, flat, body, res);
   };
 
   return {
