@@ -2977,6 +2977,20 @@ export async function runBulkImportCliCommand(
     );
   }
 
+  // Guard: persistence isn't wired yet, so non-dryRun invocations must
+  // fail loudly BEFORE reading/parsing the file.  Running the full parse
+  // would incur file I/O and memory pressure (imports can be 100k+
+  // messages) only to inevitably throw.  The adapter check above still
+  // fires first so `--source <unknown>` surfaces the more-actionable
+  // "Unknown bulk-import source" error.  The orchestrator integration
+  // will replace this guard with a real processBatch callback.
+  if (opts.dryRun !== true) {
+    throw new Error(
+      "Bulk import persistence is not yet wired. " +
+        "Use --dry-run to validate without persisting.",
+    );
+  }
+
   const inputRaw = await readFile(opts.file, "utf-8");
   let inputParsed: unknown;
   try {
@@ -2998,13 +3012,12 @@ export async function runBulkImportCliCommand(
   });
 
   const processBatch: ProcessBatchFn = async () => {
-    // The real extraction callback will be wired when the
-    // orchestrator integration lands in a later PR.
-    // The pipeline never calls processBatch in dryRun mode,
-    // so reaching here means a non-dryRun invocation.
+    // The pipeline never calls processBatch in dryRun mode, so reaching
+    // here would indicate a bug in the pipeline.  Throwing here provides
+    // a defensive failure mode; the guard above is the primary protection.
     throw new Error(
       "Bulk import persistence is not yet wired. " +
-        "Use --dryRun to validate without persisting.",
+        "Use --dry-run to validate without persisting.",
     );
   };
 

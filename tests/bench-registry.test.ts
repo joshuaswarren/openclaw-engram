@@ -69,11 +69,12 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
   );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,ingestion-entity-recall,ingestion-backlink-f1,assistant-morning-brief,assistant-meeting-prep,assistant-next-best-action,assistant-synthesis",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,ingestion-entity-recall,ingestion-backlink-f1,ingestion-setup-friction,assistant-morning-brief,assistant-meeting-prep,assistant-next-best-action,assistant-synthesis",
   );
-  // Schema completeness, setup friction, and citation accuracy remain gated off until their adapter contracts are wired.
+  // Schema completeness and citation accuracy remain gated off until their adapter contracts are wired.
+  // Setup friction was wired up in PR #498 and is now runner-available.
   assert.equal(getBenchmark("ingestion-schema-completeness")?.runnerAvailable, false);
-  assert.equal(getBenchmark("ingestion-setup-friction")?.runnerAvailable, false);
+  assert.equal(getBenchmark("ingestion-setup-friction")?.runnerAvailable, true);
   assert.equal(getBenchmark("ingestion-citation-accuracy")?.runnerAvailable, false);
 });
 
