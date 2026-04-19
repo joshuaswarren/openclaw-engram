@@ -8,6 +8,7 @@ import {
   formatTimestamp,
   humanizeIdentifier,
 } from "../bench-data";
+import { IntegrityBadge } from "./IntegrityBadge";
 
 export function RunTable({
   runs,
@@ -34,6 +35,7 @@ export function RunTable({
             <th>Providers</th>
             <th>Score</th>
             {showDelta ? <th>Delta</th> : null}
+            <th>Integrity</th>
             <th>Latency</th>
             <th>Cost</th>
           </tr>
@@ -63,6 +65,9 @@ export function RunTable({
               </td>
               <td>{formatMetricValue(run.primaryScore)}</td>
               {showDelta ? <td>{formatDelta(run.delta ?? null)}</td> : null}
+              <td>
+                <IntegrityBadge summary={run.integrity} />
+              </td>
               <td>{formatDuration(run.totalLatencyMs)}</td>
               <td>{formatCurrency(run.estimatedCostUsd)}</td>
             </tr>
