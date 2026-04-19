@@ -1506,9 +1506,10 @@ async function runBenchViaPackage(
       runtimeProfile: plan.runtime.profile,
       systemProvider: plan.runtime.systemProvider,
       judgeProvider: plan.runtime.judgeProvider,
-      remnicConfig: plan.runtime.remnicConfig,
+      remnicConfig: plan.runtime.effectiveRemnicConfig,
       system,
     });
+    result.config.remnicConfig = plan.runtime.remnicConfig;
     const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
     if (parsed.json) {
       console.log(JSON.stringify(result, null, 2));
@@ -1556,9 +1557,10 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
         runtimeProfile: plan.runtime.profile,
         systemProvider: plan.runtime.systemProvider,
         judgeProvider: plan.runtime.judgeProvider,
-        remnicConfig: plan.runtime.remnicConfig,
+        remnicConfig: plan.runtime.effectiveRemnicConfig,
         system,
       });
+      result.config.remnicConfig = plan.runtime.remnicConfig;
       const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
       if (parsed.json) {
         console.log(JSON.stringify(result, null, 2));
