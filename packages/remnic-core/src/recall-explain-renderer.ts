@@ -44,7 +44,11 @@ export function toRecallExplainJson(
     };
   }
   return {
-    hasExplain: snapshot.tierExplain !== undefined,
+    // Consistent null/undefined guard with the tierExplain field below
+    // (truthiness): hasExplain must never be true while tierExplain is null.
+    // Cursor Bugbot flagged the prior `!== undefined` check as inconsistent
+    // because `LastRecallStore.load()` can produce a null tierExplain.
+    hasExplain: snapshot.tierExplain != null,
     snapshotFound: true,
     sessionKey: snapshot.sessionKey,
     recordedAt: snapshot.recordedAt,

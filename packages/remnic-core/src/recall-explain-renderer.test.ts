@@ -52,6 +52,22 @@ test("toRecallExplainJson reports missing tierExplain when snapshot exists witho
   assert.equal(payload.tierExplain, null);
 });
 
+// Regression for cursor Bugbot finding on PR #537: LastRecallStore.load() does
+// an unvalidated JSON.parse with a type assertion, so tierExplain can be null
+// at runtime even though the TS type says undefined-or-present. hasExplain and
+// the tierExplain field must stay in sync: both null → hasExplain=false.
+test("toRecallExplainJson treats a null tierExplain the same as missing (hasExplain=false)", () => {
+  const snapshot = makeSnapshot({
+    // Force null past the type system to simulate a value that survived an
+    // unvalidated JSON.parse.
+    tierExplain: null as unknown as RecallTierExplain | undefined,
+  });
+  const payload = toRecallExplainJson(snapshot);
+  assert.equal(payload.snapshotFound, true);
+  assert.equal(payload.hasExplain, false);
+  assert.equal(payload.tierExplain, null);
+});
+
 test("toRecallExplainJson serializes tierExplain with all fields", () => {
   const tierExplain = makeTierExplain();
   const payload = toRecallExplainJson(makeSnapshot({ tierExplain }));
