@@ -1704,15 +1704,37 @@ export function removeConnector(connectorId: string): RemoveResult {
           "(likely a legacy install predating proxyConfigPath provenance).",
       );
     } else {
-      try {
-        if (fs.existsSync(weCloneProxyConfigPath)) {
-          fs.unlinkSync(weCloneProxyConfigPath);
-          notes.push(`Removed WeClone proxy config: ${weCloneProxyConfigPath}`);
+      // Safety gate: validate the persisted path before unlinking. Because
+      // `weCloneProxyConfigPath` is loaded from user-controlled JSON, a
+      // malformed or tampered weclone.json could make `removeConnector` delete
+      // an arbitrary file. Restrict deletion to paths that are:
+      //   1. Absolute (relative paths are CWD-dependent and were never written
+      //      by the installer).
+      //   2. End with the known suffix "connectors/weclone.json" — the only
+      //      filename the installer ever writes, regardless of base directory.
+      // If either check fails, skip the unlink and surface an error so the
+      // operator can clean up manually. Failing closed is safer than silently
+      // deleting an unexpected path.
+      const expectedSuffix = path.join("connectors", "weclone.json");
+      const isSafePath =
+        path.isAbsolute(weCloneProxyConfigPath) &&
+        weCloneProxyConfigPath.endsWith(expectedSuffix);
+      if (!isSafePath) {
+        weCloneProxyDeleteFailed =
+          `Proxy config path ${JSON.stringify(weCloneProxyConfigPath)} failed safety validation ` +
+          `(must be absolute and end with "${expectedSuffix}"). ` +
+          `Refusing to delete — remove the file manually if it exists.`;
+      } else {
+        try {
+          if (fs.existsSync(weCloneProxyConfigPath)) {
+            fs.unlinkSync(weCloneProxyConfigPath);
+            notes.push(`Removed WeClone proxy config: ${weCloneProxyConfigPath}`);
+          }
+        } catch (err) {
+          // Hard failure: leaving the file behind with a live token is a
+          // security issue. Capture the error so we return status:"error".
+          weCloneProxyDeleteFailed = err instanceof Error ? err.message : String(err);
         }
-      } catch (err) {
-        // Hard failure: leaving the file behind with a live token is a
-        // security issue. Capture the error so we return status:"error".
-        weCloneProxyDeleteFailed = err instanceof Error ? err.message : String(err);
       }
     }
   }
