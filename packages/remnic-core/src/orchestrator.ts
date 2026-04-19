@@ -3955,13 +3955,21 @@ export class Orchestrator {
         // block onto a newer query's snapshot and misreport which
         // tier served the latest recall in `--explain` output.
         const expectedSnapshot = this.lastRecall.get(sessionKey);
-        // Codex P2 (#540): skip observation when recallInternal selected
-        // `no_recall` — the user opted out of retrieval for this turn,
-        // so scanning memory and trust-zones to populate a tier-explain
-        // block nothing will consume is pure waste.  Annotation would
-        // also misreport the tier for a turn that never actually ran
-        // recall.  Guard before any observation setup.
-        if (expectedSnapshot?.plannerMode !== "no_recall") {
+        // Cursor M on #540: `expectedSnapshot?.plannerMode !== "no_recall"`
+        // evaluates true when the snapshot is null (undefined !== "no_recall").
+        // That would let observation proceed with `expectedIdentity = undefined`,
+        // bypassing the stale-snapshot guard in `annotateTierExplain` and
+        // allowing the annotation to land on a concurrent recall's newer
+        // snapshot.  Require a present snapshot before proceeding.
+        //
+        // Codex P2 on #540: skip observation when recallInternal selected
+        // `no_recall` — the user opted out of retrieval for this turn, so
+        // scanning memory and trust-zones just to populate a tier-explain
+        // nothing will consume is waste and would misreport the tier.
+        const shouldObserve =
+          expectedSnapshot !== null &&
+          expectedSnapshot.plannerMode !== "no_recall";
+        if (shouldObserve) {
           const principal = resolvePrincipal(sessionKey, this.config);
           const namespaceOverride = options.namespace?.trim() || undefined;
           // Mirror recallInternal's namespace selection: when no override
@@ -3994,12 +4002,19 @@ export class Orchestrator {
           );
           const observationQuery =
             observationQueryPolicy.retrievalQuery || prompt;
-          const expectedIdentity = expectedSnapshot
-            ? {
-                traceId: expectedSnapshot.traceId,
-                recordedAt: expectedSnapshot.recordedAt,
-              }
-            : undefined;
+          const expectedIdentity = {
+            traceId: expectedSnapshot.traceId,
+            recordedAt: expectedSnapshot.recordedAt,
+          };
+          // Cursor L on #540: do NOT pass `abortController.signal` into
+          // the fire-and-forget observation.  The signal becomes dead
+          // once `recall()` returns (the `finally` block drops the
+          // parent-signal listener), so abort checks inside
+          // `annotateDirectAnswerTier` / `tryDirectAnswer` could never
+          // fire mid-flight — creating the illusion of cancellation
+          // hooks that are actually unreachable.  Observation is
+          // fire-and-forget by design; cancelling it from the caller's
+          // signal would cancel it immediately on every recall.
           const previous = this.directAnswerObservationChain;
           this.directAnswerObservationChain = previous.then(() =>
             this.annotateDirectAnswerTier(
@@ -4007,7 +4022,7 @@ export class Orchestrator {
               sessionKey,
               observationNamespaces,
               expectedIdentity,
-              abortController.signal,
+              undefined,
             ).catch((err) => {
               log.debug(`direct-answer observation chain error: ${err}`);
             }),
@@ -4067,7 +4082,6 @@ export class Orchestrator {
       // winner from a namespace recall did not actually consult,
       // which is a cross-tenant leak in explain output.
       if (namespaces.length === 0) return;
-      const scopedNamespaces = namespaces;
       // Trust-zone map keyed by `"namespace:recordId"` so the same
       // recordId appearing in two namespaces doesn't clobber each
       // other's zone.  Without this, two candidates that share an id
@@ -4088,7 +4102,7 @@ export class Orchestrator {
         string,
         Awaited<ReturnType<typeof this.storageRouter.storageFor>>
       >();
-      for (const ns of scopedNamespaces) {
+      for (const ns of namespaces) {
         const storage = await this.storageRouter.storageFor(ns);
         scopedStorages.set(ns, storage);
         const trustZones = await listTrustZoneRecords({
@@ -4126,7 +4140,7 @@ export class Orchestrator {
         taxonomy: DEFAULT_TAXONOMY,
         listCandidateMemories: async ({ abortSignal }) => {
           const union: MemoryFile[] = [];
-          for (const ns of scopedNamespaces) {
+          for (const ns of namespaces) {
             if (abortSignal?.aborted) return [];
             const storage =
               scopedStorages.get(ns) ??
@@ -4165,7 +4179,7 @@ export class Orchestrator {
         // `listCandidateMemories` hook; we perform our own multi-ns
         // union above and ignore it, so pass the primary namespace
         // (the one recorded on the snapshot) for logging/symmetry.
-        namespace: scopedNamespaces[0]!,
+        namespace: namespaces[0]!,
         config: this.config,
         sources,
         abortSignal: parentAbortSignal,
