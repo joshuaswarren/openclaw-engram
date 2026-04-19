@@ -3,7 +3,14 @@
   "version": "1.0.0",
   "description": "Remnic MCP connector for Replit Agent — setup instructions and token generator",
   "type": "module",
-  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -16,5 +23,22 @@
     "replit",
     "mcp",
     "ai-agent"
-  ]
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "files": [
+    "dist",
+    "setup-snippet.json"
+  ],
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "check-types": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.1",
+    "typescript": "^5.9.3"
+  }
 }

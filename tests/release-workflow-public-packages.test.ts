@@ -2,12 +2,25 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+// Topological publish order: core first, then the à-la-carte companion
+// packages (bench, weclone family, connector-replit) that install
+// surfaces depend on, then the depend-on-core runtimes (server, CLI) and
+// plugin bundles (openclaw + per-agent plugins), and finally the legacy
+// shim that lives at the tail. Keep in sync with PUBLISH_ORDER in
+// .github/workflows/release-and-publish.yml and AGENTS.md §44.
 const expectedPublishDirs = [
   "packages/remnic-core",
+  "packages/bench",
+  "packages/export-weclone",
+  "packages/import-weclone",
+  "packages/connector-weclone",
+  "packages/connector-replit",
+  "packages/hermes-provider",
   "packages/remnic-server",
   "packages/remnic-cli",
-  "packages/hermes-provider",
   "packages/plugin-openclaw",
+  "packages/plugin-claude-code",
+  "packages/plugin-codex",
   "packages/shim-openclaw-engram",
 ] as const;
 
