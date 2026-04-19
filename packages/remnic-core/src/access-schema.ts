@@ -77,7 +77,7 @@ const writeContentSchema = z.string().min(1, "content is required").max(50000);
 const categorySchema = z
   .enum([
     "fact", "preference", "correction", "entity", "decision",
-    "relationship", "principle", "commitment", "moment", "skill", "rule",
+    "relationship", "principle", "commitment", "moment", "skill", "rule", "procedure",
   ])
   .optional();
 const confidenceSchema = z.number().min(0).max(1).optional();

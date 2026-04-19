@@ -3,7 +3,11 @@ import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { ensureDaySummaryCron, ensureNightlyGovernanceCron } from "../src/maintenance/memory-governance-cron.ts";
+import {
+  ensureDaySummaryCron,
+  ensureNightlyGovernanceCron,
+  ensureProceduralMiningCron,
+} from "../src/maintenance/memory-governance-cron.ts";
 
 test("nightly governance cron auto-registers a bounded job once", async () => {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "engram-governance-cron-"));
@@ -69,6 +73,26 @@ test("day-summary and nightly governance cron registration share the same write 
       parsed.jobs.map((job) => job.id).sort(),
       ["engram-day-summary", "engram-nightly-governance"],
     );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("procedural mining cron registers once and references engram.procedure_mining_run", async () => {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "engram-procedural-mining-cron-"));
+  const jobsPath = path.join(tempDir, "jobs.json");
+  try {
+    await writeFile(jobsPath, JSON.stringify({ version: 1, jobs: [] }, null, 2) + "\n", "utf-8");
+    const first = await ensureProceduralMiningCron(jobsPath, { timezone: "UTC" });
+    assert.equal(first.created, true);
+    const second = await ensureProceduralMiningCron(jobsPath, { timezone: "UTC" });
+    assert.equal(second.created, false);
+    const parsed = JSON.parse(await readFile(jobsPath, "utf-8")) as {
+      jobs: Array<{ id: string; payload: { message: string } }>;
+    };
+    const job = parsed.jobs.find((j) => j.id === "engram-procedural-mining");
+    assert.ok(job);
+    assert.match(job.payload.message, /engram\.procedure_mining_run/);
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }

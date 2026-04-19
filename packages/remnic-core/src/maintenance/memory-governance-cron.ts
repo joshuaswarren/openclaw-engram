@@ -3,6 +3,7 @@ import path from "node:path";
 
 const DAY_SUMMARY_CRON_ID = "engram-day-summary";
 const GOVERNANCE_CRON_ID = "engram-nightly-governance";
+const PROCEDURAL_MINING_CRON_ID = "engram-procedural-mining";
 
 type CronJobsShape =
   | Array<Record<string, unknown>>
@@ -177,4 +178,45 @@ export async function ensureNightlyGovernanceCron(
       },
       delivery: { mode: "none" },
     }));
+}
+
+export async function ensureProceduralMiningCron(
+  jobsPath: string,
+  options: {
+    timezone: string;
+    agentId?: string;
+    scheduleExpr?: string;
+  },
+): Promise<{ created: boolean; jobId: string }> {
+  const scheduleExpr =
+    typeof options.scheduleExpr === "string" && options.scheduleExpr.trim().length > 0
+      ? options.scheduleExpr.trim()
+      : "17 3 * * *";
+  const agentId =
+    typeof options.agentId === "string" && options.agentId.trim().length > 0
+      ? options.agentId.trim()
+      : "main";
+
+  return ensureCronJob(jobsPath, PROCEDURAL_MINING_CRON_ID, () => ({
+    id: PROCEDURAL_MINING_CRON_ID,
+    agentId,
+    name: "Remnic Procedural Mining (nightly)",
+    enabled: true,
+    schedule: {
+      kind: "cron",
+      expr: scheduleExpr,
+      tz: options.timezone,
+    },
+    sessionTarget: "isolated",
+    wakeMode: "now",
+    payload: {
+      kind: "agentTurn",
+      timeoutSeconds: 900,
+      thinking: "off",
+      message:
+        "You are OpenClaw automation. Call tool `engram.procedure_mining_run` with empty params. " +
+        "If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
+    },
+    delivery: { mode: "none" },
+  }));
 }

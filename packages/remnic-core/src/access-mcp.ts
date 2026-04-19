@@ -156,6 +156,18 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.procedure_mining_run",
+        description:
+          "Run procedural memory mining from causal trajectories (issue #519). Respects procedural.enabled; writes under procedures/ when clusters qualify.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.memory_get",
         description: "Fetch one Remnic memory by id.",
         inputSchema: {
@@ -1043,6 +1055,14 @@ export class EngramMcpServer {
           batchSize: typeof args.batchSize === "number" && Number.isFinite(args.batchSize) ? args.batchSize : undefined,
           authenticatedPrincipal: effectivePrincipal,
         }, effectivePrincipal);
+      case "engram.procedure_mining_run":
+        return this.service.procedureMiningRun(
+          {
+            namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+            authenticatedPrincipal: effectivePrincipal,
+          },
+          effectivePrincipal,
+        );
       case "engram.memory_get":
         return this.service.memoryGet(
           typeof args.memoryId === "string" ? args.memoryId : "",
