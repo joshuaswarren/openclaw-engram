@@ -42,8 +42,14 @@ function defaultConfigPath(): string {
   return resolve(home, ".remnic", "connectors", "weclone.json");
 }
 
+// Parse --config first so an explicit path takes precedence over env-var
+// resolution. Only fall back to defaultConfigPath() when the user has not
+// supplied an explicit --config flag. This lets `remnic-weclone-proxy
+// --config /abs/path` work even in environments where REMNIC_HOME is
+// misconfigured, without defaultConfigPath() (and any env-var validation
+// it contains) running unnecessarily.
 const args = process.argv.slice(2);
-let configPath = defaultConfigPath();
+let configPath: string | null = null;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--config") {
@@ -54,6 +60,10 @@ for (let i = 0; i < args.length; i++) {
     configPath = resolve(args[i + 1]);
     i++;
   }
+}
+
+if (configPath === null) {
+  configPath = defaultConfigPath();
 }
 
 if (!existsSync(configPath)) {
