@@ -28,6 +28,7 @@ const DEFAULT_JUDGE_SYSTEM_PROMPT = [
 ].join(" ");
 
 const SCORE_OUT_OF_REGEX = /(-?\d+(?:\.\d+)?)\s+out\s+of\s+(-?\d+(?:\.\d+)?)/gi;
+const SCORE_CUE_REGEX = /\b(score|rated|rating|grade|graded|result|overall|final)\b/;
 
 export interface GatewayResponderOptions {
   gatewayConfig?: GatewayConfig;
@@ -231,17 +232,14 @@ function parseScalarJudgeScore(raw: string): number {
   }
 
   const scalarMatches = [...trimmed.matchAll(/-?\d+(?:\.\d+)?/g)];
-  const scalarMatch = scalarMatches.at(-1);
-  if (!scalarMatch) {
-    return -1;
+  for (const match of scalarMatches.reverse()) {
+    const value = Number.parseFloat(match[0]);
+    if (isPlausibleScalarScore(value)) {
+      return clampNormalizedScore(value);
+    }
   }
 
-  const value = Number.parseFloat(scalarMatch[0]);
-  if (!Number.isFinite(value)) {
-    return -1;
-  }
-
-  return clampNormalizedScore(value);
+  return -1;
 }
 
 function isPlausibleScoreFraction(
@@ -280,19 +278,36 @@ function isPlausibleSlashScoreFraction(
     if (/^\s*\/\s*\d/.test(afterContext)) {
       return false;
     }
+    return isStandaloneSlashScore(raw, start, end) || hasScoreCueBefore(raw, start);
+  }
+
+  const end = start + match[0].length;
+  if (isStandaloneSlashScore(raw, start, end)) {
     return true;
   }
 
-  const candidate = match[0].trim();
-  if (raw.trim() === candidate) {
-    return true;
-  }
+  return hasScoreCueBefore(raw, start);
+}
 
+function isStandaloneSlashScore(
+  raw: string,
+  start: number,
+  end: number,
+): boolean {
+  return raw.slice(0, start).trim().length === 0 &&
+    /^[\s.!?]*$/.test(raw.slice(end));
+}
+
+function hasScoreCueBefore(raw: string, start: number): boolean {
   const beforeContext = raw
     .slice(Math.max(0, start - 20), start)
     .toLowerCase();
 
-  return /\b(score|rated|rating|grade|graded|result|overall|final)\b/.test(beforeContext);
+  return SCORE_CUE_REGEX.test(beforeContext);
+}
+
+function isPlausibleScalarScore(value: number): boolean {
+  return Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 function clampNormalizedScore(value: number): number {

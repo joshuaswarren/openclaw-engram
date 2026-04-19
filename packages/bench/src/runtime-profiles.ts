@@ -65,6 +65,7 @@ const SECRET_KEY_SEGMENT_SUFFIXES = new Set([
   "apikey",
   "authtoken",
   "accesstoken",
+  "refreshtoken",
   "bearertoken",
   "clientsecret",
   "secretkey",
@@ -77,12 +78,14 @@ export async function resolveBenchRuntimeProfile(
   options: ResolveBenchRuntimeProfileOptions,
 ): Promise<ResolvedBenchRuntimeProfile> {
   const profile = options.runtimeProfile ?? "baseline";
-  const systemProvider = resolveProviderConfig(
-    "system",
-    options.systemProvider,
-    options.systemModel,
-    options.systemBaseUrl,
-  );
+  const systemProvider = profile === "openclaw-chain"
+    ? null
+    : resolveProviderConfig(
+      "system",
+      options.systemProvider,
+      options.systemModel,
+      options.systemBaseUrl,
+    );
   const judgeProvider = resolveProviderConfig(
     "judge",
     options.judgeProvider,
