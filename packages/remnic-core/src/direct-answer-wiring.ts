@@ -53,10 +53,13 @@ export interface DirectAnswerSources {
     abortSignal?: AbortSignal;
   }): Promise<MemoryFile[]>;
   /**
-   * Resolve the trust-zone record for a memory.  Returns `null` when
-   * the memory has no trust-zone record (treated as not trusted).
+   * Resolve the trust-zone record for a memory.  Receives the full
+   * `MemoryFile` rather than a bare id so multi-namespace callers can
+   * disambiguate candidates that share a `frontmatter.id` across
+   * tenants (e.g. via `memory.path`).  Returns `null` when the
+   * memory has no trust-zone record (treated as not trusted).
    */
-  trustZoneFor(memoryId: string): Promise<TrustZoneName | null>;
+  trustZoneFor(memory: MemoryFile): Promise<TrustZoneName | null>;
   /**
    * Resolve a calibrated importance score in [0, 1] for a memory.
    */
@@ -140,7 +143,7 @@ export async function tryDirectAnswer(
     // (after which no further iteration would exist) still stops us.
     throwIfAborted(abortSignal);
 
-    const trustZone = await sources.trustZoneFor(memory.frontmatter.id);
+    const trustZone = await sources.trustZoneFor(memory);
     throwIfAborted(abortSignal);
 
     // Cheap pre-filter: non-trusted memories can't qualify, so skip

@@ -200,6 +200,187 @@ test("LastRecallStore.annotateTierExplain deep-copies the caller's block", async
   assert.deepEqual(snap?.tierExplain?.filteredBy, ["a"]);
 });
 
+// ── Stale-snapshot guard on annotateTierExplain ─────────────────────────────
+
+test("LastRecallStore.annotateTierExplain drops write when expected traceId no longer matches", async () => {
+  // Regression for PR #540 review: back-to-back recalls on the same
+  // sessionKey overwrite the snapshot, so an async observation that
+  // enqueued against the earlier snapshot must not overwrite the newer
+  // one with a stale tier-explain block.
+  const { store } = await freshStore();
+  await store.record({
+    sessionKey: "s1",
+    query: "q1",
+    memoryIds: [],
+    traceId: "trace-1",
+  });
+  const capturedIdentity = { traceId: "trace-1" };
+  // Simulate a second recall landing before the observation from
+  // recall #1 resolves — the stored snapshot is replaced with a new
+  // traceId.
+  await store.record({
+    sessionKey: "s1",
+    query: "q2",
+    memoryIds: [],
+    traceId: "trace-2",
+  });
+
+  await store.annotateTierExplain(
+    "s1",
+    {
+      tier: "direct-answer",
+      tierReason: "stale",
+      filteredBy: [],
+      candidatesConsidered: 7,
+      latencyMs: 1,
+    },
+    capturedIdentity,
+  );
+
+  const snap = store.get("s1");
+  assert.ok(snap);
+  // Snapshot must still reflect the newer query and must NOT carry
+  // the stale observation's tier-explain block.
+  assert.equal(snap.traceId, "trace-2");
+  assert.equal(snap.tierExplain, undefined);
+});
+
+test("LastRecallStore.annotateTierExplain writes when expected traceId matches", async () => {
+  const { store } = await freshStore();
+  await store.record({
+    sessionKey: "s1",
+    query: "q1",
+    memoryIds: [],
+    traceId: "trace-1",
+  });
+
+  await store.annotateTierExplain(
+    "s1",
+    {
+      tier: "direct-answer",
+      tierReason: "fresh",
+      filteredBy: [],
+      candidatesConsidered: 2,
+      latencyMs: 3,
+    },
+    { traceId: "trace-1" },
+  );
+
+  const snap = store.get("s1");
+  assert.ok(snap);
+  assert.equal(snap.tierExplain?.tierReason, "fresh");
+});
+
+test("LastRecallStore.annotateTierExplain falls back to recordedAt when traceId is absent", async () => {
+  const { store } = await freshStore();
+  await store.record({
+    sessionKey: "s1",
+    query: "q1",
+    memoryIds: [],
+  });
+  const current = store.get("s1");
+  assert.ok(current);
+  const staleRecordedAt = "1970-01-01T00:00:00.000Z";
+
+  // Mismatched recordedAt → write is dropped.
+  await store.annotateTierExplain(
+    "s1",
+    {
+      tier: "direct-answer",
+      tierReason: "stale",
+      filteredBy: [],
+      candidatesConsidered: 0,
+      latencyMs: 0,
+    },
+    { recordedAt: staleRecordedAt },
+  );
+  assert.equal(store.get("s1")?.tierExplain, undefined);
+
+  // Matching recordedAt → write succeeds.
+  await store.annotateTierExplain(
+    "s1",
+    {
+      tier: "direct-answer",
+      tierReason: "fresh",
+      filteredBy: [],
+      candidatesConsidered: 0,
+      latencyMs: 0,
+    },
+    { recordedAt: current.recordedAt },
+  );
+  assert.equal(store.get("s1")?.tierExplain?.tierReason, "fresh");
+});
+
+test("LastRecallStore.record generates a unique writeNonce per snapshot", async () => {
+  const { store } = await freshStore();
+  await store.record({ sessionKey: "s1", query: "q", memoryIds: [] });
+  const n1 = store.get("s1")?.writeNonce;
+  await store.record({ sessionKey: "s1", query: "q", memoryIds: [] });
+  const n2 = store.get("s1")?.writeNonce;
+  assert.ok(n1 && typeof n1 === "string" && n1.length > 0);
+  assert.ok(n2 && typeof n2 === "string" && n2.length > 0);
+  assert.notEqual(n1, n2, "each record() call must produce a unique writeNonce");
+});
+
+test("LastRecallStore.annotateTierExplain rejects stale nonce even when recordedAt collides", async () => {
+  // Regression for Codex P2 (round 2) on PR #540: `recordedAt` is
+  // millisecond-precision, so two back-to-back recalls can share a
+  // timestamp.  The writeNonce guard must reject stale observations
+  // even when traceId and recordedAt happen to match.
+  const { store } = await freshStore();
+  await store.record({ sessionKey: "s1", query: "q1", memoryIds: [] });
+  const snap1 = store.get("s1");
+  assert.ok(snap1?.writeNonce);
+  const staleExpected = {
+    writeNonce: snap1.writeNonce,
+    traceId: snap1.traceId,
+    recordedAt: snap1.recordedAt,
+  };
+
+  await store.record({ sessionKey: "s1", query: "q2", memoryIds: [] });
+  const snap2 = store.get("s1");
+  assert.ok(snap2?.writeNonce);
+  assert.notEqual(snap1.writeNonce, snap2.writeNonce);
+
+  // Force recordedAt to match so only the nonce can reject.
+  await store.annotateTierExplain(
+    "s1",
+    {
+      tier: "direct-answer",
+      tierReason: "stale — must be rejected",
+      filteredBy: [],
+      candidatesConsidered: 0,
+      latencyMs: 0,
+    },
+    { ...staleExpected, recordedAt: snap2.recordedAt },
+  );
+  assert.equal(
+    store.get("s1")?.tierExplain,
+    undefined,
+    "writeNonce mismatch must reject the annotation",
+  );
+
+  await store.annotateTierExplain(
+    "s1",
+    {
+      tier: "direct-answer",
+      tierReason: "fresh — must be applied",
+      filteredBy: [],
+      candidatesConsidered: 0,
+      latencyMs: 0,
+    },
+    {
+      writeNonce: snap2.writeNonce,
+      traceId: snap2.traceId,
+      recordedAt: snap2.recordedAt,
+    },
+  );
+  assert.equal(
+    store.get("s1")?.tierExplain?.tierReason,
+    "fresh — must be applied",
+  );
+});
+
 test("LastRecallStore.record copies sourceAnchors array and lineRange tuple", async () => {
   const { store } = await freshStore();
   const anchors: RecallTierExplain["sourceAnchors"] = [

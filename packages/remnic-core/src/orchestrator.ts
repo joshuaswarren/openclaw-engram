@@ -98,6 +98,10 @@ import {
   type TierMigrationCycleSummary,
   type TierMigrationStatusSnapshot,
 } from "./recall-state.js";
+import { tryDirectAnswer, type DirectAnswerSources } from "./direct-answer-wiring.js";
+import { listTrustZoneRecords } from "./trust-zones.js";
+import { DEFAULT_TAXONOMY } from "./taxonomy/default-taxonomy.js";
+import type { RecallTierExplain } from "./types.js";
 import {
   recordEvalShadowRecall,
   type EvalShadowRecallRecord,
@@ -1179,6 +1183,11 @@ export class Orchestrator {
   private runtimePolicyValues: RuntimePolicyValues | null = null;
   private utilityRuntimeValues: UtilityRuntimeValues | null = null;
   private evalShadowWriteChain: Promise<void> = Promise.resolve();
+
+  // Pending background observation-mode direct-answer annotations (#518 slice 3c).
+  // Tracks fire-and-forget `annotateDirectAnswerTier` calls so callers (tests,
+  // lifecycle shutdown) can await their completion without blocking `recall()`.
+  private directAnswerObservationChain: Promise<void> = Promise.resolve();
 
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
@@ -2704,6 +2713,45 @@ export class Orchestrator {
     return true;
   }
 
+  /**
+   * Await the in-flight observation-mode direct-answer annotation chain.
+   *
+   * The observation hook in `recall()` is deliberately fire-and-forget so
+   * annotation latency (I/O for trust-zone and memory listing) can never
+   * delay the user's recall response.  Tests that assert on the attached
+   * tierExplain snapshot need a deterministic way to wait for that
+   * background work to settle.
+   *
+   * Resolves to `true` when the chain settled (or no work was pending) and
+   * `false` on timeout.
+   */
+  async waitForDirectAnswerObservationIdle(
+    timeoutMs: number = 60_000,
+  ): Promise<boolean> {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    try {
+      const timeoutPromise = new Promise<"timeout">((resolve) => {
+        timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
+      });
+      const result = await Promise.race([
+        // The chain itself already swallows rejections via `.catch`, so this
+        // resolve is safe.  `then(() => "ok")` lets us distinguish completion
+        // from the timeout branch without losing type safety.
+        this.directAnswerObservationChain.then(() => "ok" as const),
+        timeoutPromise,
+      ]);
+      if (result === "timeout") {
+        log.warn(
+          `waitForDirectAnswerObservationIdle timed out after ${timeoutMs}ms`,
+        );
+        return false;
+      }
+      return true;
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
   async getStorage(namespace?: string): Promise<StorageManager> {
     const ns =
       namespace && namespace.length > 0
@@ -3869,23 +3917,56 @@ export class Orchestrator {
         abortSignal: abortController.signal,
       });
       const RECALL_TIMEOUT_MS = this.config.recallOuterTimeoutMs ?? 75_000;
+      let recallResult: string;
       if (RECALL_TIMEOUT_MS <= 0) {
-        return await recallPromise;
+        recallResult = await recallPromise;
+      } else {
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<string>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            abortController.abort();
+            reject(new Error("recall timeout"));
+          }, RECALL_TIMEOUT_MS);
+        });
+        try {
+          recallResult = await Promise.race([recallPromise, timeoutPromise]);
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+        }
       }
 
-      let timeoutHandle: NodeJS.Timeout | null = null;
-      const timeoutPromise = new Promise<string>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          abortController.abort();
-          reject(new Error("recall timeout"));
-        }, RECALL_TIMEOUT_MS);
-      });
-
-      try {
-        return await Promise.race([recallPromise, timeoutPromise]);
-      } finally {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
+      // Observation-mode direct-answer tier (issue #518 slice 3c).
+      //
+      // Runs after the user's recall already succeeded, fire-and-forget,
+      // so annotation latency (trust-zone listing, full memory fetch,
+      // eligibility gate, snapshot write) can never delay the caller's
+      // response.  Feature-gated behind `recallDirectAnswerEnabled`
+      // (default false).  Errors inside the observation are swallowed
+      // by `annotateDirectAnswerTier` itself; the outer `.catch` here is
+      // defense-in-depth so a throw in the sync setup path also can't
+      // poison the chain.  Tests needing the snapshot to be annotated
+      // can `await orchestrator.waitForDirectAnswerObservationIdle()`.
+      if (this.config.recallDirectAnswerEnabled && sessionKey) {
+        // Cursor M on #540 (round 2): wrap the observation setup in its
+        // own try/catch.  Without this, a sync throw inside
+        // resolvePrincipal / recallNamespacesForPrincipal /
+        // buildRecallQueryPolicy would bubble up to the outer try/catch,
+        // `logRecallFailure()` would fire, and `recall()` would return
+        // "" — silently discarding the valid `recallResult` already in
+        // hand.  Observation must never be able to corrupt a recall
+        // response, so any error here is log.debug'd and swallowed.
+        try {
+          await this.enqueueDirectAnswerObservation(
+            prompt,
+            sessionKey,
+            options.namespace?.trim() || undefined,
+          );
+        } catch (err) {
+          log.debug(`direct-answer observation setup failed: ${err}`);
+        }
       }
+
+      return recallResult;
     } catch (err) {
       this.logRecallFailure(err);
       // endTrace() is safe here: if no trace is active (disabled or already
@@ -3894,6 +3975,259 @@ export class Orchestrator {
       return ""; // Return empty context on timeout/error
     } finally {
       options.abortSignal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Build the observation identity + sources and append the
+   * fire-and-forget annotation to the direct-answer chain.  Extracted
+   * from `recall()` so that a sync throw in any of the setup helpers
+   * (resolvePrincipal / recallNamespacesForPrincipal /
+   * buildRecallQueryPolicy) can be caught at the caller without
+   * bubbling into `recall()`'s outer try/catch — which would discard
+   * the valid recallResult already in hand.  Cursor M on #540.
+   */
+  private async enqueueDirectAnswerObservation(
+    prompt: string,
+    sessionKey: string,
+    namespaceOverride: string | undefined,
+  ): Promise<void> {
+    // Capture the identity of the snapshot just written by
+    // recallInternal.  Back-to-back recalls on the same sessionKey
+    // overwrite this snapshot, so before the async annotation lands
+    // we check the current snapshot still matches.
+    const expectedSnapshot = this.lastRecall.get(sessionKey);
+    // Cursor M on #540: `expectedSnapshot?.plannerMode !== "no_recall"`
+    // evaluates true when snapshot is null (undefined !== "no_recall").
+    // Observation would then proceed with `expectedIdentity` undefined,
+    // bypassing the stale-snapshot guard.  Require a present snapshot.
+    //
+    // Codex P2 on #540: skip when recallInternal chose `no_recall` — the
+    // user opted out of retrieval this turn, so scanning memory +
+    // trust-zones to populate a tier-explain nothing will consume is
+    // waste and would misreport the tier.
+    if (expectedSnapshot === null) return;
+    if (expectedSnapshot.plannerMode === "no_recall") return;
+
+    const principal = resolvePrincipal(sessionKey, this.config);
+    // Mirror recallInternal's namespace selection: when no override is
+    // provided, recall may search all readable namespaces for the
+    // principal.  Evaluate the direct-answer gate over the same set so
+    // the observer can't miss candidates in `shared` / other readable
+    // namespaces and misreport the tier decision.
+    const observationNamespaces: string[] =
+      namespaceOverride && canReadNamespace(principal, namespaceOverride, this.config)
+        ? [namespaceOverride]
+        : recallNamespacesForPrincipal(principal, this.config);
+    // Normalize the query through the same `buildRecallQueryPolicy` path
+    // recallInternal uses, so observation scores the same text recall
+    // actually ran (important for cron/instruction-heavy prompts where
+    // normalization can materially restructure the query).
+    const observationQueryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
+      cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
+      cronRecallNormalizedQueryMaxChars:
+        this.config.cronRecallNormalizedQueryMaxChars,
+      cronRecallInstructionHeavyTokenCap:
+        this.effectiveCronRecallInstructionHeavyTokenCap(),
+      cronConversationRecallMode: this.config.cronConversationRecallMode,
+    });
+    const observationQuery = observationQueryPolicy.retrievalQuery || prompt;
+    const expectedIdentity = {
+      writeNonce: expectedSnapshot.writeNonce,
+      traceId: expectedSnapshot.traceId,
+      recordedAt: expectedSnapshot.recordedAt,
+    };
+    // Cursor L on #540: do NOT forward the caller's abort signal into
+    // the fire-and-forget observation.  The signal becomes inert once
+    // `recall()` returns (the `finally` there drops the only listener),
+    // so abort checks inside the observation path are unreachable.
+    // Observation is fire-and-forget by design.
+    const previous = this.directAnswerObservationChain;
+    this.directAnswerObservationChain = previous.then(() =>
+      this.annotateDirectAnswerTier(
+        observationQuery,
+        sessionKey,
+        observationNamespaces,
+        expectedIdentity,
+        undefined,
+      ).catch((err) => {
+        log.debug(`direct-answer observation chain error: ${err}`);
+      }),
+    );
+  }
+
+  /**
+   * Observation-mode direct-answer tier (issue #518 slice 3c).
+   *
+   * Runs after `recallInternal` has already produced the caller's
+   * answer and persisted a snapshot.  Fires `tryDirectAnswer`, and
+   * when the eligibility gate returns a winner, annotates the
+   * snapshot with a RecallTierExplain block so CLI / HTTP / MCP
+   * surfaces can show which tier would have served the query.
+   *
+   * Does not short-circuit the recall response — the caller already
+   * has it.  A future slice may wire the short-circuit path once
+   * the bench confirms direct-answer decisions match what full
+   * recall returned.
+   *
+   * All errors are logged and swallowed so observation can never
+   * corrupt the user's recall response.
+   */
+  private async annotateDirectAnswerTier(
+    prompt: string,
+    sessionKey: string,
+    namespaces: string[],
+    expectedIdentity:
+      | { writeNonce?: string; traceId?: string; recordedAt?: string }
+      | undefined,
+    parentAbortSignal?: AbortSignal,
+  ): Promise<void> {
+    const tierStart = Date.now();
+    try {
+      // Evaluate across every readable namespace recall itself would
+      // have searched.  In `namespacesEnabled` deployments recall fans
+      // out over `recallNamespacesForPrincipal`, so the observer must
+      // union candidates and trust-zone records across the same set —
+      // otherwise a winner living in `shared` (or another readable
+      // namespace) is invisible to the observer and `tierExplain`
+      // would misreport the eligibility verdict for that recall.
+      //
+      // When the principal has no readable namespaces (empty list),
+      // recall itself searches nothing; observation must follow suit.
+      // A `defaultNamespace` fallback here would annotate with a
+      // winner from a namespace recall did not actually consult,
+      // which is a cross-tenant leak in explain output.
+      if (namespaces.length === 0) return;
+      // Trust-zone map keyed by `"namespace:recordId"` so the same
+      // recordId appearing in two namespaces doesn't clobber each
+      // other's zone.  Without this, two candidates that share an id
+      // across tenants would both inherit whichever zone was loaded
+      // last, silently admitting or dropping direct-answer candidates.
+      const trustZoneByNsAndRecordId = new Map<
+        string,
+        "quarantine" | "working" | "trusted"
+      >();
+      const trustZoneKey = (ns: string, recordId: string) =>
+        `${ns}\u0000${recordId}`;
+      // Preserve namespace-scoped storage handles so candidate
+      // listing below reads from exactly the same roots we loaded
+      // trust-zone records from — prevents a split-brain where a
+      // later `storageFor(ns)` could resolve differently and skew
+      // observation decisions.
+      const scopedStorages = new Map<
+        string,
+        Awaited<ReturnType<typeof this.storageRouter.storageFor>>
+      >();
+      for (const ns of namespaces) {
+        const storage = await this.storageRouter.storageFor(ns);
+        scopedStorages.set(ns, storage);
+        const trustZones = await listTrustZoneRecords({
+          memoryDir: storage.dir,
+          trustZoneStoreDir: this.config.trustZoneStoreDir,
+          limit: 200,
+        }).catch(() => ({
+          allRecords: [] as Array<{
+            recordId: string;
+            zone: "quarantine" | "working" | "trusted";
+          }>,
+        }));
+        for (const record of trustZones.allRecords ?? []) {
+          trustZoneByNsAndRecordId.set(
+            trustZoneKey(ns, record.recordId),
+            record.zone,
+          );
+        }
+      }
+      // Track each candidate memory's namespace keyed by `memory.path`.
+      // `memory.path` is globally unique (the disk path of the file),
+      // unlike `memory.frontmatter.id` which can collide across
+      // namespaces.  Using path keeps the namespace resolution
+      // collision-free during `trustZoneFor`.
+      const memoryNamespaceByPath = new Map<string, string>();
+
+      // Track the pre-filter candidate count so `candidatesConsidered`
+      // reflects the number of memories the eligibility gate actually
+      // evaluated — not the count of filter labels that fired.  Filter
+      // labels in `result.filteredBy` are unique strings per filter
+      // stage, so summing them would cap at ~6 regardless of input size.
+      let candidatesConsidered = 0;
+
+      const sources: DirectAnswerSources = {
+        taxonomy: DEFAULT_TAXONOMY,
+        listCandidateMemories: async ({ abortSignal }) => {
+          const union: MemoryFile[] = [];
+          for (const ns of namespaces) {
+            if (abortSignal?.aborted) return [];
+            const storage =
+              scopedStorages.get(ns) ??
+              (await this.storageRouter.storageFor(ns));
+            const all = await storage.readAllMemories();
+            for (const m of all) {
+              if ((m.frontmatter.status ?? "active") === "active") {
+                union.push(m);
+                memoryNamespaceByPath.set(m.path, ns);
+              }
+            }
+          }
+          candidatesConsidered = union.length;
+          return union;
+        },
+        trustZoneFor: async (memory: MemoryFile) => {
+          // Namespace-resolve via the unique `memory.path` rather than
+          // `memory.frontmatter.id`; IDs can collide across tenants.
+          const ns = memoryNamespaceByPath.get(memory.path);
+          if (!ns) return null;
+          return (
+            trustZoneByNsAndRecordId.get(
+              trustZoneKey(ns, memory.frontmatter.id),
+            ) ?? null
+          );
+        },
+        importanceFor: (memory) =>
+          typeof memory.frontmatter.importance?.score === "number"
+            ? memory.frontmatter.importance.score
+            : 0,
+      };
+
+      const result = await tryDirectAnswer({
+        query: prompt,
+        // The wiring passes this namespace through to the caller's
+        // `listCandidateMemories` hook; we perform our own multi-ns
+        // union above and ignore it, so pass the primary namespace
+        // (the one recorded on the snapshot) for logging/symmetry.
+        namespace: namespaces[0]!,
+        config: this.config,
+        sources,
+        abortSignal: parentAbortSignal,
+      });
+
+      // Only annotate when a concrete direct-answer verdict was reached.
+      // The `disabled` and `no-candidates` cases add no signal; skipping
+      // them keeps the snapshot clean.
+      if (!result.eligible || !result.winner) return;
+
+      const explain: RecallTierExplain = {
+        tier: "direct-answer",
+        tierReason: result.narrative,
+        filteredBy: result.filteredBy,
+        candidatesConsidered,
+        latencyMs: Date.now() - tierStart,
+        sourceAnchors: [{ path: result.winner.memory.path }],
+      };
+      // Pass the expected identity captured at enqueue time so the
+      // annotation is dropped if a subsequent recall has already
+      // replaced the session's snapshot.  Without this guard, an older
+      // observation's tier-explain block would be attached to the
+      // newer snapshot and misreport which tier served the latest
+      // recall in CLI/HTTP/MCP --explain output.
+      await this.lastRecall.annotateTierExplain(
+        sessionKey,
+        explain,
+        expectedIdentity,
+      );
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      log.debug(`direct-answer observation failed: ${err}`);
     }
   }
 
