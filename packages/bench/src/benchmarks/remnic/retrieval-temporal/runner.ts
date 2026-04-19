@@ -215,7 +215,7 @@ function parseTimestamp(value: string | undefined): number | null {
 }
 
 function parseTimelineEntry(entry: string): number | null {
-  const match = entry.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const match = entry.match(/^(\d{4})-(\d{2})-(\d{2})(?=$|\D)/);
   if (!match) return null;
 
   const year = Number(match[1]);

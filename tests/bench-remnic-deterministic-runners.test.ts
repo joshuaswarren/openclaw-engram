@@ -216,3 +216,31 @@ test("runBenchmark rejects overflowed created timestamps in retrieval-temporal e
     targetPage.frontmatter.timeline = originalTimeline;
   }
 });
+
+test("runBenchmark rejects timeline entries with extra day digits in retrieval-temporal evidence", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:morgan-q3-commitments");
+  assert.ok(temporalCase);
+
+  const targetPage = temporalCase.pages.find((page) => page.id === "morgan-q3-training-plan");
+  assert.ok(targetPage);
+
+  const originalCreated = targetPage.frontmatter.created;
+  const originalTimeline = targetPage.frontmatter.timeline ? [...targetPage.frontmatter.timeline] : undefined;
+
+  try {
+    targetPage.frontmatter.created = undefined;
+    targetPage.frontmatter.timeline = ["2026-08-032 malformed day"];
+
+    const result = await runBenchmark("retrieval-temporal", {
+      mode: "full",
+      system: adapter,
+    });
+
+    const task = result.results.tasks.find((entry) => entry.taskId === "clean:morgan-q3-commitments");
+    assert.ok(task);
+    assert.equal(task.scores.qrel_at_1, 0);
+  } finally {
+    targetPage.frontmatter.created = originalCreated;
+    targetPage.frontmatter.timeline = originalTimeline;
+  }
+});
