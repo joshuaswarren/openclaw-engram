@@ -290,3 +290,45 @@ Required prevention workflow:
 
 If the work is stateful and you are responding one review comment at a time,
 stop and widen the fix before pushing.
+
+## Agent Notes: Retrieval Explain Surface (issue #518)
+
+Two adjacent concepts with similar names — do not conflate them:
+
+1. **`recall/explain`** (pre-existing) — `POST /engram/v1/recall/explain` /
+   `engram.recall_explain` MCP tool / `EngramAccessService.recallExplain()`.
+   Returns a graph-path explanation *document* on demand. Reads the same
+   snapshot but enriches it with intent and graph data. Use this when a user
+   asks "why these memories?" for the graph subsystem.
+
+2. **Tier explain** (issue #518) — `GET /engram/v1/recall/tier-explain` /
+   `engram.recall_tier_explain` MCP tool / `remnic recall-explain` CLI /
+   `EngramAccessService.recallTierExplain()`. Returns a *structured
+   per-result annotation* of which retrieval tier served the query
+   (`direct-answer`, `hybrid`, etc.). The annotation is optional on
+   `LastRecallSnapshot.tierExplain` and only populated when
+   `recallDirectAnswerEnabled: true`.
+
+All three surfaces route through the same `toRecallExplainJson()` /
+`toRecallExplainText()` renderer at
+`packages/remnic-core/src/recall-explain-renderer.ts`. Do not fork
+formatting — extend the renderer.
+
+The direct-answer eligibility decision is a **pure function** at
+`packages/remnic-core/src/direct-answer.ts`. It takes caller-resolved
+`DirectAnswerCandidate`s (trustZone + taxonomyBucket + importance
+already looked up upstream) and returns a `DirectAnswerResult`. Tests
+use this function directly with mocks — they do not need to stand up
+a trust-zones store.
+
+The orchestrator binding lives in
+`packages/remnic-core/src/direct-answer-wiring.ts` (`tryDirectAnswer`).
+It is source-agnostic: callers inject a `DirectAnswerSources` accessor
+for `listCandidateMemories`, `trustZoneFor`, `importanceFor`, and the
+taxonomy. The orchestrator's binding (in
+`Orchestrator.annotateDirectAnswerTier`) is just one caller — bench and
+tests bind their own accessors and never go through the orchestrator.
+
+Abort helpers live in `packages/remnic-core/src/abort-error.ts`.
+`throwIfAborted(signal, message?)` throws an `Error` with
+`name === "AbortError"`. Do not re-implement locally.

@@ -74,6 +74,30 @@ When **`procedural.enabled`** is true, Remnic can inject a short **“Relevant p
 
 See [Procedural memory](./procedural-memory.md) for configuration, mining, and the `procedural-recall` benchmark.
 
+### Direct-answer retrieval tier (issue #518)
+
+When **`recallDirectAnswerEnabled`** is true, Remnic runs a lightweight eligibility gate alongside QMD to decide whether a single validated memory can answer the query. The gate is an observation pass in the current release: it records *which tier would have served the query* onto the caller's last-recall snapshot, so CLI / HTTP / MCP surfaces can surface the decision. A future release will flip the short-circuit bit and return the direct-answer winner before QMD runs.
+
+Eligibility ladder (in order):
+
+1. `config.recallDirectAnswerEnabled === false` → reason `disabled`
+2. Query normalizes to zero searchable tokens → reason `empty-query`
+3. No candidate memories → reason `no-candidates`
+4. Hard filters drop all candidates (status ≠ active, not `trusted` zone, ineligible taxonomy bucket, importance below floor AND not `user_confirmed`, entity-ref hint mismatch) → reason `no-eligible-candidates`
+5. Token-overlap floor drops all survivors → reason `below-token-overlap-floor`
+6. Top two candidates within `recallDirectAnswerAmbiguityMargin` of each other → reason `ambiguous`
+7. Otherwise → reason `eligible`, winner annotated on the snapshot
+
+Config keys:
+
+- `recallDirectAnswerEnabled` (default `false`) — master switch
+- `recallDirectAnswerTokenOverlapFloor` (default `0.55`, `0` to disable the gate)
+- `recallDirectAnswerImportanceFloor` (default `0.7`, `0` to disable the gate)
+- `recallDirectAnswerAmbiguityMargin` (default `0.15`)
+- `recallDirectAnswerEligibleTaxonomyBuckets` (default `["decisions","principles","conventions","runbooks","entities"]`)
+
+See [Retrieval explain](./retrieval-explain.md) for how to read the tier annotation from the CLI, HTTP, and MCP surfaces.
+
 ## Example: Enable Local-only Re-ranking
 
 In `openclaw.json`:
