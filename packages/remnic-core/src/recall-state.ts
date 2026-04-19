@@ -2,7 +2,11 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "./logger.js";
-import type { IdentityInjectionMode, RecallPlanMode } from "./types.js";
+import type {
+  IdentityInjectionMode,
+  RecallPlanMode,
+  RecallTierExplain,
+} from "./types.js";
 
 export interface LastRecallBudgetSummary {
   requestedTopK?: number;
@@ -37,6 +41,15 @@ export interface LastRecallSnapshot {
   identityInjectionMode?: IdentityInjectionMode | "none";
   identityInjectedChars?: number;
   identityInjectionTruncated?: boolean;
+  /**
+   * Optional tier-level explanation of how recall was served
+   * (issue #518).  Populated by orchestrator call sites that can
+   * identify a concrete tier; surfaces expose the block via
+   * `engram query --explain`, the `?explain=1` HTTP flag, and the
+   * `remnic_recall_explain` MCP tool.  Orthogonal to the existing
+   * graph-path `recallExplain` operation.
+   */
+  tierExplain?: RecallTierExplain;
 }
 
 export interface GraphRecallExpandedEntry {
@@ -178,6 +191,12 @@ export class LastRecallStore {
       injectedChars: number;
       truncated: boolean;
     };
+    /**
+     * Per-tier explain annotation (issue #518).  When supplied, the
+     * snapshot carries it so downstream surfaces (CLI / HTTP / MCP)
+     * can render which retrieval tier served the query.
+     */
+    tierExplain?: RecallTierExplain;
   }): Promise<void> {
     const now = new Date().toISOString();
     const queryHash = createHash("sha256").update(opts.query).digest("hex");
@@ -202,6 +221,22 @@ export class LastRecallStore {
       identityInjectionMode: opts.identityInjection?.mode,
       identityInjectedChars: opts.identityInjection?.injectedChars,
       identityInjectionTruncated: opts.identityInjection?.truncated,
+      tierExplain: opts.tierExplain
+        ? {
+            ...opts.tierExplain,
+            // Defensive copy so caller-side mutation cannot tear
+            // the persisted snapshot after this call returns.
+            filteredBy: [...opts.tierExplain.filteredBy],
+            sourceAnchors: opts.tierExplain.sourceAnchors
+              ? opts.tierExplain.sourceAnchors.map((a) => ({
+                  path: a.path,
+                  lineRange: a.lineRange
+                    ? ([a.lineRange[0], a.lineRange[1]] as [number, number])
+                    : undefined,
+                }))
+              : undefined,
+          }
+        : undefined,
     };
 
     this.state[opts.sessionKey] = snapshot;
