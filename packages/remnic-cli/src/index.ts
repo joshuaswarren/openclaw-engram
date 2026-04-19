@@ -1923,21 +1923,14 @@ async function resolvePackageBenchRuntime(
   parsed: ParsedBenchArgs,
   runtimeProfile: BenchRuntimeProfile,
 ): Promise<ResolvedBenchRuntimeProfile> {
-  if (runtimeProfile === "real") {
-    resolveExistingBenchRemnicConfigPath(parsed.remnicConfigPath);
-  }
-  if (runtimeProfile === "openclaw-chain") {
-    resolveExistingBenchOpenclawConfigPath(parsed.openclawConfigPath);
-  }
+  const request = buildBenchRuntimeProfileRequest(parsed, runtimeProfile);
   if (!benchModule.resolveBenchRuntimeProfile) {
     throw new Error(
       "Installed @remnic/bench runtime does not expose resolveBenchRuntimeProfile().",
     );
   }
 
-  return benchModule.resolveBenchRuntimeProfile(
-    buildBenchRuntimeProfileRequest(parsed, runtimeProfile),
-  );
+  return benchModule.resolveBenchRuntimeProfile(request);
 }
 
 function resolveMemoryDir(): string {
