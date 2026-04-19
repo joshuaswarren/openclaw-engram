@@ -3107,14 +3107,17 @@ export async function resolveMemoryDirForNamespace(
 }
 
 /**
- * Count memory markdown files (facts + corrections) under a memoryDir.
- * Used by the bulk-import CLI to derive a batch-level `memoriesCreated`
- * count by snapshotting before and after extraction settles. Intentionally
- * simple and swallows per-directory errors so a missing subdir reads as 0.
+ * Walk `memoryDir/{facts,corrections}` recursively and invoke `visit` for
+ * every `*.md` file. Intentionally swallows per-directory errors so a missing
+ * subdir reads as empty. Shared primitive for `listMemoryMarkdownFilePaths`,
+ * `readAllMemoryFiles`, and any future walker that needs the same roots +
+ * `.md` filter.
  */
-async function countMemoryMarkdownFiles(memoryDir: string): Promise<number> {
+async function walkMemoryMarkdownFiles(
+  memoryDir: string,
+  visit: (fullPath: string) => void | Promise<void>,
+): Promise<void> {
   const roots = [path.join(memoryDir, "facts"), path.join(memoryDir, "corrections")];
-  let count = 0;
 
   const walk = async (dir: string): Promise<void> => {
     let entries: Array<{ isDirectory(): boolean; isFile(): boolean; name: string | Buffer }>;
@@ -3135,73 +3138,62 @@ async function countMemoryMarkdownFiles(memoryDir: string): Promise<number> {
         continue;
       }
       if (!entry.isFile() || !entryName.endsWith(".md")) continue;
-      count += 1;
+      await visit(fullPath);
     }
   };
 
   for (const root of roots) {
     await walk(root);
   }
-  return count;
+}
+
+/**
+ * List absolute paths of every `*.md` file under `memoryDir/{facts,corrections}`.
+ * Used by the bulk-import CLI to derive a per-batch `memoriesCreated` count
+ * via set-subtraction of "paths after extraction" against "paths before
+ * extraction". Caveat: the extraction queue is shared across sessions, so
+ * concurrent organic extractions that write memories between the two
+ * snapshots will still inflate the reported count. Filename-set diff at
+ * least correctly ignores pre-existing files and files that were deleted
+ * while the batch ran.
+ */
+async function listMemoryMarkdownFilePaths(memoryDir: string): Promise<string[]> {
+  const paths: string[] = [];
+  await walkMemoryMarkdownFiles(memoryDir, (fullPath) => {
+    paths.push(fullPath);
+  });
+  return paths;
 }
 
 async function readAllMemoryFiles(memoryDir: string): Promise<DedupeCandidate[]> {
-  const roots = [path.join(memoryDir, "facts"), path.join(memoryDir, "corrections")];
   const out: DedupeCandidate[] = [];
-
-  const walk = async (dir: string): Promise<void> => {
-    let entries: Array<{ isDirectory(): boolean; isFile(): boolean; name: string | Buffer }>;
+  await walkMemoryMarkdownFiles(memoryDir, async (fullPath) => {
     try {
-      entries = (await readdir(dir, { withFileTypes: true })) as Array<{
-        isDirectory(): boolean;
-        isFile(): boolean;
-        name: string | Buffer;
-      }>;
+      const raw = await readFile(fullPath, "utf-8");
+      const parsed = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+      if (!parsed) return;
+      const fmRaw = parsed[1];
+      const body = parsed[2] ?? "";
+      const get = (key: string): string => {
+        const match = fmRaw.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
+        return match ? match[1].trim() : "";
+      };
+      const confidenceRaw = get("confidence");
+      const confidence = confidenceRaw.length > 0 ? Number(confidenceRaw) : undefined;
+      out.push({
+        path: fullPath,
+        content: body,
+        frontmatter: {
+          id: get("id") || undefined,
+          confidence: Number.isFinite(confidence as number) ? confidence : undefined,
+          updated: get("updated") || undefined,
+          created: get("created") || undefined,
+        },
+      });
     } catch {
-      return;
+      // Skip unreadable/malformed files.
     }
-
-    for (const entry of entries) {
-      const entryName = typeof entry.name === "string" ? entry.name : entry.name.toString("utf-8");
-      const fullPath = path.join(dir, entryName);
-      if (entry.isDirectory()) {
-        await walk(fullPath);
-        continue;
-      }
-      if (!entry.isFile() || !entryName.endsWith(".md")) continue;
-
-      try {
-        const raw = await readFile(fullPath, "utf-8");
-        const parsed = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-        if (!parsed) continue;
-        const fmRaw = parsed[1];
-        const body = parsed[2] ?? "";
-        const get = (key: string): string => {
-          const match = fmRaw.match(new RegExp(`^${key}:\\s*(.+)$`, "m"));
-          return match ? match[1].trim() : "";
-        };
-        const confidenceRaw = get("confidence");
-        const confidence = confidenceRaw.length > 0 ? Number(confidenceRaw) : undefined;
-        out.push({
-          path: fullPath,
-          content: body,
-          frontmatter: {
-            id: get("id") || undefined,
-            confidence: Number.isFinite(confidence as number) ? confidence : undefined,
-            updated: get("updated") || undefined,
-            created: get("created") || undefined,
-          },
-        });
-      } catch {
-        // Skip unreadable/malformed files.
-      }
-    }
-  };
-
-  for (const root of roots) {
-    await walk(root);
-  }
-
+  });
   return out;
 }
 
@@ -3892,10 +3884,20 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           );
           const writeRoot = defaultStorage.dir;
           const ingestBatch: ProcessBatchFn = async (turns) => {
-            const before = await countMemoryMarkdownFiles(writeRoot);
+            // Filename-set diff correctly excludes files that already existed
+            // (vs. a naïve `after - before` integer subtraction, which would
+            // inflate when unrelated files are deleted mid-batch). Concurrent
+            // organic extractions against the same writeRoot can still inflate
+            // this count; the extraction engine does not expose a per-session
+            // hook for "files created by this run", so full isolation against
+            // concurrent writes is tracked as a follow-up.
+            const before = new Set(await listMemoryMarkdownFilePaths(writeRoot));
             await orchestrator.ingestBulkImportBatch(turns, {});
-            const after = await countMemoryMarkdownFiles(writeRoot);
-            const memoriesCreated = Math.max(0, after - before);
+            const after = await listMemoryMarkdownFilePaths(writeRoot);
+            let memoriesCreated = 0;
+            for (const p of after) {
+              if (!before.has(p)) memoriesCreated += 1;
+            }
             return { memoriesCreated, duplicatesSkipped: 0 };
           };
           try {
