@@ -133,7 +133,7 @@ import {
   parseBenchArgs,
 } from "./bench-args.js";
 import {
-  cleanupRollbackDirectory,
+  cleanupRollbackDirectoryBestEffort,
   createOpenclawUpgradeRollbackFailure,
   runBestEffortGatewayRestart,
   rollbackOpenclawUpgrade,
@@ -1923,14 +1923,15 @@ async function resolvePackageBenchRuntime(
   parsed: ParsedBenchArgs,
   runtimeProfile: BenchRuntimeProfile,
 ): Promise<ResolvedBenchRuntimeProfile> {
-  const request = buildBenchRuntimeProfileRequest(parsed, runtimeProfile);
   if (!benchModule.resolveBenchRuntimeProfile) {
     throw new Error(
       "Installed @remnic/bench runtime does not expose resolveBenchRuntimeProfile().",
     );
   }
 
-  return benchModule.resolveBenchRuntimeProfile(request);
+  return benchModule.resolveBenchRuntimeProfile(
+    buildBenchRuntimeProfileRequest(parsed, runtimeProfile),
+  );
 }
 
 function resolveMemoryDir(): string {
@@ -4932,7 +4933,6 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
       memoryDir: preservedMemoryDir,
       configPath,
     });
-    cleanupRollbackDirectory(installResult.rollbackDir);
   } catch (installError) {
     const failurePhase = installResult
       ? "reconfiguring the installed plugin"
@@ -4962,6 +4962,9 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
       { cause: installError },
     );
   }
+  const rollbackCleanupWarning = cleanupRollbackDirectoryBestEffort(
+    installResult?.rollbackDir,
+  );
 
   console.log("\nUpgrade backups:");
   for (const note of backupNotes) console.log(`  ${note}`);
@@ -4969,6 +4972,9 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     `\nInstalled published plugin from npm pack ${packageSpec}` +
     `${installResult.version ? ` (version ${installResult.version})` : ""}.`,
   );
+  if (rollbackCleanupWarning) {
+    console.warn(rollbackCleanupWarning);
+  }
 
   if (opts.restartGateway) {
     const restartResult = runBestEffortGatewayRestart(restartOpenclawGateway, OPENCLAW_GATEWAY_LABEL);

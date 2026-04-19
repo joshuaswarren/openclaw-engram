@@ -63,6 +63,20 @@ export function cleanupRollbackDirectory(rollbackDir?: string): void {
   fs.rmSync(rollbackDir, { recursive: true, force: true });
 }
 
+export function cleanupRollbackDirectoryBestEffort(rollbackDir?: string): string | undefined {
+  if (!rollbackDir) return undefined;
+
+  try {
+    cleanupRollbackDirectory(rollbackDir);
+    return undefined;
+  } catch (error) {
+    return (
+      `Warning: the upgrade completed, but failed to remove the preserved rollback copy at ` +
+      `${rollbackDir}: ${describeError(error)}`
+    );
+  }
+}
+
 export function restoreDirectoryFromRollback(targetDir: string, rollbackDir: string): void {
   if (!fs.existsSync(rollbackDir)) {
     throw new Error(`Rollback directory is missing: ${rollbackDir}`);

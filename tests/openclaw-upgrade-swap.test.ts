@@ -7,6 +7,7 @@ import { mkdtemp } from "node:fs/promises";
 
 import {
   cleanupRollbackDirectory,
+  cleanupRollbackDirectoryBestEffort,
   createOpenclawUpgradeRollbackFailure,
   restoreDirectoryFromRollback,
   runBestEffortGatewayRestart,
@@ -52,6 +53,31 @@ test("cleanupRollbackDirectory removes the preserved rollback copy after success
   cleanupRollbackDirectory(rollbackDir);
 
   assert.equal(fs.existsSync(rollbackDir), false);
+});
+
+test("cleanupRollbackDirectoryBestEffort degrades cleanup failures into a warning", async () => {
+  const tmp = await makeTmpDir();
+  const rollbackDir = path.join(tmp, "rollback");
+
+  writeMarker(rollbackDir, "old-plugin");
+
+  const rmSync = fs.rmSync;
+  fs.rmSync = ((target: fs.PathLike, options?: fs.RmOptions) => {
+    if (String(target) === rollbackDir) {
+      throw new Error("permission denied");
+    }
+    return rmSync(target, options);
+  }) as typeof fs.rmSync;
+
+  try {
+    const warning = cleanupRollbackDirectoryBestEffort(rollbackDir);
+
+    assert.match(warning ?? "", /failed to remove the preserved rollback copy/i);
+    assert.match(warning ?? "", /permission denied/);
+    assert.equal(fs.existsSync(rollbackDir), true);
+  } finally {
+    fs.rmSync = rmSync;
+  }
 });
 
 test("restoreDirectoryFromRollback reinstates the previous plugin copy", async () => {
