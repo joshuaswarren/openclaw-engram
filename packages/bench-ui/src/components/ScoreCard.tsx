@@ -4,6 +4,7 @@ import {
   formatMetricValue,
   formatTimestamp,
   humanizeIdentifier,
+  isImprovingDelta,
 } from "../bench-data";
 
 export function ScoreCard({ card }: { card: BenchmarkCard }) {
@@ -21,9 +22,9 @@ export function ScoreCard({ card }: { card: BenchmarkCard }) {
         <strong>{formatMetricValue(card.latest.primaryScore, card.latest.primaryMetric ?? undefined)}</strong>
         <span
           className={`delta-pill${
-            card.delta !== null && card.delta > 0
+            card.delta !== null && isImprovingDelta(card.delta, card.latest.primaryMetric ?? undefined)
               ? " delta-pill--positive"
-              : card.delta !== null && card.delta < 0
+              : card.delta !== null && !isImprovingDelta(card.delta, card.latest.primaryMetric ?? undefined) && card.delta !== 0
                 ? " delta-pill--negative"
                 : ""
           }`}

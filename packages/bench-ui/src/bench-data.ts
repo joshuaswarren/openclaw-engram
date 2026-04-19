@@ -166,8 +166,28 @@ const rawCountMetrics = new Set([
   "errors_count",
 ]);
 
+/**
+ * Metrics where a smaller value represents an improvement.
+ * A positive delta for these metrics is a regression, not a win.
+ */
+const lowerIsBetterMetrics = new Set([
+  "setup_friction",
+  "commands_count",
+  "prompts_count",
+  "errors_count",
+]);
+
 function isRawCountMetric(metricName?: string): boolean {
   return typeof metricName === "string" && rawCountMetrics.has(metricName);
+}
+
+/**
+ * Returns true when `delta > 0` is an improvement for the given metric name.
+ * For most metrics higher is better; for lower-is-better metrics it is reversed.
+ */
+export function isImprovingDelta(delta: number, metricName?: string): boolean {
+  const lowerIsBetter = typeof metricName === "string" && lowerIsBetterMetrics.has(metricName);
+  return lowerIsBetter ? delta < 0 : delta > 0;
 }
 
 export function formatMetricValue(value: number | null, metricName?: string): string {
