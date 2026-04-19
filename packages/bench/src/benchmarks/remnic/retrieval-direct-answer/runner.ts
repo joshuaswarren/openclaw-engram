@@ -78,23 +78,50 @@ function scoreCase(benchCase: DirectAnswerBenchCase): { scores: Record<string, n
   const winnerId = result.winner?.memory.frontmatter.id ?? null;
 
   const verdictCorrect = actualVerdict === benchCase.expected ? 1 : 0;
-  const winnerCorrect =
-    benchCase.expected === "eligible"
-      ? winnerId === (benchCase.expectedWinnerId ?? null)
-        ? 1
-        : 0
-      : 1; // non-eligible cases have no winner to check
+  const scores: Record<string, number> = {
+    verdict_correct: verdictCorrect,
+    latency_under_5ms: latencyMs < 5 ? 1 : 0,
+  };
+  // Only record winner_correct on cases that expect an eligible verdict.
+  // Hard-coding 1 for defer cases would inflate the aggregate mean and mask
+  // real winner-selection regressions on eligible cases. Omitting the metric
+  // causes aggregateTaskScores to average only over eligible cases (see
+  // collectMetricValues, which filters non-numeric entries).
+  if (benchCase.expected === "eligible") {
+    scores.winner_correct =
+      winnerId === (benchCase.expectedWinnerId ?? null) ? 1 : 0;
+  }
 
   return {
-    scores: {
-      verdict_correct: verdictCorrect,
-      winner_correct: winnerCorrect,
-      latency_under_5ms: latencyMs < 5 ? 1 : 0,
-    },
+    scores,
     actualVerdict,
     winnerId,
     latencyMs,
   };
+}
+
+function selectCases(
+  mode: "quick" | "full",
+  limit?: number,
+): DirectAnswerBenchCase[] {
+  // Quick mode defaults to the first case; explicit --limit always wins.
+  const effectiveLimit =
+    limit !== undefined ? limit : mode === "quick" ? 1 : undefined;
+  if (effectiveLimit === undefined) {
+    return DIRECT_ANSWER_BENCH_FIXTURE;
+  }
+  if (!Number.isInteger(effectiveLimit) || effectiveLimit <= 0) {
+    throw new Error(
+      "retrieval-direct-answer limit must be a positive integer",
+    );
+  }
+  const limited = DIRECT_ANSWER_BENCH_FIXTURE.slice(0, effectiveLimit);
+  if (limited.length === 0) {
+    throw new Error(
+      "retrieval-direct-answer fixture is empty after applying the requested limit.",
+    );
+  }
+  return limited;
 }
 
 export async function runRetrievalDirectAnswerBenchmark(
@@ -102,8 +129,9 @@ export async function runRetrievalDirectAnswerBenchmark(
 ): Promise<BenchmarkResult> {
   const tasks: TaskResult[] = [];
   const latencies: number[] = [];
+  const cases = selectCases(options.mode, options.limit);
 
-  for (const benchCase of DIRECT_ANSWER_BENCH_FIXTURE) {
+  for (const benchCase of cases) {
     const { scores, actualVerdict, winnerId, latencyMs } = scoreCase(benchCase);
     latencies.push(latencyMs);
     tasks.push({
