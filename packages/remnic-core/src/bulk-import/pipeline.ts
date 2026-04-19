@@ -18,6 +18,11 @@ const MAX_BATCH_SIZE = 1000;
 export interface ProcessBatchResult {
   memoriesCreated: number;
   duplicatesSkipped: number;
+  /**
+   * Number of entities created by the batch. Optional so Phase-1 stubs that
+   * only count memories can omit it; when absent it is treated as 0.
+   */
+  entitiesCreated?: number;
 }
 
 export type ProcessBatchFn = (
@@ -118,6 +123,9 @@ export async function runBulkImportPipeline(
       const batchResult = await processBatch(batch);
       result.memoriesCreated += batchResult.memoriesCreated;
       result.duplicatesSkipped += batchResult.duplicatesSkipped;
+      if (typeof batchResult.entitiesCreated === "number") {
+        result.entitiesCreated += batchResult.entitiesCreated;
+      }
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : String(err);

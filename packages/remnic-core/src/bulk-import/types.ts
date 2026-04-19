@@ -2,6 +2,8 @@
 // Bulk-import pipeline types and validation
 // ---------------------------------------------------------------------------
 
+import { parseIsoOffsetTimestamp } from "../utils/iso-timestamp.js";
+
 export interface BulkImportSource {
   turns: ImportTurn[];
   metadata: {
@@ -58,7 +60,6 @@ export interface BulkImportSourceAdapter {
 // ---------------------------------------------------------------------------
 
 const VALID_ROLES: ReadonlySet<string> = new Set(["user", "assistant", "other"]);
-const ISO_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?(?:Z|[+-]\d{2}:\d{2})$/;
 
 export interface ImportTurnValidationIssue {
   code: string;
@@ -66,69 +67,24 @@ export interface ImportTurnValidationIssue {
   index?: number;
 }
 
-function normalizeIsoForComparison(value: string): string {
-  return value.includes(".") ? value : value.replace("Z", ".000Z");
-}
-
-/**
- * Validate the date/time components of an ISO timestamp string.
- * Catches overflowed dates like Feb 31 that Date.parse silently normalizes.
- */
-function validateDateComponents(isoString: string): boolean {
-  const match = isoString.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/);
-  if (!match) return false;
-  const [, yStr, mStr, dStr, hStr, minStr, sStr] = match;
-  const y = Number(yStr);
-  const m = Number(mStr);
-  const d = Number(dStr);
-  const h = Number(hStr);
-  const min = Number(minStr);
-  const s = Number(sStr);
-  if (m < 1 || m > 12) return false;
-  if (d < 1 || d > 31) return false;
-  if (h > 23 || min > 59 || s > 59) return false;
-  // Validate day for the specific month (using Date(y, m, 0) to get days in month)
-  const daysInMonth = new Date(y, m, 0).getDate();
-  if (d > daysInMonth) return false;
-  return true;
-}
-
-/**
- * Validate the timezone offset range if present.
- * Max offset is +/-14:00 per ISO 8601; minute part must be 0-59.
- */
-function validateOffset(isoString: string): boolean {
-  const offsetMatch = isoString.match(/([+-])(\d{2}):(\d{2})$/);
-  if (!offsetMatch) return true; // Z format, no offset to validate
-  const oh = Number(offsetMatch[2]);
-  const om = Number(offsetMatch[3]);
-  if (oh > 14 || om > 59) return false;
-  // +14:00 is max; offsets like +14:30 are invalid
-  if (oh === 14 && om > 0) return false;
-  return true;
-}
-
 export function isImportRole(value: unknown): value is ImportSourceRole {
   return typeof value === "string" && VALID_ROLES.has(value);
 }
 
+/**
+ * Parse an ISO-8601 / RFC 3339 timestamp used by bulk-import adapters.
+ *
+ * Accepts variable-precision fractional seconds and either a `Z` suffix or a
+ * `[+-]HH:MM` timezone offset, so adapters may preserve their source
+ * timestamps verbatim. Returns milliseconds since epoch, or `null` if the
+ * string is not a well-formed timestamp (including overflowed calendar dates
+ * or out-of-range offsets).
+ *
+ * Delegates to the shared parser in `utils/iso-timestamp.ts` — do not
+ * reimplement locally; extend that helper instead.
+ */
 export function parseIsoTimestamp(value: string): number | null {
-  if (typeof value !== "string" || !ISO_TIMESTAMP_RE.test(value)) return null;
-  const ts = Date.parse(value);
-  if (!Number.isFinite(ts)) return null;
-
-  // Validate date/time components to catch overflowed dates (e.g., Feb 31)
-  if (!validateDateComponents(value)) return null;
-
-  // Validate offset range if present (e.g., reject +25:00)
-  if (!validateOffset(value)) return null;
-
-  // For UTC timestamps (ending in Z), also verify with round-trip
-  if (value.endsWith("Z")) {
-    const roundTrip = new Date(ts).toISOString();
-    if (roundTrip !== normalizeIsoForComparison(value)) return null;
-  }
-  return ts;
+  return parseIsoOffsetTimestamp(value);
 }
 
 export function validateImportTurn(

@@ -188,6 +188,36 @@ describe("runBulkImportPipeline", () => {
     assert.equal(result.duplicatesSkipped, 4);
     assert.equal(result.memoriesCreated, 0);
   });
+
+  it("accumulates entitiesCreated from processBatch", async () => {
+    const source = makeSource(6);
+    const fn: ProcessBatchFn = async () => ({
+      memoriesCreated: 1,
+      duplicatesSkipped: 0,
+      entitiesCreated: 3,
+    });
+    const result = await runBulkImportPipeline(
+      source,
+      { batchSize: 2 },
+      fn,
+    );
+    // 3 batches × 3 entities = 9
+    assert.equal(result.entitiesCreated, 9);
+  });
+
+  it("treats missing entitiesCreated as zero", async () => {
+    const source = makeSource(4);
+    const fn: ProcessBatchFn = async () => ({
+      memoriesCreated: 1,
+      duplicatesSkipped: 0,
+    });
+    const result = await runBulkImportPipeline(
+      source,
+      { batchSize: 2 },
+      fn,
+    );
+    assert.equal(result.entitiesCreated, 0);
+  });
 });
 
 describe("formatBatchTranscript", () => {

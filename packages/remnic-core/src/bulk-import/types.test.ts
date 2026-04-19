@@ -103,6 +103,24 @@ describe("parseIsoTimestamp", () => {
     assert.ok(ts! > 0);
   });
 
+  it("accepts two-digit fractional seconds", () => {
+    const ts = parseIsoTimestamp("2024-01-15T10:30:00.12Z");
+    assert.equal(typeof ts, "number");
+    assert.ok(ts! > 0);
+  });
+
+  it("accepts six-digit fractional seconds with offset", () => {
+    const ts = parseIsoTimestamp("2024-01-15T10:30:00.123456+00:00");
+    assert.equal(typeof ts, "number");
+    assert.ok(ts! > 0);
+  });
+
+  it("accepts single-digit fractional seconds", () => {
+    const ts = parseIsoTimestamp("2024-01-15T10:30:00.5Z");
+    assert.equal(typeof ts, "number");
+    assert.ok(ts! > 0);
+  });
+
   it("rejects Feb 29 in non-leap year with offset", () => {
     assert.equal(parseIsoTimestamp("2023-02-29T10:00:00+05:30"), null);
   });

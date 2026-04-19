@@ -2765,7 +2765,6 @@ export interface BulkImportCliCommandOptions {
   memoryDir: string;
   source: string;
   file: string;
-  platform?: string;
   namespace?: string;
   batchSize?: number;
   dryRun?: boolean;

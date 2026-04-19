@@ -33,7 +33,11 @@ export function registerBulkImportSource(
       `bulk-import source adapter '${key}' is already registered`,
     );
   }
-  adapters.set(key, adapter);
+  // Store adapter with trimmed name so `adapter.name` stays consistent with
+  // the registry key returned by `listBulkImportSources()`.
+  const normalized: BulkImportSourceAdapter =
+    adapter.name === key ? adapter : { ...adapter, name: key };
+  adapters.set(key, normalized);
 }
 
 /**

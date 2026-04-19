@@ -142,4 +142,16 @@ describe("bulk-import registry", () => {
     const result2 = getBulkImportSource("padded-source");
     assert.ok(result2, "expected adapter found via trimmed lookup");
   });
+
+  it("stored adapter.name matches the registry key (trimmed)", () => {
+    // Register adapter whose name has surrounding whitespace.
+    registerBulkImportSource(makeAdapter("  padded-name  "));
+    const names = listBulkImportSources();
+    assert.deepEqual(names, ["padded-name"]);
+    // The adapter returned from lookup must also report the trimmed name so
+    // downstream code using `adapter.name` agrees with the registry key.
+    const retrieved = getBulkImportSource("padded-name");
+    assert.ok(retrieved);
+    assert.equal(retrieved!.name, "padded-name");
+  });
 });
