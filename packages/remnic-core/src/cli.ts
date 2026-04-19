@@ -3641,7 +3641,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
-        .command("import")
+        .command("bulk-import")
         .description(
           "Bulk-import chat history via a registered source adapter " +
             "(e.g. --source weclone). Use --dry-run while the persistence " +
@@ -3660,11 +3660,11 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const sourceRaw = typeof options.source === "string" ? options.source.trim() : "";
           const filePathRaw = typeof options.file === "string" ? options.file.trim() : "";
           if (sourceRaw.length === 0) {
-            console.log("Missing --source. Example: openclaw engram import --source weclone --file /tmp/export.json --dry-run");
+            console.log("Missing --source. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json --dry-run");
             return;
           }
           if (filePathRaw.length === 0) {
-            console.log("Missing --file. Example: openclaw engram import --source weclone --file /tmp/export.json --dry-run");
+            console.log("Missing --file. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json --dry-run");
             return;
           }
           const batchSizeRaw = parseInt(String(options.batchSize ?? "50"), 10);
@@ -3672,7 +3672,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const namespaceRaw = typeof options.namespace === "string" ? options.namespace.trim() : "";
           const platformRaw = typeof options.platform === "string" ? options.platform.trim() : "";
           try {
-            await runBulkImportCliCommand({
+            const result = await runBulkImportCliCommand({
               memoryDir: orchestrator.config.memoryDir,
               source: sourceRaw,
               file: filePathRaw,
@@ -3685,7 +3685,12 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
               stdout: process.stdout,
               stderr: process.stderr,
             });
-            console.log("OK");
+            if (result.errors.length > 0) {
+              console.error(`Bulk import completed with ${result.errors.length} batch error(s).`);
+              process.exitCode = 1;
+            } else {
+              console.log("OK");
+            }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
             console.error(`Bulk import failed: ${message}`);

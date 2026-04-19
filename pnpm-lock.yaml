@@ -237,9 +237,6 @@ importers:
       '@lancedb/lancedb-linux-x64-gnu':
         specifier: ^0.26.2
         version: 0.26.2
-      '@remnic/import-weclone':
-        specifier: workspace:*
-        version: link:../import-weclone
 
   packages/remnic-server:
     dependencies:
