@@ -1,4 +1,3 @@
-import os from "node:os";
 import path from "node:path";
 import { access, readFile, readdir, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -927,15 +926,13 @@ export async function runTrainingExportCliCommand(
   // 6. Format records using adapter
   const formatted = adapter.formatRecords(records);
 
-  // 7. Write to output file
+  // 7. Write to output file. `mkdirSync` with `recursive: true` is a no-op
+  // when the directory already exists, so real errors (EACCES, ENOSPC,
+  // EROFS, etc.) must propagate to the caller rather than being silenced.
   const { writeFile: fsWriteFile } = await import("node:fs/promises");
   const { dirname } = await import("node:path");
   const { mkdirSync } = await import("node:fs");
-  try {
-    mkdirSync(dirname(expandedOutput), { recursive: true });
-  } catch {
-    // parent already exists
-  }
+  mkdirSync(dirname(expandedOutput), { recursive: true });
   await fsWriteFile(expandedOutput, formatted, "utf-8");
   opts.stdout.write(
     `Exported ${records.length} records to ${expandedOutput} (${adapter.name} format)\n`,
