@@ -3947,86 +3947,22 @@ export class Orchestrator {
       // poison the chain.  Tests needing the snapshot to be annotated
       // can `await orchestrator.waitForDirectAnswerObservationIdle()`.
       if (this.config.recallDirectAnswerEnabled && sessionKey) {
-        // Capture the identity of the snapshot just written by
-        // recallInternal.  Back-to-back recalls on the same sessionKey
-        // overwrite this snapshot, so before the async annotation lands
-        // we check the current snapshot still matches.  Without this
-        // guard, an older observation could attach its tier-explain
-        // block onto a newer query's snapshot and misreport which
-        // tier served the latest recall in `--explain` output.
-        const expectedSnapshot = this.lastRecall.get(sessionKey);
-        // Cursor M on #540: `expectedSnapshot?.plannerMode !== "no_recall"`
-        // evaluates true when the snapshot is null (undefined !== "no_recall").
-        // That would let observation proceed with `expectedIdentity = undefined`,
-        // bypassing the stale-snapshot guard in `annotateTierExplain` and
-        // allowing the annotation to land on a concurrent recall's newer
-        // snapshot.  Require a present snapshot before proceeding.
-        //
-        // Codex P2 on #540: skip observation when recallInternal selected
-        // `no_recall` — the user opted out of retrieval for this turn, so
-        // scanning memory and trust-zones just to populate a tier-explain
-        // nothing will consume is waste and would misreport the tier.
-        const shouldObserve =
-          expectedSnapshot !== null &&
-          expectedSnapshot.plannerMode !== "no_recall";
-        if (shouldObserve) {
-          const principal = resolvePrincipal(sessionKey, this.config);
-          const namespaceOverride = options.namespace?.trim() || undefined;
-          // Mirror recallInternal's namespace selection: when no override
-          // is provided, recall may search all readable namespaces for the
-          // principal (`recallNamespacesForPrincipal`).  Evaluate the
-          // direct-answer gate over the same namespace set so the observer
-          // can't miss valid candidates that live in `shared` or other
-          // readable namespaces and misreport the tier decision.
-          const observationNamespaces: string[] =
-            namespaceOverride &&
-            canReadNamespace(principal, namespaceOverride, this.config)
-              ? [namespaceOverride]
-              : recallNamespacesForPrincipal(principal, this.config);
-          // Normalize the query through the same `buildRecallQueryPolicy`
-          // path recallInternal uses, so observation scores the same text
-          // recall actually ran — important for cron/instruction-heavy
-          // prompts where normalization can materially shorten or
-          // restructure the query.
-          const observationQueryPolicy = buildRecallQueryPolicy(
+        // Cursor M on #540 (round 2): wrap the observation setup in its
+        // own try/catch.  Without this, a sync throw inside
+        // resolvePrincipal / recallNamespacesForPrincipal /
+        // buildRecallQueryPolicy would bubble up to the outer try/catch,
+        // `logRecallFailure()` would fire, and `recall()` would return
+        // "" — silently discarding the valid `recallResult` already in
+        // hand.  Observation must never be able to corrupt a recall
+        // response, so any error here is log.debug'd and swallowed.
+        try {
+          await this.enqueueDirectAnswerObservation(
             prompt,
             sessionKey,
-            {
-              cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
-              cronRecallNormalizedQueryMaxChars:
-                this.config.cronRecallNormalizedQueryMaxChars,
-              cronRecallInstructionHeavyTokenCap:
-                this.effectiveCronRecallInstructionHeavyTokenCap(),
-              cronConversationRecallMode: this.config.cronConversationRecallMode,
-            },
+            options.namespace?.trim() || undefined,
           );
-          const observationQuery =
-            observationQueryPolicy.retrievalQuery || prompt;
-          const expectedIdentity = {
-            traceId: expectedSnapshot.traceId,
-            recordedAt: expectedSnapshot.recordedAt,
-          };
-          // Cursor L on #540: do NOT pass `abortController.signal` into
-          // the fire-and-forget observation.  The signal becomes dead
-          // once `recall()` returns (the `finally` block drops the
-          // parent-signal listener), so abort checks inside
-          // `annotateDirectAnswerTier` / `tryDirectAnswer` could never
-          // fire mid-flight — creating the illusion of cancellation
-          // hooks that are actually unreachable.  Observation is
-          // fire-and-forget by design; cancelling it from the caller's
-          // signal would cancel it immediately on every recall.
-          const previous = this.directAnswerObservationChain;
-          this.directAnswerObservationChain = previous.then(() =>
-            this.annotateDirectAnswerTier(
-              observationQuery,
-              sessionKey,
-              observationNamespaces,
-              expectedIdentity,
-              undefined,
-            ).catch((err) => {
-              log.debug(`direct-answer observation chain error: ${err}`);
-            }),
-          );
+        } catch (err) {
+          log.debug(`direct-answer observation setup failed: ${err}`);
         }
       }
 
@@ -4059,6 +3995,83 @@ export class Orchestrator {
    * All errors are logged and swallowed so observation can never
    * corrupt the user's recall response.
    */
+  /**
+   * Build the observation identity + sources and append the
+   * fire-and-forget annotation to the direct-answer chain.  Extracted
+   * from `recall()` so that a sync throw in any of the setup helpers
+   * (resolvePrincipal / recallNamespacesForPrincipal /
+   * buildRecallQueryPolicy) can be caught at the caller without
+   * bubbling into `recall()`'s outer try/catch — which would discard
+   * the valid recallResult already in hand.  Cursor M on #540.
+   */
+  private async enqueueDirectAnswerObservation(
+    prompt: string,
+    sessionKey: string,
+    namespaceOverride: string | undefined,
+  ): Promise<void> {
+    // Capture the identity of the snapshot just written by
+    // recallInternal.  Back-to-back recalls on the same sessionKey
+    // overwrite this snapshot, so before the async annotation lands
+    // we check the current snapshot still matches.
+    const expectedSnapshot = this.lastRecall.get(sessionKey);
+    // Cursor M on #540: `expectedSnapshot?.plannerMode !== "no_recall"`
+    // evaluates true when snapshot is null (undefined !== "no_recall").
+    // Observation would then proceed with `expectedIdentity` undefined,
+    // bypassing the stale-snapshot guard.  Require a present snapshot.
+    //
+    // Codex P2 on #540: skip when recallInternal chose `no_recall` — the
+    // user opted out of retrieval this turn, so scanning memory +
+    // trust-zones to populate a tier-explain nothing will consume is
+    // waste and would misreport the tier.
+    if (expectedSnapshot === null) return;
+    if (expectedSnapshot.plannerMode === "no_recall") return;
+
+    const principal = resolvePrincipal(sessionKey, this.config);
+    // Mirror recallInternal's namespace selection: when no override is
+    // provided, recall may search all readable namespaces for the
+    // principal.  Evaluate the direct-answer gate over the same set so
+    // the observer can't miss candidates in `shared` / other readable
+    // namespaces and misreport the tier decision.
+    const observationNamespaces: string[] =
+      namespaceOverride && canReadNamespace(principal, namespaceOverride, this.config)
+        ? [namespaceOverride]
+        : recallNamespacesForPrincipal(principal, this.config);
+    // Normalize the query through the same `buildRecallQueryPolicy` path
+    // recallInternal uses, so observation scores the same text recall
+    // actually ran (important for cron/instruction-heavy prompts where
+    // normalization can materially restructure the query).
+    const observationQueryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
+      cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
+      cronRecallNormalizedQueryMaxChars:
+        this.config.cronRecallNormalizedQueryMaxChars,
+      cronRecallInstructionHeavyTokenCap:
+        this.effectiveCronRecallInstructionHeavyTokenCap(),
+      cronConversationRecallMode: this.config.cronConversationRecallMode,
+    });
+    const observationQuery = observationQueryPolicy.retrievalQuery || prompt;
+    const expectedIdentity = {
+      traceId: expectedSnapshot.traceId,
+      recordedAt: expectedSnapshot.recordedAt,
+    };
+    // Cursor L on #540: do NOT forward the caller's abort signal into
+    // the fire-and-forget observation.  The signal becomes inert once
+    // `recall()` returns (the `finally` there drops the only listener),
+    // so abort checks inside the observation path are unreachable.
+    // Observation is fire-and-forget by design.
+    const previous = this.directAnswerObservationChain;
+    this.directAnswerObservationChain = previous.then(() =>
+      this.annotateDirectAnswerTier(
+        observationQuery,
+        sessionKey,
+        observationNamespaces,
+        expectedIdentity,
+        undefined,
+      ).catch((err) => {
+        log.debug(`direct-answer observation chain error: ${err}`);
+      }),
+    );
+  }
+
   private async annotateDirectAnswerTier(
     prompt: string,
     sessionKey: string,

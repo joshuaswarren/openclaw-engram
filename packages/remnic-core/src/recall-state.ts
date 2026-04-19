@@ -329,16 +329,24 @@ export class LastRecallStore {
     const current = this.state[sessionKey];
     if (!current) return;
     if (expected) {
+      // Codex P1 on #540: treat empty `traceId` as missing.  When
+      // `profilingEnabled: false` (the default), `startTrace()` returns
+      // `""` and every snapshot persists the same empty trace id.  A
+      // simple `expected.traceId !== undefined` check would then always
+      // be truthy and the guard would match across back-to-back recalls,
+      // letting an older observation annotate a newer snapshot.
+      const hasExpectedTraceId =
+        typeof expected.traceId === "string" && expected.traceId.length > 0;
       const traceIdMatches =
-        expected.traceId !== undefined && current.traceId === expected.traceId;
+        hasExpectedTraceId && current.traceId === expected.traceId;
       const recordedAtMatches =
         expected.recordedAt !== undefined &&
         current.recordedAt === expected.recordedAt;
-      // Prefer traceId when the caller supplied it; fall back to
-      // recordedAt when traceId is absent.  Reject the write if
-      // neither identifier matches so a stale observation from a
-      // prior recall cannot overwrite a newer session snapshot.
-      if (expected.traceId !== undefined) {
+      // Prefer traceId when the caller supplied a non-empty one; fall
+      // back to recordedAt otherwise.  Reject the write if neither
+      // identifier matches so a stale observation from a prior recall
+      // cannot overwrite a newer session snapshot.
+      if (hasExpectedTraceId) {
         if (!traceIdMatches) return;
       } else if (expected.recordedAt !== undefined && !recordedAtMatches) {
         return;
