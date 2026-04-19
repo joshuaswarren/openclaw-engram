@@ -103,6 +103,11 @@ import {
   type EvalShadowRecallRecord,
 } from "./evals.js";
 import { SessionObserverState } from "./session-observer-state.js";
+import {
+  abortError as sharedAbortError,
+  isAbortError,
+  throwIfAborted as sharedThrowIfAborted,
+} from "./abort-error.js";
 import { CODEX_THREAD_KEY_PREFIX } from "./codex-thread-key.js";
 import { isDisagreementPrompt } from "./signal.js";
 import { lintWorkspaceFiles, rotateMarkdownFileToArchive } from "./hygiene.js";
@@ -467,19 +472,19 @@ type QueryAwarePrefilter = {
   filteredToFullSearch: boolean;
 };
 
-function abortRecallError(message: string): Error {
-  const err = new Error(message);
-  Object.defineProperty(err, "name", { value: "AbortError" });
-  return err;
-}
+// Recall-specific abort helpers.  Thin wrappers over the shared
+// `abort-error.ts` module so every abort in the codebase shares the
+// same `name === "AbortError"` classification contract (`isAbortError`
+// works uniformly).  We keep the "recall aborted" default message for
+// back-compat with call-site logs; callers that pass an explicit
+// message (e.g. "extraction aborted (before_extract)") are unaffected.
+const abortRecallError = sharedAbortError;
 
 function throwIfRecallAborted(
   signal?: AbortSignal,
   message = "recall aborted",
 ): void {
-  if (signal?.aborted) {
-    throw abortRecallError(message);
-  }
+  sharedThrowIfAborted(signal, message);
 }
 
 async function raceRecallAbort<T>(
@@ -8632,7 +8637,17 @@ export class Orchestrator {
     if (!this.queueProcessing) {
       this.queueProcessing = true;
       this.processQueue().catch((err) => {
-        log.error("background extraction queue processor failed", err);
+        // Issue #549: an AbortError bubbling up here is session-
+        // transition cancellation, not a failure.  Log at debug so
+        // operators don't see spurious "queue processor failed"
+        // errors right next to a successful extraction log.
+        if (isAbortError(err)) {
+          log.debug(
+            "background extraction queue processor aborted (session transition)",
+          );
+        } else {
+          log.error("background extraction queue processor failed", err);
+        }
         this.queueProcessing = false;
       });
     }
@@ -8714,7 +8729,24 @@ export class Orchestrator {
         try {
           await task();
         } catch (err) {
-          log.error("background extraction task failed", err);
+          // Issue #549: `throwIfRecallAborted` (used throughout
+          // runExtraction) raises an Error whose `name` is
+          // `"AbortError"`.  That path fires when `before_reset`
+          // aborts a queued task to avoid duplicate extraction — it
+          // is intentional cancellation, not a failure.  Downgrading
+          // the log to debug prevents spurious `error`-level lines
+          // that routinely appear right next to a successful
+          // `persisted: N facts, M entities` log and that confuse
+          // operators into thinking extraction is broken.  Genuine
+          // extraction failures (network, parse, I/O) still log at
+          // `error`.
+          if (isAbortError(err)) {
+            log.debug(
+              "background extraction task aborted (session transition)",
+            );
+          } else {
+            log.error("background extraction task failed", err);
+          }
         }
       }
     }
