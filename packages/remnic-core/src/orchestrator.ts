@@ -3947,38 +3947,6 @@ export class Orchestrator {
       // poison the chain.  Tests needing the snapshot to be annotated
       // can `await orchestrator.waitForDirectAnswerObservationIdle()`.
       if (this.config.recallDirectAnswerEnabled && sessionKey) {
-        const principal = resolvePrincipal(sessionKey, this.config);
-        const namespaceOverride = options.namespace?.trim() || undefined;
-        // Mirror recallInternal's namespace selection: when no override
-        // is provided, recall may search all readable namespaces for the
-        // principal (`recallNamespacesForPrincipal`).  Evaluate the
-        // direct-answer gate over the same namespace set so the observer
-        // can't miss valid candidates that live in `shared` or other
-        // readable namespaces and misreport the tier decision.
-        const observationNamespaces: string[] =
-          namespaceOverride &&
-          canReadNamespace(principal, namespaceOverride, this.config)
-            ? [namespaceOverride]
-            : recallNamespacesForPrincipal(principal, this.config);
-        // Normalize the query through the same `buildRecallQueryPolicy`
-        // path recallInternal uses, so observation scores the same text
-        // recall actually ran — important for cron/instruction-heavy
-        // prompts where normalization can materially shorten or
-        // restructure the query.
-        const observationQueryPolicy = buildRecallQueryPolicy(
-          prompt,
-          sessionKey,
-          {
-            cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
-            cronRecallNormalizedQueryMaxChars:
-              this.config.cronRecallNormalizedQueryMaxChars,
-            cronRecallInstructionHeavyTokenCap:
-              this.effectiveCronRecallInstructionHeavyTokenCap(),
-            cronConversationRecallMode: this.config.cronConversationRecallMode,
-          },
-        );
-        const observationQuery =
-          observationQueryPolicy.retrievalQuery || prompt;
         // Capture the identity of the snapshot just written by
         // recallInternal.  Back-to-back recalls on the same sessionKey
         // overwrite this snapshot, so before the async annotation lands
@@ -3987,24 +3955,64 @@ export class Orchestrator {
         // block onto a newer query's snapshot and misreport which
         // tier served the latest recall in `--explain` output.
         const expectedSnapshot = this.lastRecall.get(sessionKey);
-        const expectedIdentity = expectedSnapshot
-          ? {
-              traceId: expectedSnapshot.traceId,
-              recordedAt: expectedSnapshot.recordedAt,
-            }
-          : undefined;
-        const previous = this.directAnswerObservationChain;
-        this.directAnswerObservationChain = previous.then(() =>
-          this.annotateDirectAnswerTier(
-            observationQuery,
+        // Codex P2 (#540): skip observation when recallInternal selected
+        // `no_recall` — the user opted out of retrieval for this turn,
+        // so scanning memory and trust-zones to populate a tier-explain
+        // block nothing will consume is pure waste.  Annotation would
+        // also misreport the tier for a turn that never actually ran
+        // recall.  Guard before any observation setup.
+        if (expectedSnapshot?.plannerMode !== "no_recall") {
+          const principal = resolvePrincipal(sessionKey, this.config);
+          const namespaceOverride = options.namespace?.trim() || undefined;
+          // Mirror recallInternal's namespace selection: when no override
+          // is provided, recall may search all readable namespaces for the
+          // principal (`recallNamespacesForPrincipal`).  Evaluate the
+          // direct-answer gate over the same namespace set so the observer
+          // can't miss valid candidates that live in `shared` or other
+          // readable namespaces and misreport the tier decision.
+          const observationNamespaces: string[] =
+            namespaceOverride &&
+            canReadNamespace(principal, namespaceOverride, this.config)
+              ? [namespaceOverride]
+              : recallNamespacesForPrincipal(principal, this.config);
+          // Normalize the query through the same `buildRecallQueryPolicy`
+          // path recallInternal uses, so observation scores the same text
+          // recall actually ran — important for cron/instruction-heavy
+          // prompts where normalization can materially shorten or
+          // restructure the query.
+          const observationQueryPolicy = buildRecallQueryPolicy(
+            prompt,
             sessionKey,
-            observationNamespaces,
-            expectedIdentity,
-            abortController.signal,
-          ).catch((err) => {
-            log.debug(`direct-answer observation chain error: ${err}`);
-          }),
-        );
+            {
+              cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
+              cronRecallNormalizedQueryMaxChars:
+                this.config.cronRecallNormalizedQueryMaxChars,
+              cronRecallInstructionHeavyTokenCap:
+                this.effectiveCronRecallInstructionHeavyTokenCap(),
+              cronConversationRecallMode: this.config.cronConversationRecallMode,
+            },
+          );
+          const observationQuery =
+            observationQueryPolicy.retrievalQuery || prompt;
+          const expectedIdentity = expectedSnapshot
+            ? {
+                traceId: expectedSnapshot.traceId,
+                recordedAt: expectedSnapshot.recordedAt,
+              }
+            : undefined;
+          const previous = this.directAnswerObservationChain;
+          this.directAnswerObservationChain = previous.then(() =>
+            this.annotateDirectAnswerTier(
+              observationQuery,
+              sessionKey,
+              observationNamespaces,
+              expectedIdentity,
+              abortController.signal,
+            ).catch((err) => {
+              log.debug(`direct-answer observation chain error: ${err}`);
+            }),
+          );
+        }
       }
 
       return recallResult;
