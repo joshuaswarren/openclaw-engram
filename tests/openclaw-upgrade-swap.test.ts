@@ -158,6 +158,45 @@ test("rollbackOpenclawUpgrade restores plugin and config from rollback artifacts
   assert.ok(notes.some((note) => note.includes("Restored OpenClaw config from backup")));
 });
 
+test("rollbackOpenclawUpgrade falls back to the durable backup when rollback restore fails", async () => {
+  const tmp = await makeTmpDir();
+  const pluginDir = path.join(tmp, "extensions", "openclaw-remnic");
+  const rollbackDir = path.join(tmp, "rollback");
+  const pluginBackupDir = path.join(tmp, "backups", "extensions", "openclaw-remnic");
+  const configPath = path.join(tmp, "openclaw.json");
+
+  writeMarker(pluginDir, "new-plugin");
+  writeMarker(rollbackDir, "old-plugin");
+  writeMarker(pluginBackupDir, "backup-plugin");
+  fs.writeFileSync(configPath, '{"plugins":{"slots":{"memory":"broken"}}}\n', "utf8");
+
+  const renameSync = fs.renameSync;
+  let rollbackRenameSeen = false;
+  fs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+    if (String(from) === rollbackDir && String(to) === pluginDir && !rollbackRenameSeen) {
+      rollbackRenameSeen = true;
+      throw new Error("rollback rename failed");
+    }
+    return renameSync(from, to);
+  }) as typeof fs.renameSync;
+
+  try {
+    const notes = rollbackOpenclawUpgrade({
+      configPath,
+      pluginBackupDir,
+      pluginDir,
+      rollbackDir,
+    });
+
+    assert.equal(readMarker(pluginDir), "backup-plugin");
+    assert.equal(readMarker(rollbackDir), "old-plugin");
+    assert.ok(notes.some((note) => note.includes("Rollback copy restore failed")));
+    assert.ok(notes.some((note) => note.includes("durable backup")));
+  } finally {
+    fs.renameSync = renameSync;
+  }
+});
+
 test("rollbackOpenclawUpgrade falls back to the durable plugin backup when rollback dir is gone", async () => {
   const tmp = await makeTmpDir();
   const pluginDir = path.join(tmp, "extensions", "openclaw-remnic");

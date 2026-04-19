@@ -188,19 +188,46 @@ export function rollbackOpenclawUpgrade({
 }: RollbackOpenclawUpgradeOptions): string[] {
   const notes: string[] = [];
   const errors: string[] = [];
+  let rollbackRestoreError: string | undefined;
+  let pluginRestored = false;
 
   try {
     if (rollbackDir && fs.existsSync(rollbackDir)) {
       restoreDirectoryFromRollback(pluginDir, rollbackDir);
       notes.push(`Restored previous plugin from rollback copy at ${rollbackDir}`);
-    } else if (pluginBackupDir && fs.existsSync(pluginBackupDir)) {
+      pluginRestored = true;
+    }
+  } catch (error) {
+    rollbackRestoreError = error instanceof Error ? error.message : String(error);
+  }
+
+  try {
+    if (!pluginRestored && pluginBackupDir && fs.existsSync(pluginBackupDir)) {
       restoreDirectoryFromBackup(pluginDir, pluginBackupDir);
-      notes.push(`Restored previous plugin from backup at ${pluginBackupDir}`);
-    } else {
+      if (rollbackRestoreError) {
+        notes.push(
+          `Rollback copy restore failed; restored previous plugin from durable backup at ` +
+          `${pluginBackupDir}`,
+        );
+      } else {
+        notes.push(`Restored previous plugin from backup at ${pluginBackupDir}`);
+      }
+      pluginRestored = true;
+    } else if (!pluginRestored && !rollbackRestoreError) {
       notes.push("No previous plugin copy was available for automatic restore");
     }
   } catch (error) {
+    if (rollbackRestoreError) {
+      errors.push(rollbackRestoreError);
+      rollbackRestoreError = undefined;
+    }
     errors.push(error instanceof Error ? error.message : String(error));
+  }
+
+  if (!pluginRestored && rollbackRestoreError) {
+    errors.push(rollbackRestoreError);
+  } else if (!pluginRestored && notes.length === 0) {
+    notes.push("No previous plugin copy was available for automatic restore");
   }
 
   try {
