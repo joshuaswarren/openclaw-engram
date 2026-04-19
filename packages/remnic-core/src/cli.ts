@@ -834,11 +834,13 @@ function isWorkProjectStatus(value: string | undefined): value is "active" | "on
  * Expand a leading `~` or `~/` in a user-supplied path to the real home
  * directory. Node.js `fs` does NOT expand `~` (per CLAUDE.md #17), and this
  * applies to every user-facing path input, not just `memoryDir`.
+ * Uses `resolveHomeDir()` so that the `HOME` env-var override path is respected
+ * consistently with the rest of the codebase.
  */
 function expandTildePath(p: string): string {
-  if (p === "~") return os.homedir();
+  if (p === "~") return resolveHomeDir();
   if (p.startsWith("~/") || p.startsWith("~\\")) {
-    return path.join(os.homedir(), p.slice(2));
+    return path.join(resolveHomeDir(), p.slice(2));
   }
   return p;
 }
