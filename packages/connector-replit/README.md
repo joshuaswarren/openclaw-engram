@@ -2,7 +2,7 @@
 
 MCP connector helper for using [Remnic](https://github.com/joshuaswarren/remnic) memory with [Replit Agent](https://replit.com/).
 
-Replit Agent has no plugin system, so it can't install a Remnic hook like Claude Code or Codex can. Instead, this package generates a bearer token and the exact MCP server config to paste into Replit's **Integrations** pane, turning any Replit workspace into a Remnic memory client over HTTP + MCP.
+Replit Agent has no plugin system, so it can't install a Remnic hook like Claude Code or Codex can. Instead, this package takes a bearer token that you mint separately (`remnic token generate replit`) and produces the exact MCP server config + paste-ready setup instructions for Replit's **Integrations** pane, turning any Replit workspace into a Remnic memory client over HTTP + MCP.
 
 ## Install
 
@@ -15,9 +15,18 @@ Needs a running Remnic server (see [`@remnic/server`](https://www.npmjs.com/pack
 
 ## Quick start
 
+First mint a Replit-scoped token with the Remnic CLI:
+
+```bash
+remnic token generate replit
+```
+
+Then use the helper to render the setup instructions and MCP config:
+
 ```ts
 import { generateReplitInstructions } from "@remnic/replit";
 
+// Pass the token returned by `remnic token generate replit`:
 const setup = generateReplitInstructions("YOUR_REMNIC_TOKEN");
 
 console.log(setup.instructions);
