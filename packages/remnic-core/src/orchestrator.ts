@@ -8335,20 +8335,30 @@ export class Orchestrator {
   /**
    * Ingest a batch of bulk-import turns (#460). Like ingestReplayBatch, this
    * normalizes user/assistant turns into the extraction buffer and awaits
-   * settlement, but it intentionally bypasses the captureMode="explicit" gate
-   * because bulk-import is itself an explicit user action — the user ran
-   * `bulk-import --source <name> --file ...` and would be surprised to see
-   * the command silently no-op when capture is otherwise restricted.
+   * settlement, but it intentionally bypasses the captureMode="explicit"
+   * gate because bulk-import is itself an explicit user action — the user
+   * ran `bulk-import --source <name> --file ...` and would be surprised to
+   * see the command silently no-op when capture is otherwise restricted.
    *
    * Turns with role="other" are skipped (not supported by the extraction
-   * pipeline). The session key is a fixed `bulk-import:default` so that
-   * `resolvePrincipal` falls through to the default principal and
-   * extraction writes land in the orchestrator's default namespace root —
-   * the single "it works consistently" target for the first bulk-import
-   * release. Namespace-scoped bulk-imports are tracked as a follow-up
-   * because they require threading a namespace override down through
-   * `queueBufferedExtraction` → `runExtraction`, which does not currently
-   * accept one on the write path.
+   * pipeline).
+   *
+   * Principal routing: the turns carry `sessionKey=""`, which makes
+   * `resolvePrincipal` short-circuit to `"default"` via its
+   * `if (!sk) return "default"` branch BEFORE any user-configured
+   * prefix / map / regex `principalFromSessionKeyRules` are evaluated.
+   * This means writes always land in the orchestrator's default namespace,
+   * even in deployments that have a catch-all principal rule (which would
+   * otherwise quietly reroute a synthetic `"bulk-import:default"` session
+   * key into a different tenant). A separate bufferKey
+   * (`"bulk-import:default"`) is still used to keep the buffer for this
+   * import isolated from organic sessions — bufferKey is a plain Map key,
+   * not subject to principal-rule evaluation.
+   *
+   * Namespace-scoped bulk-imports are tracked as a follow-up because they
+   * require threading a namespace override through `queueBufferedExtraction`
+   * → `runExtraction`, which does not currently accept one on the write
+   * path.
    */
   async ingestBulkImportBatch(
     turns: ImportTurn[],
@@ -8358,8 +8368,6 @@ export class Orchestrator {
   ): Promise<void> {
     if (!Array.isArray(turns) || turns.length === 0) return;
 
-    const sessionKey = normalizeReplaySessionKey("bulk-import:default");
-
     const sessionTurns: BufferTurn[] = [];
     for (const turn of turns) {
       if (turn.role !== "user" && turn.role !== "assistant") continue;
@@ -8367,7 +8375,9 @@ export class Orchestrator {
         role: turn.role,
         content: turn.content,
         timestamp: turn.timestamp,
-        sessionKey,
+        // Empty sessionKey → resolvePrincipal short-circuits to "default"
+        // before any user-configured routing rule fires.  See method docs.
+        sessionKey: "",
       });
     }
     if (sessionTurns.length === 0) return;
@@ -8377,7 +8387,10 @@ export class Orchestrator {
         skipDedupeCheck: true,
         clearBufferAfterExtraction: false,
         skipCharThreshold: true,
-        bufferKey: sessionKey,
+        // bufferKey is used only as a Map key for buffer-state isolation; it
+        // does not flow through to resolvePrincipal, so a descriptive value
+        // is fine here without routing risk.
+        bufferKey: "bulk-import:default",
         extractionDeadlineMs: options.deadlineMs,
         onTaskSettled: (err) => (err ? reject(err) : resolve()),
       }).catch(reject);
