@@ -110,11 +110,17 @@ export async function tryDirectAnswer(
     });
   }
 
+  throwIfAborted(abortSignal);
   const memories = await sources.listCandidateMemories({ namespace, abortSignal });
+  throwIfAborted(abortSignal);
   const candidates: DirectAnswerCandidate[] = [];
 
   for (const memory of memories) {
-    if (abortSignal?.aborted) break;
+    // Throw rather than returning a partial verdict — a mid-loop abort
+    // that left competing candidates unprocessed could otherwise surface
+    // a spurious "eligible" result that the ambiguity gate never got a
+    // chance to reject.
+    throwIfAborted(abortSignal);
 
     const trustZone = await sources.trustZoneFor(memory.frontmatter.id);
     // Cheap pre-filter: non-trusted memories can't qualify, so skip
@@ -145,4 +151,12 @@ export async function tryDirectAnswer(
     config: eligibilityConfig,
     queryEntityRefs,
   });
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    const err = new Error("direct-answer wiring aborted");
+    Object.defineProperty(err, "name", { value: "AbortError" });
+    throw err;
+  }
 }

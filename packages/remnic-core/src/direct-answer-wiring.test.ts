@@ -269,7 +269,7 @@ test("tryDirectAnswer defers to hybrid when two trusted candidates are within am
 
 // ── Abort signal interrupts the resolution loop ─────────────────────────────
 
-test("tryDirectAnswer honors an aborted signal mid-loop", async () => {
+test("tryDirectAnswer throws AbortError when signal aborts mid-loop", async () => {
   const first = makeMemory({
     id: "first",
     tags: ["package-manager"],
@@ -282,29 +282,55 @@ test("tryDirectAnswer honors an aborted signal mid-loop", async () => {
   });
 
   const controller = new AbortController();
+  let secondTrustZoneConsulted = false;
   const sources: DirectAnswerSources = {
     taxonomy: DEFAULT_TAXONOMY,
     listCandidateMemories: async () => [first, second],
     trustZoneFor: async (id: string) => {
       if (id === "first") {
-        // Simulate user aborting recall while resolving the first candidate.
+        // Simulate the caller aborting recall while resolving the first
+        // candidate.  Abort between the accessor call and the loop guard.
         controller.abort();
+        return "trusted";
       }
+      secondTrustZoneConsulted = true;
       return "trusted";
     },
     importanceFor: () => 0.9,
   };
-  const result = await tryDirectAnswer({
-    query: "package manager remnic",
-    namespace: "default",
-    config: BASE_CONFIG,
-    sources,
-    abortSignal: controller.signal,
-  });
-  // Abort happens after first candidate is resolved; second is never
-  // processed.  Result depends on whether "first" passes all gates,
-  // but the test's point is we did not keep walking after abort.
-  assert.ok(result.reason === "eligible" || result.reason === "ambiguous" || result.reason === "below-token-overlap-floor" || result.reason === "no-eligible-candidates");
+  await assert.rejects(
+    () =>
+      tryDirectAnswer({
+        query: "package manager remnic",
+        namespace: "default",
+        config: BASE_CONFIG,
+        sources,
+        abortSignal: controller.signal,
+      }),
+    (err: Error) => err.name === "AbortError",
+  );
+  // Second candidate must never have been consulted — abort should
+  // short-circuit before the next iteration.
+  assert.equal(secondTrustZoneConsulted, false);
+});
+
+test("tryDirectAnswer throws when signal is already aborted before I/O", async () => {
+  const sources = makeMockSources({ memories: [makeMemory()] });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    () =>
+      tryDirectAnswer({
+        query: "anything",
+        namespace: "default",
+        config: BASE_CONFIG,
+        sources,
+        abortSignal: controller.signal,
+      }),
+    (err: Error) => err.name === "AbortError",
+  );
+  // listCandidateMemories must never have been called.
+  assert.equal(sources.calls.listCandidates, 0);
 });
 
 // ── Namespace flows through to the source accessor ──────────────────────────
