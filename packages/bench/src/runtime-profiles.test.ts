@@ -31,6 +31,7 @@ test("real runtime profile preserves the configured Remnic retrieval settings", 
         queryExpansionEnabled: true,
         rerankEnabled: true,
         verifiedRecallEnabled: true,
+        openaiApiKey: "super-secret",
       },
     }),
   );
@@ -45,6 +46,11 @@ test("real runtime profile preserves the configured Remnic retrieval settings", 
   assert.equal(resolved.remnicConfig.queryExpansionEnabled, true);
   assert.equal(resolved.remnicConfig.rerankEnabled, true);
   assert.equal(resolved.remnicConfig.verifiedRecallEnabled, true);
+  assert.equal(resolved.remnicConfig.openaiApiKey, undefined);
+  assert.equal(
+    (resolved.adapterOptions.configOverrides as { openaiApiKey?: string }).openaiApiKey,
+    "super-secret",
+  );
   assert.equal(resolved.systemProvider, null);
   assert.equal(resolved.judgeProvider, null);
 });

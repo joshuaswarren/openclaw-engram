@@ -132,16 +132,19 @@ export async function resolveBenchRuntimeProfile(
     : undefined;
 
   if (profile === "baseline") {
-    const remnicConfig = withAssistantHooks(
+    const persistedRemnicConfig = sanitizePersistedConfig({
+      ...BASELINE_REMNIC_CONFIG,
+    });
+    const effectiveRemnicConfig = withAssistantHooks(
       { ...BASELINE_REMNIC_CONFIG },
       responder,
       structuredJudge,
     );
     return {
       profile,
-      remnicConfig,
+      remnicConfig: persistedRemnicConfig,
       adapterOptions: {
-        configOverrides: remnicConfig,
+        configOverrides: effectiveRemnicConfig,
         responder,
         judge,
       },
@@ -154,7 +157,16 @@ export async function resolveBenchRuntimeProfile(
     const fileConfig = options.remnicConfigPath
       ? await loadRemnicConfigFile(options.remnicConfigPath)
       : {};
-    const remnicConfig = withAssistantHooks(
+    const persistedRemnicConfig = sanitizePersistedConfig({
+      ...fileConfig,
+      lcmEnabled: true,
+      ...(options.modelSource ? { modelSource: options.modelSource } : {}),
+      ...(options.gatewayAgentId ? { gatewayAgentId: options.gatewayAgentId } : {}),
+      ...(options.fastGatewayAgentId
+        ? { fastGatewayAgentId: options.fastGatewayAgentId }
+        : {}),
+    });
+    const effectiveRemnicConfig = withAssistantHooks(
       {
         ...fileConfig,
         lcmEnabled: true,
@@ -169,9 +181,9 @@ export async function resolveBenchRuntimeProfile(
     );
     return {
       profile,
-      remnicConfig,
+      remnicConfig: persistedRemnicConfig,
       adapterOptions: {
-        configOverrides: remnicConfig,
+        configOverrides: effectiveRemnicConfig,
         responder,
         judge,
       },
@@ -192,11 +204,21 @@ export async function resolveBenchRuntimeProfile(
     gatewayConfig,
     agentId: gatewayAgentId,
   });
-  const remnicConfig = withAssistantHooks(
+  const persistedRemnicConfig = sanitizePersistedConfig(
     {
       ...openclawRuntime.remnicConfig,
       lcmEnabled: true,
       gatewayConfig: openclawRuntime.persistedGatewayConfig,
+      modelSource: "gateway",
+      ...(gatewayAgentId ? { gatewayAgentId } : {}),
+      ...(fastGatewayAgentId ? { fastGatewayAgentId } : {}),
+    },
+  );
+  const effectiveRemnicConfig = withAssistantHooks(
+    {
+      ...openclawRuntime.remnicConfig,
+      lcmEnabled: true,
+      gatewayConfig,
       modelSource: "gateway",
       ...(gatewayAgentId ? { gatewayAgentId } : {}),
       ...(fastGatewayAgentId ? { fastGatewayAgentId } : {}),
@@ -207,9 +229,9 @@ export async function resolveBenchRuntimeProfile(
 
   return {
     profile,
-    remnicConfig,
+    remnicConfig: persistedRemnicConfig,
     adapterOptions: {
-      configOverrides: remnicConfig,
+      configOverrides: effectiveRemnicConfig,
       responder: gatewayResponder,
       judge,
     },
@@ -352,13 +374,18 @@ function asNonEmptyString(value: unknown): string | undefined {
 }
 
 function sanitizeGatewayConfig(config: GatewayConfig): GatewayConfig {
-  const sanitized = sanitizeGatewayValue(config);
+  const sanitized = sanitizePersistedConfig(config);
   return isPlainObject(sanitized) ? sanitized as GatewayConfig : {};
 }
 
-function sanitizeGatewayValue(value: unknown): unknown {
+function sanitizePersistedConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const sanitized = sanitizePersistedValue(config);
+  return isPlainObject(sanitized) ? sanitized : {};
+}
+
+function sanitizePersistedValue(value: unknown): unknown {
   if (Array.isArray(value)) {
-    return value.map((entry) => sanitizeGatewayValue(entry));
+    return value.map((entry) => sanitizePersistedValue(entry));
   }
 
   if (!isPlainObject(value)) {
@@ -367,15 +394,15 @@ function sanitizeGatewayValue(value: unknown): unknown {
 
   const next: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (isGatewaySecretKey(key)) {
+    if (isSecretKey(key)) {
       continue;
     }
-    next[key] = sanitizeGatewayValue(entry);
+    next[key] = sanitizePersistedValue(entry);
   }
   return next;
 }
 
-function isGatewaySecretKey(key: string): boolean {
+function isSecretKey(key: string): boolean {
   const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
   return GATEWAY_SECRET_SUFFIXES.some((suffix) => normalized === suffix || normalized.endsWith(suffix));
 }

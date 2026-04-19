@@ -87,6 +87,11 @@ export function buildBenchAdapterConfig(
   baseConfig: BenchAdapterBaseConfig,
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
+  const sandboxConfig = {
+    memoryDir: baseConfig.memoryDir,
+    workspaceDir: baseConfig.workspaceDir,
+    lcmEnabled: baseConfig.lcmEnabled,
+  };
   const modeConfig = {
     ...BENCH_ADAPTER_SHARED_CONFIG,
     ...BENCH_ADAPTER_MODE_CONFIG[mode],
@@ -97,6 +102,7 @@ export function buildBenchAdapterConfig(
       ...baseConfig,
       ...overrides,
       ...modeConfig,
+      ...sandboxConfig,
     };
   }
 
@@ -104,6 +110,7 @@ export function buildBenchAdapterConfig(
     ...baseConfig,
     ...modeConfig,
     ...overrides,
+    ...sandboxConfig,
   };
 }
 

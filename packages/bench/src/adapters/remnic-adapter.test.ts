@@ -19,6 +19,24 @@ test("direct adapter keeps its recall-friendly defaults without overrides", () =
   assert.equal(config.queryExpansionEnabled, false);
 });
 
+test("adapter sandbox paths cannot be overridden by runtime config", () => {
+  const overrides = {
+    memoryDir: "/tmp/real-user-memory",
+    workspaceDir: "/tmp/real-user-workspace",
+    lcmEnabled: false,
+  };
+
+  const direct = buildBenchAdapterConfig("direct", BASE_CONFIG, overrides);
+  const lightweight = buildBenchAdapterConfig("lightweight", BASE_CONFIG, overrides);
+
+  assert.equal(direct.memoryDir, BASE_CONFIG.memoryDir);
+  assert.equal(direct.workspaceDir, BASE_CONFIG.workspaceDir);
+  assert.equal(direct.lcmEnabled, true);
+  assert.equal(lightweight.memoryDir, BASE_CONFIG.memoryDir);
+  assert.equal(lightweight.workspaceDir, BASE_CONFIG.workspaceDir);
+  assert.equal(lightweight.lcmEnabled, true);
+});
+
 test("lightweight adapter keeps smoke-run guardrails even when overrides conflict", () => {
   const assistantHook = { enabled: true };
   const config = buildBenchAdapterConfig("lightweight", BASE_CONFIG, {
