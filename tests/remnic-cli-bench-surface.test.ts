@@ -307,6 +307,8 @@ export async function writeBenchmarkPublishFeed() { return ""; }
       `
 export const wecloneExportAdapter = { name: "weclone", fileExtension: "json", formatRecords: () => "" };
 export function ensureWecloneExportAdapterRegistered() {}
+export function synthesizeTrainingPairs() { return []; }
+export function sweepPii(input) { return input; }
 `,
     ),
     stubWorkspacePackage(
