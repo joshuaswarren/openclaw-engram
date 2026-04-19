@@ -2,7 +2,11 @@ import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { log } from "./logger.js";
-import type { IdentityInjectionMode, RecallPlanMode } from "./types.js";
+import type {
+  IdentityInjectionMode,
+  RecallPlanMode,
+  RecallTierExplain,
+} from "./types.js";
 
 export interface LastRecallBudgetSummary {
   requestedTopK?: number;
@@ -37,6 +41,15 @@ export interface LastRecallSnapshot {
   identityInjectionMode?: IdentityInjectionMode | "none";
   identityInjectedChars?: number;
   identityInjectionTruncated?: boolean;
+  /**
+   * Optional tier-level explanation of how recall was served
+   * (issue #518).  Populated by orchestrator call sites that can
+   * identify a concrete tier; surfaces expose the block via
+   * `engram query --explain`, the `?explain=1` HTTP flag, and the
+   * `remnic_recall_explain` MCP tool.  Orthogonal to the existing
+   * graph-path `recallExplain` operation.
+   */
+  tierExplain?: RecallTierExplain;
 }
 
 export interface GraphRecallExpandedEntry {
@@ -83,6 +96,37 @@ export function clampGraphRecallExpandedEntries(
 }
 
 type LastRecallState = Record<string, LastRecallSnapshot>;
+
+/**
+ * Deep-copy a RecallTierExplain block.  Used by both the write path
+ * (so caller mutation after `record()` cannot tear the persisted
+ * snapshot) and the read path (so caller mutation after `get()` /
+ * `getMostRecent()` cannot tear the in-memory store).
+ *
+ * Uses structuredClone so future additions to RecallTierExplain do
+ * not silently share references through hand-enumerated fields —
+ * matching the pattern used elsewhere in the codebase (e.g.,
+ * qmd-recall-cache.ts).  The payload is pure JSON-shaped data, so
+ * structuredClone is both safe and complete here.
+ */
+function cloneTierExplain(
+  tierExplain: RecallTierExplain | undefined,
+): RecallTierExplain | undefined {
+  if (!tierExplain) return undefined;
+  return structuredClone(tierExplain);
+}
+
+/**
+ * Deep-copy a LastRecallSnapshot so callers that receive it cannot
+ * mutate the store's internal state through mutable array/object
+ * fields.  Same structuredClone rationale as cloneTierExplain above.
+ */
+function cloneLastRecallSnapshot(
+  snapshot: LastRecallSnapshot | null,
+): LastRecallSnapshot | null {
+  if (!snapshot) return null;
+  return structuredClone(snapshot);
+}
 
 export interface TierMigrationCycleSummary {
   trigger: "extraction" | "maintenance" | "manual";
@@ -143,14 +187,22 @@ export class LastRecallStore {
   }
 
   get(sessionKey: string): LastRecallSnapshot | null {
-    return this.state[sessionKey] ?? null;
+    // Defensive copy: callers must not be able to mutate internal state
+    // by reaching into array/object fields on the returned snapshot.
+    return cloneLastRecallSnapshot(this.state[sessionKey] ?? null);
   }
 
   getMostRecent(): LastRecallSnapshot | null {
     const snapshots = Object.values(this.state);
     if (snapshots.length === 0) return null;
-    snapshots.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
-    return snapshots[0] ?? null;
+    // Secondary key on sessionKey keeps the sort stable when two
+    // snapshots share a recordedAt timestamp (CLAUDE.md rule 19).
+    snapshots.sort((a, b) => {
+      const byTime = b.recordedAt.localeCompare(a.recordedAt);
+      if (byTime !== 0) return byTime;
+      return a.sessionKey.localeCompare(b.sessionKey);
+    });
+    return cloneLastRecallSnapshot(snapshots[0] ?? null);
   }
 
   /**
@@ -178,11 +230,21 @@ export class LastRecallStore {
       injectedChars: number;
       truncated: boolean;
     };
+    /**
+     * Per-tier explain annotation (issue #518).  When supplied, the
+     * snapshot carries it so downstream surfaces (CLI / HTTP / MCP)
+     * can render which retrieval tier served the query.
+     */
+    tierExplain?: RecallTierExplain;
   }): Promise<void> {
     const now = new Date().toISOString();
     const queryHash = createHash("sha256").update(opts.query).digest("hex");
 
-    const snapshot: LastRecallSnapshot = {
+    // Build the snapshot from opts, then deep-copy it via
+    // cloneLastRecallSnapshot so caller arrays/objects passed in
+    // `opts` cannot retain a live reference to the persisted state
+    // and tear it after record() returns.
+    const liveSnapshot: LastRecallSnapshot = {
       sessionKey: opts.sessionKey,
       recordedAt: now,
       queryHash,
@@ -194,15 +256,20 @@ export class LastRecallStore {
       requestedMode: opts.requestedMode,
       source: opts.source,
       fallbackUsed: opts.fallbackUsed,
-      sourcesUsed: opts.sourcesUsed ? [...opts.sourcesUsed] : undefined,
-      budgetsApplied: opts.budgetsApplied ? { ...opts.budgetsApplied } : undefined,
+      sourcesUsed: opts.sourcesUsed,
+      budgetsApplied: opts.budgetsApplied,
       latencyMs: opts.latencyMs,
-      resultPaths: opts.resultPaths ? [...opts.resultPaths] : undefined,
+      resultPaths: opts.resultPaths,
       policyVersion: opts.policyVersion,
       identityInjectionMode: opts.identityInjection?.mode,
       identityInjectedChars: opts.identityInjection?.injectedChars,
       identityInjectionTruncated: opts.identityInjection?.truncated,
+      tierExplain: opts.tierExplain,
     };
+    // `cloneLastRecallSnapshot` handles `null` but that never applies
+    // at this call site — the non-null assertion keeps the type
+    // checker honest.
+    const snapshot = cloneLastRecallSnapshot(liveSnapshot)!;
 
     this.state[opts.sessionKey] = snapshot;
 
@@ -231,6 +298,35 @@ export class LastRecallStore {
       } catch (err) {
         log.debug(`recall impressions append failed: ${err}`);
       }
+    }
+  }
+
+  /**
+   * Attach a RecallTierExplain block to the existing snapshot for a
+   * session without rewriting the entire snapshot.  Used by the
+   * post-recall direct-answer annotation path (issue #518 slice 3c):
+   * recallInternal records the snapshot first, then the orchestrator
+   * fires the direct-answer tier in observation mode and annotates
+   * the stored snapshot with whichever tier served the query.
+   *
+   * No-op when no snapshot exists for the given session; callers do
+   * not need to guard on existence.
+   */
+  async annotateTierExplain(
+    sessionKey: string,
+    tierExplain: RecallTierExplain,
+  ): Promise<void> {
+    const current = this.state[sessionKey];
+    if (!current) return;
+    this.state[sessionKey] = {
+      ...current,
+      tierExplain: cloneTierExplain(tierExplain),
+    };
+    try {
+      await mkdir(path.dirname(this.statePath), { recursive: true });
+      await writeFile(this.statePath, JSON.stringify(this.state, null, 2), "utf-8");
+    } catch (err) {
+      log.debug(`last recall tier-explain annotate failed: ${err}`);
     }
   }
 }

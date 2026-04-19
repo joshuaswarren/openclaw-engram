@@ -19,22 +19,41 @@ const packageExpectations = [
       "@remnic/core": "workspace:^",
     },
   },
-  // Note: @remnic/plugin-openclaw intentionally has no @remnic/core dependency —
-  // it does not import @remnic/core at runtime. Keeping it would cause the
-  // workspace:^ protocol string to appear verbatim in the published package
-  // metadata when released via npm publish (see issue #403).
+  {
+    label: "OpenClaw plugin",
+    path: new URL("../packages/plugin-openclaw/package.json", testDir),
+    deps: {
+      "@remnic/core": "workspace:^",
+    },
+  },
 ] as const;
 
 test("runtime workspace packages preserve local linking in source manifests", async () => {
   for (const pkgSpec of packageExpectations) {
     const raw = await readFile(pkgSpec.path, "utf8");
-    const pkg = JSON.parse(raw) as { dependencies?: Record<string, string> };
+    const pkg = JSON.parse(raw) as {
+      dependencies?: Record<string, string>;
+      devDependencies?: Record<string, string>;
+    };
 
     for (const [depName, expectedRange] of Object.entries(pkgSpec.deps)) {
       assert.equal(
         pkg.dependencies?.[depName],
         expectedRange,
         `${pkgSpec.label} should use ${expectedRange} for ${depName}`,
+      );
+    }
+
+    if (pkgSpec.label === "CLI") {
+      assert.equal(
+        pkg.dependencies?.["@remnic/export-weclone"],
+        undefined,
+        "CLI should not publish a runtime dependency on @remnic/export-weclone",
+      );
+      assert.equal(
+        pkg.devDependencies?.["@remnic/export-weclone"],
+        "workspace:*",
+        "CLI should keep @remnic/export-weclone as a build-time workspace dependency",
       );
     }
   }

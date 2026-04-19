@@ -104,9 +104,9 @@ test("parseConfig preserves custom entity schemas without code changes", () => {
 
 // ── Issue #518: direct-answer retrieval tier config ─────────────────────────
 
-test("parseConfig recallDirectAnswerEnabled defaults to false", () => {
+test("parseConfig recallDirectAnswerEnabled defaults to true (slice 8a flip)", () => {
   const result = parseConfig({});
-  assert.equal(result.recallDirectAnswerEnabled, false);
+  assert.equal(result.recallDirectAnswerEnabled, true);
 });
 
 test('parseConfig recallDirectAnswerEnabled coerces string "true" to boolean true', () => {
@@ -243,4 +243,23 @@ test("parseConfig recallDirectAnswerEligibleTaxonomyBuckets non-array value fall
     "runbooks",
     "entities",
   ]);
+});
+
+test("parseConfig procedural numeric fields coerce from CLI-style strings (issue #519)", () => {
+  const result = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: {
+      enabled: true,
+      minOccurrences: "5",
+      successFloor: "0.82",
+      autoPromoteOccurrences: "12",
+      lookbackDays: "14",
+      recallMaxProcedures: "2",
+    },
+  });
+  assert.equal(result.procedural.minOccurrences, 5);
+  assert.equal(result.procedural.successFloor, 0.82);
+  assert.equal(result.procedural.autoPromoteOccurrences, 12);
+  assert.equal(result.procedural.lookbackDays, 14);
+  assert.equal(result.procedural.recallMaxProcedures, 2);
 });

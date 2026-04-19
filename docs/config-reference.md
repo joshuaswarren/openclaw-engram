@@ -140,6 +140,11 @@ See [Search Backends](search-backends.md) for detailed configuration and compari
 | `entitySummaryEnabled` | `true` | Maintain synthesized entity summaries used by retrieval and tooling |
 | `recallBudgetChars` | `maxMemoryTokens * 4` | Hard cap for total assembled recall context (final safety trim before system prompt injection) |
 | `recallPipeline` | `(built-in ordered defaults)` | Ordered section controls for recall assembly, including per-section caps and knobs |
+| `recallDirectAnswerEnabled` | `false` | Enable the direct-answer retrieval tier (issue #518). The current release ships only the pure eligibility function and these config keys — the orchestrator wiring, tier-explain surfaces, and a dedicated bench fixture are not yet in-tree, so setting this to `true` is a no-op at recall time until a subsequent slice lands. See [Retrieval Explain](./retrieval-explain.md). |
+| `recallDirectAnswerTokenOverlapFloor` | `0.55` | Minimum query↔memory token-overlap ratio required for direct-answer eligibility. Set to `0` to disable the gate. |
+| `recallDirectAnswerImportanceFloor` | `0.7` | Minimum calibrated importance score required for direct-answer eligibility. Set to `0` to disable the gate. `verificationState: "user_confirmed"` bypasses this check. |
+| `recallDirectAnswerAmbiguityMargin` | `0.15` | If the second-best candidate scores within this ratio of the top, direct-answer defers to the hybrid tier. |
+| `recallDirectAnswerEligibleTaxonomyBuckets` | `["decisions","principles","conventions","runbooks","entities"]` | Taxonomy category IDs eligible for direct-answer routing. Set to `[]` to disable the gate without unsetting `enabled`. |
 
 ### `recallPipeline` entries
 
@@ -333,7 +338,7 @@ Direct `includeFiles` sync plus the OpenClaw workspace adapter both persist incr
 | `lifecyclePromoteHeatThreshold` | `0.55` | Heat threshold for promotion toward `validated`/`active`. |
 | `lifecycleStaleDecayThreshold` | `0.65` | Decay threshold to move a memory to `stale`. |
 | `lifecycleArchiveDecayThreshold` | `0.85` | Decay threshold to move a memory to `archived` (non-protected categories). |
-| `lifecycleProtectedCategories` | `["decision","principle","commitment","preference"]` | Categories protected from automatic archive transition. |
+| `lifecycleProtectedCategories` | `["decision","principle","commitment","preference","procedure"]` | Categories protected from automatic archive transition (includes `procedure` when procedural memories exist). |
 | `lifecycleMetricsEnabled` | `false` (auto-`true` when policy enabled unless explicitly set) | Emit lifecycle metrics snapshot at `state/lifecycle-metrics.json`. |
 
 ## v8.3 Proactive + Policy Learning Foundation
@@ -802,7 +807,7 @@ See [compounding.md](compounding.md).
 | `factArchivalAgeDays` | `90` | Minimum age to archive |
 | `factArchivalMaxImportance` | `0.3` | Maximum importance to archive |
 | `factArchivalMaxAccessCount` | `2` | Maximum access count to archive |
-| `factArchivalProtectedCategories` | `["commitment","preference","decision","principle"]` | Never archived |
+| `factArchivalProtectedCategories` | `["commitment","preference","decision","principle","procedure"]` | Never archived |
 
 ### Write-time semantic dedup (issue #373)
 
@@ -948,6 +953,21 @@ of truth for similarity logic across read-time and write-time code paths.
 | `binaryLifecycleGracePeriodDays` | `7` | Days before local cleanup of mirrored files |
 | `binaryLifecycleBackendType` | `"none"` | Storage backend: `"none"`, `"filesystem"`, `"s3"` |
 | `binaryLifecycleBackendPath` | `""` | Base path for filesystem backend |
+
+## Procedural memory (issue #519)
+
+Stored as `category: procedure` markdown under `memoryDir/procedures/`. Narrative overview: [procedural-memory.md](procedural-memory.md).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `procedural.enabled` | `false` | Master gate: when `false`, skip procedure extraction writes, task-initiation procedure recall injection, and trajectory mining side effects. Set `true` to enable the full feature set. |
+| `procedural.minOccurrences` | `3` | Minimum cluster size for a candidate; clusters smaller than this are skipped. **`0` disables procedural mining** (`runProcedureMining` returns immediately with `skippedReason: "minOccurrences_zero"`). |
+| `procedural.successFloor` | `0.7` | Minimum trajectory success rate in `[0, 1]` for miner eligibility. |
+| `procedural.autoPromoteOccurrences` | `8` | When auto-promotion is on, occurrences before `pending_review` → `active`. |
+| `procedural.autoPromoteEnabled` | `false` | Allow automatic promotion of miner candidates that meet thresholds. |
+| `procedural.lookbackDays` | `30` | Trajectory lookback window for mining (days). |
+| `procedural.proceduralMiningCronAutoRegister` | `false` | When `true`, installer may register the nightly procedural mining cron entry. |
+| `procedural.recallMaxProcedures` | `3` | Max procedure previews injected on task-initiation recall (`1`–`10`). |
 
 ## Codex Marketplace (issue #418)
 
@@ -1365,14 +1385,22 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `factArchivalAgeDays` | `90` | `90` |
 | `factArchivalMaxImportance` | `0.3` | `0.3` |
 | `factArchivalMaxAccessCount` | `2` | `2` |
-| `factArchivalProtectedCategories` | `["commitment","preference","decision","principle"]` | `["commitment","preference","decision","principle"]` |
+| `factArchivalProtectedCategories` | `["commitment","preference","decision","principle","procedure"]` | `["commitment","preference","decision","principle","procedure"]` |
 | `lifecyclePolicyEnabled` | `false` | `false` until you are ready to measure lifecycle outcomes |
 | `lifecycleFilterStaleEnabled` | `false` | `false` for the initial lifecycle rollout |
 | `lifecyclePromoteHeatThreshold` | `0.55` | `0.55` |
 | `lifecycleStaleDecayThreshold` | `0.65` | `0.65` |
 | `lifecycleArchiveDecayThreshold` | `0.85` | `0.85` |
-| `lifecycleProtectedCategories` | `["decision","principle","commitment","preference"]` | `["decision","principle","commitment","preference"]` |
+| `lifecycleProtectedCategories` | `["decision","principle","commitment","preference","procedure"]` | `["decision","principle","commitment","preference","procedure"]` |
 | `lifecycleMetricsEnabled` | `false` | `true` when `lifecyclePolicyEnabled=true` |
+| `procedural.enabled` | `false` | `true` only after reading [procedural-memory.md](procedural-memory.md) and validating extraction + recall impact |
+| `procedural.minOccurrences` | `3` | `3` (use `0` only to intentionally disable mining; see narrative section) |
+| `procedural.successFloor` | `0.7` | `0.7` |
+| `procedural.autoPromoteOccurrences` | `8` | `8` |
+| `procedural.autoPromoteEnabled` | `false` | `false` until promotion rules are validated on your corpus |
+| `procedural.lookbackDays` | `30` | `30` |
+| `procedural.proceduralMiningCronAutoRegister` | `false` | `false` unless you intentionally want installer cron registration |
+| `procedural.recallMaxProcedures` | `3` | `3` |
 | `proactiveExtractionEnabled` | `false` | `false` until you validate the second pass in your environment |
 | `contextCompressionActionsEnabled` | `false` | `false` unless you are validating action-policy flows |
 | `compressionGuidelineLearningEnabled` | `false` | `false` unless action-policy telemetry is already stable |

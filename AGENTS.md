@@ -345,6 +345,7 @@ public export surface.
 Reviewers caught features that unconditionally transformed behavior without any
 escape hatch or configuration gate.
 
+- **Procedural memory (issue #519)** — All runtime behavior is behind **`procedural.enabled`** (default **`false`**). Docs: `docs/procedural-memory.md`. When changing extraction, recall injection, or mining paths, keep gates aligned with that flag and the nested `procedural.*` knobs in `parseConfig`.
 - **Add an `enabled` check or escape hatch for every new filter/transform** —
   if a new recall filter unconditionally removes `dream`/`procedural` memories,
   users can never search for them even when the feature is disabled. Mirror the
@@ -809,6 +810,46 @@ lost with no recovery path.
   cross-device moves.
 - **Test the failure path** — mock `renameSync` to throw after `rmSync`
   succeeds and verify the error is handled and data is recoverable.
+
+### 44. À-la-carte Packaging — Optional Packages Must Stay Optional at Every Layer
+
+Remnic ships as a family of composable packages. The architectural contract
+is that users install only what they use: `@remnic/core` alone, core plus
+`@remnic/plugin-openclaw`, core plus `@remnic/export-weclone`, or all three.
+A PR that forces an optional package into a base install surface breaks
+this contract even if every test passes, because the breakage only shows
+up at npm-install time for someone who didn't want that optional surface.
+
+- **Load optional packages via computed-specifier dynamic imports.** Never
+  do `import { X } from "@remnic/bench"` in a base install surface (CLI,
+  core, plugin-openclaw). Use `await import("@remnic/" + "bench")` so the
+  bundler cannot statically resolve the module and pull it into the bundle.
+  Wrap in a loader helper (`loadBenchModule()`) that throws a user-facing
+  install hint on miss. Canonical patterns:
+  `packages/remnic-cli/src/optional-bench.ts`,
+  `packages/remnic-cli/src/optional-weclone-export.ts`,
+  `packages/remnic-core/src/cli.ts:ensureBuiltInBulkImportAdapters`.
+- **Declare as optional peer deps, not `dependencies`.** Optional companions
+  go under `peerDependencies` with `peerDependenciesMeta.<name>.optional =
+  true`. If you put them under `dependencies`, npm install of the base
+  package pulls them in and the à-la-carte model is gone.
+- **Never add to `noExternal`.** `packages/remnic-cli/tsup.config.ts` must
+  `external` any optional package (or simply omit it from `noExternal`). A
+  past regression listed `@remnic/bench` and `@remnic/export-weclone` under
+  `noExternal`, which bundled them into every CLI install even for users
+  who never ran `remnic bench *`.
+- **Publish every surface users are told to install.** Any package that
+  docs, error messages, or install hints mention must actually exist on
+  npm. Keeping a package `"private": true` while recommending it in a CLI
+  install hint is a bug — ship it (update
+  `.github/workflows/release-and-publish.yml PUBLISH_ORDER`) or stop
+  recommending it.
+- **Verify both paths end to end.** When you touch tsup configs, optional-
+  loader modules, or the publish workflow, verify that:
+  1. `npm install @remnic/cli` succeeds without the optional packages.
+  2. Running an optional command without the package throws the install
+     hint — not a raw `MODULE_NOT_FOUND`.
+  3. Installing the optional package and rerunning the command works.
 
 ### 43. Documentation-Code Contract — Documented Behavior Must Be Implemented
 

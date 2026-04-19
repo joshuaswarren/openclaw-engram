@@ -38,3 +38,7 @@ ensurePackageBuild(
   "@remnic/bench",
   path.join(repoRoot, "packages", "bench", "dist", "index.js"),
 );
+ensurePackageBuild(
+  "@remnic/export-weclone",
+  path.join(repoRoot, "packages", "export-weclone", "dist", "index.js"),
+);

@@ -186,7 +186,7 @@ export interface DreamingConfig {
 /** Procedural memory (issue #519): mining + recall gates. All sub-features default off. */
 export interface ProceduralConfig {
   enabled: boolean;
-  /** Minimum recurrence count before emitting a candidate procedure (0 disables mining threshold). */
+  /** Minimum cluster size before emitting a candidate; `0` disables mining (`minOccurrences_zero`). */
   minOccurrences: number;
   /** Minimum success rate from trajectory outcomes in [0, 1]. */
   successFloor: number;

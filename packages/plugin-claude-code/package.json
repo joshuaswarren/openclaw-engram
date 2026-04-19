@@ -16,7 +16,10 @@
     "plugin",
     "ai-agent"
   ],
-  "private": true,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "files": [
     ".claude-plugin",
     "hooks",
