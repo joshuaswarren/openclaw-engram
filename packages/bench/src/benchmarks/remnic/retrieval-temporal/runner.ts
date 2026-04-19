@@ -14,9 +14,8 @@ import { aggregateTaskScores } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import type { SchemaTierPage } from "../../../fixtures/schema-tiers/index.js";
 import {
+  buildTieredAggregates,
   overlapCount,
-  pairIdFromTaskId,
-  prefixAggregates,
 } from "../retrieval-shared.js";
 import {
   RETRIEVAL_TEMPORAL_FIXTURE,
@@ -215,7 +214,7 @@ function parseTimestamp(value: string | undefined): number | null {
 }
 
 function parseTimelineEntry(entry: string): number | null {
-  const match = entry.match(/^(\d{4})-(\d{2})-(\d{2})(?=$|\D)/);
+  const match = entry.match(/^(\d{4})-(\d{2})-(\d{2})(?=$|[:\s])/);
   if (!match) return null;
 
   const year = Number(match[1]);
@@ -264,28 +263,4 @@ function tokenize(value: string): Set<string> {
       .map((token) => token.trim())
       .filter((token) => token.length >= 3 || (token.length >= 2 && /\d/.test(token))),
   );
-}
-
-function buildTieredAggregates(tasks: TaskResult[]): AggregateMetrics {
-  const cleanTasks = tasks.filter((task) => task.details?.tier === "clean");
-  const dirtyTasks = tasks.filter((task) => task.details?.tier === "dirty");
-  const dirtyTasksByPairId = new Map(
-    dirtyTasks.map((task) => [pairIdFromTaskId(task.taskId), task]),
-  );
-  const pairedDeltas = cleanTasks.flatMap((task) => {
-    const dirtyTask = dirtyTasksByPairId.get(pairIdFromTaskId(task.taskId));
-    if (!dirtyTask) return [];
-
-    return [{
-      qrel_at_1: (task.scores.qrel_at_1 ?? 0) - (dirtyTask.scores.qrel_at_1 ?? 0),
-      qrel_at_3: (task.scores.qrel_at_3 ?? 0) - (dirtyTask.scores.qrel_at_3 ?? 0),
-      qrel_at_5: (task.scores.qrel_at_5 ?? 0) - (dirtyTask.scores.qrel_at_5 ?? 0),
-    }];
-  });
-
-  return {
-    ...prefixAggregates("clean", aggregateTaskScores(cleanTasks.map((task) => task.scores))),
-    ...prefixAggregates("dirty", aggregateTaskScores(dirtyTasks.map((task) => task.scores))),
-    ...prefixAggregates("dirty_penalty", aggregateTaskScores(pairedDeltas)),
-  };
 }

@@ -14,9 +14,8 @@ import { aggregateTaskScores, precisionAtK } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import type { SchemaTierPage } from "../../../fixtures/schema-tiers/index.js";
 import {
+  buildTieredAggregates,
   overlapCount,
-  pairIdFromTaskId,
-  prefixAggregates,
 } from "../retrieval-shared.js";
 import {
   RETRIEVAL_PERSONALIZATION_FIXTURE,
@@ -183,28 +182,4 @@ function schemaPenalty(queryTokens: Set<string>, page: SchemaTierPage): number {
   }
 
   return penalty;
-}
-
-function buildTieredAggregates(tasks: TaskResult[]): AggregateMetrics {
-  const cleanTasks = tasks.filter((task) => task.details?.tier === "clean");
-  const dirtyTasks = tasks.filter((task) => task.details?.tier === "dirty");
-  const dirtyTasksByPairId = new Map(
-    dirtyTasks.map((task) => [pairIdFromTaskId(task.taskId), task]),
-  );
-  const pairedDeltas = cleanTasks.flatMap((task) => {
-    const dirtyTask = dirtyTasksByPairId.get(pairIdFromTaskId(task.taskId));
-    if (!dirtyTask) return [];
-
-    return [{
-      p_at_1: (task.scores.p_at_1 ?? 0) - (dirtyTask.scores.p_at_1 ?? 0),
-      p_at_3: (task.scores.p_at_3 ?? 0) - (dirtyTask.scores.p_at_3 ?? 0),
-      p_at_5: (task.scores.p_at_5 ?? 0) - (dirtyTask.scores.p_at_5 ?? 0),
-    }];
-  });
-
-  return {
-    ...prefixAggregates("clean", aggregateTaskScores(cleanTasks.map((task) => task.scores))),
-    ...prefixAggregates("dirty", aggregateTaskScores(dirtyTasks.map((task) => task.scores))),
-    ...prefixAggregates("dirty_penalty", aggregateTaskScores(pairedDeltas)),
-  };
 }
