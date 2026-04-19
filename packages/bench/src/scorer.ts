@@ -146,10 +146,14 @@ export async function llmJudgeScoreDetailed(
       return await judge.scoreWithMetrics(question, predicted, expected);
     }
 
+    const { result: score, durationMs } = await timed(() =>
+      judge.score(question, predicted, expected),
+    );
+
     return {
-      score: await judge.score(question, predicted, expected),
+      score,
       tokens: { input: 0, output: 0 },
-      latencyMs: 0,
+      latencyMs: durationMs,
     };
   } catch {
     return {
