@@ -23,9 +23,31 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const CLI_SRC = path.join(ROOT, "packages", "remnic-cli", "src", "index.ts");
+const OPTIONAL_BENCH_SRC = path.join(
+  ROOT,
+  "packages",
+  "remnic-cli",
+  "src",
+  "optional-bench.ts",
+);
+const OPTIONAL_WECLONE_SRC = path.join(
+  ROOT,
+  "packages",
+  "remnic-cli",
+  "src",
+  "optional-weclone-export.ts",
+);
 
 async function readCli(): Promise<string> {
   return readFile(CLI_SRC, "utf-8");
+}
+
+async function readOptionalBench(): Promise<string> {
+  return readFile(OPTIONAL_BENCH_SRC, "utf-8");
+}
+
+async function readOptionalWeclone(): Promise<string> {
+  return readFile(OPTIONAL_WECLONE_SRC, "utf-8");
 }
 
 test("CLI CommandName type includes 'openclaw'", async () => {
@@ -276,15 +298,29 @@ test("CLI uses resolveFlagStrict for --memory-dir and --config to reject flag-li
 });
 
 test("CLI lazy-loads bench and training-export runtime packages", async () => {
-  const src = await readCli();
+  const [cliSrc, optionalBenchSrc, optionalWecloneSrc] = await Promise.all([
+    readCli(),
+    readOptionalBench(),
+    readOptionalWeclone(),
+  ]);
   assert.ok(
-    src.includes('import("@remnic/export-weclone")') &&
-      src.includes("ensureTrainingExportRuntimeLoaded"),
+    cliSrc.includes("loadTrainingExportCoreRuntime") &&
+      cliSrc.includes("loadWecloneExportModule"),
     "CLI must lazy-load training export runtime dependencies",
   );
   assert.ok(
-    src.includes('import("@remnic/bench")') &&
-      src.includes("ensureBenchRuntimeLoaded"),
+    cliSrc.includes("loadBenchModule") &&
+      cliSrc.includes("tryLoadBenchModule"),
     "CLI must lazy-load bench runtime dependencies",
+  );
+  assert.ok(
+    optionalWecloneSrc.includes('const SPECIFIER = "@remnic/" + "export-weclone"') &&
+      optionalWecloneSrc.includes("await import(SPECIFIER)"),
+    "training export lazy loading must happen in the optional weclone loader via computed dynamic import",
+  );
+  assert.ok(
+    optionalBenchSrc.includes('const SPECIFIER = "@remnic/" + "bench"') &&
+      optionalBenchSrc.includes("await import(SPECIFIER)"),
+    "bench lazy loading must happen in the optional bench loader via computed dynamic import",
   );
 });
