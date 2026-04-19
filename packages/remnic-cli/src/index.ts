@@ -298,28 +298,33 @@ async function ensureBenchRuntimeLoaded(): Promise<void> {
     await benchRuntimePromise;
     return;
   }
-  benchRuntimePromise = import("@remnic/bench").then((bench) => {
-    buildBenchmarkPublishFeed = bench.buildBenchmarkPublishFeed;
-    compareResults = bench.compareResults;
-    deleteBenchmarkResults = bench.deleteBenchmarkResults;
-    getBenchmarkLowerIsBetter = bench.getBenchmarkLowerIsBetter;
-    defaultBenchmarkBaselineDir = bench.defaultBenchmarkBaselineDir;
-    discoverAllProviders = bench.discoverAllProviders;
-    defaultBenchmarkPublishPath = bench.defaultBenchmarkPublishPath;
-    listBenchmarkBaselines = bench.listBenchmarkBaselines;
-    listBenchmarkResults = bench.listBenchmarkResults;
-    loadBenchmarkBaseline = bench.loadBenchmarkBaseline;
-    runBenchSuite = bench.runBenchSuite;
-    runExplain = bench.runExplain;
-    loadBaseline = bench.loadBaseline;
-    saveBaseline = bench.saveBaseline;
-    checkRegression = bench.checkRegression;
-    loadBenchmarkResult = bench.loadBenchmarkResult;
-    renderBenchmarkResultExport = bench.renderBenchmarkResultExport;
-    resolveBenchmarkResultReference = bench.resolveBenchmarkResultReference;
-    saveBenchmarkBaseline = bench.saveBenchmarkBaseline;
-    writeBenchmarkPublishFeed = bench.writeBenchmarkPublishFeed;
-  });
+  benchRuntimePromise = import("@remnic/bench")
+    .then((bench) => {
+      buildBenchmarkPublishFeed = bench.buildBenchmarkPublishFeed;
+      compareResults = bench.compareResults;
+      deleteBenchmarkResults = bench.deleteBenchmarkResults;
+      getBenchmarkLowerIsBetter = bench.getBenchmarkLowerIsBetter;
+      defaultBenchmarkBaselineDir = bench.defaultBenchmarkBaselineDir;
+      discoverAllProviders = bench.discoverAllProviders;
+      defaultBenchmarkPublishPath = bench.defaultBenchmarkPublishPath;
+      listBenchmarkBaselines = bench.listBenchmarkBaselines;
+      listBenchmarkResults = bench.listBenchmarkResults;
+      loadBenchmarkBaseline = bench.loadBenchmarkBaseline;
+      runBenchSuite = bench.runBenchSuite;
+      runExplain = bench.runExplain;
+      loadBaseline = bench.loadBaseline;
+      saveBaseline = bench.saveBaseline;
+      checkRegression = bench.checkRegression;
+      loadBenchmarkResult = bench.loadBenchmarkResult;
+      renderBenchmarkResultExport = bench.renderBenchmarkResultExport;
+      resolveBenchmarkResultReference = bench.resolveBenchmarkResultReference;
+      saveBenchmarkBaseline = bench.saveBenchmarkBaseline;
+      writeBenchmarkPublishFeed = bench.writeBenchmarkPublishFeed;
+    })
+    .catch((error) => {
+      benchRuntimePromise = undefined;
+      throw error;
+    });
   await benchRuntimePromise;
 }
 
@@ -331,18 +336,23 @@ async function ensureTrainingExportRuntimeLoaded(): Promise<void> {
   trainingExportRuntimePromise = Promise.all([
     import("@remnic/core"),
     import("@remnic/export-weclone"),
-  ]).then(([core, weclone]) => {
-    const coreRuntime = core as unknown as CoreTrainingExportRuntime;
-    const wecloneRuntime = weclone as unknown as WecloneTrainingExportRuntime;
-    convertMemoriesToRecords = coreRuntime.convertMemoriesToRecords;
-    getTrainingExportAdapter = coreRuntime.getTrainingExportAdapter;
-    listTrainingExportAdapters = coreRuntime.listTrainingExportAdapters;
-    parseStrictCliDate = coreRuntime.parseStrictCliDate;
-    ensureWecloneExportAdapterRegistered =
-      wecloneRuntime.ensureWecloneExportAdapterRegistered;
-    synthesizeTrainingPairs = wecloneRuntime.synthesizeTrainingPairs;
-    sweepPii = wecloneRuntime.sweepPii;
-  });
+  ])
+    .then(([core, weclone]) => {
+      const coreRuntime = core as unknown as CoreTrainingExportRuntime;
+      const wecloneRuntime = weclone as unknown as WecloneTrainingExportRuntime;
+      convertMemoriesToRecords = coreRuntime.convertMemoriesToRecords;
+      getTrainingExportAdapter = coreRuntime.getTrainingExportAdapter;
+      listTrainingExportAdapters = coreRuntime.listTrainingExportAdapters;
+      parseStrictCliDate = coreRuntime.parseStrictCliDate;
+      ensureWecloneExportAdapterRegistered =
+        wecloneRuntime.ensureWecloneExportAdapterRegistered;
+      synthesizeTrainingPairs = wecloneRuntime.synthesizeTrainingPairs;
+      sweepPii = wecloneRuntime.sweepPii;
+    })
+    .catch((error) => {
+      trainingExportRuntimePromise = undefined;
+      throw error;
+    });
   await trainingExportRuntimePromise;
 }
 

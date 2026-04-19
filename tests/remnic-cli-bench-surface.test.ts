@@ -81,6 +81,8 @@ test("CLI uses package-owned adapters for migrated benchmark runs", async () => 
   assert.match(source, /async function runBenchViaPackage/);
   assert.match(source, /try \{\s*benchModule = await import\("@remnic\/bench"\)/s);
   assert.match(source, /\} catch \{\s*return false;\s*\}/s);
+  assert.match(source, /benchRuntimePromise = import\("@remnic\/bench"\)[\s\S]*?\.catch\(\(error\) => \{\s*benchRuntimePromise = undefined;\s*throw error;\s*\}\);/s);
+  assert.match(source, /trainingExportRuntimePromise = Promise\.all\(\[[\s\S]*?\]\)[\s\S]*?\.catch\(\(error\) => \{\s*trainingExportRuntimePromise = undefined;\s*throw error;\s*\}\);/s);
   assert.doesNotMatch(source, /evals\/adapter\/engram-adapter\.ts/);
 });
 
