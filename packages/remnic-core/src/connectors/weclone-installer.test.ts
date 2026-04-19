@@ -398,6 +398,108 @@ test("removeConnector weclone uses persisted proxyConfigPath even if REMNIC_HOME
   );
 });
 
+test("installConnector weclone restores prior proxy config when write throws mid-truncate", async (t) => {
+  // Reviewer (codex P2): writeSecretFileSync opens the file in truncate
+  // mode, so a mid-write failure (ENOSPC) can leave weclone.json empty.
+  // The rollback closure must be installed BEFORE the write so prior
+  // contents are restored on failure.
+  const sandbox = makeSandbox(t);
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: sandbox.remnicHome,
+    },
+    () => {
+      // First install succeeds and writes known prior content.
+      const first = installConnector({
+        connectorId: "weclone",
+        config: { proxyPort: 8800 },
+      });
+      assert.equal(first.status, "installed");
+      const proxyConfigPath = resolveWeCloneProxyConfigPath();
+      const priorBytes = fs.readFileSync(proxyConfigPath, "utf8");
+      assert.ok(priorBytes.length > 0);
+
+      // Now mock the internal writeFileSync so that the NEXT call targeting
+      // proxyConfigPath fails. We target writeFileSync because
+      // writeSecretFileSync calls through to it via a wrapper; catching that
+      // exception drives our new rollback path.
+      const originalWrite = fs.writeFileSync.bind(fs);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mock = t.mock.method(fs, "writeFileSync", (...args: [any, any, any?]) => {
+        const target = String(args[0] ?? "");
+        if (target === proxyConfigPath) {
+          throw new Error("ENOSPC: no space left on device (simulated)");
+        }
+        return originalWrite(...args);
+      });
+
+      const second = installConnector({
+        connectorId: "weclone",
+        force: true,
+        config: { proxyPort: 8900 },
+      });
+      mock.mock.restore();
+
+      // Install must have failed cleanly.
+      assert.equal(second.status, "error", `expected error, got: ${second.status}`);
+
+      // The proxy config file MUST contain the exact prior bytes — not
+      // empty, not corrupted, and not the new (never-committed) config.
+      const afterBytes = fs.readFileSync(proxyConfigPath, "utf8");
+      assert.equal(afterBytes, priorBytes, "prior proxy config content must be restored after failed write");
+    },
+  );
+});
+
+test("removeConnector weclone returns status:error when proxy config delete fails", async (t) => {
+  // Reviewer (codex P2): if proxy config unlink fails, silently swallowing
+  // the error and returning status:"removed" leaves an orphan file that may
+  // still contain a live bearer token. A retry would go down the
+  // `not_found` path (registry config already gone) and never attempt the
+  // cleanup. Must surface status:"error" so automation flags it.
+  const sandbox = makeSandbox(t);
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: sandbox.remnicHome,
+    },
+    () => {
+      const installResult = installConnector({ connectorId: "weclone" });
+      assert.equal(installResult.status, "installed");
+      const proxyConfigPath = resolveWeCloneProxyConfigPath();
+      assert.ok(fs.existsSync(proxyConfigPath));
+
+      // Mock unlinkSync to fail only when targeting the proxy config file.
+      const originalUnlink = fs.unlinkSync.bind(fs);
+      const mock = t.mock.method(fs, "unlinkSync", (target: fs.PathLike) => {
+        if (String(target) === proxyConfigPath) {
+          throw new Error("EPERM: operation not permitted (simulated)");
+        }
+        return originalUnlink(target);
+      });
+
+      const removeResult = removeConnector("weclone");
+      mock.mock.restore();
+
+      assert.equal(
+        removeResult.status,
+        "error",
+        `proxy-delete failure must surface status:"error", got: ${removeResult.status} — ${removeResult.message}`,
+      );
+      // The message must mention the orphan file path so operators can act.
+      assert.ok(
+        removeResult.message.includes(proxyConfigPath),
+        `error message must reference the orphan path, got: ${removeResult.message}`,
+      );
+    },
+  );
+});
+
 test("removeConnector weclone cleans up both registry and proxy config files", async (t) => {
   const sandbox = makeSandbox(t);
   await withEnv(
@@ -497,6 +599,55 @@ test("buildWeCloneProxyConfig fresh token overrides prior", () => {
     authToken: "fresh-token",
   });
   assert.equal(config.remnicAuthToken, "fresh-token", "freshly minted token must replace prior");
+});
+
+test("buildWeCloneProxyConfig rejects array memoryInjection (typeof [] === 'object' footgun)", () => {
+  // Reviewer (cursor LOW): typeof [] === "object", so a bare object+null
+  // guard would let an array spread numeric-indexed properties into the
+  // merged memoryInjection. The helper must reject arrays explicitly.
+  const config = buildWeCloneProxyConfig({
+    userConfig: { memoryInjection: ["a", "b", "c"] as unknown as Record<string, unknown> },
+    priorConfig: { memoryInjection: [1, 2, 3] as unknown as Record<string, unknown> },
+  });
+  // Defaults survive; array was NOT spread in.
+  assert.equal(config.memoryInjection.maxTokens, 1500);
+  assert.equal(config.memoryInjection.position, "system-append");
+  assert.equal(config.memoryInjection.template, "[Memory Context]\n{memories}\n[End Memory Context]");
+  // Numeric-indexed properties must NOT leak onto the result.
+  assert.equal((config.memoryInjection as unknown as Record<string, unknown>)[0], undefined);
+  assert.equal((config.memoryInjection as unknown as Record<string, unknown>)[1], undefined);
+});
+
+test("resolveWeCloneProxyConfigPath treats empty HOME as absent (aligns with os.homedir())", async (t) => {
+  // Reviewer (cursor MEDIUM): process.env.HOME ?? os.homedir() keeps "" as
+  // the home (empty string is NOT nullish). Without the parity fix, install
+  // and run would disagree whenever HOME is empty. Both must fall back to
+  // os.homedir() so they pick the same directory.
+  //
+  // Strategy: assert the result matches the os.homedir()-based path exactly,
+  // which is what the CLI computes. If HOME="" were used verbatim, the
+  // result would be resolve("", ...) ≡ resolve(".remnic/connectors/...") —
+  // i.e. CWD-relative — which must NOT be the returned path.
+  const sandbox = makeSandbox(t);
+  await withEnv(
+    {
+      HOME: "", // empty, not nullish
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: undefined,
+      ENGRAM_HOME: undefined,
+    },
+    () => {
+      const resolved = resolveWeCloneProxyConfigPath();
+      assert.equal(path.isAbsolute(resolved), true, "must be absolute");
+      const expected = path.resolve(os.homedir(), ".remnic", "connectors", "weclone.json");
+      assert.equal(
+        resolved,
+        expected,
+        "empty HOME must fall back to os.homedir() (not collapse to CWD)",
+      );
+    },
+  );
 });
 
 test("buildWeCloneProxyConfig merges memoryInjection partials", () => {

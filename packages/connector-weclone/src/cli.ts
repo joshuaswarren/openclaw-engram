@@ -25,13 +25,21 @@ import { homedir } from "node:os";
  * override could write the config in one location and read it from another,
  * producing spurious "Config not found" errors right after a successful
  * install.
+ *
+ * `HOME=""` edge case: treat an empty-string HOME as absent and fall back
+ * to `os.homedir()`. The core helper does the same; if they diverged here,
+ * install and run would target different directories when `HOME` is
+ * cleared (empty string is not nullish, so `?? os.homedir()` does NOT
+ * substitute it).
  */
 function defaultConfigPath(): string {
   const override = process.env.REMNIC_HOME ?? process.env.ENGRAM_HOME;
   if (override && override.length > 0) {
     return resolve(override, "connectors", "weclone.json");
   }
-  return resolve(homedir(), ".remnic", "connectors", "weclone.json");
+  const envHome = process.env.HOME;
+  const home = envHome && envHome.length > 0 ? envHome : homedir();
+  return resolve(home, ".remnic", "connectors", "weclone.json");
 }
 
 const args = process.argv.slice(2);

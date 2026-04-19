@@ -1293,15 +1293,16 @@ export function installConnector(options: InstallOptions): InstallResult {
         authToken: tokenEntry?.token,
       });
       fs.mkdirSync(path.dirname(proxyConfigPath), { recursive: true });
-      writeSecretFileSync(
-        proxyConfigPath,
-        JSON.stringify(proxyConfig, null, 2),
-      );
-      // Prepare rollback: restore prior content on failure, or delete if new.
+      // Install the rollback closure BEFORE the write starts. `writeSecretFileSync`
+      // opens the file in truncate mode, so a mid-write failure (ENOSPC, EPERM)
+      // could leave `weclone.json` empty. Creating the rollback now guarantees
+      // we can always restore prior content (or delete a newly-created file)
+      // even if the write itself throws.
       weCloneProxyHandleRollback = () => {
         try {
           if (prior === null) {
-            // File was created by this install — delete it.
+            // File was created (or would have been created) by this install —
+            // delete whatever is left behind, if anything.
             if (fs.existsSync(proxyConfigPath)) {
               fs.unlinkSync(proxyConfigPath);
             }
@@ -1312,6 +1313,23 @@ export function installConnector(options: InstallOptions): InstallResult {
           // Best-effort rollback.
         }
       };
+      try {
+        writeSecretFileSync(
+          proxyConfigPath,
+          JSON.stringify(proxyConfig, null, 2),
+        );
+      } catch (writeErr) {
+        // Truncate-and-write failed partway through — restore the file (or
+        // remove the empty partial) and re-throw so the outer catch drives
+        // the structured error response + token rollback.
+        try {
+          weCloneProxyHandleRollback();
+        } catch {
+          // Best-effort.
+        }
+        weCloneProxyHandleRollback = null;
+        throw writeErr;
+      }
       // Record the proxy-side config path on the registry JSON so operators
       // and `remnic connectors doctor weclone` can locate it later. Persist the
       // effective proxy port so `remnic connectors list` reflects the resolved
@@ -1626,8 +1644,12 @@ export function removeConnector(connectorId: string): RemoveResult {
   // environment — is load-bearing: if REMNIC_HOME / ENGRAM_HOME changes (or
   // is unset) between install and remove, recomputing here would leave the
   // original proxy config (with a live bearer token) on disk while reporting
-  // success. Non-fatal: if the file is already absent or the path could not
-  // be determined, skip with a note.
+  // success. If the file is present but unlink fails (e.g. EPERM), we MUST
+  // surface an error status rather than pretending success — a later retry
+  // via `remnic connectors remove weclone` would go down the `not_found`
+  // path because the registry config was already unlinked, leaving the
+  // proxy config orphaned (potentially with a still-valid token).
+  let weCloneProxyDeleteFailed: string | null = null;
   if (connectorId === "weclone") {
     if (weCloneProxyConfigPath === null) {
       notes.push(
@@ -1641,11 +1663,23 @@ export function removeConnector(connectorId: string): RemoveResult {
           notes.push(`Removed WeClone proxy config: ${weCloneProxyConfigPath}`);
         }
       } catch (err) {
-        notes.push(
-          `WeClone proxy config cleanup skipped: ${err instanceof Error ? err.message : String(err)}`,
-        );
+        // Hard failure: leaving the file behind with a live token is a
+        // security issue. Capture the error so we return status:"error".
+        weCloneProxyDeleteFailed = err instanceof Error ? err.message : String(err);
       }
     }
+  }
+  if (weCloneProxyDeleteFailed !== null && weCloneProxyConfigPath !== null) {
+    return {
+      connectorId,
+      configPath,
+      status: "error",
+      message:
+        `WeClone remove partially succeeded: registry config and token were cleaned up, ` +
+        `but the proxy config at ${weCloneProxyConfigPath} could not be deleted ` +
+        `(${weCloneProxyDeleteFailed}). Manually remove that file — it may still contain ` +
+        `a Remnic daemon bearer token.`,
+    };
   }
 
   // Hermes-specific: strip the remnic: block from config.yaml.
@@ -2684,13 +2718,21 @@ const WECLONE_PROXY_CONFIG_FILENAME = "weclone.json";
  * `tmp/remnic` (which would otherwise be interpreted against the caller's
  * current working directory). Must stay in lockstep with the proxy CLI's
  * `defaultConfigPath()` in @remnic/connector-weclone/src/cli.ts.
+ *
+ * `HOME=""` edge case: `process.env.HOME ?? os.homedir()` would keep the
+ * empty string (empty is not nullish), which `path.resolve("", ...)` then
+ * interprets as CWD. `os.homedir()` by contrast falls back to the OS
+ * password database when HOME is empty, so the two code paths would
+ * disagree. We therefore treat empty HOME as absent and delegate to
+ * `os.homedir()` in both places — the same rule the proxy CLI follows.
  */
 export function resolveWeCloneProxyConfigPath(): string {
   const override = process.env.REMNIC_HOME ?? process.env.ENGRAM_HOME;
   if (override && override.length > 0) {
     return path.resolve(override, "connectors", WECLONE_PROXY_CONFIG_FILENAME);
   }
-  const home = process.env.HOME ?? os.homedir();
+  const envHome = process.env.HOME;
+  const home = envHome && envHome.length > 0 ? envHome : os.homedir();
   return path.resolve(
     home,
     WECLONE_PROXY_CONFIG_DIRNAME,
@@ -2864,12 +2906,21 @@ export function buildWeCloneProxyConfig(args: {
   // the proxy's parseConfig() at proxy startup — here we only assemble a
   // best-effort shape. A malformed user override would be rejected later with
   // a clean error message.
+  //
+  // `typeof [] === "object"` so a bare `typeof ... === "object" && ... !==
+  // null` guard would let an array spread numeric-indexed properties into
+  // the merged object, silently corrupting it. Explicitly reject arrays.
   const memoryInjection = {
     ...WECLONE_DEFAULTS.memoryInjection,
-    ...(priorConfig && typeof priorConfig.memoryInjection === "object" && priorConfig.memoryInjection !== null
+    ...(priorConfig &&
+    typeof priorConfig.memoryInjection === "object" &&
+    priorConfig.memoryInjection !== null &&
+    !Array.isArray(priorConfig.memoryInjection)
       ? (priorConfig.memoryInjection as Record<string, unknown>)
       : {}),
-    ...(typeof userConfig.memoryInjection === "object" && userConfig.memoryInjection !== null
+    ...(typeof userConfig.memoryInjection === "object" &&
+    userConfig.memoryInjection !== null &&
+    !Array.isArray(userConfig.memoryInjection)
       ? (userConfig.memoryInjection as Record<string, unknown>)
       : {}),
   } as WeCloneProxyConfig["memoryInjection"];
