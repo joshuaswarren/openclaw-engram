@@ -2084,11 +2084,22 @@ export class Orchestrator {
    * Designed for server retry paths that run after the deferred init completes
    * when QMD was not available during initial startup.
    *
+   * Accepts an optional AbortSignal so callers can interrupt the sync during
+   * shutdown. The signal is checked between phases and forwarded into the QMD
+   * update and warmup search calls so a long-running `qmd update` subprocess
+   * is killed promptly rather than left in flight after `httpServer.stop()`.
+   *
    * Returns true if the sync succeeded (QMD now available), false otherwise.
    */
-  async startupSearchSync(): Promise<boolean> {
+  async startupSearchSync(signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted) return false;
+
     const available = await this.qmd.probe();
     if (!available) return false;
+    if (signal?.aborted) {
+      log.debug("startupSearchSync: aborted after probe");
+      return false;
+    }
 
     log.info(`startupSearchSync: backend now available ${this.qmd.debugStatus()}`);
 
@@ -2111,6 +2122,11 @@ export class Orchestrator {
       })),
     );
 
+    if (signal?.aborted) {
+      log.debug("startupSearchSync: aborted after ensureCollection");
+      return false;
+    }
+
     const defaultState =
       states.find((e) => e.namespace === this.config.defaultNamespace)?.state ?? "unknown";
     if (defaultState === "missing") {
@@ -2124,6 +2140,8 @@ export class Orchestrator {
     // timestamps, (2) reset throttles so the update isn't skipped by stale
     // backoff, and (3) verify timestamps after update to confirm it executed
     // and didn't fail silently.
+    // The abort signal is forwarded into the QMD subprocess call so the
+    // long-running `qmd update` process is killed promptly on shutdown.
     if (this.config.qmdMaintenanceEnabled) {
       try {
         const failTsBefore = "lastUpdateFailedAtMs" in this.qmd
@@ -2138,7 +2156,11 @@ export class Orchestrator {
         if (this.config.namespacesEnabled) {
           namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(namespaces);
         } else {
-          await this.qmd.update();
+          await (this.qmd as any).update(signal);
+        }
+        if (signal?.aborted) {
+          log.debug("startupSearchSync: aborted after update");
+          return false;
         }
         const failTsAfter = "lastUpdateFailedAtMs" in this.qmd
           ? (this.qmd as any).lastUpdateFailedAtMs as number | null
@@ -2168,11 +2190,13 @@ export class Orchestrator {
     }
 
     // Warmup search to pre-load embedding models
-    try {
-      await this.qmd.search("warmup", this.config.defaultNamespace, 1);
-      log.info("startupSearchSync: warmup complete");
-    } catch (err) {
-      log.debug(`startupSearchSync: warmup search failed (non-fatal): ${err}`);
+    if (!signal?.aborted) {
+      try {
+        await this.qmd.search("warmup", this.config.defaultNamespace, 1, undefined, { signal });
+        log.info("startupSearchSync: warmup complete");
+      } catch (err) {
+        log.debug(`startupSearchSync: warmup search failed (non-fatal): ${err}`);
+      }
     }
 
     return true;

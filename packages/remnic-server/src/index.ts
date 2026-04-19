@@ -213,7 +213,7 @@ export async function startServer(options?: {
           return;
         }
 
-        const synced = await orchestrator.startupSearchSync();
+        const synced = await orchestrator.startupSearchSync(startupSyncAbort.signal);
         if (!synced) {
           if (orchestrator.qmd.debugStatus() === "backend=noop") {
             log.debug("QMD startup-sync retry: search intentionally disabled; stopping retries");

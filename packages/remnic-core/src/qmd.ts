@@ -1630,8 +1630,8 @@ export class QmdClient implements SearchBackend {
     }
   }
 
-  async update(): Promise<void> {
-    await this.runUpdateForCollection(this.collection, { perCollectionThrottle: false });
+  async update(signal?: AbortSignal): Promise<void> {
+    await this.runUpdateForCollection(this.collection, { perCollectionThrottle: false }, signal);
   }
 
   async updateCollection(collection: string): Promise<void> {
@@ -1641,6 +1641,7 @@ export class QmdClient implements SearchBackend {
   private async runUpdateForCollection(
     collection: string,
     options: { perCollectionThrottle: boolean },
+    signal?: AbortSignal,
   ): Promise<void> {
     if (this.available === false) return;
     const name = collection.trim();
@@ -1709,7 +1710,7 @@ export class QmdClient implements SearchBackend {
         );
       }
       const startedAtMs = Date.now();
-      await this.runQmdCommand(["update", "-c", name], this.updateTimeoutMs);
+      await this.runQmdCommand(["update", "-c", name], this.updateTimeoutMs, signal);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD update: durationMs=${durationMs}`);
