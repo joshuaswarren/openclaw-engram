@@ -73,11 +73,16 @@ async function scanDir(dir: string): Promise<IndexableDocument[]> {
 }
 
 /**
- * Scan `facts/` and `corrections/` subdirs of memoryDir for indexable markdown documents.
+ * Scan `facts/`, `corrections/`, and `procedures/` subdirs of memoryDir for indexable markdown documents.
  */
 export async function scanMemoryDir(memoryDir: string): Promise<IndexableDocument[]> {
   const factsDir = path.join(memoryDir, "facts");
   const correctionsDir = path.join(memoryDir, "corrections");
-  const [facts, corrections] = await Promise.all([scanDir(factsDir), scanDir(correctionsDir)]);
-  return [...facts, ...corrections];
+  const proceduresDir = path.join(memoryDir, "procedures");
+  const [facts, corrections, procedures] = await Promise.all([
+    scanDir(factsDir),
+    scanDir(correctionsDir),
+    scanDir(proceduresDir),
+  ]);
+  return [...facts, ...corrections, ...procedures];
 }

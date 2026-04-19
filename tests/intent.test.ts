@@ -81,6 +81,16 @@ test("inferIntentFromText sets taskInitiation for ship/deploy/run tests phrasing
   assert.equal(isTaskInitiationIntent(vague), false);
 });
 
+test("inferIntentFromText taskInitiation matches broken-build phrasing (issue #519 bench)", () => {
+  const fixBuild = inferIntentFromText("Fixing the broken build on main");
+  assert.equal(fixBuild.taskInitiation, true);
+});
+
+test("inferIntentFromText does not treat conversational let's as task initiation", () => {
+  const discuss = inferIntentFromText("Let's discuss the roadmap tomorrow");
+  assert.equal(discuss.taskInitiation, false);
+});
+
 test("runtime guards tolerate nullish/non-string inputs", () => {
   assert.doesNotThrow(() => planRecallMode(undefined as unknown as string));
   assert.doesNotThrow(() => planRecallMode(null as unknown as string));

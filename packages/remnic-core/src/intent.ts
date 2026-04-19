@@ -26,7 +26,7 @@ const ENTITY_PATTERNS: Array<{ re: RegExp; entityType: string }> = [
 
 /** User/agent is starting a hands-on task (issue #519 procedure recall gate). */
 const TASK_INITIATION_RE =
-  /\b(ship(?:ping|ped)?|deploy(?:ing|ed)?|release|publish|open(?:ing)?\s+(?:a\s+)?(?:pr|pull\s+request)|merge(?:ing)?\s+(?:the\s+)?(?:pr|pull\s+request)|run\s+(?:the\s+)?tests?|start(?:ing)?\s+(?:work|on|the)|kick\s+off|implement(?:ing|ed)?|let's\s+|going\s+to\s+(?:ship|deploy|release|open|run|merge)|need\s+to\s+(?:ship|deploy|run|open|merge|test)|fix(?:ing|ed)?\s+(?:the\s+)?(?:bug|build)|patch(?:ing|ed)?|build(?:ing)?\s+(?:and\s+)?(?:ship|deploy))\b/i;
+  /\b(ship(?:ping|ped)?|deploy(?:ing|ed)?|release|publish|open(?:ing)?\s+(?:a\s+)?(?:pr|pull\s+request)|merge(?:ing)?\s+(?:the\s+)?(?:pr|pull\s+request)|run\s+(?:the\s+)?tests?|start(?:ing)?\s+(?:work|on|the)|kick\s+off|implement(?:ing|ed)?|let's\s+(?:ship|deploy|release|publish|open|run|merge|implement|fix|patch|build|start|do|get|put|wire|hook|land|roll)\b|going\s+to\s+(?:ship|deploy|release|open|run|merge)|need\s+to\s+(?:ship|deploy|run|open|merge|test)|fix(?:ing|ed)?\s+(?:(?:the|a)\s+)?(?:\w+\s+){0,4}(?:bug|build)\b|patch(?:ing|ed)?|build(?:ing)?\s+(?:and\s+)?(?:ship|deploy))\b/i;
 
 function normalizeTextInput(input: unknown): string {
   return typeof input === "string" ? input : "";
