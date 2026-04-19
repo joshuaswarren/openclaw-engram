@@ -2234,10 +2234,21 @@ const pluginDefinition = {
         const absolutePath = path.isAbsolute(requestedPath)
           ? path.resolve(requestedPath)
           : path.resolve(capabilityWorkspaceDir, requestedPath);
-        if (!(await isWithinAllowedRoot(absolutePath))) {
+        // Canonicalize once and return the canonical path so the subsequent
+        // readFile() opens the same inode we validated. Returning the
+        // pre-canonicalization path creates a check/use race where a
+        // symlink inside an allowed root could be swapped between the
+        // containment check and the read.
+        const canonicalPath = await canonicalizeForContainment(absolutePath);
+        const canonicalRoots = await readAllowedCanonicalRootsPromise;
+        const contained = canonicalRoots.some((root) => {
+          const relative = path.relative(root, canonicalPath);
+          return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+        });
+        if (!contained) {
           throw new Error(`memory read outside allowed roots: ${requestedPath}`);
         }
-        return absolutePath;
+        return canonicalPath;
       };
       type RuntimeMemorySource = "memory" | "sessions";
       type RuntimeSearchOptions = {
