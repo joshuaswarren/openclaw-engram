@@ -26,6 +26,7 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "enrichment-fidelity",
       "entity-consolidation",
       "page-versioning",
+      "retrieval-personalization",
     ],
   );
   assert.deepEqual(
@@ -45,11 +46,12 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "remnic",
       "remnic",
       "remnic",
+      "remnic",
     ],
   );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization",
   );
 });
 
@@ -191,6 +193,17 @@ test("getBenchmark returns page-versioning metadata with a runnable benchmark en
 
   assert.ok(benchmark);
   assert.equal(benchmark?.id, "page-versioning");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "retrieval");
+});
+
+test("getBenchmark returns retrieval-personalization metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("retrieval-personalization");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "retrieval-personalization");
   assert.equal(benchmark?.status, "ready");
   assert.equal(benchmark?.runnerAvailable, true);
   assert.equal(benchmark?.tier, "remnic");

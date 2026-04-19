@@ -71,3 +71,29 @@ test("runBenchmark executes enrichment-fidelity in quick mode", async () => {
   assert.ok(result.results.aggregates.accepted_precision.mean >= 0.66);
   assert.equal(result.results.aggregates.exact_count_match.mean, 1);
 });
+
+test("runBenchmark executes retrieval-personalization in quick mode", async () => {
+  const result = await runBenchmark("retrieval-personalization", {
+    mode: "quick",
+    system: adapter,
+  });
+
+  assert.equal(result.meta.benchmark, "retrieval-personalization");
+  assert.equal(result.meta.benchmarkTier, "remnic");
+  assert.equal(result.results.tasks.length, 4);
+  assert.equal(result.results.aggregates["clean.p_at_1"].mean, 1);
+  assert.equal(result.results.aggregates["dirty.p_at_1"].mean, 0.5);
+  assert.equal(result.results.aggregates["dirty_penalty.p_at_1"].mean, 0.5);
+});
+
+test("runBenchmark applies retrieval-personalization limit as an exact task cap", async () => {
+  const result = await runBenchmark("retrieval-personalization", {
+    mode: "quick",
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.taskId, "clean:alex-scope-q3-launch");
+  assert.equal(result.results.aggregates["dirty_penalty.p_at_1"], undefined);
+});

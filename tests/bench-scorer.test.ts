@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   aggregateScores,
   aggregateTaskScores,
+  precisionAtK,
   recallAtK,
 } from "../packages/bench/src/scorer.ts";
 
@@ -30,4 +31,12 @@ test("aggregateScores and aggregateTaskScores both handle empty input", () => {
 
 test("recallAtK deduplicates repeated hits so recall does not exceed 1.0", () => {
   assert.equal(recallAtK(["a", "a"], ["a"], 2), 1.0);
+});
+
+test("precisionAtK divides hits by K instead of relevant set size", () => {
+  assert.equal(precisionAtK(["a", "b", "c"], ["a"], 3), 1 / 3);
+});
+
+test("precisionAtK deduplicates repeated hits so precision does not double-count duplicates", () => {
+  assert.equal(precisionAtK(["a", "a"], ["a"], 2), 0.5);
 });
