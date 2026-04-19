@@ -20,13 +20,13 @@ DTSTAMP:20260201T120000Z
 SUMMARY:Daily Standup
 DTSTART;TZID=America/New_York:20260202T093000
 DTEND;TZID=America/New_York:20260202T094500
-RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR
+RRULE:FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR;COUNT=52
 LOCATION:Main Office
 ORGANIZER;CN=Maya Torres:mailto:maya.torres@synthetic.example
 ATTENDEE;CN=Ben Alder:mailto:ben.alder@synthetic.example
 ATTENDEE;CN=Wei Chen:mailto:wei.chen@synthetic.example
 DESCRIPTION:Daily team sync. Each person shares: what they did yesterday\\,
- what they plan today\\, and any blockers.\\nFacilitator rotates weekly.
+  what they plan today\\, and any blockers.\\nFacilitator rotates weekly.
 END:VEVENT
 
 BEGIN:VEVENT
@@ -35,7 +35,7 @@ DTSTAMP:20260201T120000Z
 SUMMARY:Sprint Planning — Sprint 4
 DTSTART;TZID=America/New_York:20260209T100000
 DTEND;TZID=America/New_York:20260209T120000
-RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO
+RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=MO;COUNT=26
 LOCATION:Main Office
 ORGANIZER;CN=Maya Torres:mailto:maya.torres@synthetic.example
 ATTENDEE;CN=Ben Alder:mailto:ben.alder@synthetic.example
