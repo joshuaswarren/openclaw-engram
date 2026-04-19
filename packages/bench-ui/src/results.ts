@@ -28,12 +28,24 @@ function resolveSplit(value: unknown): BenchIntegritySplit {
   return value === "public" || value === "holdout" ? value : "unknown";
 }
 
+function resolveCanaryFloor(value: unknown): number {
+  // Results produced under a custom `REMNIC_BENCH_CANARY_FLOOR` may persist
+  // the floor into `meta.canaryFloor`. If present and finite, honor it so
+  // the badge matches the gate that produced the result.
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  return DEFAULT_CANARY_FLOOR;
+}
+
 function computeIntegritySummary(meta: JsonRecord): BenchIntegritySummary {
   const canaryScoreRaw = meta.canaryScore;
   const canaryScore =
     typeof canaryScoreRaw === "number" && Number.isFinite(canaryScoreRaw)
       ? canaryScoreRaw
       : null;
+
+  const canaryFloor = resolveCanaryFloor(meta.canaryFloor);
 
   const sealsPresent =
     isSha256Hex(meta.qrelsSealedHash) &&
@@ -44,8 +56,8 @@ function computeIntegritySummary(meta: JsonRecord): BenchIntegritySummary {
     split: resolveSplit(meta.splitType),
     sealsPresent,
     canaryScore,
-    canaryFloor: DEFAULT_CANARY_FLOOR,
-    canaryUnderFloor: canaryScore === null ? null : canaryScore <= DEFAULT_CANARY_FLOOR,
+    canaryFloor,
+    canaryUnderFloor: canaryScore === null ? null : canaryScore <= canaryFloor,
     qrelsSealedHashShort: shortHash(meta.qrelsSealedHash),
     judgePromptHashShort: shortHash(meta.judgePromptHash),
     datasetHashShort: shortHash(meta.datasetHash),

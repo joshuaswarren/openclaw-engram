@@ -130,6 +130,38 @@ test("bench UI loader surfaces integrity metadata from result meta", async () =>
   assert.equal(summary.integrity.qrelsSealedHashShort, "a".repeat(12));
 });
 
+test("bench UI loader honors a per-result canaryFloor when present", async () => {
+  const resultsDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-ui-floor-"));
+  // With a floor of 0.05 and a score of 0.08 the canary is OVER floor —
+  // the badge must mark the result unverified even though the default
+  // floor (0.1) would accept the same score.
+  await writeFile(
+    path.join(resultsDir, "custom-floor.json"),
+    JSON.stringify({
+      meta: {
+        id: "custom-floor-run",
+        benchmark: "longmemeval",
+        timestamp: "2026-04-18T10:00:00.000Z",
+        mode: "full",
+        splitType: "holdout",
+        qrelsSealedHash: "a".repeat(64),
+        judgePromptHash: "b".repeat(64),
+        datasetHash: "c".repeat(64),
+        canaryScore: 0.08,
+        canaryFloor: 0.05,
+      },
+      cost: {},
+      results: { tasks: [], aggregates: {} },
+    }),
+  );
+
+  const payload = await loadBenchResultSummaries(resultsDir);
+  const summary = payload.summaries[0];
+  assert.ok(summary);
+  assert.equal(summary.integrity.canaryFloor, 0.05);
+  assert.equal(summary.integrity.canaryUnderFloor, false);
+});
+
 test("bench UI loader marks legacy results without integrity metadata as unknown split", async () => {
   const resultsDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-ui-legacy-"));
   await writeFile(
