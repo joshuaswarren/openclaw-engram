@@ -29,12 +29,13 @@ function isRetrievalTier(v: unknown): v is RetrievalTier {
  * for the top-level snapshot fields the renderer advertises as
  * `string | null` in its JSON schema: `sessionKey`, `recordedAt`,
  * `namespace`, `source`.  `LastRecallStore.load()` ingests `last_recall.json`
- * via unvalidated `JSON.parse`, so stale/corrupt state could return numbers
- * or objects for these fields.  Coerce anything else to null so HTTP/MCP
- * consumers can rely on the advertised schema.
+ * via unvalidated `JSON.parse`, so stale/corrupt state could return numbers,
+ * objects, or empty strings for these fields.  Empty strings are coerced to
+ * null so downstream `?? "(unknown)"` fallbacks work as intended; `"" ??
+ * "(unknown)"` would otherwise still be `""`.
  */
 function sanitizeString(v: unknown): string | null {
-  return typeof v === "string" ? v : null;
+  return typeof v === "string" && v.length > 0 ? v : null;
 }
 
 export type RecallExplainFormat = "text" | "json";
@@ -65,7 +66,11 @@ export interface RecallExplainJsonPayload {
  * `hasExplain` derive from this single predicate so the payload is coherent.
  */
 function normalizeTierExplain(value: unknown): RecallTierExplain | null {
-  if (!value || typeof value !== "object") return null;
+  // Plain-object check: reject null/undefined/primitive, and also arrays
+  // (typeof [] === "object").  An array tierExplain from a corrupt snapshot
+  // would otherwise be coerced into a synthetic explain with all-zero
+  // defaults, which falsely sets hasExplain=true and misleads consumers.
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const raw = value as Record<string, unknown>;
   const filteredBy = Array.isArray(raw.filteredBy)
     ? raw.filteredBy.filter((x): x is string => typeof x === "string")

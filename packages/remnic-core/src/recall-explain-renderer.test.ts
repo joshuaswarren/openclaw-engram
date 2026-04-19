@@ -144,6 +144,56 @@ test("toRecallExplainJson coerces an unknown tier string to a safe fallback inst
 // (sessionKey, recordedAt, namespace, source) come from an unvalidated
 // JSON.parse and can be objects/numbers at runtime. The advertised
 // `string | null` schema must hold; malformed values coerce to null.
+// Regression for codex-connector (P2) + cursor Bugbot on PR #537: arrays
+// pass both `typeof === "object"` and `!value === false`, so an array
+// tierExplain from a corrupt snapshot used to be coerced into a synthetic
+// hybrid explain with zeroed fields, falsely setting hasExplain=true.
+test("toRecallExplainJson rejects an array tierExplain (hasExplain=false)", () => {
+  const snapshot = makeSnapshot({
+    tierExplain: [] as unknown as RecallTierExplain,
+  });
+  const payload = toRecallExplainJson(snapshot);
+  assert.equal(payload.hasExplain, false);
+  assert.equal(payload.tierExplain, null);
+  // Same invariant for a non-empty array
+  const snapshot2 = makeSnapshot({
+    tierExplain: [1, 2, 3] as unknown as RecallTierExplain,
+  });
+  const payload2 = toRecallExplainJson(snapshot2);
+  assert.equal(payload2.hasExplain, false);
+  assert.equal(payload2.tierExplain, null);
+});
+
+// Regression for cursor Bugbot on PR #537: sanitizeString is documented as
+// producing a non-empty string or null, but `""` leaked through and broke
+// the `?? "(unknown)"` fallback in toRecallExplainText.
+test("toRecallExplainJson coerces empty-string top-level fields to null", () => {
+  const payload = toRecallExplainJson({
+    sessionKey: "",
+    recordedAt: "",
+    namespace: "",
+    source: "",
+    memoryIds: [],
+  } as unknown as LastRecallSnapshot);
+  assert.equal(payload.sessionKey, null);
+  assert.equal(payload.recordedAt, null);
+  assert.equal(payload.namespace, null);
+  assert.equal(payload.source, null);
+});
+
+test("toRecallExplainText falls back to (unknown) when sessionKey / recordedAt are empty strings", () => {
+  const out = toRecallExplainText({
+    sessionKey: "",
+    recordedAt: "",
+    memoryIds: [],
+  } as unknown as LastRecallSnapshot);
+  assert.ok(out.includes("session: (unknown)"));
+  assert.ok(out.includes("recorded: (unknown)"));
+  // No bare `session: ` (trailing space with no value)
+  assert.ok(!/session: $/m.test(out));
+  assert.ok(!/recorded: $/m.test(out));
+});
+
 test("toRecallExplainJson sanitizes non-string top-level fields to null", () => {
   const malformed = {
     sessionKey: 123,
