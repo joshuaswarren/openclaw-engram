@@ -27,6 +27,7 @@ before_agent_start
 │  b. QMD hybrid search           │  BM25 + vector subprocess calls in parallel
 │  c. Embedding fallback          │  when QMD unavailable or returns empty results
 │  d. Namespace filter (v3.0)     │  filter to allowed namespaces
+│  e. Procedural recall (opt.)    │  intent-gated `procedure` files; see docs/procedural-memory.md
 └──────────────┬──────────────────┘
                ▼
 ┌─────────────────────────────────┐

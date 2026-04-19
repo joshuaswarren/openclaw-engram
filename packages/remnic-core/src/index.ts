@@ -72,6 +72,24 @@ export {
 } from "./extraction-judge.js";
 
 // ---------------------------------------------------------------------------
+// Intent + procedural recall (issue #519)
+// ---------------------------------------------------------------------------
+
+export {
+  inferIntentFromText,
+  isTaskInitiationIntent,
+  intentCompatibilityScore,
+  planRecallMode,
+  hasBroadGraphIntent,
+} from "./intent.js";
+
+export { buildProcedureRecallSection } from "./procedural/procedure-recall.js";
+export {
+  buildProcedureMarkdownBody,
+  parseProcedureStepsFromBody,
+} from "./procedural/procedure-types.js";
+
+// ---------------------------------------------------------------------------
 // Inline source attribution (issue #369)
 // ---------------------------------------------------------------------------
 

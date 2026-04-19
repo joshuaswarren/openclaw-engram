@@ -68,6 +68,12 @@ Behavior:
 - Negative examples apply a **small, bounded penalty** during ranking (soft bias only).
 - Safe default: the batch tool requires explicit IDs (or a `usefulMemoryIds` allowlist + `autoMarkOthersNotUseful=true`) to avoid accidental mass-negative marking.
 
+### Procedural memory (optional)
+
+When **`procedural.enabled`** is true, Remnic can inject a short **“Relevant procedures”** section at recall time for prompts that look like **task initiation** (for example deploy, ship, or open a PR), using active `category: procedure` files under `procedures/`. This path is separate from QMD hybrid search and from `memoryKind: procedural` dream-surface filtering.
+
+See [Procedural memory](./procedural-memory.md) for configuration, mining, and the `procedural-recall` benchmark.
+
 ## Example: Enable Local-only Re-ranking
 
 In `openclaw.json`:

@@ -32,4 +32,5 @@ See **[docs/architecture/overview.md](architecture/overview.md)** for the full s
 
 - [Architecture Overview](architecture/overview.md) — full internals
 - [Retrieval Pipeline](architecture/retrieval-pipeline.md) — how recall works
+- [Procedural memory](procedural-memory.md) — optional `procedure` category, recall gate, miner
 - [Memory Lifecycle](architecture/memory-lifecycle.md) — write, consolidation, expiry
