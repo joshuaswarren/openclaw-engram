@@ -353,6 +353,18 @@ export async function resolveBenchmarkResultReference(
   return basenameMatch;
 }
 
+// A reference is treated as a filesystem path only when it looks like
+// one — absolute, contains a path separator, or points to a .json file.
+// Bare identifiers (e.g. run IDs) stay scoped to the store.
+function looksLikeFilesystemPath(reference: string): boolean {
+  return (
+    path.isAbsolute(reference) ||
+    reference.includes("/") ||
+    reference.includes(path.sep) ||
+    reference.endsWith(".json")
+  );
+}
+
 export async function deleteBenchmarkResults(
   outputDir: string,
   references: string[],
@@ -366,19 +378,23 @@ export async function deleteBenchmarkResults(
   const seenPaths = new Set<string>();
 
   for (const reference of references) {
-    let summary: StoredBenchmarkResultSummary | undefined;
-    if (fs.existsSync(reference)) {
+    // Resolve stored-run references first (by id or basename) so
+    // `remnic bench runs delete <id>` never unlinks an unrelated file
+    // that happens to share the same name in the current working
+    // directory. Only fall back to treating the reference as a direct
+    // filesystem path when it is unambiguously path-shaped or no
+    // stored run matches.
+    let summary: StoredBenchmarkResultSummary | undefined =
+      summaries.find((entry) => entry.id === reference) ??
+      summaries.find((entry) => path.basename(entry.path) === reference);
+
+    if (!summary && looksLikeFilesystemPath(reference) && fs.existsSync(reference)) {
       try {
         const result = await loadBenchmarkResult(reference);
         summary = toSummary(result, reference);
       } catch {
         summary = undefined;
       }
-    }
-    if (!summary) {
-      summary =
-        summaries.find((entry) => entry.id === reference) ??
-        summaries.find((entry) => path.basename(entry.path) === reference);
     }
     if (!summary) {
       missing.push(reference);
