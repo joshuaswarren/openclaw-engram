@@ -71,15 +71,20 @@ test("assertPublishableIntegrity rejects public split for the leaderboard", () =
   );
 });
 
-test("buildBenchmarkPublishFeed omits results with missing integrity by throwing", async () => {
+test("buildBenchmarkPublishFeed skips results with missing integrity rather than aborting", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-integrity-publish-"));
   const incomplete = buildResult("incomplete", { datasetHash: undefined });
-  await writeFile(path.join(dir, "incomplete.json"), JSON.stringify(incomplete));
+  // Older, valid result for the same benchmark.
+  const older = buildResult("older-ok", { id: "older-ok" } as never);
+  (older.meta as { id: string }).id = "older-ok";
+  (older.meta as { timestamp: string }).timestamp = "2026-04-17T00:00:00.000Z";
+  await writeFile(path.join(dir, "newer-incomplete.json"), JSON.stringify(incomplete));
+  await writeFile(path.join(dir, "older-ok.json"), JSON.stringify(older));
 
-  await assert.rejects(
-    () => buildBenchmarkPublishFeed(dir, "remnic-ai"),
-    /integrity metadata is incomplete/,
-  );
+  const feed = await buildBenchmarkPublishFeed(dir, "remnic-ai");
+  assert.equal(feed.benchmarks.length, 1);
+  assert.equal(feed.benchmarks[0]?.resultId, "older-ok");
+  assert.ok(feed.skipped?.some((entry) => entry.reason === "missing-integrity"));
 });
 
 test("buildBenchmarkPublishFeed emits integrity block for holdout results", async () => {
@@ -95,7 +100,7 @@ test("buildBenchmarkPublishFeed emits integrity block for holdout results", asyn
   assert.equal(entry.integrity.canaryScore, 0.02);
 });
 
-test("buildBenchmarkPublishFeed refuses contaminated datasets", async () => {
+test("buildBenchmarkPublishFeed skips contaminated datasets and records the skip", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-integrity-contam-"));
   const contaminatedHash = hashString("dataset");
   const result = buildResult("contaminated", { datasetHash: contaminatedHash });
@@ -112,8 +117,30 @@ test("buildBenchmarkPublishFeed refuses contaminated datasets", async () => {
     ],
   };
 
-  await assert.rejects(
-    () => buildBenchmarkPublishFeed(dir, "remnic-ai", { contaminationManifest: manifest }),
-    /contamination manifest/,
-  );
+  const feed = await buildBenchmarkPublishFeed(dir, "remnic-ai", {
+    contaminationManifest: manifest,
+  });
+  assert.equal(feed.benchmarks.length, 0);
+  assert.ok(feed.skipped?.some((entry) => entry.reason === "contaminated-dataset"));
+});
+
+test("buildBenchmarkPublishFeed skips newer public-split and falls back to older holdout", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-integrity-public-"));
+  const newerPublic = buildResult("newer-public", { splitType: "public" });
+  (newerPublic.meta as { timestamp: string }).timestamp = "2026-04-19T00:00:00.000Z";
+  const olderHoldout = buildResult("older-holdout");
+  (olderHoldout.meta as { timestamp: string }).timestamp = "2026-04-17T00:00:00.000Z";
+
+  await writeFile(path.join(dir, "newer.json"), JSON.stringify(newerPublic));
+  await writeFile(path.join(dir, "older.json"), JSON.stringify(olderHoldout));
+
+  const feed = await buildBenchmarkPublishFeed(dir, "remnic-ai");
+  assert.equal(feed.benchmarks.length, 1);
+  assert.equal(feed.benchmarks[0]?.resultId, "older-holdout");
+  assert.ok(feed.skipped?.some((entry) => entry.reason === "non-holdout-split"));
+});
+
+test("assertPublishableIntegrity remains throwing for strict callers", () => {
+  const result = buildResult("strict", { qrelsSealedHash: undefined });
+  assert.throws(() => assertPublishableIntegrity(result, "remnic-ai"), /qrelsSealedHash/);
 });

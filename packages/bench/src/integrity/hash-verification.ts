@@ -62,22 +62,17 @@ export function hashBytes(value: Uint8Array): string {
  * same digest regardless of key insertion order.
  */
 export function canonicalJsonStringify(value: unknown): string {
-  return JSON.stringify(value, canonicalReplacer(value));
+  return JSON.stringify(value, canonicalReplacer);
 }
 
-function canonicalReplacer(root: unknown): (this: unknown, key: string, value: unknown) => unknown {
-  return function replace(this: unknown, _key: string, value: unknown): unknown {
-    if (Array.isArray(value)) {
-      return value;
-    }
-    if (value && typeof value === "object" && value !== root) {
-      return sortObjectKeys(value as Record<string, unknown>);
-    }
-    if (value && typeof value === "object") {
-      return sortObjectKeys(value as Record<string, unknown>);
-    }
+function canonicalReplacer(this: unknown, _key: string, value: unknown): unknown {
+  if (Array.isArray(value)) {
     return value;
-  };
+  }
+  if (value && typeof value === "object") {
+    return sortObjectKeys(value as Record<string, unknown>);
+  }
+  return value;
 }
 
 function sortObjectKeys(input: Record<string, unknown>): Record<string, unknown> {
@@ -193,22 +188,36 @@ export function openSeal(seal: SealedArtifact, key: Buffer): string {
   return plaintext;
 }
 
+// Strict base64 / base64url validator for a 32-byte key. `Buffer.from(x,
+// "base64")` is permissive in Node — it silently drops non-base64 characters
+// rather than throwing — so we must validate the input format ourselves
+// before decoding. 32 bytes of base64 is 44 characters including padding
+// (or 43 without padding for base64url-style encoding).
+const BASE64_32BYTE_PATTERN = /^(?:[A-Za-z0-9+/]{43}=|[A-Za-z0-9+/]{44}|[A-Za-z0-9_-]{43}=?|[A-Za-z0-9_-]{44})$/u;
+
 /**
  * Load a 32-byte AES key from an environment variable. The variable must
  * contain a base64-encoded 256-bit key. Returns `null` when unset so callers
  * can degrade gracefully in environments without a key-management backend.
+ *
+ * The input is validated against a strict base64 pattern before decoding
+ * because Node's `Buffer.from(x, "base64")` silently ignores non-base64
+ * characters and never throws — accepting a malformed key would surface
+ * only later as an opaque decryption or hash mismatch error.
  */
 export function loadSealKeyFromEnv(envName: string): Buffer | null {
   const raw = process.env[envName];
   if (typeof raw !== "string" || raw.length === 0) {
     return null;
   }
-  let decoded: Buffer;
-  try {
-    decoded = Buffer.from(raw, "base64");
-  } catch {
-    throw new Error(`${envName} must be a base64-encoded 32-byte key.`);
+  if (!BASE64_32BYTE_PATTERN.test(raw)) {
+    throw new Error(
+      `${envName} must be a base64 (or base64url) encoding of exactly 32 bytes.`,
+    );
   }
+  // Normalize base64url to standard base64 so Buffer.from decodes cleanly.
+  const normalized = raw.replace(/-/g, "+").replace(/_/g, "/");
+  const decoded = Buffer.from(normalized, "base64");
   if (decoded.length !== AES_KEY_LENGTH) {
     throw new Error(
       `${envName} decoded to ${decoded.length} bytes; expected ${AES_KEY_LENGTH}.`,

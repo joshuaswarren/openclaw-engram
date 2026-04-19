@@ -99,14 +99,40 @@ test("loadSealKeyFromEnv returns null when the variable is unset", () => {
   assert.equal(loadSealKeyFromEnv("REMNIC_UNSET_SEAL_KEY"), null);
 });
 
-test("loadSealKeyFromEnv rejects wrong-length decoded keys", () => {
+test("loadSealKeyFromEnv rejects wrong-length base64 inputs", () => {
+  // 16 bytes of base64 is 24 chars — outside the strict 43/44-char pattern.
   process.env.REMNIC_TEST_BAD_SEAL_KEY = Buffer.alloc(16).toString("base64");
   try {
     assert.throws(
       () => loadSealKeyFromEnv("REMNIC_TEST_BAD_SEAL_KEY"),
-      /expected 32/,
+      /32 bytes/,
     );
   } finally {
     delete process.env.REMNIC_TEST_BAD_SEAL_KEY;
+  }
+});
+
+test("loadSealKeyFromEnv rejects non-base64 strings", () => {
+  process.env.REMNIC_TEST_BAD_CHARS_SEAL_KEY = "not-a-valid-base64-string!!!!!";
+  try {
+    assert.throws(
+      () => loadSealKeyFromEnv("REMNIC_TEST_BAD_CHARS_SEAL_KEY"),
+      /base64/,
+    );
+  } finally {
+    delete process.env.REMNIC_TEST_BAD_CHARS_SEAL_KEY;
+  }
+});
+
+test("loadSealKeyFromEnv accepts base64url-encoded keys", () => {
+  const key = Buffer.from("a".repeat(32));
+  const base64url = key.toString("base64").replace(/\+/g, "-").replace(/\//g, "_");
+  process.env.REMNIC_TEST_BASE64URL_SEAL_KEY = base64url;
+  try {
+    const loaded = loadSealKeyFromEnv("REMNIC_TEST_BASE64URL_SEAL_KEY");
+    assert.ok(loaded);
+    assert.ok(loaded.equals(key));
+  } finally {
+    delete process.env.REMNIC_TEST_BASE64URL_SEAL_KEY;
   }
 });

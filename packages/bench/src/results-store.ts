@@ -78,6 +78,12 @@ export interface PublishedBenchmarkFeed {
   target: BenchmarkPublishTarget;
   generatedAt: string;
   benchmarks: PublishedBenchmarkFeedEntry[];
+  /**
+   * Records for every candidate result that was considered but dropped from
+   * this feed because of an integrity concern. Exposed so tooling can surface
+   * the dropped runs without grep-ing logs.
+   */
+  skipped?: PublishSkipRecord[];
 }
 
 const BASELINE_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -368,10 +374,12 @@ function isPublishableResultForTarget(
 }
 
 /**
- * Throws if the result is missing any required integrity field. Called from
- * the publishing pipeline so feed entries always carry sealed-artifact
- * provenance. Leaderboard-bound entries must also be `holdout` split; public
- * split results are accepted but never published.
+ * Throws if the result is missing any required integrity field. Called
+ * explicitly by tooling (e.g. `remnic bench publish --strict`) that needs to
+ * surface integrity gaps as errors rather than silently skipping the run.
+ * The feed builder uses `isResultPublishable` below to filter non-fatal
+ * conditions (public split, missing integrity) so a single bad result does
+ * not block publishing older, valid holdout runs.
  */
 export function assertPublishableIntegrity(
   result: BenchmarkResult,
@@ -383,6 +391,64 @@ export function assertPublishableIntegrity(
       `Published leaderboard only accepts holdout-split results; got splitType="${String(result.meta.splitType)}".`,
     );
   }
+}
+
+export type PublishSkipReason =
+  | "missing-integrity"
+  | "non-holdout-split"
+  | "contaminated-dataset";
+
+export interface PublishSkipRecord {
+  resultId: string;
+  path: string;
+  reason: PublishSkipReason;
+  detail: string;
+}
+
+/**
+ * Decide whether a single result should contribute to a published feed for
+ * the given target. Returns `null` when the result is publishable; otherwise
+ * returns a structured skip reason. Called per-result so newer results with
+ * missing/public metadata do not block older valid holdout runs for the same
+ * benchmark.
+ */
+function classifyPublishCandidate(
+  result: BenchmarkResult,
+  target: BenchmarkPublishTarget,
+  contaminationManifest: ContaminationManifest,
+): PublishSkipRecord | null {
+  if (!integrityMetaIsComplete(result.meta)) {
+    return {
+      resultId: result.meta.id,
+      path: "",
+      reason: "missing-integrity",
+      detail: "Result is missing one or more required integrity fields.",
+    };
+  }
+
+  if (target === "remnic-ai" && result.meta.splitType !== "holdout") {
+    return {
+      resultId: result.meta.id,
+      path: "",
+      reason: "non-holdout-split",
+      detail: `Leaderboard only accepts holdout-split results; got "${result.meta.splitType}".`,
+    };
+  }
+
+  const contamination = checkDatasetContamination(
+    result.meta.datasetHash,
+    contaminationManifest,
+  );
+  if (!contamination.clean) {
+    return {
+      resultId: result.meta.id,
+      path: "",
+      reason: "contaminated-dataset",
+      detail: `datasetHash ${result.meta.datasetHash} appears on the contamination manifest (${contamination.matched?.reason ?? "unspecified reason"}).`,
+    };
+  }
+
+  return null;
 }
 
 function toPublishedBenchmarkFeedEntry(
@@ -427,6 +493,7 @@ export async function buildBenchmarkPublishFeed(
   const contaminationManifest =
     options.contaminationManifest ?? EMPTY_CONTAMINATION_MANIFEST;
   const latestByBenchmark = new Map<string, PublishedBenchmarkFeedEntry>();
+  const skipped: PublishSkipRecord[] = [];
 
   for (const summary of summaries) {
     if (latestByBenchmark.has(summary.benchmark)) {
@@ -438,19 +505,13 @@ export async function buildBenchmarkPublishFeed(
       continue;
     }
 
-    // Hard-fail rather than silently drop: a result that reaches the
-    // publishing pipeline without integrity metadata is a config bug the
-    // operator needs to see.
-    assertPublishableIntegrity(result, target);
-
-    const contamination = checkDatasetContamination(
-      result.meta.datasetHash as string,
-      contaminationManifest,
-    );
-    if (!contamination.clean) {
-      throw new Error(
-        `Refusing to publish ${result.meta.id}: datasetHash ${result.meta.datasetHash} appears on the contamination manifest (${contamination.matched?.reason ?? "unspecified reason"}).`,
-      );
+    // Classify rather than throw so a newer public-split / missing-integrity
+    // result does NOT block older, valid holdout runs for the same benchmark
+    // from reaching the leaderboard.
+    const skip = classifyPublishCandidate(result, target, contaminationManifest);
+    if (skip) {
+      skipped.push({ ...skip, path: summary.path });
+      continue;
     }
 
     latestByBenchmark.set(
@@ -463,6 +524,7 @@ export async function buildBenchmarkPublishFeed(
     target,
     generatedAt: new Date().toISOString(),
     benchmarks: [...latestByBenchmark.values()].sort(comparePublishedBenchmarkEntries),
+    skipped,
   };
 }
 
