@@ -129,6 +129,11 @@ import {
   parseBenchActionArgs,
   parseBenchArgs,
 } from "./bench-args.js";
+import {
+  cleanupRollbackDirectory,
+  rollbackOpenclawUpgrade,
+  swapDirectoryWithRollback,
+} from "./openclaw-upgrade-swap.js";
 import { expandTilde, resolveHomeDir } from "./path-utils.js";
 export { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
@@ -1794,7 +1799,10 @@ function backupPathIfPresent(sourcePath: string, backupPath: string): boolean {
   return true;
 }
 
-function installPublishedOpenclawPlugin(spec: string, pluginDir: string): { version?: string } {
+function installPublishedOpenclawPlugin(
+  spec: string,
+  pluginDir: string,
+): { rollbackDir?: string; version?: string } {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remnic-openclaw-upgrade-"));
   const stagedDir = `${pluginDir}.next-${process.pid}-${Date.now()}`;
   const rollbackDir = `${pluginDir}.rollback-${process.pid}-${Date.now()}`;
@@ -1833,33 +1841,18 @@ function installPublishedOpenclawPlugin(spec: string, pluginDir: string): { vers
       stdio: ["ignore", "pipe", "pipe"],
     });
 
-    fs.mkdirSync(path.dirname(pluginDir), { recursive: true });
-    fs.rmSync(rollbackDir, { recursive: true, force: true });
-    if (fs.existsSync(pluginDir)) {
-      fs.renameSync(pluginDir, rollbackDir);
-    }
-
-    try {
-      fs.renameSync(stagedDir, pluginDir);
-      fs.rmSync(rollbackDir, { recursive: true, force: true });
-    } catch (err) {
-      fs.rmSync(pluginDir, { recursive: true, force: true });
-      if (fs.existsSync(rollbackDir)) {
-        fs.renameSync(rollbackDir, pluginDir);
-      }
-      throw err;
-    }
+    const swapResult = swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);
 
     const installedPackageJsonPath = path.join(pluginDir, "package.json");
     const installedPackage = fs.existsSync(installedPackageJsonPath)
       ? JSON.parse(fs.readFileSync(installedPackageJsonPath, "utf8")) as Record<string, unknown>
       : {};
     return {
+      rollbackDir: swapResult.rollbackDir,
       version: typeof installedPackage.version === "string" ? installedPackage.version : undefined,
     };
   } finally {
     fs.rmSync(stagedDir, { recursive: true, force: true });
-    fs.rmSync(rollbackDir, { recursive: true, force: true });
     fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
@@ -4474,6 +4467,8 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
     "backups",
     `remnic-openclaw-upgrade-${formatOpenclawUpgradeStamp()}`,
   );
+  const configBackupPath = path.join(backupDir, "openclaw.json");
+  const pluginBackupDir = path.join(backupDir, "extensions", REMNIC_OPENCLAW_PLUGIN_ID);
 
   console.log(`OpenClaw config: ${configPath}`);
   console.log(`Plugin dir:      ${pluginDir}`);
@@ -4510,24 +4505,40 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
   }
 
   const backupNotes: string[] = [];
-  if (backupPathIfPresent(configPath, path.join(backupDir, "openclaw.json"))) {
-    backupNotes.push(`+ Backed up config to ${path.join(backupDir, "openclaw.json")}`);
+  if (backupPathIfPresent(configPath, configBackupPath)) {
+    backupNotes.push(`+ Backed up config to ${configBackupPath}`);
   } else {
     backupNotes.push(`  No existing OpenClaw config found at ${configPath}; install step will create it`);
   }
-  if (backupPathIfPresent(pluginDir, path.join(backupDir, "extensions", REMNIC_OPENCLAW_PLUGIN_ID))) {
-    backupNotes.push(`+ Backed up plugin dir to ${path.join(backupDir, "extensions", REMNIC_OPENCLAW_PLUGIN_ID)}`);
+  if (backupPathIfPresent(pluginDir, pluginBackupDir)) {
+    backupNotes.push(`+ Backed up plugin dir to ${pluginBackupDir}`);
   } else {
     backupNotes.push(`  No existing plugin dir found at ${pluginDir}; a fresh install will be staged`);
   }
 
   const installResult = installPublishedOpenclawPlugin(packageSpec, pluginDir);
-  await cmdOpenclawInstall({
-    yes: true,
-    dryRun: false,
-    memoryDir: preservedMemoryDir,
-    configPath,
-  });
+  try {
+    await cmdOpenclawInstall({
+      yes: true,
+      dryRun: false,
+      memoryDir: preservedMemoryDir,
+      configPath,
+    });
+    cleanupRollbackDirectory(installResult.rollbackDir);
+  } catch (installError) {
+    const rollbackNotes = rollbackOpenclawUpgrade({
+      configBackupPath,
+      configPath,
+      pluginBackupDir,
+      pluginDir,
+      rollbackDir: installResult.rollbackDir,
+    });
+    throw new Error(
+      `OpenClaw upgrade failed while reconfiguring the installed plugin. ` +
+      `${rollbackNotes.join("; ")}.`,
+      { cause: installError },
+    );
+  }
 
   console.log("\nUpgrade backups:");
   for (const note of backupNotes) console.log(`  ${note}`);
