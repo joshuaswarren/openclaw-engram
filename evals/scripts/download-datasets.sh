@@ -2,7 +2,10 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DATASETS_DIR="$(cd "$SCRIPT_DIR/.." && pwd)/datasets"
+# Honor an explicit DATASETS_DIR from the environment so packaged CLI
+# installs can route downloads to a user-writable location (e.g.
+# ~/.remnic/bench/datasets) instead of a sibling of the script dir.
+DATASETS_DIR="${DATASETS_DIR:-$(cd "$SCRIPT_DIR/.." && pwd)/datasets}"
 
 usage() {
   echo "Usage: $0 [--benchmark <name>]"

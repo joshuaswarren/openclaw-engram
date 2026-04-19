@@ -157,6 +157,7 @@ export { compareResults, getBenchmarkLowerIsBetter } from "./stats/comparison.js
 export {
   assertPublishableIntegrity,
   buildBenchmarkPublishFeed,
+  deleteBenchmarkResults,
   defaultBenchmarkBaselineDir,
   defaultBenchmarkPublishPath,
   loadBenchmarkResult,

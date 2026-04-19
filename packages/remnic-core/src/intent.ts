@@ -24,6 +24,10 @@ const ENTITY_PATTERNS: Array<{ re: RegExp; entityType: string }> = [
   { re: /\b(doc|readme|docs|changelog)\b/i, entityType: "docs" },
 ];
 
+/** User/agent is starting a hands-on task (issue #519 procedure recall gate). */
+const TASK_INITIATION_RE =
+  /\b(ship(?:ping|ped)?|deploy(?:ing|ed)?|release|publish|open(?:ing)?\s+(?:a\s+)?(?:pr|pull\s+request)|merge(?:ing)?\s+(?:the\s+)?(?:pr|pull\s+request)|run\s+(?:the\s+)?tests?|start(?:ing)?\s+(?:work|on|the)|kick\s+off|implement(?:ing|ed)?|let's\s+|going\s+to\s+(?:ship|deploy|release|open|run|merge)|need\s+to\s+(?:ship|deploy|run|open|merge|test)|fix(?:ing|ed)?\s+(?:the\s+)?(?:bug|build)|patch(?:ing|ed)?|build(?:ing)?\s+(?:and\s+)?(?:ship|deploy))\b/i;
+
 function normalizeTextInput(input: unknown): string {
   return typeof input === "string" ? input : "";
 }
@@ -35,12 +39,18 @@ export function inferIntentFromText(text: string): MemoryIntent {
   const entityTypes = Array.from(
     new Set(ENTITY_PATTERNS.filter((p) => p.re.test(safeText)).map((p) => p.entityType)),
   );
+  const taskInitiation = TASK_INITIATION_RE.test(safeText);
 
   return {
     goal,
     actionType,
     entityTypes,
+    taskInitiation,
   };
+}
+
+export function isTaskInitiationIntent(intent: MemoryIntent): boolean {
+  return intent.taskInitiation === true;
 }
 
 export function intentCompatibilityScore(queryIntent: MemoryIntent, memoryIntent: MemoryIntent): number {

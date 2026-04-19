@@ -22,10 +22,13 @@ import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   judgeFactDurability,
   createVerdictCache,
+  validateProcedureExtraction,
   type JudgeBatchResult,
   type JudgeCandidate,
   type JudgeVerdict,
 } from "./extraction-judge.js";
+import { buildProcedurePersistBody } from "./procedural/procedure-types.js";
+import { buildProcedureRecallSection } from "./procedural/procedure-recall.js";
 import {
   attachCitation,
   type CitationContext,
@@ -62,7 +65,11 @@ import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
-import { ensureDaySummaryCron, ensureNightlyGovernanceCron } from "./maintenance/memory-governance-cron.js";
+import {
+  ensureDaySummaryCron,
+  ensureNightlyGovernanceCron,
+  ensureProceduralMiningCron,
+} from "./maintenance/memory-governance-cron.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import {
@@ -916,6 +923,7 @@ function parseMemoryIntentSnapshot(value: unknown): MemoryIntent {
           (item): item is string => typeof item === "string",
         )
       : [],
+    taskInitiation: candidate.taskInitiation === true,
   };
 }
 
@@ -929,6 +937,9 @@ function buildQmdIntentHint(intent: MemoryIntent): string | undefined {
   }
   if (intent.entityTypes.length > 0) {
     parts.push(`entities:${intent.entityTypes.join(",")}`);
+  }
+  if (intent.taskInitiation === true) {
+    parts.push("task_initiation");
   }
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
@@ -2073,6 +2084,13 @@ export class Orchestrator {
         log.debug(`nightly governance cron auto-register failed (non-fatal): ${err}`);
       }
     }
+    if (this.config.procedural?.proceduralMiningCronAutoRegister) {
+      try {
+        await this.autoRegisterProceduralMiningCron();
+      } catch (err) {
+        log.debug(`procedural mining cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
 
     log.info("orchestrator initialized (full — deferred steps complete)");
   }
@@ -2261,6 +2279,27 @@ export class Orchestrator {
       }
     } catch (err) {
       log.debug(`nightly governance cron auto-register error: ${err}`);
+    }
+  }
+
+  private async autoRegisterProceduralMiningCron(): Promise<void> {
+    const home = resolveHomeDir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("procedural mining cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+      const created = await ensureProceduralMiningCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (created.created) {
+        log.info(`procedural mining cron auto-registered (${created.jobId})`);
+      } else {
+        log.debug("procedural mining cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`procedural mining cron auto-register error: ${err}`);
     }
   }
 
@@ -6756,6 +6795,23 @@ export class Orchestrator {
       return section;
     })();
 
+    const procedureRecallPromise = (async (): Promise<string | null> => {
+      if (this.config.procedural?.enabled !== true) return null;
+      if (!this.isRecallSectionEnabled("procedure-recall", true)) return null;
+      try {
+        return await buildProcedureRecallSection(
+          this.storage,
+          retrievalQuery,
+          this.config,
+        );
+      } catch (err) {
+        log.debug(
+          `procedure-recall: failed open: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
+      }
+    })();
+
     const compoundingPromise = observeEnrichmentPromise(
       (async (): Promise<string | null> => {
         const t0 = Date.now();
@@ -6840,6 +6896,7 @@ export class Orchestrator {
       causalTrajectorySection,
       cmcCausalChainsSection,
       calibrationSection,
+      procedureRecallSection,
       trustZoneSection,
       verifiedRecallSection,
       verifiedRulesSection,
@@ -6862,6 +6919,7 @@ export class Orchestrator {
             ["causalTraj", causalTrajectoryPromise],
             ["cmc", cmcRetrievalPromise],
             ["calibration", calibrationPromise],
+            ["procedureRecall", procedureRecallPromise],
             ["trustZone", trustZonePromise],
             ["verifiedRecall", verifiedRecallPromise],
             ["verifiedRules", verifiedRulesPromise],
@@ -6891,6 +6949,7 @@ export class Orchestrator {
           typeof causalTrajectoryPromise extends Promise<infer T> ? T : never,
           typeof cmcRetrievalPromise extends Promise<infer T> ? T : never,
           typeof calibrationPromise extends Promise<infer T> ? T : never,
+          typeof procedureRecallPromise extends Promise<infer T> ? T : never,
           typeof trustZonePromise extends Promise<infer T> ? T : never,
           typeof verifiedRecallPromise extends Promise<infer T> ? T : never,
           typeof verifiedRulesPromise extends Promise<infer T> ? T : never,
@@ -7020,6 +7079,14 @@ export class Orchestrator {
         sectionBuckets,
         "calibration-rules",
         calibrationSection,
+      );
+    }
+
+    if (procedureRecallSection) {
+      this.appendRecallSection(
+        sectionBuckets,
+        "procedure-recall",
+        procedureRecallSection,
       );
     }
 
@@ -9817,6 +9884,9 @@ export class Orchestrator {
           // category slugs defined in the taxonomy; the fallback is the
           // original ExtractedFact.category which is already typed.
           const judgeCategory = (preRoutedCategories[fi] ?? f.category) as import("./types.js").MemoryCategory;
+          if (judgeCategory === "procedure") {
+            continue;
+          }
           const tags = Array.isArray(f.tags) ? f.tags : [];
           const imp = scoreImportance(
             f.content,
@@ -9955,6 +10025,11 @@ export class Orchestrator {
         fact.tags,
       );
 
+      if (writeCategory === "procedure" && this.config.procedural?.enabled !== true) {
+        log.debug("persistExtraction: skip procedure memory (procedural.enabled is false)");
+        continue;
+      }
+
       // Importance write-gate (issue #372). Drop facts whose locally-scored
       // level falls below the configured minimum BEFORE the semantic dedup
       // lookup so that low-importance facts never incur an embedding search.
@@ -9996,6 +10071,27 @@ export class Orchestrator {
             judgeGatedCount++;
             log.debug(
               `extraction-judge: rejected "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
+            );
+            continue;
+          }
+        }
+      }
+
+      // Procedure extraction gate (issue #519): ≥2 steps + trigger phrasing.
+      // Runs even when extractionJudgeEnabled is false (durability judge is unrelated).
+      if (writeCategory === "procedure") {
+        const procGate = validateProcedureExtraction({
+          content: fact.content,
+          procedureSteps: fact.procedureSteps,
+        });
+        if (!procGate.durable) {
+          if (this.config.extractionJudgeShadow) {
+            log.info(
+              `extraction-procedure-gate[shadow]: would reject "${fact.content.slice(0, 60)}…" reason="${procGate.reason}"`,
+            );
+          } else {
+            log.debug(
+              `extraction-procedure-gate: rejected "${fact.content.slice(0, 60)}…" reason="${procGate.reason}"`,
             );
             continue;
           }
@@ -10177,7 +10273,7 @@ export class Orchestrator {
       // When semanticChunkingEnabled is true, prefer the embedding-based
       // semantic chunker which produces more coherent topic-aligned segments.
       // Falls back to the recursive sentence-boundary chunker on failure.
-      if (this.config.chunkingEnabled) {
+      if (this.config.chunkingEnabled && writeCategory !== "procedure") {
         let chunkResult: { chunked: boolean; chunks: { content: string; index: number; tokenCount: number }[] };
 
         if (this.config.semanticChunkingEnabled) {
@@ -10451,9 +10547,12 @@ export class Orchestrator {
       }
 
       // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
-      const memoryKind = this.config.episodeNoteModeEnabled
-        ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
-        : undefined;
+      const memoryKind =
+        writeCategory === "procedure"
+          ? undefined
+          : this.config.episodeNoteModeEnabled
+            ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
+            : undefined;
 
       // Normal write (no chunking)
       //
@@ -10471,7 +10570,11 @@ export class Orchestrator {
       // write and defeat cross-session dedup (see `findDuplicateExplicitCapture`
       // in explicit-capture.ts which calls `hasFactContentHash(candidate.content)`
       // on raw content).
-      const citedFactContent = applyInlineCitation(fact.content);
+      const rawPersistBody =
+        writeCategory === "procedure"
+          ? buildProcedurePersistBody(fact.content, fact.procedureSteps)
+          : fact.content;
+      const citedFactContent = applyInlineCitation(rawPersistBody);
       const memoryId = await targetStorage.writeMemory(
         writeCategory,
         citedFactContent,
@@ -10491,7 +10594,7 @@ export class Orchestrator {
           intentEntityTypes: inferredIntent?.entityTypes,
           memoryKind,
           structuredAttributes: fact.structuredAttributes,
-          contentHashSource: fact.content,
+          contentHashSource: writeCategory === "fact" ? fact.content : undefined,
         },
       );
       if (routedRuleId) {

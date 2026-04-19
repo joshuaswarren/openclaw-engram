@@ -37,6 +37,8 @@ remnic query "hello" --explain  # Test query with tier breakdown
 | `remnic sync` | Diff-aware sync with external sources |
 | `remnic spaces` | Manage memory namespaces |
 | `remnic bench list` | List published benchmark packs |
+| `remnic bench datasets status/download` | Check or download local benchmark datasets |
+| `remnic bench runs list/show/delete` | Manage stored benchmark result files |
 | `remnic bench run` | Run one or more published benchmark packs |
 | `remnic bench compare` | Compare two stored benchmark results |
 | `remnic bench baseline` | Save or list named benchmark baselines |
@@ -54,6 +56,13 @@ kept as a compatibility alias.
 ```bash
 remnic bench list
 remnic bench run --quick longmemeval --runtime-profile baseline
+remnic bench datasets status
+remnic bench datasets download longmemeval
+remnic bench datasets download --all
+remnic bench runs list
+remnic bench runs show candidate-run --detail
+remnic bench runs delete candidate-run
+remnic bench run --quick longmemeval
 remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
 remnic bench run longmemeval --runtime-profile real --remnic-config ~/.config/remnic/config.json
 remnic bench run longmemeval --runtime-profile real --system-provider openai --system-model gpt-5.4-mini
@@ -75,6 +84,10 @@ ships a bundled smoke fixture, `--quick` uses that tracked fixture by default;
 full runs need a real benchmark dataset. In a repo checkout the CLI will use
 `evals/datasets/<benchmark>` automatically; in packaged installs pass
 `--dataset-dir <path>` explicitly.
+
+`remnic bench datasets download` currently manages the script-backed published
+datasets for `ama-bench`, `memory-arena`, `amemgym`, `longmemeval`, and `locomo`.
+Other benchmark fixtures remain repo-managed or need manual dataset wiring.
 
 ## Connecting agents
 

@@ -19,6 +19,7 @@ import type { PluginConfig, ImportanceLevel } from "./types.js";
 import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
 import { extractJsonCandidates } from "./json-extract.js";
+import { normalizeProcedureSteps } from "./procedural/procedure-types.js";
 
 // ---------------------------------------------------------------------------
 // Public interfaces
@@ -121,6 +122,29 @@ function enforceMaxCacheSize(cache: Map<string, JudgeVerdict>): void {
 // ---------------------------------------------------------------------------
 
 const AUTO_APPROVE_CATEGORIES = new Set(["correction", "principle"]);
+
+/** Explicit trigger phrasing — procedures must match to persist (issue #519). */
+const PROCEDURE_TRIGGER_RE =
+  /(when you|whenever|before you|before running|always\s|first\b.*\bthen|to deploy|to ship|run these steps|follow these steps|how (i|we)\s|recipe for|workflow|each time you)/i;
+
+/**
+ * Deterministic gate for extracted `procedure` memories: ≥2 steps with non-empty
+ * intents and explicit trigger wording in title and/or steps.
+ */
+export function validateProcedureExtraction(input: {
+  content: string;
+  procedureSteps?: unknown;
+}): JudgeVerdict {
+  const steps = normalizeProcedureSteps(input.procedureSteps);
+  if (steps.length < 2) {
+    return { durable: false, reason: "Procedure requires at least two steps with intents" };
+  }
+  const combined = [input.content, ...steps.map((s) => s.intent)].join(" ").toLowerCase();
+  if (!PROCEDURE_TRIGGER_RE.test(combined)) {
+    return { durable: false, reason: "Procedure missing explicit trigger phrasing" };
+  }
+  return { durable: true, reason: "Procedure structure validated" };
+}
 
 // ---------------------------------------------------------------------------
 // Core judge function

@@ -318,6 +318,63 @@
           }
         }
       },
+      "procedural": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Master gate for procedural memory: extraction, recall boost, and mining (issue #519)."
+          },
+          "minOccurrences": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "default": 3,
+            "description": "Minimum clustered trajectory occurrences before emitting a candidate procedure (0 disables mining)."
+          },
+          "successFloor": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.7,
+            "description": "Minimum success-rate floor (from trajectory outcomes) for miner promotion."
+          },
+          "autoPromoteOccurrences": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "default": 8,
+            "description": "When auto-promotion is enabled, minimum occurrence count to move pending_review procedures to active (0 disables auto-promotion by count)."
+          },
+          "autoPromoteEnabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, miner may auto-promote trusted procedures to active after autoPromoteOccurrences."
+          },
+          "lookbackDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650,
+            "default": 30,
+            "description": "Trajectory lookback window for procedural mining."
+          },
+          "recallMaxProcedures": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 3,
+            "description": "Maximum procedure memories to inject on task-initiation recall."
+          },
+          "proceduralMiningCronAutoRegister": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, installer may register the nightly procedural mining cron job."
+          }
+        }
+      },
       "slotBehavior": {
         "type": "object",
         "additionalProperties": false,
@@ -1295,7 +1352,8 @@
             "principle",
             "commitment",
             "moment",
-            "skill"
+            "skill",
+            "procedure"
           ]
         },
         "default": [
@@ -1869,6 +1927,38 @@
         "type": "boolean",
         "default": false,
         "description": "If true, include temporally-superseded facts in recall results (for audit/history). Default: exclude."
+      },
+      "recallDirectAnswerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, recall checks whether a single validated high-trust memory can answer the query before QMD runs (issue #518). Default off until bench validation."
+      },
+      "recallDirectAnswerTokenOverlapFloor": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.55,
+        "description": "Minimum query↔memory token-overlap ratio for direct-answer eligibility. Set to 0 to disable the gate."
+      },
+      "recallDirectAnswerImportanceFloor": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.7,
+        "description": "Minimum calibrated importance score for direct-answer eligibility. Set to 0 to disable the gate."
+      },
+      "recallDirectAnswerAmbiguityMargin": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.15,
+        "description": "If the second-best candidate scores within this ratio of the top, direct-answer defers to hybrid."
+      },
+      "recallDirectAnswerEligibleTaxonomyBuckets": {
+        "type": "array",
+        "items": { "type": "string" },
+        "default": ["decisions", "principles", "conventions", "runbooks", "entities"],
+        "description": "Taxonomy category IDs eligible for direct-answer routing."
       },
       "memoryLinkingEnabled": {
         "type": "boolean",
@@ -2556,7 +2646,8 @@
         },
         "default": [
           "correction",
-          "commitment"
+          "commitment",
+          "procedure"
         ],
         "description": "Memory categories excluded from semantic consolidation."
       },
@@ -2969,7 +3060,8 @@
           "commitment",
           "preference",
           "decision",
-          "principle"
+          "principle",
+          "procedure"
         ],
         "description": "Categories that protect a fact from archival regardless of other criteria."
       },
@@ -3007,7 +3099,8 @@
           "decision",
           "principle",
           "commitment",
-          "preference"
+          "preference",
+          "procedure"
         ],
         "description": "Categories that lifecycle policy will not auto-archive."
       },
@@ -3905,6 +3998,30 @@
       "label": "Include Superseded Facts In Recall",
       "advanced": true,
       "help": "If enabled, superseded facts still surface in recall (audit/history mode)."
+    },
+    "recallDirectAnswerEnabled": {
+      "label": "Direct-Answer Retrieval Tier",
+      "help": "Route validated high-trust queries to a fast direct-answer path before QMD (issue #518)."
+    },
+    "recallDirectAnswerTokenOverlapFloor": {
+      "label": "Direct-Answer Token Overlap Floor",
+      "advanced": true,
+      "placeholder": "0.55"
+    },
+    "recallDirectAnswerImportanceFloor": {
+      "label": "Direct-Answer Importance Floor",
+      "advanced": true,
+      "placeholder": "0.7"
+    },
+    "recallDirectAnswerAmbiguityMargin": {
+      "label": "Direct-Answer Ambiguity Margin",
+      "advanced": true,
+      "placeholder": "0.15"
+    },
+    "recallDirectAnswerEligibleTaxonomyBuckets": {
+      "label": "Direct-Answer Eligible Taxonomy Buckets",
+      "advanced": true,
+      "help": "Taxonomy category IDs eligible for direct-answer routing."
     },
     "memoryLinkingEnabled": {
       "label": "Memory Linking",

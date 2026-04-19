@@ -44,6 +44,7 @@ const INLINE_ALLOWED_CATEGORIES = new Set<MemoryCategory>([
   "moment",
   "skill",
   "rule",
+  "procedure",
 ]);
 
 const SECRET_PATTERNS: RegExp[] = [

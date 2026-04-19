@@ -335,7 +335,7 @@ function sanitizeGatewayConfig(config: GatewayConfig): GatewayConfig {
   return isPlainObject(sanitized) ? sanitized as GatewayConfig : {};
 }
 
-function sanitizePersistedConfig(config: Record<string, unknown>): Record<string, unknown> {
+function sanitizePersistedConfig(config: unknown): Record<string, unknown> {
   const sanitized = sanitizePersistedValue(config);
   return isPlainObject(sanitized) ? sanitized : {};
 }

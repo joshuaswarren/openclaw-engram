@@ -1,7 +1,7 @@
 export type ReasoningEffort = "none" | "low" | "medium" | "high";
 export type TriggerMode = "smart" | "every_n" | "time_based";
 export type SignalLevel = "none" | "low" | "medium" | "high";
-export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill" | "rule";
+export type MemoryCategory = "fact" | "preference" | "correction" | "entity" | "decision" | "relationship" | "principle" | "commitment" | "moment" | "skill" | "rule" | "procedure";
 export type ConsolidationAction = "ADD" | "MERGE" | "UPDATE" | "INVALIDATE" | "SKIP";
 export type ConfidenceTier = "explicit" | "implied" | "inferred" | "speculative";
 export type PrincipalFromSessionKeyMode = "map" | "prefix" | "regex";
@@ -34,6 +34,38 @@ export type ActiveRecallThinking =
   | "adaptive";
 export type ActiveRecallChatType = "direct" | "group" | "channel";
 export type ActiveRecallModelFallbackPolicy = "default-remote" | "resolved-only";
+
+/**
+ * Retrieval tier ladder (issue #518).  Identifies which tier served a recall
+ * result.  Ordered top-to-bottom by cost, but routing is not strictly
+ * sequential — callers may jump straight to a lower tier when eligibility
+ * does not hold.
+ */
+export type RetrievalTier =
+  | "exact-cache"
+  | "fuzzy-cache"
+  | "direct-answer"
+  | "hybrid"
+  | "rerank-graph"
+  | "agentic";
+
+/**
+ * Per-recall annotation describing which retrieval tier served a result,
+ * why that tier was chosen, and what was filtered along the way.  Added as
+ * part of issue #518 (direct-answer tier + `query --explain`).
+ *
+ * Not to be confused with the existing `recallExplain` operation
+ * (graph-path explanation) — that is a user-invoked RPC; this is a
+ * per-result annotation that can be attached to any recall response.
+ */
+export interface RecallTierExplain {
+  tier: RetrievalTier;
+  tierReason: string;
+  filteredBy: string[];
+  candidatesConsidered: number;
+  latencyMs: number;
+  sourceAnchors?: Array<{ path: string; lineRange?: [number, number] }>;
+}
 
 export interface RecallSectionConfig {
   id: string;
@@ -149,6 +181,23 @@ export interface DreamingConfig {
   narrativeModel: string | null;
   narrativePromptStyle: DreamingNarrativePromptStyle;
   watchFile: boolean;
+}
+
+/** Procedural memory (issue #519): mining + recall gates. All sub-features default off. */
+export interface ProceduralConfig {
+  enabled: boolean;
+  /** Minimum recurrence count before emitting a candidate procedure (0 disables mining threshold). */
+  minOccurrences: number;
+  /** Minimum success rate from trajectory outcomes in [0, 1]. */
+  successFloor: number;
+  /** When auto-promotion is enabled, promote pending_review → active after this many occurrences. */
+  autoPromoteOccurrences: number;
+  autoPromoteEnabled: boolean;
+  lookbackDays: number;
+  /** When true, installer may register the nightly procedural mining cron (default off). */
+  proceduralMiningCronAutoRegister: boolean;
+  /** Max procedure memories to inject on task-initiation recall (1–10). */
+  recallMaxProcedures: number;
 }
 
 export interface HeartbeatConfig {
@@ -300,6 +349,33 @@ export interface PluginConfig {
    * filtered out.
    */
   temporalSupersessionIncludeInRecall: boolean;
+  // Direct-answer retrieval tier (issue #518)
+  /**
+   * When true, recall checks whether a single validated memory in a
+   * high-trust taxonomy bucket can answer the query before invoking QMD.
+   * Default false — enable explicitly after bench validation.
+   */
+  recallDirectAnswerEnabled: boolean;
+  /**
+   * Minimum token-overlap ratio (query tokens ∩ memory tokens / query tokens)
+   * required for direct-answer eligibility.  Set to 0 to disable the gate.
+   */
+  recallDirectAnswerTokenOverlapFloor: number;
+  /**
+   * Minimum calibrated importance score required for direct-answer
+   * eligibility.  Set to 0 to disable the gate.
+   */
+  recallDirectAnswerImportanceFloor: number;
+  /**
+   * Ambiguity margin: if the second-best candidate scores within this
+   * ratio of the top candidate, direct-answer defers to the hybrid tier.
+   */
+  recallDirectAnswerAmbiguityMargin: number;
+  /**
+   * Taxonomy category IDs eligible for direct-answer routing.  Memories
+   * whose resolved taxonomy category is not in this list never qualify.
+   */
+  recallDirectAnswerEligibleTaxonomyBuckets: string[];
   // Memory Linking (Phase 3A)
   memoryLinkingEnabled: boolean;
   // Conversation Threading (Phase 3B)
@@ -365,6 +441,7 @@ export interface PluginConfig {
   activeRecallAttachRecallExplain: boolean;
   activeRecallAllowChainedActiveMemory: boolean;
   dreaming: DreamingConfig;
+  procedural: ProceduralConfig;
   heartbeat: HeartbeatConfig;
   slotBehavior: SlotBehaviorConfig;
   codexCompat: CodexCompatConfig;
@@ -1356,6 +1433,15 @@ export interface MemoryFile {
   content: string;
 }
 
+/** Ordered step for extracted procedure memories (issue #519). */
+export interface ExtractedProcedureStep {
+  order: number;
+  intent: string;
+  toolCall?: { kind: string; signature: string };
+  expectedOutcome?: string;
+  optional?: boolean;
+}
+
 export interface ExtractedFact {
   category: MemoryCategory;
   content: string;
@@ -1366,12 +1452,16 @@ export interface ExtractedFact {
   promptedByQuestion?: string;
   /** Structured key-value attributes extracted from the content (e.g., product attributes, dates, quantities). */
   structuredAttributes?: Record<string, string>;
+  /** When category is `procedure`, ordered steps with intents (persisted under procedures/). */
+  procedureSteps?: ExtractedProcedureStep[];
 }
 
 export interface MemoryIntent {
   goal: string;
   actionType: string;
   entityTypes: string[];
+  /** True when the prompt reads like starting a concrete task (ship/deploy/tests/PR, etc.). */
+  taskInitiation?: boolean;
 }
 
 export interface ExtractedQuestion {

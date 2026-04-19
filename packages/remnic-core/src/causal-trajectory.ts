@@ -149,7 +149,7 @@ export async function recordCausalTrajectory(options: {
   return filePath;
 }
 
-async function readCausalTrajectoryRecords(options: {
+export async function readCausalTrajectoryRecords(options: {
   memoryDir: string;
   causalTrajectoryStoreDir?: string;
 }): Promise<{
@@ -172,6 +172,20 @@ async function readCausalTrajectoryRecords(options: {
     }
   }
   return { files, trajectories, invalidTrajectories };
+}
+
+/** Keep trajectories whose recordedAt is within the last `lookbackDays` (issue #519 miner). */
+export function filterTrajectoriesByLookbackDays(
+  trajectories: CausalTrajectoryRecord[],
+  lookbackDays: number,
+  nowMs: number = Date.now(),
+): CausalTrajectoryRecord[] {
+  const days = Math.max(1, Math.floor(lookbackDays));
+  const cutoff = nowMs - days * 86_400_000;
+  return trajectories.filter((t) => {
+    const ms = Date.parse(t.recordedAt);
+    return Number.isFinite(ms) && ms >= cutoff;
+  });
 }
 
 export async function getCausalTrajectoryStoreStatus(options: {

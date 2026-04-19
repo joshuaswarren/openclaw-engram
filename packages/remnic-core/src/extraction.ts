@@ -34,6 +34,7 @@ import { applyWorkExtractionBoundary } from "./work/boundary.js";
 import { buildChatCompletionTokenLimit, shouldAssumeOpenAiChatCompletions } from "./openai-chat-compat.js";
 import { formatDaySummaryMemories, loadDaySummaryPrompt, buildExtensionsFooterForSummary } from "./day-summary.js";
 import { ProfilingCollector } from "./profiling.js";
+import { normalizeProcedureSteps } from "./procedural/procedure-types.js";
 
 type ExtractionQuestion = ExtractionResult["questions"][number];
 type ExtractedFactResult = ExtractionResult["facts"][number];
@@ -152,19 +153,22 @@ export class ExtractionEngine {
   }
 
   private sanitizeExtractionResult(result: ExtractionResult, messageTimestamp?: Date): ExtractionResult {
+    const proceduralOn = this.config.procedural?.enabled === true;
     const ts = messageTimestamp ?? new Date();
-    const facts = result.facts.map((fact) => {
-      const sanitized = sanitizeMemoryContent(fact.content);
-      if (!sanitized.clean) {
-        log.warn(`extraction fact sanitized; violations=${sanitized.violations.join(", ")}`);
-      }
-      let content = sanitized.text;
-      // De-linearize: resolve coreferences + anchor temporal expressions
-      if (this.config.delinearizeEnabled) {
-        content = delinearize(content, result.entities, ts);
-      }
-      return { ...fact, content };
-    });
+    const facts = result.facts
+      .filter((fact) => proceduralOn || fact.category !== "procedure")
+      .map((fact) => {
+        const sanitized = sanitizeMemoryContent(fact.content);
+        if (!sanitized.clean) {
+          log.warn(`extraction fact sanitized; violations=${sanitized.violations.join(", ")}`);
+        }
+        let content = sanitized.text;
+        // De-linearize: resolve coreferences + anchor temporal expressions
+        if (this.config.delinearizeEnabled) {
+          content = delinearize(content, result.entities, ts);
+        }
+        return { ...fact, content };
+      });
     return { ...result, facts };
   }
 
@@ -200,6 +204,9 @@ export class ExtractionEngine {
                       .filter(([k, v]) => typeof k === "string" && typeof v === "string")
                   ) as Record<string, string>
                 : undefined,
+            procedureSteps: Array.isArray(f?.procedureSteps)
+              ? normalizeProcedureSteps(f.procedureSteps)
+              : undefined,
           }))
           .filter((f: any) => f.content.length > 0)
       : [];
@@ -1236,6 +1243,8 @@ ${truncatedConversation}`;
       "commitment",
       "moment",
       "skill",
+      "rule",
+      "procedure",
     ]);
     const allowedEntityTypes = new Set([
       "person",
@@ -1300,6 +1309,7 @@ Memory categories:
 - moment: Emotionally significant events or milestones (e.g., "first successful deployment of engram")
 - skill: Capabilities the user or agent has demonstrated (e.g., "user is proficient with Kubernetes")${this.config.causalRuleExtractionEnabled ? `
 - rule: Causal rules discovered through experience (format: "IF <condition> THEN <action/outcome>", e.g., "IF Shopify API returns 401 THEN the admin token is missing read_products scope")` : ""}
+- procedure: A reusable workflow the user wants remembered the same way across sessions. Set category to "procedure". Use "content" for a short title that includes explicit trigger phrasing (e.g. "When you deploy to production…", "Whenever you ship a release…"). Add "procedureSteps": an array of at least two objects {"order": number, "intent": "concrete step description"} in execution order. Optional per-step "toolCall": {"kind": "…", "signature": "…"}, "expectedOutcome", "optional": true.
 
 Rules:
 - Only extract genuinely NEW information worth remembering across sessions

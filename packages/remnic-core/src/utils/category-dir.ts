@@ -18,6 +18,7 @@ export const CATEGORY_DIR_MAP: Record<string, string> = {
   rule: "rules",
   skill: "skills",
   relationship: "relationships",
+  procedure: "procedures",
 };
 
 /** All directory names derived from CATEGORY_DIR_MAP, plus "facts" (the default). */

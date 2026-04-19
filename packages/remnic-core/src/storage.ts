@@ -1835,6 +1835,9 @@ export class StorageManager {
   private get correctionsDir(): string {
     return path.join(this.baseDir, "corrections");
   }
+  private get proceduresDir(): string {
+    return path.join(this.baseDir, "procedures");
+  }
   private get entitiesDir(): string {
     return path.join(this.baseDir, "entities");
   }
@@ -2042,6 +2045,7 @@ export class StorageManager {
   async ensureDirectories(): Promise<void> {
     const today = new Date().toISOString().slice(0, 10);
     await mkdir(path.join(this.factsDir, today), { recursive: true });
+    await mkdir(path.join(this.proceduresDir, today), { recursive: true });
     await mkdir(this.correctionsDir, { recursive: true });
     await mkdir(this.entitiesDir, { recursive: true });
     await mkdir(this.stateDir, { recursive: true });
@@ -2088,6 +2092,7 @@ export class StorageManager {
        * even when their citation timestamp differs.
        */
       contentHashSource?: string;
+      status?: MemoryStatus;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -2130,6 +2135,9 @@ export class StorageManager {
       memoryKind: options.memoryKind,
       structuredAttributes: options.structuredAttributes,
     };
+    if (options.status !== undefined) {
+      fm.status = options.status;
+    }
 
     // Append structured attributes as searchable suffix so QMD indexes them.
     // normalizeAttributePairs sorts and lowercases keys so the enriched content
@@ -2163,6 +2171,9 @@ export class StorageManager {
     let filePath: string;
     if (category === "correction") {
       filePath = path.join(this.correctionsDir, `${id}.md`);
+    } else if (category === "procedure") {
+      await mkdir(path.join(this.proceduresDir, today), { recursive: true });
+      filePath = path.join(this.proceduresDir, today, `${id}.md`);
     } else {
       filePath = path.join(this.factsDir, today, `${id}.md`);
     }
@@ -2687,6 +2698,7 @@ export class StorageManager {
     };
 
     await collectPaths(this.factsDir);
+    await collectPaths(this.proceduresDir);
     await collectPaths(this.correctionsDir);
     return filePaths;
   }
@@ -3086,6 +3098,9 @@ export class StorageManager {
     }
     if (memory.frontmatter.category === "correction") {
       return path.join(root, "corrections", `${memory.frontmatter.id}.md`);
+    }
+    if (memory.frontmatter.category === "procedure") {
+      return path.join(root, "procedures", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
     }
     return path.join(root, "facts", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
   }
@@ -5325,6 +5340,9 @@ export class StorageManager {
     let filePath: string;
     if (category === "correction") {
       filePath = path.join(this.correctionsDir, `${id}.md`);
+    } else if (category === "procedure") {
+      await mkdir(path.join(this.proceduresDir, today), { recursive: true });
+      filePath = path.join(this.proceduresDir, today, `${id}.md`);
     } else {
       filePath = path.join(this.factsDir, today, `${id}.md`);
     }

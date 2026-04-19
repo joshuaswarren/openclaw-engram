@@ -6,6 +6,8 @@ export type BenchAction =
   | "help"
   | "list"
   | "run"
+  | "datasets"
+  | "runs"
   | "compare"
   | "ui"
   | "results"
@@ -17,11 +19,13 @@ export type BenchAction =
   | "report";
 
 export type BenchBaselineAction = "save" | "list";
+export type BenchDatasetAction = "download" | "status";
 export type BenchExportFormat = "json" | "csv" | "html";
 export type BenchProviderAction = "discover";
 export type BenchPublishTarget = "remnic-ai";
 export type BenchRuntimeProfile = "baseline" | "real" | "openclaw-chain";
 export type BenchModelSource = "plugin" | "gateway";
+export type BenchRunAction = "list" | "show" | "delete";
 
 export interface ParsedBenchArgs {
   action: BenchAction;
@@ -48,7 +52,9 @@ export interface ParsedBenchArgs {
   judgeBaseUrl?: string;
   threshold?: number;
   baselineAction?: BenchBaselineAction;
+  datasetAction?: BenchDatasetAction;
   providerAction?: BenchProviderAction;
+  runAction?: BenchRunAction;
   format?: BenchExportFormat;
   output?: string;
   custom?: string;
@@ -114,6 +120,8 @@ export function parseBenchActionArgs(argv: string[]): {
   const action: BenchAction =
     first === "list" ||
     first === "run" ||
+    first === "datasets" ||
+    first === "runs" ||
     first === "compare" ||
     first === "ui" ||
     first === "results" ||
@@ -142,20 +150,44 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
         ? args[0]
         : undefined
       : undefined;
+  const datasetAction =
+    action === "datasets"
+      ? args[0] === "download" || args[0] === "status"
+        ? args[0]
+        : undefined
+      : undefined;
   const providerAction =
     action === "providers"
       ? args[0] === "discover"
         ? args[0]
         : undefined
       : undefined;
+  const runAction =
+    action === "runs"
+      ? args[0] === "list" || args[0] === "show" || args[0] === "delete"
+        ? args[0]
+        : undefined
+      : undefined;
   if (action === "baseline" && baselineAction === undefined) {
     throw new Error("ERROR: baseline requires a subcommand: save or list.");
+  }
+  if (action === "datasets" && datasetAction === undefined) {
+    throw new Error("ERROR: datasets requires a subcommand: download or status.");
   }
   if (action === "providers" && providerAction === undefined) {
     throw new Error("ERROR: providers requires a subcommand: discover.");
   }
+  if (action === "runs" && runAction === undefined) {
+    throw new Error("ERROR: runs requires a subcommand: list, show, or delete.");
+  }
 
-  const benchmarkArgs = action === "baseline" || action === "providers" ? args.slice(1) : args;
+  const benchmarkArgs =
+    action === "baseline" ||
+    action === "datasets" ||
+    action === "providers" ||
+    action === "runs"
+      ? args.slice(1)
+      : args;
   const benchmarks = collectBenchmarks(benchmarkArgs);
   const datasetDir = readBenchOptionValue(args, "--dataset-dir");
   const resultsDir = readBenchOptionValue(args, "--results-dir");
@@ -305,7 +337,9 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     threshold,
     custom: customRaw ? path.resolve(expandTilde(customRaw)) : undefined,
     baselineAction,
+    datasetAction,
     providerAction,
+    runAction,
     format,
     output: output ? path.resolve(expandTilde(output)) : undefined,
     target,

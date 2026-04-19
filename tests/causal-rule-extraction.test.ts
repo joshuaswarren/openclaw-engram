@@ -11,7 +11,7 @@ describe("causal rule category", () => {
   it("rule is distinct from existing categories", () => {
     const categories: MemoryCategory[] = [
       "fact", "preference", "correction", "entity", "decision",
-      "relationship", "principle", "commitment", "moment", "skill", "rule",
+      "relationship", "principle", "commitment", "moment", "skill", "rule", "procedure",
     ];
     assert.equal(new Set(categories).size, categories.length);
   });

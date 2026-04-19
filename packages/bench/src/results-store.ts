@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -332,15 +332,11 @@ export async function resolveBenchmarkResultReference(
   outputDir: string,
   reference: string,
 ): Promise<StoredBenchmarkResultSummary | undefined> {
-  if (fs.existsSync(reference)) {
-    try {
-      const result = await loadBenchmarkResult(reference);
-      return toSummary(result, reference);
-    } catch {
-      // Fall through to id/basename matching under the results directory.
-    }
-  }
-
+  // Store-first resolution keeps `runs show <id>` deterministic: a
+  // bare identifier always maps to the stored run rather than an
+  // unrelated file in the current working directory that happens to
+  // share the same name. Only fall back to the filesystem when the
+  // reference is unambiguously path-shaped.
   const summaries = await listBenchmarkResults(outputDir);
   const exactIdMatch = summaries.find((summary) => summary.id === reference);
   if (exactIdMatch) {
@@ -350,7 +346,100 @@ export async function resolveBenchmarkResultReference(
   const basenameMatch = summaries.find(
     (summary) => path.basename(summary.path) === reference,
   );
-  return basenameMatch;
+  if (basenameMatch) {
+    return basenameMatch;
+  }
+
+  if (looksLikeFilesystemPath(reference) && fs.existsSync(reference)) {
+    try {
+      const result = await loadBenchmarkResult(reference);
+      return toSummary(result, reference);
+    } catch {
+      return undefined;
+    }
+  }
+
+  return undefined;
+}
+
+// A reference is treated as a filesystem path only when it looks like
+// one — absolute, contains a path separator, or points to a .json file.
+// Bare identifiers (e.g. run IDs) stay scoped to the store.
+function looksLikeFilesystemPath(reference: string): boolean {
+  return (
+    path.isAbsolute(reference) ||
+    reference.includes("/") ||
+    reference.includes(path.sep) ||
+    reference.endsWith(".json")
+  );
+}
+
+export async function deleteBenchmarkResults(
+  outputDir: string,
+  references: string[],
+): Promise<{
+  deleted: StoredBenchmarkResultSummary[];
+  missing: string[];
+}> {
+  const summaries = await listBenchmarkResults(outputDir);
+  const deleted: StoredBenchmarkResultSummary[] = [];
+  const missing: string[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const reference of references) {
+    // Resolve stored-run references first (by id or basename) so
+    // `remnic bench runs delete <id>` never unlinks an unrelated file
+    // that happens to share the same name in the current working
+    // directory. Only fall back to treating the reference as a direct
+    // filesystem path when it is unambiguously path-shaped or no
+    // stored run matches.
+    let summary: StoredBenchmarkResultSummary | undefined =
+      summaries.find((entry) => entry.id === reference) ??
+      summaries.find((entry) => path.basename(entry.path) === reference);
+
+    if (!summary && looksLikeFilesystemPath(reference)) {
+      // If we've already deleted the file this path points at earlier
+      // in the same batch, treat a repeat reference as a duplicate —
+      // not a missing run — so multi-ref automation that mixes id and
+      // path aliases for the same run still exits cleanly.
+      const canonicalRef = path.resolve(reference);
+      if (seenPaths.has(canonicalRef)) {
+        continue;
+      }
+      if (fs.existsSync(reference)) {
+        try {
+          const result = await loadBenchmarkResult(reference);
+          summary = toSummary(result, reference);
+        } catch {
+          summary = undefined;
+        }
+      }
+    }
+    if (!summary) {
+      missing.push(reference);
+      continue;
+    }
+    // Canonicalize before dedupe so a relative path and an absolute
+    // path that point at the same file collapse to a single key.
+    const canonicalPath = path.resolve(summary.path);
+    if (seenPaths.has(canonicalPath)) {
+      continue;
+    }
+    seenPaths.add(canonicalPath);
+
+    try {
+      await unlink(summary.path);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        // Already removed (e.g. by a concurrent delete) — treat as success.
+      } else {
+        throw error;
+      }
+    }
+    deleted.push(summary);
+  }
+
+  return { deleted, missing };
 }
 
 function comparePublishedBenchmarkEntries(

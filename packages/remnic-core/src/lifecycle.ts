@@ -54,7 +54,7 @@ const DEFAULT_POLICY: LifecyclePolicy = {
   promoteHeatThreshold: 0.55,
   staleDecayThreshold: 0.65,
   archiveDecayThreshold: 0.85,
-  protectedCategories: ["decision", "principle", "commitment", "preference"],
+  protectedCategories: ["decision", "principle", "commitment", "preference", "procedure"],
 };
 
 export function clamp01(value: number): number {
