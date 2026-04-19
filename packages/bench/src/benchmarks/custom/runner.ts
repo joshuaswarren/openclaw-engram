@@ -5,6 +5,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { RunBenchmarkOptions, BenchmarkDefinition, BenchmarkResult, ResolvedRunBenchmarkOptions, TaskResult } from "../../types.js";
+import { answerBenchmarkQuestion } from "../../answering.js";
 import { aggregateTaskScores, exactMatch, f1Score, llmJudgeScoreDetailed, rougeL, timed } from "../../scorer.js";
 import { orchestrateBenchmarkRuns } from "../../benchmark.js";
 import { getGitSha, getRemnicVersion } from "../../reporter.js";
@@ -103,12 +104,17 @@ async function runCustomBenchmarkRun(
     const { result: searchResults, durationMs } = await timed(async () =>
       options.system.search(task.question, 10),
     );
-    const actual = searchResults.map((entry) => entry.snippet).join("\n\n");
+    const recalledText = searchResults.map((entry) => entry.snippet).join("\n\n");
+    const answered = await answerBenchmarkQuestion({
+      question: task.question,
+      recalledText,
+      responder: options.system.responder,
+    });
     const scored = await scoreTask(
       benchmark.scoring,
       options,
       task.question,
-      actual,
+      answered.finalAnswer,
       task.expected,
     );
 
@@ -116,16 +122,24 @@ async function runCustomBenchmarkRun(
       taskId: `${slugify(benchmark.name)}-${runIndex + 1}-${taskIndex + 1}`,
       question: task.question,
       expected: task.expected,
-      actual,
+      actual: answered.finalAnswer,
       scores: { [benchmark.scoring]: scored.score },
-      latencyMs: durationMs + scored.judgeMetrics.latencyMs,
-      tokens: scored.judgeMetrics.tokens,
+      latencyMs: durationMs + answered.latencyMs + scored.judgeMetrics.latencyMs,
+      tokens: {
+        input: answered.tokens.input + scored.judgeMetrics.tokens.input,
+        output: answered.tokens.output + scored.judgeMetrics.tokens.output,
+      },
       details: {
         tags: task.tags ?? [],
         searchHits: searchResults.length,
         scoring: benchmark.scoring,
         runIndex,
         seed,
+        recalledLength: recalledText.length,
+        answeredLength: answered.finalAnswer.length,
+        recalledText,
+        answeredText: answered.finalAnswer,
+        responderModel: answered.model,
         judgeModel: scored.judgeMetrics.model,
       },
     });

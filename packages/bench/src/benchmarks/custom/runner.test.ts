@@ -168,3 +168,88 @@ test("custom benchmark latency includes fallback judge wall time", async () => {
     await rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("custom benchmarks score responder output and include responder usage", async () => {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "remnic-custom-bench-"));
+  const benchmarkPath = path.join(tempDir, "responder.yaml");
+
+  try {
+    await writeFile(
+      benchmarkPath,
+      [
+        "name: Custom Responder",
+        "scoring: exact_match",
+        "tasks:",
+        "  - question: What happened?",
+        "    expected: The generated answer.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const result = await runCustomBenchmarkFile(benchmarkPath, {
+      mode: "quick",
+      system: {
+        async store() {},
+        async recall() {
+          return "";
+        },
+        async search(query) {
+          assert.equal(query, "What happened?");
+          return [
+            {
+              turnIndex: 0,
+              role: "assistant",
+              snippet: "The recalled memory.",
+              sessionId: "session-1",
+            },
+          ];
+        },
+        async reset() {},
+        async getStats() {
+          return {
+            totalMessages: 0,
+            totalSummaryNodes: 0,
+            maxDepth: 0,
+          };
+        },
+        async destroy() {},
+        responder: {
+          async respond(question, recalledText) {
+            assert.equal(question, "What happened?");
+            assert.equal(recalledText, "The recalled memory.");
+            return {
+              text: "The generated answer.",
+              tokens: { input: 9, output: 3 },
+              latencyMs: 25,
+              model: "responder-model",
+            };
+          },
+        },
+      },
+    });
+
+    assert.equal(result.results.tasks.length, 1);
+    assert.equal(result.results.tasks[0]?.actual, "The generated answer.");
+    assert.equal(result.results.tasks[0]?.scores.exact_match, 1);
+    assert.equal(result.results.tasks[0]?.tokens.input, 9);
+    assert.equal(result.results.tasks[0]?.tokens.output, 3);
+    assert.equal(result.results.tasks[0]?.details?.recalledText, "The recalled memory.");
+    assert.equal(result.results.tasks[0]?.details?.answeredText, "The generated answer.");
+    assert.equal(result.results.tasks[0]?.details?.responderModel, "responder-model");
+    assert.ok(
+      (result.results.tasks[0]?.latencyMs ?? 0) >= 25,
+      `expected task latency to include responder latency, received ${result.results.tasks[0]?.latencyMs}`,
+    );
+    assert.equal(
+      result.cost.totalLatencyMs,
+      result.results.tasks[0]?.latencyMs,
+    );
+    assert.equal(
+      result.cost.meanQueryLatencyMs,
+      result.results.tasks[0]?.latencyMs,
+    );
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
