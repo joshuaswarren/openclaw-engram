@@ -11,7 +11,7 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": ["dist", "README.md"],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts",
     "test": "tsx --test 'src/**/*.test.ts'",

@@ -116,6 +116,22 @@ import {
   resolveExtensionsRoot,
   coerceInstallExtension,
 } from "@remnic/core";
+import {
+  convertMemoriesToRecords,
+  getTrainingExportAdapter,
+  listTrainingExportAdapters,
+  parseStrictCliDate,
+  type TrainingExportOptions,
+  type TrainingExportRecord,
+} from "@remnic/core";
+// Side-effect import: registers the weclone adapter with the core registry.
+// `ensureWecloneExportAdapterRegistered` is exported for idempotent explicit
+// calls from tests that reset the registry between cases.
+import {
+  ensureWecloneExportAdapterRegistered,
+  synthesizeTrainingPairs,
+  sweepPii,
+} from "@remnic/export-weclone";
 import type {
   BinaryLifecycleConfig,
 } from "@remnic/core";
@@ -196,7 +212,8 @@ type CommandName =
   | "taxonomy"
   | "enrich"
   | "openclaw"
-  | "extensions";
+  | "extensions"
+  | "training:export";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
@@ -3946,6 +3963,253 @@ Usage:
   }
 }
 
+// ── Training export ──────────────────────────────────────────────────────────
+
+/**
+ * Allowed values for `--format`. Derived dynamically from the registry so
+ * any adapter registered via side-effect import (e.g. `@remnic/export-weclone`)
+ * is auto-discovered without a hard-coded switch.
+ *
+ * CLAUDE.md #51: invalid formats must throw an error listing valid options,
+ * not silently default. CLAUDE.md #52: the validator is the registry, so
+ * there is no chance of an allow-list drifting from the handler map.
+ */
+
+interface ParsedTrainingExportArgs {
+  format: string;
+  output: string;
+  memoryDir: string;
+  since?: string;
+  until?: string;
+  minConfidence?: number;
+  categories?: string[];
+  includeEntities: boolean;
+  synthesize: boolean;
+  maxPairsPerRecord?: number;
+  privacySweep: boolean;
+  dryRun: boolean;
+}
+
+/**
+ * Parse training:export CLI flags. Rejects unknown values instead of
+ * silently defaulting, per CLAUDE.md #14/#51.
+ *
+ * Exported for testability.
+ */
+export function parseTrainingExportArgs(
+  rest: string[],
+  defaultMemoryDir: string,
+): ParsedTrainingExportArgs {
+  const format = resolveFlagStrict(rest, "--format");
+  if (!format) {
+    throw new Error(
+      "--format <name> is required. Run `remnic training:export --help` for the list of registered adapters.",
+    );
+  }
+
+  // Accept --out as a short alias for --output (issue #459 spec uses both).
+  const output = resolveFlagStrict(rest, "--output") ?? resolveFlagStrict(rest, "--out");
+  if (!output) {
+    throw new Error(
+      "--output <path> (or --out <path>) is required for training:export. " +
+        "Use --dry-run to print statistics without writing a file.",
+    );
+  }
+
+  const memoryDirFlag = resolveFlagStrict(rest, "--memory-dir");
+  const memoryDir = memoryDirFlag ? expandTilde(memoryDirFlag) : defaultMemoryDir;
+
+  const since = resolveFlagStrict(rest, "--since");
+  const until = resolveFlagStrict(rest, "--until");
+
+  const minConfidenceRaw = resolveFlagStrict(rest, "--min-confidence");
+  let minConfidence: number | undefined;
+  if (minConfidenceRaw !== undefined) {
+    const n = Number(minConfidenceRaw);
+    if (!Number.isFinite(n) || n < 0 || n > 1) {
+      throw new Error(
+        `Invalid --min-confidence value "${minConfidenceRaw}": expected a number in [0, 1].`,
+      );
+    }
+    minConfidence = n;
+  }
+
+  const categoriesRaw = resolveFlagStrict(rest, "--categories");
+  const categories = categoriesRaw
+    ? categoriesRaw
+        .split(",")
+        .map((c) => c.trim())
+        .filter((c) => c.length > 0)
+    : undefined;
+
+  const maxPairsRaw = resolveFlagStrict(rest, "--max-pairs-per-record");
+  let maxPairsPerRecord: number | undefined;
+  if (maxPairsRaw !== undefined) {
+    const n = Number(maxPairsRaw);
+    if (!Number.isInteger(n) || n < 1) {
+      throw new Error(
+        `Invalid --max-pairs-per-record value "${maxPairsRaw}": expected a positive integer.`,
+      );
+    }
+    maxPairsPerRecord = n;
+  }
+
+  const includeEntities = hasFlag(rest, "--include-entities");
+  // `--synthesize` is off by default: it is a WeClone-specific enhancement that
+  // turns Remnic's flat records into conversational Q/A pairs. Users of other
+  // formats (or raw Alpaca) can opt out.
+  const synthesize = hasFlag(rest, "--synthesize");
+  // `--privacy-sweep` is on by default for WeClone and any other adapter that
+  // will be shared as a training dataset. Off switch: --no-privacy-sweep.
+  const privacySweep = !hasFlag(rest, "--no-privacy-sweep");
+  const dryRun = hasFlag(rest, "--dry-run");
+
+  return {
+    format,
+    output: expandTilde(output),
+    memoryDir,
+    since,
+    until,
+    minConfidence,
+    categories,
+    includeEntities,
+    synthesize,
+    maxPairsPerRecord,
+    privacySweep,
+    dryRun,
+  };
+}
+
+/**
+ * Run the full training-export pipeline end-to-end:
+ *   memoryDir → convertMemoriesToRecords → (optional synthesize) →
+ *   (optional PII sweep) → adapter.formatRecords → file
+ *
+ * Exported for integration tests so a harness can drive the full pipeline
+ * without spawning a subprocess.
+ */
+export async function runTrainingExport(
+  args: ParsedTrainingExportArgs,
+  stdout: { write: (s: string) => void } = process.stdout,
+): Promise<{
+  recordsRead: number;
+  recordsWritten: number;
+  redactedCount: number;
+  outputPath: string | null;
+}> {
+  // Ensure the WeClone adapter (and any others registered via side-effect
+  // imports) are available before we ask the registry. `ensureWecloneExportAdapterRegistered`
+  // is idempotent — safe to call even when the adapter is already registered
+  // by a previous CLI invocation in the same process.
+  ensureWecloneExportAdapterRegistered();
+
+  const adapter = getTrainingExportAdapter(args.format);
+  if (!adapter) {
+    const registered = listTrainingExportAdapters();
+    const validList =
+      registered.length > 0
+        ? `Valid formats: [${registered.join(", ")}]`
+        : "No adapters are currently registered.";
+    throw new Error(
+      `Unknown training-export format "${args.format}". ${validList}`,
+    );
+  }
+
+  if (!fs.existsSync(args.memoryDir)) {
+    throw new Error(
+      `--memory-dir "${args.memoryDir}" does not exist. Provide the path to an existing memory directory.`,
+    );
+  }
+  if (!fs.statSync(args.memoryDir).isDirectory()) {
+    throw new Error(
+      `--memory-dir "${args.memoryDir}" is not a directory. Provide the path to a memory directory, not a file.`,
+    );
+  }
+
+  // Parse date filters with the shared strict validator so behavior matches
+  // the core CLI (rejects Feb 31, non-ISO strings, etc.).
+  let since: Date | undefined;
+  if (args.since) since = parseStrictCliDate(args.since, "--since");
+  let until: Date | undefined;
+  if (args.until) until = parseStrictCliDate(args.until, "--until");
+
+  const convertOptions: TrainingExportOptions = {
+    memoryDir: args.memoryDir,
+    since,
+    until,
+    minConfidence: args.minConfidence,
+    categories: args.categories,
+    includeEntities: args.includeEntities,
+  };
+
+  let records: TrainingExportRecord[] = await convertMemoriesToRecords(convertOptions);
+  const recordsRead = records.length;
+
+  if (args.synthesize) {
+    records = synthesizeTrainingPairs(records, {
+      maxPairsPerRecord: args.maxPairsPerRecord,
+    });
+  }
+
+  let redactedCount = 0;
+  if (args.privacySweep) {
+    const swept = sweepPii(records);
+    records = swept.cleanRecords;
+    redactedCount = swept.redactedCount;
+  }
+
+  if (args.dryRun) {
+    stdout.write(`Training export dry run\n`);
+    stdout.write(`Format: ${adapter.name}\n`);
+    stdout.write(`Records read: ${recordsRead}\n`);
+    stdout.write(`Records to write: ${records.length}\n`);
+    if (args.privacySweep) {
+      stdout.write(`Redacted records: ${redactedCount}\n`);
+    }
+    const cats = new Map<string, number>();
+    for (const r of records) {
+      const c = r.category ?? "unknown";
+      cats.set(c, (cats.get(c) ?? 0) + 1);
+    }
+    const sortedCats = [...cats.entries()].sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    );
+    for (const [cat, count] of sortedCats) {
+      stdout.write(`  ${cat}: ${count}\n`);
+    }
+    return {
+      recordsRead,
+      recordsWritten: 0,
+      redactedCount,
+      outputPath: null,
+    };
+  }
+
+  const formatted = adapter.formatRecords(records);
+
+  // Ensure parent directory exists before writing. Use atomic rename to
+  // avoid partial-write corruption (CLAUDE.md #54: never delete before
+  // successful write).
+  const outDir = path.dirname(args.output);
+  fs.mkdirSync(outDir, { recursive: true });
+  const tmpPath = `${args.output}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(tmpPath, formatted, "utf-8");
+  fs.renameSync(tmpPath, args.output);
+
+  stdout.write(
+    `Exported ${records.length} records to ${args.output} (${adapter.name} format)\n`,
+  );
+  if (args.privacySweep && redactedCount > 0) {
+    stdout.write(`Privacy sweep redacted PII in ${redactedCount} record(s).\n`);
+  }
+  return {
+    recordsRead,
+    recordsWritten: records.length,
+    redactedCount,
+    outputPath: args.output,
+  };
+}
+
 // ── CLI entry ────────────────────────────────────────────────────────────────
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -4238,6 +4502,52 @@ Options:
       break;
     }
 
+    case "training:export": {
+      if (rest.includes("--help") || rest.includes("-h")) {
+        console.log(`
+remnic training:export — Export Remnic memories as fine-tuning datasets (issue #459)
+
+Usage:
+  remnic training:export --format <name> --output <path> [options]
+
+Required:
+  --format <name>              Registered adapter name (e.g. weclone)
+  --output <path> | --out      Path to write the dataset file
+
+Filters:
+  --memory-dir <path>          Memory directory (defaults to resolved memoryDir)
+  --since <YYYY-MM-DD[T...]>   Only include memories created at or after this date
+  --until <YYYY-MM-DD[T...]>   Only include memories created before this date (exclusive)
+  --min-confidence <0..1>      Inclusive lower bound on memory confidence
+  --categories <list>          Comma-separated category filter (fact,preference,...)
+  --include-entities           Also read from entities/ (off by default)
+
+Adapter options:
+  --synthesize                 Generate conversational Q/A pairs (WeClone-optimised)
+  --max-pairs-per-record <n>   When --synthesize, max pairs emitted per memory
+  --no-privacy-sweep           Skip the final PII redaction pass (default: on)
+
+Other:
+  --dry-run                    Print statistics only; do not write the file
+`);
+        break;
+      }
+      let parsed: ParsedTrainingExportArgs;
+      try {
+        parsed = parseTrainingExportArgs(rest, resolveMemoryDir());
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+      try {
+        await runTrainingExport(parsed);
+      } catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+      }
+      break;
+    }
+
     case "openclaw": {
       const subAction = rest[0] ?? "help";
       if (subAction === "install") {
@@ -4318,6 +4628,9 @@ Usage:
   remnic enrich --dry-run        Preview what would be enriched
   remnic enrich audit            Show recent enrichment audit log
   remnic enrich providers        List registered providers and their status
+  remnic training:export --format <name> --output <path> [options]
+    Export memories as a fine-tuning dataset (issue #459). See
+    `remnic training:export --help` for the full option list.
 
 Options:
   --json    Output in JSON format

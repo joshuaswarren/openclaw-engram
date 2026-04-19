@@ -6,7 +6,45 @@
  * compatible with WeClone / LLaMA Factory.
  */
 
+import {
+  getTrainingExportAdapter,
+  registerTrainingExportAdapter,
+} from "@remnic/core";
+
+import { wecloneExportAdapter } from "./adapter.js";
+
 export { wecloneExportAdapter } from "./adapter.js";
 export { synthesizeTrainingPairs, type SynthesizerOptions } from "./synthesizer.js";
 export { extractStyleMarkers, type StyleMarkers } from "./style-extractor.js";
 export { sweepPii, type PrivacySweepResult } from "./privacy.js";
+
+/**
+ * Idempotently register the WeClone adapter with the core training-export
+ * registry. Callable multiple times without throwing (CLAUDE.md #13:
+ * secondary calls must not crash host processes that pre-register the
+ * adapter for test fixtures).
+ *
+ * Returns true when the adapter was newly registered, false when an adapter
+ * with the same name already exists.
+ */
+export function ensureWecloneExportAdapterRegistered(): boolean {
+  if (getTrainingExportAdapter(wecloneExportAdapter.name) !== undefined) {
+    return false;
+  }
+  registerTrainingExportAdapter(wecloneExportAdapter);
+  return true;
+}
+
+// Side-effect registration: importing this module registers the adapter.
+// Callers that need to manage registration manually (e.g. tests that call
+// `clearTrainingExportAdapters()`) can re-invoke
+// `ensureWecloneExportAdapterRegistered()` after clearing.
+//
+// The try/catch keeps import-time errors from breaking unrelated callers —
+// the adapter surfaces `formatRecords` purely, so a failure here would be
+// surprising, but defensive coding keeps CLI startup resilient.
+try {
+  ensureWecloneExportAdapterRegistered();
+} catch {
+  // Swallow — explicit callers can re-invoke ensureWecloneExportAdapterRegistered().
+}

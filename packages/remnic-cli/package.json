@@ -30,7 +30,8 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@remnic/core": "workspace:^"
+    "@remnic/core": "workspace:^",
+    "@remnic/export-weclone": "workspace:^"
   },
   "devDependencies": {
     "@remnic/bench": "workspace:*",

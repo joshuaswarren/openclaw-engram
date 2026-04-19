@@ -196,6 +196,7 @@ import {
 } from "./policy-runtime.js";
 import { resolveHomeDir } from "./runtime/env.js";
 import { convertMemoriesToRecords } from "./training-export/converter.js";
+import { parseStrictCliDate as parseStrictCliDateShared } from "./training-export/date-parse.js";
 import { getTrainingExportAdapter, listTrainingExportAdapters } from "./training-export/registry.js";
 
 interface CliApi {
@@ -2138,100 +2139,16 @@ async function readRuntimePolicySnapshot(
 }
 
 /**
- * Days in each month (1-indexed). February is 28; leap-year handling is
- * applied by `isCalendarDateValid` below.
- */
-const DAYS_IN_MONTH = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
-
-function isLeapYear(year: number): boolean {
-  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
-}
-
-/**
- * True iff `year-month-day` is a valid Gregorian calendar date. Input
- * numbers must be integer-valued; month is 1-12, day is 1-31 nominally.
- */
-function isCalendarDateValid(year: number, month: number, day: number): boolean {
-  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
-    return false;
-  }
-  if (month < 1 || month > 12) return false;
-  if (day < 1) return false;
-  const maxDay = month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month];
-  return day <= maxDay;
-}
-
-/**
- * Parse a date string strictly: rejects overflowed calendar values
- * like "2026-02-31" that JavaScript normalizes silently, and rejects
- * non-ISO formats (e.g. "01/15/2026", "December 25, 2026").
+ * Parse a date string strictly. Thin re-export of the canonical
+ * implementation in `training-export/date-parse.ts` so that the
+ * `@remnic/cli` front-end and the core CLI use identical semantics
+ * (CLAUDE.md #22: shared helpers must not be re-implemented per caller).
  *
- * Accepts:
- *   YYYY-MM-DD
- *   YYYY-MM-DDTHH:mm:ss                (naive / local time)
- *   YYYY-MM-DDTHH:mm:ss.sssZ           (UTC)
- *   YYYY-MM-DDTHH:mm:ss+HH:MM          (with timezone offset)
- *   YYYY-MM-DDTHH:mm:ss.sss-HH:MM      (with timezone offset)
- *
- * Overflow validation is performed structurally on the parsed Y-M-D
- * components, independent of how `Date` interprets the string. This makes
- * the check correct regardless of whether the timestamp is UTC, offset, or
- * naive (local) — i.e. it does not depend on the host timezone.
+ * Existing imports of `parseStrictCliDate` from `./cli.js` continue to
+ * work — this re-export preserves backward compatibility for the
+ * `cli-date-validation.test.ts` suite.
  */
-export function parseStrictCliDate(value: string, flagName: string): Date {
-  // 1. Shape check: must begin YYYY-MM-DD and use ISO 8601 structure.
-  //    This rejects "12/25/2026", "December 25, 2026", RFC 2822, etc.
-  const shape =
-    /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(Z|[+-]\d{2}:\d{2})?)?$/;
-  const match = value.match(shape);
-  if (!match) {
-    throw new Error(
-      `Invalid ${flagName} value "${value}": expected ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:MM]).`,
-    );
-  }
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-
-  // 2. Structural calendar validation. This rejects Feb 31, Feb 29 in
-  //    non-leap years, Apr 31, etc. regardless of the timezone suffix, so
-  //    "2026-02-31T00:00:00+05:30" is rejected the same way as "2026-02-31Z".
-  if (!isCalendarDateValid(year, month, day)) {
-    throw new Error(
-      `Invalid ${flagName} value "${value}": date components overflow (e.g. month has fewer days). Provide a valid calendar date.`,
-    );
-  }
-
-  // 3. Optional time-component validation.
-  //    JavaScript's Date cannot represent a leap second: `:60` is silently
-  //    normalised to `:00` of the following minute, which would make a
-  //    "strict" validator return a different timestamp than the user
-  //    requested. Reject second == 60 outright so a strict parse cannot
-  //    round-trip to a different clock value.
-  if (match[4] !== undefined) {
-    const hour = Number(match[4]);
-    const minute = Number(match[5]);
-    const second = match[6] !== undefined ? Number(match[6]) : 0;
-    if (hour > 23 || minute > 59 || second > 59) {
-      throw new Error(
-        `Invalid ${flagName} value "${value}": time components out of range.`,
-      );
-    }
-  }
-
-  // 4. Finally parse via Date for the actual timestamp value. At this point
-  //    we've already validated structure and calendar correctness, so any
-  //    remaining NaN (extremely unlikely) still fails closed.
-  const d = new Date(value);
-  if (!Number.isFinite(d.getTime())) {
-    throw new Error(
-      `Invalid ${flagName} value "${value}". Provide an ISO 8601 date string (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss).`,
-    );
-  }
-
-  return d;
-}
+export const parseStrictCliDate = parseStrictCliDateShared;
 
 function parseSinceDurationMs(since: string): number {
   const trimmed = since.trim().toLowerCase();

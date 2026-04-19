@@ -18,3 +18,5 @@ export {
 } from "./registry.js";
 
 export { convertMemoriesToRecords } from "./converter.js";
+
+export { parseStrictCliDate, isCalendarDateValid } from "./date-parse.js";
