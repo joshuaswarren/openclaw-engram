@@ -547,6 +547,41 @@ function resolveDatasetDownloadScriptPath(): string {
   return path.join(CLI_REPO_ROOT, "evals", "scripts", "download-datasets.sh");
 }
 
+function runDatasetDownloadScript(
+  scriptPath: string,
+  benchmarkId: string,
+  jsonMode: boolean,
+): void {
+  // In --json mode, redirect the script's stdout to parent stderr so
+  // progress logs don't corrupt the JSON payload we emit on stdout.
+  const stdio: childProcess.StdioOptions = jsonMode
+    ? ["inherit", process.stderr, "inherit"]
+    : "inherit";
+  const options: childProcess.SpawnSyncOptions = {
+    cwd: CLI_REPO_ROOT,
+    stdio,
+    env: process.env,
+  };
+  const args = ["--benchmark", benchmarkId];
+
+  // On Unix we rely on the script's shebang and executable bit — this
+  // avoids forcing bash in PATH. On Windows (which doesn't honor POSIX
+  // shebangs) we fall back to bash and surface a clear error when it's
+  // absent, since the script itself is bash-only.
+  if (process.platform !== "win32") {
+    childProcess.execFileSync(scriptPath, args, options);
+    return;
+  }
+
+  const bashProbe = childProcess.spawnSync("bash", ["--version"], { stdio: "ignore" });
+  if (bashProbe.error || bashProbe.status !== 0) {
+    throw new Error(
+      "bench datasets download requires bash on Windows (Git Bash or WSL). Install bash or run this command from a Unix shell.",
+    );
+  }
+  childProcess.execFileSync("bash", [scriptPath, ...args], options);
+}
+
 function resolveSelectedDatasetDownloads(parsed: ParsedBenchArgs): string[] {
   const supported = listDownloadableBenchmarks();
   if (parsed.all) {
@@ -957,11 +992,7 @@ async function manageBenchDatasets(parsed: ParsedBenchArgs): Promise<void> {
   const selected = resolveSelectedDatasetDownloads(parsed);
   const downloaded: Array<{ benchmark: string; path: string }> = [];
   for (const benchmarkId of selected) {
-    childProcess.execFileSync("bash", [scriptPath, "--benchmark", benchmarkId], {
-      cwd: CLI_REPO_ROOT,
-      stdio: "inherit",
-      env: process.env,
-    });
+    runDatasetDownloadScript(scriptPath, benchmarkId, parsed.json === true);
     downloaded.push({
       benchmark: benchmarkId,
       path: path.join(datasetRoot, benchmarkId),
