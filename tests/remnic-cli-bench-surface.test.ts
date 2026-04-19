@@ -282,6 +282,7 @@ export function checkRegression() { return null; }
 export function defaultBenchmarkBaselineDir() { return ""; }
 export function defaultBenchmarkPublishPath() { return ""; }
 export async function discoverAllProviders() { return []; }
+export function getBenchmarkLowerIsBetter() { return new Set(); }
 export async function listBenchmarkBaselines() { return []; }
 export async function listBenchmarkResults() { return []; }
 export async function loadBenchmarkBaseline() { return null; }

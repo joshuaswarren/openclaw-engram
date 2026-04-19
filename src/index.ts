@@ -2261,17 +2261,31 @@ const pluginDefinition = {
           : rawPath;
       };
       const resolveReadablePath = async (requestedPath: string): Promise<string> => {
-        const absolutePath = path.isAbsolute(requestedPath)
-          ? path.resolve(requestedPath)
-          : path.resolve(capabilityWorkspaceDir, requestedPath);
+        // QMD search results return paths relative to memoryDir (e.g.
+        // "facts/alice.md"), not the agent workspace root. Resolve
+        // relative paths against each allowlisted root and take the
+        // first one whose realpath lands inside the allowlist. This
+        // keeps absolute paths working while letting search hits feed
+        // straight into readFile() without the caller having to know
+        // which root owns them.
+        const candidateAbsolutePaths = path.isAbsolute(requestedPath)
+          ? [path.resolve(requestedPath)]
+          : readAllowedRoots.map((root) => path.resolve(root, requestedPath));
         // Canonicalize strictly: realpath failure = reject. A lexical
-        // fallback here would let a non-existent path pass the
-        // containment check, after which a symlink could be created
-        // pointing outside the allowlist before readFile() runs.
-        let canonicalPath: string;
-        try {
-          canonicalPath = await canonicalizeForRead(absolutePath);
-        } catch (err) {
+        // fallback would let a non-existent path pass the containment
+        // check, after which a symlink could be created pointing
+        // outside the allowlist before readFile() runs.
+        let canonicalPath: string | undefined;
+        let lastError: unknown;
+        for (const absolutePath of candidateAbsolutePaths) {
+          try {
+            canonicalPath = await canonicalizeForRead(absolutePath);
+            break;
+          } catch (err) {
+            lastError = err;
+          }
+        }
+        if (canonicalPath === undefined) {
           throw new Error(
             `memory read rejected (path unresolvable): ${requestedPath}`,
           );
