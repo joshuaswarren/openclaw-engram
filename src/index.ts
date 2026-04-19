@@ -2436,7 +2436,27 @@ const pluginDefinition = {
                   namespaces: namespace ? [namespace] : undefined,
                   mode: resolvedMode,
                 });
-                return rawResults.map((result, index): RuntimeSearchResult => {
+                // Artifact-backed files are filtered from generic recall
+                // surfaces (see recallForActiveMemory in @remnic/core),
+                // so exclude them here too — otherwise this runtime path
+                // would bypass the isolation every other reader honors.
+                const isArtifactPath = (p: string): boolean =>
+                  /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(p);
+                return rawResults
+                  .filter((result) => {
+                    const candidate = result as unknown as {
+                      path?: string;
+                      id?: string;
+                    };
+                    const p =
+                      typeof candidate.path === "string"
+                        ? candidate.path
+                        : typeof candidate.id === "string"
+                          ? candidate.id
+                          : "";
+                    return !isArtifactPath(p);
+                  })
+                  .map((result, index): RuntimeSearchResult => {
                   const candidate = result as unknown as {
                     path?: string;
                     id?: string;
@@ -2452,6 +2472,26 @@ const pluginDefinition = {
                       : typeof candidate.id === "string"
                         ? candidate.id
                         : `memory-${index + 1}`;
+                  // Emit the absolute path as the primary `path` field so
+                  // follow-up readFile() calls are unambiguous (relative
+                  // paths that exist under both memoryDir and
+                  // <workspace>/memory would otherwise pick whichever
+                  // root realpath succeeded against first).
+                  const absolutePath = path.isAbsolute(rawPath)
+                    ? path.resolve(rawPath)
+                    : (() => {
+                        for (const root of readAllowedRoots) {
+                          const candidateAbs = path.resolve(root, rawPath);
+                          const relative = path.relative(root, candidateAbs);
+                          if (
+                            !relative.startsWith("..") &&
+                            !path.isAbsolute(relative)
+                          ) {
+                            return candidateAbs;
+                          }
+                        }
+                        return path.resolve(capabilityWorkspaceDir, rawPath);
+                      })();
                   const normalizedPath = relativizeToMemoryRoot(rawPath);
                   const startLine =
                     typeof candidate.startLine === "number" && Number.isFinite(candidate.startLine)
@@ -2462,7 +2502,7 @@ const pluginDefinition = {
                       ? Math.max(startLine, Math.floor(candidate.endLine))
                       : startLine;
                   return {
-                    path: normalizedPath,
+                    path: absolutePath,
                     startLine,
                     endLine,
                     score:
