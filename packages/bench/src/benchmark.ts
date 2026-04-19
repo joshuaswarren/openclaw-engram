@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { EngramAccessService } from "@remnic/core";
 import { getRegisteredBenchmark, listBenchmarks, getBenchmark } from "./registry.js";
+import { finalizeBenchmarkResultConfig } from "./result-config.js";
 import { buildBenchmarkRunSeeds } from "./run-seeds.js";
 import type {
   BenchConfig,
@@ -131,11 +132,13 @@ export async function runBenchmark(
     );
   }
 
-  return registeredBenchmark.run({
+  const result = await registeredBenchmark.run({
     ...options,
     mode: options.mode ?? "quick",
     benchmark: definition,
   });
+
+  return finalizeBenchmarkResultConfig(result, options);
 }
 
 function benchmarkDefinition(id: string): BenchmarkDefinition {

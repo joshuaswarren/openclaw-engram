@@ -308,3 +308,54 @@ Required prevention workflow:
 
 If the work is stateful and you are responding one review comment at a time,
 stop and widen the fix before pushing.
+
+## Agent Notes: Retrieval Explain Surface (issue #518)
+
+Two adjacent concepts with similar names — do not conflate them when later
+slices land:
+
+1. **`recall/explain`** (shipped) — `POST /engram/v1/recall/explain` /
+   `engram.recall_explain` MCP tool / `EngramAccessService.recallExplain()`.
+   Returns a graph-path explanation *document* on demand. Use this when a
+   user asks "why these memories?" for the graph subsystem.
+
+2. **Tier explain** (issue #518, **not yet shipped**) — planned
+   `GET /engram/v1/recall/tier-explain` / `engram.recall_tier_explain` MCP
+   tool / `remnic recall-explain` CLI / `EngramAccessService.recallTierExplain()`.
+   Will return a *structured per-result annotation* of which retrieval tier
+   served the query (`direct-answer`, `hybrid`, etc.). Planned as an
+   optional `LastRecallSnapshot.tierExplain` field populated only when
+   `recallDirectAnswerEnabled: true`.
+
+What's actually on disk today:
+
+- `packages/remnic-core/src/direct-answer.ts` — pure eligibility function.
+  Takes caller-resolved `DirectAnswerCandidate`s (trustZone + taxonomyBucket
+  + importance already looked up upstream) and returns a
+  `DirectAnswerResult`. Tests use this directly with mocks.
+- `packages/remnic-core/src/direct-answer-wiring.ts` — source-agnostic
+  `tryDirectAnswer(...)` binding. Callers inject a `DirectAnswerSources`
+  accessor (`listCandidateMemories`, `trustZoneFor`, `importanceFor`,
+  taxonomy). **Not yet invoked by the orchestrator.**
+- `packages/remnic-core/src/types.ts` — `RecallTierExplain` interface.
+  Declared but not yet attached to `LastRecallSnapshot` (see
+  `packages/remnic-core/src/recall-state.ts`).
+- No dedicated bench fixture yet. A `retrieval-direct-answer` fixture is
+  planned under `packages/bench/src/benchmarks/remnic/` but not yet
+  in-tree (existing retrieval fixtures there are `retrieval-personalization`
+  and `retrieval-temporal`).
+
+What does NOT exist yet, despite being referenced in the design docs:
+
+- `packages/remnic-core/src/recall-explain-renderer.ts` (planned shared
+  CLI / HTTP / MCP formatter). When it lands, do not fork formatting —
+  extend the renderer.
+- `Orchestrator.annotateDirectAnswerTier` and any `tierExplain` population
+  on `LastRecallSnapshot`.
+- The `GET /engram/v1/recall/tier-explain` HTTP route, the
+  `remnic.recall_tier_explain` MCP tool, and the `remnic recall-explain`
+  CLI command.
+
+`tryDirectAnswer` currently uses a private `throwIfAborted(signal)` helper
+local to `direct-answer-wiring.ts`. If a shared `abort-error.ts` module is
+introduced later, migrate callers rather than re-implementing locally.

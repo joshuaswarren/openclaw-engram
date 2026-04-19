@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
+import { answerBenchmarkQuestion } from "../../../answering.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -16,7 +17,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -94,30 +95,38 @@ export async function runPersonaMemBenchmark(
       10,
       sessionId,
     );
-    const judgeScore = await llmJudgeScore(
+    const answered = await answerBenchmarkQuestion({
+      question: sample.userQuery,
+      recalledText,
+      responder: options.system.responder,
+    });
+    const judgeResult = await llmJudgeScoreDetailed(
       options.system.judge,
       sample.userQuery,
-      recalledText,
+      answered.finalAnswer,
       sample.correctAnswer,
     );
 
     const scores: Record<string, number> = {
-      f1: f1Score(recalledText, sample.correctAnswer),
-      contains_answer: containsAnswer(recalledText, sample.correctAnswer),
+      f1: f1Score(answered.finalAnswer, sample.correctAnswer),
+      contains_answer: containsAnswer(answered.finalAnswer, sample.correctAnswer),
       search_hits: searchResults.length,
     };
-    if (judgeScore >= 0) {
-      scores.llm_judge = judgeScore;
+    if (judgeResult.score >= 0) {
+      scores.llm_judge = judgeResult.score;
     }
 
     tasks.push({
       taskId: `${sample.personaId}-q${sampleIndex}`,
       question: sample.userQuery,
       expected: sample.correctAnswer,
-      actual: recalledText,
+      actual: answered.finalAnswer,
       scores,
-      latencyMs: durationMs,
-      tokens: { input: 0, output: 0 },
+      latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+      tokens: {
+        input: answered.tokens.input + judgeResult.tokens.input,
+        output: answered.tokens.output + judgeResult.tokens.output,
+      },
       details: {
         personaId: sample.personaId,
         topicQuery: sample.topicQuery,
@@ -131,12 +140,20 @@ export async function runPersonaMemBenchmark(
         chatHistoryMessageCount: sample.chatHistory.chat_history.length,
         chatHistory32kLink: sample.chatHistory32kLink,
         chatHistory128kLink: sample.chatHistory128kLink,
+        recalledLength: recalledText.length,
+        answeredLength: answered.finalAnswer.length,
+        recalledText,
+        answeredText: answered.finalAnswer,
+        responderModel: answered.model,
+        judgeModel: judgeResult.model,
       },
     });
   }
 
   const remnicVersion = await getRemnicVersion();
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
+  const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
 
   return {
     meta: {
@@ -158,9 +175,9 @@ export async function runPersonaMemBenchmark(
       remnicConfig: options.remnicConfig ?? {},
     },
     cost: {
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
       estimatedCostUsd: 0,
       totalLatencyMs,
       meanQueryLatencyMs:

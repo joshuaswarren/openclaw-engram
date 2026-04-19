@@ -74,6 +74,40 @@ When **`procedural.enabled`** is true, Remnic can inject a short **“Relevant p
 
 See [Procedural memory](./procedural-memory.md) for configuration, mining, and the `procedural-recall` benchmark.
 
+### Direct-answer retrieval tier (issue #518)
+
+> **Status (current release): design + pure eligibility function + config keys only.** The orchestrator wiring that would populate a `tierExplain` annotation on the caller's last-recall snapshot — and the CLI / HTTP / MCP surfaces that would expose it — are **not yet shipped**. This section documents the design so downstream slices land against a stable contract. Setting `recallDirectAnswerEnabled: true` in the current release is a no-op at recall time.
+
+Planned behavior: when **`recallDirectAnswerEnabled`** is true, Remnic will run a lightweight eligibility gate alongside QMD to decide whether a single validated memory can answer the query. The first slice that ships runtime behavior will run the gate in observation mode — it will record *which tier would have served the query* onto the caller's last-recall snapshot, so CLI / HTTP / MCP surfaces can surface the decision. A later slice will flip the short-circuit bit and return the direct-answer winner before QMD runs.
+
+What exists today:
+
+- `packages/remnic-core/src/direct-answer.ts` — pure eligibility function (`isDirectAnswerEligible`) exercised by unit tests.
+- `packages/remnic-core/src/direct-answer-wiring.ts` — `tryDirectAnswer(...)` source-agnostic binding, callable by tests but not yet invoked by the orchestrator.
+- The five `recallDirectAnswer*` config keys below (parsed and validated; no runtime callers yet).
+
+A dedicated `retrieval-direct-answer` bench fixture is planned but not yet in-tree.
+
+Planned eligibility ladder (in order, unchanged between observation and short-circuit modes):
+
+1. `config.recallDirectAnswerEnabled === false` → reason `disabled`
+2. Query normalizes to zero searchable tokens → reason `empty-query`
+3. No candidate memories → reason `no-candidates`
+4. Hard filters drop all candidates (status ≠ active, not `trusted` zone, ineligible taxonomy bucket, importance below floor AND not `user_confirmed`, entity-ref hint mismatch) → reason `no-eligible-candidates`
+5. Token-overlap floor drops all survivors → reason `below-token-overlap-floor`
+6. Top two candidates within `recallDirectAnswerAmbiguityMargin` of each other → reason `ambiguous`
+7. Otherwise → reason `eligible`, winner annotated on the snapshot
+
+Config keys (already parsed by `config.ts`; inert at recall time until the wiring slice lands):
+
+- `recallDirectAnswerEnabled` (default `false`) — master switch
+- `recallDirectAnswerTokenOverlapFloor` (default `0.55`, `0` to disable the gate)
+- `recallDirectAnswerImportanceFloor` (default `0.7`, `0` to disable the gate)
+- `recallDirectAnswerAmbiguityMargin` (default `0.15`)
+- `recallDirectAnswerEligibleTaxonomyBuckets` (default `["decisions","principles","conventions","runbooks","entities"]`)
+
+See [Retrieval explain](./retrieval-explain.md) for the planned shape of the tier annotation and the CLI / HTTP / MCP surfaces that will expose it.
+
 ## Example: Enable Local-only Re-ranking
 
 In `openclaw.json`:
