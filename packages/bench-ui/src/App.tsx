@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { HashRouter, NavLink, Navigate, Route, Routes } from "react-router-dom";
 import type { BenchResultSummaryPayload } from "./bench-data";
 import { listBenchmarks } from "./bench-data";
+import { Assistant } from "./pages/Assistant";
 import { BenchmarkDetail } from "./pages/BenchmarkDetail";
 import { Compare } from "./pages/Compare";
 import { Ingestion } from "./pages/Ingestion";
@@ -12,6 +13,7 @@ import { Runs } from "./pages/Runs";
 
 const navigationItems = [
   { label: "Overview", path: "/" },
+  { label: "Assistant", path: "/assistant" },
   { label: "Ingestion", path: "/ingestion" },
   { label: "Runs", path: "/runs" },
   { label: "Compare", path: "/compare" },
@@ -155,6 +157,7 @@ export function App() {
       >
         <Routes>
           <Route path="/" element={<Overview payload={payload} />} />
+          <Route path="/assistant" element={<Assistant payload={payload} />} />
           <Route path="/ingestion" element={<Ingestion payload={payload} />} />
           <Route path="/runs" element={<Runs payload={payload} />} />
           <Route path="/compare" element={<Compare payload={payload} />} />
