@@ -133,6 +133,7 @@ export {
 export { cohensD, interpretEffectSize } from "./stats/effect-size.js";
 export { compareResults, getBenchmarkLowerIsBetter } from "./stats/comparison.js";
 export {
+  assertPublishableIntegrity,
   buildBenchmarkPublishFeed,
   defaultBenchmarkBaselineDir,
   defaultBenchmarkPublishPath,
@@ -145,6 +146,10 @@ export {
   saveBenchmarkBaseline,
   writeBenchmarkPublishFeed,
 } from "./results-store.js";
+export type { BuildBenchmarkPublishFeedOptions } from "./results-store.js";
+
+// Integrity pipeline (sealed qrels, canary adapter, contamination, randomize).
+export * from "./integrity/index.js";
 export {
   loadCustomBenchmarkFile,
   parseCustomBenchmark,

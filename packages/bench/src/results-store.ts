@@ -3,6 +3,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BenchmarkMode, BenchmarkResult } from "./types.js";
+import {
+  assertIntegrityMetaPresent,
+  integrityMetaIsComplete,
+} from "./integrity/types.js";
+import {
+  checkDatasetContamination,
+  EMPTY_CONTAMINATION_MANIFEST,
+  type ContaminationManifest,
+} from "./integrity/contamination.js";
 
 export interface StoredBenchmarkResultSummary {
   id: string;
@@ -47,6 +56,22 @@ export interface PublishedBenchmarkFeedEntry {
   aggregateMetrics: BenchmarkResult["results"]["aggregates"];
   cost: BenchmarkResult["cost"];
   environment: BenchmarkResult["environment"];
+  integrity: {
+    splitType: NonNullable<BenchmarkResult["meta"]["splitType"]>;
+    qrelsSealedHash: string;
+    judgePromptHash: string;
+    datasetHash: string;
+    canaryScore?: number;
+  };
+}
+
+export interface BuildBenchmarkPublishFeedOptions {
+  /**
+   * Contamination manifest applied to every candidate result. A result whose
+   * `datasetHash` matches an entry is dropped from the published feed.
+   * Defaults to the empty manifest.
+   */
+  contaminationManifest?: ContaminationManifest;
 }
 
 export interface PublishedBenchmarkFeed {
@@ -342,9 +367,33 @@ function isPublishableResultForTarget(
   }
 }
 
+/**
+ * Throws if the result is missing any required integrity field. Called from
+ * the publishing pipeline so feed entries always carry sealed-artifact
+ * provenance. Leaderboard-bound entries must also be `holdout` split; public
+ * split results are accepted but never published.
+ */
+export function assertPublishableIntegrity(
+  result: BenchmarkResult,
+  target: BenchmarkPublishTarget,
+): void {
+  assertIntegrityMetaPresent(result.meta);
+  if (target === "remnic-ai" && result.meta.splitType !== "holdout") {
+    throw new Error(
+      `Published leaderboard only accepts holdout-split results; got splitType="${String(result.meta.splitType)}".`,
+    );
+  }
+}
+
 function toPublishedBenchmarkFeedEntry(
   result: BenchmarkResult,
 ): PublishedBenchmarkFeedEntry {
+  if (!integrityMetaIsComplete(result.meta)) {
+    throw new Error(
+      "toPublishedBenchmarkFeedEntry called with a result missing integrity metadata; call assertPublishableIntegrity first.",
+    );
+  }
+
   return {
     benchmark: result.meta.benchmark,
     benchmarkTier: result.meta.benchmarkTier,
@@ -357,14 +406,26 @@ function toPublishedBenchmarkFeedEntry(
     aggregateMetrics: result.results.aggregates,
     cost: result.cost,
     environment: result.environment,
+    integrity: {
+      splitType: result.meta.splitType,
+      qrelsSealedHash: result.meta.qrelsSealedHash,
+      judgePromptHash: result.meta.judgePromptHash,
+      datasetHash: result.meta.datasetHash,
+      ...(result.meta.canaryScore !== undefined
+        ? { canaryScore: result.meta.canaryScore }
+        : {}),
+    },
   };
 }
 
 export async function buildBenchmarkPublishFeed(
   outputDir: string,
   target: BenchmarkPublishTarget,
+  options: BuildBenchmarkPublishFeedOptions = {},
 ): Promise<PublishedBenchmarkFeed> {
   const summaries = await listBenchmarkResults(outputDir);
+  const contaminationManifest =
+    options.contaminationManifest ?? EMPTY_CONTAMINATION_MANIFEST;
   const latestByBenchmark = new Map<string, PublishedBenchmarkFeedEntry>();
 
   for (const summary of summaries) {
@@ -376,6 +437,22 @@ export async function buildBenchmarkPublishFeed(
     if (!isPublishableResultForTarget(result, target)) {
       continue;
     }
+
+    // Hard-fail rather than silently drop: a result that reaches the
+    // publishing pipeline without integrity metadata is a config bug the
+    // operator needs to see.
+    assertPublishableIntegrity(result, target);
+
+    const contamination = checkDatasetContamination(
+      result.meta.datasetHash as string,
+      contaminationManifest,
+    );
+    if (!contamination.clean) {
+      throw new Error(
+        `Refusing to publish ${result.meta.id}: datasetHash ${result.meta.datasetHash} appears on the contamination manifest (${contamination.matched?.reason ?? "unspecified reason"}).`,
+      );
+    }
+
     latestByBenchmark.set(
       summary.benchmark,
       toPublishedBenchmarkFeedEntry(result),

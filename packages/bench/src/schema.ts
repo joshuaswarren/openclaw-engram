@@ -2,6 +2,8 @@
  * JSON schema contract for BenchmarkResult payloads.
  */
 
+import { BENCHMARK_SPLIT_TYPES } from "./integrity/types.js";
+
 export const BENCHMARK_RESULT_SCHEMA = {
   type: "object",
   required: ["meta", "config", "cost", "results", "environment"],
@@ -37,6 +39,14 @@ export const BENCHMARK_RESULT_SCHEMA = {
           type: "array",
           items: { type: "number" },
         },
+        splitType: {
+          type: "string",
+          enum: [...BENCHMARK_SPLIT_TYPES],
+        },
+        qrelsSealedHash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        judgePromptHash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        datasetHash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+        canaryScore: { type: "number" },
       },
     },
     config: {

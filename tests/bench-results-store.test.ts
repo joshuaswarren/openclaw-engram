@@ -17,6 +17,7 @@ import {
   writeBenchmarkPublishFeed,
 } from "../packages/bench/src/results-store.ts";
 import type { BenchmarkResult } from "../packages/bench/src/types.ts";
+import { hashString } from "../packages/bench/src/integrity/index.ts";
 
 function buildResult(
   id: string,
@@ -35,6 +36,10 @@ function buildResult(
       mode: "full",
       runCount: 5,
       seeds: [0, 1, 2, 3, 4],
+      splitType: "holdout",
+      qrelsSealedHash: hashString(`${benchmark}:qrels`),
+      judgePromptHash: hashString(`${benchmark}:judge`),
+      datasetHash: hashString(`${benchmark}:dataset`),
     },
     config: {
       systemProvider: null,
