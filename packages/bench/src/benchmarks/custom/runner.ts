@@ -100,39 +100,33 @@ async function runCustomBenchmarkRun(
 
   const results: TaskResult[] = [];
   for (const [taskIndex, task] of tasks.entries()) {
-    const { result, durationMs } = await timed(async () => {
-      const searchResults = await options.system.search(task.question, 10);
-      const actual = searchResults.map((entry) => entry.snippet).join("\n\n");
-      const scored = await scoreTask(
-        benchmark.scoring,
-        options,
-        task.question,
-        actual,
-        task.expected,
-      );
-      return {
-        actual,
-        score: scored.score,
-        judgeMetrics: scored.judgeMetrics,
-        searchHits: searchResults.length,
-      };
-    });
+    const { result: searchResults, durationMs } = await timed(async () =>
+      options.system.search(task.question, 10),
+    );
+    const actual = searchResults.map((entry) => entry.snippet).join("\n\n");
+    const scored = await scoreTask(
+      benchmark.scoring,
+      options,
+      task.question,
+      actual,
+      task.expected,
+    );
 
     results.push({
       taskId: `${slugify(benchmark.name)}-${runIndex + 1}-${taskIndex + 1}`,
       question: task.question,
       expected: task.expected,
-      actual: result.actual,
-      scores: { [benchmark.scoring]: result.score },
-      latencyMs: durationMs,
-      tokens: result.judgeMetrics.tokens,
+      actual,
+      scores: { [benchmark.scoring]: scored.score },
+      latencyMs: durationMs + scored.judgeMetrics.latencyMs,
+      tokens: scored.judgeMetrics.tokens,
       details: {
         tags: task.tags ?? [],
-        searchHits: result.searchHits,
+        searchHits: searchResults.length,
         scoring: benchmark.scoring,
         runIndex,
         seed,
-        judgeModel: result.judgeMetrics.model,
+        judgeModel: scored.judgeMetrics.model,
       },
     });
   }
