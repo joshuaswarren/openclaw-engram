@@ -956,7 +956,7 @@ Stored as `category: procedure` markdown under `memoryDir/procedures/`. Narrativ
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `procedural.enabled` | `false` | Master gate: when `false`, skip procedure extraction writes, task-initiation procedure recall injection, and trajectory mining side effects. Set `true` to enable the full feature set. |
-| `procedural.minOccurrences` | `3` | Minimum cluster recurrence before the miner can emit a candidate (`0` disables the recurrence threshold). |
+| `procedural.minOccurrences` | `3` | Minimum cluster size for a candidate; clusters smaller than this are skipped. **`0` disables procedural mining** (`runProcedureMining` returns immediately with `skippedReason: "minOccurrences_zero"`). |
 | `procedural.successFloor` | `0.7` | Minimum trajectory success rate in `[0, 1]` for miner eligibility. |
 | `procedural.autoPromoteOccurrences` | `8` | When auto-promotion is on, occurrences before `pending_review` → `active`. |
 | `procedural.autoPromoteEnabled` | `false` | Allow automatic promotion of miner candidates that meet thresholds. |
@@ -1389,7 +1389,7 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `lifecycleProtectedCategories` | `["decision","principle","commitment","preference","procedure"]` | `["decision","principle","commitment","preference","procedure"]` |
 | `lifecycleMetricsEnabled` | `false` | `true` when `lifecyclePolicyEnabled=true` |
 | `procedural.enabled` | `false` | `true` only after reading [procedural-memory.md](procedural-memory.md) and validating extraction + recall impact |
-| `procedural.minOccurrences` | `3` | `3` |
+| `procedural.minOccurrences` | `3` | `3` (use `0` only to intentionally disable mining; see narrative section) |
 | `procedural.successFloor` | `0.7` | `0.7` |
 | `procedural.autoPromoteOccurrences` | `8` | `8` |
 | `procedural.autoPromoteEnabled` | `false` | `false` until promotion rules are validated on your corpus |
