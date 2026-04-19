@@ -2378,7 +2378,7 @@
       "localLlmDisableThinking": {
         "type": "boolean",
         "default": true,
-        "description": "When true (default), suppress chain-of-thought / thinking mode on the main local LLM by sending chat_template_kwargs: { enable_thinking: false } (issue #548). Structured-output tasks like extraction and consolidation gain nothing from reasoning tokens and thinking-capable models (Qwen 3.5, Gemma 4, DeepSeek) often blow the 60s timeout before emitting content. Set to false to restore thinking for narrative tasks. The fast-tier client always disables thinking and is not affected by this flag."
+        "description": "When true (default), request chain-of-thought / thinking-mode suppression on the main local LLM (issue #548). The `chat_template_kwargs: { enable_thinking: false }` field is only injected when the detected backend is known to support it (LM Studio, vLLM); strict OpenAI-compat backends fail open to avoid the 400-cooldown path. Structured-output tasks like extraction and consolidation gain nothing from reasoning tokens and thinking-capable models (Qwen 3.5, Gemma 4, DeepSeek) often blow the 60s timeout before emitting content. Set to false to restore thinking for narrative tasks. The fast-tier client always disables thinking and is not affected by this flag."
       },
       "hourlySummaryCronAutoRegister": {
         "type": "boolean",
@@ -4279,7 +4279,7 @@
     "localLlmDisableThinking": {
       "label": "Disable Local LLM Thinking Mode",
       "advanced": true,
-      "help": "Suppress chain-of-thought reasoning on the main local LLM. Default on — extraction / consolidation are structured-output tasks where thinking is pure latency tax and a common cause of 60s timeouts on Qwen 3.5 / Gemma 4 / DeepSeek. Turn off if you want thinking on narrative tasks. Fast-tier client always disables thinking regardless."
+      "help": "Suppress chain-of-thought reasoning on the main local LLM. Default on — extraction / consolidation are structured-output tasks where thinking is pure latency tax and a common cause of 60s timeouts on Qwen 3.5 / Gemma 4 / DeepSeek. The suppression field (chat_template_kwargs) is only sent when the backend is known to support it (LM Studio, vLLM); strict OpenAI-compat backends fail open. Turn off if you want thinking on narrative tasks. Fast-tier client always disables thinking regardless."
     },
     "evalHarnessEnabled": {
       "label": "Evaluation Harness",

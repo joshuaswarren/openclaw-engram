@@ -22,6 +22,23 @@ function trimTrailingSlashes(s: string): string {
  */
 export type LocalLlmType = "lmstudio" | "ollama" | "mlx" | "vllm" | "generic";
 
+/**
+ * Backends known to honor `chat_template_kwargs: { enable_thinking: false }`
+ * on OpenAI-compatible `/v1/chat/completions`.  LM Studio and vLLM both
+ * forward this field to the jinja chat template, where thinking-capable
+ * models (Qwen 3.5, Gemma 4, DeepSeek) suppress reasoning tokens.
+ *
+ * Strict OpenAI-compatible backends (standard OpenAI, Azure OpenAI, some
+ * proxies) reject unknown request fields with 400 — which trips the
+ * `localLlm400*` cooldown path.  `LocalLlmClient` therefore only injects
+ * the kwarg when the detected backend is in this set; unknown / `generic`
+ * / `ollama` / `mlx` fail open (no injection, no 400 risk).  Issue #548.
+ */
+const THINKING_COMPATIBLE_BACKENDS: ReadonlySet<LocalLlmType> = new Set([
+  "lmstudio",
+  "vllm",
+]);
+
 interface LocalServerConfig {
   type: LocalLlmType;
   defaultPort: number;
@@ -132,9 +149,16 @@ export class LocalLlmClient {
   }
 
   /**
-   * Disable thinking/reasoning mode for models that support it (e.g. Qwen 3.5).
-   * When enabled, adds chat_template_kwargs to suppress chain-of-thought,
-   * reducing latency for fast-tier operations.
+   * Request thinking/reasoning suppression on the next chat completion.
+   *
+   * When `true`, the client will inject
+   * `chat_template_kwargs: { enable_thinking: false }` into the request
+   * body — **but only when the detected backend is known to support it**
+   * (LM Studio, vLLM; see `THINKING_COMPATIBLE_BACKENDS`).  Strict
+   * OpenAI-compat backends reject unknown fields with 400; on those the
+   * client fails open (thinking runs normally).  This is the safe
+   * default for Remnic extraction / consolidation: measurable latency
+   * win on thinking-capable backends, zero risk on others.  Issue #548.
    */
   set disableThinking(value: boolean) {
     this._disableThinking = value;
@@ -767,10 +791,24 @@ export class LocalLlmClient {
         requestBody.response_format = options.responseFormat;
       }
 
-      // Suppress thinking/reasoning for fast-tier models (e.g. Qwen 3.5 small).
-      // These models default to non-thinking but LM Studio may force thinking via
-      // chat template. Sending this kwarg explicitly disables it.
-      if (this._disableThinking) {
+      // Suppress thinking/reasoning for thinking-capable models
+      // (Qwen 3.5, Gemma 4, DeepSeek).  These models default to
+      // thinking-on via their chat template; sending
+      // `chat_template_kwargs: { enable_thinking: false }` tells the
+      // template to skip reasoning tokens.
+      //
+      // Gate the injection on detected backend support (issue #548,
+      // Codex P1 on PR #550): `chat_template_kwargs` is an LM Studio /
+      // vLLM / llama.cpp extension, not part of standard OpenAI chat
+      // completions.  Strict OpenAI-compatible backends reject
+      // unknown fields with 400, which trips the 400-cooldown path and
+      // can effectively disable local extraction.  Fail open when the
+      // backend hasn't been positively identified as thinking-capable.
+      if (
+        this._disableThinking &&
+        this.detectedType !== null &&
+        THINKING_COMPATIBLE_BACKENDS.has(this.detectedType)
+      ) {
         requestBody.chat_template_kwargs = { enable_thinking: false };
       }
 

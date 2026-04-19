@@ -1419,6 +1419,13 @@ export function parseConfig(raw: unknown): PluginConfig {
     // client (e.g. for narrative tasks) can set this to false via
     // config or --config CLI flag.  The fast-tier `fastLlm` always
     // disables thinking and is unaffected by this flag.
+    //
+    // Injection is backend-gated inside LocalLlmClient: the
+    // `chat_template_kwargs` field is only sent when the detected
+    // backend is in `THINKING_COMPATIBLE_BACKENDS` (LM Studio, vLLM).
+    // Strict OpenAI-compatible backends reject unknown request
+    // fields with 400, so the client fails open on unknown backends
+    // rather than tripping the 400 cooldown (Codex P1 on PR #550).
     localLlmDisableThinking:
       coerceBool(cfg.localLlmDisableThinking) ?? true,
     // Gateway config (passed from index.ts for fallback AI)
