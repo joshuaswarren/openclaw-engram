@@ -564,6 +564,7 @@ export {
   clearBulkImportSources,
   runBulkImportPipeline,
   formatBatchTranscript,
+  validateBatchSize,
   type ProcessBatchFn,
   type ProcessBatchResult,
 } from "./bulk-import/index.js";
