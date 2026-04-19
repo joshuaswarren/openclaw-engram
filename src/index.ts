@@ -28,7 +28,7 @@ import {
   stripInlineExplicitCaptureNotes,
   validateExplicitCaptureInput,
 } from "./explicit-capture.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -2191,6 +2191,445 @@ const pluginDefinition = {
           : undefined) ??
         orchestrator.config.workspaceDir ??
         defaultWorkspaceDir();
+      const remnicUsesQmd =
+        (orchestrator.config.searchBackend ?? "qmd") === "qmd" &&
+        orchestrator.config.qmdEnabled !== false;
+      const remnicQmdCommand =
+        typeof orchestrator.config.qmdPath === "string" && orchestrator.config.qmdPath.trim().length > 0
+          ? orchestrator.config.qmdPath.trim()
+          : "qmd";
+      // Runtime reads are restricted to memory files only. The agent
+      // workspace root would be too broad (it contains logs, configs,
+      // secrets, etc.), so we allowlist only the memory root plus the
+      // workspace's memory subdirectory if it exists. The extension
+      // check in resolveReadablePath further narrows to markdown.
+      const readAllowedRoots = [
+        orchestrator.config.memoryDir,
+        capabilityWorkspaceDir ? path.join(capabilityWorkspaceDir, "memory") : undefined,
+      ].filter((root): root is string => typeof root === "string" && root.length > 0);
+      // Init-time canonicalization tolerates realpath failure (roots may
+      // not exist yet at plugin start) — the lexical fallback is fine
+      // because readAllowedCanonicalRootsPromise is only used as the
+      // containment target, not as a path we open.
+      const canonicalizeRootForContainment = async (rawPath: string): Promise<string> => {
+        const resolved = path.resolve(rawPath);
+        try {
+          return path.normalize(await realpath(resolved));
+        } catch {
+          return path.normalize(resolved);
+        }
+      };
+      // Check-time canonicalization is strict — realpath failure means
+      // the file does not exist or its symlink chain is broken. Falling
+      // back to lexical normalization there would re-open the TOCTOU
+      // window by letting a non-existent path pass the containment
+      // check; a symlink could then be created between check and open.
+      const canonicalizeForRead = async (rawPath: string): Promise<string> => {
+        const resolved = path.resolve(rawPath);
+        const real = await realpath(resolved);
+        return path.normalize(real);
+      };
+      const readAllowedCanonicalRootsPromise = Promise.all(
+        readAllowedRoots.map((root) => canonicalizeRootForContainment(root)),
+      );
+      const isWithinAllowedRoot = async (candidatePath: string): Promise<boolean> => {
+        // Use strict canonicalization here too so callers of this helper
+        // (if any) benefit from the same TOCTOU protection as
+        // resolveReadablePath. Kept for backwards compatibility with any
+        // downstream consumer; resolveReadablePath now short-circuits
+        // past this helper.
+        let canonicalCandidatePath: string;
+        try {
+          canonicalCandidatePath = await canonicalizeForRead(candidatePath);
+        } catch {
+          return false;
+        }
+        const canonicalRoots = await readAllowedCanonicalRootsPromise;
+        return canonicalRoots.some((root) => {
+          const relative = path.relative(root, canonicalCandidatePath);
+          return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+        });
+      };
+      const normalizeWorkspacePath = (rawPath: string | undefined): string => {
+        if (!rawPath || typeof rawPath !== "string") return "memory";
+        const resolved = path.isAbsolute(rawPath)
+          ? path.resolve(rawPath)
+          : path.resolve(capabilityWorkspaceDir, rawPath);
+        const relative = path.relative(capabilityWorkspaceDir, resolved);
+        return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
+          ? relative
+          : rawPath;
+      };
+      // Relativize a path against whichever allowed read root actually
+      // contains it. Required for search results: returning the path
+      // relative to capabilityWorkspaceDir produces forms like
+      // "memory/local/facts/a.md", which resolveReadablePath would then
+      // join to every allowed root (memoryDir + <workspace>/memory),
+      // producing doubled "memory/" segments and failed reads.
+      const relativizeToMemoryRoot = (rawPath: string | undefined): string => {
+        if (!rawPath || typeof rawPath !== "string") return "memory";
+        const resolved = path.isAbsolute(rawPath)
+          ? path.resolve(rawPath)
+          : path.resolve(capabilityWorkspaceDir, rawPath);
+        for (const root of readAllowedRoots) {
+          const relative = path.relative(root, resolved);
+          if (
+            relative !== "" &&
+            !relative.startsWith("..") &&
+            !path.isAbsolute(relative)
+          ) {
+            return relative;
+          }
+        }
+        // Fall back to the workspace-relative form for display if the
+        // path is not inside any allowed root (search may still surface
+        // it as an informational hit even when reads would be rejected).
+        return normalizeWorkspacePath(rawPath);
+      };
+      const resolveReadablePath = async (requestedPath: string): Promise<string> => {
+        // QMD search results return paths relative to memoryDir (e.g.
+        // "facts/alice.md"), not the agent workspace root. Resolve
+        // relative paths against each allowlisted root and take the
+        // first one whose realpath lands inside the allowlist. This
+        // keeps absolute paths working while letting search hits feed
+        // straight into readFile() without the caller having to know
+        // which root owns them.
+        const candidateAbsolutePaths = path.isAbsolute(requestedPath)
+          ? [path.resolve(requestedPath)]
+          : readAllowedRoots.map((root) => path.resolve(root, requestedPath));
+        // Canonicalize strictly: realpath failure = reject. A lexical
+        // fallback would let a non-existent path pass the containment
+        // check, after which a symlink could be created pointing
+        // outside the allowlist before readFile() runs.
+        let canonicalPath: string | undefined;
+        let lastError: unknown;
+        for (const absolutePath of candidateAbsolutePaths) {
+          try {
+            canonicalPath = await canonicalizeForRead(absolutePath);
+            break;
+          } catch (err) {
+            lastError = err;
+          }
+        }
+        if (canonicalPath === undefined) {
+          throw new Error(
+            `memory read rejected (path unresolvable): ${requestedPath}`,
+          );
+        }
+        const canonicalRoots = await readAllowedCanonicalRootsPromise;
+        const contained = canonicalRoots.some((root) => {
+          const relative = path.relative(root, canonicalPath);
+          return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+        });
+        if (!contained) {
+          throw new Error(`memory read outside allowed roots: ${requestedPath}`);
+        }
+        // Restrict to markdown memory files — the allowed roots contain
+        // other file types (attachments, index files, snapshots) that
+        // should not be readable via this runtime capability.
+        if (!canonicalPath.toLowerCase().endsWith(".md")) {
+          throw new Error(
+            `memory read restricted to .md files: ${requestedPath}`,
+          );
+        }
+        return canonicalPath;
+      };
+      type RuntimeMemorySource = "memory" | "sessions";
+      type RuntimeSearchOptions = {
+        maxResults?: number;
+        minScore?: number;
+        sessionKey?: string;
+        qmdSearchModeOverride?: "query" | "search" | "vsearch";
+      };
+      type RuntimeSearchResult = {
+        path: string;
+        startLine: number;
+        endLine: number;
+        score: number;
+        snippet: string;
+        source: RuntimeMemorySource;
+        citation?: string;
+      };
+      type RuntimeReadParams = {
+        relPath: string;
+        from?: number;
+        lines?: number;
+      };
+      type RuntimeReadResult = {
+        text: string;
+        path: string;
+        truncated?: boolean;
+        from?: number;
+        lines?: number;
+        nextFrom?: number;
+      };
+      type RuntimeStatus = {
+        backend: "builtin" | "qmd";
+        provider: string;
+        requestedProvider?: string;
+        model?: string;
+        dirty?: boolean;
+        workspaceDir?: string;
+        dbPath?: string;
+        sources?: RuntimeMemorySource[];
+        sourceCounts?: Array<{
+          source: RuntimeMemorySource;
+          files: number;
+          chunks: number;
+        }>;
+        vector?: {
+          enabled: boolean;
+          available?: boolean;
+        };
+        fts?: {
+          enabled: boolean;
+          available: boolean;
+        };
+        custom?: Record<string, unknown>;
+      };
+      type RuntimeManager = {
+        search(query: string, opts?: RuntimeSearchOptions): Promise<RuntimeSearchResult[]>;
+        readFile(params: RuntimeReadParams): Promise<RuntimeReadResult>;
+        status(): RuntimeStatus;
+        sync?(params?: { reason?: string; force?: boolean }): Promise<void>;
+        probeEmbeddingAvailability(): Promise<{ ok: boolean; error?: string }>;
+        probeVectorAvailability(): Promise<boolean>;
+        close?(): Promise<void>;
+      };
+      type RemnicCapabilityRuntime = {
+        getMemorySearchManager(params: {
+          cfg: unknown;
+          agentId: string;
+          purpose?: "default" | "status";
+        }): Promise<{
+          manager: RuntimeManager | null;
+          error?: string;
+        }>;
+        resolveMemoryBackendConfig(params: {
+          cfg: unknown;
+          agentId: string;
+        }): { backend: "builtin" } | { backend: "qmd"; qmd?: { command?: string } };
+        closeAllMemorySearchManagers(): Promise<void>;
+      };
+      const remnicMemoryRuntime: RemnicCapabilityRuntime = {
+        async getMemorySearchManager(_params: {
+          cfg: unknown;
+          agentId: string;
+          purpose?: "default" | "status";
+        }) {
+          return {
+            manager: {
+              async search(query: string, opts?: RuntimeSearchOptions) {
+                const namespace =
+                  typeof orchestrator.resolveSelfNamespace === "function"
+                    ? orchestrator.resolveSelfNamespace(opts?.sessionKey)
+                    : undefined;
+                const resolvedMode =
+                  opts?.qmdSearchModeOverride === "vsearch"
+                    ? "vector"
+                    : opts?.qmdSearchModeOverride === "query"
+                      ? "search"
+                      : opts?.qmdSearchModeOverride ?? "search";
+                const rawResults = await orchestrator.searchAcrossNamespaces({
+                  query,
+                  maxResults: opts?.maxResults,
+                  namespaces: namespace ? [namespace] : undefined,
+                  mode: resolvedMode,
+                });
+                // Artifact-backed files are filtered from generic recall
+                // surfaces (see recallForActiveMemory in @remnic/core),
+                // so exclude them here too — otherwise this runtime path
+                // would bypass the isolation every other reader honors.
+                const isArtifactPath = (p: string): boolean =>
+                  /(?:^|[\\/])artifacts(?:[\\/]|$)/i.test(p);
+                return rawResults
+                  .filter((result) => {
+                    const candidate = result as unknown as {
+                      path?: string;
+                      id?: string;
+                    };
+                    const p =
+                      typeof candidate.path === "string"
+                        ? candidate.path
+                        : typeof candidate.id === "string"
+                          ? candidate.id
+                          : "";
+                    return !isArtifactPath(p);
+                  })
+                  .map((result, index): RuntimeSearchResult => {
+                  const candidate = result as unknown as {
+                    path?: string;
+                    id?: string;
+                    startLine?: number;
+                    endLine?: number;
+                    score?: number;
+                    snippet?: string;
+                    text?: string;
+                  };
+                  const rawPath =
+                    typeof candidate.path === "string"
+                      ? candidate.path
+                      : typeof candidate.id === "string"
+                        ? candidate.id
+                        : `memory-${index + 1}`;
+                  // Emit the absolute path as the primary `path` field so
+                  // follow-up readFile() calls are unambiguous (relative
+                  // paths that exist under both memoryDir and
+                  // <workspace>/memory would otherwise pick whichever
+                  // root realpath succeeded against first).
+                  const absolutePath = path.isAbsolute(rawPath)
+                    ? path.resolve(rawPath)
+                    : (() => {
+                        for (const root of readAllowedRoots) {
+                          const candidateAbs = path.resolve(root, rawPath);
+                          const relative = path.relative(root, candidateAbs);
+                          if (
+                            !relative.startsWith("..") &&
+                            !path.isAbsolute(relative)
+                          ) {
+                            return candidateAbs;
+                          }
+                        }
+                        return path.resolve(capabilityWorkspaceDir, rawPath);
+                      })();
+                  const normalizedPath = relativizeToMemoryRoot(rawPath);
+                  const startLine =
+                    typeof candidate.startLine === "number" && Number.isFinite(candidate.startLine)
+                      ? Math.max(1, Math.floor(candidate.startLine))
+                      : 1;
+                  const endLine =
+                    typeof candidate.endLine === "number" && Number.isFinite(candidate.endLine)
+                      ? Math.max(startLine, Math.floor(candidate.endLine))
+                      : startLine;
+                  return {
+                    path: absolutePath,
+                    startLine,
+                    endLine,
+                    score:
+                      typeof candidate.score === "number" && Number.isFinite(candidate.score)
+                        ? candidate.score
+                        : 0,
+                    snippet:
+                      typeof candidate.snippet === "string"
+                        ? candidate.snippet
+                        : typeof candidate.text === "string"
+                          ? candidate.text
+                          : "",
+                    source: normalizedPath.includes("sessions/") ? "sessions" : "memory",
+                    citation: normalizedPath,
+                  };
+                })
+                // Honor caller-supplied minScore. The underlying search
+                // orchestrator does not filter on score directly, so the
+                // threshold must be applied here before results leave
+                // the manager.
+                .filter((result) =>
+                  typeof opts?.minScore === "number" && Number.isFinite(opts.minScore)
+                    ? result.score >= opts.minScore
+                    : true,
+                );
+              },
+              async readFile(params: RuntimeReadParams) {
+                const requestedPath = normalizeWorkspacePath(params.relPath);
+                const absolutePath = await resolveReadablePath(params.relPath);
+                const text = await readFile(absolutePath, "utf-8");
+                const allLines = text.split(/\r?\n/);
+                const from = typeof params.from === "number" ? Math.max(1, Math.floor(params.from)) : 1;
+                const lines =
+                  typeof params.lines === "number" && Number.isFinite(params.lines)
+                    ? Math.max(1, Math.floor(params.lines))
+                    : undefined;
+                const startIndex = from - 1;
+                const endIndex = typeof lines === "number" ? startIndex + lines : allLines.length;
+                const slice = allLines.slice(startIndex, endIndex);
+                const truncated = endIndex < allLines.length;
+                return {
+                  text: slice.join("\n"),
+                  path: requestedPath,
+                  truncated: truncated || undefined,
+                  from,
+                  lines,
+                  nextFrom: truncated ? endIndex + 1 : undefined,
+                };
+              },
+              status() {
+                const qmdAvailable =
+                  remnicUsesQmd && typeof (orchestrator as any).qmd?.isAvailable === "function"
+                    ? Boolean((orchestrator as any).qmd.isAvailable())
+                    : !remnicUsesQmd;
+                const qmdDebug =
+                  typeof (orchestrator as any).qmd?.debugStatus === "function"
+                    ? (orchestrator as any).qmd.debugStatus()
+                    : undefined;
+                return {
+                  backend: remnicUsesQmd ? "qmd" : "builtin",
+                  provider: remnicUsesQmd ? "qmd" : "builtin",
+                  requestedProvider: remnicUsesQmd ? "qmd" : "builtin",
+                  model: remnicUsesQmd ? remnicQmdCommand : "builtin",
+                  dirty: false,
+                  workspaceDir: capabilityWorkspaceDir,
+                  dbPath: orchestrator.config.memoryDir,
+                  sources: ["memory"],
+                  sourceCounts: [],
+                  vector: remnicUsesQmd
+                    ? {
+                        enabled: true,
+                        available: qmdAvailable,
+                      }
+                    : {
+                        enabled: false,
+                      },
+                  fts: {
+                    enabled: true,
+                    available: qmdAvailable,
+                  },
+                  custom: {
+                    remnic: {
+                      qmdAvailable,
+                      qmdDebug,
+                      memoryDir: orchestrator.config.memoryDir,
+                    },
+                  },
+                };
+              },
+              async sync(_params?: { reason?: string; force?: boolean }) {
+                if (remnicUsesQmd && typeof (orchestrator as any).qmd?.update === "function") {
+                  await (orchestrator as any).qmd.update();
+                }
+              },
+              async probeEmbeddingAvailability() {
+                if (!remnicUsesQmd) return { ok: true };
+                const qmdAvailable =
+                  typeof (orchestrator as any).qmd?.isAvailable === "function"
+                    ? Boolean((orchestrator as any).qmd.isAvailable())
+                    : false;
+                if (qmdAvailable) return { ok: true };
+                const qmdDebug =
+                  typeof (orchestrator as any).qmd?.debugStatus === "function"
+                    ? (orchestrator as any).qmd.debugStatus()
+                    : undefined;
+                return {
+                  ok: false,
+                  error: qmdDebug ?? "Remnic QMD backend unavailable",
+                };
+              },
+              async probeVectorAvailability() {
+                if (!remnicUsesQmd) return false;
+                return typeof (orchestrator as any).qmd?.isAvailable === "function"
+                  ? Boolean((orchestrator as any).qmd.isAvailable())
+                  : false;
+              },
+              async close() {},
+            },
+          };
+        },
+        resolveMemoryBackendConfig(_params: { cfg: unknown; agentId: string }) {
+          return remnicUsesQmd
+            ? { backend: "qmd", qmd: { command: remnicQmdCommand } }
+            : { backend: "builtin" };
+        },
+        async closeAllMemorySearchManagers() {},
+      };
 
       const memoryCapability: import("openclaw/plugin-sdk").MemoryPluginCapability = {
         // Include the promptBuilder so runtimes that treat unified capability
@@ -2199,6 +2638,7 @@ const pluginDefinition = {
         // Respect promptInjectionAllowed policy — omit promptBuilder if injection
         // is disabled, so the capability only provides publicArtifacts.
         ...(promptInjectionAllowed ? { promptBuilder: capabilityPromptBuilder } : {}),
+        runtime: remnicMemoryRuntime,
         publicArtifacts: {
           listArtifacts: async (_params: { cfg: unknown }) => {
             try {
@@ -2220,7 +2660,7 @@ const pluginDefinition = {
         : memoryPromptBuilder
           ? " and promptBuilder (from registerMemoryPromptSection)"
           : " and promptBuilder (capability-only fallback)";
-      log.info(`registered memory capability with publicArtifacts provider${builderDesc}`);
+      log.info(`registered memory capability with runtime and publicArtifacts provider${builderDesc}`);
     }
 
     // ========================================================================
