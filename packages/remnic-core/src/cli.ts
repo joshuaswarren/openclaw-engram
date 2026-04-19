@@ -27,6 +27,13 @@ import { chatgptReplayNormalizer } from "./replay/normalizers/chatgpt.js";
 import { claudeReplayNormalizer } from "./replay/normalizers/claude.js";
 import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
 import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type ReplayTurn } from "./replay/types.js";
+import {
+  getBulkImportSource,
+  listBulkImportSources,
+  runBulkImportPipeline,
+  type BulkImportResult,
+  type ProcessBatchFn,
+} from "./bulk-import/index.js";
 import { archiveObservations } from "./maintenance/archive-observations.js";
 import { rebuildMemoryLifecycleLedger } from "./maintenance/rebuild-memory-lifecycle-ledger.js";
 import {
@@ -2748,6 +2755,91 @@ export async function runReplayCliCommand(
   }
 
   return summary;
+}
+
+// ---------------------------------------------------------------------------
+// Bulk-import CLI command
+// ---------------------------------------------------------------------------
+
+export interface BulkImportCliCommandOptions {
+  memoryDir: string;
+  source: string;
+  file: string;
+  namespace?: string;
+  batchSize?: number;
+  dryRun?: boolean;
+  verbose?: boolean;
+  strict?: boolean;
+  stdout: Writable;
+  stderr: Writable;
+}
+
+export async function runBulkImportCliCommand(
+  opts: BulkImportCliCommandOptions,
+): Promise<BulkImportResult> {
+  const adapter = getBulkImportSource(opts.source);
+  if (!adapter) {
+    const registered = listBulkImportSources();
+    const list =
+      registered.length > 0
+        ? registered.map((n) => `'${n}'`).join(", ")
+        : "(none registered)";
+    throw new Error(
+      `Unknown bulk-import source '${opts.source}'. ` +
+        `Valid sources: ${list}`,
+    );
+  }
+
+  const inputRaw = await readFile(opts.file, "utf-8");
+  const parsed = await adapter.parse(inputRaw, {
+    strict: opts.strict === true,
+  });
+
+  if (!opts.dryRun) {
+    throw new Error(
+      "Bulk import persistence is not yet wired — use --dry-run to validate input, or implement a processBatch callback via the programmatic API",
+    );
+  }
+
+  const processBatch: ProcessBatchFn = async (turns) => {
+    // Phase 1 stub — the real extraction callback will be wired
+    // when the orchestrator integration lands in a later PR.
+    return { memoriesCreated: turns.length, duplicatesSkipped: 0 };
+  };
+
+  const result = await runBulkImportPipeline(
+    parsed,
+    {
+      batchSize: opts.batchSize,
+      dryRun: opts.dryRun,
+      dedup: true,
+      trustLevel: "import",
+      namespace: opts.namespace,
+    },
+    processBatch,
+  );
+
+  const out = opts.stdout;
+  out.write(`Bulk import complete (source: ${opts.source})\n`);
+  out.write(`  Turns processed:     ${result.turnsProcessed}\n`);
+  out.write(`  Batches processed:   ${result.batchesProcessed}\n`);
+  out.write(`  Memories created:    ${result.memoriesCreated}\n`);
+  out.write(`  Duplicates skipped:  ${result.duplicatesSkipped}\n`);
+  if (result.errors.length > 0) {
+    out.write(`  Errors:              ${result.errors.length}\n`);
+    if (opts.verbose) {
+      for (const err of result.errors) {
+        opts.stderr.write(
+          `    [batch ${err.batchIndex}] ${err.message}\n`,
+        );
+      }
+    }
+  }
+  if (opts.dryRun) {
+    out.write("  (dry run — no memories were stored)\n");
+  }
+
+  return result;
 }
 
 async function getPluginVersion(): Promise<string> {
