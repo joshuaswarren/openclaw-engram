@@ -550,46 +550,142 @@ test("buildBenchRuntimeProfileRequest keeps openclaw-chain on gateway routing in
   const { mkdtemp, writeFile } = await import("node:fs/promises");
   const os = await import("node:os");
   const path = await import("node:path");
-  const { buildBenchRuntimeProfileRequest } = await import("../packages/remnic-cli/src/index.ts");
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = join(__dirname, "..");
+
+  interface StubHandle {
+    cleanup: () => void;
+  }
+
+  const stubWorkspacePackage = (
+    packageName: string,
+    moduleBody: string,
+  ): StubHandle => {
+    const linkRoot = join(repoRoot, "packages/remnic-cli/node_modules", packageName);
+    const moduleRoot = existsSync(linkRoot) ? realpathSync(linkRoot) : linkRoot;
+    const distDir = join(moduleRoot, "dist");
+    const entry = join(distDir, "index.js");
+    const packageJson = join(moduleRoot, "package.json");
+    const needsEntry = !existsSync(entry);
+    const createdLinkRoot = !existsSync(linkRoot);
+    const createdPackageJson = needsEntry && !existsSync(packageJson);
+    const createdDistDir = needsEntry && !existsSync(distDir);
+
+    if (needsEntry) {
+      mkdirSync(distDir, { recursive: true });
+      if (createdPackageJson) {
+        writeFileSync(
+          packageJson,
+          JSON.stringify({
+            name: packageName,
+            type: "module",
+            exports: { ".": "./dist/index.js" },
+          }),
+        );
+      }
+      writeFileSync(entry, moduleBody);
+    }
+
+    return {
+      cleanup: () => {
+        if (!needsEntry) return;
+        rmSync(entry, { force: true });
+        if (createdDistDir) rmSync(distDir, { recursive: true, force: true });
+        if (createdPackageJson) rmSync(packageJson, { force: true });
+        if (createdLinkRoot) rmSync(moduleRoot, { recursive: true, force: true });
+      },
+    };
+  };
+
+  const stubs: StubHandle[] = [
+    stubWorkspacePackage(
+      "@remnic/bench",
+      `
+export function compareResults() {}
+export async function buildBenchmarkPublishFeed() { return { target: "remnic-ai", generatedAt: new Date(0).toISOString(), benchmarks: [] }; }
+export function checkRegression() { return null; }
+export function defaultBenchmarkBaselineDir() { return ""; }
+export function defaultBenchmarkPublishPath() { return ""; }
+export async function discoverAllProviders() { return []; }
+export function getBenchmarkLowerIsBetter() { return new Set(); }
+export async function listBenchmarkBaselines() { return []; }
+export async function listBenchmarkResults() { return []; }
+export async function loadBenchmarkBaseline() { return null; }
+export async function runBenchSuite() { return null; }
+export async function runExplain() { return null; }
+export async function loadBaseline() { return null; }
+export async function saveBaseline() { return null; }
+export async function loadBenchmarkResult() { return null; }
+export function renderBenchmarkResultExport() { return ""; }
+export async function resolveBenchmarkResultReference() { return null; }
+export async function saveBenchmarkBaseline() { return null; }
+export async function writeBenchmarkPublishFeed() { return ""; }
+`,
+    ),
+    stubWorkspacePackage(
+      "@remnic/export-weclone",
+      `
+export const wecloneExportAdapter = { name: "weclone", fileExtension: "json", formatRecords: () => "" };
+export function ensureWecloneExportAdapterRegistered() {}
+export function synthesizeTrainingPairs() { return []; }
+export function sweepPii(input) { return input; }
+`,
+    ),
+    stubWorkspacePackage(
+      "@remnic/import-weclone",
+      `
+export const wecloneImportAdapter = { name: "weclone", parse: async () => ({ turns: [], metadata: {} }) };
+export function ensureWecloneImportAdapterRegistered() {}
+`,
+    ),
+  ];
 
   const root = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-openclaw-matrix-"));
   const openclawConfigPath = path.join(root, "openclaw.json");
   await writeFile(openclawConfigPath, JSON.stringify({ plugins: { entries: {} } }));
 
-  const parsed = {
-    action: "run",
-    benchmarks: ["longmemeval"],
-    quick: true,
-    all: false,
-    json: false,
-    detail: false,
-    matrixProfiles: ["baseline", "openclaw-chain"],
-    openclawConfigPath,
-    modelSource: "gateway",
-    gatewayAgentId: "memory-primary",
-    fastGatewayAgentId: "memory-fast",
-    systemProvider: "openai",
-    systemModel: "gpt-5.4-mini",
-    systemBaseUrl: "http://localhost:4000/v1",
-    judgeProvider: "anthropic",
-    judgeModel: "claude-sonnet-4-5",
-    judgeBaseUrl: "http://localhost:4100",
-  } as const;
+  try {
+    const { buildBenchRuntimeProfileRequest } = await import(
+      `../packages/remnic-cli/src/index.ts?matrix-runtime-request=${Date.now()}`
+    );
 
-  const baseline = buildBenchRuntimeProfileRequest(parsed, "baseline");
-  const openclaw = buildBenchRuntimeProfileRequest(parsed, "openclaw-chain");
+    const parsed = {
+      action: "run",
+      benchmarks: ["longmemeval"],
+      quick: true,
+      all: false,
+      json: false,
+      detail: false,
+      matrixProfiles: ["baseline", "openclaw-chain"],
+      openclawConfigPath,
+      modelSource: "gateway",
+      gatewayAgentId: "memory-primary",
+      fastGatewayAgentId: "memory-fast",
+      systemProvider: "openai",
+      systemModel: "gpt-5.4-mini",
+      systemBaseUrl: "http://localhost:4000/v1",
+      judgeProvider: "anthropic",
+      judgeModel: "claude-sonnet-4-5",
+      judgeBaseUrl: "http://localhost:4100",
+    } as const;
 
-  assert.equal(baseline.systemProvider, "openai");
-  assert.equal(baseline.systemModel, "gpt-5.4-mini");
-  assert.equal(baseline.openclawConfigPath, undefined);
-  assert.equal(openclaw.openclawConfigPath, openclawConfigPath);
-  assert.equal(openclaw.systemProvider, undefined);
-  assert.equal(openclaw.systemModel, undefined);
-  assert.equal(openclaw.systemBaseUrl, undefined);
-  assert.equal(openclaw.judgeProvider, "anthropic");
-  assert.equal(openclaw.judgeModel, "claude-sonnet-4-5");
-  assert.equal(openclaw.gatewayAgentId, "memory-primary");
-  assert.equal(openclaw.fastGatewayAgentId, "memory-fast");
+    const baseline = buildBenchRuntimeProfileRequest(parsed, "baseline");
+    const openclaw = buildBenchRuntimeProfileRequest(parsed, "openclaw-chain");
+
+    assert.equal(baseline.systemProvider, "openai");
+    assert.equal(baseline.systemModel, "gpt-5.4-mini");
+    assert.equal(baseline.openclawConfigPath, undefined);
+    assert.equal(openclaw.openclawConfigPath, openclawConfigPath);
+    assert.equal(openclaw.systemProvider, undefined);
+    assert.equal(openclaw.systemModel, undefined);
+    assert.equal(openclaw.systemBaseUrl, undefined);
+    assert.equal(openclaw.judgeProvider, "anthropic");
+    assert.equal(openclaw.judgeModel, "claude-sonnet-4-5");
+    assert.equal(openclaw.gatewayAgentId, "memory-primary");
+    assert.equal(openclaw.fastGatewayAgentId, "memory-fast");
+  } finally {
+    for (const stub of stubs) stub.cleanup();
+  }
 });
 
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {
