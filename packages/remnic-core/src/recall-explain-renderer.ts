@@ -24,6 +24,19 @@ function isRetrievalTier(v: unknown): v is RetrievalTier {
   return typeof v === "string" && (KNOWN_RETRIEVAL_TIERS as readonly string[]).includes(v);
 }
 
+/**
+ * Narrow an arbitrary persisted field to a non-empty string, or null.  Used
+ * for the top-level snapshot fields the renderer advertises as
+ * `string | null` in its JSON schema: `sessionKey`, `recordedAt`,
+ * `namespace`, `source`.  `LastRecallStore.load()` ingests `last_recall.json`
+ * via unvalidated `JSON.parse`, so stale/corrupt state could return numbers
+ * or objects for these fields.  Coerce anything else to null so HTTP/MCP
+ * consumers can rely on the advertised schema.
+ */
+function sanitizeString(v: unknown): string | null {
+  return typeof v === "string" ? v : null;
+}
+
 export type RecallExplainFormat = "text" | "json";
 
 export interface RecallExplainJsonPayload {
@@ -114,15 +127,23 @@ export function toRecallExplainJson(
   // from the same normalized value so the payload is never internally
   // inconsistent, even against malformed persisted state.
   const normalizedExplain = normalizeTierExplain(snapshot.tierExplain);
+  // Top-level fields are forwarded from LastRecallStore.load(), which casts a
+  // raw JSON.parse result.  Sanitize each field to the schema the payload
+  // advertises so downstream HTTP/MCP consumers can rely on `string | null`
+  // and `string[]` invariants even against a stale/corrupt file.
   return {
     hasExplain: normalizedExplain !== null,
     snapshotFound: true,
-    sessionKey: snapshot.sessionKey,
-    recordedAt: snapshot.recordedAt,
-    namespace: snapshot.namespace ?? null,
-    memoryIds: Array.isArray(snapshot.memoryIds) ? [...snapshot.memoryIds] : [],
-    source: snapshot.source ?? null,
-    sourcesUsed: Array.isArray(snapshot.sourcesUsed) ? [...snapshot.sourcesUsed] : null,
+    sessionKey: sanitizeString(snapshot.sessionKey),
+    recordedAt: sanitizeString(snapshot.recordedAt),
+    namespace: sanitizeString(snapshot.namespace),
+    memoryIds: Array.isArray(snapshot.memoryIds)
+      ? snapshot.memoryIds.filter((x): x is string => typeof x === "string")
+      : [],
+    source: sanitizeString(snapshot.source),
+    sourcesUsed: Array.isArray(snapshot.sourcesUsed)
+      ? snapshot.sourcesUsed.filter((x): x is string => typeof x === "string")
+      : null,
     latencyMs: typeof snapshot.latencyMs === "number" ? snapshot.latencyMs : null,
     tierExplain: normalizedExplain,
   };
@@ -142,18 +163,30 @@ export function toRecallExplainText(
     return lines.join("\n");
   }
 
-  lines.push(`session: ${snapshot.sessionKey}`);
-  lines.push(`recorded: ${snapshot.recordedAt}`);
-  if (snapshot.namespace) lines.push(`namespace: ${snapshot.namespace}`);
-  if (snapshot.source) lines.push(`source: ${snapshot.source}`);
-  if (Array.isArray(snapshot.sourcesUsed) && snapshot.sourcesUsed.length > 0) {
-    lines.push(`sources-used: ${snapshot.sourcesUsed.join(", ")}`);
+  // Sanitize the same top-level fields the JSON payload sanitizes so text
+  // output is equally robust to a stale/corrupt last_recall.json.
+  const sessionKey = sanitizeString(snapshot.sessionKey);
+  const recordedAt = sanitizeString(snapshot.recordedAt);
+  const namespace = sanitizeString(snapshot.namespace);
+  const source = sanitizeString(snapshot.source);
+  lines.push(`session: ${sessionKey ?? "(unknown)"}`);
+  lines.push(`recorded: ${recordedAt ?? "(unknown)"}`);
+  if (namespace) lines.push(`namespace: ${namespace}`);
+  if (source) lines.push(`source: ${source}`);
+  const sourcesUsed = Array.isArray(snapshot.sourcesUsed)
+    ? snapshot.sourcesUsed.filter((x): x is string => typeof x === "string")
+    : [];
+  if (sourcesUsed.length > 0) {
+    lines.push(`sources-used: ${sourcesUsed.join(", ")}`);
   }
   if (typeof snapshot.latencyMs === "number") {
     lines.push(`latency-ms: ${snapshot.latencyMs}`);
   }
-  if (Array.isArray(snapshot.memoryIds) && snapshot.memoryIds.length > 0) {
-    lines.push(`memories: ${snapshot.memoryIds.join(", ")}`);
+  const memoryIds = Array.isArray(snapshot.memoryIds)
+    ? snapshot.memoryIds.filter((x): x is string => typeof x === "string")
+    : [];
+  if (memoryIds.length > 0) {
+    lines.push(`memories: ${memoryIds.join(", ")}`);
   }
 
   // Use the same validated/normalized explain as toRecallExplainJson so the

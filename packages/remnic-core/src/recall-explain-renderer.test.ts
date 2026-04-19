@@ -140,6 +140,43 @@ test("toRecallExplainJson coerces an unknown tier string to a safe fallback inst
   assert.equal(payload.tierExplain.tier, "hybrid");
 });
 
+// Regression for codex-connector P2 on PR #537: top-level snapshot fields
+// (sessionKey, recordedAt, namespace, source) come from an unvalidated
+// JSON.parse and can be objects/numbers at runtime. The advertised
+// `string | null` schema must hold; malformed values coerce to null.
+test("toRecallExplainJson sanitizes non-string top-level fields to null", () => {
+  const malformed = {
+    sessionKey: 123,
+    recordedAt: { nested: true },
+    namespace: 7,
+    source: [],
+    memoryIds: ["ok", 42, null, "also-ok"],
+    sourcesUsed: [1, "qmd", false, "rerank"],
+    latencyMs: "not-a-number",
+  } as unknown as LastRecallSnapshot;
+  const payload = toRecallExplainJson(malformed);
+  assert.equal(payload.snapshotFound, true);
+  assert.equal(payload.sessionKey, null);
+  assert.equal(payload.recordedAt, null);
+  assert.equal(payload.namespace, null);
+  assert.equal(payload.source, null);
+  assert.equal(payload.latencyMs, null);
+  assert.deepEqual(payload.memoryIds, ["ok", "also-ok"]);
+  assert.deepEqual(payload.sourcesUsed, ["qmd", "rerank"]);
+});
+
+test("toRecallExplainText prints (unknown) for malformed sessionKey / recordedAt instead of [object Object]", () => {
+  const malformed = {
+    sessionKey: { weird: true },
+    recordedAt: 42,
+    memoryIds: [],
+  } as unknown as LastRecallSnapshot;
+  const out = toRecallExplainText(malformed);
+  assert.ok(out.includes("session: (unknown)"));
+  assert.ok(out.includes("recorded: (unknown)"));
+  assert.ok(!out.includes("[object Object]"));
+});
+
 test("toRecallExplainText renders a malformed tierExplain with empty filtered-by instead of throwing", () => {
   const malformed = {
     tier: "direct-answer",
