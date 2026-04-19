@@ -24,6 +24,25 @@ export interface BenchTaskScoreEntry {
   value: number;
 }
 
+export interface BenchPerSeedScore {
+  seed: number;
+  identityAccuracy: number | null;
+  stanceCoherence: number | null;
+  novelty: number | null;
+  calibration: number | null;
+  parseOk: boolean;
+  notes: string;
+  latencyMs: number | null;
+}
+
+export interface BenchAssistantTaskDetails {
+  focus: string | null;
+  rubricId: string | null;
+  rubricSha256: string | null;
+  perSeedScores: BenchPerSeedScore[];
+  judgeParseFailures: number | null;
+}
+
 export interface BenchTaskSummary {
   taskId: string;
   question: string;
@@ -33,6 +52,7 @@ export interface BenchTaskSummary {
   totalTokens: number;
   primaryScore: number | null;
   scoreEntries: BenchTaskScoreEntry[];
+  assistantDetails?: BenchAssistantTaskDetails | null;
 }
 
 export type BenchIntegritySplit = "public" | "holdout" | "unknown";
@@ -78,6 +98,9 @@ export interface BenchResultSummary {
   aggregateMetrics: BenchAggregateMetric[];
   taskSummaries: BenchTaskSummary[];
   integrity: BenchIntegritySummary;
+  assistantRubricId?: string | null;
+  assistantRubricSha256?: string | null;
+  assistantRunId?: string | null;
   filePath: string;
 }
 
@@ -530,4 +553,149 @@ export function benchmarkRuns(
     .filter((summary) => summary.benchmark === benchmark)
     .slice()
     .sort(compareTimestampedRuns);
+}
+
+export const ASSISTANT_BENCHMARK_IDS = [
+  "assistant-morning-brief",
+  "assistant-meeting-prep",
+  "assistant-next-best-action",
+  "assistant-synthesis",
+] as const;
+
+export type AssistantBenchmarkId = (typeof ASSISTANT_BENCHMARK_IDS)[number];
+
+export const ASSISTANT_RUBRIC_DIMENSION_KEYS = [
+  "identity_accuracy",
+  "stance_coherence",
+  "novelty",
+  "calibration",
+  "overall",
+] as const;
+
+export type AssistantRubricDimensionKey =
+  (typeof ASSISTANT_RUBRIC_DIMENSION_KEYS)[number];
+
+export interface AssistantDimensionBar {
+  dimension: AssistantRubricDimensionKey;
+  label: string;
+  mean: number | null;
+  ciLower: number | null;
+  ciUpper: number | null;
+}
+
+export function isAssistantBenchmark(benchmark: string): boolean {
+  return (ASSISTANT_BENCHMARK_IDS as readonly string[]).includes(benchmark);
+}
+
+export function getAssistantRuns(
+  payload: BenchResultSummaryPayload,
+): BenchResultSummary[] {
+  return payload.summaries
+    .filter((summary) => isAssistantBenchmark(summary.benchmark))
+    .slice()
+    .sort(compareTimestampedRuns);
+}
+
+export function getLatestAssistantRunByBenchmark(
+  payload: BenchResultSummaryPayload,
+): Record<string, BenchResultSummary | null> {
+  const latest: Record<string, BenchResultSummary | null> = {};
+  for (const id of ASSISTANT_BENCHMARK_IDS) {
+    latest[id] = null;
+  }
+  for (const run of getAssistantRuns(payload)) {
+    if (!latest[run.benchmark]) {
+      latest[run.benchmark] = run;
+    }
+  }
+  return latest;
+}
+
+export function dimensionLabel(
+  dimension: AssistantRubricDimensionKey,
+): string {
+  switch (dimension) {
+    case "identity_accuracy":
+      return "Identity accuracy";
+    case "stance_coherence":
+      return "Stance coherence";
+    case "novelty":
+      return "Novelty";
+    case "calibration":
+      return "Calibration";
+    case "overall":
+      return "Overall";
+  }
+}
+
+export function getAssistantDimensionBars(
+  summary: BenchResultSummary | null,
+): AssistantDimensionBar[] {
+  if (!summary) {
+    return ASSISTANT_RUBRIC_DIMENSION_KEYS.map((dimension) => ({
+      dimension,
+      label: dimensionLabel(dimension),
+      mean: null,
+      ciLower: null,
+      ciUpper: null,
+    }));
+  }
+  const lookup = new Map(
+    summary.aggregateMetrics.map((metric) => [metric.name, metric]),
+  );
+  return ASSISTANT_RUBRIC_DIMENSION_KEYS.map((dimension) => {
+    const metric = lookup.get(dimension);
+    return {
+      dimension,
+      label: dimensionLabel(dimension),
+      mean: metric?.mean ?? null,
+      ciLower: metric?.ciLower ?? null,
+      ciUpper: metric?.ciUpper ?? null,
+    };
+  });
+}
+
+export function flattenAssistantSpotChecks(
+  summary: BenchResultSummary | null,
+): Array<{
+  taskId: string;
+  seed: number;
+  identityAccuracy: number | null;
+  stanceCoherence: number | null;
+  novelty: number | null;
+  calibration: number | null;
+  parseOk: boolean;
+  notes: string;
+  focus: string | null;
+}> {
+  if (!summary) return [];
+  const rows: Array<{
+    taskId: string;
+    seed: number;
+    identityAccuracy: number | null;
+    stanceCoherence: number | null;
+    novelty: number | null;
+    calibration: number | null;
+    parseOk: boolean;
+    notes: string;
+    focus: string | null;
+  }> = [];
+  for (const task of summary.taskSummaries) {
+    const details = task.assistantDetails;
+    if (!details) continue;
+    for (const seed of details.perSeedScores) {
+      rows.push({
+        taskId: task.taskId,
+        seed: seed.seed,
+        identityAccuracy: seed.identityAccuracy,
+        stanceCoherence: seed.stanceCoherence,
+        novelty: seed.novelty,
+        calibration: seed.calibration,
+        parseOk: seed.parseOk,
+        notes: seed.notes,
+        focus: details.focus,
+      });
+    }
+  }
+  return rows;
 }
