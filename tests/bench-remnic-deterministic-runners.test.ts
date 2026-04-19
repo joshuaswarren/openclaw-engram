@@ -123,3 +123,18 @@ test("runBenchmark applies retrieval-temporal limit as an exact task cap", async
   assert.equal(result.results.tasks[0]?.taskId, "clean:alex-last-tuesday-meeting");
   assert.equal(result.results.aggregates["dirty_penalty.qrel_at_1"], undefined);
 });
+
+test("runBenchmark preserves quarter tokens for full retrieval-temporal cases", async () => {
+  const result = await runBenchmark("retrieval-temporal", {
+    mode: "full",
+    system: adapter,
+  });
+
+  const task = result.results.tasks.find((entry) => entry.taskId === "clean:morgan-q3-commitments");
+  assert.ok(task);
+  assert.equal(task.scores.qrel_at_1, 1);
+  assert.deepEqual(
+    task.details?.retrievedPageIds?.slice(0, 2),
+    ["morgan-q3-training-plan", "morgan-coffee-preferences"],
+  );
+});

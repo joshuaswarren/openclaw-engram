@@ -232,7 +232,7 @@ function tokenize(value: string): Set<string> {
       .toLowerCase()
       .split(/[^a-z0-9]+/g)
       .map((token) => token.trim())
-      .filter((token) => token.length >= 3),
+      .filter((token) => token.length >= 3 || (token.length >= 2 && /\d/.test(token))),
   );
 }
 
