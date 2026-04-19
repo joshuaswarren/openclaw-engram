@@ -3,13 +3,68 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import type {
   BenchAggregateMetric,
+  BenchAssistantTaskDetails,
+  BenchIntegritySplit,
+  BenchIntegritySummary,
   BenchMetricHighlight,
+  BenchPerSeedScore,
   BenchResultSummary,
   BenchResultSummaryPayload,
   BenchTaskScoreEntry,
   BenchTaskSummary,
 } from "./bench-data.js";
 import { compareMetricNames, compareStrings, compareTimestampedRuns } from "./sort-utils.js";
+
+const DEFAULT_CANARY_FLOOR = 0.1;
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/u;
+
+function isSha256Hex(value: unknown): value is string {
+  return typeof value === "string" && SHA256_HEX_PATTERN.test(value);
+}
+
+function shortHash(value: unknown): string | null {
+  return isSha256Hex(value) ? value.slice(0, 12) : null;
+}
+
+function resolveSplit(value: unknown): BenchIntegritySplit {
+  return value === "public" || value === "holdout" ? value : "unknown";
+}
+
+function resolveCanaryFloor(value: unknown): number {
+  // Results produced under a custom `REMNIC_BENCH_CANARY_FLOOR` may persist
+  // the floor into `meta.canaryFloor`. If present and finite, honor it so
+  // the badge matches the gate that produced the result.
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+    return value;
+  }
+  return DEFAULT_CANARY_FLOOR;
+}
+
+function computeIntegritySummary(meta: JsonRecord): BenchIntegritySummary {
+  const canaryScoreRaw = meta.canaryScore;
+  const canaryScore =
+    typeof canaryScoreRaw === "number" && Number.isFinite(canaryScoreRaw)
+      ? canaryScoreRaw
+      : null;
+
+  const canaryFloor = resolveCanaryFloor(meta.canaryFloor);
+
+  const sealsPresent =
+    isSha256Hex(meta.qrelsSealedHash) &&
+    isSha256Hex(meta.judgePromptHash) &&
+    isSha256Hex(meta.datasetHash);
+
+  return {
+    split: resolveSplit(meta.splitType),
+    sealsPresent,
+    canaryScore,
+    canaryFloor,
+    canaryUnderFloor: canaryScore === null ? null : canaryScore <= canaryFloor,
+    qrelsSealedHashShort: shortHash(meta.qrelsSealedHash),
+    judgePromptHashShort: shortHash(meta.judgePromptHash),
+    datasetHashShort: shortHash(meta.datasetHash),
+  };
+}
 
 type JsonRecord = Record<string, unknown>;
 
@@ -102,6 +157,40 @@ function metricHighlights(metrics: BenchAggregateMetric[]): BenchMetricHighlight
     .map((metric) => ({ name: metric.name, mean: metric.mean }));
 }
 
+function assistantPerSeedScore(value: unknown): BenchPerSeedScore | null {
+  if (!isRecord(value)) return null;
+  const scores = isRecord(value.scores) ? value.scores : {};
+  const seed = toFiniteNumber(value.seed);
+  if (seed === null) return null;
+  return {
+    seed,
+    identityAccuracy: toFiniteNumber(scores.identity_accuracy),
+    stanceCoherence: toFiniteNumber(scores.stance_coherence),
+    novelty: toFiniteNumber(scores.novelty),
+    calibration: toFiniteNumber(scores.calibration),
+    parseOk: value.parseOk === true,
+    notes: typeof value.notes === "string" ? value.notes : "",
+    latencyMs: toFiniteNumber(value.latencyMs),
+  };
+}
+
+function assistantDetails(value: unknown): BenchAssistantTaskDetails | null {
+  if (!isRecord(value)) return null;
+  const perSeedRaw = Array.isArray(value.perSeedScores) ? value.perSeedScores : null;
+  if (!perSeedRaw) return null;
+  const perSeedScores = perSeedRaw
+    .map(assistantPerSeedScore)
+    .filter((entry): entry is BenchPerSeedScore => entry !== null);
+  return {
+    focus: typeof value.focus === "string" ? value.focus : null,
+    rubricId: typeof value.rubricId === "string" ? value.rubricId : null,
+    rubricSha256:
+      typeof value.rubricSha256 === "string" ? value.rubricSha256 : null,
+    perSeedScores,
+    judgeParseFailures: toFiniteNumber(value.judgeParseFailures),
+  };
+}
+
 function taskSummaries(result: JsonRecord): BenchTaskSummary[] {
   const results = isRecord(result.results) ? result.results : {};
   const tasks = Array.isArray(results.tasks) ? results.tasks : [];
@@ -129,6 +218,7 @@ function taskSummaries(result: JsonRecord): BenchTaskSummary[] {
           (toFiniteNumber(tokens.input) ?? 0) + (toFiniteNumber(tokens.output) ?? 0),
         primaryScore: primaryEntry?.value ?? null,
         scoreEntries: entries,
+        assistantDetails: assistantDetails(task.details),
       };
     })
     .filter((task): task is BenchTaskSummary => task !== null)
@@ -161,6 +251,19 @@ export function summarizeBenchmarkResult(
 
   const systemProvider = providerLabel(config.systemProvider);
   const judgeProvider = providerLabel(config.judgeProvider);
+  const remnicConfig = isRecord(config.remnicConfig) ? config.remnicConfig : {};
+  const assistantRubricId =
+    typeof remnicConfig.assistantRubricId === "string"
+      ? remnicConfig.assistantRubricId
+      : null;
+  const assistantRubricSha256 =
+    typeof remnicConfig.assistantRubricSha256 === "string"
+      ? remnicConfig.assistantRubricSha256
+      : null;
+  const assistantRunId =
+    typeof remnicConfig.assistantRunId === "string"
+      ? remnicConfig.assistantRunId
+      : null;
 
   return {
     id: meta.id,
@@ -187,6 +290,10 @@ export function summarizeBenchmarkResult(
       typeof config.adapterMode === "string" ? config.adapterMode : "unknown",
     aggregateMetrics: metrics,
     taskSummaries: tasks,
+    integrity: computeIntegritySummary(meta),
+    assistantRubricId,
+    assistantRubricSha256,
+    assistantRunId,
     filePath,
   };
 }

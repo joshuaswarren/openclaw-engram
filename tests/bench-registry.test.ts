@@ -28,6 +28,15 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "page-versioning",
       "retrieval-personalization",
       "retrieval-temporal",
+      "ingestion-entity-recall",
+      "ingestion-schema-completeness",
+      "ingestion-backlink-f1",
+      "ingestion-setup-friction",
+      "ingestion-citation-accuracy",
+      "assistant-morning-brief",
+      "assistant-meeting-prep",
+      "assistant-next-best-action",
+      "assistant-synthesis",
     ],
   );
   assert.deepEqual(
@@ -49,12 +58,26 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "remnic",
       "remnic",
       "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
     ],
   );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,retrieval-temporal",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,retrieval-temporal,ingestion-entity-recall,ingestion-backlink-f1,ingestion-setup-friction,assistant-morning-brief,assistant-meeting-prep,assistant-next-best-action,assistant-synthesis",
   );
+  // Schema completeness and citation accuracy remain gated off until their adapter contracts are wired.
+  // Setup friction was wired up in PR #498 and is now runner-available.
+  assert.equal(getBenchmark("ingestion-schema-completeness")?.runnerAvailable, false);
+  assert.equal(getBenchmark("ingestion-setup-friction")?.runnerAvailable, true);
+  assert.equal(getBenchmark("ingestion-citation-accuracy")?.runnerAvailable, false);
 });
 
 test("getBenchmark returns ama-bench metadata with a runnable benchmark entry", () => {
@@ -221,6 +244,50 @@ test("getBenchmark returns retrieval-temporal metadata with a runnable benchmark
   assert.equal(benchmark?.runnerAvailable, true);
   assert.equal(benchmark?.tier, "remnic");
   assert.equal(benchmark?.meta.category, "retrieval");
+});
+
+test("getBenchmark returns ingestion-entity-recall metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("ingestion-entity-recall");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ingestion-entity-recall");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "ingestion");
+});
+
+test("getBenchmark returns ingestion-backlink-f1 metadata with a runnable benchmark entry", () => {
+  const benchmark = getBenchmark("ingestion-backlink-f1");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ingestion-backlink-f1");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, true);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "ingestion");
+});
+
+test("getBenchmark returns ingestion-schema-completeness metadata (not yet runnable)", () => {
+  const benchmark = getBenchmark("ingestion-schema-completeness");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ingestion-schema-completeness");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, false);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "ingestion");
+});
+
+test("getBenchmark returns ingestion-citation-accuracy metadata (not yet runnable)", () => {
+  const benchmark = getBenchmark("ingestion-citation-accuracy");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ingestion-citation-accuracy");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, false);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "ingestion");
 });
 
 test("BenchmarkResult schema captures the phase-1 package contract", () => {

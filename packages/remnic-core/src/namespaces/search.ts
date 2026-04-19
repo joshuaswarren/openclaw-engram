@@ -98,15 +98,24 @@ export class NamespaceSearchRouter {
     return mergeNamespaceSearchResults(resultsByNamespace, maxResults);
   }
 
-  async updateNamespaces(namespaces: string[]): Promise<void> {
+  /**
+   * Update all namespace backends.
+   * Returns the number of backends for which an update was attempted
+   * (i.e., available and collection present).  Callers can treat 0 as a
+   * signal that no backend was eligible — useful for success-verification in
+   * startup-sync when namespacesEnabled is true.
+   */
+  async updateNamespaces(namespaces: string[]): Promise<number> {
     const unique = Array.from(new Set(namespaces.map((value) => value.trim()).filter(Boolean)));
-    await Promise.all(
+    const results = await Promise.all(
       unique.map(async (namespace) => {
         const record = await this.backendRecordFor(namespace);
-        if (!record.available || record.collectionState === "missing") return;
+        if (!record.available || record.collectionState === "missing") return 0;
         await record.backend.update();
+        return 1;
       }),
     );
+    return results.reduce<number>((sum, v) => sum + v, 0);
   }
 
   async embedNamespaces(namespaces: string[]): Promise<void> {
@@ -123,6 +132,11 @@ export class NamespaceSearchRouter {
   async ensureNamespaceCollection(namespace: string): Promise<"present" | "missing" | "unknown" | "skipped"> {
     const record = await this.backendRecordFor(namespace);
     return record.collectionState;
+  }
+
+  /** Clear cached backend records so the next access re-probes availability. */
+  clearCache(): void {
+    this.cache.clear();
   }
 
   private async backendRecordFor(namespace: string): Promise<NamespaceBackendRecord> {

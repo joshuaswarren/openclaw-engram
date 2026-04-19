@@ -67,6 +67,42 @@ import {
   retrievalTemporalDefinition,
   runRetrievalTemporalBenchmark,
 } from "./benchmarks/remnic/retrieval-temporal/runner.js";
+import {
+  ingestionEntityRecallDefinition,
+  runIngestionEntityRecallBenchmark,
+} from "./benchmarks/remnic/ingestion-entity-recall/runner.js";
+import {
+  ingestionSchemaCompletenessDefinition,
+  runIngestionSchemaCompletenessBenchmark,
+} from "./benchmarks/remnic/ingestion-schema-completeness/runner.js";
+import {
+  ingestionBacklinkF1Definition,
+  runIngestionBacklinkF1Benchmark,
+} from "./benchmarks/remnic/ingestion-backlink-f1/runner.js";
+import {
+  ingestionSetupFrictionDefinition,
+  runIngestionSetupFrictionBenchmark,
+} from "./benchmarks/remnic/ingestion-setup-friction/runner.js";
+import {
+  ingestionCitationAccuracyDefinition,
+  runIngestionCitationAccuracyBenchmark,
+} from "./benchmarks/remnic/ingestion-citation-accuracy/runner.js";
+import {
+  assistantMorningBriefDefinition,
+  runAssistantMorningBriefBenchmark,
+} from "./benchmarks/remnic/assistant-morning-brief/runner.js";
+import {
+  assistantMeetingPrepDefinition,
+  runAssistantMeetingPrepBenchmark,
+} from "./benchmarks/remnic/assistant-meeting-prep/runner.js";
+import {
+  assistantNextBestActionDefinition,
+  runAssistantNextBestActionBenchmark,
+} from "./benchmarks/remnic/assistant-next-best-action/runner.js";
+import {
+  assistantSynthesisDefinition,
+  runAssistantSynthesisBenchmark,
+} from "./benchmarks/remnic/assistant-synthesis/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -136,6 +172,44 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...retrievalTemporalDefinition,
     run: runRetrievalTemporalBenchmark,
+  },
+  {
+    ...ingestionEntityRecallDefinition,
+    run: runIngestionEntityRecallBenchmark,
+  },
+  {
+    ...ingestionSchemaCompletenessDefinition,
+    runnerAvailable: false,
+    run: runIngestionSchemaCompletenessBenchmark,
+  },
+  {
+    ...ingestionBacklinkF1Definition,
+    run: runIngestionBacklinkF1Benchmark,
+  },
+  {
+    ...ingestionSetupFrictionDefinition,
+    run: runIngestionSetupFrictionBenchmark as (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>,
+  },
+  {
+    ...ingestionCitationAccuracyDefinition,
+    runnerAvailable: false,
+    run: runIngestionCitationAccuracyBenchmark,
+  },
+  {
+    ...assistantMorningBriefDefinition,
+    run: runAssistantMorningBriefBenchmark,
+  },
+  {
+    ...assistantMeetingPrepDefinition,
+    run: runAssistantMeetingPrepBenchmark,
+  },
+  {
+    ...assistantNextBestActionDefinition,
+    run: runAssistantNextBestActionBenchmark,
+  },
+  {
+    ...assistantSynthesisDefinition,
+    run: runAssistantSynthesisBenchmark,
   },
 ];
 

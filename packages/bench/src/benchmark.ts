@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { EngramAccessService } from "@remnic/core";
 import { getRegisteredBenchmark, listBenchmarks, getBenchmark } from "./registry.js";
+import { buildBenchmarkRunSeeds } from "./run-seeds.js";
 import type {
   BenchConfig,
   BenchTier,
@@ -79,21 +80,7 @@ export function resolveBenchmarkRunCount(
   return requestedIterations;
 }
 
-export function buildBenchmarkRunSeeds(
-  runCount: number,
-  baseSeed?: number,
-): number[] {
-  if (!Number.isInteger(runCount) || runCount <= 0) {
-    throw new Error("benchmark run count must be a positive integer");
-  }
-
-  const firstSeed = baseSeed ?? 0;
-  if (!Number.isInteger(firstSeed) || firstSeed < 0) {
-    throw new Error("benchmark seed must be a non-negative integer");
-  }
-
-  return Array.from({ length: runCount }, (_, index) => firstSeed + index);
-}
+export { buildBenchmarkRunSeeds } from "./run-seeds.js";
 
 export async function orchestrateBenchmarkRuns<T>(
   mode: BenchmarkMode,
@@ -135,10 +122,19 @@ export async function runBenchmark(
     );
   }
 
+  const definition = benchmarkDefinition(registeredBenchmark.id);
+  if (definition.meta.category === "ingestion" && !options.ingestionAdapter) {
+    throw new Error(
+      `Benchmark "${benchmarkId}" requires an ingestion adapter. ` +
+      `Pass ingestionAdapter via RunBenchmarkOptions or use the programmatic API. ` +
+      `The CLI does not yet support ingestion benchmarks.`,
+    );
+  }
+
   return registeredBenchmark.run({
     ...options,
     mode: options.mode ?? "quick",
-    benchmark: benchmarkDefinition(registeredBenchmark.id),
+    benchmark: definition,
   });
 }
 

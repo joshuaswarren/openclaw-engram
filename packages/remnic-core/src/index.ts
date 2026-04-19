@@ -542,6 +542,37 @@ export {
   type WebSearchProviderOptions,
 } from "./enrichment/index.js";
 
+// Bulk-import pipeline (#460)
+// ---------------------------------------------------------------------------
+
+export {
+  type BulkImportSource,
+  type ImportTurn,
+  type BulkImportOptions,
+  type ImportSourceRole,
+  type BulkImportResult,
+  type BulkImportError,
+  type BulkImportSourceAdapter,
+  type ImportTurnValidationIssue,
+  isImportRole,
+  parseIsoTimestamp,
+  validateImportTurn,
+  registerBulkImportSource,
+  getBulkImportSource,
+  listBulkImportSources,
+  clearBulkImportSources,
+  runBulkImportPipeline,
+  formatBatchTranscript,
+  type ProcessBatchFn,
+  type ProcessBatchResult,
+} from "./bulk-import/index.js";
+
+// ---------------------------------------------------------------------------
+// Training-data export (issue #459)
+// ---------------------------------------------------------------------------
+
+export * from "./training-export/index.js";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------

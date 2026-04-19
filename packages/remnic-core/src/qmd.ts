@@ -793,9 +793,26 @@ function getSharedDaemonSession(qmdPath: string): QmdDaemonSession {
 
 export class QmdClient implements SearchBackend {
   private available: boolean | null = null;
-  private lastUpdateFailAtMs: number | null = null;
+  private _lastUpdateFailAtMs: number | null = null;
   private lastEmbedFailAtMs: number | null = null;
   private lastUpdateRunAtMs: number | null = null;
+
+  get lastUpdateFailedAtMs(): number | null {
+    return this._lastUpdateFailAtMs;
+  }
+
+  get lastUpdateRanAtMs(): number | null {
+    return this.lastUpdateRunAtMs;
+  }
+
+  resetUpdateThrottles(): void {
+    this._lastUpdateFailAtMs = null;
+    this.lastUpdateRunAtMs = null;
+    const gs = getGlobalQmdState();
+    gs.lastGlobalUpdateRunAtMs = null;
+    gs.lastGlobalUpdateFailAtMs = null;
+  }
+
   private readonly updateTimeoutMs: number;
   private readonly updateMinIntervalMs: number;
   private readonly slowLog?: { enabled: boolean; thresholdMs: number };
@@ -1613,8 +1630,8 @@ export class QmdClient implements SearchBackend {
     }
   }
 
-  async update(): Promise<void> {
-    await this.runUpdateForCollection(this.collection, { perCollectionThrottle: false });
+  async update(signal?: AbortSignal): Promise<void> {
+    await this.runUpdateForCollection(this.collection, { perCollectionThrottle: false }, signal);
   }
 
   async updateCollection(collection: string): Promise<void> {
@@ -1624,6 +1641,7 @@ export class QmdClient implements SearchBackend {
   private async runUpdateForCollection(
     collection: string,
     options: { perCollectionThrottle: boolean },
+    signal?: AbortSignal,
   ): Promise<void> {
     if (this.available === false) return;
     const name = collection.trim();
@@ -1663,8 +1681,8 @@ export class QmdClient implements SearchBackend {
         return;
       }
       if (
-        this.lastUpdateFailAtMs &&
-        now - this.lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+        this._lastUpdateFailAtMs &&
+        now - this._lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
       ) {
         log.debug("QMD update: suppressed due to recent failures (backoff)");
         return;
@@ -1692,7 +1710,7 @@ export class QmdClient implements SearchBackend {
         );
       }
       const startedAtMs = Date.now();
-      await this.runQmdCommand(["update", "-c", name], this.updateTimeoutMs);
+      await this.runQmdCommand(["update", "-c", name], this.updateTimeoutMs, signal);
       const durationMs = Date.now() - startedAtMs;
       if (this.slowLog?.enabled && durationMs >= this.slowLog.thresholdMs) {
         log.warn(`SLOW QMD update: durationMs=${durationMs}`);
@@ -1712,7 +1730,7 @@ export class QmdClient implements SearchBackend {
         globalState.lastUpdateFailByCollectionMs[name] = at;
         globalState.lastGlobalUpdateFailAtMs = at;
       } else {
-        this.lastUpdateFailAtMs = at;
+        this._lastUpdateFailAtMs = at;
         globalState.lastGlobalUpdateFailAtMs = at;
       }
       const msg = err instanceof Error ? err.message : String(err);

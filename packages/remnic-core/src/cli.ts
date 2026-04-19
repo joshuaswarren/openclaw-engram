@@ -1,3 +1,4 @@
+import os from "node:os";
 import path from "node:path";
 import { access, readFile, readdir, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -27,6 +28,15 @@ import { chatgptReplayNormalizer } from "./replay/normalizers/chatgpt.js";
 import { claudeReplayNormalizer } from "./replay/normalizers/claude.js";
 import { openclawReplayNormalizer } from "./replay/normalizers/openclaw.js";
 import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type ReplayTurn } from "./replay/types.js";
+import {
+  getBulkImportSource,
+  listBulkImportSources,
+  registerBulkImportSource,
+  runBulkImportPipeline,
+  type BulkImportResult,
+  type BulkImportSourceAdapter,
+  type ProcessBatchFn,
+} from "./bulk-import/index.js";
 import { archiveObservations } from "./maintenance/archive-observations.js";
 import { rebuildMemoryLifecycleLedger } from "./maintenance/rebuild-memory-lifecycle-ledger.js";
 import {
@@ -185,6 +195,9 @@ import {
   type RuntimePolicyValues,
 } from "./policy-runtime.js";
 import { resolveHomeDir } from "./runtime/env.js";
+import { convertMemoriesToRecords } from "./training-export/converter.js";
+import { parseStrictCliDate as parseStrictCliDateShared } from "./training-export/date-parse.js";
+import { getTrainingExportAdapter, listTrainingExportAdapters } from "./training-export/registry.js";
 
 interface CliApi {
   registerCli(
@@ -693,6 +706,20 @@ export interface AccessHttpServeCliCommandOptions {
   }) => AccessHttpServerLike;
 }
 
+export interface TrainingExportCliCommandOptions {
+  memoryDir: string;
+  format: string;
+  output: string;
+  since?: string;
+  until?: string;
+  minConfidence?: number;
+  categories?: string[];
+  includeEntities?: boolean;
+  dryRun?: boolean;
+  stdout: Writable;
+  stderr: Writable;
+}
+
 export function resolveAccessPrincipalOverride(
   explicitPrincipal: unknown,
   configuredPrincipal?: string,
@@ -802,6 +829,118 @@ function isWorkTaskPriority(value: string | undefined): value is "low" | "medium
 
 function isWorkProjectStatus(value: string | undefined): value is "active" | "on_hold" | "completed" | "archived" {
   return value === "active" || value === "on_hold" || value === "completed" || value === "archived";
+}
+
+/**
+ * Expand a leading `~` or `~/` in a user-supplied path to the real home
+ * directory. Node.js `fs` does NOT expand `~` (per CLAUDE.md #17), and this
+ * applies to every user-facing path input, not just `memoryDir`.
+ * Uses `resolveHomeDir()` so that the `HOME` env-var override path is respected
+ * consistently with the rest of the codebase.
+ */
+function expandTildePath(p: string): string {
+  if (p === "~") return resolveHomeDir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) {
+    return path.join(resolveHomeDir(), p.slice(2));
+  }
+  return p;
+}
+
+export async function runTrainingExportCliCommand(
+  opts: TrainingExportCliCommandOptions,
+): Promise<void> {
+  // Expand ~ in user-facing paths (CLAUDE.md #17: applies to memoryDir AND
+  // output — Node.js fs does not expand ~ on any path).
+  const expandedMemoryDir = expandTildePath(opts.memoryDir);
+  const expandedOutput = expandTildePath(opts.output);
+
+  // 1. Validate format is registered (reject invalid per CLAUDE.md #51)
+  const adapter = getTrainingExportAdapter(opts.format);
+  if (!adapter) {
+    const registered = listTrainingExportAdapters();
+    const validList = registered.length > 0
+      ? `Valid formats: [${registered.join(", ")}]`
+      : "No adapters are currently registered.";
+    throw new Error(
+      `Unknown training-export format "${opts.format}". ${validList}`,
+    );
+  }
+
+  // 2. Validate memoryDir exists and is a directory (CLAUDE.md #24: existsSync
+  // returns true for files; must use statSync().isDirectory() when a directory
+  // is required, otherwise we silently generate an empty export).
+  const { statSync, existsSync } = await import("node:fs");
+  if (!existsSync(expandedMemoryDir)) {
+    throw new Error(
+      `--memory-dir "${opts.memoryDir}" does not exist. Provide the path to an existing memory directory.`,
+    );
+  }
+  try {
+    if (!statSync(expandedMemoryDir).isDirectory()) {
+      throw new Error(
+        `--memory-dir "${opts.memoryDir}" is not a directory. Provide the path to a memory directory, not a file.`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("--memory-dir ")) throw err;
+    throw new Error(
+      `Unable to stat --memory-dir "${opts.memoryDir}": ${(err as Error).message}`,
+    );
+  }
+
+  // 3. Parse date filters (strict: reject overflowed dates like Feb 31)
+  let since: Date | undefined;
+  if (opts.since !== undefined) {
+    since = parseStrictCliDate(opts.since, "--since");
+  }
+
+  let until: Date | undefined;
+  if (opts.until !== undefined) {
+    until = parseStrictCliDate(opts.until, "--until");
+  }
+
+  // 4. Convert memories to records
+  const records = await convertMemoriesToRecords({
+    memoryDir: expandedMemoryDir,
+    since,
+    until,
+    minConfidence: opts.minConfidence,
+    categories: opts.categories,
+    includeEntities: opts.includeEntities,
+  });
+
+  // 5. Dry run — print statistics and return
+  if (opts.dryRun) {
+    opts.stdout.write(`Training export dry run\n`);
+    opts.stdout.write(`Format: ${adapter.name}\n`);
+    opts.stdout.write(`Records: ${records.length}\n`);
+    const cats = new Map<string, number>();
+    for (const r of records) {
+      const c = r.category ?? "unknown";
+      cats.set(c, (cats.get(c) ?? 0) + 1);
+    }
+    for (const [cat, count] of [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      opts.stdout.write(`  ${cat}: ${count}\n`);
+    }
+    return;
+  }
+
+  // 6. Format records using adapter
+  const formatted = adapter.formatRecords(records);
+
+  // 7. Write to output file
+  const { writeFile: fsWriteFile } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  const { mkdirSync } = await import("node:fs");
+  try {
+    mkdirSync(dirname(expandedOutput), { recursive: true });
+  } catch {
+    // parent already exists
+  }
+  await fsWriteFile(expandedOutput, formatted, "utf-8");
+  opts.stdout.write(
+    `Exported ${records.length} records to ${expandedOutput} (${adapter.name} format)\n`,
+  );
 }
 
 export async function runArchiveObservationsCliCommand(
@@ -1999,6 +2138,18 @@ async function readRuntimePolicySnapshot(
   };
 }
 
+/**
+ * Parse a date string strictly. Thin re-export of the canonical
+ * implementation in `training-export/date-parse.ts` so that the
+ * `@remnic/cli` front-end and the core CLI use identical semantics
+ * (CLAUDE.md #22: shared helpers must not be re-implemented per caller).
+ *
+ * Existing imports of `parseStrictCliDate` from `./cli.js` continue to
+ * work — this re-export preserves backward compatibility for the
+ * `cli-date-validation.test.ts` suite.
+ */
+export const parseStrictCliDate = parseStrictCliDateShared;
+
 function parseSinceDurationMs(since: string): number {
   const trimmed = since.trim().toLowerCase();
   const match = trimmed.match(/^(\d+)\s*([mhd])$/);
@@ -2750,6 +2901,161 @@ export async function runReplayCliCommand(
   return summary;
 }
 
+// ---------------------------------------------------------------------------
+// Bulk-import CLI command
+// ---------------------------------------------------------------------------
+
+export interface BulkImportCliCommandOptions {
+  memoryDir: string;
+  source: string;
+  file: string;
+  namespace?: string;
+  batchSize?: number;
+  dryRun?: boolean;
+  verbose?: boolean;
+  strict?: boolean;
+  /**
+   * Optional adapter-specific platform hint forwarded to `adapter.parse`.
+   * Some bulk-import adapters (e.g. weclone) accept a platform discriminator
+   * so a single adapter can parse Telegram JSON, WeChat JSON, etc. without
+   * shipping a separate source for each. When undefined, adapters pick a
+   * default based on file shape.
+   */
+  platform?: string;
+  stdout: Writable;
+  stderr: Writable;
+}
+
+/**
+ * Attempt to lazily register built-in bulk-import adapters.  Adapters
+ * live in optional workspace packages (e.g. `@remnic/import-weclone`)
+ * so that core stays framework-agnostic; we try the dynamic import and
+ * silently continue if the package is absent or the adapter is already
+ * registered.  Errors from the dynamic import are swallowed so a missing
+ * optional package does not break other bulk-import sources.
+ */
+async function ensureBuiltInBulkImportAdapters(): Promise<void> {
+  // weclone — imported via a computed specifier so the TypeScript dts
+  // resolver doesn't require `@remnic/import-weclone` to be present at
+  // core-build time.  The package declares it as an optional workspace
+  // dependency; if it's missing from a given deployment we silently
+  // skip registration.
+  if (!getBulkImportSource("weclone")) {
+    const wecloneSpecifier = "@remnic/" + "import-weclone";
+    try {
+      const mod = (await import(wecloneSpecifier)) as {
+        wecloneImportAdapter?: BulkImportSourceAdapter;
+      };
+      if (mod.wecloneImportAdapter) {
+        try {
+          registerBulkImportSource(mod.wecloneImportAdapter);
+        } catch {
+          // Already registered by another caller — fine.
+        }
+      }
+    } catch {
+      // Package not installed in this deployment; skip.
+    }
+  }
+}
+
+export async function runBulkImportCliCommand(
+  opts: BulkImportCliCommandOptions,
+): Promise<BulkImportResult> {
+  await ensureBuiltInBulkImportAdapters();
+
+  const adapter = getBulkImportSource(opts.source);
+  if (!adapter) {
+    const registered = listBulkImportSources();
+    const list =
+      registered.length > 0
+        ? registered.map((n) => `'${n}'`).join(", ")
+        : "(none registered)";
+    throw new Error(
+      `Unknown bulk-import source '${opts.source}'. ` +
+        `Valid sources: ${list}`,
+    );
+  }
+
+  // Guard: persistence isn't wired yet, so non-dryRun invocations must
+  // fail loudly BEFORE reading/parsing the file.  Running the full parse
+  // would incur file I/O and memory pressure (imports can be 100k+
+  // messages) only to inevitably throw.  The adapter check above still
+  // fires first so `--source <unknown>` surfaces the more-actionable
+  // "Unknown bulk-import source" error.  The orchestrator integration
+  // will replace this guard with a real processBatch callback.
+  if (opts.dryRun !== true) {
+    throw new Error(
+      "Bulk import persistence is not yet wired. " +
+        "Use --dry-run to validate without persisting.",
+    );
+  }
+
+  const inputRaw = await readFile(opts.file, "utf-8");
+  let inputParsed: unknown;
+  try {
+    inputParsed = JSON.parse(inputRaw);
+  } catch (err) {
+    throw new Error(
+      `Failed to parse import file as JSON: ${(err as Error).message}`,
+    );
+  }
+  if (typeof inputParsed !== "object" || inputParsed === null) {
+    throw new Error(
+      "Import file must contain a JSON object or array, got " +
+        (inputParsed === null ? "null" : typeof inputParsed),
+    );
+  }
+  const parsed = await adapter.parse(inputParsed, {
+    strict: opts.strict === true,
+    platform: opts.platform,
+  });
+
+  const processBatch: ProcessBatchFn = async () => {
+    // The pipeline never calls processBatch in dryRun mode, so reaching
+    // here would indicate a bug in the pipeline.  Throwing here provides
+    // a defensive failure mode; the guard above is the primary protection.
+    throw new Error(
+      "Bulk import persistence is not yet wired. " +
+        "Use --dry-run to validate without persisting.",
+    );
+  };
+
+  const result = await runBulkImportPipeline(
+    parsed,
+    {
+      batchSize: opts.batchSize,
+      dryRun: opts.dryRun,
+      dedup: true,
+      trustLevel: "import",
+      namespace: opts.namespace,
+    },
+    processBatch,
+  );
+
+  const out = opts.stdout;
+  out.write(`Bulk import complete (source: ${opts.source})\n`);
+  out.write(`  Turns processed:     ${result.turnsProcessed}\n`);
+  out.write(`  Batches processed:   ${result.batchesProcessed}\n`);
+  out.write(`  Memories created:    ${result.memoriesCreated}\n`);
+  out.write(`  Duplicates skipped:  ${result.duplicatesSkipped}\n`);
+  if (result.errors.length > 0) {
+    out.write(`  Errors:              ${result.errors.length}\n`);
+    if (opts.verbose) {
+      for (const err of result.errors) {
+        opts.stderr.write(
+          `    [batch ${err.batchIndex}] ${err.message}\n`,
+        );
+      }
+    }
+  }
+  if (opts.dryRun) {
+    out.write("  (dry run — no memories were stored)\n");
+  }
+
+  return result;
+}
+
 async function getPluginVersion(): Promise<string> {
   try {
     const pkgPath = new URL("../package.json", import.meta.url);
@@ -3495,6 +3801,64 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             }
           }
           console.log("OK");
+        });
+
+      cmd
+        .command("bulk-import")
+        .description(
+          "Bulk-import chat history via a registered source adapter " +
+            "(e.g. --source weclone). Use --dry-run while the persistence " +
+            "path is still being wired.",
+        )
+        .option("--source <source>", "Bulk-import source adapter name (e.g. weclone)")
+        .option("--file <path>", "Path to the import file (JSON)")
+        .option("--platform <platform>", "Optional platform override forwarded to the adapter")
+        .option("--namespace <ns>", "Target namespace", "")
+        .option("--batch-size <n>", "Turns per batch", "50")
+        .option("--dry-run", "Parse and validate only; do not persist")
+        .option("--strict", "Fail on any invalid source row")
+        .option("--verbose", "Print per-batch error details")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const sourceRaw = typeof options.source === "string" ? options.source.trim() : "";
+          const filePathRaw = typeof options.file === "string" ? options.file.trim() : "";
+          if (sourceRaw.length === 0) {
+            console.log("Missing --source. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json --dry-run");
+            return;
+          }
+          if (filePathRaw.length === 0) {
+            console.log("Missing --file. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json --dry-run");
+            return;
+          }
+          const batchSizeRaw = parseInt(String(options.batchSize ?? "50"), 10);
+          const batchSize = Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? batchSizeRaw : 50;
+          const namespaceRaw = typeof options.namespace === "string" ? options.namespace.trim() : "";
+          const platformRaw = typeof options.platform === "string" ? options.platform.trim() : "";
+          try {
+            const result = await runBulkImportCliCommand({
+              memoryDir: orchestrator.config.memoryDir,
+              source: sourceRaw,
+              file: filePathRaw,
+              platform: platformRaw.length > 0 ? platformRaw : undefined,
+              namespace: namespaceRaw.length > 0 ? namespaceRaw : undefined,
+              batchSize,
+              dryRun: options.dryRun === true,
+              verbose: options.verbose === true,
+              strict: options.strict === true,
+              stdout: process.stdout,
+              stderr: process.stderr,
+            });
+            if (result.errors.length > 0) {
+              console.error(`Bulk import completed with ${result.errors.length} batch error(s).`);
+              process.exitCode = 1;
+            } else {
+              console.log("OK");
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`Bulk import failed: ${message}`);
+            process.exitCode = 1;
+          }
         });
 
       cmd

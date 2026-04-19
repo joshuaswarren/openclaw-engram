@@ -1,3 +1,5 @@
+import { parseIsoUtcTimestamp } from "../utils/iso-timestamp.js";
+
 export type ReplaySource = "openclaw" | "claude" | "chatgpt";
 export type ReplayRole = "user" | "assistant";
 
@@ -42,12 +44,7 @@ export interface ReplayNormalizer {
 
 const VALID_SOURCES: ReadonlySet<string> = new Set(["openclaw", "claude", "chatgpt"]);
 const VALID_ROLES: ReadonlySet<string> = new Set(["user", "assistant"]);
-const ISO_UTC_TIMESTAMP_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 export const REPLAY_UNKNOWN_SESSION_KEY = "replay:unknown";
-
-function normalizeIsoForComparison(value: string): string {
-  return value.includes(".") ? value : value.replace("Z", ".000Z");
-}
 
 export function isReplaySource(value: unknown): value is ReplaySource {
   return typeof value === "string" && VALID_SOURCES.has(value);
@@ -63,13 +60,16 @@ export function normalizeReplaySessionKey(value: unknown): string {
   return trimmed.length > 0 ? trimmed : REPLAY_UNKNOWN_SESSION_KEY;
 }
 
+/**
+ * Strict UTC-only ISO-8601 parser used by the replay pipeline.
+ *
+ * Delegates to the shared parser in `utils/iso-timestamp.ts` — do not
+ * reimplement locally; extend that helper instead. Replay intentionally
+ * rejects timezone-offset timestamps to keep canonical form consistent
+ * across recorded transcripts.
+ */
 export function parseIsoTimestamp(value: string): number | null {
-  if (typeof value !== "string" || !ISO_UTC_TIMESTAMP_RE.test(value)) return null;
-  const ts = Date.parse(value);
-  if (!Number.isFinite(ts)) return null;
-  const roundTrip = new Date(ts).toISOString();
-  if (roundTrip !== normalizeIsoForComparison(value)) return null;
-  return ts;
+  return parseIsoUtcTimestamp(value);
 }
 
 export function validateReplayTurn(turn: ReplayTurn, index?: number): ReplayValidationIssue[] {

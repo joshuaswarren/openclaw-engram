@@ -1189,6 +1189,26 @@ export class Orchestrator {
    */
   deferredReady: Promise<void> = Promise.resolve();
   private resolveDeferredReady: (() => void) | null = null;
+  private deferredInitAbort: AbortController | null = null;
+
+  /**
+   * Whether the deferred init's QMD startup sync completed successfully.
+   * When false after deferredReady resolves, the server retry loop should
+   * attempt startupSearchSync() even if `qmd.isAvailable()` is true —
+   * availability only means probe succeeded, not that the index is current.
+   */
+  deferredSyncSucceeded = false;
+
+  /**
+   * Abort deferred initialization so background QMD sync/warmup stops
+   * promptly on shutdown. Safe to call multiple times or before init.
+   */
+  abortDeferredInit(): void {
+    if (this.deferredInitAbort) {
+      this.deferredInitAbort.abort();
+      this.deferredInitAbort = null;
+    }
+  }
 
   /** Set per-session workspace for the next recall() call (compaction reset). @internal */
   setRecallWorkspaceOverride(sessionKey: string, dir: string): void {
@@ -1885,7 +1905,8 @@ export class Orchestrator {
       // promise prematurely while leaving the first cycle's promise pending.
       const resolveDeferred = this.resolveDeferredReady;
       this.resolveDeferredReady = null;
-      this.deferredInitialize()
+      this.deferredInitAbort = new AbortController();
+      this.deferredInitialize(this.deferredInitAbort.signal)
         .catch((err) => {
           log.error(`deferred initialization failed (non-fatal): ${err}`);
         })
@@ -1914,9 +1935,7 @@ export class Orchestrator {
     }
   }
 
-  private async deferredInitialize(): Promise<void> {
-    // QMD probe + collection check (including NoopSearchBackend swap) already
-    // ran in initialize() before the init gate opened, so this.qmd is final.
+  private async deferredInitialize(signal: AbortSignal): Promise<void> {
 
     // Sync QMD index with current disk state so recall finds recently-written
     // facts. Without this, the index stays stale from the last extraction-
@@ -1934,10 +1953,19 @@ export class Orchestrator {
           await this.qmd.update();
         }
         log.info("QMD startup sync: complete");
+        this.deferredSyncSucceeded = true;
       } catch (err) {
         log.warn(`QMD startup sync failed (non-fatal): ${err}`);
+        // deferredSyncSucceeded stays false — server retry will attempt sync
       }
+    } else if (!(this.qmd.isAvailable())) {
+      // QMD not available at deferred init time — server retry will handle it
+    } else {
+      // QMD available but maintenance disabled — consider sync not needed
+      this.deferredSyncSucceeded = true;
     }
+
+    if (signal.aborted) return;
 
     // Warmup: run cheap searches to pre-load QMD embedding models and the
     // embedding-fallback JSON index so the first real recall is fast.
@@ -1971,6 +1999,7 @@ export class Orchestrator {
       );
     }
     await Promise.all(warmupPromises);
+    if (signal.aborted) return;
 
     // Pre-warm knowledge index, memory, and entity caches.
     // Awaited so callers of `deferredReady` can rely on warmups being complete
@@ -1992,6 +2021,7 @@ export class Orchestrator {
     cacheWarmups.push(this.storage.readAllMemories().then(() => {}).catch(() => {}));
     cacheWarmups.push(this.storage.readAllEntityFiles().then(() => {}).catch(() => {}));
     await Promise.all(cacheWarmups);
+    if (signal.aborted) return;
 
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
       try {
@@ -2012,6 +2042,8 @@ export class Orchestrator {
       }
     }
 
+    if (signal.aborted) return;
+
     if (this.config.localLlmEnabled) {
       try {
         await this.validateLocalLlmModel();
@@ -2019,6 +2051,8 @@ export class Orchestrator {
         log.error(`Local LLM validation failed (non-fatal): ${err}`);
       }
     }
+
+    if (signal.aborted) return;
 
     // Await cron auto-registration so callers that `await deferredReady` can
     // rely on cron jobs being registered when it resolves. Without this, the
@@ -2040,6 +2074,138 @@ export class Orchestrator {
     }
 
     log.info("orchestrator initialized (full — deferred steps complete)");
+  }
+
+  /**
+   * Namespace-aware startup search sync. Re-probes QMD, ensures collections
+   * (namespace-aware when namespacesEnabled), runs update, and warms up search.
+   * Designed for server retry paths that run after the deferred init completes
+   * when QMD was not available during initial startup.
+   *
+   * Accepts an optional AbortSignal so callers can interrupt the sync during
+   * shutdown. The signal is checked between phases and forwarded into the QMD
+   * update and warmup search calls so a long-running `qmd update` subprocess
+   * is killed promptly rather than left in flight after `httpServer.stop()`.
+   *
+   * Returns true if the sync succeeded (QMD now available), false otherwise.
+   */
+  async startupSearchSync(signal?: AbortSignal): Promise<boolean> {
+    if (signal?.aborted) return false;
+
+    const available = await this.qmd.probe();
+    if (!available) return false;
+    if (signal?.aborted) {
+      log.debug("startupSearchSync: aborted after probe");
+      return false;
+    }
+
+    log.info(`startupSearchSync: backend now available ${this.qmd.debugStatus()}`);
+
+    // Clear namespace router cache so re-probe picks up newly available backends
+    if (this.config.namespacesEnabled) {
+      this.namespaceSearchRouter.clearCache();
+    }
+
+    // Ensure collections — namespace-aware when enabled
+    const namespaces = this.config.namespacesEnabled
+      ? this.configuredNamespaces()
+      : [this.config.defaultNamespace];
+
+    const states = await Promise.all(
+      namespaces.map(async (namespace) => ({
+        namespace,
+        state: this.config.namespacesEnabled
+          ? await this.namespaceSearchRouter.ensureNamespaceCollection(namespace)
+          : await this.qmd.ensureCollection(this.config.memoryDir),
+      })),
+    );
+
+    if (signal?.aborted) {
+      log.debug("startupSearchSync: aborted after ensureCollection");
+      return false;
+    }
+
+    const defaultState =
+      states.find((e) => e.namespace === this.config.defaultNamespace)?.state ?? "unknown";
+    if (defaultState === "missing") {
+      // Reset the real backend's available flag before replacing it with noop.
+      // probe() set available=true earlier in this call; without this reset,
+      // any code that captured a reference to the old backend (e.g. a concurrent
+      // recall() that read this.qmd before the reassignment) would observe
+      // isAvailable()===true against a backend with a missing collection.
+      if ("available" in this.qmd) {
+        (this.qmd as any).available = false;
+      }
+      this.qmd = new NoopSearchBackend();
+      log.warn("startupSearchSync: search collection missing; disabling search (fallback retrieval remains enabled)");
+      return false;
+    }
+
+    // Run index update — namespace-aware when enabled.
+    // qmd.update() swallows errors internally, so we: (1) snapshot fail/run
+    // timestamps, (2) reset throttles so the update isn't skipped by stale
+    // backoff, and (3) verify timestamps after update to confirm it executed
+    // and didn't fail silently.
+    // The abort signal is forwarded into the QMD subprocess call so the
+    // long-running `qmd update` process is killed promptly on shutdown.
+    if (this.config.qmdMaintenanceEnabled) {
+      try {
+        const failTsBefore = "lastUpdateFailedAtMs" in this.qmd
+          ? (this.qmd as any).lastUpdateFailedAtMs as number | null
+          : null;
+        const hasRunTs = "lastUpdateRanAtMs" in this.qmd;
+        if ("resetUpdateThrottles" in this.qmd) {
+          (this.qmd as any).resetUpdateThrottles();
+        }
+        log.info("startupSearchSync: updating index to match current disk state");
+        let namespacesUpdated = 0;
+        if (this.config.namespacesEnabled) {
+          namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(namespaces);
+        } else {
+          await (this.qmd as any).update(signal);
+        }
+        if (signal?.aborted) {
+          log.debug("startupSearchSync: aborted after update");
+          return false;
+        }
+        const failTsAfter = "lastUpdateFailedAtMs" in this.qmd
+          ? (this.qmd as any).lastUpdateFailedAtMs as number | null
+          : null;
+        const runTsAfter = hasRunTs
+          ? (this.qmd as any).lastUpdateRanAtMs as number | null
+          : null;
+        if (failTsAfter !== null && failTsAfter !== failTsBefore) {
+          log.warn("startupSearchSync: update silently failed (detected via fail timestamp)");
+          return false;
+        }
+        if (this.config.namespacesEnabled) {
+          if (namespacesUpdated === 0) {
+            log.warn("startupSearchSync: no namespace backends were eligible for update (all unavailable or collections missing)");
+            return false;
+          }
+          log.info(`startupSearchSync: namespace updates succeeded (${namespacesUpdated}/${namespaces.length} namespaces updated)`);
+        } else if (hasRunTs && runTsAfter === null) {
+          log.warn("startupSearchSync: update was throttled/skipped (run timestamp is null after reset + update)");
+          return false;
+        }
+        log.info("startupSearchSync: sync complete");
+      } catch (err) {
+        log.warn(`startupSearchSync: update failed: ${err}`);
+        return false;
+      }
+    }
+
+    // Warmup search to pre-load embedding models
+    if (!signal?.aborted) {
+      try {
+        await this.qmd.search("warmup", this.config.defaultNamespace, 1, undefined, { signal });
+        log.info("startupSearchSync: warmup complete");
+      } catch (err) {
+        log.debug(`startupSearchSync: warmup search failed (non-fatal): ${err}`);
+      }
+    }
+
+    return true;
   }
 
   /**

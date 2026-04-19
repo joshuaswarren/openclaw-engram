@@ -15,14 +15,25 @@
   "include": [
     "src/index.ts",
     "src/types.ts",
+    "src/ingestion-types.ts",
     "src/schema.ts",
     "src/benchmark.ts",
     "src/registry.ts",
     "src/reporter.ts",
+    "src/run-seeds.ts",
     "src/scorer.ts",
+    "src/ingestion-scorer.ts",
     "src/adapters/**/*.ts",
+    "src/fixtures/**/*.ts",
+    "src/integrity/**/*.ts",
+    "src/judges/**/*.ts",
     "src/providers/**/*.ts",
+    "src/stats/**/*.ts",
     "src/benchmarks/published/**/*.ts",
-    "src/benchmarks/custom/**/*.ts"
+    "src/benchmarks/custom/**/*.ts",
+    "src/benchmarks/remnic/**/*.ts"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
   ]
 }

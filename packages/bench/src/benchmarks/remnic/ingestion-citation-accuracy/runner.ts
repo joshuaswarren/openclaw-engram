@@ -1,0 +1,254 @@
+/**
+ * Ingestion citation accuracy benchmark.
+ */
+
+import { randomUUID } from "node:crypto";
+import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import type {
+  BenchmarkDefinition,
+  BenchmarkResult,
+  ResolvedRunBenchmarkOptions,
+} from "../../../types.js";
+import type { ExtractedPage } from "../../../ingestion-types.js";
+import type { BenchJudge } from "../../../adapters/types.js";
+import { aggregateTaskScores, llmJudgeScore, timed } from "../../../scorer.js";
+import { getGitSha, getRemnicVersion } from "../../../reporter.js";
+import { emailFixture } from "../../../fixtures/inbox/email.js";
+
+export const ingestionCitationAccuracyDefinition: BenchmarkDefinition = {
+  id: "ingestion-citation-accuracy",
+  title: "Ingestion: Citation Accuracy",
+  tier: "remnic",
+  status: "ready",
+  runnerAvailable: true,
+  meta: {
+    name: "ingestion-citation-accuracy",
+    version: "1.0.0",
+    description: "Verifies that claims in generated summaries cite valid source chunks via LLM judge.",
+    category: "ingestion",
+  },
+};
+
+/**
+ * Extract a narrow context window around a sentence within the full text.
+ * Returns up to 2 sentences before and after the target sentence so the judge
+ * sees claim-specific evidence rather than the entire page body.
+ */
+function extractClaimContext(fullText: string, sentence: string): string {
+  const sentences = fullText
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  const idx = sentences.findIndex((s) => s.includes(sentence) || sentence.includes(s));
+  if (idx < 0) return sentence;
+
+  const start = Math.max(0, idx - 2);
+  const end = Math.min(sentences.length, idx + 3);
+  return sentences.slice(start, end).join(" ");
+}
+
+function extractClaims(
+  pages: ExtractedPage[],
+): Array<{ claim: string; claimContext: string; pageRef: string; seeAlso: string[] }> {
+  const claims: Array<{ claim: string; claimContext: string; pageRef: string; seeAlso: string[] }> = [];
+  for (const page of pages) {
+    if (!page.content) continue;
+    const sentences = page.content
+      .split(/[.!?]+/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 20);
+    for (const sentence of sentences) {
+      claims.push({
+        claim: sentence,
+        claimContext: extractClaimContext(page.content, sentence),
+        pageRef: page.path,
+        seeAlso: page.seeAlso,
+      });
+    }
+  }
+  return claims;
+}
+
+/**
+ * Build the cited source content for a claim by resolving its page's seeAlso
+ * references against the fixture file map. Falls back to a basename match if
+ * no seeAlso entry resolves directly, and falls back to all sources only if
+ * no narrower match is available. This prevents a misattributed citation from
+ * scoring as valid just because the claim is supported somewhere else in the
+ * merged corpus.
+ */
+function resolveCitedSources(
+  seeAlso: string[],
+  pageRef: string,
+  sourceContentMap: Map<string, string>,
+): string {
+  const resolved: string[] = [];
+
+  for (const ref of seeAlso) {
+    const refBase = path.basename(ref).toLowerCase();
+    for (const [relativePath, content] of sourceContentMap) {
+      if (
+        relativePath === ref ||
+        relativePath.endsWith(ref) ||
+        path.basename(relativePath).toLowerCase() === refBase
+      ) {
+        resolved.push(content);
+        break;
+      }
+    }
+  }
+
+  if (resolved.length > 0) {
+    return resolved.join("\n\n---\n\n");
+  }
+
+  // Fall back to a source whose basename matches the page path
+  const pageBase = path.basename(pageRef).toLowerCase();
+  for (const [relativePath, content] of sourceContentMap) {
+    if (path.basename(relativePath).toLowerCase() === pageBase) {
+      return content;
+    }
+  }
+
+  // Last resort: all sources (equivalent to original behaviour, but only reached
+  // when citation metadata is entirely absent)
+  return Array.from(sourceContentMap.values()).join("\n\n---\n\n");
+}
+
+export async function runIngestionCitationAccuracyBenchmark(
+  options: ResolvedRunBenchmarkOptions,
+): Promise<BenchmarkResult> {
+  if (!options.ingestionAdapter) {
+    throw new Error("ingestionAdapter is required for ingestion benchmarks");
+  }
+  const fixture = emailFixture.generate();
+
+  const fixtureDir = await mkdtemp(path.join(tmpdir(), "bench-citation-"));
+  try {
+    await options.ingestionAdapter!.reset();
+
+    for (const file of fixture.files) {
+      const filePath = path.join(fixtureDir, file.relativePath);
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFile(filePath, file.content, "utf8");
+    }
+
+    const benchmarkStart = performance.now();
+
+    const { result: ingestionLog, durationMs: ingestionDurationMs } = await timed(() =>
+      options.ingestionAdapter!.ingest(fixtureDir),
+    );
+
+    const graph = await options.ingestionAdapter.getMemoryGraph();
+    const claims = extractClaims(graph.pages);
+
+    const judge: BenchJudge | undefined = options.system?.judge;
+
+    // Build a map from relativePath → content for citation-aware source resolution
+    const sourceContentMap = new Map<string, string>(
+      fixture.files.map((f) => [f.relativePath, f.content]),
+    );
+
+    let validCitations = 0;
+    let scoredClaims = 0;
+
+    if (claims.length > 0) {
+      for (const { claim, claimContext, pageRef, seeAlso } of claims) {
+        const citedSources = resolveCitedSources(seeAlso, pageRef, sourceContentMap);
+        const score = await llmJudgeScore(
+          judge,
+          `Does the cited source content support this claim? Claim: "${claim}"`,
+          claimContext,
+          citedSources,
+        );
+        if (score >= 0) {
+          scoredClaims += 1;
+          if (score >= 0.5) {
+            validCitations += 1;
+          }
+        }
+      }
+    }
+
+    // Total latency includes both ingestion and judge scoring time
+    const totalDurationMs = Math.round(performance.now() - benchmarkStart);
+
+    const citationAccuracy = scoredClaims > 0 ? validCitations / scoredClaims : -1;
+
+    const scores: Record<string, number> = {
+      total_claims: claims.length,
+    };
+    if (citationAccuracy >= 0) {
+      scores.valid_citations = validCitations;
+      scores.citation_accuracy = citationAccuracy;
+    }
+
+    const tasks = [
+      {
+        taskId: `citation-accuracy-${fixture.id}`,
+        question: `Verify citation accuracy for ${fixture.id} fixture`,
+        expected: `All claims cite valid source chunks`,
+        actual: judge
+          ? `${validCitations}/${scoredClaims} claims cite valid source chunks (${claims.length} total claims)`
+          : `No judge available; ${claims.length} claims extracted`,
+        scores,
+        latencyMs: totalDurationMs,
+        tokens: { input: 0, output: 0 },
+        details: {
+          fixtureId: fixture.id,
+          totalClaims: claims.length,
+          scoredClaims,
+          validCitations,
+          citationAccuracy,
+          judgeAvailable: judge !== undefined,
+          ingestionDurationMs,
+          ingestionErrors: ingestionLog.errors,
+        },
+      },
+    ];
+
+    const remnicVersion = await getRemnicVersion();
+    return {
+      meta: {
+        id: randomUUID(),
+        benchmark: options.benchmark.id,
+        benchmarkTier: options.benchmark.tier,
+        version: options.benchmark.meta.version,
+        remnicVersion,
+        gitSha: getGitSha(),
+        timestamp: new Date().toISOString(),
+        mode: options.mode,
+        runCount: 1,
+        seeds: [options.seed ?? 0],
+      },
+      config: {
+        systemProvider: options.systemProvider ?? null,
+        judgeProvider: options.judgeProvider ?? null,
+        adapterMode: options.adapterMode ?? "direct",
+        remnicConfig: options.remnicConfig ?? {},
+      },
+      cost: {
+        totalTokens: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCostUsd: 0,
+        totalLatencyMs: totalDurationMs,
+        meanQueryLatencyMs: totalDurationMs,
+      },
+      results: {
+        tasks,
+        aggregates: aggregateTaskScores(tasks.map((t) => t.scores)),
+      },
+      environment: {
+        os: process.platform,
+        nodeVersion: process.version,
+        hardware: process.arch,
+      },
+    };
+  } finally {
+    await rm(fixtureDir, { recursive: true, force: true });
+  }
+}

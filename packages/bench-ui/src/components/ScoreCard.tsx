@@ -5,6 +5,7 @@ import {
   formatTimestamp,
   humanizeIdentifier,
 } from "../bench-data";
+import { IntegrityBadge } from "./IntegrityBadge";
 
 export function ScoreCard({ card }: { card: BenchmarkCard }) {
   return (
@@ -18,7 +19,7 @@ export function ScoreCard({ card }: { card: BenchmarkCard }) {
       </div>
 
       <div className="score-card__score-row">
-        <strong>{formatMetricValue(card.latest.primaryScore)}</strong>
+        <strong>{formatMetricValue(card.latest.primaryScore, card.latest.primaryMetric ?? undefined)}</strong>
         <span
           className={`delta-pill${
             card.delta !== null && card.delta > 0
@@ -28,9 +29,11 @@ export function ScoreCard({ card }: { card: BenchmarkCard }) {
                 : ""
           }`}
         >
-          {formatDelta(card.delta)}
+          {formatDelta(card.delta, card.latest.primaryMetric ?? undefined)}
         </span>
       </div>
+
+      <IntegrityBadge summary={card.latest.integrity} />
 
       <dl className="score-card__meta">
         <div>
