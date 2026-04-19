@@ -148,6 +148,23 @@ test("CLI openclaw upgrade mentions backups and npm package refresh", async () =
   );
 });
 
+test("CLI openclaw upgrade rolls back if the published plugin install fails after swap", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("PublishedOpenclawPluginInstallError"),
+    "CLI upgrade must track plugin install failures that happen after the staged swap",
+  );
+  assert.ok(
+    src.includes("let installResult") &&
+      src.includes("installResult = installPublishedOpenclawPlugin(packageSpec, pluginDir)"),
+    "CLI upgrade must assign the published plugin install inside the rollback try/catch",
+  );
+  assert.ok(
+    /installError instanceof PublishedOpenclawPluginInstallError[\s\S]*\? installError\.rollbackDir[\s\S]*rollbackDir,\s*\n\s*\}\);/s.test(src),
+    "CLI upgrade must reuse rollbackDir from install failures that occur before installResult is assigned",
+  );
+});
+
 test("CLI next-step instructions mention gateway restart", async () => {
   const src = await readCli();
   assert.ok(
