@@ -715,18 +715,13 @@ function resolveBenchDatasetDir(
   // an explicit `--dataset-dir` override. Gate auto-selection on the
   // same per-benchmark content markers as `datasets status` so a
   // partial/interrupted download doesn't silently feed an empty
-  // directory into the benchmark loader.
-  const managedRoot = resolveRepoDatasetRoot();
-  const managedDatasetDir = path.join(managedRoot, benchmarkId);
-  if (isDatasetDownloaded(managedDatasetDir, benchmarkId)) {
-    return managedDatasetDir;
-  }
-
-  // Fall back to the in-repo evals/datasets/<benchmark> location so
-  // monorepo checkouts that keep datasets committed continue to work.
-  const repoDatasetDir = path.join(CLI_REPO_ROOT, "evals", "datasets", benchmarkId);
-  if (isDatasetDownloaded(repoDatasetDir, benchmarkId)) {
-    return repoDatasetDir;
+  // directory into the benchmark loader. `resolveRepoDatasetRoot`
+  // already picks the correct layout (evals/datasets in monorepo
+  // checkouts, ~/.remnic/bench/datasets in packaged installs), so one
+  // lookup covers both install modes.
+  const datasetDir = path.join(resolveRepoDatasetRoot(), benchmarkId);
+  if (isDatasetDownloaded(datasetDir, benchmarkId)) {
+    return datasetDir;
   }
 
   return undefined;
