@@ -9,7 +9,7 @@ export function overlapCount(left: Set<string>, right: Set<string>): number {
   return count;
 }
 
-export function prefixAggregates(
+function prefixAggregates(
   prefix: string,
   aggregates: AggregateMetrics,
 ): AggregateMetrics {
@@ -22,7 +22,7 @@ export function prefixAggregates(
   return prefixed;
 }
 
-export function pairIdFromTaskId(taskId: string): string {
+function pairIdFromTaskId(taskId: string): string {
   return taskId.replace(/^(clean|dirty):/, "");
 }
 
