@@ -28,6 +28,7 @@ import {
   type JudgeVerdict,
 } from "./extraction-judge.js";
 import { buildProcedurePersistBody } from "./procedural/procedure-types.js";
+import { buildProcedureRecallSection } from "./procedural/procedure-recall.js";
 import {
   attachCitation,
   type CitationContext,
@@ -918,6 +919,7 @@ function parseMemoryIntentSnapshot(value: unknown): MemoryIntent {
           (item): item is string => typeof item === "string",
         )
       : [],
+    taskInitiation: candidate.taskInitiation === true,
   };
 }
 
@@ -931,6 +933,9 @@ function buildQmdIntentHint(intent: MemoryIntent): string | undefined {
   }
   if (intent.entityTypes.length > 0) {
     parts.push(`entities:${intent.entityTypes.join(",")}`);
+  }
+  if (intent.taskInitiation === true) {
+    parts.push("task_initiation");
   }
   return parts.length > 0 ? parts.join(" ") : undefined;
 }
@@ -6759,6 +6764,22 @@ export class Orchestrator {
       return section;
     })();
 
+    const procedureRecallPromise = (async (): Promise<string | null> => {
+      if (this.config.procedural?.enabled !== true) return null;
+      if (!this.isRecallSectionEnabled("procedure-recall", true)) return null;
+      try {
+        return await buildProcedureRecallSection(
+          this.storage,
+          retrievalQuery,
+          this.config,
+        );
+      } catch (err) {
+        log.debug(
+          `procedure-recall: failed open: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return null;
+      }
+    })();
 
     const compoundingPromise = observeEnrichmentPromise(
       (async (): Promise<string | null> => {
@@ -6844,6 +6865,7 @@ export class Orchestrator {
       causalTrajectorySection,
       cmcCausalChainsSection,
       calibrationSection,
+      procedureRecallSection,
       trustZoneSection,
       verifiedRecallSection,
       verifiedRulesSection,
@@ -6866,6 +6888,7 @@ export class Orchestrator {
             ["causalTraj", causalTrajectoryPromise],
             ["cmc", cmcRetrievalPromise],
             ["calibration", calibrationPromise],
+            ["procedureRecall", procedureRecallPromise],
             ["trustZone", trustZonePromise],
             ["verifiedRecall", verifiedRecallPromise],
             ["verifiedRules", verifiedRulesPromise],
@@ -6895,6 +6918,7 @@ export class Orchestrator {
           typeof causalTrajectoryPromise extends Promise<infer T> ? T : never,
           typeof cmcRetrievalPromise extends Promise<infer T> ? T : never,
           typeof calibrationPromise extends Promise<infer T> ? T : never,
+          typeof procedureRecallPromise extends Promise<infer T> ? T : never,
           typeof trustZonePromise extends Promise<infer T> ? T : never,
           typeof verifiedRecallPromise extends Promise<infer T> ? T : never,
           typeof verifiedRulesPromise extends Promise<infer T> ? T : never,
@@ -7027,6 +7051,13 @@ export class Orchestrator {
       );
     }
 
+    if (procedureRecallSection) {
+      this.appendRecallSection(
+        sectionBuckets,
+        "procedure-recall",
+        procedureRecallSection,
+      );
+    }
 
     // 1a. Identity continuity
     if (identityContinuity) {

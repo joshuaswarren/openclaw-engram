@@ -1460,6 +1460,8 @@ export interface MemoryIntent {
   goal: string;
   actionType: string;
   entityTypes: string[];
+  /** True when the prompt reads like starting a concrete task (ship/deploy/tests/PR, etc.). */
+  taskInitiation?: boolean;
 }
 
 export interface ExtractedQuestion {

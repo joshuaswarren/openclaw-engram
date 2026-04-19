@@ -2195,6 +2195,15 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
           : 40,
     },
     { id: "verbatim-artifacts", enabled: cfg.verbatimArtifactsEnabled === true },
+    {
+      id: "procedure-recall",
+      enabled:
+        typeof cfg.procedural === "object" &&
+        cfg.procedural !== null &&
+        !Array.isArray(cfg.procedural) &&
+        (cfg.procedural as { enabled?: unknown }).enabled === true,
+      maxChars: 2400,
+    },
     { id: "memory-boxes", enabled: cfg.memoryBoxesEnabled === true },
     { id: "temporal-memory-tree", enabled: cfg.temporalMemoryTreeEnabled === true },
     { id: "lcm-compressed-history", enabled: cfg.lcmEnabled === true },
