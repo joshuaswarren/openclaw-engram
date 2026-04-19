@@ -99,9 +99,11 @@ export async function runIngestionCitationAccuracyBenchmark(
 
     const scores: Record<string, number> = {
       total_claims: claims.length,
-      valid_citations: validCitations,
     };
-    if (citationAccuracy >= 0) scores.citation_accuracy = citationAccuracy;
+    if (citationAccuracy >= 0) {
+      scores.valid_citations = validCitations;
+      scores.citation_accuracy = citationAccuracy;
+    }
 
     const tasks = [
       {
