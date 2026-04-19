@@ -115,7 +115,7 @@ export class NamespaceSearchRouter {
         return 1;
       }),
     );
-    return results.reduce((sum, v) => sum + v, 0);
+    return results.reduce<number>((sum, v) => sum + v, 0);
   }
 
   async embedNamespaces(namespaces: string[]): Promise<void> {

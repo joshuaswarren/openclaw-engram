@@ -190,6 +190,9 @@ importers:
       '@remnic/core':
         specifier: workspace:^
         version: link:../remnic-core
+      '@remnic/export-weclone':
+        specifier: workspace:^
+        version: link:../export-weclone
     devDependencies:
       '@remnic/bench':
         specifier: workspace:*
