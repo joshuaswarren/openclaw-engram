@@ -24,6 +24,7 @@ import {
   runMemoryGovernance,
 } from "./maintenance/memory-governance.js";
 import { runProcedureMining } from "./procedural/procedure-miner.js";
+import { toRecallExplainJson } from "./recall-explain-renderer.js";
 import {
   normalizeProjectionPreview,
   normalizeProjectionTags,
@@ -2635,6 +2636,25 @@ export class EngramAccessService {
       ? this.orchestrator.lastRecall.get(sessionKey)
       : this.orchestrator.lastRecall.getMostRecent();
     return snapshot ?? { message: "No recall snapshot available" };
+  }
+
+  /**
+   * Return a structured tier-explain payload for the most recent recall
+   * (or a specific session when `sessionKey` is supplied).  Issue #518.
+   *
+   * Orthogonal to `recallExplain()` above, which returns a graph-path
+   * explanation document.  This is the per-result annotation introduced
+   * by the direct-answer retrieval tier.
+   */
+  async recallTierExplain(sessionKey?: string) {
+    // Ensure the on-disk snapshot store is loaded — HTTP/MCP callers
+    // may hit this endpoint after a gateway restart before any recall
+    // has primed the store in memory.
+    await this.orchestrator.lastRecall.load();
+    const snapshot = sessionKey
+      ? this.orchestrator.lastRecall.get(sessionKey)
+      : this.orchestrator.lastRecall.getMostRecent();
+    return toRecallExplainJson(snapshot);
   }
 
   async intentDebug(namespace?: string): Promise<unknown> {
