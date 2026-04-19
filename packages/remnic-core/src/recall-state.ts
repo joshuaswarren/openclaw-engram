@@ -97,6 +97,59 @@ export function clampGraphRecallExpandedEntries(
 
 type LastRecallState = Record<string, LastRecallSnapshot>;
 
+/**
+ * Deep-copy a RecallTierExplain block.  Used by both the write path
+ * (so caller mutation after `record()` cannot tear the persisted
+ * snapshot) and the read path (so caller mutation after `get()` /
+ * `getMostRecent()` cannot tear the in-memory store).
+ */
+function cloneTierExplain(
+  tierExplain: RecallTierExplain | undefined,
+): RecallTierExplain | undefined {
+  if (!tierExplain) return undefined;
+  return {
+    ...tierExplain,
+    filteredBy: [...tierExplain.filteredBy],
+    sourceAnchors: tierExplain.sourceAnchors
+      ? tierExplain.sourceAnchors.map((a) => ({
+          path: a.path,
+          lineRange: a.lineRange
+            ? ([a.lineRange[0], a.lineRange[1]] as [number, number])
+            : undefined,
+        }))
+      : undefined,
+  };
+}
+
+/**
+ * Deep-copy a LastRecallSnapshot so callers that receive it cannot
+ * mutate the store's internal state through mutable array/object
+ * fields.
+ */
+function cloneLastRecallSnapshot(
+  snapshot: LastRecallSnapshot | null,
+): LastRecallSnapshot | null {
+  if (!snapshot) return null;
+  return {
+    ...snapshot,
+    memoryIds: [...snapshot.memoryIds],
+    sourcesUsed: snapshot.sourcesUsed ? [...snapshot.sourcesUsed] : undefined,
+    resultPaths: snapshot.resultPaths ? [...snapshot.resultPaths] : undefined,
+    budgetsApplied: snapshot.budgetsApplied
+      ? {
+          ...snapshot.budgetsApplied,
+          includedSections: snapshot.budgetsApplied.includedSections
+            ? [...snapshot.budgetsApplied.includedSections]
+            : undefined,
+          omittedSections: snapshot.budgetsApplied.omittedSections
+            ? [...snapshot.budgetsApplied.omittedSections]
+            : undefined,
+        }
+      : undefined,
+    tierExplain: cloneTierExplain(snapshot.tierExplain),
+  };
+}
+
 export interface TierMigrationCycleSummary {
   trigger: "extraction" | "maintenance" | "manual";
   scanned: number;
@@ -156,14 +209,22 @@ export class LastRecallStore {
   }
 
   get(sessionKey: string): LastRecallSnapshot | null {
-    return this.state[sessionKey] ?? null;
+    // Defensive copy: callers must not be able to mutate internal state
+    // by reaching into array/object fields on the returned snapshot.
+    return cloneLastRecallSnapshot(this.state[sessionKey] ?? null);
   }
 
   getMostRecent(): LastRecallSnapshot | null {
     const snapshots = Object.values(this.state);
     if (snapshots.length === 0) return null;
-    snapshots.sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
-    return snapshots[0] ?? null;
+    // Secondary key on sessionKey keeps the sort stable when two
+    // snapshots share a recordedAt timestamp (CLAUDE.md rule 19).
+    snapshots.sort((a, b) => {
+      const byTime = b.recordedAt.localeCompare(a.recordedAt);
+      if (byTime !== 0) return byTime;
+      return a.sessionKey.localeCompare(b.sessionKey);
+    });
+    return cloneLastRecallSnapshot(snapshots[0] ?? null);
   }
 
   /**
@@ -201,12 +262,15 @@ export class LastRecallStore {
     const now = new Date().toISOString();
     const queryHash = createHash("sha256").update(opts.query).digest("hex");
 
+    // Defensive copies on the write path: caller arrays/objects must not
+    // retain a live reference to the persisted snapshot, so mutation
+    // after `record()` returns cannot tear what was stored.
     const snapshot: LastRecallSnapshot = {
       sessionKey: opts.sessionKey,
       recordedAt: now,
       queryHash,
       queryLen: opts.query.length,
-      memoryIds: opts.memoryIds,
+      memoryIds: [...opts.memoryIds],
       namespace: opts.namespace,
       traceId: opts.traceId,
       plannerMode: opts.plannerMode,
@@ -214,29 +278,24 @@ export class LastRecallStore {
       source: opts.source,
       fallbackUsed: opts.fallbackUsed,
       sourcesUsed: opts.sourcesUsed ? [...opts.sourcesUsed] : undefined,
-      budgetsApplied: opts.budgetsApplied ? { ...opts.budgetsApplied } : undefined,
+      budgetsApplied: opts.budgetsApplied
+        ? {
+            ...opts.budgetsApplied,
+            includedSections: opts.budgetsApplied.includedSections
+              ? [...opts.budgetsApplied.includedSections]
+              : undefined,
+            omittedSections: opts.budgetsApplied.omittedSections
+              ? [...opts.budgetsApplied.omittedSections]
+              : undefined,
+          }
+        : undefined,
       latencyMs: opts.latencyMs,
       resultPaths: opts.resultPaths ? [...opts.resultPaths] : undefined,
       policyVersion: opts.policyVersion,
       identityInjectionMode: opts.identityInjection?.mode,
       identityInjectedChars: opts.identityInjection?.injectedChars,
       identityInjectionTruncated: opts.identityInjection?.truncated,
-      tierExplain: opts.tierExplain
-        ? {
-            ...opts.tierExplain,
-            // Defensive copy so caller-side mutation cannot tear
-            // the persisted snapshot after this call returns.
-            filteredBy: [...opts.tierExplain.filteredBy],
-            sourceAnchors: opts.tierExplain.sourceAnchors
-              ? opts.tierExplain.sourceAnchors.map((a) => ({
-                  path: a.path,
-                  lineRange: a.lineRange
-                    ? ([a.lineRange[0], a.lineRange[1]] as [number, number])
-                    : undefined,
-                }))
-              : undefined,
-          }
-        : undefined,
+      tierExplain: cloneTierExplain(opts.tierExplain),
     };
 
     this.state[opts.sessionKey] = snapshot;

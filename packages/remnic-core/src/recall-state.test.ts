@@ -81,6 +81,72 @@ test("LastRecallStore.record copies filteredBy so caller mutation does not tear 
   assert.deepEqual(snap?.tierExplain?.filteredBy, ["below-importance-floor"]);
 });
 
+test("LastRecallStore.get returns a defensive copy; mutation does not tear the store", async () => {
+  // Regression for PR #535 review: get() previously returned a live
+  // reference to internal state, so a caller that mutated memoryIds,
+  // budgetsApplied.includedSections, or tierExplain fields would
+  // corrupt subsequent reads.
+  const { store } = await freshStore();
+  await store.record({
+    sessionKey: "s1",
+    query: "q",
+    memoryIds: ["m-1"],
+    budgetsApplied: {
+      appliedTopK: 1,
+      recallBudgetChars: 8000,
+      maxMemoryTokens: 2000,
+      includedSections: ["profile", "recent"],
+    },
+    tierExplain: {
+      tier: "direct-answer",
+      tierReason: "unambiguous",
+      filteredBy: ["below-token-overlap-floor"],
+      candidatesConsidered: 3,
+      latencyMs: 7,
+      sourceAnchors: [{ path: "/a.md", lineRange: [2, 5] }],
+    },
+  });
+
+  const snap = store.get("s1");
+  assert.ok(snap);
+  // Mutate every mutable field on the returned copy.
+  snap.memoryIds.push("leak");
+  snap.budgetsApplied?.includedSections?.push("leak");
+  snap.tierExplain?.filteredBy.push("leak");
+  const firstAnchor = snap.tierExplain?.sourceAnchors?.[0];
+  if (firstAnchor?.lineRange) firstAnchor.lineRange[0] = 999;
+
+  const fresh = store.get("s1");
+  assert.deepEqual(fresh?.memoryIds, ["m-1"]);
+  assert.deepEqual(fresh?.budgetsApplied?.includedSections, ["profile", "recent"]);
+  assert.deepEqual(fresh?.tierExplain?.filteredBy, ["below-token-overlap-floor"]);
+  assert.deepEqual(fresh?.tierExplain?.sourceAnchors?.[0]?.lineRange, [2, 5]);
+});
+
+test("LastRecallStore.getMostRecent returns a defensive copy", async () => {
+  const { store } = await freshStore();
+  await store.record({
+    sessionKey: "s1",
+    query: "q",
+    memoryIds: ["m-1"],
+  });
+  const snap = store.getMostRecent();
+  assert.ok(snap);
+  snap.memoryIds.push("leak");
+
+  const fresh = store.getMostRecent();
+  assert.deepEqual(fresh?.memoryIds, ["m-1"]);
+});
+
+test("LastRecallStore.record copies memoryIds so caller mutation does not tear the snapshot", async () => {
+  const { store } = await freshStore();
+  const memoryIds = ["m-1"];
+  await store.record({ sessionKey: "s1", query: "q", memoryIds });
+  memoryIds.push("leak");
+  const snap = store.get("s1");
+  assert.deepEqual(snap?.memoryIds, ["m-1"]);
+});
+
 test("LastRecallStore.record copies sourceAnchors array and lineRange tuple", async () => {
   const { store } = await freshStore();
   const anchors: RecallTierExplain["sourceAnchors"] = [
