@@ -490,6 +490,41 @@ export function buildBenchRunnerArgs(
   return args;
 }
 
+export function buildBenchRuntimeProfileRequest(
+  parsed: ParsedBenchArgs,
+  runtimeProfile: BenchRuntimeProfile,
+): ResolveBenchRuntimeProfileOptions {
+  return {
+    runtimeProfile,
+    remnicConfigPath:
+      runtimeProfile === "real"
+        ? resolveExistingBenchRemnicConfigPath(parsed.remnicConfigPath)
+        : undefined,
+    openclawConfigPath:
+      runtimeProfile === "openclaw-chain"
+        ? resolveExistingBenchOpenclawConfigPath(parsed.openclawConfigPath)
+        : undefined,
+    modelSource: runtimeProfile === "real" ? parsed.modelSource : undefined,
+    gatewayAgentId: parsed.gatewayAgentId,
+    fastGatewayAgentId: parsed.fastGatewayAgentId,
+    systemProvider:
+      runtimeProfile === "openclaw-chain"
+        ? undefined
+        : parsed.systemProvider,
+    systemModel:
+      runtimeProfile === "openclaw-chain"
+        ? undefined
+        : parsed.systemModel,
+    systemBaseUrl:
+      runtimeProfile === "openclaw-chain"
+        ? undefined
+        : parsed.systemBaseUrl,
+    judgeProvider: parsed.judgeProvider,
+    judgeModel: parsed.judgeModel,
+    judgeBaseUrl: parsed.judgeBaseUrl,
+  };
+}
+
 function coerceBenchCategory(
   benchmarkId: string,
   category: string | undefined,
@@ -564,7 +599,35 @@ async function resolveKnownBenchmarkIds(): Promise<Set<string>> {
 async function runBenchViaFallback(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
+  runtimeProfile: BenchRuntimeProfile,
 ): Promise<void> {
+  if (runtimeProfile === "real") {
+    resolveExistingBenchRemnicConfigPath(parsed.remnicConfigPath);
+    throw new Error(
+      'Fallback benchmark runner does not support --runtime-profile "real". Build/install @remnic/bench to use package-backed runtime profiles.',
+    );
+  }
+  if (runtimeProfile === "openclaw-chain") {
+    resolveExistingBenchOpenclawConfigPath(parsed.openclawConfigPath);
+    throw new Error(
+      'Fallback benchmark runner does not support --runtime-profile "openclaw-chain". Build/install @remnic/bench to use package-backed runtime profiles.',
+    );
+  }
+  if (
+    parsed.modelSource !== undefined ||
+    parsed.gatewayAgentId !== undefined ||
+    parsed.fastGatewayAgentId !== undefined ||
+    parsed.systemProvider !== undefined ||
+    parsed.systemModel !== undefined ||
+    parsed.systemBaseUrl !== undefined ||
+    parsed.judgeProvider !== undefined ||
+    parsed.judgeModel !== undefined ||
+    parsed.judgeBaseUrl !== undefined
+  ) {
+    throw new Error(
+      "Fallback benchmark runner does not support provider-backed or gateway runtime flags. Build/install @remnic/bench to use those options.",
+    );
+  }
   if (!fs.existsSync(EVAL_RUNNER_PATH)) {
     console.error(
       "Benchmark runner not found. Expected eval runner at evals/run.ts or a phase-1 @remnic/bench runtime export.",
@@ -1241,26 +1304,9 @@ async function resolvePackageBenchRuntime(
     );
   }
 
-  return benchModule.resolveBenchRuntimeProfile({
-    runtimeProfile,
-    remnicConfigPath:
-      runtimeProfile === "real"
-        ? resolveExistingBenchRemnicConfigPath(parsed.remnicConfigPath)
-        : undefined,
-    openclawConfigPath:
-      runtimeProfile === "openclaw-chain"
-        ? resolveExistingBenchOpenclawConfigPath(parsed.openclawConfigPath)
-        : undefined,
-    modelSource: parsed.modelSource,
-    gatewayAgentId: parsed.gatewayAgentId,
-    fastGatewayAgentId: parsed.fastGatewayAgentId,
-    systemProvider: parsed.systemProvider,
-    systemModel: parsed.systemModel,
-    systemBaseUrl: parsed.systemBaseUrl,
-    judgeProvider: parsed.judgeProvider,
-    judgeModel: parsed.judgeModel,
-    judgeBaseUrl: parsed.judgeBaseUrl,
-  });
+  return benchModule.resolveBenchRuntimeProfile(
+    buildBenchRuntimeProfileRequest(parsed, runtimeProfile),
+  );
 }
 
 function resolveMemoryDir(): string {
@@ -3140,7 +3186,7 @@ async function cmdBench(rest: string[]): Promise<void> {
         runtimeProfile,
       );
       if (!handledByPackage) {
-        await runBenchViaFallback(parsed, benchmarkId);
+        await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
       }
     }
   }

@@ -114,6 +114,47 @@ test("openclaw-chain runtime profile loads OpenClaw config and forces gateway ro
   );
 });
 
+test("openclaw-chain ignores direct system-provider overrides and keeps gateway routing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-openclaw-override-"));
+  const configPath = path.join(root, "openclaw.json");
+
+  await writeFile(
+    configPath,
+    JSON.stringify({
+      agents: {
+        defaults: {
+          model: {
+            primary: "openai/gpt-5.4-mini",
+          },
+        },
+      },
+      plugins: {
+        slots: {
+          memory: "openclaw-remnic",
+        },
+        entries: {
+          "openclaw-remnic": {
+            config: {
+              qmdEnabled: true,
+            },
+          },
+        },
+      },
+    }),
+  );
+
+  const resolved = await resolveBenchRuntimeProfile({
+    runtimeProfile: "openclaw-chain",
+    openclawConfigPath: configPath,
+    systemProvider: "openai",
+    systemModel: "gpt-5.4",
+  });
+
+  assert.equal(resolved.profile, "openclaw-chain");
+  assert.equal(resolved.remnicConfig.modelSource, "gateway");
+  assert.equal(resolved.systemProvider, null);
+});
+
 test("provider-backed runtime resolution rejects incomplete provider configuration", async () => {
   await assert.rejects(
     () =>

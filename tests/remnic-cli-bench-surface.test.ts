@@ -546,6 +546,52 @@ export function ensureWecloneImportAdapterRegistered() {}
   }
 });
 
+test("buildBenchRuntimeProfileRequest keeps openclaw-chain on gateway routing in matrix mode", async () => {
+  const { mkdtemp, writeFile } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const { buildBenchRuntimeProfileRequest } = await import("../packages/remnic-cli/src/index.ts");
+
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-openclaw-matrix-"));
+  const openclawConfigPath = path.join(root, "openclaw.json");
+  await writeFile(openclawConfigPath, JSON.stringify({ plugins: { entries: {} } }));
+
+  const parsed = {
+    action: "run",
+    benchmarks: ["longmemeval"],
+    quick: true,
+    all: false,
+    json: false,
+    detail: false,
+    matrixProfiles: ["baseline", "openclaw-chain"],
+    openclawConfigPath,
+    modelSource: "gateway",
+    gatewayAgentId: "memory-primary",
+    fastGatewayAgentId: "memory-fast",
+    systemProvider: "openai",
+    systemModel: "gpt-5.4-mini",
+    systemBaseUrl: "http://localhost:4000/v1",
+    judgeProvider: "anthropic",
+    judgeModel: "claude-sonnet-4-5",
+    judgeBaseUrl: "http://localhost:4100",
+  } as const;
+
+  const baseline = buildBenchRuntimeProfileRequest(parsed, "baseline");
+  const openclaw = buildBenchRuntimeProfileRequest(parsed, "openclaw-chain");
+
+  assert.equal(baseline.systemProvider, "openai");
+  assert.equal(baseline.systemModel, "gpt-5.4-mini");
+  assert.equal(baseline.openclawConfigPath, undefined);
+  assert.equal(openclaw.openclawConfigPath, openclawConfigPath);
+  assert.equal(openclaw.systemProvider, undefined);
+  assert.equal(openclaw.systemModel, undefined);
+  assert.equal(openclaw.systemBaseUrl, undefined);
+  assert.equal(openclaw.judgeProvider, "anthropic");
+  assert.equal(openclaw.judgeModel, "claude-sonnet-4-5");
+  assert.equal(openclaw.gatewayAgentId, "memory-primary");
+  assert.equal(openclaw.fastGatewayAgentId, "memory-fast");
+});
+
 test("parseBenchArgs excludes --dataset-dir values from benchmark ids", async () => {
   const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
 

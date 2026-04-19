@@ -188,11 +188,10 @@ export async function resolveBenchRuntimeProfile(
   const fastGatewayAgentId =
     options.fastGatewayAgentId ??
     asNonEmptyString(openclawRuntime.remnicConfig.fastGatewayAgentId);
-  const gatewayResponder = responder ??
-    createGatewayResponder({
-      gatewayConfig,
-      agentId: gatewayAgentId,
-    });
+  const gatewayResponder = createGatewayResponder({
+    gatewayConfig,
+    agentId: gatewayAgentId,
+  });
   const remnicConfig = withAssistantHooks(
     {
       ...openclawRuntime.remnicConfig,
@@ -214,7 +213,7 @@ export async function resolveBenchRuntimeProfile(
       responder: gatewayResponder,
       judge,
     },
-    systemProvider,
+    systemProvider: null,
     judgeProvider,
   };
 }
