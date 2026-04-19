@@ -26,6 +26,12 @@ test("schema tier fixture models real schema degradation in the dirty corpus", (
   assert.equal(cleanLaunch.frontmatter.type, "project");
   assert.equal(dirtyLaunch.frontmatter.type, undefined);
   assert.match(dirtyLaunch.seeAlso[0] ?? "", /Retro/);
+  assert.deepEqual(dirtyLaunch.dirtySignals, [
+    "missing-frontmatter-type",
+    "dropped-backlink",
+    "backlink-casing-drift",
+    "title-casing-drift",
+  ]);
   assert.equal(dirtyTraining.frontmatter.created, "2025-08-03T07:00:00.000Z");
   assert.deepEqual(dirtyTraining.dirtySignals, ["stale-created-date", "stale-timeline-date"]);
 });

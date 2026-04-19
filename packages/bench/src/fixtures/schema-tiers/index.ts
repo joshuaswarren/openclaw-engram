@@ -259,6 +259,7 @@ function buildDirtyCorpus(cleanPages: SchemaTierPage[]): SchemaTierPage[] {
         dirtyPage.frontmatter.seeAlso = ["alex-team-Retro"];
         dirtyPage.dirtySignals.push(
           "missing-frontmatter-type",
+          "dropped-backlink",
           "backlink-casing-drift",
           "title-casing-drift",
         );
