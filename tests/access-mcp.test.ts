@@ -28,12 +28,20 @@ function createFakeService(): EngramAccessService {
       intent: null,
       graph: null,
     }),
-    recallTierExplain: async (sessionKey?: string) => ({
+    // Signature mirrors production (CLAUDE.md rule 33): the service's
+    // recallTierExplain accepts (sessionKey, namespace, authenticatedPrincipal).
+    // The mock echoes them so tests can assert the MCP dispatcher
+    // forwards each one end-to-end.
+    recallTierExplain: async (
+      sessionKey?: string,
+      namespace?: string,
+      _authenticatedPrincipal?: string,
+    ) => ({
       hasExplain: true,
       snapshotFound: true,
       sessionKey: sessionKey ?? "default",
       recordedAt: "2026-04-19T18:00:00.000Z",
-      namespace: "global",
+      namespace: namespace ?? "global",
       memoryIds: ["fact-1"],
       source: "direct-answer",
       sourcesUsed: ["direct-answer"],
@@ -272,6 +280,26 @@ test("MCP server advertises tools and dispatches recall", async () => {
     structuredContent: { sessionKey: string };
   };
   assert.equal(canonicalTierResult.structuredContent.sessionKey, "default");
+
+  // Namespace forwarding (issue #518 — codex review on #539): the MCP
+  // dispatcher must forward the caller-provided `namespace` argument
+  // to the service so multi-tenant ACLs apply.  Regression guard
+  // against the cross-tenant leak where `recallTierExplain` defaulted
+  // to the most recent snapshot across all namespaces.
+  const namespacedTierExplain = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 33,
+    method: "tools/call",
+    params: {
+      name: "engram.recall_tier_explain",
+      arguments: { sessionKey: "sess-ns", namespace: "project-x" },
+    },
+  });
+  const namespacedTierResult = namespacedTierExplain?.result as {
+    structuredContent: { sessionKey: string; namespace: string };
+  };
+  assert.equal(namespacedTierResult.structuredContent.sessionKey, "sess-ns");
+  assert.equal(namespacedTierResult.structuredContent.namespace, "project-x");
 
   const store = await server.handleRequest({
     jsonrpc: "2.0",

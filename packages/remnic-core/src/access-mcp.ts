@@ -128,14 +128,19 @@ export class EngramMcpServer {
       {
         name: "engram.recall_tier_explain",
         description:
-          "Return a structured tier-explain payload for the last direct-answer-eligible recall (issue #518). Orthogonal to engram.recall_explain, which returns a graph-path explanation. Responses carry snapshotFound and hasExplain booleans so callers can branch without parsing.",
+          "Return a structured tier-explain payload for the last direct-answer-eligible recall (issue #518). Orthogonal to engram.recall_explain, which returns a graph-path explanation. Responses carry snapshotFound and hasExplain booleans so callers can branch without parsing. In multi-principal deployments the caller's authenticated principal is used to scope access; passing `namespace` further constrains results.",
         inputSchema: {
           type: "object",
           properties: {
             sessionKey: {
               type: "string",
               description:
-                "Optional session key. Omit to read the most recent snapshot across sessions.",
+                "Optional session key. Omit to read the most recent snapshot visible to the caller.",
+            },
+            namespace: {
+              type: "string",
+              description:
+                "Optional namespace to scope the returned snapshot to. When omitted, the most recent snapshot readable by the caller is returned.",
             },
           },
           additionalProperties: false,
@@ -1057,10 +1062,19 @@ export class EngramMcpServer {
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
       case "engram.recall_tier_explain":
+        // Forward `namespace` and `effectivePrincipal` so the service
+        // applies the same multi-principal ACL as `recall_explain`.
+        // Without these, the service would resolve the principal from
+        // `sessionKey` alone, which breaks trusted-header deployments
+        // and blocks the namespace-override ACL path in multi-tenant
+        // setups (cross-tenant data leak on the global most-recent
+        // snapshot fallback).
         return this.service.recallTierExplain(
           typeof args.sessionKey === "string" && args.sessionKey.length > 0
             ? args.sessionKey
             : undefined,
+          typeof args.namespace === "string" ? args.namespace : undefined,
+          effectivePrincipal,
         );
       case "engram.day_summary":
         return this.service.daySummary({
