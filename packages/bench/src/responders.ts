@@ -269,13 +269,18 @@ function isPlausibleSlashScoreFraction(
     return false;
   }
 
-  if (denominator <= 10 || denominator === 100) {
-    return true;
-  }
-
   const start = match.index ?? -1;
   if (start < 0) {
     return false;
+  }
+
+  if (denominator <= 10 || denominator === 100) {
+    const end = start + match[0].length;
+    const afterContext = raw.slice(end);
+    if (/^\s*\/\s*\d/.test(afterContext)) {
+      return false;
+    }
+    return true;
   }
 
   const candidate = match[0].trim();

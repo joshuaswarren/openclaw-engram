@@ -145,3 +145,12 @@ test("provider-backed judge does not treat month/day text as a slash score", asy
 
   assert.equal(await judge.score("q", "predicted", "expected"), 0.4);
 });
+
+test("provider-backed judge rejects date-like slash triplets before trailing scores", async () => {
+  const judge = createProviderBackedJudge(
+    { provider: "openai", model: "gpt-5.4-mini" },
+    createFakeProvider("Reviewed on 4/5/2026. Final score: 0.4"),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 0.4);
+});
