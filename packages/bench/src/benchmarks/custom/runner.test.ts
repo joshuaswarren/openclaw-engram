@@ -189,6 +189,7 @@ test("custom benchmarks score responder output and include responder usage", asy
 
     const result = await runCustomBenchmarkFile(benchmarkPath, {
       mode: "quick",
+      runtimeProfile: "openclaw-chain",
       system: {
         async store() {},
         async recall() {
@@ -232,6 +233,7 @@ test("custom benchmarks score responder output and include responder usage", asy
     assert.equal(result.results.tasks.length, 1);
     assert.equal(result.results.tasks[0]?.actual, "The generated answer.");
     assert.equal(result.results.tasks[0]?.scores.exact_match, 1);
+    assert.equal(result.config.runtimeProfile, "openclaw-chain");
     assert.equal(result.results.tasks[0]?.tokens.input, 9);
     assert.equal(result.results.tasks[0]?.tokens.output, 3);
     assert.equal(result.results.tasks[0]?.details?.recalledText, "The recalled memory.");

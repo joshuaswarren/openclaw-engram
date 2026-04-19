@@ -8,6 +8,7 @@ import type { RunBenchmarkOptions, BenchmarkDefinition, BenchmarkResult, Resolve
 import { answerBenchmarkQuestion } from "../../answering.js";
 import { aggregateTaskScores, exactMatch, f1Score, llmJudgeScoreDetailed, rougeL, timed } from "../../scorer.js";
 import { orchestrateBenchmarkRuns } from "../../benchmark.js";
+import { finalizeBenchmarkResultConfig } from "../../result-config.js";
 import { getGitSha, getRemnicVersion } from "../../reporter.js";
 import { loadCustomBenchmarkFile } from "./loader.js";
 import type { CustomBenchmarkScoring, CustomBenchmarkSpec } from "./types.js";
@@ -47,7 +48,7 @@ async function runCustomBenchmark(
   const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
   const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
 
-  return {
+  return finalizeBenchmarkResultConfig({
     meta: {
       id: randomUUID(),
       benchmark: options.benchmark.id,
@@ -83,7 +84,7 @@ async function runCustomBenchmark(
       nodeVersion: process.version,
       hardware: process.arch,
     },
-  };
+  }, options);
 }
 
 async function runCustomBenchmarkRun(

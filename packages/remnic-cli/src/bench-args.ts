@@ -61,6 +61,33 @@ export interface ParsedBenchArgs {
   target?: BenchPublishTarget;
 }
 
+function isBenchRuntimeProfile(value: string): value is BenchRuntimeProfile {
+  return (
+    value === "baseline" ||
+    value === "real" ||
+    value === "openclaw-chain"
+  );
+}
+
+function parseBenchRuntimeProfile(
+  value: string,
+  flagName: "--runtime-profile" | "--matrix",
+): BenchRuntimeProfile {
+  if (isBenchRuntimeProfile(value)) {
+    return value;
+  }
+
+  if (flagName === "--runtime-profile") {
+    throw new Error(
+      'ERROR: --runtime-profile must be "baseline", "real", or "openclaw-chain".',
+    );
+  }
+
+  throw new Error(
+    'ERROR: --matrix must contain only "baseline", "real", or "openclaw-chain".',
+  );
+}
+
 export function readBenchOptionValue(argv: string[], flag: string): string | undefined {
   const index = argv.indexOf(flag);
   if (index === -1) {
@@ -212,16 +239,10 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const targetRaw = readBenchOptionValue(args, "--target");
   let runtimeProfile: BenchRuntimeProfile | undefined;
   if (runtimeProfileRaw !== undefined) {
-    if (
-      runtimeProfileRaw !== "baseline" &&
-      runtimeProfileRaw !== "real" &&
-      runtimeProfileRaw !== "openclaw-chain"
-    ) {
-      throw new Error(
-        'ERROR: --runtime-profile must be "baseline", "real", or "openclaw-chain".',
-      );
-    }
-    runtimeProfile = runtimeProfileRaw;
+    runtimeProfile = parseBenchRuntimeProfile(
+      runtimeProfileRaw,
+      "--runtime-profile",
+    );
   }
 
   let matrixProfiles: BenchRuntimeProfile[] | undefined;
@@ -235,18 +256,9 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
         'ERROR: --matrix must contain one or more of "baseline", "real", or "openclaw-chain".',
       );
     }
-    for (const candidate of candidates) {
-      if (
-        candidate !== "baseline" &&
-        candidate !== "real" &&
-        candidate !== "openclaw-chain"
-      ) {
-        throw new Error(
-          'ERROR: --matrix must contain only "baseline", "real", or "openclaw-chain".',
-        );
-      }
-    }
-    matrixProfiles = candidates;
+    matrixProfiles = candidates.map((candidate) =>
+      parseBenchRuntimeProfile(candidate, "--matrix"),
+    );
   }
 
   let modelSource: BenchModelSource | undefined;
