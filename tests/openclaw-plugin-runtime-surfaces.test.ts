@@ -189,6 +189,32 @@ for (const manifestPath of [
       "entitySynthesisMaxTokens must keep 0 as a disable switch without advertising unusable 1..9 values",
     );
     assert.equal(entitySynthesisMaxTokens?.default, 500);
+
+    const briefing = properties.briefing;
+    assert.ok(briefing, "briefing config block should exist");
+    assert.equal(
+      briefing.additionalProperties,
+      false,
+      "briefing config block must reject unknown keys to prevent silent typo acceptance",
+    );
+    assert.deepEqual(
+      Object.keys(briefing.properties ?? {}).sort(),
+      [
+        "calendarSource",
+        "defaultFormat",
+        "defaultWindow",
+        "enabled",
+        "llmFollowups",
+        "maxFollowups",
+        "saveByDefault",
+        "saveDir",
+      ],
+    );
+    assert.deepEqual(briefing.properties?.defaultFormat?.enum, ["markdown", "json"]);
+    assert.equal(briefing.properties?.maxFollowups?.minimum, 0);
+    assert.equal(briefing.properties?.maxFollowups?.maximum, 10);
+    assert.deepEqual(briefing.properties?.calendarSource?.type, ["string", "null"]);
+    assert.deepEqual(briefing.properties?.saveDir?.type, ["string", "null"]);
   });
 }
 

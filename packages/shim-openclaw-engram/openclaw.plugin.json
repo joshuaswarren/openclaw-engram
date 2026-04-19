@@ -3629,6 +3629,7 @@
       },
       "briefing": {
         "type": "object",
+        "additionalProperties": false,
         "default": {
           "enabled": true,
           "defaultWindow": "yesterday",
@@ -3638,6 +3639,52 @@
           "saveByDefault": false,
           "saveDir": null,
           "llmFollowups": true
+        },
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "defaultWindow": {
+            "type": "string",
+            "default": "yesterday"
+          },
+          "defaultFormat": {
+            "type": "string",
+            "enum": [
+              "markdown",
+              "json"
+            ],
+            "default": "markdown"
+          },
+          "maxFollowups": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10,
+            "default": 5
+          },
+          "calendarSource": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "saveByDefault": {
+            "type": "boolean",
+            "default": false
+          },
+          "saveDir": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "default": null
+          },
+          "llmFollowups": {
+            "type": "boolean",
+            "default": true
+          }
         },
         "description": "Daily Context Briefing (#370). Knobs: enabled, defaultWindow ('yesterday', '3d', '1w', '24h', ...), defaultFormat (markdown|json), maxFollowups (0-10), calendarSource (path to ICS/JSON file, null = off), saveByDefault, saveDir (null = $REMNIC_HOME/briefings/), llmFollowups (disable to skip Responses API calls)."
       },
