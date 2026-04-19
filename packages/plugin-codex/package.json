@@ -1,6 +1,6 @@
 {
   "name": "@remnic/plugin-codex",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Remnic memory plugin for Codex CLI — hooks, skills, MCP integration",
   "type": "module",
   "license": "MIT",
