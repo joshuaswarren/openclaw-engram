@@ -192,6 +192,8 @@ import {
   type RuntimePolicyValues,
 } from "./policy-runtime.js";
 import { resolveHomeDir } from "./runtime/env.js";
+import { convertMemoriesToRecords } from "./training-export/converter.js";
+import { getTrainingExportAdapter, listTrainingExportAdapters } from "./training-export/registry.js";
 
 interface CliApi {
   registerCli(
@@ -700,6 +702,21 @@ export interface AccessHttpServeCliCommandOptions {
   }) => AccessHttpServerLike;
 }
 
+export interface TrainingExportCliCommandOptions {
+  memoryDir: string;
+  format: string;
+  output: string;
+  since?: string;
+  until?: string;
+  minConfidence?: number;
+  categories?: string[];
+  includeEntities?: boolean;
+  includeTopics?: boolean;
+  dryRun?: boolean;
+  stdout: Writable;
+  stderr: Writable;
+}
+
 export function resolveAccessPrincipalOverride(
   explicitPrincipal: unknown,
   configuredPrincipal?: string,
@@ -809,6 +826,85 @@ function isWorkTaskPriority(value: string | undefined): value is "low" | "medium
 
 function isWorkProjectStatus(value: string | undefined): value is "active" | "on_hold" | "completed" | "archived" {
   return value === "active" || value === "on_hold" || value === "completed" || value === "archived";
+}
+
+export async function runTrainingExportCliCommand(
+  opts: TrainingExportCliCommandOptions,
+): Promise<void> {
+  // 1. Validate format is registered (reject invalid per CLAUDE.md #51)
+  const adapter = getTrainingExportAdapter(opts.format);
+  if (!adapter) {
+    const registered = listTrainingExportAdapters();
+    const validList = registered.length > 0
+      ? `Valid formats: [${registered.join(", ")}]`
+      : "No adapters are currently registered.";
+    throw new Error(
+      `Unknown training-export format "${opts.format}". ${validList}`,
+    );
+  }
+
+  // 2. Parse date filters
+  let since: Date | undefined;
+  if (opts.since !== undefined) {
+    since = new Date(opts.since);
+    if (!Number.isFinite(since.getTime())) {
+      throw new Error(
+        `Invalid --since value "${opts.since}". Provide an ISO 8601 date string.`,
+      );
+    }
+  }
+
+  let until: Date | undefined;
+  if (opts.until !== undefined) {
+    until = new Date(opts.until);
+    if (!Number.isFinite(until.getTime())) {
+      throw new Error(
+        `Invalid --until value "${opts.until}". Provide an ISO 8601 date string.`,
+      );
+    }
+  }
+
+  // 3. Convert memories to records
+  const records = await convertMemoriesToRecords({
+    memoryDir: opts.memoryDir,
+    since,
+    until,
+    minConfidence: opts.minConfidence,
+    categories: opts.categories,
+    includeEntities: opts.includeEntities,
+    includeTopics: opts.includeTopics,
+  });
+
+  // 4. Dry run — print statistics and return
+  if (opts.dryRun) {
+    opts.stdout.write(`Training export dry run\n`);
+    opts.stdout.write(`Format: ${adapter.name}\n`);
+    opts.stdout.write(`Records: ${records.length}\n`);
+    const cats = new Map<string, number>();
+    for (const r of records) {
+      const c = r.category ?? "unknown";
+      cats.set(c, (cats.get(c) ?? 0) + 1);
+    }
+    for (const [cat, count] of [...cats.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      opts.stdout.write(`  ${cat}: ${count}\n`);
+    }
+    return;
+  }
+
+  // 5. Format records using adapter
+  const formatted = adapter.formatRecords(records);
+
+  // 6. Write to output file
+  const { writeFile: fsWriteFile } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  const { mkdirSync } = await import("node:fs");
+  // recursive: true handles existing dirs natively (never throws EEXIST),
+  // so no try-catch needed — let real errors (EACCES, etc.) propagate
+  mkdirSync(dirname(opts.output), { recursive: true });
+  await fsWriteFile(opts.output, formatted, "utf-8");
+  opts.stdout.write(
+    `Exported ${records.length} records to ${opts.output} (${adapter.name} format)\n`,
+  );
 }
 
 export async function runArchiveObservationsCliCommand(
