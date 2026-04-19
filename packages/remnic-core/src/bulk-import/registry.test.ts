@@ -7,7 +7,7 @@ import {
   listBulkImportSources,
   clearBulkImportSources,
 } from "./registry.js";
-import type { BulkImportSourceAdapter } from "./types.js";
+import type { BulkImportSource, BulkImportSourceAdapter } from "./types.js";
 
 function makeAdapter(
   name: string,
@@ -153,5 +153,38 @@ describe("bulk-import registry", () => {
     const retrieved = getBulkImportSource("padded-name");
     assert.ok(retrieved);
     assert.equal(retrieved!.name, "padded-name");
+  });
+
+  it("preserves prototype-defined methods on class-based adapters with padded names", async () => {
+    // A class whose `parse` lives on the prototype (not as an own property).
+    class ClassAdapter implements BulkImportSourceAdapter {
+      name: string;
+      constructor(name: string) {
+        this.name = name;
+      }
+      parse(): BulkImportSource {
+        return {
+          turns: [],
+          metadata: {
+            source: this.name.trim(),
+            exportDate: "2024-06-15T00:00:00.000Z",
+            messageCount: 0,
+            dateRange: {
+              from: "2024-01-01T00:00:00.000Z",
+              to: "2024-06-15T00:00:00.000Z",
+            },
+          },
+        };
+      }
+    }
+    const instance = new ClassAdapter("  class-adapter  ");
+    registerBulkImportSource(instance);
+    const retrieved = getBulkImportSource("class-adapter");
+    assert.ok(retrieved, "expected class-based adapter to be retrievable");
+    assert.equal(retrieved!.name, "class-adapter");
+    // The prototype-defined `parse` method must survive name normalization.
+    assert.equal(typeof retrieved!.parse, "function");
+    const parsed = await retrieved!.parse(null);
+    assert.equal(parsed.metadata.source, "class-adapter");
   });
 });

@@ -101,6 +101,74 @@ describe("runBulkImportPipeline", () => {
     assert.equal(result.errors.length, 0);
   });
 
+  it("throws when source.turns is missing (malformed adapter output)", async () => {
+    const bad = {
+      metadata: {
+        source: "test",
+        exportDate: "2024-06-15T00:00:00.000Z",
+        messageCount: 0,
+        dateRange: {
+          from: "2024-01-01T00:00:00.000Z",
+          to: "2024-06-15T00:00:00.000Z",
+        },
+      },
+    } as unknown as BulkImportSource;
+    const { fn } = trackingProcessBatch();
+    await assert.rejects(
+      () => runBulkImportPipeline(bad, {}, fn),
+      (err: Error) => {
+        assert.ok(err.message.includes("array of turns"));
+        return true;
+      },
+    );
+  });
+
+  it("throws when source.turns is null", async () => {
+    const bad = {
+      turns: null,
+      metadata: {
+        source: "test",
+        exportDate: "2024-06-15T00:00:00.000Z",
+        messageCount: 0,
+        dateRange: {
+          from: "2024-01-01T00:00:00.000Z",
+          to: "2024-06-15T00:00:00.000Z",
+        },
+      },
+    } as unknown as BulkImportSource;
+    const { fn } = trackingProcessBatch();
+    await assert.rejects(
+      () => runBulkImportPipeline(bad, {}, fn),
+      (err: Error) => {
+        assert.ok(err.message.includes("null"));
+        return true;
+      },
+    );
+  });
+
+  it("throws when source.turns is not an array", async () => {
+    const bad = {
+      turns: "oops" as unknown as ImportTurn[],
+      metadata: {
+        source: "test",
+        exportDate: "2024-06-15T00:00:00.000Z",
+        messageCount: 0,
+        dateRange: {
+          from: "2024-01-01T00:00:00.000Z",
+          to: "2024-06-15T00:00:00.000Z",
+        },
+      },
+    } as BulkImportSource;
+    const { fn } = trackingProcessBatch();
+    await assert.rejects(
+      () => runBulkImportPipeline(bad, {}, fn),
+      (err: Error) => {
+        assert.ok(err.message.includes("array of turns"));
+        return true;
+      },
+    );
+  });
+
   it("respects custom batchSize", async () => {
     const source = makeSource(10);
     const { fn, calls } = trackingProcessBatch();

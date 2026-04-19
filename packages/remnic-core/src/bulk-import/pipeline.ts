@@ -85,9 +85,30 @@ export async function runBulkImportPipeline(
     errors: [],
   };
 
+  if (!source || typeof source !== "object") {
+    throw new Error(
+      "bulk-import pipeline received invalid source (expected an object)",
+    );
+  }
+
   const turns = source.turns;
 
-  if (!turns || turns.length === 0) {
+  // Distinguish a malformed source (missing/non-array `turns`) from a
+  // legitimately empty import. Malformed shapes indicate an adapter bug and
+  // must fail loudly rather than masquerade as a successful zero-turn run.
+  if (turns === undefined || turns === null || !Array.isArray(turns)) {
+    throw new Error(
+      `bulk-import source must expose an array of turns (received ${
+        turns === null
+          ? "null"
+          : turns === undefined
+          ? "undefined"
+          : typeof turns
+      })`,
+    );
+  }
+
+  if (turns.length === 0) {
     return result;
   }
 

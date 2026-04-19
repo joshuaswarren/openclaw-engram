@@ -33,10 +33,26 @@ export function registerBulkImportSource(
       `bulk-import source adapter '${key}' is already registered`,
     );
   }
-  // Store adapter with trimmed name so `adapter.name` stays consistent with
-  // the registry key returned by `listBulkImportSources()`.
-  const normalized: BulkImportSourceAdapter =
-    adapter.name === key ? adapter : { ...adapter, name: key };
+  // Store the adapter under the trimmed key so `adapter.name` stays
+  // consistent with the registry key returned by `listBulkImportSources()`.
+  // When the name already matches the trimmed key, keep the original object
+  // as-is. When we need to rewrite `name`, build a proxy whose prototype is
+  // the original adapter's prototype so class-based adapters keep their
+  // prototype-defined methods (e.g. `parse`) intact — a plain object spread
+  // would only copy own enumerable properties and would break those cases.
+  let normalized: BulkImportSourceAdapter;
+  if (adapter.name === key) {
+    normalized = adapter;
+  } else {
+    const proto = Object.getPrototypeOf(adapter) as object | null;
+    const clone = Object.create(proto) as Record<string, unknown>;
+    // Copy own (enumerable) properties from the original adapter.
+    for (const prop of Object.keys(adapter)) {
+      clone[prop] = (adapter as unknown as Record<string, unknown>)[prop];
+    }
+    clone.name = key;
+    normalized = clone as unknown as BulkImportSourceAdapter;
+  }
   adapters.set(key, normalized);
 }
 
