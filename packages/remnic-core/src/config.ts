@@ -885,9 +885,13 @@ export function parseConfig(raw: unknown): PluginConfig {
     temporalSupersessionEnabled: cfg.temporalSupersessionEnabled !== false, // On by default
     temporalSupersessionIncludeInRecall:
       cfg.temporalSupersessionIncludeInRecall === true, // Off by default
-    // Direct-answer retrieval tier (issue #518)
+    // Direct-answer retrieval tier (issue #518).  Default on — the
+    // tier runs in observation mode: it annotates
+    // LastRecallSnapshot.tierExplain but never short-circuits the
+    // QMD path.  Operators can opt out with
+    // recallDirectAnswerEnabled=false.
     recallDirectAnswerEnabled:
-      coerceBool(cfg.recallDirectAnswerEnabled) ?? false,
+      coerceBool(cfg.recallDirectAnswerEnabled) ?? true,
     recallDirectAnswerTokenOverlapFloor: (() => {
       const n = coerceNumber(cfg.recallDirectAnswerTokenOverlapFloor);
       return n !== undefined && n >= 0 && n <= 1 ? n : 0.55;
