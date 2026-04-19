@@ -8,7 +8,7 @@ import type {
   BenchJudge,
   BenchResponder,
 } from "./adapters/types.js";
-import { buildBenchBaselineRemnicConfig } from "./adapters/remnic-adapter.ts";
+import { buildBenchBaselineRemnicConfig } from "./adapters/remnic-adapter.js";
 import {
   ASSISTANT_AGENT_CONFIG_KEY,
   ASSISTANT_JUDGE_CONFIG_KEY,
