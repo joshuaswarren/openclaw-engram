@@ -1391,6 +1391,84 @@ describe("WeCloneProxy", () => {
     );
   });
 
+  it("returns 400 for null JSON body on chat completions", async () => {
+    const weclone = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    cleanups.push(weclone.close);
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "null",
+      }
+    );
+    assert.equal(res.status, 400, "null JSON body must return 400, not 500");
+    const body = JSON.parse(await readResponse(res));
+    assert.equal(body.error, "bad_request");
+  });
+
+  it("forwards non-Authorization auth headers (api-key) on chat completions", async () => {
+    let receivedApiKey: string | undefined;
+    const weclone = await createMockServer((req, res) => {
+      receivedApiKey = req.headers["api-key"] as string | undefined;
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "ok" } }],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "api-key": "azure-key-xyz",
+        },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }
+    );
+    assert.equal(res.status, 200);
+    assert.equal(
+      receivedApiKey,
+      "azure-key-xyz",
+      "Non-Authorization auth headers (api-key) must be forwarded upstream"
+    );
+  });
+
   it("returns 400 when messages is not an array", async () => {
     const weclone = await createMockServer((_req, res) => {
       res.writeHead(200);

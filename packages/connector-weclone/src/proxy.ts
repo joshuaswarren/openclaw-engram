@@ -420,7 +420,21 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
 
       let parsed: ChatCompletionRequest;
       try {
-        parsed = JSON.parse(bodyStr) as ChatCompletionRequest;
+        const decoded = JSON.parse(bodyStr);
+        // `JSON.parse("null")` succeeds but null is not a valid chat body.
+        // Reject non-object payloads with a 400 so clients get a clear
+        // validation error instead of hitting the top-level 500.
+        if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) {
+          res.writeHead(400, { "Content-Type": "application/json" });
+          res.end(
+            JSON.stringify({
+              error: "bad_request",
+              detail: "request body must be a JSON object",
+            })
+          );
+          return;
+        }
+        parsed = decoded as ChatCompletionRequest;
       } catch {
         res.writeHead(400, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ error: "bad_request", detail: "Invalid JSON body" }));
@@ -529,15 +543,22 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
       const querySuffix = qIdx === -1 ? "" : url.slice(qIdx);
       const targetUrl =
         `${wecloneParts.origin}${chatBase}/chat/completions${querySuffix}`;
-      const forwardHeaders: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-
-      // Preserve authorization if present
-      const authHeader = req.headers["authorization"];
-      if (typeof authHeader === "string") {
-        forwardHeaders["Authorization"] = authHeader;
+      // Forward all non-hop-by-hop request headers to the upstream chat
+      // endpoint (mirroring the transparentProxy behaviour) so that
+      // client auth schemes other than Authorization — Azure `api-key`,
+      // OpenAI-compatible `x-api-key`, tenant headers, etc. — are
+      // preserved on the chat path as well. `content-length` is dropped
+      // because we re-serialize the body, and `content-type` is set to
+      // JSON since we post a JSON payload.
+      const flatReqHeaders = flattenHeaders(req.headers);
+      const forwardHeaders: Record<string, string> = {};
+      for (const [key, value] of Object.entries(flatReqHeaders)) {
+        const lower = key.toLowerCase();
+        if (lower === "host" || HOP_BY_HOP_REQUEST_HEADERS.has(lower)) continue;
+        if (lower === "content-length" || lower === "content-type") continue;
+        forwardHeaders[key] = value;
       }
+      forwardHeaders["Content-Type"] = "application/json";
 
       try {
         const upstream = await fetch(targetUrl, {
@@ -644,10 +665,20 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
         res.writeHead(upstream.status, chatResponseHeaders);
         res.end(responseBytes);
       } catch (_err) {
-        res.writeHead(502, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({
-          error: "upstream_unreachable",
-        }));
+        // If a stream-path error propagates here AFTER res.writeHead(200)
+        // has already been called (e.g. upstream disconnects mid-stream),
+        // we cannot send a 502 without triggering ERR_HTTP_HEADERS_SENT.
+        // Guard on headersSent and just close the response in that case.
+        if (!res.headersSent) {
+          res.writeHead(502, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: "upstream_unreachable" }));
+        } else {
+          try {
+            res.end();
+          } catch {
+            // Already ended — nothing to do.
+          }
+        }
       }
       return;
     }

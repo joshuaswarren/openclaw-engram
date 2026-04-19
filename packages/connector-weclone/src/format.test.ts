@@ -84,6 +84,26 @@ describe("formatMemoryBlock", () => {
     assert.ok(result.includes("Fact Y"));
   });
 
+  it("accounts for newline separators in maxTokens budget", () => {
+    // maxTokens=3 => max 12 chars. Three 5-char memories joined by "\n"
+    // produce "AAAAA\nBBBBB\nCCCCC" = 17 chars which exceeds 12.
+    // The formatter must count the separator characters and stop before
+    // the joined output overshoots.
+    const memories: RecallResult[] = [
+      { content: "AAAAA", confidence: 0.9 },
+      { content: "BBBBB", confidence: 0.8 },
+      { content: "CCCCC", confidence: 0.7 },
+    ];
+    const result = formatMemoryBlock(memories, "{memories}", 3);
+    // Budget is 12 chars. "AAAAA\nBBBBB" = 11 chars, fits. Adding CCCCC
+    // with the newline would be 11+1+5 = 17, exceeds, so stop at two.
+    assert.equal(result, "AAAAA\nBBBBB");
+    assert.ok(
+      result.length <= 12,
+      `Joined output (${result.length} chars) must not exceed budget (12)`
+    );
+  });
+
   it("does not corrupt output when memory content contains $ patterns", () => {
     const memories: RecallResult[] = [
       { content: "Price is $100 and $200", confidence: 0.9 },

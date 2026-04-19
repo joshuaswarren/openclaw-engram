@@ -43,11 +43,17 @@ export function formatMemoryBlock(
 
   for (const memory of sorted) {
     const line = memory.content;
-    if (totalChars + line.length > maxChars && included.length > 0) {
+    // Account for the `\n` separator that will be inserted between
+    // adjacent memories so the joined block stays within budget.
+    const separatorCost = included.length > 0 ? 1 : 0;
+    if (
+      totalChars + line.length + separatorCost > maxChars &&
+      included.length > 0
+    ) {
       break;
     }
     included.push(line);
-    totalChars += line.length;
+    totalChars += line.length + separatorCost;
   }
 
   if (included.length === 0) {
