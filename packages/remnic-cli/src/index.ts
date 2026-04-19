@@ -1928,11 +1928,22 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
     const explainStart = Date.now();
     const recallResult = await service.recall({ query: queryText, mode: "auto" });
     const totalDurationMs = Date.now() - explainStart;
-    const memories = (recallResult as { memories?: Array<{ content: string }> }).memories ?? [];
+    // recall() returns { count, results, memoryIds, ... } (see
+    // EngramAccessRecallResponse). A prior version of this fallback
+    // read .memories, which doesn't exist, so resultsCount was always
+    // 0 and users saw misleading explain output. (Codex feedback on
+    // PR #545.) Prefer the numeric count and fall back to
+    // results.length for robustness across future schema tweaks.
+    const resultsCount =
+      typeof recallResult.count === "number"
+        ? recallResult.count
+        : Array.isArray(recallResult.results)
+          ? recallResult.results.length
+          : 0;
     const minimalExplain = {
       query: queryText,
       totalDurationMs,
-      resultsCount: memories.length,
+      resultsCount,
       note: "Install @remnic/bench for a full tier-level explain breakdown.",
     };
     if (json) {
