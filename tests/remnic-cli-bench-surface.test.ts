@@ -222,46 +222,59 @@ test("parseBenchArgs preserves unexpected trailing providers args for CLI valida
 test("bench providers discover rejects unexpected trailing positional args", async () => {
   const __dirname = dirname(fileURLToPath(import.meta.url));
   const repoRoot = join(__dirname, "..");
-  const benchModuleLinkRoot = join(repoRoot, "packages/remnic-cli/node_modules/@remnic/bench");
-  const benchModuleRoot = existsSync(benchModuleLinkRoot)
-    ? realpathSync(benchModuleLinkRoot)
-    : benchModuleLinkRoot;
-  const benchModuleDist = join(benchModuleRoot, "dist");
-  const benchModuleEntry = join(benchModuleDist, "index.js");
-  const benchPackageJson = join(benchModuleRoot, "package.json");
-  const exportModuleLinkRoot = join(repoRoot, "packages/remnic-cli/node_modules/@remnic/export-weclone");
-  const exportModuleRoot = existsSync(exportModuleLinkRoot)
-    ? realpathSync(exportModuleLinkRoot)
-    : exportModuleLinkRoot;
-  const exportModuleDist = join(exportModuleRoot, "dist");
-  const exportModuleEntry = join(exportModuleDist, "index.js");
-  const exportPackageJson = join(exportModuleRoot, "package.json");
   const cliEntry = pathToFileURL(join(repoRoot, "packages/remnic-cli/src/index.ts")).href;
-  const stubbedBenchModule = !existsSync(benchModuleEntry);
-  const stubbedExportModule = !existsSync(exportModuleEntry);
-  const createdModuleRoot = !existsSync(benchModuleLinkRoot);
-  const createdPackageJson = stubbedBenchModule && !existsSync(benchPackageJson);
-  const createdDistDir = stubbedBenchModule && !existsSync(benchModuleDist);
-  const createdExportModuleRoot = !existsSync(exportModuleLinkRoot);
-  const createdExportPackageJson = stubbedExportModule && !existsSync(exportPackageJson);
-  const createdExportDistDir = stubbedExportModule && !existsSync(exportModuleDist);
 
-  if (stubbedBenchModule) {
-    mkdirSync(benchModuleDist, { recursive: true });
-    if (createdPackageJson) {
-      writeFileSync(
-        benchPackageJson,
-        JSON.stringify({
-          name: "@remnic/bench",
-          type: "module",
-          exports: {
-            ".": "./dist/index.js",
-          },
-        }),
-      );
+  interface StubHandle {
+    cleanup: () => void;
+  }
+
+  // Stub a workspace package's dist entry if it doesn't exist, so the
+  // CLI's dynamic imports resolve even when the monorepo hasn't been
+  // built in CI. Each stub tracks what it created so we restore the
+  // pre-test filesystem state in the finally block.
+  const stubWorkspacePackage = (
+    packageName: string,
+    moduleBody: string,
+  ): StubHandle => {
+    const linkRoot = join(repoRoot, "packages/remnic-cli/node_modules", packageName);
+    const moduleRoot = existsSync(linkRoot) ? realpathSync(linkRoot) : linkRoot;
+    const distDir = join(moduleRoot, "dist");
+    const entry = join(distDir, "index.js");
+    const packageJson = join(moduleRoot, "package.json");
+    const needsEntry = !existsSync(entry);
+    const createdLinkRoot = !existsSync(linkRoot);
+    const createdPackageJson = needsEntry && !existsSync(packageJson);
+    const createdDistDir = needsEntry && !existsSync(distDir);
+
+    if (needsEntry) {
+      mkdirSync(distDir, { recursive: true });
+      if (createdPackageJson) {
+        writeFileSync(
+          packageJson,
+          JSON.stringify({
+            name: packageName,
+            type: "module",
+            exports: { ".": "./dist/index.js" },
+          }),
+        );
+      }
+      writeFileSync(entry, moduleBody);
     }
-    writeFileSync(
-      benchModuleEntry,
+
+    return {
+      cleanup: () => {
+        if (!needsEntry) return;
+        rmSync(entry, { force: true });
+        if (createdDistDir) rmSync(distDir, { recursive: true, force: true });
+        if (createdPackageJson) rmSync(packageJson, { force: true });
+        if (createdLinkRoot) rmSync(moduleRoot, { recursive: true, force: true });
+      },
+    };
+  };
+
+  const stubs: StubHandle[] = [
+    stubWorkspacePackage(
+      "@remnic/bench",
       `
 export function compareResults() {}
 export async function buildBenchmarkPublishFeed() { return { target: "remnic-ai", generatedAt: new Date(0).toISOString(), benchmarks: [] }; }
@@ -270,6 +283,7 @@ export function defaultBenchmarkBaselineDir() { return ""; }
 export function defaultBenchmarkPublishPath() { return ""; }
 export function getBenchmarkLowerIsBetter() { return false; }
 export async function discoverAllProviders() { return []; }
+export function getBenchmarkLowerIsBetter() { return new Set(); }
 export async function listBenchmarkBaselines() { return []; }
 export async function listBenchmarkResults() { return []; }
 export async function loadBenchmarkBaseline() { return null; }
@@ -283,8 +297,29 @@ export async function resolveBenchmarkResultReference() { return null; }
 export async function saveBenchmarkBaseline() { return null; }
 export async function writeBenchmarkPublishFeed() { return ""; }
 `,
-    );
-  }
+    ),
+    // The CLI lazily imports these optional adapter packages to
+    // register themselves with the core registry. If their dist
+    // builds are absent in CI, the import throws and crashes the
+    // command under test — a no-op stub is enough to make the
+    // registration path succeed.
+    stubWorkspacePackage(
+      "@remnic/export-weclone",
+      `
+export const wecloneExportAdapter = { name: "weclone", fileExtension: "json", formatRecords: () => "" };
+export function ensureWecloneExportAdapterRegistered() {}
+export function synthesizeTrainingPairs() { return []; }
+export function sweepPii(input) { return input; }
+`,
+    ),
+    stubWorkspacePackage(
+      "@remnic/import-weclone",
+      `
+export const wecloneImportAdapter = { name: "weclone", parse: async () => ({ turns: [], metadata: {} }) };
+export function ensureWecloneImportAdapterRegistered() {}
+`,
+    ),
+  ];
 
   if (stubbedExportModule) {
     mkdirSync(exportModuleDist, { recursive: true });
@@ -327,30 +362,7 @@ export function sweepPii(records) { return { records, redactions: [] }; }
     assert.deepEqual(exitCalls, [1]);
   } finally {
     process.exit = originalExit;
-    if (stubbedExportModule) {
-      rmSync(exportModuleEntry, { force: true });
-      if (createdExportDistDir) {
-        rmSync(exportModuleDist, { recursive: true, force: true });
-      }
-      if (createdExportPackageJson) {
-        rmSync(exportPackageJson, { force: true });
-      }
-      if (createdExportModuleRoot) {
-        rmSync(exportModuleRoot, { recursive: true, force: true });
-      }
-    }
-    if (stubbedBenchModule) {
-      rmSync(benchModuleEntry, { force: true });
-      if (createdDistDir) {
-        rmSync(benchModuleDist, { recursive: true, force: true });
-      }
-      if (createdPackageJson) {
-        rmSync(benchPackageJson, { force: true });
-      }
-      if (createdModuleRoot) {
-        rmSync(benchModuleRoot, { recursive: true, force: true });
-      }
-    }
+    for (const stub of stubs) stub.cleanup();
   }
 });
 
