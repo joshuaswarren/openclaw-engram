@@ -9,7 +9,7 @@
  * The `input` field is empty string (synthesis is left to adapters).
  */
 
-import { readdir, readFile, lstat } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import type { TrainingExportOptions, TrainingExportRecord } from "./types.js";
@@ -73,56 +73,103 @@ function parseFrontmatter(raw: string): ParsedMemory | null {
 // Recursive directory scan
 // ---------------------------------------------------------------------------
 
-async function collectMarkdownFiles(dir: string): Promise<string[]> {
+/**
+ * Resolve the canonical real path of `dir`. Used as the containment root
+ * when rejecting symlinks that escape `memoryDir` (data-exfil protection).
+ */
+async function safeRealpath(p: string): Promise<string | null> {
+  try {
+    return await realpath(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Recursively collect `.md` files under `dir`, returning deterministic,
+ * lexicographically-sorted absolute paths.
+ *
+ * Security: rejects symlinks outright. A symlink named `facts/private.md`
+ * pointing to `~/.ssh/id_rsa` (or a symlinked `facts/` directory pointing
+ * outside `memoryDir`) must NOT be read/exported — that would be a data
+ * exfiltration path out of the memory store.
+ *
+ * `containmentRoot` is the canonical real path that every resolved file
+ * must sit under. Callers pass the real path of the memoryDir so symlinked
+ * subdirectories (e.g. `facts/` pointing at `/tmp/other/facts`) cannot
+ * leak files from outside the memory store.
+ */
+async function collectMarkdownFiles(
+  dir: string,
+  containmentRoot: string,
+): Promise<string[]> {
   const files: string[] = [];
 
   const walk = async (d: string): Promise<void> => {
+    // Refuse to descend into `d` at all if it is a symlink — regardless of
+    // whether the symlink happens to still point inside `containmentRoot`,
+    // traversing symlinked directories is easy to weaponise via TOCTOU.
+    let dStat: import("node:fs").Stats | null = null;
+    try {
+      dStat = await lstat(d);
+    } catch {
+      return;
+    }
+    if (dStat.isSymbolicLink()) return;
+
     let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(d, { withFileTypes: true });
-    } catch (err: unknown) {
-      // ENOENT means directory doesn't exist — that's fine (e.g. no facts/ yet)
-      if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
-        return;
-      }
-      // Other errors (EACCES, EIO, etc.) indicate real problems — propagate
-      throw err;
+    } catch {
+      return; // directory does not exist or is unreadable
     }
-    // Sort entries by name for deterministic output order
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
+
+    // Sort entries lexicographically for deterministic output ordering.
+    // `readdir` does not guarantee order across filesystems/platforms, which
+    // would otherwise make identical corpora produce different dataset files.
+    const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of sorted) {
       const full = path.join(d, entry.name);
-      // Reject symlinks to prevent data exfiltration (a symlink could
-      // point outside memoryDir, e.g. facts/private.md -> ~/.ssh/id_rsa)
-      let linkStat: import("node:fs").Stats;
-      try {
-        linkStat = await lstat(full);
-      } catch (err: unknown) {
-        // ENOENT: entry disappeared between readdir and lstat — skip
-        if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
+
+      // Skip symlinked entries entirely (security: prevents traversal out of
+      // memoryDir). withFileTypes=true gives us the entry kind from lstat-
+      // semantics, so we don't follow the link.
+      if (entry.isSymbolicLink()) continue;
+
+      if (entry.isDirectory()) {
+        await walk(full);
+      } else if (entry.isFile() && entry.name.endsWith(".md")) {
+        // Defense in depth: confirm the resolved real path still lives under
+        // the canonical containment root. `realpath` alone is not enough to
+        // catch hard links that point at out-of-tree inodes (a hard link IS
+        // the file, so realpath returns the in-tree path). We therefore also
+        // reject entries whose `nlink > 1`: memory files should have a single
+        // directory entry, and any additional hard link is a potential
+        // exfiltration vector that the operator did not intend.
+        let st: import("node:fs").Stats | null = null;
+        try {
+          st = await lstat(full);
+        } catch {
           continue;
         }
-        throw err;
-      }
-      if (linkStat.isSymbolicLink()) {
-        continue;
-      }
-      // Gate traversal on lstat() type rather than Dirent flags: some
-      // filesystems (certain network/FUSE mounts) return DT_UNKNOWN from
-      // readdir, making entry.isDirectory()/isFile() report false for real
-      // directories and regular files. lstat() gives a definitive answer.
-      if (linkStat.isDirectory()) {
-        await walk(full);
-      } else if (linkStat.isFile() && entry.name.endsWith(".md")) {
-        // Only accept regular files — FIFOs, sockets, device nodes, etc.
-        // could hang or error on readFile
+        if (st.nlink > 1) continue;
+
+        const real = await safeRealpath(full);
+        if (!real) continue;
+        if (real !== containmentRoot && !real.startsWith(containmentRoot + path.sep)) {
+          continue;
+        }
         files.push(full);
       }
     }
   };
 
   await walk(dir);
-  return files;
+
+  // Final stable sort of the absolute paths guarantees order regardless of
+  // directory traversal quirks.
+  return files.sort((a, b) => a.localeCompare(b));
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +201,8 @@ function buildInstruction(category: string, tags: string[]): string {
       return `Recall a skill${tagSuffix}`;
     case "rule":
       return `Recall a rule${tagSuffix}`;
+    case "personal":
+      return `Recall personal information${tagSuffix}`;
     default:
       return `Recall a memory${tagSuffix}`;
   }
@@ -182,106 +231,23 @@ export async function convertMemoriesToRecords(
 ): Promise<TrainingExportRecord[]> {
   const { memoryDir } = options;
 
-  // Gate unimplemented options (CLAUDE.md #51, #55)
-  if (options.includeTopics) {
-    throw new Error(
-      "includeTopics is not yet implemented — this option will be available in a future release",
-    );
-  }
-
-  // Validate since/until Date objects are valid (CLAUDE.md #51)
-  // NaN comparisons always return false, which silently disables filters
-  if (options.since && !Number.isFinite(options.since.getTime())) {
-    throw new Error("since is an Invalid Date — provide a valid Date object");
-  }
-  if (options.until && !Number.isFinite(options.until.getTime())) {
-    throw new Error("until is an Invalid Date — provide a valid Date object");
-  }
-
-  // Validate minConfidence is a finite number in [0, 1] (CLAUDE.md #51)
-  // NaN comparisons always return false, which would silently disable the filter
-  if (
-    options.minConfidence !== undefined &&
-    (!Number.isFinite(options.minConfidence) ||
-      options.minConfidence < 0 ||
-      options.minConfidence > 1)
-  ) {
-    throw new Error(
-      `minConfidence must be a finite number between 0 and 1, got: ${options.minConfidence}`,
-    );
-  }
-
-  // Normalize memoryDir: strip trailing separators so that lstat sees the
-  // entry itself rather than the directory it points to. Node's lstat on
-  // "link/" resolves through the symlink and reports a directory, not a
-  // symlink — the trailing slash strips the symlink-root guard entirely.
-  //
-  // Use path.normalize() to collapse redundant separators, then strip a
-  // single trailing separator only when the result is not a filesystem root
-  // (e.g. "/" on POSIX or "C:\" on Windows). A regex with repeated-separator
-  // alternation ([/\\]+) causes polynomial backtracking on adversarial input;
-  // the character-by-character approach below avoids that entirely.
-  let normalizedMemoryDir = path.normalize(memoryDir);
-  // path.normalize strips redundant slashes but preserves trailing sep on root
-  // paths ("/" stays "/", "C:\" stays "C:\"). Strip a single trailing sep only
-  // when the result is longer than the root portion.
-  if (
-    normalizedMemoryDir.length > path.parse(normalizedMemoryDir).root.length &&
-    (normalizedMemoryDir.endsWith("/") || normalizedMemoryDir.endsWith(path.sep))
-  ) {
-    normalizedMemoryDir = normalizedMemoryDir.slice(0, -1);
-  }
-
-  // Reject symlinked memoryDir root — a symlink could redirect the entire
-  // memory tree to an attacker-controlled location, bypassing per-file checks.
-  // Using the normalized path ensures a trailing slash cannot bypass this check.
-  let rootLinkStat: import("node:fs").Stats;
-  try {
-    rootLinkStat = await lstat(normalizedMemoryDir);
-  } catch {
-    throw new Error(
-      `memoryDir does not exist: ${memoryDir}`,
-    );
-  }
-  if (rootLinkStat.isSymbolicLink()) {
-    throw new Error(
-      `memoryDir must not be a symlink: ${memoryDir}`,
-    );
-  }
-  // lstat on a non-symlink is identical to stat, so isDirectory() is already
-  // authoritative here — no second stat() call needed (CLAUDE.md #24).
-  if (!rootLinkStat.isDirectory()) {
-    throw new Error(
-      `memoryDir is not a directory: ${memoryDir}`,
-    );
-  }
+  // Canonicalise the memoryDir once — this is the containment root every
+  // resolved `.md` file must sit under (symlink/hard-link escape defense).
+  const containmentRoot = await safeRealpath(memoryDir);
+  if (!containmentRoot) return [];
 
   // Collect from facts/ and corrections/ subdirectories (mirrors storage.ts)
-  const factsDir = path.join(normalizedMemoryDir, "facts");
-  const correctionsDir = path.join(normalizedMemoryDir, "corrections");
+  const factsDir = path.join(memoryDir, "facts");
+  const correctionsDir = path.join(memoryDir, "corrections");
 
   const dirs = [factsDir, correctionsDir];
   if (options.includeEntities) {
-    dirs.push(path.join(normalizedMemoryDir, "entities"));
+    dirs.push(path.join(memoryDir, "entities"));
   }
 
   const allFiles: string[] = [];
   for (const dir of dirs) {
-    // Reject symlinked source directories — a symlinked facts/ could point
-    // outside memoryDir, enabling data exfiltration
-    try {
-      const dirLinkStat = await lstat(dir);
-      if (dirLinkStat.isSymbolicLink()) {
-        continue; // skip symlinked source directory entirely
-      }
-    } catch (err: unknown) {
-      // ENOENT means directory doesn't exist — that's fine
-      if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
-        continue;
-      }
-      throw err;
-    }
-    const files = await collectMarkdownFiles(dir);
+    const files = await collectMarkdownFiles(dir, containmentRoot);
     allFiles.push(...files);
   }
 
@@ -291,13 +257,8 @@ export async function convertMemoriesToRecords(
     let raw: string;
     try {
       raw = await readFile(filePath, "utf-8");
-    } catch (err: unknown) {
-      // ENOENT means the file was removed between listing and reading — skip
-      if (err instanceof Error && (err as NodeJS.ErrnoException).code === "ENOENT") {
-        continue;
-      }
-      // Other errors (EACCES, EIO, etc.) indicate real problems — propagate
-      throw err;
+    } catch {
+      continue; // skip unreadable files
     }
 
     const parsed = parseFrontmatter(raw);
@@ -305,23 +266,6 @@ export async function convertMemoriesToRecords(
     if (!parsed.content) continue; // skip empty content
 
     parsed.filePath = filePath;
-
-    // Entity files from entities/ directory: override default category and
-    // derive sourceId from filename when frontmatter ID is missing.
-    // Use normalizedMemoryDir (not raw memoryDir) so the prefix matches the
-    // paths in allFiles, which were collected from dirs built via normalizedMemoryDir.
-    const entitiesPrefix = path.join(normalizedMemoryDir, "entities") + path.sep;
-    if (filePath.startsWith(entitiesPrefix)) {
-      // Default category from parseFrontmatter is "fact" — override to "entity"
-      // if the frontmatter didn't explicitly set a different category
-      if (parsed.category === "fact") {
-        parsed.category = "entity";
-      }
-      // Derive ID from filename when frontmatter ID is empty
-      if (!parsed.id) {
-        parsed.id = path.basename(filePath, ".md");
-      }
-    }
 
     // --- Apply filters ---
 
@@ -346,10 +290,8 @@ export async function convertMemoriesToRecords(
     // since filter (half-open: created >= since)
     if (options.since) {
       const created = parseIsoDate(parsed.created);
-      // Exclude memories with missing/unparseable dates when date filtering
-      // is active — including them contradicts the user's date-range intent
-      if (!created) continue;
-      if (created.getTime() < options.since.getTime()) {
+      // Exclude memories with missing/unparseable dates when date filters are active
+      if (!created || created.getTime() < options.since.getTime()) {
         continue;
       }
     }
@@ -357,8 +299,8 @@ export async function convertMemoriesToRecords(
     // until filter (exclusive upper bound per CLAUDE.md #35: created < until)
     if (options.until) {
       const created = parseIsoDate(parsed.created);
-      if (!created) continue;
-      if (created.getTime() >= options.until.getTime()) {
+      // Exclude memories with missing/unparseable dates when date filters are active
+      if (!created || created.getTime() >= options.until.getTime()) {
         continue;
       }
     }

@@ -13,7 +13,6 @@ export interface TrainingExportOptions {
   minConfidence?: number;
   categories?: string[];
   includeEntities?: boolean;
-  includeTopics?: boolean;
 }
 
 export interface TrainingExportRecord {
