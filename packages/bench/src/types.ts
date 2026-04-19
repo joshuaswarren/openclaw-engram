@@ -5,7 +5,7 @@
 export type BenchmarkMode = "full" | "quick";
 export type BenchmarkTier = "published" | "remnic" | "custom";
 export type BenchmarkStatus = "ready" | "planned";
-export type BenchmarkCategory = "agentic" | "retrieval" | "conversational";
+export type BenchmarkCategory = "agentic" | "retrieval" | "conversational" | "ingestion";
 export type BuiltInProvider = "openai" | "anthropic" | "ollama" | "litellm";
 
 export interface ProviderConfig {
@@ -153,6 +153,7 @@ export interface RunBenchmarkOptions {
   seed?: number;
   adapterMode?: string;
   system: import("./adapters/types.js").BenchMemoryAdapter;
+  ingestionAdapter?: import("./ingestion-types.js").IngestionBenchAdapter;
   systemProvider?: ProviderConfig | null;
   judgeProvider?: ProviderConfig | null;
   remnicConfig?: Record<string, unknown>;

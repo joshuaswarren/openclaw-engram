@@ -15,12 +15,14 @@
   "include": [
     "src/index.ts",
     "src/types.ts",
+    "src/ingestion-types.ts",
     "src/schema.ts",
     "src/benchmark.ts",
     "src/registry.ts",
     "src/reporter.ts",
     "src/scorer.ts",
     "src/adapters/**/*.ts",
+    "src/fixtures/**/*.ts",
     "src/providers/**/*.ts",
     "src/benchmarks/published/**/*.ts",
     "src/benchmarks/custom/**/*.ts"

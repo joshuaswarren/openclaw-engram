@@ -125,6 +125,19 @@ tasks: []
   );
 });
 
+test("parseCustomBenchmark accepts ingestion as a category", () => {
+  const benchmark = parseCustomBenchmark(`
+name: Ingestion Check
+scoring: exact_match
+category: ingestion
+tasks:
+  - question: Was the document indexed?
+    expected: Yes
+`);
+
+  assert.equal(benchmark.category, "ingestion");
+});
+
 test("parseCustomBenchmark rejects unsupported scoring values", () => {
   assert.throws(
     () =>

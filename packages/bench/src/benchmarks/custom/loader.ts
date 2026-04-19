@@ -22,6 +22,7 @@ const CUSTOM_CATEGORIES = new Set<BenchmarkCategory>([
   "agentic",
   "retrieval",
   "conversational",
+  "ingestion",
 ]);
 
 export function parseCustomBenchmark(source: string): CustomBenchmarkSpec {

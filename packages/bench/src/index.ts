@@ -51,6 +51,28 @@ export type {
   MemorySystem,
 } from "./adapters/types.js";
 
+export type {
+  GoldEntityType,
+  GoldEntity,
+  GoldLink,
+  GoldPage,
+  GoldGraph,
+  ExtractedEntity,
+  ExtractedLink,
+  ExtractedPage,
+  MemoryGraph,
+  IngestionLog,
+  IngestionBenchAdapter,
+} from "./ingestion-types.js";
+
+export { REQUIRED_FRONTMATTER_FIELDS } from "./ingestion-types.js";
+
+export type {
+  GeneratedFile,
+  FixtureOutput,
+  FixtureGenerator,
+} from "./fixtures/inbox/types.js";
+
 export {
   createLightweightAdapter,
   createRemnicAdapter,
