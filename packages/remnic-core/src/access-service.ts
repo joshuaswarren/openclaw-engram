@@ -23,6 +23,7 @@ import {
   readMemoryGovernanceRunArtifact,
   runMemoryGovernance,
 } from "./maintenance/memory-governance.js";
+import { runProcedureMining } from "./procedural/procedure-miner.js";
 import {
   normalizeProjectionPreview,
   normalizeProjectionTags,
@@ -1616,6 +1617,37 @@ export class EngramAccessService {
       appliedActionCount: result.appliedActions.length,
       summaryPath: result.summaryPath,
       reportPath: result.reportPath,
+    };
+  }
+
+  async procedureMiningRun(
+    request: {
+      namespace?: string;
+      authenticatedPrincipal?: string;
+    },
+    principal?: string,
+  ): Promise<{
+    namespace: string;
+    clustersProcessed: number;
+    proceduresWritten: number;
+    skippedReason?: string;
+  }> {
+    const resolvedNamespace = this.resolveWritableNamespace(
+      request.namespace,
+      undefined,
+      request.authenticatedPrincipal ?? principal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const result = await runProcedureMining({
+      memoryDir: storage.dir,
+      storage,
+      config: this.orchestrator.config,
+    });
+    return {
+      namespace: resolvedNamespace,
+      clustersProcessed: result.clustersProcessed,
+      proceduresWritten: result.proceduresWritten,
+      skippedReason: result.skippedReason,
     };
   }
 

@@ -65,7 +65,11 @@ import { TranscriptManager } from "./transcript.js";
 import { HourlySummarizer } from "./summarizer.js";
 import { LocalLlmClient } from "./local-llm.js";
 import { FallbackLlmClient } from "./fallback-llm.js";
-import { ensureDaySummaryCron, ensureNightlyGovernanceCron } from "./maintenance/memory-governance-cron.js";
+import {
+  ensureDaySummaryCron,
+  ensureNightlyGovernanceCron,
+  ensureProceduralMiningCron,
+} from "./maintenance/memory-governance-cron.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import {
@@ -2080,6 +2084,13 @@ export class Orchestrator {
         log.debug(`nightly governance cron auto-register failed (non-fatal): ${err}`);
       }
     }
+    if (this.config.procedural?.proceduralMiningCronAutoRegister) {
+      try {
+        await this.autoRegisterProceduralMiningCron();
+      } catch (err) {
+        log.debug(`procedural mining cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
 
     log.info("orchestrator initialized (full — deferred steps complete)");
   }
@@ -2271,6 +2282,26 @@ export class Orchestrator {
     }
   }
 
+  private async autoRegisterProceduralMiningCron(): Promise<void> {
+    const home = resolveHomeDir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("procedural mining cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+      const created = await ensureProceduralMiningCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (created.created) {
+        log.info(`procedural mining cron auto-registered (${created.jobId})`);
+      } else {
+        log.debug("procedural mining cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`procedural mining cron auto-register error: ${err}`);
+    }
+  }
 
   async applyBehaviorRuntimePolicy(
     state: BehaviorLoopPolicyState,
