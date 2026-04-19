@@ -7,7 +7,7 @@ Native [OpenAI Codex CLI](https://github.com/openai/codex) plugin for [Remnic](h
 ```bash
 # Recommended: the Remnic CLI installs + configures the plugin for you,
 # mints an MCP token, and materializes it into ~/.codex/.
-remnic connectors install codex
+remnic connectors install codex-cli
 ```
 
 Or install the package and wire Codex to it manually:
@@ -16,7 +16,7 @@ Or install the package and wire Codex to it manually:
 npm install -g @remnic/plugin-codex
 ```
 
-The package ships a `materialize.cjs` helper that copies the plugin tree into `~/.codex/` on demand (invoked by `remnic connectors install codex`).
+The package ships a `materialize.cjs` helper that copies the plugin tree into `~/.codex/` on demand (invoked by `remnic connectors install codex-cli`).
 
 ## What ships
 
@@ -29,7 +29,7 @@ The package is **data + one small materializer** (no runtime JS beyond the insta
 | `skills/` | `remnic-recall`, `remnic-remember`, `remnic-search`, `remnic-status`, `remnic-entities`, `remnic-memory-workflow` — invocable from Codex chats |
 | `memories_extensions/remnic/` | Codex memory extension that surfaces recall + observe without a separate MCP round trip on hot paths |
 | `.mcp.json` | MCP server config pointing Codex at `http://localhost:4318/mcp` |
-| `bin/materialize.cjs` | Installer used by `remnic connectors install codex` |
+| `bin/materialize.cjs` | Installer used by `remnic connectors install codex-cli` |
 
 ## What you get at runtime
 
@@ -42,7 +42,7 @@ Once installed and a Remnic daemon is running (`remnic daemon start`):
 
 ## MCP setup
 
-The plugin expects a Remnic daemon reachable at `http://localhost:4318/mcp` with a bearer token. `remnic connectors install codex` handles this automatically. The template is:
+The plugin expects a Remnic daemon reachable at `http://localhost:4318/mcp` with a bearer token. `remnic connectors install codex-cli` handles this automatically. The template is:
 
 ```json
 {
@@ -63,7 +63,7 @@ Replace `{{REMNIC_TOKEN}}` with a token minted via `remnic token create`.
 
 ## Agent note
 
-If you're an AI agent scaffolding a Codex integration: **do not** hand-edit `~/.codex/` directly — run `remnic connectors install codex` (which shells out to `materialize.cjs` in this package) so upgrades stay in sync and the token rotation flow works. The materializer treats `~/.codex/` as its source of truth for the installed copy and cleanly re-applies on reinstall.
+If you're an AI agent scaffolding a Codex integration: **do not** hand-edit `~/.codex/` directly — run `remnic connectors install codex-cli` (which shells out to `materialize.cjs` in this package) so upgrades stay in sync and the token rotation flow works. The materializer treats `~/.codex/` as its source of truth for the installed copy and cleanly re-applies on reinstall.
 
 ## Related
 

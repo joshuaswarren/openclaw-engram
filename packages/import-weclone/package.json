@@ -1,6 +1,6 @@
 {
   "name": "@remnic/import-weclone",
-  "version": "1.0.2",
+  "version": "1.0.1",
   "description": "Import WeClone-preprocessed chat exports to bootstrap Remnic memory",
   "type": "module",
   "main": "dist/index.js",
