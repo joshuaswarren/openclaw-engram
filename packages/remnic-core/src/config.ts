@@ -434,7 +434,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       : 3;
   const procedural: ProceduralConfig = {
     enabled: coerceBool(rawProcedural.enabled) === true,
-    /** 0 disables miner emission threshold (no clusters qualify). */
+    /** `0` skips all mining (`minOccurrences_zero`); otherwise clusters need at least this many members. */
     minOccurrences: Math.min(1000, Math.max(0, proceduralMinRaw)),
     successFloor,
     autoPromoteOccurrences,

@@ -560,6 +560,7 @@ Run Engram as a standalone HTTP server that multiple agent harnesses share. Isol
 - **Extraction Judge** — LLM-as-judge post-extraction filter that evaluates fact durability before write. Has shadow mode for calibration. Opt-in via `extractionJudgeEnabled`. (issue #376)
 - **Semantic Chunking** — Smoothing-based topic boundary detection using sentence embeddings and cosine similarity, as an alternative to recursive chunking. Opt-in via `semanticChunkingEnabled`. (issue #368)
 - **OAI-mem-citation Blocks** — Recall responses emit `<oai-mem-citation>` blocks matching the Codex citation format for memory attribution and usage tracking. Opt-in via `citationsEnabled`. (issue #379)
+- **Procedural memory** — Stores repeatable **how-to** memories as `category: procedure` markdown under `procedures/`, mines candidates from causal trajectories, and can inject a **Relevant procedures** section on task-initiation prompts. **Off by default**; set `procedural.enabled` to `true` in plugin config. See [Procedural memory](docs/procedural-memory.md). (issue #519)
 
 ### Organization & Taxonomy (opt-in)
 
@@ -880,6 +881,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `taxonomyEnabled` | `false` | MECE knowledge directory with resolver decision tree |
 | `enrichmentEnabled` | `false` | External entity enrichment pipeline |
 | `binaryLifecycleEnabled` | `false` | Binary file lifecycle management (mirror/redirect/clean) |
+| `procedural.enabled` | `false` | **Procedural memory (issue #519):** master gate for procedure extraction, task-init recall injection, and trajectory mining. Set nested `procedural: { "enabled": true }` in plugin config (see [Procedural memory](docs/procedural-memory.md)). |
 
 **[See the full config reference for all 60+ settings](docs/config-reference.md)** including search backend configuration, namespace policies, Memory OS features, governance, evaluation harness, trust zones, causal trajectories, and more.
 
@@ -919,6 +921,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Binary Lifecycle](docs/architecture/binary-lifecycle.md) — Binary file management
 - [Memory Extensions](docs/architecture/memory-extensions.md) — Third-party extension discovery
 - [Codex Marketplace](docs/plugins/codex-marketplace.md) — Marketplace installation
+- [Procedural memory](docs/procedural-memory.md) — Procedure files, recall injection, mining; enable with `procedural.enabled` (issue #519)
 
 ## Contributing
 

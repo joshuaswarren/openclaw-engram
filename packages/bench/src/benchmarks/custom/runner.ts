@@ -5,8 +5,10 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { RunBenchmarkOptions, BenchmarkDefinition, BenchmarkResult, ResolvedRunBenchmarkOptions, TaskResult } from "../../types.js";
-import { aggregateTaskScores, exactMatch, f1Score, llmJudgeScore, rougeL, timed } from "../../scorer.js";
+import { answerBenchmarkQuestion } from "../../answering.js";
+import { aggregateTaskScores, exactMatch, f1Score, llmJudgeScoreDetailed, rougeL, timed } from "../../scorer.js";
 import { orchestrateBenchmarkRuns } from "../../benchmark.js";
+import { finalizeBenchmarkResultConfig } from "../../result-config.js";
 import { getGitSha, getRemnicVersion } from "../../reporter.js";
 import { loadCustomBenchmarkFile } from "./loader.js";
 import type { CustomBenchmarkScoring, CustomBenchmarkSpec } from "./types.js";
@@ -43,8 +45,10 @@ async function runCustomBenchmark(
   );
   const tasks = runs.flat();
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
+  const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
 
-  return {
+  return finalizeBenchmarkResultConfig({
     meta: {
       id: randomUUID(),
       benchmark: options.benchmark.id,
@@ -64,9 +68,9 @@ async function runCustomBenchmark(
       remnicConfig: options.remnicConfig ?? {},
     },
     cost: {
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
       estimatedCostUsd: 0,
       totalLatencyMs,
       meanQueryLatencyMs: tasks.length > 0 ? totalLatencyMs / tasks.length : 0,
@@ -80,7 +84,7 @@ async function runCustomBenchmark(
       nodeVersion: process.version,
       hardware: process.arch,
     },
-  };
+  }, options);
 }
 
 async function runCustomBenchmarkRun(
@@ -98,37 +102,46 @@ async function runCustomBenchmarkRun(
 
   const results: TaskResult[] = [];
   for (const [taskIndex, task] of tasks.entries()) {
-    const { result, durationMs } = await timed(async () => {
-      const searchResults = await options.system.search(task.question, 10);
-      const actual = searchResults.map((entry) => entry.snippet).join("\n\n");
-      const score = await scoreTask(
-        benchmark.scoring,
-        options,
-        task.question,
-        actual,
-        task.expected,
-      );
-      return {
-        actual,
-        score,
-        searchHits: searchResults.length,
-      };
+    const { result: searchResults, durationMs } = await timed(async () =>
+      options.system.search(task.question, 10),
+    );
+    const recalledText = searchResults.map((entry) => entry.snippet).join("\n\n");
+    const answered = await answerBenchmarkQuestion({
+      question: task.question,
+      recalledText,
+      responder: options.system.responder,
     });
+    const scored = await scoreTask(
+      benchmark.scoring,
+      options,
+      task.question,
+      answered.finalAnswer,
+      task.expected,
+    );
 
     results.push({
       taskId: `${slugify(benchmark.name)}-${runIndex + 1}-${taskIndex + 1}`,
       question: task.question,
       expected: task.expected,
-      actual: result.actual,
-      scores: { [benchmark.scoring]: result.score },
-      latencyMs: durationMs,
-      tokens: { input: 0, output: 0 },
+      actual: answered.finalAnswer,
+      scores: { [benchmark.scoring]: scored.score },
+      latencyMs: durationMs + answered.latencyMs + scored.judgeMetrics.latencyMs,
+      tokens: {
+        input: answered.tokens.input + scored.judgeMetrics.tokens.input,
+        output: answered.tokens.output + scored.judgeMetrics.tokens.output,
+      },
       details: {
         tags: task.tags ?? [],
-        searchHits: result.searchHits,
+        searchHits: searchResults.length,
         scoring: benchmark.scoring,
         runIndex,
         seed,
+        recalledLength: recalledText.length,
+        answeredLength: answered.finalAnswer.length,
+        recalledText,
+        answeredText: answered.finalAnswer,
+        responderModel: answered.model,
+        judgeModel: scored.judgeMetrics.model,
       },
     });
   }
@@ -142,16 +155,42 @@ async function scoreTask(
   question: string,
   actual: string,
   expected: string,
-): Promise<number> {
+): Promise<{
+  score: number;
+  judgeMetrics: {
+    score: number;
+    tokens: { input: number; output: number };
+    latencyMs: number;
+    model?: string;
+  };
+}> {
   switch (scoring) {
     case "exact_match":
-      return exactMatch(actual, expected);
+      return {
+        score: exactMatch(actual, expected),
+        judgeMetrics: { score: -1, tokens: { input: 0, output: 0 }, latencyMs: 0 },
+      };
     case "f1":
-      return f1Score(actual, expected);
+      return {
+        score: f1Score(actual, expected),
+        judgeMetrics: { score: -1, tokens: { input: 0, output: 0 }, latencyMs: 0 },
+      };
     case "rouge_l":
-      return rougeL(actual, expected);
+      return {
+        score: rougeL(actual, expected),
+        judgeMetrics: { score: -1, tokens: { input: 0, output: 0 }, latencyMs: 0 },
+      };
     case "llm_judge":
-      return llmJudgeScore(options.system.judge, question, actual, expected);
+      const judgeMetrics = await llmJudgeScoreDetailed(
+        options.system.judge,
+        question,
+        actual,
+        expected,
+      );
+      return {
+        score: judgeMetrics.score,
+        judgeMetrics,
+      };
     default:
       throw new Error(`Unsupported custom benchmark scoring: ${scoring as string}`);
   }

@@ -4,6 +4,8 @@ Procedural memories are first-class **`category: procedure`** items stored under
 
 This feature tracks [issue #519](https://github.com/joshuaswarren/remnic/issues/519).
 
+Also indexed from the repo [README](../README.md) (Features + Configuration), [Getting started](getting-started.md) (Next steps), and [Config reference](config-reference.md) (Procedural memory section) so operators and agents see the **`procedural.enabled`** gate without opening this page first.
+
 ## Enablement
 
 Everything behavioral is gated by plugin config **`procedural.enabled`** (default **`false`**). When disabled:

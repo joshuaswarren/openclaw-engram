@@ -90,6 +90,20 @@ export {
 } from "./procedural/procedure-types.js";
 
 // ---------------------------------------------------------------------------
+// Direct-answer retrieval tier (issue #518)
+// ---------------------------------------------------------------------------
+
+export {
+  isDirectAnswerEligible,
+  FILTER_LABELS as DIRECT_ANSWER_FILTER_LABELS,
+  type DirectAnswerCandidate,
+  type DirectAnswerConfig,
+  type DirectAnswerInput,
+  type DirectAnswerReason,
+  type DirectAnswerResult,
+} from "./direct-answer.js";
+
+// ---------------------------------------------------------------------------
 // Inline source attribution (issue #369)
 // ---------------------------------------------------------------------------
 
@@ -590,6 +604,8 @@ export {
   type BulkImportCliCommandOptions,
 } from "./cli.js";
 
+export { FallbackLlmClient, type FallbackLlmOptions, type FallbackLlmResponse } from "./fallback-llm.js";
+
 // ---------------------------------------------------------------------------
 // Training-data export (issue #459)
 // ---------------------------------------------------------------------------
@@ -602,6 +618,7 @@ export * from "./training-export/index.js";
 
 export type {
   PluginConfig,
+  GatewayConfig,
   MemoryFile,
   MemoryCategory,
   MemoryActionType,

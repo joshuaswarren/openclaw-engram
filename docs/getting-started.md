@@ -219,6 +219,7 @@ See [Search Backends](search-backends.md) for a full comparison and configuratio
 ## Next Steps
 
 - [Search Backends](search-backends.md) — choose and configure your search engine
+- [Procedural memory](procedural-memory.md) — optional how-to / runbook memories (issue #519); **defaults off** — set `procedural.enabled` to `true` under the Remnic plugin config when you want extraction, mining, and recall-time procedure injection
 - [Enable All Features](enable-all-v8.md) — explicit full-profile config for all feature families
 - [Config Reference](config-reference.md) — full settings list with defaults and recommended values
 - [Operations](operations.md) — backups, exports, hourly summaries

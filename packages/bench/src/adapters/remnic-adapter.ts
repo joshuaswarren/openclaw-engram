@@ -6,65 +6,176 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Orchestrator, parseConfig } from "@remnic/core";
-import type { BenchMemoryAdapter, MemoryStats, Message, SearchResult } from "./types.js";
+import type {
+  BenchJudge,
+  BenchMemoryAdapter,
+  BenchResponder,
+  MemoryStats,
+  Message,
+  SearchResult,
+} from "./types.js";
 
 export interface RemnicAdapterOptions {
   configOverrides?: Record<string, unknown>;
+  preserveRuntimeDefaults?: boolean;
+  responder?: BenchResponder;
+  judge?: BenchJudge;
+}
+
+type BenchAdapterMode = "lightweight" | "direct";
+
+interface BenchAdapterBaseConfig {
+  memoryDir: string;
+  workspaceDir: string;
+  lcmEnabled: true;
+}
+
+export const BENCH_ADAPTER_SHARED_CONFIG: Record<string, unknown> = {
+  qmdEnabled: false,
+  qmdColdTierEnabled: false,
+  transcriptEnabled: false,
+  hourlySummariesEnabled: false,
+  daySummaryEnabled: false,
+  identityEnabled: false,
+  identityContinuityEnabled: false,
+  namespacesEnabled: false,
+  sharedContextEnabled: false,
+  workTasksEnabled: false,
+  workProjectsEnabled: false,
+  commitmentLedgerEnabled: false,
+  resumeBundlesEnabled: false,
+  nativeKnowledge: { enabled: false },
+  lcmLeafBatchSize: 4,
+  lcmRollupFanIn: 3,
+  lcmFreshTailTurns: 8,
+  lcmMaxDepth: 4,
+  lcmDeterministicMaxTokens: 512,
+  lcmRecallBudgetShare: 1.0,
+  queryExpansionEnabled: false,
+  rerankEnabled: false,
+  memoryBoxesEnabled: false,
+  traceWeaverEnabled: false,
+  threadingEnabled: false,
+  factDeduplicationEnabled: false,
+  knowledgeIndexEnabled: false,
+  entityRetrievalEnabled: false,
+  verifiedRecallEnabled: false,
+  queryAwareIndexingEnabled: false,
+  contradictionDetectionEnabled: false,
+  memoryLinkingEnabled: false,
+  topicExtractionEnabled: false,
+  chunkingEnabled: true,
+  episodeNoteModeEnabled: false,
+};
+
+export const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, unknown>> = {
+  direct: {
+    extractionDedupeEnabled: true,
+    extractionMinChars: 10,
+    extractionMinUserTurns: 0,
+    recallPlannerEnabled: true,
+  },
+  lightweight: {
+    extractionDedupeEnabled: false,
+    extractionMinChars: 1000000,
+    extractionMinUserTurns: 1000000,
+    recallPlannerEnabled: false,
+  },
+};
+
+function cloneBenchConfig(config: Record<string, unknown>): Record<string, unknown> {
+  return cloneBenchConfigValue(config) as Record<string, unknown>;
+}
+
+function cloneBenchConfigValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => cloneBenchConfigValue(entry));
+  }
+
+  if (typeof value === "function") {
+    return value;
+  }
+
+  if (value && typeof value === "object") {
+    const next: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      next[key] = cloneBenchConfigValue(entry);
+    }
+    return next;
+  }
+
+  return value;
+}
+
+export function buildBenchBaselineRemnicConfig(): Record<string, unknown> {
+  return cloneBenchConfig({
+    ...BENCH_ADAPTER_SHARED_CONFIG,
+    ...BENCH_ADAPTER_MODE_CONFIG.direct,
+    lcmEnabled: true,
+  });
+}
+
+export function buildBenchAdapterConfig(
+  mode: BenchAdapterMode,
+  baseConfig: BenchAdapterBaseConfig,
+  overrides: Record<string, unknown> = {},
+  options: { preserveRuntimeDefaults?: boolean } = {},
+): Record<string, unknown> {
+  const sandboxConfig = {
+    memoryDir: baseConfig.memoryDir,
+    workspaceDir: baseConfig.workspaceDir,
+    lcmEnabled: baseConfig.lcmEnabled,
+  };
+  const modeConfig = {
+    ...BENCH_ADAPTER_SHARED_CONFIG,
+    ...BENCH_ADAPTER_MODE_CONFIG[mode],
+  };
+
+  if (mode === "lightweight") {
+    return cloneBenchConfig({
+      ...baseConfig,
+      ...overrides,
+      ...modeConfig,
+      ...sandboxConfig,
+    });
+  }
+
+  if (options.preserveRuntimeDefaults === true) {
+    return cloneBenchConfig({
+      ...baseConfig,
+      ...overrides,
+      ...sandboxConfig,
+    });
+  }
+
+  return cloneBenchConfig({
+    ...baseConfig,
+    ...modeConfig,
+    ...overrides,
+    ...sandboxConfig,
+  });
 }
 
 async function createBenchOrchestrator(
-  mode: "lightweight" | "direct",
+  mode: BenchAdapterMode,
   overrides?: Record<string, unknown>,
+  preserveRuntimeDefaults = false,
 ): Promise<{ tempDir: string; orchestrator: Orchestrator }> {
   const tempDir = await mkdtemp(path.join(tmpdir(), `remnic-bench-${mode}-`));
   await mkdir(path.join(tempDir, "state"), { recursive: true });
 
+  const commonConfig: BenchAdapterBaseConfig = {
+    memoryDir: tempDir,
+    workspaceDir: tempDir,
+    lcmEnabled: true,
+  };
+
   const orchestrator = new Orchestrator(
-    parseConfig({
-      memoryDir: tempDir,
-      workspaceDir: tempDir,
-      qmdEnabled: false,
-      qmdColdTierEnabled: false,
-      transcriptEnabled: false,
-      hourlySummariesEnabled: false,
-      daySummaryEnabled: false,
-      identityEnabled: false,
-      identityContinuityEnabled: false,
-      namespacesEnabled: false,
-      sharedContextEnabled: false,
-      workTasksEnabled: false,
-      workProjectsEnabled: false,
-      commitmentLedgerEnabled: false,
-      resumeBundlesEnabled: false,
-      nativeKnowledge: { enabled: false },
-      lcmEnabled: true,
-      lcmLeafBatchSize: 4,
-      lcmRollupFanIn: 3,
-      lcmFreshTailTurns: 8,
-      lcmMaxDepth: 4,
-      lcmDeterministicMaxTokens: 512,
-      lcmRecallBudgetShare: 1.0,
-      extractionDedupeEnabled: mode === "direct",
-      extractionMinChars: mode === "direct" ? 10 : 1000000,
-      extractionMinUserTurns: mode === "direct" ? 0 : 1000000,
-      recallPlannerEnabled: mode === "direct",
-      queryExpansionEnabled: false,
-      rerankEnabled: false,
-      memoryBoxesEnabled: false,
-      traceWeaverEnabled: false,
-      threadingEnabled: false,
-      factDeduplicationEnabled: false,
-      knowledgeIndexEnabled: false,
-      entityRetrievalEnabled: false,
-      verifiedRecallEnabled: false,
-      queryAwareIndexingEnabled: false,
-      contradictionDetectionEnabled: false,
-      memoryLinkingEnabled: false,
-      topicExtractionEnabled: false,
-      chunkingEnabled: true,
-      episodeNoteModeEnabled: false,
-      ...overrides,
-    }),
+    parseConfig(
+      buildBenchAdapterConfig(mode, commonConfig, overrides, {
+        preserveRuntimeDefaults,
+      }),
+    ),
   );
 
   await orchestrator.initialize();
@@ -79,7 +190,11 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
   return async function createAdapter(
     options: RemnicAdapterOptions = {},
   ): Promise<BenchMemoryAdapter> {
-    let state = await createBenchOrchestrator(mode, options.configOverrides);
+    let state = await createBenchOrchestrator(
+      mode,
+      options.configOverrides,
+      options.preserveRuntimeDefaults === true,
+    );
 
     const getEngine = () => {
       const engine = state.orchestrator.lcmEngine;
@@ -96,7 +211,11 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
     const rebuild = async (): Promise<void> => {
       await cleanup();
-      state = await createBenchOrchestrator(mode, options.configOverrides);
+      state = await createBenchOrchestrator(
+        mode,
+        options.configOverrides,
+        options.preserveRuntimeDefaults === true,
+      );
     };
 
     return {
@@ -175,6 +294,9 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       async destroy(): Promise<void> {
         await cleanup();
       },
+
+      responder: options.responder,
+      judge: options.judge,
     };
   };
 }

@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
+import { answerBenchmarkQuestion } from "../../../answering.js";
 import {
   AMEMGYM_SMOKE_FIXTURE,
   type AMemGymProfile,
@@ -22,7 +23,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -102,29 +103,37 @@ export async function runAMemGymBenchmark(
       const { result: recallText, durationMs } = await timed(async () => {
         return options.system.recall(sessionId, qa.query);
       });
+      const answered = await answerBenchmarkQuestion({
+        question: qa.query,
+        recalledText: recallText,
+        responder: options.system.responder,
+      });
 
       const scores: Record<string, number> = {
-        f1: f1Score(recallText, expectedAnswer),
-        contains_answer: containsAnswer(recallText, expectedAnswer),
+        f1: f1Score(answered.finalAnswer, expectedAnswer),
+        contains_answer: containsAnswer(answered.finalAnswer, expectedAnswer),
       };
-      const judgeScore = await llmJudgeScore(
+      const judgeResult = await llmJudgeScoreDetailed(
         options.system.judge,
         qa.query,
-        recallText,
+        answered.finalAnswer,
         expectedAnswer,
       );
-      if (judgeScore >= 0) {
-        scores.llm_judge = judgeScore;
+      if (judgeResult.score >= 0) {
+        scores.llm_judge = judgeResult.score;
       }
 
       tasks.push({
         taskId: `${profile.id}-q${questionIndex}`,
         question: qa.query,
         expected: expectedAnswer,
-        actual: recallText,
+        actual: answered.finalAnswer,
         scores,
-        latencyMs: durationMs,
-        tokens: { input: 0, output: 0 },
+        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+        tokens: {
+          input: answered.tokens.input + judgeResult.tokens.input,
+          output: answered.tokens.output + judgeResult.tokens.output,
+        },
         details: {
           profileId: profile.id,
           profileName: profile.user_profile.name,
@@ -132,6 +141,11 @@ export async function runAMemGymBenchmark(
           periodCount: profile.periods.length,
           requiredInfo: qa.required_info,
           recalledLength: recallText.length,
+          answeredLength: answered.finalAnswer.length,
+          recalledText: recallText,
+          answeredText: answered.finalAnswer,
+          responderModel: answered.model,
+          judgeModel: judgeResult.model,
         },
       });
     }

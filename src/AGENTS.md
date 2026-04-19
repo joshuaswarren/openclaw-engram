@@ -23,6 +23,7 @@ See `AGENTS.md` (root) for the full list. Key reminders:
 3. **`no_recall` gates everything** — when planner returns `no_recall`, skip all retrieval paths.
 4. **Config `0` means `0`** — never coerce zero limits to non-zero values.
 5. **OpenAI Responses API only** — never use Chat Completions anywhere in this directory.
+6. **Procedural memory (issue #519)** — Shipped **off** until `procedural.enabled` is `true` in plugin config. See `docs/procedural-memory.md` before changing procedure extraction, recall injection, or mining.
 
 ## File Ownership
 

@@ -345,6 +345,7 @@ public export surface.
 Reviewers caught features that unconditionally transformed behavior without any
 escape hatch or configuration gate.
 
+- **Procedural memory (issue #519)** — All runtime behavior is behind **`procedural.enabled`** (default **`false`**). Docs: `docs/procedural-memory.md`. When changing extraction, recall injection, or mining paths, keep gates aligned with that flag and the nested `procedural.*` knobs in `parseConfig`.
 - **Add an `enabled` check or escape hatch for every new filter/transform** —
   if a new recall filter unconditionally removes `dream`/`procedural` memories,
   users can never search for them even when the feature is disabled. Mirror the
