@@ -4,7 +4,6 @@
 
 import { randomUUID } from "node:crypto";
 import type {
-  AggregateMetrics,
   BenchmarkDefinition,
   BenchmarkResult,
   ResolvedRunBenchmarkOptions,
