@@ -2396,7 +2396,7 @@ const pluginDefinition = {
                   namespaces: namespace ? [namespace] : undefined,
                   mode: resolvedMode,
                 });
-                return rawResults.map((result, index) => {
+                return rawResults.map((result, index): RuntimeSearchResult => {
                   const candidate = result as unknown as {
                     path?: string;
                     id?: string;
