@@ -80,3 +80,29 @@ test("benchmark config builders do not share nested nativeKnowledge state", () =
   assert.equal(second.nativeKnowledge.enabled, false);
   assert.equal(baseline.nativeKnowledge.enabled, false);
 });
+
+test("benchmark config builders preserve function-valued assistant hooks", async () => {
+  const assistantAgent = {
+    async respond(): Promise<string> {
+      return "ok";
+    },
+  };
+  const assistantJudge = {
+    async evaluate(): Promise<{ score: number }> {
+      return { score: 0.8 };
+    },
+  };
+
+  const config = buildBenchAdapterConfig("direct", BASE_CONFIG, {
+    assistantAgent,
+    assistantJudge,
+  }) as {
+    assistantAgent: typeof assistantAgent;
+    assistantJudge: typeof assistantJudge;
+  };
+
+  assert.equal(await config.assistantAgent.respond(), "ok");
+  assert.deepEqual(await config.assistantJudge.evaluate(), { score: 0.8 });
+  assert.notEqual(config.assistantAgent, assistantAgent);
+  assert.notEqual(config.assistantJudge, assistantJudge);
+});

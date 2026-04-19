@@ -83,7 +83,27 @@ export const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, 
 };
 
 function cloneBenchConfig(config: Record<string, unknown>): Record<string, unknown> {
-  return structuredClone(config);
+  return cloneBenchConfigValue(config);
+}
+
+function cloneBenchConfigValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => cloneBenchConfigValue(entry));
+  }
+
+  if (typeof value === "function") {
+    return value;
+  }
+
+  if (value && typeof value === "object") {
+    const next: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      next[key] = cloneBenchConfigValue(entry);
+    }
+    return next;
+  }
+
+  return value;
 }
 
 export function buildBenchBaselineRemnicConfig(): Record<string, unknown> {
