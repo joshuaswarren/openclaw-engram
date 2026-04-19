@@ -24,7 +24,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   rougeL,
   timed,
 } from "../../../scorer.js";
@@ -132,7 +132,7 @@ export async function runMemoryAgentBenchBenchmark(
         responder: options.system.responder,
       });
       const bestExpectedAnswer = selectBestMatchingAnswer(answered.finalAnswer, answerVariants);
-      const judgeScore = await llmJudgeScore(
+      const judgeResult = await llmJudgeScoreDetailed(
         options.system.judge,
         question,
         answered.finalAnswer,
@@ -148,8 +148,8 @@ export async function runMemoryAgentBenchBenchmark(
           : 0,
         rouge_l: scoreAgainstVariants(answered.finalAnswer, answerVariants, rougeL),
       };
-      if (judgeScore >= 0) {
-        scores.llm_judge = judgeScore;
+      if (judgeResult.score >= 0) {
+        scores.llm_judge = judgeResult.score;
       }
 
       tasks.push({
@@ -160,8 +160,11 @@ export async function runMemoryAgentBenchBenchmark(
         expected: answerVariants[0]!,
         actual: answered.finalAnswer,
         scores,
-        latencyMs: durationMs + answered.latencyMs,
-        tokens: answered.tokens,
+        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+        tokens: {
+          input: answered.tokens.input + judgeResult.tokens.input,
+          output: answered.tokens.output + judgeResult.tokens.output,
+        },
         details: {
           competency: item.metadata.competency,
           source: item.metadata.source,
@@ -179,6 +182,7 @@ export async function runMemoryAgentBenchBenchmark(
           recalledText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
+          judgeModel: judgeResult.model,
         },
       });
     }

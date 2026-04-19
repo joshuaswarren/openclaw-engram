@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import type {
   BenchMemoryAdapter,
+  BenchJudge,
   Message,
   SearchResult,
 } from "../packages/bench/src/index.js";
@@ -15,6 +16,7 @@ import { runCustomBenchmarkFile } from "../packages/bench/src/benchmarks/custom/
 
 class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
+  judge?: BenchJudge;
 
   async store(sessionId: string, messages: Message[]): Promise<void> {
     const existing = this.sessions.get(sessionId) ?? [];
@@ -186,4 +188,54 @@ tasks:
   assert.equal(result.results.tasks[0]?.actual, "The sky is blue.");
   assert.equal(result.results.tasks[0]?.scores.exact_match, 1);
   assert.equal(result.results.aggregates.exact_match?.mean, 1);
+});
+
+test("runCustomBenchmarkFile includes judge token and latency usage for llm_judge scoring", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-custom-bench-judge-"));
+  const filePath = path.join(tmpDir, "judge-check.yaml");
+  await writeFile(
+    filePath,
+    `
+name: Judge Check
+description: Custom benchmark with llm_judge scoring
+scoring: llm_judge
+tasks:
+  - question: What color is the sky?
+    expected: The sky is blue.
+`,
+  );
+
+  const adapter = new FakeMemoryAdapter();
+  adapter.judge = {
+    async score() {
+      return 0.9;
+    },
+    async scoreWithMetrics() {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return {
+        score: 0.9,
+        tokens: { input: 11, output: 7 },
+        latencyMs: 25,
+        model: "gpt-5.4-mini",
+      };
+    },
+  };
+  await adapter.store("memory", [
+    { role: "assistant", content: "The sky is blue." },
+  ]);
+
+  const result = await runCustomBenchmarkFile(filePath, {
+    mode: "quick",
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.scores.llm_judge, 0.9);
+  assert.deepEqual(result.results.tasks[0]?.tokens, { input: 11, output: 7 });
+  assert.equal((result.results.tasks[0]?.latencyMs ?? 0) >= 20, true);
+  assert.equal(result.results.tasks[0]?.details.judgeModel, "gpt-5.4-mini");
+  assert.equal(result.cost.inputTokens, 11);
+  assert.equal(result.cost.outputTokens, 7);
+  assert.equal(result.cost.totalTokens, 18);
+  assert.equal(result.cost.totalLatencyMs >= 20, true);
+  assert.equal(result.cost.meanQueryLatencyMs >= 20, true);
 });

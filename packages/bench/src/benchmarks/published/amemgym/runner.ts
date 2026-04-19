@@ -23,7 +23,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -113,14 +113,14 @@ export async function runAMemGymBenchmark(
         f1: f1Score(answered.finalAnswer, expectedAnswer),
         contains_answer: containsAnswer(answered.finalAnswer, expectedAnswer),
       };
-      const judgeScore = await llmJudgeScore(
+      const judgeResult = await llmJudgeScoreDetailed(
         options.system.judge,
         qa.query,
         answered.finalAnswer,
         expectedAnswer,
       );
-      if (judgeScore >= 0) {
-        scores.llm_judge = judgeScore;
+      if (judgeResult.score >= 0) {
+        scores.llm_judge = judgeResult.score;
       }
 
       tasks.push({
@@ -129,8 +129,11 @@ export async function runAMemGymBenchmark(
         expected: expectedAnswer,
         actual: answered.finalAnswer,
         scores,
-        latencyMs: durationMs + answered.latencyMs,
-        tokens: answered.tokens,
+        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+        tokens: {
+          input: answered.tokens.input + judgeResult.tokens.input,
+          output: answered.tokens.output + judgeResult.tokens.output,
+        },
         details: {
           profileId: profile.id,
           profileName: profile.user_profile.name,
@@ -142,6 +145,7 @@ export async function runAMemGymBenchmark(
           recalledText: recallText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
+          judgeModel: judgeResult.model,
         },
       });
     }

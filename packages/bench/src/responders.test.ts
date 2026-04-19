@@ -59,6 +59,12 @@ test("responder wrappers adapt a provider instance into answer-generation and ju
   const judge = createProviderBackedJudge({ provider: "openai", model: "gpt-5.4-mini" }, judgeProvider);
   const score = await judge.score("q", "predicted", "expected");
   assert.equal(score, 0.82);
+  const judgeResult = await judge.scoreWithMetrics?.("q", "predicted", "expected");
+  assert.equal(judgeResult?.score, 0.82);
+  assert.equal(judgeResult?.tokens.input > 0, true);
+  assert.equal(judgeResult?.tokens.output > 0, true);
+  assert.equal(judgeResult?.latencyMs, 12);
+  assert.equal(judgeResult?.model, "test-model");
 
   const structuredProvider = createFakeProvider("{\"identity_accuracy\":0.9,\"stance_coherence\":0.8,\"novelty\":0.7,\"calibration\":0.6,\"notes\":\"ok\"}");
   const structuredJudge = createStructuredJudgeFromProvider(structuredProvider);
@@ -108,4 +114,13 @@ test("provider-backed judge parses fraction and percent score formats", async ()
     createFakeProvider("75%"),
   );
   assert.equal(await percentJudge.score("q", "predicted", "expected"), 0.75);
+});
+
+test("provider-backed judge ignores date-like fractions and uses the trailing score", async () => {
+  const judge = createProviderBackedJudge(
+    { provider: "openai", model: "gpt-5.4-mini" },
+    createFakeProvider("Reviewed on 2026/04/19. Final score: 0.4"),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 0.4);
 });

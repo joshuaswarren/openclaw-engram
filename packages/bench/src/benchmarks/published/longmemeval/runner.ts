@@ -21,7 +21,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -88,7 +88,7 @@ export async function runLongMemEvalBenchmark(
     });
 
     const searchResults = await options.system.search(item.question, 10);
-    const judgeScore = await llmJudgeScore(
+    const judgeResult = await llmJudgeScoreDetailed(
       options.system.judge,
       item.question,
       answered.finalAnswer,
@@ -100,8 +100,8 @@ export async function runLongMemEvalBenchmark(
       contains_answer: containsAnswer(answered.finalAnswer, item.answer),
       search_hits: searchResults.length,
     };
-    if (judgeScore >= 0) {
-      scores.llm_judge = judgeScore;
+    if (judgeResult.score >= 0) {
+      scores.llm_judge = judgeResult.score;
     }
 
     tasks.push({
@@ -110,8 +110,11 @@ export async function runLongMemEvalBenchmark(
       expected: item.answer,
       actual: answered.finalAnswer,
       scores,
-      latencyMs: durationMs + answered.latencyMs,
-      tokens: answered.tokens,
+      latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+      tokens: {
+        input: answered.tokens.input + judgeResult.tokens.input,
+        output: answered.tokens.output + judgeResult.tokens.output,
+      },
       details: {
         questionType: item.question_type,
         questionDate: item.question_date,
@@ -123,6 +126,7 @@ export async function runLongMemEvalBenchmark(
         recalledText,
         answeredText: answered.finalAnswer,
         responderModel: answered.model,
+        judgeModel: judgeResult.model,
       },
     });
   }

@@ -21,7 +21,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -82,7 +82,7 @@ export async function runMemBenchBenchmark(
       recalledText,
       responder: options.system.responder,
     });
-    const judgeScore = await llmJudgeScore(
+    const judgeResult = await llmJudgeScoreDetailed(
       options.system.judge,
       testCase.question,
       answered.finalAnswer,
@@ -93,8 +93,8 @@ export async function runMemBenchBenchmark(
       f1: f1Score(answered.finalAnswer, testCase.answer),
       contains_answer: containsAnswer(answered.finalAnswer, testCase.answer),
     };
-    if (judgeScore >= 0) {
-      scores.llm_judge = judgeScore;
+    if (judgeResult.score >= 0) {
+      scores.llm_judge = judgeResult.score;
     }
 
     tasks.push({
@@ -103,8 +103,11 @@ export async function runMemBenchBenchmark(
       expected: testCase.answer,
       actual: answered.finalAnswer,
       scores,
-      latencyMs: durationMs + answered.latencyMs,
-      tokens: answered.tokens,
+      latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+      tokens: {
+        input: answered.tokens.input + judgeResult.tokens.input,
+        output: answered.tokens.output + judgeResult.tokens.output,
+      },
       details: {
         memoryType: testCase.memoryType,
         scenario: testCase.scenario,
@@ -115,6 +118,7 @@ export async function runMemBenchBenchmark(
         recalledText,
         answeredText: answered.finalAnswer,
         responderModel: answered.model,
+        judgeModel: judgeResult.model,
       },
     });
   }

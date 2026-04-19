@@ -4,6 +4,7 @@ import {
 } from "@remnic/core";
 import type {
   BenchJudge,
+  BenchJudgeResult,
   BenchResponder,
   BenchResponse,
 } from "./adapters/types.js";
@@ -68,26 +69,40 @@ export function createProviderBackedResponder(
 }
 
 function createJudgeFromProvider(provider: LlmProvider): BenchJudge {
+  async function scoreWithMetrics(
+    question: string,
+    predicted: string,
+    expected: string,
+  ): Promise<BenchJudgeResult> {
+    const completion = await provider.complete(
+      [
+        `QUESTION: ${question}`,
+        "",
+        `EXPECTED_ANSWER: ${expected}`,
+        "",
+        `PREDICTED_ANSWER: ${predicted}`,
+        "",
+        "Score the predicted answer against the expected answer.",
+      ].join("\n"),
+      {
+        systemPrompt: DEFAULT_JUDGE_SYSTEM_PROMPT,
+        temperature: 0,
+      },
+    );
+
+    return {
+      score: parseScalarJudgeScore(completion.text),
+      tokens: completion.tokens,
+      latencyMs: completion.latencyMs,
+      model: completion.model,
+    };
+  }
+
   return {
     async score(question: string, predicted: string, expected: string): Promise<number> {
-      const completion = await provider.complete(
-        [
-          `QUESTION: ${question}`,
-          "",
-          `EXPECTED_ANSWER: ${expected}`,
-          "",
-          `PREDICTED_ANSWER: ${predicted}`,
-          "",
-          "Score the predicted answer against the expected answer.",
-        ].join("\n"),
-        {
-          systemPrompt: DEFAULT_JUDGE_SYSTEM_PROMPT,
-          temperature: 0,
-        },
-      );
-
-      return parseScalarJudgeScore(completion.text);
+      return (await scoreWithMetrics(question, predicted, expected)).score;
     },
+    scoreWithMetrics,
   };
 }
 
@@ -185,28 +200,27 @@ function validateProviderConfig(
 function parseScalarJudgeScore(raw: string): number {
   const trimmed = raw.trim();
 
-  const fractionMatch = trimmed.match(/(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/);
-  if (fractionMatch) {
-    const numerator = Number.parseFloat(fractionMatch[1]);
-    const denominator = Number.parseFloat(fractionMatch[2]);
-    if (
-      Number.isFinite(numerator) &&
-      Number.isFinite(denominator) &&
-      denominator > 0
-    ) {
+  const fractionMatches = [
+    ...trimmed.matchAll(/(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/g),
+  ];
+  for (const match of [...fractionMatches].reverse()) {
+    const numerator = Number.parseFloat(match[1]);
+    const denominator = Number.parseFloat(match[2]);
+    if (isPlausibleScoreFraction(numerator, denominator)) {
       return clampNormalizedScore(numerator / denominator);
     }
   }
 
-  const percentMatch = trimmed.match(/(-?\d+(?:\.\d+)?)\s*%/);
-  if (percentMatch) {
-    const percent = Number.parseFloat(percentMatch[1]);
+  const percentMatches = [...trimmed.matchAll(/(-?\d+(?:\.\d+)?)\s*%/g)];
+  for (const match of [...percentMatches].reverse()) {
+    const percent = Number.parseFloat(match[1]);
     if (Number.isFinite(percent)) {
       return clampNormalizedScore(percent / 100);
     }
   }
 
-  const scalarMatch = trimmed.match(/-?\d+(?:\.\d+)?/);
+  const scalarMatches = [...trimmed.matchAll(/-?\d+(?:\.\d+)?/g)];
+  const scalarMatch = scalarMatches.at(-1);
   if (!scalarMatch) {
     return -1;
   }
@@ -217,6 +231,21 @@ function parseScalarJudgeScore(raw: string): number {
   }
 
   return clampNormalizedScore(value);
+}
+
+function isPlausibleScoreFraction(
+  numerator: number,
+  denominator: number,
+): boolean {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator)) {
+    return false;
+  }
+
+  if (denominator <= 0 || numerator < 0 || numerator > denominator) {
+    return false;
+  }
+
+  return denominator <= 10 || denominator === 100;
 }
 
 function clampNormalizedScore(value: number): number {

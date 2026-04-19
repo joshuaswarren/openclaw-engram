@@ -23,7 +23,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   rougeL,
   timed,
 } from "../../../scorer.js";
@@ -139,7 +139,7 @@ export async function runLoCoMoBenchmark(
         recalledText,
         responder: options.system.responder,
       });
-      const judgeScore = await llmJudgeScore(
+      const judgeResult = await llmJudgeScoreDetailed(
         options.system.judge,
         qa.question,
         answered.finalAnswer,
@@ -151,8 +151,8 @@ export async function runLoCoMoBenchmark(
         contains_answer: containsAnswer(answered.finalAnswer, qa.answer),
         rouge_l: rougeL(answered.finalAnswer, qa.answer),
       };
-      if (judgeScore >= 0) {
-        scores.llm_judge = judgeScore;
+      if (judgeResult.score >= 0) {
+        scores.llm_judge = judgeResult.score;
       }
 
       tasks.push({
@@ -161,8 +161,11 @@ export async function runLoCoMoBenchmark(
         expected: qa.answer,
         actual: answered.finalAnswer,
         scores,
-        latencyMs: durationMs + answered.latencyMs,
-        tokens: answered.tokens,
+        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+        tokens: {
+          input: answered.tokens.input + judgeResult.tokens.input,
+          output: answered.tokens.output + judgeResult.tokens.output,
+        },
         details: {
           category: qa.category,
           categoryName,
@@ -174,6 +177,7 @@ export async function runLoCoMoBenchmark(
           recalledText,
           answeredText: answered.finalAnswer,
           responderModel: answered.model,
+          judgeModel: judgeResult.model,
         },
       });
     }

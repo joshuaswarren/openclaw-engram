@@ -23,7 +23,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -86,7 +86,7 @@ export async function runMemoryArenaBenchmark(
           recalledText,
           responder: options.system.responder,
         });
-        const judgeScore = await llmJudgeScore(
+        const judgeResult = await llmJudgeScoreDetailed(
           options.system.judge,
           question,
           answered.finalAnswer,
@@ -97,8 +97,8 @@ export async function runMemoryArenaBenchmark(
           f1: f1Score(answered.finalAnswer, expected),
           contains_answer: containsAnswer(answered.finalAnswer, expected),
         };
-        if (judgeScore >= 0) {
-          scores.llm_judge = judgeScore;
+        if (judgeResult.score >= 0) {
+          scores.llm_judge = judgeResult.score;
         }
 
         tasks.push({
@@ -107,8 +107,11 @@ export async function runMemoryArenaBenchmark(
           expected,
           actual: answered.finalAnswer,
           scores,
-          latencyMs: durationMs + answered.latencyMs,
-          tokens: answered.tokens,
+          latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+          tokens: {
+            input: answered.tokens.input + judgeResult.tokens.input,
+            output: answered.tokens.output + judgeResult.tokens.output,
+          },
           details: {
             domain,
             taskId: task.id,
@@ -119,6 +122,7 @@ export async function runMemoryArenaBenchmark(
             recalledText,
             answeredText: answered.finalAnswer,
             responderModel: answered.model,
+            judgeModel: judgeResult.model,
           },
         });
 

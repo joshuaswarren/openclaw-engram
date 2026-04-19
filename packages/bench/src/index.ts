@@ -48,6 +48,7 @@ export type {
   MemoryStats,
   BenchResponse,
   BenchResponder,
+  BenchJudgeResult,
   BenchJudge,
   BenchMemoryAdapter,
   LlmJudge,
@@ -144,6 +145,7 @@ export {
   precisionAtK,
   containsAnswer,
   llmJudgeScore,
+  llmJudgeScoreDetailed,
   timed,
   aggregateTaskScores,
 } from "./scorer.js";

@@ -3,6 +3,7 @@
  */
 
 import type { AggregateMetrics } from "./types.js";
+import type { BenchJudgeResult } from "./adapters/types.js";
 
 export function exactMatch(
   predicted: string,
@@ -101,18 +102,61 @@ export function containsAnswer(
 
 export async function llmJudgeScore(
   judge:
-    | { score(question: string, predicted: string, expected: string): Promise<number> }
+    | {
+      score(question: string, predicted: string, expected: string): Promise<number>;
+      scoreWithMetrics?(
+        question: string,
+        predicted: string,
+        expected: string,
+      ): Promise<BenchJudgeResult>;
+    }
     | undefined,
   question: string,
   predicted: string,
   expected: string,
 ): Promise<number> {
-  if (!judge) return -1;
+  return (await llmJudgeScoreDetailed(judge, question, predicted, expected)).score;
+}
+
+export async function llmJudgeScoreDetailed(
+  judge:
+    | {
+      score(question: string, predicted: string, expected: string): Promise<number>;
+      scoreWithMetrics?(
+        question: string,
+        predicted: string,
+        expected: string,
+      ): Promise<BenchJudgeResult>;
+    }
+    | undefined,
+  question: string,
+  predicted: string,
+  expected: string,
+): Promise<BenchJudgeResult> {
+  if (!judge) {
+    return {
+      score: -1,
+      tokens: { input: 0, output: 0 },
+      latencyMs: 0,
+    };
+  }
 
   try {
-    return await judge.score(question, predicted, expected);
+    if (judge.scoreWithMetrics) {
+      return await judge.scoreWithMetrics(question, predicted, expected);
+    }
+
+    return {
+      score: await judge.score(question, predicted, expected),
+      tokens: { input: 0, output: 0 },
+      latencyMs: 0,
+    };
   } catch {
-    return -1;
+    return {
+      score: -1,
+      tokens: { input: 0, output: 0 },
+      latencyMs: 0,
+    };
   }
 }
 
