@@ -197,8 +197,12 @@ export async function resolveProviderApiKey(
   gatewayConfig?: unknown,
   agentDir?: string,
 ): Promise<string | undefined> {
+  const resolvedAgentDir = path.resolve(
+    agentDir ?? path.join(os.homedir(), ".openclaw", "agents", "main", "agent"),
+  );
+
   // Check cache first
-  const cacheKey = `provider:${providerId}`;
+  const cacheKey = `provider:${providerId}:agentDir:${resolvedAgentDir}`;
   if (resolvedCache.has(cacheKey)) {
     return resolvedCache.get(cacheKey);
   }
@@ -229,7 +233,6 @@ export async function resolveProviderApiKey(
   const resolver = await getGatewayResolver();
   if (resolver) {
     try {
-      const resolvedAgentDir = agentDir ?? path.join(os.homedir(), ".openclaw", "agents", "main", "agent");
       const auth = await resolver({ provider: providerId, cfg: gatewayConfig, agentDir: resolvedAgentDir });
       if (auth?.apiKey) {
         resolved = auth.apiKey;
@@ -299,5 +302,11 @@ export function clearSecretCache(): void {
   _resolveApiKeyForProvider = null;
   _getRuntimeAuthForModel = null;
   _resolverLoaded = false;
+  _resolverNextRetryAt = 0;
+}
+
+export function __setGatewayResolverForTest(resolver: ResolveApiKeyFn | null): void {
+  _resolveApiKeyForProvider = resolver;
+  _resolverLoaded = resolver !== null;
   _resolverNextRetryAt = 0;
 }
