@@ -109,19 +109,27 @@ async function collectMarkdownFiles(
     // Refuse to descend into `d` at all if it is a symlink — regardless of
     // whether the symlink happens to still point inside `containmentRoot`,
     // traversing symlinked directories is easy to weaponise via TOCTOU.
-    let dStat: import("node:fs").Stats | null = null;
+    // `ENOENT` on the initial subdirectory is the only expected "not here"
+    // signal; every other error (EACCES, EIO, etc.) is propagated so a
+    // partial export cannot happen silently.
+    let dStat: import("node:fs").Stats;
     try {
       dStat = await lstat(d);
-    } catch {
-      return;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw err;
     }
     if (dStat.isSymbolicLink()) return;
+    if (!dStat.isDirectory()) return;
 
     let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(d, { withFileTypes: true });
-    } catch {
-      return; // directory does not exist or is unreadable
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+      // Permission / I/O errors must surface to the caller — silently
+      // returning here would let exports succeed with partial data.
+      throw err;
     }
 
     // Sort entries lexicographically for deterministic output ordering.
@@ -137,9 +145,28 @@ async function collectMarkdownFiles(
       // semantics, so we don't follow the link.
       if (entry.isSymbolicLink()) continue;
 
-      if (entry.isDirectory()) {
+      // Classify the entry. On some filesystems (network / FUSE mounts)
+      // `Dirent` returns `DT_UNKNOWN`, in which case both `isDirectory()`
+      // and `isFile()` are false and the entry would otherwise be dropped.
+      // Fall back to `lstat` to recover the real type.
+      let isDir = entry.isDirectory();
+      let isFile = entry.isFile();
+      let entryStat: import("node:fs").Stats | undefined;
+      if (!isDir && !isFile) {
+        try {
+          entryStat = await lstat(full);
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw err;
+        }
+        if (entryStat.isSymbolicLink()) continue;
+        isDir = entryStat.isDirectory();
+        isFile = entryStat.isFile();
+      }
+
+      if (isDir) {
         await walk(full);
-      } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      } else if (isFile && entry.name.endsWith(".md")) {
         // Defense in depth: confirm the resolved real path still lives under
         // the canonical containment root. `realpath` alone is not enough to
         // catch hard links that point at out-of-tree inodes (a hard link IS
@@ -147,11 +174,12 @@ async function collectMarkdownFiles(
         // reject entries whose `nlink > 1`: memory files should have a single
         // directory entry, and any additional hard link is a potential
         // exfiltration vector that the operator did not intend.
-        let st: import("node:fs").Stats | null = null;
+        let st: import("node:fs").Stats;
         try {
-          st = await lstat(full);
-        } catch {
-          continue;
+          st = entryStat ?? (await lstat(full));
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+          throw err;
         }
         if (st.nlink > 1) continue;
 
@@ -233,16 +261,24 @@ export async function convertMemoriesToRecords(
 
   // Canonicalise the memoryDir once — this is the containment root every
   // resolved `.md` file must sit under (symlink/hard-link escape defense).
+  // A `null` from `safeRealpath` means ENOENT / EACCES / invalid path; we
+  // distinguish that from "exists-but-empty" by throwing so a typo or
+  // permission issue cannot look like a successful zero-record export.
   const containmentRoot = await safeRealpath(memoryDir);
-  if (!containmentRoot) return [];
+  if (!containmentRoot) {
+    throw new Error(
+      `Unable to resolve memoryDir "${memoryDir}" — the path may not exist, not be accessible, or contain a broken symlink.`,
+    );
+  }
 
   // Collect from facts/ and corrections/ subdirectories (mirrors storage.ts)
   const factsDir = path.join(memoryDir, "facts");
   const correctionsDir = path.join(memoryDir, "corrections");
 
   const dirs = [factsDir, correctionsDir];
+  const entitiesDir = path.join(memoryDir, "entities");
   if (options.includeEntities) {
-    dirs.push(path.join(memoryDir, "entities"));
+    dirs.push(entitiesDir);
   }
 
   const allFiles: string[] = [];
@@ -253,12 +289,18 @@ export async function convertMemoriesToRecords(
 
   const records: TrainingExportRecord[] = [];
 
+  // Detect whether a file lives under the entities tree (entity files are
+  // written by `serializeEntityFile`, which does NOT emit `id`/`category`
+  // frontmatter — we have to synthesize both from the path).
+  const entitiesPrefix = entitiesDir + path.sep;
+
   for (const filePath of allFiles) {
     let raw: string;
     try {
       raw = await readFile(filePath, "utf-8");
-    } catch {
-      continue; // skip unreadable files
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
     }
 
     const parsed = parseFrontmatter(raw);
@@ -266,6 +308,22 @@ export async function convertMemoriesToRecords(
     if (!parsed.content) continue; // skip empty content
 
     parsed.filePath = filePath;
+
+    // Restore entity metadata mapping when the file came from the entities
+    // directory. `serializeEntityFile` does not emit `id` or `category`
+    // frontmatter, so without this block entity exports would default to
+    // `category: "fact"` with an empty `sourceIds` array, which breaks
+    // downstream template routing and traceability.
+    if (filePath === entitiesDir || filePath.startsWith(entitiesPrefix)) {
+      parsed.category = "entity";
+      if (!parsed.id) {
+        // Derive a stable id from the filename (e.g. `person-alice.md` ->
+        // `person-alice`). Relative to entitiesDir so nested entity
+        // subdirectories also produce deterministic ids.
+        const rel = path.relative(entitiesDir, filePath);
+        parsed.id = rel.replace(/\.md$/i, "").replace(/\\/g, "/");
+      }
+    }
 
     // --- Apply filters ---
 

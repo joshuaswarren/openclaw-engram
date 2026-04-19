@@ -283,6 +283,46 @@ describe("convertMemoriesToRecords", () => {
     assert.match(records[0].instruction, /user preference/);
   });
 
+  // --- Error surfacing: misconfiguration must not look like success ---
+
+  it("throws when memoryDir does not exist (distinguishes from empty export)", async () => {
+    const missing = path.join(os.tmpdir(), `remnic-missing-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await assert.rejects(
+      () => convertMemoriesToRecords({ memoryDir: missing }),
+      /Unable to resolve memoryDir/,
+    );
+  });
+
+  // --- Entity metadata mapping ---
+
+  it("includeEntities exports entity files with category=entity and a derived id", async () => {
+    const dir = await makeTmpDir();
+    // Write an entity-shape markdown file (no `id`/`category` frontmatter,
+    // matching `serializeEntityFile`'s output shape).
+    const entitiesDir = path.join(dir, "entities");
+    await mkdir(entitiesDir, { recursive: true });
+    const md = [
+      "---",
+      "created: 2026-01-15T00:00:00.000Z",
+      "updated: 2026-01-15T00:00:00.000Z",
+      "tags: []",
+      "---",
+      "",
+      "Alice is a software engineer.",
+    ].join("\n");
+    await writeFile(path.join(entitiesDir, "person-alice.md"), md, "utf-8");
+
+    const records = await convertMemoriesToRecords({
+      memoryDir: dir,
+      includeEntities: true,
+    });
+
+    assert.equal(records.length, 1);
+    assert.equal(records[0].category, "entity");
+    assert.deepEqual(records[0].sourceIds, ["person-alice"]);
+    assert.match(records[0].instruction, /entity information/);
+  });
+
   // --- Security: symlink traversal must be blocked ---
 
   it("refuses to follow .md symlinks pointing outside memoryDir", async () => {
