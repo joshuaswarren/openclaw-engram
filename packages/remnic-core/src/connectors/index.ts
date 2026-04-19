@@ -439,6 +439,39 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
     requiresToken: true,
   },
   {
+    id: "weclone",
+    name: "WeClone Avatar",
+    version: "1.0.0",
+    description:
+      "Memory-aware OpenAI-compatible proxy for deployed WeClone avatars — " +
+      "injects Remnic recall into chat completions and buffers turns via observe",
+    capabilities: {
+      observe: true,
+      recall: true,
+      store: false,
+      search: false,
+      entities: false,
+      realtimeSync: false,
+      batch: false,
+      maxBudgetChars: 32000,
+      connectionType: "http",
+    },
+    configSchema: {
+      wecloneApiUrl:
+        "Base URL of the WeClone OpenAI-compatible API (e.g. http://localhost:8000/v1)",
+      proxyPort: "Local port where the memory proxy will listen (default 8100)",
+      remnicDaemonUrl:
+        "URL of the Remnic daemon exposing /engram/v1/recall and /engram/v1/observe",
+      sessionStrategy:
+        "Per-caller session mapping strategy: 'caller-id' | 'single'",
+      wecloneModelName: "Optional fine-tuned model name passed through to WeClone",
+    },
+    homepage: "https://github.com/xming521/weclone",
+    author: "Remnic",
+    tags: ["official", "ai", "weclone", "proxy"],
+    requiresToken: true,
+  },
+  {
     id: "hermes",
     name: "Hermes Agent",
     version: "1.0.0",
@@ -1212,6 +1245,77 @@ export function installConnector(options: InstallOptions): InstallResult {
     }
   }
 
+  // ── WeClone: write proxy config to ~/.remnic/connectors/weclone.json ─────
+  //
+  // The standalone `remnic-weclone-proxy` CLI (see packages/connector-weclone)
+  // reads its config from ~/.remnic/connectors/weclone.json by default so the
+  // proxy can start without depending on Remnic's XDG-scoped registry layout.
+  // Compose and write that file here, BEFORE the registry connector.json is
+  // written, so that a failure in either file's write path rolls back cleanly.
+  //
+  // Precedence for each field: user-supplied via --config → saved prior proxy
+  // config (on --force) → manifest defaults. The generated bearer token (if
+  // any) is persisted into remnicAuthToken so the proxy can authenticate with
+  // the daemon without a second token lookup at runtime.
+  let weCloneProxyHandleRollback: (() => void) | null = null;
+  if (options.connectorId === "weclone") {
+    try {
+      const proxyConfigPath = resolveWeCloneProxyConfigPath();
+      const prior = readWeCloneProxyConfigIfExists(proxyConfigPath);
+      const proxyConfig = buildWeCloneProxyConfig({
+        userConfig: safeUserConfig,
+        priorConfig: prior ? safeParseJson(prior) : null,
+        authToken: tokenEntry?.token,
+      });
+      fs.mkdirSync(path.dirname(proxyConfigPath), { recursive: true });
+      writeSecretFileSync(
+        proxyConfigPath,
+        JSON.stringify(proxyConfig, null, 2),
+      );
+      // Prepare rollback: restore prior content on failure, or delete if new.
+      weCloneProxyHandleRollback = () => {
+        try {
+          if (prior === null) {
+            // File was created by this install — delete it.
+            if (fs.existsSync(proxyConfigPath)) {
+              fs.unlinkSync(proxyConfigPath);
+            }
+          } else {
+            writeSecretFileSync(proxyConfigPath, prior);
+          }
+        } catch {
+          // Best-effort rollback.
+        }
+      };
+      // Record the proxy-side config path on the registry JSON so operators
+      // and `remnic connectors doctor weclone` can locate it later. Persist the
+      // effective proxy port so `remnic connectors list` reflects the resolved
+      // value rather than whatever (possibly missing) the user supplied.
+      resolvedConfig.proxyConfigPath = proxyConfigPath;
+      resolvedConfig.proxyPort = proxyConfig.proxyPort;
+      resolvedConfig.wecloneApiUrl = proxyConfig.wecloneApiUrl;
+      resolvedConfig.remnicDaemonUrl = proxyConfig.remnicDaemonUrl;
+      resolvedConfig.sessionStrategy = proxyConfig.sessionStrategy;
+    } catch (weCloneErr) {
+      // Roll back the token store if we wrote one.
+      if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
+        try {
+          saveTokenStore(nonHermesPriorTokenStore);
+        } catch {
+          // Best-effort rollback.
+        }
+      }
+      return {
+        connectorId: options.connectorId,
+        status: "error",
+        message:
+          `WeClone install aborted: proxy config write failed — ` +
+          `${weCloneErr instanceof Error ? weCloneErr.message : String(weCloneErr)}. ` +
+          `Resolve the write permission issue on ~/.remnic/connectors/, then reinstall.`,
+      };
+    }
+  }
+
   // Finding 5: strip internal/test-only keys that must never be persisted to
   // the config file. These keys are used at install time only (e.g. to inject
   // a synthetic extension source dir in tests) and have no meaning on disk.
@@ -1269,6 +1373,14 @@ export function installConnector(options: InstallOptions): InstallResult {
           "[remnic/connectors] installConnector: config write failed and extension rollback also failed — " +
             "manual cleanup of memories_extensions/remnic may be required.",
         );
+      }
+    }
+    // Roll back the WeClone proxy config if it was written.
+    if (weCloneProxyHandleRollback !== null) {
+      try {
+        weCloneProxyHandleRollback();
+      } catch {
+        // Best-effort rollback.
       }
     }
     // Only include a token-rollback suffix for connectors that actually had a
@@ -1455,6 +1567,23 @@ export function removeConnector(connectorId: string): RemoveResult {
     // The connector config has already been removed at this point.
     const revokeMsg = revokeErr instanceof Error ? revokeErr.message : String(revokeErr);
     notes.push(`Warning: token revocation failed — ${revokeMsg}. The token for ${connectorId} may still be present in tokens.json.`);
+  }
+
+  // WeClone-specific: remove the proxy config file at ~/.remnic/connectors/weclone.json.
+  // Only attempted after successful connector-registry file removal so the two
+  // locations stay consistent. Non-fatal — absence is treated as success.
+  if (connectorId === "weclone") {
+    try {
+      const proxyConfigPath = resolveWeCloneProxyConfigPath();
+      if (fs.existsSync(proxyConfigPath)) {
+        fs.unlinkSync(proxyConfigPath);
+        notes.push(`Removed WeClone proxy config: ${proxyConfigPath}`);
+      }
+    } catch (err) {
+      notes.push(
+        `WeClone proxy config cleanup skipped: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   // Hermes-specific: strip the remnic: block from config.yaml.
@@ -2469,4 +2598,233 @@ function getConnectorsDir(): string {
     ? path.join(process.env.XDG_CONFIG_HOME, "engram")
     : path.join(process.env.HOME ?? "~", ".config", "engram");
   return path.join(configDir, REGISTRY_DIR_NAME, "connectors");
+}
+
+// ── WeClone proxy config helpers ───────────────────────────────────────────
+//
+// The standalone `remnic-weclone-proxy` CLI reads its config from
+// ~/.remnic/connectors/weclone.json by default. `remnic connectors install
+// weclone` composes and persists that file so the proxy can start without
+// additional setup. The file is also tracked by the connector registry (at
+// getConnectorsDir()/weclone.json) so `remnic connectors list/remove/doctor`
+// work uniformly across all connectors.
+
+const WECLONE_PROXY_CONFIG_DIRNAME = ".remnic";
+const WECLONE_PROXY_CONFIG_FILENAME = "weclone.json";
+
+/**
+ * Resolve the path to ~/.remnic/connectors/weclone.json for the current user.
+ * Honours REMNIC_HOME / ENGRAM_HOME env overrides so tests can point the
+ * install at a temp dir without leaking into the real home directory.
+ */
+export function resolveWeCloneProxyConfigPath(): string {
+  const override = process.env.REMNIC_HOME ?? process.env.ENGRAM_HOME;
+  if (override && override.length > 0) {
+    return path.join(override, "connectors", WECLONE_PROXY_CONFIG_FILENAME);
+  }
+  const home = process.env.HOME ?? os.homedir();
+  return path.join(
+    home,
+    WECLONE_PROXY_CONFIG_DIRNAME,
+    "connectors",
+    WECLONE_PROXY_CONFIG_FILENAME,
+  );
+}
+
+/**
+ * Read the existing proxy config file, if any. Returns raw contents so the
+ * caller can both parse it (for value precedence) and restore it verbatim on
+ * rollback without touching byte-level formatting.
+ */
+function readWeCloneProxyConfigIfExists(configPath: string): string | null {
+  try {
+    if (!fs.existsSync(configPath)) return null;
+    return fs.readFileSync(configPath, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/** Safely parse a JSON string into a record; returns null on error. */
+function safeParseJson(raw: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(raw);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      return parsed as Record<string, unknown>;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+interface WeCloneProxyConfig {
+  wecloneApiUrl: string;
+  wecloneModelName: string;
+  proxyPort: number;
+  remnicDaemonUrl: string;
+  remnicAuthToken?: string;
+  sessionStrategy: "caller-id" | "single";
+  memoryInjection: {
+    maxTokens: number;
+    position: "system-append" | "system-prepend";
+    template: string;
+  };
+}
+
+const WECLONE_DEFAULTS = {
+  wecloneApiUrl: "http://localhost:8000/v1",
+  wecloneModelName: "weclone-avatar",
+  proxyPort: 8100,
+  remnicDaemonUrl: "http://localhost:4318",
+  sessionStrategy: "single" as const,
+  memoryInjection: {
+    maxTokens: 1500,
+    position: "system-append" as const,
+    template: "[Memory Context]\n{memories}\n[End Memory Context]",
+  },
+};
+
+/**
+ * Resolve a string field with precedence: userConfig → priorConfig → default.
+ * Only non-empty strings are accepted from either source; invalid values fall
+ * through so the user gets a working default rather than a broken install.
+ */
+function resolveStringField(
+  userConfig: Record<string, unknown>,
+  priorConfig: Record<string, unknown> | null,
+  key: string,
+  fallback: string,
+): string {
+  const fromUser = userConfig[key];
+  if (typeof fromUser === "string" && fromUser.length > 0) return fromUser;
+  if (priorConfig) {
+    const fromPrior = priorConfig[key];
+    if (typeof fromPrior === "string" && fromPrior.length > 0) return fromPrior;
+  }
+  return fallback;
+}
+
+/**
+ * Coerce a config value to an integer port in [1, 65535]. Accepts number or
+ * numeric string (parseConnectorConfig produces strings from `--config
+ * proxyPort=8100`). Returns null if the value is missing or invalid so the
+ * caller can fall through to the next precedence level.
+ */
+function coercePort(value: unknown): number | null {
+  if (typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535) {
+    return value;
+  }
+  if (typeof value === "string" && value.length > 0) {
+    const n = Number(value);
+    if (Number.isInteger(n) && n >= 1 && n <= 65535) return n;
+  }
+  return null;
+}
+
+function resolvePort(
+  userConfig: Record<string, unknown>,
+  priorConfig: Record<string, unknown> | null,
+  fallback: number,
+): number {
+  const fromUser = coercePort(userConfig.proxyPort);
+  if (fromUser !== null) return fromUser;
+  if (priorConfig) {
+    const fromPrior = coercePort(priorConfig.proxyPort);
+    if (fromPrior !== null) return fromPrior;
+  }
+  return fallback;
+}
+
+function resolveSessionStrategy(
+  userConfig: Record<string, unknown>,
+  priorConfig: Record<string, unknown> | null,
+): "caller-id" | "single" {
+  const valid = new Set(["caller-id", "single"]);
+  const fromUser = userConfig.sessionStrategy;
+  if (typeof fromUser === "string" && valid.has(fromUser)) {
+    return fromUser as "caller-id" | "single";
+  }
+  if (priorConfig) {
+    const fromPrior = priorConfig.sessionStrategy;
+    if (typeof fromPrior === "string" && valid.has(fromPrior)) {
+      return fromPrior as "caller-id" | "single";
+    }
+  }
+  return WECLONE_DEFAULTS.sessionStrategy;
+}
+
+/**
+ * Compose a WeCloneProxyConfig from user-supplied overrides and any prior
+ * saved config, filling in defaults for every required field. The returned
+ * shape is exactly what the proxy's parseConfig() expects.
+ */
+export function buildWeCloneProxyConfig(args: {
+  userConfig: Record<string, unknown>;
+  priorConfig: Record<string, unknown> | null;
+  authToken?: string;
+}): WeCloneProxyConfig {
+  const { userConfig, priorConfig, authToken } = args;
+
+  const wecloneApiUrl = resolveStringField(
+    userConfig,
+    priorConfig,
+    "wecloneApiUrl",
+    WECLONE_DEFAULTS.wecloneApiUrl,
+  );
+  const wecloneModelName = resolveStringField(
+    userConfig,
+    priorConfig,
+    "wecloneModelName",
+    WECLONE_DEFAULTS.wecloneModelName,
+  );
+  const remnicDaemonUrl = resolveStringField(
+    userConfig,
+    priorConfig,
+    "remnicDaemonUrl",
+    WECLONE_DEFAULTS.remnicDaemonUrl,
+  );
+  const proxyPort = resolvePort(
+    userConfig,
+    priorConfig,
+    WECLONE_DEFAULTS.proxyPort,
+  );
+  const sessionStrategy = resolveSessionStrategy(userConfig, priorConfig);
+
+  // Memory injection: always start from defaults, then shallow-merge any
+  // prior values, then user overrides. Individual field validation happens in
+  // the proxy's parseConfig() at proxy startup — here we only assemble a
+  // best-effort shape. A malformed user override would be rejected later with
+  // a clean error message.
+  const memoryInjection = {
+    ...WECLONE_DEFAULTS.memoryInjection,
+    ...(priorConfig && typeof priorConfig.memoryInjection === "object" && priorConfig.memoryInjection !== null
+      ? (priorConfig.memoryInjection as Record<string, unknown>)
+      : {}),
+    ...(typeof userConfig.memoryInjection === "object" && userConfig.memoryInjection !== null
+      ? (userConfig.memoryInjection as Record<string, unknown>)
+      : {}),
+  } as WeCloneProxyConfig["memoryInjection"];
+
+  const config: WeCloneProxyConfig = {
+    wecloneApiUrl,
+    wecloneModelName,
+    proxyPort,
+    remnicDaemonUrl,
+    sessionStrategy,
+    memoryInjection,
+  };
+
+  // Token precedence: freshly minted token → user-supplied → prior saved.
+  // Never write a token if none is available — the proxy tolerates missing
+  // tokens (it just won't send Authorization headers to the daemon).
+  if (authToken && authToken.length > 0) {
+    config.remnicAuthToken = authToken;
+  } else if (typeof userConfig.remnicAuthToken === "string" && userConfig.remnicAuthToken.length > 0) {
+    config.remnicAuthToken = userConfig.remnicAuthToken;
+  } else if (priorConfig && typeof priorConfig.remnicAuthToken === "string" && priorConfig.remnicAuthToken.length > 0) {
+    config.remnicAuthToken = priorConfig.remnicAuthToken;
+  }
+
+  return config;
 }

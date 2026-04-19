@@ -3,7 +3,9 @@
  * CLI entrypoint for @remnic/connector-weclone.
  *
  * Reads config from ~/.remnic/connectors/weclone.json (or --config path)
- * and starts the OpenAI-compatible memory proxy.
+ * and starts the OpenAI-compatible memory proxy. `REMNIC_HOME` (or legacy
+ * `ENGRAM_HOME`) can override the default home directory — this matches the
+ * override honoured by `remnic connectors install weclone` in @remnic/core.
  */
 
 import { createWeCloneProxy } from "./proxy.js";
@@ -12,8 +14,21 @@ import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
 
+/**
+ * Resolve the default proxy config path. Kept in lockstep with
+ * @remnic/core's resolveWeCloneProxyConfigPath() so install/run pair up
+ * without additional wiring from the caller.
+ */
+function defaultConfigPath(): string {
+  const override = process.env.REMNIC_HOME ?? process.env.ENGRAM_HOME;
+  if (override && override.length > 0) {
+    return resolve(override, "connectors", "weclone.json");
+  }
+  return resolve(homedir(), ".remnic", "connectors", "weclone.json");
+}
+
 const args = process.argv.slice(2);
-let configPath = resolve(homedir(), ".remnic/connectors/weclone.json");
+let configPath = defaultConfigPath();
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--config") {
