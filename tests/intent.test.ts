@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { hasBroadGraphIntent, inferIntentFromText, planRecallMode } from "../src/intent.ts";
+import {
+  hasBroadGraphIntent,
+  inferIntentFromText,
+  isTaskInitiationIntent,
+  planRecallMode,
+} from "../src/intent.ts";
 
 test("planRecallMode keeps acknowledgements in no_recall", () => {
   assert.equal(planRecallMode("ok"), "no_recall");
@@ -64,6 +69,16 @@ test("inferIntentFromText recognizes summarize/recap conjugations", () => {
 
   const recapped = inferIntentFromText("We recapped the timeline at standup");
   assert.equal(recapped.actionType, "summarize");
+});
+
+test("inferIntentFromText sets taskInitiation for ship/deploy/run tests phrasing", () => {
+  const deploy = inferIntentFromText("Let's deploy the gateway to production");
+  assert.equal(deploy.taskInitiation, true);
+  assert.equal(isTaskInitiationIntent(deploy), true);
+
+  const vague = inferIntentFromText("What is deployment?");
+  assert.ok(vague.taskInitiation !== true);
+  assert.equal(isTaskInitiationIntent(vague), false);
 });
 
 test("runtime guards tolerate nullish/non-string inputs", () => {
