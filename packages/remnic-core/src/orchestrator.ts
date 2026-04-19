@@ -98,6 +98,10 @@ import {
   type TierMigrationCycleSummary,
   type TierMigrationStatusSnapshot,
 } from "./recall-state.js";
+import { tryDirectAnswer, type DirectAnswerSources } from "./direct-answer-wiring.js";
+import { listTrustZoneRecords } from "./trust-zones.js";
+import { DEFAULT_TAXONOMY } from "./taxonomy/default-taxonomy.js";
+import type { RecallTierExplain } from "./types.js";
 import {
   recordEvalShadowRecall,
   type EvalShadowRecallRecord,
@@ -3869,23 +3873,33 @@ export class Orchestrator {
         abortSignal: abortController.signal,
       });
       const RECALL_TIMEOUT_MS = this.config.recallOuterTimeoutMs ?? 75_000;
+      let recallResult: string;
       if (RECALL_TIMEOUT_MS <= 0) {
-        return await recallPromise;
+        recallResult = await recallPromise;
+      } else {
+        let timeoutHandle: NodeJS.Timeout | null = null;
+        const timeoutPromise = new Promise<string>((_, reject) => {
+          timeoutHandle = setTimeout(() => {
+            abortController.abort();
+            reject(new Error("recall timeout"));
+          }, RECALL_TIMEOUT_MS);
+        });
+        try {
+          recallResult = await Promise.race([recallPromise, timeoutPromise]);
+        } finally {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
+        }
       }
 
-      let timeoutHandle: NodeJS.Timeout | null = null;
-      const timeoutPromise = new Promise<string>((_, reject) => {
-        timeoutHandle = setTimeout(() => {
-          abortController.abort();
-          reject(new Error("recall timeout"));
-        }, RECALL_TIMEOUT_MS);
-      });
-
-      try {
-        return await Promise.race([recallPromise, timeoutPromise]);
-      } finally {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
+      // Observation-mode direct-answer tier (issue #518 slice 3c).
+      // Runs after the user's recall already succeeded so no annotation
+      // error can corrupt the caller's answer.  Feature-gated behind
+      // `recallDirectAnswerEnabled` (default false).
+      if (this.config.recallDirectAnswerEnabled && sessionKey) {
+        await this.annotateDirectAnswerTier(prompt, sessionKey, abortController.signal);
       }
+
+      return recallResult;
     } catch (err) {
       this.logRecallFailure(err);
       // endTrace() is safe here: if no trace is active (disabled or already
@@ -3894,6 +3908,87 @@ export class Orchestrator {
       return ""; // Return empty context on timeout/error
     } finally {
       options.abortSignal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Observation-mode direct-answer tier (issue #518 slice 3c).
+   *
+   * Runs after `recallInternal` has already produced the caller's
+   * answer and persisted a snapshot.  Fires `tryDirectAnswer`, and
+   * when the eligibility gate returns a winner, annotates the
+   * snapshot with a RecallTierExplain block so CLI / HTTP / MCP
+   * surfaces can show which tier would have served the query.
+   *
+   * Does not short-circuit the recall response — the caller already
+   * has it.  A future slice may wire the short-circuit path once
+   * the bench confirms direct-answer decisions match what full
+   * recall returned.
+   *
+   * All errors are logged and swallowed so observation can never
+   * corrupt the user's recall response.
+   */
+  private async annotateDirectAnswerTier(
+    prompt: string,
+    sessionKey: string,
+    parentAbortSignal?: AbortSignal,
+  ): Promise<void> {
+    const tierStart = Date.now();
+    try {
+      const namespace = this.config.defaultNamespace;
+      // Read all trust-zone records up front; map by record ID for O(1)
+      // lookup inside the wiring's per-candidate call.
+      const trustZones = await listTrustZoneRecords({
+        memoryDir: this.config.memoryDir,
+        trustZoneStoreDir: this.config.trustZoneStoreDir,
+        limit: 200,
+      }).catch(() => ({ allRecords: [] as Array<{ recordId: string; zone: "quarantine" | "working" | "trusted" }> }));
+      const trustZoneByRecordId = new Map<string, "quarantine" | "working" | "trusted">();
+      for (const record of trustZones.allRecords ?? []) {
+        trustZoneByRecordId.set(record.recordId, record.zone);
+      }
+
+      const sources: DirectAnswerSources = {
+        taxonomy: DEFAULT_TAXONOMY,
+        listCandidateMemories: async () => {
+          const all = await this.storage.readAllMemories();
+          return all.filter(
+            (m) => (m.frontmatter.status ?? "active") === "active",
+          );
+        },
+        trustZoneFor: async (memoryId: string) =>
+          trustZoneByRecordId.get(memoryId) ?? null,
+        importanceFor: (memory) =>
+          typeof memory.frontmatter.importance?.score === "number"
+            ? memory.frontmatter.importance.score
+            : 0,
+      };
+
+      const result = await tryDirectAnswer({
+        query: prompt,
+        namespace,
+        config: this.config,
+        sources,
+        abortSignal: parentAbortSignal,
+      });
+
+      // Only annotate when a concrete direct-answer verdict was reached.
+      // The `disabled` and `no-candidates` cases add no signal; skipping
+      // them keeps the snapshot clean.
+      if (!result.eligible || !result.winner) return;
+
+      const explain: RecallTierExplain = {
+        tier: "direct-answer",
+        tierReason: result.narrative,
+        filteredBy: result.filteredBy,
+        candidatesConsidered: (result.winner ? 1 : 0) + result.filteredBy.length,
+        latencyMs: Date.now() - tierStart,
+        sourceAnchors: [{ path: result.winner.memory.path }],
+      };
+      await this.lastRecall.annotateTierExplain(sessionKey, explain);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      log.debug(`direct-answer observation failed: ${err}`);
     }
   }
 
