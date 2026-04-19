@@ -83,6 +83,22 @@ import {
   ingestionCitationAccuracyDefinition,
   runIngestionCitationAccuracyBenchmark,
 } from "./benchmarks/remnic/ingestion-citation-accuracy/runner.js";
+import {
+  assistantMorningBriefDefinition,
+  runAssistantMorningBriefBenchmark,
+} from "./benchmarks/remnic/assistant-morning-brief/runner.js";
+import {
+  assistantMeetingPrepDefinition,
+  runAssistantMeetingPrepBenchmark,
+} from "./benchmarks/remnic/assistant-meeting-prep/runner.js";
+import {
+  assistantNextBestActionDefinition,
+  runAssistantNextBestActionBenchmark,
+} from "./benchmarks/remnic/assistant-next-best-action/runner.js";
+import {
+  assistantSynthesisDefinition,
+  runAssistantSynthesisBenchmark,
+} from "./benchmarks/remnic/assistant-synthesis/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -170,6 +186,22 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
     ...ingestionCitationAccuracyDefinition,
     runnerAvailable: false,
     run: runIngestionCitationAccuracyBenchmark,
+  },
+  {
+    ...assistantMorningBriefDefinition,
+    run: runAssistantMorningBriefBenchmark,
+  },
+  {
+    ...assistantMeetingPrepDefinition,
+    run: runAssistantMeetingPrepBenchmark,
+  },
+  {
+    ...assistantNextBestActionDefinition,
+    run: runAssistantNextBestActionBenchmark,
+  },
+  {
+    ...assistantSynthesisDefinition,
+    run: runAssistantSynthesisBenchmark,
   },
 ];
 
