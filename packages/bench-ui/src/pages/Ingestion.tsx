@@ -3,10 +3,10 @@ import type { BenchResultSummaryPayload } from "../bench-data";
 import {
   formatDelta,
   formatMetricValue,
-  formatTimestamp,
   getBenchmarkCards,
   humanizeIdentifier,
 } from "../bench-data";
+import { ScoreCard } from "../components/ScoreCard";
 
 const INGESTION_BENCHMARKS = [
   "ingestion-entity-recall",
@@ -65,47 +65,7 @@ export function Ingestion({ payload }: { payload: BenchResultSummaryPayload }) {
           <div className="score-grid">
             {ingestionCards.map((card) => (
               <Link key={card.benchmark} to={`/benchmark/${card.benchmark}`}>
-                <article className="score-card">
-                  <div className="score-card__header">
-                    <div>
-                      <span className="section-kicker">ingestion</span>
-                      <h4>{humanizeIdentifier(card.benchmark)}</h4>
-                    </div>
-                    <span className="score-card__timestamp">
-                      {formatTimestamp(card.latest.timestamp)}
-                    </span>
-                  </div>
-
-                  <div className="score-card__score-row">
-                    <strong>{formatMetricValue(card.latest.primaryScore)}</strong>
-                    <span
-                      className={`delta-pill${
-                        card.delta !== null && card.delta > 0
-                          ? " delta-pill--positive"
-                          : card.delta !== null && card.delta < 0
-                            ? " delta-pill--negative"
-                            : ""
-                      }`}
-                    >
-                      {formatDelta(card.delta)}
-                    </span>
-                  </div>
-
-                  <dl className="score-card__meta">
-                    <div>
-                      <dt>Metric</dt>
-                      <dd>{card.latest.primaryMetric ?? "n/a"}</dd>
-                    </div>
-                    <div>
-                      <dt>System</dt>
-                      <dd>{card.latest.systemProvider}</dd>
-                    </div>
-                  </dl>
-
-                  <p className="score-card__desc">
-                    {INGESTION_DESCRIPTIONS[card.benchmark] ?? ""}
-                  </p>
-                </article>
+                <ScoreCard card={card} />
               </Link>
             ))}
           </div>
