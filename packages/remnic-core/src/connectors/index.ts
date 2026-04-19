@@ -1340,21 +1340,35 @@ export function installConnector(options: InstallOptions): InstallResult {
       resolvedConfig.remnicDaemonUrl = proxyConfig.remnicDaemonUrl;
       resolvedConfig.sessionStrategy = proxyConfig.sessionStrategy;
     } catch (weCloneErr) {
-      // Roll back the token store if we wrote one.
+      // Track token rollback success/failure explicitly so the error message
+      // can truthfully report whether tokens.json was restored or is in a
+      // potentially-inconsistent state. Mirrors the care taken in the
+      // registry-config-write failure handler below.
+      let tokenRolledBack = false;
+      let tokenRollbackMsg = "";
       if (tokenEntry !== null && nonHermesPriorTokenStore !== null) {
         try {
           saveTokenStore(nonHermesPriorTokenStore);
-        } catch {
-          // Best-effort rollback.
+          tokenRolledBack = true;
+        } catch (tokenRestoreErr) {
+          tokenRolledBack = false;
+          tokenRollbackMsg =
+            tokenRestoreErr instanceof Error ? tokenRestoreErr.message : String(tokenRestoreErr);
         }
       }
+      const tokenSuffix = manifest.requiresToken && tokenEntry !== null
+        ? tokenRolledBack
+          ? " Token has been rolled back."
+          : ` Token rollback FAILED (${tokenRollbackMsg}) — tokens.json may contain an orphaned entry. ` +
+            `Manually inspect ~/.remnic/tokens.json and reinstall.`
+        : "";
       return {
         connectorId: options.connectorId,
         status: "error",
         message:
           `WeClone install aborted: proxy config write failed — ` +
-          `${weCloneErr instanceof Error ? weCloneErr.message : String(weCloneErr)}. ` +
-          `Resolve the write permission issue on ~/.remnic/connectors/, then reinstall.`,
+          `${weCloneErr instanceof Error ? weCloneErr.message : String(weCloneErr)}.` +
+          `${tokenSuffix} Resolve the write permission issue on ~/.remnic/connectors/, then reinstall.`,
       };
     }
   }
@@ -1539,9 +1553,18 @@ export function removeConnector(connectorId: string): RemoveResult {
   // config BEFORE deleting it. Using the persisted absolute path (rather than
   // recomputing from current REMNIC_HOME / ENGRAM_HOME / $HOME) guarantees
   // that a remove still targets the original file even if the environment
-  // has changed between install and remove. Falls back to the env-derived
-  // path only if the saved config is missing or malformed.
+  // has changed between install and remove.
+  //
+  // Parse failure handling: if the registry config exists but is malformed,
+  // we MUST abort the whole removal (mirror of the codex-cli provenance
+  // gate). Silently falling back to an env-derived path would delete the
+  // registry entry first and then miss the real proxy config if the
+  // environment had since changed, orphaning the file (which may still hold
+  // a live bearer token). Only install-time WRITES persist the path; if we
+  // lost it on read, the only safe action is to stop and let the operator
+  // fix the config or clean up manually.
   let weCloneProxyConfigPath: string | null = null;
+  let weCloneRegistryParseFailed = false;
   if (connectorId === "weclone") {
     try {
       const stored = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
@@ -1549,16 +1572,35 @@ export function removeConnector(connectorId: string): RemoveResult {
         weCloneProxyConfigPath = stored.proxyConfigPath;
       }
     } catch {
-      // Registry config unreadable — fall back to env-derived path below.
+      weCloneRegistryParseFailed = true;
     }
-    if (weCloneProxyConfigPath === null) {
+    // No persisted path AND parse succeeded means this is a legacy install
+    // pre-dating proxyConfigPath provenance. Fall back to env resolution
+    // only in that specific case so we still make a best-effort cleanup.
+    if (weCloneProxyConfigPath === null && !weCloneRegistryParseFailed) {
       try {
         weCloneProxyConfigPath = resolveWeCloneProxyConfigPath();
       } catch {
-        // Resolution failed (e.g. no HOME) — leave null so the cleanup block
-        // skips gracefully rather than crashing the whole remove.
+        // Resolution failed (e.g. no HOME) — leave null; cleanup block skips.
       }
     }
+  }
+  if (connectorId === "weclone" && weCloneRegistryParseFailed) {
+    console.warn(
+      "[remnic/connectors] removeConnector: weclone.json is malformed — " +
+        "aborting removal to preserve provenance. Fix or delete " +
+        configPath +
+        " manually and retry.",
+    );
+    return {
+      connectorId,
+      configPath,
+      message:
+        "Removal aborted: weclone.json is malformed. Registry config left in place for inspection; " +
+        "proxy config NOT removed.",
+      status: "skipped",
+      reason: "config-parse-failed",
+    };
   }
 
   // Finding 4: if the codex-cli config exists but failed to parse, abort the
@@ -1629,11 +1671,16 @@ export function removeConnector(connectorId: string): RemoveResult {
   // should still succeed. Stale tokens will be rejected by the daemon when the
   // token file is later accessible.
   const notes: string[] = [];
+  // Track revocation success so downstream error branches (e.g. weclone
+  // proxy-delete failure) can accurately report whether the token was
+  // cleaned up rather than hardcoding "Token has been rolled back".
+  let tokenRevoked = true;
   try {
     revokeToken(connectorId);
   } catch (revokeErr) {
     // Surface the failure so callers know the token was not cleaned up.
     // The connector config has already been removed at this point.
+    tokenRevoked = false;
     const revokeMsg = revokeErr instanceof Error ? revokeErr.message : String(revokeErr);
     notes.push(`Warning: token revocation failed — ${revokeMsg}. The token for ${connectorId} may still be present in tokens.json.`);
   }
@@ -1670,12 +1717,20 @@ export function removeConnector(connectorId: string): RemoveResult {
     }
   }
   if (weCloneProxyDeleteFailed !== null && weCloneProxyConfigPath !== null) {
+    // Report the token-revocation status truthfully. If revocation already
+    // failed above, claiming the token was "cleaned up" here would mislead
+    // the operator into thinking the only action left is deleting the
+    // orphan file — when in reality the bearer token is also still live.
+    const tokenStatus = tokenRevoked
+      ? "the registry config was deleted and the token was revoked"
+      : "the registry config was deleted but TOKEN REVOCATION ALSO FAILED — " +
+        "inspect ~/.remnic/tokens.json and revoke manually";
     return {
       connectorId,
       configPath,
       status: "error",
       message:
-        `WeClone remove partially succeeded: registry config and token were cleaned up, ` +
+        `WeClone remove partially succeeded: ${tokenStatus}, ` +
         `but the proxy config at ${weCloneProxyConfigPath} could not be deleted ` +
         `(${weCloneProxyDeleteFailed}). Manually remove that file — it may still contain ` +
         `a Remnic daemon bearer token.`,

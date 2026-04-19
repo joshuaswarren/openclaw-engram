@@ -398,6 +398,46 @@ test("removeConnector weclone uses persisted proxyConfigPath even if REMNIC_HOME
   );
 });
 
+test("installConnector weclone install error reports token rollback status truthfully", async (t) => {
+  // Reviewer (cursor MEDIUM): the WeClone outer catch previously swallowed
+  // token-rollback failures. The message must now either say "Token has
+  // been rolled back." (on success) or "Token rollback FAILED (...)" — it
+  // must NEVER silently omit either outcome.
+  const sandbox = makeSandbox(t);
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: sandbox.remnicHome,
+    },
+    () => {
+      // Force proxy write to fail so we hit the WeClone catch branch.
+      const proxyConfigPath = resolveWeCloneProxyConfigPath();
+      const originalWrite = fs.writeFileSync.bind(fs);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mock = t.mock.method(fs, "writeFileSync", (...args: [any, any, any?]) => {
+        if (String(args[0] ?? "") === proxyConfigPath) {
+          throw new Error("ENOSPC: simulated proxy write failure");
+        }
+        return originalWrite(...args);
+      });
+
+      const result = installConnector({ connectorId: "weclone" });
+      mock.mock.restore();
+
+      assert.equal(result.status, "error");
+      // Happy rollback path: token store was restorable, so message must say
+      // so. If the test environment cannot rollback (unlikely), the message
+      // must explicitly say FAILED.
+      assert.ok(
+        /Token has been rolled back\.|Token rollback FAILED/.test(result.message),
+        `install error must report token rollback status; got: ${result.message}`,
+      );
+    },
+  );
+});
+
 test("installConnector weclone restores prior proxy config when write throws mid-truncate", async (t) => {
   // Reviewer (codex P2): writeSecretFileSync opens the file in truncate
   // mode, so a mid-write failure (ENOSPC) can leave weclone.json empty.
@@ -496,6 +536,94 @@ test("removeConnector weclone returns status:error when proxy config delete fail
         removeResult.message.includes(proxyConfigPath),
         `error message must reference the orphan path, got: ${removeResult.message}`,
       );
+    },
+  );
+});
+
+test("removeConnector weclone aborts with status:skipped when weclone.json is malformed", async (t) => {
+  // Reviewer (codex P2): silently falling back to env-derived path when
+  // parsing weclone.json fails can miss the real proxy config if env
+  // changed between install and remove. Must abort the whole removal,
+  // leave the registry config intact for inspection, and NOT delete the
+  // proxy config file (which may still hold a live token).
+  const sandbox = makeSandbox(t);
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: sandbox.remnicHome,
+    },
+    () => {
+      // Real install first so proxy config exists.
+      const installResult = installConnector({ connectorId: "weclone" });
+      assert.equal(installResult.status, "installed");
+      const proxyConfigPath = resolveWeCloneProxyConfigPath();
+      const registryConfigPath = installResult.configPath as string;
+      assert.ok(fs.existsSync(proxyConfigPath));
+
+      // Corrupt the registry config.
+      fs.writeFileSync(registryConfigPath, "{ not valid json }}");
+
+      const removeResult = removeConnector("weclone");
+      assert.equal(removeResult.status, "skipped", `expected skipped, got: ${removeResult.status}`);
+      assert.equal(removeResult.reason, "config-parse-failed");
+
+      // Both files must remain untouched so the operator can fix and retry.
+      assert.ok(fs.existsSync(registryConfigPath), "malformed registry config must be preserved");
+      assert.ok(fs.existsSync(proxyConfigPath), "proxy config must not be deleted when we lost provenance");
+    },
+  );
+});
+
+test("removeConnector weclone error message reflects token-revocation status truthfully", async (t) => {
+  // Reviewer (codex P2): when BOTH token revocation AND proxy-config delete
+  // fail, the message must tell the operator the token is still live —
+  // hardcoding "token was cleaned up" would mislead them into thinking they
+  // only need to remove the orphan file.
+  const sandbox = makeSandbox(t);
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: sandbox.remnicHome,
+    },
+    () => {
+      const installResult = installConnector({ connectorId: "weclone" });
+      assert.equal(installResult.status, "installed");
+      const proxyConfigPath = resolveWeCloneProxyConfigPath();
+
+      // Fail both: proxy-config unlink AND the revokeToken path (via
+      // saveTokenStore throwing when it tries to persist the revocation).
+      const originalUnlink = fs.unlinkSync.bind(fs);
+      const originalWrite = fs.writeFileSync.bind(fs);
+      const unlinkMock = t.mock.method(fs, "unlinkSync", (target: fs.PathLike) => {
+        if (String(target) === proxyConfigPath) {
+          throw new Error("EPERM: proxy unlink failed (simulated)");
+        }
+        return originalUnlink(target);
+      });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const writeMock = t.mock.method(fs, "writeFileSync", (...args: [any, any, any?]) => {
+        if (String(args[0] ?? "").endsWith("tokens.json")) {
+          throw new Error("EPERM: tokens.json write failed (simulated)");
+        }
+        return originalWrite(...args);
+      });
+
+      const removeResult = removeConnector("weclone");
+      unlinkMock.mock.restore();
+      writeMock.mock.restore();
+
+      assert.equal(removeResult.status, "error");
+      // Must mention token revocation failure, not claim success.
+      assert.ok(
+        /TOKEN REVOCATION (ALSO )?FAILED/i.test(removeResult.message),
+        `message must report token revocation failure; got: ${removeResult.message}`,
+      );
+      // Must still mention the orphan proxy path.
+      assert.ok(removeResult.message.includes(proxyConfigPath));
     },
   );
 });
