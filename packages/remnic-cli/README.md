@@ -55,6 +55,7 @@ kept as a compatibility alias.
 
 ```bash
 remnic bench list
+remnic bench run --quick longmemeval --runtime-profile baseline
 remnic bench datasets status
 remnic bench datasets download longmemeval
 remnic bench datasets download --all
@@ -63,6 +64,10 @@ remnic bench runs show candidate-run --detail
 remnic bench runs delete candidate-run
 remnic bench run --quick longmemeval
 remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
+remnic bench run longmemeval --runtime-profile real --remnic-config ~/.config/remnic/config.json
+remnic bench run longmemeval --runtime-profile real --system-provider openai --system-model gpt-5.4-mini
+remnic bench run longmemeval --runtime-profile openclaw-chain --openclaw-config ~/.openclaw/openclaw.json --gateway-agent-id memory-primary
+remnic bench run longmemeval --matrix baseline,real,openclaw-chain
 remnic bench compare base-run candidate-run
 remnic bench baseline save main candidate-run
 remnic bench baseline list

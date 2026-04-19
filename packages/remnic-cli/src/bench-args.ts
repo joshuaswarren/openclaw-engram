@@ -1,4 +1,5 @@
 import path from "node:path";
+import type { BuiltInProvider } from "@remnic/bench";
 import { expandTilde } from "./path-utils.js";
 
 export type BenchAction =
@@ -22,6 +23,8 @@ export type BenchDatasetAction = "download" | "status";
 export type BenchExportFormat = "json" | "csv" | "html";
 export type BenchProviderAction = "discover";
 export type BenchPublishTarget = "remnic-ai";
+export type BenchRuntimeProfile = "baseline" | "real" | "openclaw-chain";
+export type BenchModelSource = "plugin" | "gateway";
 export type BenchRunAction = "list" | "show" | "delete";
 
 export interface ParsedBenchArgs {
@@ -34,6 +37,19 @@ export interface ParsedBenchArgs {
   datasetDir?: string;
   resultsDir?: string;
   baselinesDir?: string;
+  runtimeProfile?: BenchRuntimeProfile;
+  matrixProfiles?: BenchRuntimeProfile[];
+  remnicConfigPath?: string;
+  openclawConfigPath?: string;
+  modelSource?: BenchModelSource;
+  gatewayAgentId?: string;
+  fastGatewayAgentId?: string;
+  systemProvider?: BuiltInProvider;
+  systemModel?: string;
+  systemBaseUrl?: string;
+  judgeProvider?: BuiltInProvider;
+  judgeModel?: string;
+  judgeBaseUrl?: string;
   threshold?: number;
   baselineAction?: BenchBaselineAction;
   datasetAction?: BenchDatasetAction;
@@ -43,6 +59,33 @@ export interface ParsedBenchArgs {
   output?: string;
   custom?: string;
   target?: BenchPublishTarget;
+}
+
+function isBenchRuntimeProfile(value: string): value is BenchRuntimeProfile {
+  return (
+    value === "baseline" ||
+    value === "real" ||
+    value === "openclaw-chain"
+  );
+}
+
+function parseBenchRuntimeProfile(
+  value: string,
+  flagName: "--runtime-profile" | "--matrix",
+): BenchRuntimeProfile {
+  if (isBenchRuntimeProfile(value)) {
+    return value;
+  }
+
+  if (flagName === "--runtime-profile") {
+    throw new Error(
+      'ERROR: --runtime-profile must be "baseline", "real", or "openclaw-chain".',
+    );
+  }
+
+  throw new Error(
+    'ERROR: --matrix must contain only "baseline", "real", or "openclaw-chain".',
+  );
 }
 
 export function readBenchOptionValue(argv: string[], flag: string): string | undefined {
@@ -67,6 +110,19 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--dataset-dir" ||
       arg === "--results-dir" ||
       arg === "--baselines-dir" ||
+      arg === "--runtime-profile" ||
+      arg === "--matrix" ||
+      arg === "--remnic-config" ||
+      arg === "--openclaw-config" ||
+      arg === "--model-source" ||
+      arg === "--gateway-agent-id" ||
+      arg === "--fast-gateway-agent-id" ||
+      arg === "--system-provider" ||
+      arg === "--system-model" ||
+      arg === "--system-base-url" ||
+      arg === "--judge-provider" ||
+      arg === "--judge-model" ||
+      arg === "--judge-base-url" ||
       arg === "--threshold" ||
       arg === "--custom" ||
       arg === "--format" ||
@@ -163,11 +219,86 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const datasetDir = readBenchOptionValue(args, "--dataset-dir");
   const resultsDir = readBenchOptionValue(args, "--results-dir");
   const baselinesDir = readBenchOptionValue(args, "--baselines-dir");
+  const runtimeProfileRaw = readBenchOptionValue(args, "--runtime-profile");
+  const matrixRaw = readBenchOptionValue(args, "--matrix");
+  const remnicConfigRaw = readBenchOptionValue(args, "--remnic-config");
+  const openclawConfigRaw = readBenchOptionValue(args, "--openclaw-config");
+  const modelSourceRaw = readBenchOptionValue(args, "--model-source");
+  const gatewayAgentId = readBenchOptionValue(args, "--gateway-agent-id");
+  const fastGatewayAgentId = readBenchOptionValue(args, "--fast-gateway-agent-id");
+  const systemProviderRaw = readBenchOptionValue(args, "--system-provider");
+  const systemModel = readBenchOptionValue(args, "--system-model");
+  const systemBaseUrl = readBenchOptionValue(args, "--system-base-url");
+  const judgeProviderRaw = readBenchOptionValue(args, "--judge-provider");
+  const judgeModel = readBenchOptionValue(args, "--judge-model");
+  const judgeBaseUrl = readBenchOptionValue(args, "--judge-base-url");
   const thresholdRaw = readBenchOptionValue(args, "--threshold");
   const customRaw = readBenchOptionValue(args, "--custom");
   const formatRaw = readBenchOptionValue(args, "--format");
   const output = readBenchOptionValue(args, "--output");
   const targetRaw = readBenchOptionValue(args, "--target");
+  let runtimeProfile: BenchRuntimeProfile | undefined;
+  if (runtimeProfileRaw !== undefined) {
+    runtimeProfile = parseBenchRuntimeProfile(
+      runtimeProfileRaw,
+      "--runtime-profile",
+    );
+  }
+
+  let matrixProfiles: BenchRuntimeProfile[] | undefined;
+  if (matrixRaw !== undefined) {
+    const candidates = matrixRaw
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+    if (candidates.length === 0) {
+      throw new Error(
+        'ERROR: --matrix must contain one or more of "baseline", "real", or "openclaw-chain".',
+      );
+    }
+    matrixProfiles = candidates.map((candidate) =>
+      parseBenchRuntimeProfile(candidate, "--matrix"),
+    );
+  }
+
+  let modelSource: BenchModelSource | undefined;
+  if (modelSourceRaw !== undefined) {
+    if (modelSourceRaw !== "plugin" && modelSourceRaw !== "gateway") {
+      throw new Error('ERROR: --model-source must be "plugin" or "gateway".');
+    }
+    modelSource = modelSourceRaw;
+  }
+
+  let systemProvider: BuiltInProvider | undefined;
+  if (systemProviderRaw !== undefined) {
+    if (
+      systemProviderRaw !== "openai" &&
+      systemProviderRaw !== "anthropic" &&
+      systemProviderRaw !== "ollama" &&
+      systemProviderRaw !== "litellm"
+    ) {
+      throw new Error(
+        'ERROR: --system-provider must be "openai", "anthropic", "ollama", or "litellm".',
+      );
+    }
+    systemProvider = systemProviderRaw;
+  }
+
+  let judgeProvider: BuiltInProvider | undefined;
+  if (judgeProviderRaw !== undefined) {
+    if (
+      judgeProviderRaw !== "openai" &&
+      judgeProviderRaw !== "anthropic" &&
+      judgeProviderRaw !== "ollama" &&
+      judgeProviderRaw !== "litellm"
+    ) {
+      throw new Error(
+        'ERROR: --judge-provider must be "openai", "anthropic", "ollama", or "litellm".',
+      );
+    }
+    judgeProvider = judgeProviderRaw;
+  }
+
   let threshold: number | undefined;
   if (thresholdRaw !== undefined) {
     threshold = Number(thresholdRaw);
@@ -202,6 +333,19 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     datasetDir: datasetDir ? path.resolve(expandTilde(datasetDir)) : undefined,
     resultsDir: resultsDir ? path.resolve(expandTilde(resultsDir)) : undefined,
     baselinesDir: baselinesDir ? path.resolve(expandTilde(baselinesDir)) : undefined,
+    runtimeProfile,
+    matrixProfiles,
+    remnicConfigPath: remnicConfigRaw ? path.resolve(expandTilde(remnicConfigRaw)) : undefined,
+    openclawConfigPath: openclawConfigRaw ? path.resolve(expandTilde(openclawConfigRaw)) : undefined,
+    modelSource,
+    gatewayAgentId,
+    fastGatewayAgentId,
+    systemProvider,
+    systemModel,
+    systemBaseUrl,
+    judgeProvider,
+    judgeModel,
+    judgeBaseUrl,
     threshold,
     custom: customRaw ? path.resolve(expandTilde(customRaw)) : undefined,
     baselineAction,

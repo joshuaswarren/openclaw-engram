@@ -43,6 +43,7 @@ function buildResult(
       datasetHash: hashString(`${benchmark}:dataset`),
     },
     config: {
+      runtimeProfile: null,
       systemProvider: null,
       judgeProvider: null,
       adapterMode: "lightweight",
@@ -120,6 +121,18 @@ test("loadBenchmarkResult rejects incomplete benchmark result payloads", async (
     () => loadBenchmarkResult(invalidPath),
     /Invalid benchmark result file/,
   );
+});
+
+test("loadBenchmarkResult preserves runtime profile metadata on stored results", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-runtime-profile-"));
+  const filePath = path.join(root, "runtime-profile.json");
+  const result = buildResult("runtime-profile-run", "2026-04-18T00:30:00.000Z");
+  result.config.runtimeProfile = "real";
+
+  await writeFile(filePath, `${JSON.stringify(result)}\n`);
+
+  const loaded = await loadBenchmarkResult(filePath);
+  assert.equal(loaded.config.runtimeProfile, "real");
 });
 
 test("resolveBenchmarkResultReference matches by id, basename, or direct path", async () => {

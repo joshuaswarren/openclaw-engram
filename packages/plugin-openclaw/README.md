@@ -38,6 +38,42 @@ Then restart the gateway:
 launchctl kickstart -k gui/501/ai.openclaw.gateway
 ```
 
+## Benchmarking The OpenClaw Chain
+
+The benchmark CLI can now exercise the real OpenClaw-backed answer path instead
+of only the stripped retrieval harness. Use the `openclaw-chain` runtime
+profile to load the Remnic plugin config from `openclaw.json`, route answer
+generation through the configured gateway chain, and optionally attach a
+provider-backed judge:
+
+```bash
+remnic bench run longmemeval \
+  --runtime-profile openclaw-chain \
+  --openclaw-config ~/.openclaw/openclaw.json \
+  --gateway-agent-id memory-primary
+
+remnic bench run longmemeval \
+  --runtime-profile openclaw-chain \
+  --openclaw-config ~/.openclaw/openclaw.json \
+  --gateway-agent-id memory-primary \
+  --judge-provider openai \
+  --judge-model gpt-5.4-mini
+```
+
+To compare the stripped harness, direct Remnic runtime, and OpenClaw chain in a
+single pass, run a profile matrix:
+
+```bash
+remnic bench run longmemeval \
+  --matrix baseline,real,openclaw-chain \
+  --openclaw-config ~/.openclaw/openclaw.json \
+  --remnic-config ~/.config/remnic/config.json
+```
+
+Each stored result records its `runtimeProfile`, provider metadata, and the
+resolved Remnic config so benchmark comparisons can distinguish retrieval-only
+runs from real runtime and OpenClaw chain runs.
+
 ## What it does
 
 This plugin hooks into the OpenClaw gateway lifecycle:

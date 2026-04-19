@@ -58,6 +58,15 @@ export const BENCHMARK_RESULT_SCHEMA = {
         "remnicConfig",
       ],
       properties: {
+        runtimeProfile: {
+          anyOf: [
+            { type: "null" },
+            {
+              type: "string",
+              enum: ["baseline", "real", "openclaw-chain"],
+            },
+          ],
+        },
         systemProvider: {
           anyOf: [
             { type: "null" },

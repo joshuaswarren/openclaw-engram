@@ -138,6 +138,7 @@ import type {
 import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 import {
   buildBenchmarkPublishFeed,
+  type BenchRuntimeProfile,
   compareResults,
   deleteBenchmarkResults,
   getBenchmarkLowerIsBetter,
@@ -159,6 +160,8 @@ import {
   writeBenchmarkPublishFeed,
   type BenchConfig,
   type BenchmarkDefinition,
+  type ResolveBenchRuntimeProfileOptions,
+  type ResolvedBenchRuntimeProfile,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
 import {
@@ -280,18 +283,51 @@ const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
 type PackageBenchModule = {
   getBenchmark?: (id: string) => {
     runnerAvailable?: boolean;
+    meta?: {
+      category?: string;
+    };
   } | undefined;
+  resolveBenchRuntimeProfile?: (
+    options: ResolveBenchRuntimeProfileOptions,
+  ) => Promise<ResolvedBenchRuntimeProfile>;
   runBenchmark?: (id: string, options: {
     mode?: "full" | "quick";
     datasetDir?: string;
     outputDir?: string;
     limit?: number;
     adapterMode?: string;
+    runtimeProfile?: BenchRuntimeProfile | null;
+    systemProvider?: {
+      provider: string;
+      model: string;
+      baseUrl?: string;
+    } | null;
+    judgeProvider?: {
+      provider: string;
+      model: string;
+      baseUrl?: string;
+    } | null;
+    remnicConfig?: Record<string, unknown>;
     system: {
       destroy(): Promise<void>;
     };
   }) => Promise<{
     meta: { benchmark: string; mode: string };
+    config: {
+      runtimeProfile?: BenchRuntimeProfile | null;
+      systemProvider?: {
+        provider: string;
+        model: string;
+        baseUrl?: string;
+      } | null;
+      judgeProvider?: {
+        provider: string;
+        model: string;
+        baseUrl?: string;
+      } | null;
+      adapterMode: string;
+      remnicConfig: Record<string, unknown>;
+    };
     results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
     cost: { meanQueryLatencyMs: number };
   }>;
@@ -300,18 +336,86 @@ type PackageBenchModule = {
     outputDir?: string;
     limit?: number;
     adapterMode?: string;
+    runtimeProfile?: BenchRuntimeProfile | null;
+    systemProvider?: {
+      provider: string;
+      model: string;
+      baseUrl?: string;
+    } | null;
+    judgeProvider?: {
+      provider: string;
+      model: string;
+      baseUrl?: string;
+    } | null;
+    remnicConfig?: Record<string, unknown>;
     system: {
       destroy(): Promise<void>;
     };
   }) => Promise<{
     meta: { benchmark: string; mode: string };
+    config: {
+      runtimeProfile?: BenchRuntimeProfile | null;
+      systemProvider?: {
+        provider: string;
+        model: string;
+        baseUrl?: string;
+      } | null;
+      judgeProvider?: {
+        provider: string;
+        model: string;
+        baseUrl?: string;
+      } | null;
+      adapterMode: string;
+      remnicConfig: Record<string, unknown>;
+    };
     results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
     cost: { meanQueryLatencyMs: number };
   }>;
-  writeBenchmarkResult?: (result: unknown, outputDir: string) => Promise<string>;
-  createLightweightAdapter?: () => Promise<{ destroy(): Promise<void> }>;
-  createRemnicAdapter?: () => Promise<{ destroy(): Promise<void> }>;
+  writeBenchmarkResult?: (result: {
+    meta: { benchmark: string; mode: string };
+    config: {
+      runtimeProfile?: BenchRuntimeProfile | null;
+      systemProvider?: {
+        provider: string;
+        model: string;
+        baseUrl?: string;
+      } | null;
+      judgeProvider?: {
+        provider: string;
+        model: string;
+        baseUrl?: string;
+      } | null;
+      adapterMode: string;
+      remnicConfig: Record<string, unknown>;
+    };
+    results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
+    cost: { meanQueryLatencyMs: number };
+  }, outputDir: string) => Promise<string>;
+  createLightweightAdapter?: (options?: {
+    configOverrides?: Record<string, unknown>;
+    preserveRuntimeDefaults?: boolean;
+    responder?: unknown;
+    judge?: unknown;
+  }) => Promise<{ destroy(): Promise<void> }>;
+  createRemnicAdapter?: (options?: {
+    configOverrides?: Record<string, unknown>;
+    preserveRuntimeDefaults?: boolean;
+    responder?: unknown;
+    judge?: unknown;
+  }) => Promise<{ destroy(): Promise<void> }>;
 };
+
+type PackageBenchAdapterFactory = NonNullable<
+  PackageBenchModule["createLightweightAdapter"] | PackageBenchModule["createRemnicAdapter"]
+>;
+
+type PackageBenchAdapterMode = "lightweight" | "direct";
+
+export interface PackageBenchExecutionPlan {
+  runtime: ResolvedBenchRuntimeProfile;
+  createAdapter: PackageBenchAdapterFactory;
+  adapterMode: PackageBenchAdapterMode;
+}
 
 export function getBenchUsageText(): string {
   return `Usage: remnic bench <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers> [options] [benchmark...]
@@ -343,7 +447,25 @@ Commands:
 Options:
   --quick                  Run a lightweight quick pass (maps to --lightweight --limit 1)
   --all                    Run every published benchmark
+  --runtime-profile <baseline|real|openclaw-chain>
+                           Choose the benchmark runtime profile
+  --matrix <profiles>      Run a benchmark across a comma-separated profile matrix
   --dataset-dir <path>     Override the benchmark dataset directory for full runs
+  --remnic-config <path>   Load runtime settings from a Remnic config file
+  --openclaw-config <path> Load runtime settings from an OpenClaw config file
+  --model-source <plugin|gateway>
+                           Override whether Remnic uses plugin or gateway model routing
+  --gateway-agent-id <id>  OpenClaw agent persona id for gateway model routing
+  --fast-gateway-agent-id <id>
+                           OpenClaw fast-tier agent persona id for gateway model routing
+  --system-provider <openai|anthropic|ollama|litellm>
+                           Use a direct provider-backed answering path
+  --system-model <model>   Model name for the direct answering provider
+  --system-base-url <url>  Base URL for the direct answering provider
+  --judge-provider <openai|anthropic|ollama|litellm>
+                           Use a direct provider-backed judge
+  --judge-model <model>    Model name for the judge provider
+  --judge-base-url <url>   Base URL for the judge provider
   --custom <path>          Run a YAML-defined custom benchmark file
   --results-dir <path>     Override the stored benchmark results directory
   --baselines-dir <path>   Override the named baseline directory
@@ -356,6 +478,7 @@ Options:
 
 Examples:
   remnic bench list
+  remnic bench run --quick longmemeval --runtime-profile baseline
   remnic bench datasets status
   remnic bench datasets download longmemeval
   remnic bench datasets download --all
@@ -364,6 +487,10 @@ Examples:
   remnic bench runs delete candidate-run
   remnic bench run --quick longmemeval
   remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
+  remnic bench run longmemeval --runtime-profile real --remnic-config ~/.config/remnic/config.json
+  remnic bench run longmemeval --runtime-profile real --system-provider openai --system-model gpt-5.4-mini
+  remnic bench run longmemeval --runtime-profile openclaw-chain --openclaw-config ~/.openclaw/openclaw.json --gateway-agent-id memory-primary
+  remnic bench run longmemeval --matrix baseline,real,openclaw-chain
   remnic bench compare base-run candidate-run
   remnic bench results
   remnic bench results candidate-run --detail
@@ -389,6 +516,41 @@ export function buildBenchRunnerArgs(
     args.push("--dataset-dir", parsed.datasetDir);
   }
   return args;
+}
+
+export function buildBenchRuntimeProfileRequest(
+  parsed: ParsedBenchArgs,
+  runtimeProfile: BenchRuntimeProfile,
+): ResolveBenchRuntimeProfileOptions {
+  return {
+    runtimeProfile,
+    remnicConfigPath:
+      runtimeProfile === "real"
+        ? resolveExistingBenchRemnicConfigPath(parsed.remnicConfigPath)
+        : undefined,
+    openclawConfigPath:
+      runtimeProfile === "openclaw-chain"
+        ? resolveExistingBenchOpenclawConfigPath(parsed.openclawConfigPath)
+        : undefined,
+    modelSource: runtimeProfile === "real" ? parsed.modelSource : undefined,
+    gatewayAgentId: parsed.gatewayAgentId,
+    fastGatewayAgentId: parsed.fastGatewayAgentId,
+    systemProvider:
+      runtimeProfile === "openclaw-chain"
+        ? undefined
+        : parsed.systemProvider,
+    systemModel:
+      runtimeProfile === "openclaw-chain"
+        ? undefined
+        : parsed.systemModel,
+    systemBaseUrl:
+      runtimeProfile === "openclaw-chain"
+        ? undefined
+        : parsed.systemBaseUrl,
+    judgeProvider: parsed.judgeProvider,
+    judgeModel: parsed.judgeModel,
+    judgeBaseUrl: parsed.judgeBaseUrl,
+  };
 }
 
 function coerceBenchCategory(
@@ -465,7 +627,39 @@ async function resolveKnownBenchmarkIds(): Promise<Set<string>> {
 async function runBenchViaFallback(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
+  runtimeProfile: BenchRuntimeProfile,
 ): Promise<void> {
+  if (runtimeProfile === "real" && parsed.remnicConfigPath) {
+    resolveExistingBenchRemnicConfigPath(parsed.remnicConfigPath);
+  }
+  if (runtimeProfile === "openclaw-chain" && parsed.openclawConfigPath) {
+    resolveExistingBenchOpenclawConfigPath(parsed.openclawConfigPath);
+  }
+  if (runtimeProfile === "real") {
+    throw new Error(
+      'Fallback benchmark runner does not support --runtime-profile "real". Build/install @remnic/bench to use package-backed runtime profiles.',
+    );
+  }
+  if (runtimeProfile === "openclaw-chain") {
+    throw new Error(
+      'Fallback benchmark runner does not support --runtime-profile "openclaw-chain". Build/install @remnic/bench to use package-backed runtime profiles.',
+    );
+  }
+  if (
+    parsed.modelSource !== undefined ||
+    parsed.gatewayAgentId !== undefined ||
+    parsed.fastGatewayAgentId !== undefined ||
+    parsed.systemProvider !== undefined ||
+    parsed.systemModel !== undefined ||
+    parsed.systemBaseUrl !== undefined ||
+    parsed.judgeProvider !== undefined ||
+    parsed.judgeModel !== undefined ||
+    parsed.judgeBaseUrl !== undefined
+  ) {
+    throw new Error(
+      "Fallback benchmark runner does not support provider-backed or gateway runtime flags. Build/install @remnic/bench to use those options.",
+    );
+  }
   if (!fs.existsSync(EVAL_RUNNER_PATH)) {
     console.error(
       "Benchmark runner not found. Expected eval runner at evals/run.ts or a phase-1 @remnic/bench runtime export.",
@@ -730,6 +924,9 @@ function resolveBenchDatasetDir(
 function printBenchPackageSummary(
   result: {
     meta: { benchmark: string; mode: string };
+    config: {
+      runtimeProfile?: BenchRuntimeProfile | null;
+    };
     results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
     cost: { meanQueryLatencyMs: number };
   },
@@ -738,6 +935,9 @@ function printBenchPackageSummary(
 ): void {
   console.log(`Benchmark: ${result.meta.benchmark}`);
   console.log(`Mode: ${result.meta.mode}`);
+  if (result.config.runtimeProfile) {
+    console.log(`Runtime profile: ${result.config.runtimeProfile}`);
+  }
   console.log(`Tasks: ${result.results.tasks.length}`);
   console.log(`Mean query latency: ${result.cost.meanQueryLatencyMs.toFixed(1)}ms`);
   for (const [metric, aggregate] of Object.entries(result.results.aggregates).sort()) {
@@ -1248,6 +1448,7 @@ async function publishBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
 async function runBenchViaPackage(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
+  runtimeProfile: BenchRuntimeProfile,
 ): Promise<boolean> {
   let benchModule: PackageBenchModule;
   try {
@@ -1268,11 +1469,16 @@ async function runBenchViaPackage(
     );
   }
 
-  const createAdapter = parsed.quick
-    ? benchModule.createLightweightAdapter
-    : benchModule.createRemnicAdapter;
-
-  if (!createAdapter) {
+  const plans = await buildPackageBenchExecutionPlans(
+    benchModule,
+    parsed,
+    [runtimeProfile],
+  );
+  if (!plans) {
+    return false;
+  }
+  const [plan] = plans;
+  if (!plan) {
     return false;
   }
 
@@ -1288,7 +1494,7 @@ async function runBenchViaPackage(
     );
   }
 
-  const system = await createAdapter();
+  const system = await plan.createAdapter(plan.runtime.adapterOptions);
 
   try {
     const result = await benchModule.runBenchmark(benchmarkId, {
@@ -1296,9 +1502,14 @@ async function runBenchViaPackage(
       datasetDir,
       outputDir,
       limit: parsed.quick ? 1 : undefined,
-      adapterMode: parsed.quick ? "lightweight" : "direct",
+      adapterMode: plan.adapterMode,
+      runtimeProfile: plan.runtime.profile,
+      systemProvider: plan.runtime.systemProvider,
+      judgeProvider: plan.runtime.judgeProvider,
+      remnicConfig: plan.runtime.effectiveRemnicConfig,
       system,
     });
+    result.config.remnicConfig = plan.runtime.remnicConfig;
     const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
     if (parsed.json) {
       console.log(JSON.stringify(result, null, 2));
@@ -1312,6 +1523,7 @@ async function runBenchViaPackage(
 }
 
 async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolean> {
+  const runtimeProfiles = resolveBenchRunProfiles(parsed);
   let benchModule: PackageBenchModule;
   try {
     benchModule = await import("@remnic/bench") as unknown as PackageBenchModule;
@@ -1323,35 +1535,44 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
     return false;
   }
 
-  const createAdapter = parsed.quick
-    ? benchModule.createLightweightAdapter
-    : benchModule.createRemnicAdapter;
-
-  if (!createAdapter) {
+  const plans = await buildPackageBenchExecutionPlans(
+    benchModule,
+    parsed,
+    runtimeProfiles,
+  );
+  if (!plans) {
     return false;
   }
 
   const outputDir = resolveBenchOutputDir();
-  const system = await createAdapter();
+  for (const plan of plans) {
+    const system = await plan.createAdapter(plan.runtime.adapterOptions);
 
-  try {
-    const result = await benchModule.runCustomBenchmarkFile(parsed.custom!, {
-      mode: parsed.quick ? "quick" : "full",
-      outputDir,
-      limit: parsed.quick ? 1 : undefined,
-      adapterMode: parsed.quick ? "lightweight" : "direct",
-      system,
-    });
-    const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
-    if (parsed.json) {
-      console.log(JSON.stringify(result, null, 2));
-    } else {
-      printBenchPackageSummary(result, writtenPath);
+    try {
+      const result = await benchModule.runCustomBenchmarkFile(parsed.custom!, {
+        mode: parsed.quick ? "quick" : "full",
+        outputDir,
+        limit: parsed.quick ? 1 : undefined,
+        adapterMode: plan.adapterMode,
+        runtimeProfile: plan.runtime.profile,
+        systemProvider: plan.runtime.systemProvider,
+        judgeProvider: plan.runtime.judgeProvider,
+        remnicConfig: plan.runtime.effectiveRemnicConfig,
+        system,
+      });
+      result.config.remnicConfig = plan.runtime.remnicConfig;
+      const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
+      if (parsed.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        printBenchPackageSummary(result, writtenPath);
+      }
+    } finally {
+      await system.destroy();
     }
-    return true;
-  } finally {
-    await system.destroy();
   }
+
+  return true;
 }
 
 // ── Config helpers ───────────────────────────────────────────────────────────
@@ -1371,6 +1592,102 @@ function resolveConfigPath(cliPath?: string): string {
     if (fs.existsSync(candidate)) return candidate;
   }
   return path.join(resolveHomeDir(), ".config", "remnic", "config.json");
+}
+
+function resolveExistingBenchRemnicConfigPath(cliPath?: string): string | undefined {
+  const configPath = resolveConfigPath(cliPath);
+  if (fs.existsSync(configPath)) {
+    return configPath;
+  }
+  if (cliPath) {
+    throw new Error(`Remnic config file not found: ${configPath}`);
+  }
+  return undefined;
+}
+
+function resolveExistingBenchOpenclawConfigPath(cliPath?: string): string {
+  const configPath = resolveOpenclawConfigPath(cliPath);
+  if (fs.existsSync(configPath)) {
+    return configPath;
+  }
+  if (cliPath) {
+    throw new Error(`OpenClaw config file not found: ${configPath}`);
+  }
+  throw new Error(
+    `openclaw-chain runtime profile requires an OpenClaw config file. Not found at ${configPath}`,
+  );
+}
+
+function resolveBenchRunProfiles(
+  parsed: ParsedBenchArgs,
+): BenchRuntimeProfile[] {
+  return parsed.matrixProfiles ?? [parsed.runtimeProfile ?? "baseline"];
+}
+
+function resolvePackageBenchAdapterMode(
+  quick: boolean,
+  runtimeProfile: BenchRuntimeProfile,
+): PackageBenchAdapterMode {
+  return quick && runtimeProfile === "baseline" ? "lightweight" : "direct";
+}
+
+function resolvePackageBenchAdapterFactory(
+  benchModule: PackageBenchModule,
+  quick: boolean,
+  runtimeProfile: BenchRuntimeProfile,
+): PackageBenchAdapterFactory | undefined {
+  return resolvePackageBenchAdapterMode(quick, runtimeProfile) === "lightweight"
+    ? benchModule.createLightweightAdapter
+    : benchModule.createRemnicAdapter;
+}
+
+export async function buildPackageBenchExecutionPlans(
+  benchModule: PackageBenchModule,
+  parsed: ParsedBenchArgs,
+  runtimeProfiles: BenchRuntimeProfile[],
+): Promise<PackageBenchExecutionPlan[] | false> {
+  const plans: PackageBenchExecutionPlan[] = [];
+
+  for (const runtimeProfile of runtimeProfiles) {
+    const runtime = await resolvePackageBenchRuntime(
+      benchModule,
+      parsed,
+      runtimeProfile,
+    );
+    const createAdapter = resolvePackageBenchAdapterFactory(
+      benchModule,
+      parsed.quick,
+      runtime.profile,
+    );
+
+    if (!createAdapter) {
+      return false;
+    }
+
+    plans.push({
+      runtime,
+      createAdapter,
+      adapterMode: resolvePackageBenchAdapterMode(parsed.quick, runtime.profile),
+    });
+  }
+
+  return plans;
+}
+
+async function resolvePackageBenchRuntime(
+  benchModule: PackageBenchModule,
+  parsed: ParsedBenchArgs,
+  runtimeProfile: BenchRuntimeProfile,
+): Promise<ResolvedBenchRuntimeProfile> {
+  if (!benchModule.resolveBenchRuntimeProfile) {
+    throw new Error(
+      "Installed @remnic/bench runtime does not expose resolveBenchRuntimeProfile().",
+    );
+  }
+
+  return benchModule.resolveBenchRuntimeProfile(
+    buildBenchRuntimeProfileRequest(parsed, runtimeProfile),
+  );
 }
 
 function resolveMemoryDir(): string {
@@ -3251,10 +3568,17 @@ async function cmdBench(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
+  const runtimeProfiles = resolveBenchRunProfiles(parsed);
   for (const benchmarkId of selectedBenchmarks) {
-    const handledByPackage = await runBenchViaPackage(parsed, benchmarkId);
-    if (!handledByPackage) {
-      await runBenchViaFallback(parsed, benchmarkId);
+    for (const runtimeProfile of runtimeProfiles) {
+      const handledByPackage = await runBenchViaPackage(
+        parsed,
+        benchmarkId,
+        runtimeProfile,
+      );
+      if (!handledByPackage) {
+        await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
+      }
     }
   }
 }

@@ -12,6 +12,7 @@ import {
   type ArenaTask,
   type DomainData,
 } from "./fixture.js";
+import { answerBenchmarkQuestion } from "../../../answering.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -22,7 +23,7 @@ import {
   aggregateTaskScores,
   containsAnswer,
   f1Score,
-  llmJudgeScore,
+  llmJudgeScoreDetailed,
   timed,
 } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
@@ -80,35 +81,48 @@ export async function runMemoryArenaBenchmark(
         const { result: recalledText, durationMs } = await timed(async () =>
           options.system.recall(sessionId, question),
         );
-        const judgeScore = await llmJudgeScore(
-          options.system.judge,
+        const answered = await answerBenchmarkQuestion({
           question,
           recalledText,
+          responder: options.system.responder,
+        });
+        const judgeResult = await llmJudgeScoreDetailed(
+          options.system.judge,
+          question,
+          answered.finalAnswer,
           expected,
         );
 
         const scores: Record<string, number> = {
-          f1: f1Score(recalledText, expected),
-          contains_answer: containsAnswer(recalledText, expected),
+          f1: f1Score(answered.finalAnswer, expected),
+          contains_answer: containsAnswer(answered.finalAnswer, expected),
         };
-        if (judgeScore >= 0) {
-          scores.llm_judge = judgeScore;
+        if (judgeResult.score >= 0) {
+          scores.llm_judge = judgeResult.score;
         }
 
         tasks.push({
           taskId: `${domain}-t${task.id}-q${questionIndex}`,
           question,
           expected,
-          actual: recalledText,
+          actual: answered.finalAnswer,
           scores,
-          latencyMs: durationMs,
-          tokens: { input: 0, output: 0 },
+          latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+          tokens: {
+            input: answered.tokens.input + judgeResult.tokens.input,
+            output: answered.tokens.output + judgeResult.tokens.output,
+          },
           details: {
             domain,
             taskId: task.id,
             subtaskIndex: questionIndex,
             category: task.category,
             recalledLength: recalledText.length,
+            answeredLength: answered.finalAnswer.length,
+            recalledText,
+            answeredText: answered.finalAnswer,
+            responderModel: answered.model,
+            judgeModel: judgeResult.model,
           },
         });
 
@@ -124,6 +138,8 @@ export async function runMemoryArenaBenchmark(
 
   const remnicVersion = await getRemnicVersion();
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
+  const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
 
   return {
     meta: {
@@ -145,9 +161,9 @@ export async function runMemoryArenaBenchmark(
       remnicConfig: options.remnicConfig ?? {},
     },
     cost: {
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
       estimatedCostUsd: 0,
       totalLatencyMs,
       meanQueryLatencyMs:

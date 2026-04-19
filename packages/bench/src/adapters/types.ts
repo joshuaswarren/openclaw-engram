@@ -21,8 +21,37 @@ export interface MemoryStats {
   maxDepth: number;
 }
 
+export interface BenchResponse {
+  text: string;
+  tokens: {
+    input: number;
+    output: number;
+  };
+  latencyMs: number;
+  model: string;
+}
+
+export interface BenchResponder {
+  respond(question: string, recalledText: string): Promise<BenchResponse>;
+}
+
+export interface BenchJudgeResult {
+  score: number;
+  tokens: {
+    input: number;
+    output: number;
+  };
+  latencyMs: number;
+  model?: string;
+}
+
 export interface BenchJudge {
   score(question: string, predicted: string, expected: string): Promise<number>;
+  scoreWithMetrics?(
+    question: string,
+    predicted: string,
+    expected: string,
+  ): Promise<BenchJudgeResult>;
 }
 
 export interface BenchMemoryAdapter {
@@ -32,6 +61,7 @@ export interface BenchMemoryAdapter {
   reset(sessionId?: string): Promise<void>;
   getStats(sessionId?: string): Promise<MemoryStats>;
   destroy(): Promise<void>;
+  responder?: BenchResponder;
   judge?: BenchJudge;
 }
 
