@@ -28,7 +28,7 @@ import {
   stripInlineExplicitCaptureNotes,
   validateExplicitCaptureInput,
 } from "./explicit-capture.js";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, realpath, writeFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -2201,11 +2201,25 @@ const pluginDefinition = {
       const readAllowedRoots = [capabilityWorkspaceDir, orchestrator.config.memoryDir].filter(
         (root): root is string => typeof root === "string" && root.length > 0,
       );
-      const isWithinAllowedRoot = (candidatePath: string): boolean =>
-        readAllowedRoots.some((root) => {
-          const relative = path.relative(root, candidatePath);
+      const canonicalizeForContainment = async (rawPath: string): Promise<string> => {
+        const resolved = path.resolve(rawPath);
+        try {
+          return path.normalize(await realpath(resolved));
+        } catch {
+          return path.normalize(resolved);
+        }
+      };
+      const readAllowedCanonicalRootsPromise = Promise.all(
+        readAllowedRoots.map((root) => canonicalizeForContainment(root)),
+      );
+      const isWithinAllowedRoot = async (candidatePath: string): Promise<boolean> => {
+        const canonicalCandidatePath = await canonicalizeForContainment(candidatePath);
+        const canonicalRoots = await readAllowedCanonicalRootsPromise;
+        return canonicalRoots.some((root) => {
+          const relative = path.relative(root, canonicalCandidatePath);
           return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
         });
+      };
       const normalizeWorkspacePath = (rawPath: string | undefined): string => {
         if (!rawPath || typeof rawPath !== "string") return "memory";
         const resolved = path.isAbsolute(rawPath)
@@ -2216,11 +2230,11 @@ const pluginDefinition = {
           ? relative
           : rawPath;
       };
-      const resolveReadablePath = (requestedPath: string): string => {
+      const resolveReadablePath = async (requestedPath: string): Promise<string> => {
         const absolutePath = path.isAbsolute(requestedPath)
           ? path.resolve(requestedPath)
           : path.resolve(capabilityWorkspaceDir, requestedPath);
-        if (!isWithinAllowedRoot(absolutePath)) {
+        if (!(await isWithinAllowedRoot(absolutePath))) {
           throw new Error(`memory read outside allowed roots: ${requestedPath}`);
         }
         return absolutePath;
@@ -2372,7 +2386,7 @@ const pluginDefinition = {
               },
               async readFile(params: RuntimeReadParams) {
                 const requestedPath = normalizeWorkspacePath(params.relPath);
-                const absolutePath = resolveReadablePath(params.relPath);
+                const absolutePath = await resolveReadablePath(params.relPath);
                 const text = await readFile(absolutePath, "utf-8");
                 const allLines = text.split(/\r?\n/);
                 const from = typeof params.from === "number" ? Math.max(1, Math.floor(params.from)) : 1;
