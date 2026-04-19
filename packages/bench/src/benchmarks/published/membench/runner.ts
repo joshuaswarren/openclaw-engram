@@ -9,6 +9,7 @@ import {
   MEMBENCH_SMOKE_FIXTURE,
   type MemBenchCase,
 } from "./fixture.js";
+import { answerBenchmarkQuestion } from "../../../answering.js";
 import type { Message } from "../../../adapters/types.js";
 import type {
   BenchmarkDefinition,
@@ -76,16 +77,21 @@ export async function runMemBenchBenchmark(
     const { result: recalledText, durationMs } = await timed(async () =>
       options.system.recall(sessionId, testCase.question),
     );
+    const answered = await answerBenchmarkQuestion({
+      question: testCase.question,
+      recalledText,
+      responder: options.system.responder,
+    });
     const judgeScore = await llmJudgeScore(
       options.system.judge,
       testCase.question,
-      recalledText,
+      answered.finalAnswer,
       testCase.answer,
     );
 
     const scores: Record<string, number> = {
-      f1: f1Score(recalledText, testCase.answer),
-      contains_answer: containsAnswer(recalledText, testCase.answer),
+      f1: f1Score(answered.finalAnswer, testCase.answer),
+      contains_answer: containsAnswer(answered.finalAnswer, testCase.answer),
     };
     if (judgeScore >= 0) {
       scores.llm_judge = judgeScore;
@@ -95,22 +101,28 @@ export async function runMemBenchBenchmark(
       taskId: testCase.id,
       question: testCase.question,
       expected: testCase.answer,
-      actual: recalledText,
+      actual: answered.finalAnswer,
       scores,
-      latencyMs: durationMs,
-      tokens: { input: 0, output: 0 },
+      latencyMs: durationMs + answered.latencyMs,
+      tokens: answered.tokens,
       details: {
         memoryType: testCase.memoryType,
         scenario: testCase.scenario,
         level: testCase.level,
         turnCount: testCase.turns.length,
         recalledLength: recalledText.length,
+        answeredLength: answered.finalAnswer.length,
+        recalledText,
+        answeredText: answered.finalAnswer,
+        responderModel: answered.model,
       },
     });
   }
 
   const remnicVersion = await getRemnicVersion();
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
+  const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
 
   return {
     meta: {
@@ -132,9 +144,9 @@ export async function runMemBenchBenchmark(
       remnicConfig: options.remnicConfig ?? {},
     },
     cost: {
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
       estimatedCostUsd: 0,
       totalLatencyMs,
       meanQueryLatencyMs:

@@ -9,6 +9,7 @@ import {
   AMA_BENCH_SMOKE_FIXTURE,
   type AMABenchEpisode,
 } from "./fixture.js";
+import { answerBenchmarkQuestion } from "../../../answering.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -67,16 +68,21 @@ export async function runAmaBenchBenchmark(
       const { result: recalledText, durationMs } = await timed(async () =>
         options.system.recall(sessionId, qa.question),
       );
+      const answered = await answerBenchmarkQuestion({
+        question: qa.question,
+        recalledText,
+        responder: options.system.responder,
+      });
       const judgeScore = await llmJudgeScore(
         options.system.judge,
         qa.question,
-        recalledText,
+        answered.finalAnswer,
         qa.answer,
       );
 
       const scores: Record<string, number> = {
-        f1: f1Score(recalledText, qa.answer),
-        contains_answer: containsAnswer(recalledText, qa.answer),
+        f1: f1Score(answered.finalAnswer, qa.answer),
+        contains_answer: containsAnswer(answered.finalAnswer, qa.answer),
       };
       if (judgeScore >= 0) {
         scores.llm_judge = judgeScore;
@@ -86,10 +92,10 @@ export async function runAmaBenchBenchmark(
         taskId: qa.question_uuid,
         question: qa.question,
         expected: qa.answer,
-        actual: recalledText,
+        actual: answered.finalAnswer,
         scores,
-        latencyMs: durationMs,
-        tokens: { input: 0, output: 0 },
+        latencyMs: durationMs + answered.latencyMs,
+        tokens: answered.tokens,
         details: {
           qaType: qa.type,
           domain: episode.domain,
@@ -99,6 +105,10 @@ export async function runAmaBenchBenchmark(
           numTurns: episode.num_turns,
           totalTokens: episode.total_tokens,
           recalledLength: recalledText.length,
+          answeredLength: answered.finalAnswer.length,
+          recalledText,
+          answeredText: answered.finalAnswer,
+          responderModel: answered.model,
         },
       });
     }
@@ -106,6 +116,8 @@ export async function runAmaBenchBenchmark(
 
   const remnicVersion = await getRemnicVersion();
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
+  const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
 
   return {
     meta: {
@@ -127,9 +139,9 @@ export async function runAmaBenchBenchmark(
       remnicConfig: options.remnicConfig ?? {},
     },
     cost: {
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
       estimatedCostUsd: 0,
       totalLatencyMs,
       meanQueryLatencyMs:

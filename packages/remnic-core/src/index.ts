@@ -572,6 +572,8 @@ export {
   type BulkImportCliCommandOptions,
 } from "./cli.js";
 
+export { FallbackLlmClient, type FallbackLlmOptions, type FallbackLlmResponse } from "./fallback-llm.js";
+
 // ---------------------------------------------------------------------------
 // Training-data export (issue #459)
 // ---------------------------------------------------------------------------
@@ -584,6 +586,7 @@ export * from "./training-export/index.js";
 
 export type {
   PluginConfig,
+  GatewayConfig,
   MemoryFile,
   MemoryCategory,
   MemoryActionType,

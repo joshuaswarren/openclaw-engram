@@ -17,6 +17,7 @@ export type {
   BenchmarkTier,
   BenchmarkStatus,
   BenchmarkCategory,
+  BenchRuntimeProfile,
   BuiltInProvider,
   ProviderConfig,
   TaskTokenUsage,
@@ -45,6 +46,8 @@ export type {
   Message,
   SearchResult,
   MemoryStats,
+  BenchResponse,
+  BenchResponder,
   BenchJudge,
   BenchMemoryAdapter,
   LlmJudge,
@@ -77,6 +80,7 @@ export {
   createLightweightAdapter,
   createRemnicAdapter,
 } from "./adapters/remnic-adapter.js";
+export type { RemnicAdapterOptions } from "./adapters/remnic-adapter.js";
 export type {
   AnthropicProviderConfig,
   CompletionOpts,
@@ -97,9 +101,27 @@ export {
   createProvider,
   discoverAllProviders,
 } from "./providers/factory.js";
+export {
+  answerBenchmarkQuestion,
+} from "./answering.js";
+export {
+  createGatewayResponder,
+  createJudgeFromProvider,
+  createProviderBackedJudge,
+  createProviderBackedResponder,
+  createProviderBackedStructuredJudge,
+  createResponderFromProvider,
+  createStructuredJudgeFromProvider,
+} from "./responders.js";
 export { createLiteLlmProvider } from "./providers/litellm.js";
 export { createOllamaProvider } from "./providers/ollama.js";
 export { createOpenAiCompatibleProvider } from "./providers/openai-compatible.js";
+export type {
+  BenchModelSource,
+  ResolveBenchRuntimeProfileOptions,
+  ResolvedBenchRuntimeProfile,
+} from "./runtime-profiles.js";
+export { resolveBenchRuntimeProfile } from "./runtime-profiles.js";
 export {
   buildBenchmarkRunSeeds,
   orchestrateBenchmarkRuns,

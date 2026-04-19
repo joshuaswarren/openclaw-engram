@@ -6,10 +6,19 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Orchestrator, parseConfig } from "@remnic/core";
-import type { BenchMemoryAdapter, MemoryStats, Message, SearchResult } from "./types.js";
+import type {
+  BenchJudge,
+  BenchMemoryAdapter,
+  BenchResponder,
+  MemoryStats,
+  Message,
+  SearchResult,
+} from "./types.js";
 
 export interface RemnicAdapterOptions {
   configOverrides?: Record<string, unknown>;
+  responder?: BenchResponder;
+  judge?: BenchJudge;
 }
 
 async function createBenchOrchestrator(
@@ -19,50 +28,60 @@ async function createBenchOrchestrator(
   const tempDir = await mkdtemp(path.join(tmpdir(), `remnic-bench-${mode}-`));
   await mkdir(path.join(tempDir, "state"), { recursive: true });
 
+  const commonConfig = {
+    memoryDir: tempDir,
+    workspaceDir: tempDir,
+    lcmEnabled: true,
+  };
+  const lightweightConfig =
+    mode === "lightweight"
+      ? {
+          qmdEnabled: false,
+          qmdColdTierEnabled: false,
+          transcriptEnabled: false,
+          hourlySummariesEnabled: false,
+          daySummaryEnabled: false,
+          identityEnabled: false,
+          identityContinuityEnabled: false,
+          namespacesEnabled: false,
+          sharedContextEnabled: false,
+          workTasksEnabled: false,
+          workProjectsEnabled: false,
+          commitmentLedgerEnabled: false,
+          resumeBundlesEnabled: false,
+          nativeKnowledge: { enabled: false },
+          lcmLeafBatchSize: 4,
+          lcmRollupFanIn: 3,
+          lcmFreshTailTurns: 8,
+          lcmMaxDepth: 4,
+          lcmDeterministicMaxTokens: 512,
+          lcmRecallBudgetShare: 1.0,
+          extractionDedupeEnabled: false,
+          extractionMinChars: 1000000,
+          extractionMinUserTurns: 1000000,
+          recallPlannerEnabled: false,
+          queryExpansionEnabled: false,
+          rerankEnabled: false,
+          memoryBoxesEnabled: false,
+          traceWeaverEnabled: false,
+          threadingEnabled: false,
+          factDeduplicationEnabled: false,
+          knowledgeIndexEnabled: false,
+          entityRetrievalEnabled: false,
+          verifiedRecallEnabled: false,
+          queryAwareIndexingEnabled: false,
+          contradictionDetectionEnabled: false,
+          memoryLinkingEnabled: false,
+          topicExtractionEnabled: false,
+          chunkingEnabled: true,
+          episodeNoteModeEnabled: false,
+        }
+      : {};
+
   const orchestrator = new Orchestrator(
     parseConfig({
-      memoryDir: tempDir,
-      workspaceDir: tempDir,
-      qmdEnabled: false,
-      qmdColdTierEnabled: false,
-      transcriptEnabled: false,
-      hourlySummariesEnabled: false,
-      daySummaryEnabled: false,
-      identityEnabled: false,
-      identityContinuityEnabled: false,
-      namespacesEnabled: false,
-      sharedContextEnabled: false,
-      workTasksEnabled: false,
-      workProjectsEnabled: false,
-      commitmentLedgerEnabled: false,
-      resumeBundlesEnabled: false,
-      nativeKnowledge: { enabled: false },
-      lcmEnabled: true,
-      lcmLeafBatchSize: 4,
-      lcmRollupFanIn: 3,
-      lcmFreshTailTurns: 8,
-      lcmMaxDepth: 4,
-      lcmDeterministicMaxTokens: 512,
-      lcmRecallBudgetShare: 1.0,
-      extractionDedupeEnabled: mode === "direct",
-      extractionMinChars: mode === "direct" ? 10 : 1000000,
-      extractionMinUserTurns: mode === "direct" ? 0 : 1000000,
-      recallPlannerEnabled: mode === "direct",
-      queryExpansionEnabled: false,
-      rerankEnabled: false,
-      memoryBoxesEnabled: false,
-      traceWeaverEnabled: false,
-      threadingEnabled: false,
-      factDeduplicationEnabled: false,
-      knowledgeIndexEnabled: false,
-      entityRetrievalEnabled: false,
-      verifiedRecallEnabled: false,
-      queryAwareIndexingEnabled: false,
-      contradictionDetectionEnabled: false,
-      memoryLinkingEnabled: false,
-      topicExtractionEnabled: false,
-      chunkingEnabled: true,
-      episodeNoteModeEnabled: false,
+      ...commonConfig,
+      ...lightweightConfig,
       ...overrides,
     }),
   );
@@ -175,6 +194,9 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       async destroy(): Promise<void> {
         await cleanup();
       },
+
+      responder: options.responder,
+      judge: options.judge,
     };
   };
 }

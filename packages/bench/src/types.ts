@@ -11,6 +11,7 @@ export type BenchmarkMode = "full" | "quick";
 export type BenchmarkTier = "published" | "remnic" | "custom";
 export type BenchmarkStatus = "ready" | "planned";
 export type BenchmarkCategory = "agentic" | "retrieval" | "conversational" | "ingestion";
+export type BenchRuntimeProfile = "baseline" | "real" | "openclaw-chain";
 export type BuiltInProvider = "openai" | "anthropic" | "ollama" | "litellm";
 
 export interface ProviderConfig {
@@ -124,6 +125,7 @@ export interface BenchmarkResult {
     canaryScore?: number;
   };
   config: {
+    runtimeProfile?: BenchRuntimeProfile | null;
     systemProvider: ProviderConfig | null;
     judgeProvider: ProviderConfig | null;
     adapterMode: string;
@@ -181,6 +183,7 @@ export interface RunBenchmarkOptions {
   limit?: number;
   seed?: number;
   adapterMode?: string;
+  runtimeProfile?: BenchRuntimeProfile | null;
   system: import("./adapters/types.js").BenchMemoryAdapter;
   ingestionAdapter?: import("./ingestion-types.js").IngestionBenchAdapter;
   systemProvider?: ProviderConfig | null;

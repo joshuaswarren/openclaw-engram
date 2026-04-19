@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
+import { answerBenchmarkQuestion } from "../../../answering.js";
 import {
   MEMORY_AGENT_BENCH_SMOKE_FIXTURE,
   type MemoryAgentBenchCompetency,
@@ -125,22 +126,27 @@ export async function runMemoryAgentBenchBenchmark(
         );
         return recalledSessions.filter(Boolean).join("\n\n");
       });
-      const bestExpectedAnswer = selectBestMatchingAnswer(recalledText, answerVariants);
+      const answered = await answerBenchmarkQuestion({
+        question,
+        recalledText,
+        responder: options.system.responder,
+      });
+      const bestExpectedAnswer = selectBestMatchingAnswer(answered.finalAnswer, answerVariants);
       const judgeScore = await llmJudgeScore(
         options.system.judge,
         question,
-        recalledText,
+        answered.finalAnswer,
         bestExpectedAnswer,
       );
 
       const scores: Record<string, number> = {
-        f1: scoreAgainstVariants(recalledText, answerVariants, f1Score),
+        f1: scoreAgainstVariants(answered.finalAnswer, answerVariants, f1Score),
         contains_answer: answerVariants.some((variant) =>
-          containsAnswer(recalledText, variant),
+          containsAnswer(answered.finalAnswer, variant),
         )
           ? 1
           : 0,
-        rouge_l: scoreAgainstVariants(recalledText, answerVariants, rougeL),
+        rouge_l: scoreAgainstVariants(answered.finalAnswer, answerVariants, rougeL),
       };
       if (judgeScore >= 0) {
         scores.llm_judge = judgeScore;
@@ -152,10 +158,10 @@ export async function runMemoryAgentBenchBenchmark(
           `${item.metadata.source}-q${questionIndex}`,
         question,
         expected: answerVariants[0]!,
-        actual: recalledText,
+        actual: answered.finalAnswer,
         scores,
-        latencyMs: durationMs,
-        tokens: { input: 0, output: 0 },
+        latencyMs: durationMs + answered.latencyMs,
+        tokens: answered.tokens,
         details: {
           competency: item.metadata.competency,
           source: item.metadata.source,
@@ -169,6 +175,10 @@ export async function runMemoryAgentBenchBenchmark(
           sessionIds,
           storedSessionCount: sessionIds.length,
           recalledLength: recalledText.length,
+          answeredLength: answered.finalAnswer.length,
+          recalledText,
+          answeredText: answered.finalAnswer,
+          responderModel: answered.model,
         },
       });
     }
@@ -176,6 +186,8 @@ export async function runMemoryAgentBenchBenchmark(
 
   const remnicVersion = await getRemnicVersion();
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
+  const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
 
   return {
     meta: {
@@ -197,9 +209,9 @@ export async function runMemoryAgentBenchBenchmark(
       remnicConfig: options.remnicConfig ?? {},
     },
     cost: {
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
       estimatedCostUsd: 0,
       totalLatencyMs,
       meanQueryLatencyMs: tasks.length > 0 ? totalLatencyMs / tasks.length : 0,

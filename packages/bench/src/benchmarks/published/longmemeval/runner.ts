@@ -9,6 +9,7 @@ import {
   LONG_MEM_EVAL_SMOKE_FIXTURE,
   type LongMemEvalItem,
 } from "./fixture.js";
+import { answerBenchmarkQuestion } from "../../../answering.js";
 import type { Message } from "../../../adapters/types.js";
 import type {
   BenchmarkDefinition,
@@ -80,18 +81,23 @@ export async function runLongMemEvalBenchmark(
       );
       return recalledSessions.filter(Boolean).join("\n\n");
     });
+    const answered = await answerBenchmarkQuestion({
+      question: item.question,
+      recalledText,
+      responder: options.system.responder,
+    });
 
     const searchResults = await options.system.search(item.question, 10);
     const judgeScore = await llmJudgeScore(
       options.system.judge,
       item.question,
-      recalledText,
+      answered.finalAnswer,
       item.answer,
     );
 
     const scores: Record<string, number> = {
-      f1: f1Score(recalledText, item.answer),
-      contains_answer: containsAnswer(recalledText, item.answer),
+      f1: f1Score(answered.finalAnswer, item.answer),
+      contains_answer: containsAnswer(answered.finalAnswer, item.answer),
       search_hits: searchResults.length,
     };
     if (judgeScore >= 0) {
@@ -102,16 +108,21 @@ export async function runLongMemEvalBenchmark(
       taskId: `q${item.question_id}`,
       question: item.question,
       expected: item.answer,
-      actual: recalledText,
+      actual: answered.finalAnswer,
       scores,
-      latencyMs: durationMs,
-      tokens: { input: 0, output: 0 },
+      latencyMs: durationMs + answered.latencyMs,
+      tokens: answered.tokens,
       details: {
         questionType: item.question_type,
         questionDate: item.question_date,
         haystackDates: item.haystack_dates,
         haystackSessionIds: item.haystack_session_ids,
         answerSessionIds: item.answer_session_ids,
+        recalledLength: recalledText.length,
+        answeredLength: answered.finalAnswer.length,
+        recalledText,
+        answeredText: answered.finalAnswer,
+        responderModel: answered.model,
       },
     });
   }

@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
+import { answerBenchmarkQuestion } from "../../../answering.js";
 import {
   LOCOMO_SMOKE_FIXTURE,
   type LoCoMoConversation,
@@ -133,17 +134,22 @@ export async function runLoCoMoBenchmark(
         );
         return recalledSessions.filter(Boolean).join("\n\n");
       });
+      const answered = await answerBenchmarkQuestion({
+        question: qa.question,
+        recalledText,
+        responder: options.system.responder,
+      });
       const judgeScore = await llmJudgeScore(
         options.system.judge,
         qa.question,
-        recalledText,
+        answered.finalAnswer,
         qa.answer,
       );
 
       const scores: Record<string, number> = {
-        f1: f1Score(recalledText, qa.answer),
-        contains_answer: containsAnswer(recalledText, qa.answer),
-        rouge_l: rougeL(recalledText, qa.answer),
+        f1: f1Score(answered.finalAnswer, qa.answer),
+        contains_answer: containsAnswer(answered.finalAnswer, qa.answer),
+        rouge_l: rougeL(answered.finalAnswer, qa.answer),
       };
       if (judgeScore >= 0) {
         scores.llm_judge = judgeScore;
@@ -153,10 +159,10 @@ export async function runLoCoMoBenchmark(
         taskId: `${conversation.sample_id}-q${questionIndex}-${categoryName}`,
         question: qa.question,
         expected: qa.answer,
-        actual: recalledText,
+        actual: answered.finalAnswer,
         scores,
-        latencyMs: durationMs,
-        tokens: { input: 0, output: 0 },
+        latencyMs: durationMs + answered.latencyMs,
+        tokens: answered.tokens,
         details: {
           category: qa.category,
           categoryName,
@@ -164,6 +170,10 @@ export async function runLoCoMoBenchmark(
           conversationId: conversation.sample_id,
           sessionIds,
           recalledLength: recalledText.length,
+          answeredLength: answered.finalAnswer.length,
+          recalledText,
+          answeredText: answered.finalAnswer,
+          responderModel: answered.model,
         },
       });
     }
@@ -171,6 +181,8 @@ export async function runLoCoMoBenchmark(
 
   const remnicVersion = await getRemnicVersion();
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
+  const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
 
   return {
     meta: {
@@ -192,9 +204,9 @@ export async function runLoCoMoBenchmark(
       remnicConfig: options.remnicConfig ?? {},
     },
     cost: {
-      totalTokens: 0,
-      inputTokens: 0,
-      outputTokens: 0,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
       estimatedCostUsd: 0,
       totalLatencyMs,
       meanQueryLatencyMs:

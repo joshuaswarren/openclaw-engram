@@ -103,7 +103,8 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /const datasetDir = resolveBenchDatasetDir\(/);
   assert.match(source, /if \(!parsed\.quick && !datasetDir\) \{\s*throw new Error\(/s);
   assert.match(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
-  assert.match(source, /const system = await createAdapter\(\);/);
+  assert.match(source, /const runtime = await resolvePackageBenchRuntime\(/);
+  assert.match(source, /const system = await createAdapter\(runtime\.adapterOptions\);/);
 });
 
 test("parseBenchArgs supports custom benchmark files without counting them as benchmark ids", async () => {
@@ -113,6 +114,92 @@ test("parseBenchArgs supports custom benchmark files without counting them as be
 
   assert.match(parsed.custom ?? "", /benchmarks[\/\\]custom\.yaml$/);
   assert.deepEqual(parsed.benchmarks, []);
+});
+
+test("bench CLI exposes runtime profile and provider-backed run surfaces", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
+  const readme = await readFile("packages/remnic-cli/README.md", "utf8");
+
+  assert.match(source, /--runtime-profile <baseline\|real\|openclaw-chain>/);
+  assert.match(source, /--matrix <profiles>/);
+  assert.match(source, /--remnic-config <path>/);
+  assert.match(source, /--openclaw-config <path>/);
+  assert.match(source, /--model-source <plugin\|gateway>/);
+  assert.match(source, /--gateway-agent-id <id>/);
+  assert.match(source, /--fast-gateway-agent-id <id>/);
+  assert.match(source, /--system-provider <openai\|anthropic\|ollama\|litellm>/);
+  assert.match(source, /--system-model <model>/);
+  assert.match(source, /--judge-provider <openai\|anthropic\|ollama\|litellm>/);
+  assert.match(source, /--judge-model <model>/);
+  assert.match(source, /remnic bench run --quick longmemeval --runtime-profile baseline/);
+  assert.match(source, /remnic bench run longmemeval --runtime-profile real --remnic-config/);
+  assert.match(source, /remnic bench run longmemeval --runtime-profile openclaw-chain --openclaw-config/);
+  assert.match(source, /remnic bench run longmemeval --runtime-profile real --system-provider openai --system-model/);
+  assert.match(source, /remnic bench run longmemeval --matrix baseline,real,openclaw-chain/);
+
+  assert.match(parserSource, /export type BenchRuntimeProfile = "baseline" \| "real" \| "openclaw-chain";/);
+  assert.match(parserSource, /runtimeProfile\?: BenchRuntimeProfile;/);
+  assert.match(parserSource, /matrixProfiles\?: BenchRuntimeProfile\[];/);
+  assert.match(parserSource, /systemProvider\?: BuiltInProvider;/);
+  assert.match(parserSource, /judgeProvider\?: BuiltInProvider;/);
+  assert.match(parserSource, /const runtimeProfileRaw = readBenchOptionValue\(args, "--runtime-profile"\);/);
+  assert.match(parserSource, /const matrixRaw = readBenchOptionValue\(args, "--matrix"\);/);
+  assert.match(parserSource, /const remnicConfigRaw = readBenchOptionValue\(args, "--remnic-config"\);/);
+  assert.match(parserSource, /const openclawConfigRaw = readBenchOptionValue\(args, "--openclaw-config"\);/);
+  assert.match(parserSource, /const systemProviderRaw = readBenchOptionValue\(args, "--system-provider"\);/);
+  assert.match(parserSource, /const judgeProviderRaw = readBenchOptionValue\(args, "--judge-provider"\);/);
+  assert.match(readme, /remnic bench run --quick longmemeval --runtime-profile baseline/);
+  assert.match(readme, /remnic bench run longmemeval --runtime-profile real --remnic-config/);
+  assert.match(readme, /remnic bench run longmemeval --runtime-profile openclaw-chain --openclaw-config/);
+});
+
+test("parseBenchArgs supports runtime profiles, provider-backed runs, and matrix mode", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const parsed = parseBenchArgs([
+    "run",
+    "longmemeval",
+    "--runtime-profile",
+    "openclaw-chain",
+    "--openclaw-config",
+    "~/.openclaw/openclaw.json",
+    "--model-source",
+    "gateway",
+    "--gateway-agent-id",
+    "memory-primary",
+    "--fast-gateway-agent-id",
+    "memory-fast",
+    "--system-provider",
+    "openai",
+    "--system-model",
+    "gpt-5.4-mini",
+    "--system-base-url",
+    "http://localhost:4000/v1",
+    "--judge-provider",
+    "anthropic",
+    "--judge-model",
+    "claude-sonnet-4-5",
+    "--judge-base-url",
+    "http://localhost:4100",
+    "--matrix",
+    "baseline,real,openclaw-chain",
+  ]);
+
+  assert.equal(parsed.action, "run");
+  assert.deepEqual(parsed.benchmarks, ["longmemeval"]);
+  assert.equal(parsed.runtimeProfile, "openclaw-chain");
+  assert.deepEqual(parsed.matrixProfiles, ["baseline", "real", "openclaw-chain"]);
+  assert.equal(parsed.modelSource, "gateway");
+  assert.equal(parsed.gatewayAgentId, "memory-primary");
+  assert.equal(parsed.fastGatewayAgentId, "memory-fast");
+  assert.equal(parsed.systemProvider, "openai");
+  assert.equal(parsed.systemModel, "gpt-5.4-mini");
+  assert.equal(parsed.judgeProvider, "anthropic");
+  assert.equal(parsed.judgeModel, "claude-sonnet-4-5");
+  assert.match(parsed.openclawConfigPath ?? "", /openclaw\.json$/);
+  assert.match(parsed.systemBaseUrl ?? "", /4000\/v1$/);
+  assert.match(parsed.judgeBaseUrl ?? "", /4100$/);
 });
 
 test("bench compare routes through stored package results with threshold and results-dir options", async () => {
@@ -468,7 +555,7 @@ test("parseBenchArgs rejects unknown bench publish targets", async () => {
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
 
-  assert.match(source, /type BenchmarkDefinition,\s*\n\s*\} from "@remnic\/bench";/s);
+  assert.match(source, /type BenchmarkDefinition,/);
   assert.match(source, /async function loadBenchDefinitionsFromPackage\(\): Promise<BenchmarkDefinition\[\] \| undefined>/);
   assert.match(source, /listBenchmarks\?: \(\) => BenchmarkDefinition\[\];/);
   assert.doesNotMatch(source, /interface PackageBenchDefinition/);
