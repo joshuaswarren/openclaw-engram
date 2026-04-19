@@ -1811,6 +1811,14 @@ function backupPathIfPresent(sourcePath: string, backupPath: string): boolean {
   return true;
 }
 
+function assertDirectoryPathOrMissing(targetPath: string, label: string): void {
+  if (!fs.existsSync(targetPath)) return;
+  const stat = fs.statSync(targetPath);
+  if (!stat.isDirectory()) {
+    throw new Error(`${label} must be a directory when it already exists: ${targetPath}`);
+  }
+}
+
 class PublishedOpenclawPluginInstallError extends Error {
   readonly rollbackDir?: string;
 
@@ -1864,6 +1872,7 @@ function installPublishedOpenclawPlugin(
       stdio: ["ignore", "pipe", "pipe"],
     });
 
+    assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");
     const swapResult = swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);
     swapRollbackDir = swapResult.rollbackDir;
 
@@ -4501,6 +4510,8 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
   );
   const configBackupPath = path.join(backupDir, "openclaw.json");
   const pluginBackupDir = path.join(backupDir, "extensions", REMNIC_OPENCLAW_PLUGIN_ID);
+
+  assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");
 
   console.log(`OpenClaw config: ${configPath}`);
   console.log(`Plugin dir:      ${pluginDir}`);

@@ -177,6 +177,22 @@ test("CLI openclaw upgrade preserves the original install error if rollback also
   );
 });
 
+test("CLI openclaw upgrade rejects file-backed pluginDir paths before backup and swap", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("function assertDirectoryPathOrMissing"),
+    "CLI upgrade must define a shared directory guard for pluginDir",
+  );
+  assert.ok(
+    src.includes('assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");'),
+    "CLI upgrade must validate pluginDir before backup/install work begins",
+  );
+  assert.ok(
+    /childProcess\.execFileSync\("npm", \["install", "--omit=dev"\],[\s\S]*assertDirectoryPathOrMissing\(pluginDir, "OpenClaw plugin dir"\);\s*const swapResult = swapDirectoryWithRollback/s.test(src),
+    "published plugin installs must validate pluginDir immediately before the staged swap",
+  );
+});
+
 test("CLI next-step instructions mention gateway restart", async () => {
   const src = await readCli();
   assert.ok(
