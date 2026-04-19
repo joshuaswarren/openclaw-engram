@@ -22,7 +22,7 @@
     "provenance": true
   },
   "dependencies": {
-    "@remnic/core": "workspace:*"
+    "@remnic/core": "workspace:^"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

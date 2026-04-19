@@ -124,41 +124,27 @@ import {
   type TrainingExportOptions,
   type TrainingExportRecord,
 } from "@remnic/core";
-// Side-effect import: registers the weclone adapter with the core registry.
-// `ensureWecloneExportAdapterRegistered` is exported for idempotent explicit
-// calls from tests that reset the registry between cases.
-import {
-  ensureWecloneExportAdapterRegistered,
-  synthesizeTrainingPairs,
-  sweepPii,
-} from "@remnic/export-weclone";
+// @remnic/export-weclone is an optional install surface (training:export
+// only uses it). Load lazily so the CLI works without it — see
+// optional-weclone-export.ts for the install-hint behaviour.
+import { loadWecloneExportModule } from "./optional-weclone-export.js";
 import type {
   BinaryLifecycleConfig,
 } from "@remnic/core";
 import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
+// @remnic/bench is an optional install surface. Import types only at the
+// top level (erased at compile time); runtime access goes through
+// loadBenchModule() / tryLoadBenchModule() so the CLI stays functional for
+// users who never run `remnic bench *`.
 import {
-  buildBenchmarkPublishFeed,
-  compareResults,
-  deleteBenchmarkResults,
-  getBenchmarkLowerIsBetter,
-  defaultBenchmarkBaselineDir,
-  discoverAllProviders,
-  defaultBenchmarkPublishPath,
-  listBenchmarkBaselines,
-  listBenchmarkResults,
-  loadBenchmarkBaseline,
-  runBenchSuite,
-  runExplain,
-  loadBaseline,
-  saveBaseline,
-  checkRegression,
-  loadBenchmarkResult,
-  renderBenchmarkResultExport,
-  resolveBenchmarkResultReference,
-  saveBenchmarkBaseline,
-  writeBenchmarkPublishFeed,
-  type BenchConfig,
-  type BenchmarkDefinition,
+  loadBenchModule,
+  tryLoadBenchModule,
+} from "./optional-bench.js";
+import type {
+  BenchConfig,
+  BenchmarkDefinition,
+  BenchmarkResult,
+  ComparisonResult,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
 import {
@@ -280,6 +266,7 @@ const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
 type PackageBenchModule = {
   getBenchmark?: (id: string) => {
     runnerAvailable?: boolean;
+    meta?: { category?: string };
   } | undefined;
   runBenchmark?: (id: string, options: {
     mode?: "full" | "quick";
@@ -424,16 +411,12 @@ async function listBenchmarksFromPackage(): Promise<BenchCatalogEntry[] | undefi
 }
 
 async function loadBenchDefinitionsFromPackage(): Promise<BenchmarkDefinition[] | undefined> {
-  try {
-    const benchModule = await import("@remnic/bench") as {
-      listBenchmarks?: () => BenchmarkDefinition[];
-    };
-    if (!benchModule.listBenchmarks) return undefined;
-    const result = benchModule.listBenchmarks();
-    return Array.isArray(result) ? result : undefined;
-  } catch {
+  const benchModule = await tryLoadBenchModule();
+  if (!benchModule || typeof benchModule.listBenchmarks !== "function") {
     return undefined;
   }
+  const result = benchModule.listBenchmarks();
+  return Array.isArray(result) ? result : undefined;
 }
 
 async function resolveAllBenchmarks(): Promise<string[]> {
@@ -588,8 +571,11 @@ async function launchBenchUi(resultsDir: string): Promise<void> {
   });
 }
 
+// Inlined copy of @remnic/bench's defaultBenchmarkBaselineDir so we don't
+// load the optional bench package just to resolve a path. Keep in sync with
+// packages/bench/src/results-store.ts:defaultBenchmarkBaselineDir.
 function resolveBenchBaselineDir(): string {
-  return defaultBenchmarkBaselineDir();
+  return path.join(resolveHomeDir(), ".remnic", "bench", "baselines");
 }
 
 // Resolve the dataset root. In a monorepo checkout we keep using
@@ -747,7 +733,7 @@ function printBenchPackageSummary(
 }
 
 function printStoredBenchResultSummary(
-  result: Awaited<ReturnType<typeof loadBenchmarkResult>>,
+  result: BenchmarkResult,
   summary: { id: string; path: string },
 ): void {
   printBenchPackageSummary(result, summary.path, "Stored result");
@@ -755,7 +741,7 @@ function printStoredBenchResultSummary(
 }
 
 function printStoredBenchResultDetails(
-  result: Awaited<ReturnType<typeof loadBenchmarkResult>>,
+  result: BenchmarkResult,
   summary: { id: string; path: string },
 ): void {
   printStoredBenchResultSummary(result, summary);
@@ -778,7 +764,7 @@ function printStoredBenchResultDetails(
 }
 
 function printBenchComparisonSummary(
-  comparison: ReturnType<typeof compareResults>,
+  comparison: ComparisonResult,
   baseline: { id: string; path: string },
   candidate: { id: string; path: string },
 ): void {
@@ -824,6 +810,12 @@ async function compareBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
   }
 
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const {
+    resolveBenchmarkResultReference,
+    loadBenchmarkResult,
+    compareResults,
+    getBenchmarkLowerIsBetter,
+  } = await loadBenchModule();
   const [baselineRef, candidateRef] = refs;
   const baselineSummary = await resolveBenchmarkResultReference(resultsDir, baselineRef);
   const candidateSummary = await resolveBenchmarkResultReference(resultsDir, candidateRef);
@@ -872,6 +864,11 @@ async function compareBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
 
 async function showBenchPackageResults(parsed: ParsedBenchArgs): Promise<void> {
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const {
+    listBenchmarkResults,
+    resolveBenchmarkResultReference,
+    loadBenchmarkResult,
+  } = await loadBenchModule();
 
   if (parsed.benchmarks.length === 0) {
     const summaries = await listBenchmarkResults(resultsDir);
@@ -922,6 +919,14 @@ async function showBenchPackageResults(parsed: ParsedBenchArgs): Promise<void> {
 
 async function manageBenchBaselines(parsed: ParsedBenchArgs): Promise<void> {
   const baselineDir = parsed.baselinesDir ?? resolveBenchBaselineDir();
+  const {
+    listBenchmarkBaselines,
+    resolveBenchmarkResultReference,
+    listBenchmarkResults,
+    loadBenchmarkResult,
+    saveBenchmarkBaseline,
+    loadBenchmarkBaseline,
+  } = await loadBenchModule();
 
   if (parsed.baselineAction === "list") {
     const baselines = await listBenchmarkBaselines(baselineDir);
@@ -1014,6 +1019,11 @@ async function exportBenchPackageResult(parsed: ParsedBenchArgs): Promise<void> 
   }
 
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const {
+    resolveBenchmarkResultReference,
+    loadBenchmarkResult,
+    renderBenchmarkResultExport,
+  } = await loadBenchModule();
   const reference = parsed.benchmarks[0]!;
   const summary = await resolveBenchmarkResultReference(resultsDir, reference);
   if (!summary) {
@@ -1137,6 +1147,7 @@ async function manageBenchRuns(parsed: ParsedBenchArgs): Promise<void> {
       );
       process.exit(1);
     }
+    const { deleteBenchmarkResults } = await loadBenchModule();
     const deleted = await deleteBenchmarkResults(resultsDir, parsed.benchmarks);
     if (parsed.json) {
       console.log(JSON.stringify(deleted, null, 2));
@@ -1176,6 +1187,7 @@ async function discoverBenchProviders(parsed: ParsedBenchArgs): Promise<void> {
     process.exit(1);
   }
 
+  const { discoverAllProviders } = await loadBenchModule();
   const discovered = await discoverAllProviders();
 
   if (parsed.json) {
@@ -1220,6 +1232,11 @@ async function publishBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
   }
 
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const {
+    buildBenchmarkPublishFeed,
+    defaultBenchmarkPublishPath,
+    writeBenchmarkPublishFeed,
+  } = await loadBenchModule();
   const feed = await buildBenchmarkPublishFeed(resultsDir, parsed.target);
   if (feed.benchmarks.length === 0) {
     console.error(
@@ -1249,12 +1266,9 @@ async function runBenchViaPackage(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
 ): Promise<boolean> {
-  let benchModule: PackageBenchModule;
-  try {
-    benchModule = await import("@remnic/bench") as unknown as PackageBenchModule;
-  } catch {
-    return false;
-  }
+  const loaded = await tryLoadBenchModule();
+  if (!loaded) return false;
+  const benchModule = loaded as unknown as PackageBenchModule;
 
   const definition = benchModule.getBenchmark?.(benchmarkId);
   if (!definition?.runnerAvailable || !benchModule.runBenchmark || !benchModule.writeBenchmarkResult) {
@@ -1312,12 +1326,9 @@ async function runBenchViaPackage(
 }
 
 async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolean> {
-  let benchModule: PackageBenchModule;
-  try {
-    benchModule = await import("@remnic/bench") as unknown as PackageBenchModule;
-  } catch {
-    return false;
-  }
+  const loaded = await tryLoadBenchModule();
+  if (!loaded) return false;
+  const benchModule = loaded as unknown as PackageBenchModule;
 
   if (!benchModule.runCustomBenchmarkFile || !benchModule.writeBenchmarkResult) {
     return false;
@@ -1578,6 +1589,7 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
   const service = new EngramAccessService(orchestrator);
 
   if (explain) {
+    const { runExplain } = await loadBenchModule();
     const result = await runExplain(service, queryText);
     if (json) {
       console.log(JSON.stringify(result, null, 2));
@@ -3066,6 +3078,8 @@ async function cmdLegacyBenchmark(action: string, rest: string[], json: boolean)
   const orchestrator = new Orchestrator(config);
   const service = new EngramAccessService(orchestrator);
 
+  const { runBenchSuite, loadBaseline, checkRegression } = await loadBenchModule();
+
   const benchConfig: BenchConfig = {
     queries: rest.filter((a) => !a.startsWith("--")).length > 0
       ? rest.filter((a) => !a.startsWith("--"))
@@ -4479,8 +4493,11 @@ export async function runTrainingExport(
   // Ensure the WeClone adapter (and any others registered via side-effect
   // imports) are available before we ask the registry. `ensureWecloneExportAdapterRegistered`
   // is idempotent — safe to call even when the adapter is already registered
-  // by a previous CLI invocation in the same process.
-  ensureWecloneExportAdapterRegistered();
+  // by a previous CLI invocation in the same process. The module itself is
+  // an optional install surface; loadWecloneExportModule() throws a
+  // user-facing install hint if @remnic/export-weclone is missing.
+  const wecloneExport = await loadWecloneExportModule();
+  wecloneExport.ensureWecloneExportAdapterRegistered();
 
   const adapter = getTrainingExportAdapter(args.format);
   if (!adapter) {
@@ -4525,14 +4542,14 @@ export async function runTrainingExport(
   const recordsRead = records.length;
 
   if (args.synthesize) {
-    records = synthesizeTrainingPairs(records, {
+    records = wecloneExport.synthesizeTrainingPairs(records, {
       maxPairsPerRecord: args.maxPairsPerRecord,
     });
   }
 
   let redactedCount = 0;
   if (args.privacySweep) {
-    const swept = sweepPii(records);
+    const swept = wecloneExport.sweepPii(records);
     records = swept.cleanRecords;
     redactedCount = swept.redactedCount;
   }

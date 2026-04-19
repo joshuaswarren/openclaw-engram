@@ -481,11 +481,17 @@ Engram is organized as a monorepo with a core engine, standalone server/CLI, and
 | `@remnic/server` | [![npm](https://img.shields.io/npm/v/@remnic/server)](https://www.npmjs.com/package/@remnic/server) | Standalone HTTP/MCP server with multi-token auth. Run as daemon via launchd/systemd |
 | `@remnic/cli` | [![npm](https://img.shields.io/npm/v/@remnic/cli)](https://www.npmjs.com/package/@remnic/cli) | CLI binary — memory management, daemon lifecycle, connectors, tokens, spaces, benchmarks |
 | `@remnic/hermes-provider` | [![npm](https://img.shields.io/npm/v/@remnic/hermes-provider)](https://www.npmjs.com/package/@remnic/hermes-provider) | TypeScript HTTP client for remote Remnic instances |
-| `@remnic/bench` | (private) | Latency ladder benchmarks with CI regression gates |
+| `@remnic/bench` | [![npm](https://img.shields.io/npm/v/@remnic/bench)](https://www.npmjs.com/package/@remnic/bench) | Latency ladder benchmarks with CI regression gates — optional `remnic bench *` surface |
+| `@remnic/export-weclone` | [![npm](https://img.shields.io/npm/v/@remnic/export-weclone)](https://www.npmjs.com/package/@remnic/export-weclone) | WeClone fine-tuning dataset exporter — optional `remnic training:export` surface |
+| `@remnic/import-weclone` | [![npm](https://img.shields.io/npm/v/@remnic/import-weclone)](https://www.npmjs.com/package/@remnic/import-weclone) | WeClone chat-history importer — optional `remnic bulk-import` source |
+| `@remnic/connector-weclone` | [![npm](https://img.shields.io/npm/v/@remnic/connector-weclone)](https://www.npmjs.com/package/@remnic/connector-weclone) | OpenAI-compatible proxy layering Remnic memory onto WeClone avatars |
 | `@remnic/plugin-openclaw` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-openclaw)](https://www.npmjs.com/package/@remnic/plugin-openclaw) | OpenClaw adapter — thin bridge (embedded or delegate mode) |
+| `@remnic/plugin-claude-code` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-claude-code)](https://www.npmjs.com/package/@remnic/plugin-claude-code) | Native Claude Code plugin — hooks, skills, MCP |
+| `@remnic/plugin-codex` | [![npm](https://img.shields.io/npm/v/@remnic/plugin-codex)](https://www.npmjs.com/package/@remnic/plugin-codex) | Native Codex CLI plugin — hooks, skills, MCP |
+| `@remnic/replit` | [![npm](https://img.shields.io/npm/v/@remnic/replit)](https://www.npmjs.com/package/@remnic/replit) | Replit Agent MCP connector — setup snippet + token helper |
 | `remnic-hermes` | [![PyPI](https://img.shields.io/pypi/v/remnic-hermes)](https://pypi.org/project/remnic-hermes/) | Python MemoryProvider for Hermes Agent |
-| `@remnic/plugin-claude-code` | Installed via `remnic connectors install` | Native Claude Code plugin — hooks, skills, MCP |
-| `@remnic/plugin-codex` | (installed via `remnic connectors install`) | Native Codex CLI plugin — hooks, skills, MCP |
+
+Remnic is installed à la carte: `@remnic/core` is the only package most users need, and optional surfaces (bench, weclone, plugins) are installed separately when you need them. Commands like `remnic bench *` and `remnic training:export` lazy-load their companion package and print an install hint if it's missing.
 
 The old `@joshuaswarren/openclaw-engram` package is **deprecated**. Use `@remnic/plugin-openclaw` for OpenClaw installs and `@remnic/*` for standalone or multi-platform use.
 

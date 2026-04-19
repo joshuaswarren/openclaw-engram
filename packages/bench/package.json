@@ -1,7 +1,6 @@
 {
   "name": "@remnic/bench",
   "version": "1.0.0",
-  "private": true,
   "description": "Retrieval latency ladder benchmarks + CI regression gates for @remnic/core",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,12 +11,30 @@
       "import": "./dist/index.js"
     }
   },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joshuaswarren/remnic.git",
+    "directory": "packages/bench"
+  },
+  "keywords": [
+    "remnic",
+    "benchmark",
+    "retrieval",
+    "evaluation",
+    "ai-memory"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsup --config tsup.config.ts",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@remnic/core": "workspace:*",
+    "@remnic/core": "workspace:^",
     "yaml": "^2.4.2"
   },
   "devDependencies": {

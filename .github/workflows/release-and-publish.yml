@@ -343,21 +343,29 @@ jobs:
 
       - name: Publish workspace packages to npm
         run: |
-          # Publish the install surfaces that are currently supported from npm.
-          # Uses pnpm (not npm) so that workspace: protocol strings are rewritten to
-          # real version numbers at pack time. npm publish does not perform this
-          # rewriting, which causes "workspace:^" to appear verbatim in the published
-          # package metadata (see issue #403).
+          # Publish the install surfaces supported from npm. Uses pnpm (not
+          # npm) so workspace: protocol strings are rewritten to real
+          # version numbers at pack time; npm publish does not perform this
+          # rewriting, which causes "workspace:^" to appear verbatim in the
+          # published package metadata (see issue #403).
           #
-          # The WeClone helper packages are not part of the npm install path used by
-          # Remnic/OpenClaw today. @remnic/cli bundles its export adapter so the CLI
-          # stays functional without requiring unpublished companion packages.
+          # Ordering is topological: build roots first, then packages that
+          # depend on them. Optional/à-la-carte surfaces (bench, weclone,
+          # plugins) must ship so end users can install only what they need
+          # — see the à-la-carte invariant in CLAUDE.md / AGENTS.md.
           PUBLISH_ORDER=(
             packages/remnic-core
+            packages/bench
+            packages/export-weclone
+            packages/import-weclone
+            packages/connector-weclone
+            packages/connector-replit
+            packages/hermes-provider
             packages/remnic-server
             packages/remnic-cli
-            packages/hermes-provider
             packages/plugin-openclaw
+            packages/plugin-claude-code
+            packages/plugin-codex
             packages/shim-openclaw-engram
           )
           for pkg_dir in "${PUBLISH_ORDER[@]}"; do
