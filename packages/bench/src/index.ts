@@ -131,7 +131,7 @@ export {
   pairedDeltaConfidenceInterval,
 } from "./stats/bootstrap.js";
 export { cohensD, interpretEffectSize } from "./stats/effect-size.js";
-export { compareResults } from "./stats/comparison.js";
+export { compareResults, getBenchmarkLowerIsBetter } from "./stats/comparison.js";
 export {
   buildBenchmarkPublishFeed,
   defaultBenchmarkBaselineDir,
