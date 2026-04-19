@@ -397,12 +397,22 @@ export async function deleteBenchmarkResults(
       summaries.find((entry) => entry.id === reference) ??
       summaries.find((entry) => path.basename(entry.path) === reference);
 
-    if (!summary && looksLikeFilesystemPath(reference) && fs.existsSync(reference)) {
-      try {
-        const result = await loadBenchmarkResult(reference);
-        summary = toSummary(result, reference);
-      } catch {
-        summary = undefined;
+    if (!summary && looksLikeFilesystemPath(reference)) {
+      // If we've already deleted the file this path points at earlier
+      // in the same batch, treat a repeat reference as a duplicate —
+      // not a missing run — so multi-ref automation that mixes id and
+      // path aliases for the same run still exits cleanly.
+      const canonicalRef = path.resolve(reference);
+      if (seenPaths.has(canonicalRef)) {
+        continue;
+      }
+      if (fs.existsSync(reference)) {
+        try {
+          const result = await loadBenchmarkResult(reference);
+          summary = toSummary(result, reference);
+        } catch {
+          summary = undefined;
+        }
       }
     }
     if (!summary) {
