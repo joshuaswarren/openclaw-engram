@@ -838,6 +838,34 @@ export function parseConfig(raw: unknown): PluginConfig {
     temporalSupersessionEnabled: cfg.temporalSupersessionEnabled !== false, // On by default
     temporalSupersessionIncludeInRecall:
       cfg.temporalSupersessionIncludeInRecall === true, // Off by default
+    // Direct-answer retrieval tier (issue #518)
+    recallDirectAnswerEnabled:
+      coerceBool(cfg.recallDirectAnswerEnabled) ?? false,
+    recallDirectAnswerTokenOverlapFloor:
+      typeof cfg.recallDirectAnswerTokenOverlapFloor === "number" &&
+      cfg.recallDirectAnswerTokenOverlapFloor >= 0 &&
+      cfg.recallDirectAnswerTokenOverlapFloor <= 1
+        ? cfg.recallDirectAnswerTokenOverlapFloor
+        : 0.55,
+    recallDirectAnswerImportanceFloor:
+      typeof cfg.recallDirectAnswerImportanceFloor === "number" &&
+      cfg.recallDirectAnswerImportanceFloor >= 0 &&
+      cfg.recallDirectAnswerImportanceFloor <= 1
+        ? cfg.recallDirectAnswerImportanceFloor
+        : 0.7,
+    recallDirectAnswerAmbiguityMargin:
+      typeof cfg.recallDirectAnswerAmbiguityMargin === "number" &&
+      cfg.recallDirectAnswerAmbiguityMargin >= 0 &&
+      cfg.recallDirectAnswerAmbiguityMargin <= 1
+        ? cfg.recallDirectAnswerAmbiguityMargin
+        : 0.15,
+    recallDirectAnswerEligibleTaxonomyBuckets: Array.isArray(
+      cfg.recallDirectAnswerEligibleTaxonomyBuckets,
+    )
+      ? (cfg.recallDirectAnswerEligibleTaxonomyBuckets as unknown[]).filter(
+          (v): v is string => typeof v === "string" && v.length > 0,
+        )
+      : ["decisions", "principles", "conventions", "runbooks", "entities"],
     // Memory Linking (Phase 3A)
     memoryLinkingEnabled: cfg.memoryLinkingEnabled === true, // Off by default initially
     // Conversation Threading (Phase 3B)

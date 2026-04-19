@@ -101,3 +101,121 @@ test("parseConfig preserves custom entity schemas without code changes", () => {
     { key: "working_on", title: "Working On", description: "" },
   ]);
 });
+
+// ── Issue #518: direct-answer retrieval tier config ─────────────────────────
+
+test("parseConfig recallDirectAnswerEnabled defaults to false", () => {
+  const result = parseConfig({});
+  assert.equal(result.recallDirectAnswerEnabled, false);
+});
+
+test('parseConfig recallDirectAnswerEnabled coerces string "true" to boolean true', () => {
+  const result = parseConfig({ recallDirectAnswerEnabled: "true" });
+  assert.equal(result.recallDirectAnswerEnabled, true);
+});
+
+test('parseConfig recallDirectAnswerEnabled coerces string "false" to boolean false (rule 36)', () => {
+  const result = parseConfig({ recallDirectAnswerEnabled: "false" });
+  assert.equal(result.recallDirectAnswerEnabled, false);
+});
+
+test("parseConfig recallDirectAnswerEnabled accepts boolean true", () => {
+  const result = parseConfig({ recallDirectAnswerEnabled: true });
+  assert.equal(result.recallDirectAnswerEnabled, true);
+});
+
+test("parseConfig recallDirectAnswerTokenOverlapFloor defaults to 0.55", () => {
+  const result = parseConfig({});
+  assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0.55);
+});
+
+test("parseConfig recallDirectAnswerTokenOverlapFloor=0 is preserved as disable switch (rule 45)", () => {
+  const result = parseConfig({ recallDirectAnswerTokenOverlapFloor: 0 });
+  assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0);
+});
+
+test("parseConfig recallDirectAnswerTokenOverlapFloor=0.8 preserves the explicit value", () => {
+  const result = parseConfig({ recallDirectAnswerTokenOverlapFloor: 0.8 });
+  assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0.8);
+});
+
+test("parseConfig recallDirectAnswerTokenOverlapFloor=-0.1 falls back to default", () => {
+  const result = parseConfig({ recallDirectAnswerTokenOverlapFloor: -0.1 });
+  assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0.55);
+});
+
+test("parseConfig recallDirectAnswerTokenOverlapFloor=1.5 falls back to default", () => {
+  const result = parseConfig({ recallDirectAnswerTokenOverlapFloor: 1.5 });
+  assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0.55);
+});
+
+test("parseConfig recallDirectAnswerImportanceFloor defaults to 0.7", () => {
+  const result = parseConfig({});
+  assert.equal(result.recallDirectAnswerImportanceFloor, 0.7);
+});
+
+test("parseConfig recallDirectAnswerImportanceFloor=0 is preserved as disable switch", () => {
+  const result = parseConfig({ recallDirectAnswerImportanceFloor: 0 });
+  assert.equal(result.recallDirectAnswerImportanceFloor, 0);
+});
+
+test("parseConfig recallDirectAnswerAmbiguityMargin defaults to 0.15", () => {
+  const result = parseConfig({});
+  assert.equal(result.recallDirectAnswerAmbiguityMargin, 0.15);
+});
+
+test("parseConfig recallDirectAnswerAmbiguityMargin=0.3 preserves explicit value", () => {
+  const result = parseConfig({ recallDirectAnswerAmbiguityMargin: 0.3 });
+  assert.equal(result.recallDirectAnswerAmbiguityMargin, 0.3);
+});
+
+test("parseConfig recallDirectAnswerEligibleTaxonomyBuckets defaults to the documented list", () => {
+  const result = parseConfig({});
+  assert.deepEqual(result.recallDirectAnswerEligibleTaxonomyBuckets, [
+    "decisions",
+    "principles",
+    "conventions",
+    "runbooks",
+    "entities",
+  ]);
+});
+
+test("parseConfig recallDirectAnswerEligibleTaxonomyBuckets preserves a custom array", () => {
+  const result = parseConfig({
+    recallDirectAnswerEligibleTaxonomyBuckets: ["decisions", "runbooks"],
+  });
+  assert.deepEqual(result.recallDirectAnswerEligibleTaxonomyBuckets, [
+    "decisions",
+    "runbooks",
+  ]);
+});
+
+test("parseConfig recallDirectAnswerEligibleTaxonomyBuckets filters non-strings and empty strings", () => {
+  const result = parseConfig({
+    recallDirectAnswerEligibleTaxonomyBuckets: ["decisions", "", 42, null, "runbooks"],
+  });
+  assert.deepEqual(result.recallDirectAnswerEligibleTaxonomyBuckets, [
+    "decisions",
+    "runbooks",
+  ]);
+});
+
+test("parseConfig recallDirectAnswerEligibleTaxonomyBuckets=[] is preserved as a disable-all state", () => {
+  const result = parseConfig({
+    recallDirectAnswerEligibleTaxonomyBuckets: [],
+  });
+  assert.deepEqual(result.recallDirectAnswerEligibleTaxonomyBuckets, []);
+});
+
+test("parseConfig recallDirectAnswerEligibleTaxonomyBuckets non-array value falls back to default", () => {
+  const result = parseConfig({
+    recallDirectAnswerEligibleTaxonomyBuckets: "decisions",
+  });
+  assert.deepEqual(result.recallDirectAnswerEligibleTaxonomyBuckets, [
+    "decisions",
+    "principles",
+    "conventions",
+    "runbooks",
+    "entities",
+  ]);
+});

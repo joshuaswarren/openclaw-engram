@@ -35,6 +35,38 @@ export type ActiveRecallThinking =
 export type ActiveRecallChatType = "direct" | "group" | "channel";
 export type ActiveRecallModelFallbackPolicy = "default-remote" | "resolved-only";
 
+/**
+ * Retrieval tier ladder (issue #518).  Identifies which tier served a recall
+ * result.  Ordered top-to-bottom by cost, but routing is not strictly
+ * sequential — callers may jump straight to a lower tier when eligibility
+ * does not hold.
+ */
+export type RetrievalTier =
+  | "exact-cache"
+  | "fuzzy-cache"
+  | "direct-answer"
+  | "hybrid"
+  | "rerank-graph"
+  | "agentic";
+
+/**
+ * Per-recall annotation describing which retrieval tier served a result,
+ * why that tier was chosen, and what was filtered along the way.  Added as
+ * part of issue #518 (direct-answer tier + `query --explain`).
+ *
+ * Not to be confused with the existing `recallExplain` operation
+ * (graph-path explanation) — that is a user-invoked RPC; this is a
+ * per-result annotation that can be attached to any recall response.
+ */
+export interface RecallTierExplain {
+  tier: RetrievalTier;
+  tierReason: string;
+  filteredBy: string[];
+  candidatesConsidered: number;
+  latencyMs: number;
+  sourceAnchors?: Array<{ path: string; lineRange?: [number, number] }>;
+}
+
 export interface RecallSectionConfig {
   id: string;
   enabled?: boolean;
@@ -300,6 +332,33 @@ export interface PluginConfig {
    * filtered out.
    */
   temporalSupersessionIncludeInRecall: boolean;
+  // Direct-answer retrieval tier (issue #518)
+  /**
+   * When true, recall checks whether a single validated memory in a
+   * high-trust taxonomy bucket can answer the query before invoking QMD.
+   * Default false — enable explicitly after bench validation.
+   */
+  recallDirectAnswerEnabled: boolean;
+  /**
+   * Minimum token-overlap ratio (query tokens ∩ memory tokens / query tokens)
+   * required for direct-answer eligibility.  Set to 0 to disable the gate.
+   */
+  recallDirectAnswerTokenOverlapFloor: number;
+  /**
+   * Minimum calibrated importance score required for direct-answer
+   * eligibility.  Set to 0 to disable the gate.
+   */
+  recallDirectAnswerImportanceFloor: number;
+  /**
+   * Ambiguity margin: if the second-best candidate scores within this
+   * ratio of the top candidate, direct-answer defers to the hybrid tier.
+   */
+  recallDirectAnswerAmbiguityMargin: number;
+  /**
+   * Taxonomy category IDs eligible for direct-answer routing.  Memories
+   * whose resolved taxonomy category is not in this list never qualify.
+   */
+  recallDirectAnswerEligibleTaxonomyBuckets: string[];
   // Memory Linking (Phase 3A)
   memoryLinkingEnabled: boolean;
   // Conversation Threading (Phase 3B)
