@@ -27,6 +27,23 @@ function createSiblingSwapPath(targetDir: string, label: string): string {
   return path.join(path.dirname(targetDir), `.${path.basename(targetDir)}.${label}.${nonce}`);
 }
 
+function cleanupDisplacedDirectoryBestEffort(
+  displacedDir: string | undefined,
+  context: string,
+): string | undefined {
+  if (!displacedDir) return undefined;
+
+  try {
+    fs.rmSync(displacedDir, { recursive: true, force: true });
+    return undefined;
+  } catch (error) {
+    return (
+      `Warning: ${context}, but failed to remove the displaced plugin copy at ` +
+      `${displacedDir}: ${describeError(error)}`
+    );
+  }
+}
+
 export function swapDirectoryWithRollback(
   stagedDir: string,
   targetDir: string,
@@ -82,7 +99,10 @@ export function cleanupRollbackDirectoryBestEffort(rollbackDir?: string): string
   }
 }
 
-export function restoreDirectoryFromRollback(targetDir: string, rollbackDir: string): void {
+export function restoreDirectoryFromRollback(
+  targetDir: string,
+  rollbackDir: string,
+): string | undefined {
   if (!fs.existsSync(rollbackDir)) {
     throw new Error(`Rollback directory is missing: ${rollbackDir}`);
   }
@@ -119,12 +139,13 @@ export function restoreDirectoryFromRollback(targetDir: string, rollbackDir: str
     );
   }
 
-  if (displacedDir) {
-    fs.rmSync(displacedDir, { recursive: true, force: true });
-  }
+  return cleanupDisplacedDirectoryBestEffort(
+    displacedDir,
+    `restored the previous plugin copy into ${targetDir}`,
+  );
 }
 
-function restoreDirectoryFromBackup(targetDir: string, backupDir: string): void {
+function restoreDirectoryFromBackup(targetDir: string, backupDir: string): string | undefined {
   if (!fs.existsSync(backupDir)) {
     throw new Error(`Plugin backup directory is missing: ${backupDir}`);
   }
@@ -168,9 +189,10 @@ function restoreDirectoryFromBackup(targetDir: string, backupDir: string): void 
     );
   }
 
-  if (displacedDir) {
-    fs.rmSync(displacedDir, { recursive: true, force: true });
-  }
+  return cleanupDisplacedDirectoryBestEffort(
+    displacedDir,
+    `restored the plugin backup into ${targetDir}`,
+  );
 }
 
 function restoreFileFromBackup(targetPath: string, backupPath: string): void {
@@ -193,8 +215,9 @@ export function rollbackOpenclawUpgrade({
 
   try {
     if (rollbackDir && fs.existsSync(rollbackDir)) {
-      restoreDirectoryFromRollback(pluginDir, rollbackDir);
+      const cleanupWarning = restoreDirectoryFromRollback(pluginDir, rollbackDir);
       notes.push(`Restored previous plugin from rollback copy at ${rollbackDir}`);
+      if (cleanupWarning) notes.push(cleanupWarning);
       pluginRestored = true;
     }
   } catch (error) {
@@ -203,7 +226,7 @@ export function rollbackOpenclawUpgrade({
 
   try {
     if (!pluginRestored && pluginBackupDir && fs.existsSync(pluginBackupDir)) {
-      restoreDirectoryFromBackup(pluginDir, pluginBackupDir);
+      const cleanupWarning = restoreDirectoryFromBackup(pluginDir, pluginBackupDir);
       if (rollbackRestoreError) {
         notes.push(
           `Rollback copy restore failed; restored previous plugin from durable backup at ` +
@@ -212,6 +235,7 @@ export function rollbackOpenclawUpgrade({
       } else {
         notes.push(`Restored previous plugin from backup at ${pluginBackupDir}`);
       }
+      if (cleanupWarning) notes.push(cleanupWarning);
       pluginRestored = true;
     } else if (!pluginRestored && !rollbackRestoreError) {
       notes.push("No previous plugin copy was available for automatic restore");

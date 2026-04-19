@@ -92,10 +92,43 @@ test("restoreDirectoryFromRollback reinstates the previous plugin copy", async (
   const result = swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);
   assert.equal(readMarker(pluginDir), "new-plugin");
 
-  restoreDirectoryFromRollback(pluginDir, result.rollbackDir!);
+  const warning = restoreDirectoryFromRollback(pluginDir, result.rollbackDir!);
 
+  assert.equal(warning, undefined);
   assert.equal(readMarker(pluginDir), "old-plugin");
   assert.equal(fs.existsSync(rollbackDir), false);
+});
+
+test("restoreDirectoryFromRollback degrades displaced-dir cleanup failures into a warning", async () => {
+  const tmp = await makeTmpDir();
+  const pluginDir = path.join(tmp, "extensions", "openclaw-remnic");
+  const stagedDir = path.join(tmp, "staged");
+  const rollbackDir = path.join(tmp, "rollback");
+
+  writeMarker(pluginDir, "old-plugin");
+  writeMarker(stagedDir, "new-plugin");
+
+  const result = swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);
+  assert.equal(readMarker(pluginDir), "new-plugin");
+
+  const rmSync = fs.rmSync;
+  fs.rmSync = ((target: fs.PathLike, options?: fs.RmOptions) => {
+    if (String(target).includes(".openclaw-remnic.rollback-restore.")) {
+      throw new Error("cleanup busy");
+    }
+    return rmSync(target, options);
+  }) as typeof fs.rmSync;
+
+  try {
+    const warning = restoreDirectoryFromRollback(pluginDir, result.rollbackDir!);
+
+    assert.match(warning ?? "", /failed to remove the displaced plugin copy/i);
+    assert.match(warning ?? "", /cleanup busy/);
+    assert.equal(readMarker(pluginDir), "old-plugin");
+    assert.equal(fs.existsSync(result.rollbackDir!), false);
+  } finally {
+    fs.rmSync = rmSync;
+  }
 });
 
 test("restoreDirectoryFromRollback keeps the current plugin if the rollback rename fails", async () => {
@@ -215,6 +248,39 @@ test("rollbackOpenclawUpgrade falls back to the durable plugin backup when rollb
 
   assert.equal(readMarker(pluginDir), "old-plugin");
   assert.ok(notes.some((note) => note.includes("Restored previous plugin from backup")));
+});
+
+test("rollbackOpenclawUpgrade keeps backup restore cleanup failures non-fatal", async () => {
+  const tmp = await makeTmpDir();
+  const pluginDir = path.join(tmp, "extensions", "openclaw-remnic");
+  const pluginBackupDir = path.join(tmp, "backups", "extensions", "openclaw-remnic");
+  const configPath = path.join(tmp, "openclaw.json");
+
+  writeMarker(pluginDir, "new-plugin");
+  writeMarker(pluginBackupDir, "old-plugin");
+  fs.writeFileSync(configPath, '{"plugins":{"slots":{"memory":"broken"}}}\n', "utf8");
+
+  const rmSync = fs.rmSync;
+  fs.rmSync = ((target: fs.PathLike, options?: fs.RmOptions) => {
+    if (String(target).includes(".openclaw-remnic.pre-backup-restore.")) {
+      throw new Error("cleanup busy");
+    }
+    return rmSync(target, options);
+  }) as typeof fs.rmSync;
+
+  try {
+    const notes = rollbackOpenclawUpgrade({
+      configPath,
+      pluginBackupDir,
+      pluginDir,
+    });
+
+    assert.equal(readMarker(pluginDir), "old-plugin");
+    assert.ok(notes.some((note) => note.includes("Restored previous plugin from backup")));
+    assert.ok(notes.some((note) => /failed to remove the displaced plugin copy/i.test(note)));
+  } finally {
+    fs.rmSync = rmSync;
+  }
 });
 
 test("rollbackOpenclawUpgrade keeps the current plugin when backup restore cannot be swapped in", async () => {
