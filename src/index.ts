@@ -2225,23 +2225,117 @@ const pluginDefinition = {
         }
         return absolutePath;
       };
-      const remnicMemoryRuntime: import("openclaw/plugin-sdk").MemoryPluginRuntime = {
-        async getMemorySearchManager(_params) {
+      type RuntimeMemorySource = "memory" | "sessions";
+      type RuntimeSearchOptions = {
+        maxResults?: number;
+        sessionKey?: string;
+        qmdSearchModeOverride?: "query" | "search" | "vsearch";
+      };
+      type RuntimeSearchResult = {
+        path: string;
+        startLine: number;
+        endLine: number;
+        score: number;
+        snippet: string;
+        source: RuntimeMemorySource;
+        citation?: string;
+      };
+      type RuntimeReadParams = {
+        relPath: string;
+        from?: number;
+        lines?: number;
+      };
+      type RuntimeReadResult = {
+        text: string;
+        path: string;
+        truncated?: boolean;
+        from?: number;
+        lines?: number;
+        nextFrom?: number;
+      };
+      type RuntimeStatus = {
+        backend: "builtin" | "qmd";
+        provider: string;
+        requestedProvider?: string;
+        model?: string;
+        dirty?: boolean;
+        workspaceDir?: string;
+        dbPath?: string;
+        sources?: RuntimeMemorySource[];
+        sourceCounts?: Array<{
+          source: RuntimeMemorySource;
+          files: number;
+          chunks: number;
+        }>;
+        vector?: {
+          enabled: boolean;
+          available?: boolean;
+        };
+        fts?: {
+          enabled: boolean;
+          available: boolean;
+        };
+        custom?: Record<string, unknown>;
+      };
+      type RuntimeManager = {
+        search(query: string, opts?: RuntimeSearchOptions): Promise<RuntimeSearchResult[]>;
+        readFile(params: RuntimeReadParams): Promise<RuntimeReadResult>;
+        status(): RuntimeStatus;
+        sync?(params?: { reason?: string; force?: boolean }): Promise<void>;
+        probeEmbeddingAvailability(): Promise<{ ok: boolean; error?: string }>;
+        probeVectorAvailability(): Promise<boolean>;
+        close?(): Promise<void>;
+      };
+      type RemnicCapabilityRuntime = {
+        getMemorySearchManager(params: {
+          cfg: unknown;
+          agentId: string;
+          purpose?: "default" | "status";
+        }): Promise<{
+          manager: RuntimeManager | null;
+          error?: string;
+        }>;
+        resolveMemoryBackendConfig(params: {
+          cfg: unknown;
+          agentId: string;
+        }): { backend: "builtin" } | { backend: "qmd"; qmd?: { command?: string } };
+        closeAllMemorySearchManagers(): Promise<void>;
+      };
+      const remnicMemoryRuntime: RemnicCapabilityRuntime = {
+        async getMemorySearchManager(_params: {
+          cfg: unknown;
+          agentId: string;
+          purpose?: "default" | "status";
+        }) {
           return {
             manager: {
-              async search(query, opts) {
+              async search(query: string, opts?: RuntimeSearchOptions) {
                 const namespace =
                   typeof orchestrator.resolveSelfNamespace === "function"
                     ? orchestrator.resolveSelfNamespace(opts?.sessionKey)
                     : undefined;
+                const resolvedMode =
+                  opts?.qmdSearchModeOverride === "vsearch"
+                    ? "vector"
+                    : opts?.qmdSearchModeOverride === "query"
+                      ? "search"
+                      : opts?.qmdSearchModeOverride ?? "search";
                 const rawResults = await orchestrator.searchAcrossNamespaces({
                   query,
                   maxResults: opts?.maxResults,
                   namespaces: namespace ? [namespace] : undefined,
-                  mode: opts?.qmdSearchModeOverride ?? "search",
+                  mode: resolvedMode,
                 });
                 return rawResults.map((result, index) => {
-                  const candidate = result as Record<string, unknown>;
+                  const candidate = result as unknown as {
+                    path?: string;
+                    id?: string;
+                    startLine?: number;
+                    endLine?: number;
+                    score?: number;
+                    snippet?: string;
+                    text?: string;
+                  };
                   const rawPath =
                     typeof candidate.path === "string"
                       ? candidate.path
@@ -2276,7 +2370,7 @@ const pluginDefinition = {
                   };
                 });
               },
-              async readFile(params) {
+              async readFile(params: RuntimeReadParams) {
                 const requestedPath = normalizeWorkspacePath(params.relPath);
                 const absolutePath = resolveReadablePath(params.relPath);
                 const text = await readFile(absolutePath, "utf-8");
@@ -2339,7 +2433,7 @@ const pluginDefinition = {
                   },
                 };
               },
-              async sync(_params) {
+              async sync(_params?: { reason?: string; force?: boolean }) {
                 if (remnicUsesQmd && typeof (orchestrator as any).qmd?.update === "function") {
                   await (orchestrator as any).qmd.update();
                 }
@@ -2370,7 +2464,7 @@ const pluginDefinition = {
             },
           };
         },
-        resolveMemoryBackendConfig() {
+        resolveMemoryBackendConfig(_params: { cfg: unknown; agentId: string }) {
           return remnicUsesQmd
             ? { backend: "qmd", qmd: { command: remnicQmdCommand } }
             : { backend: "builtin" };
