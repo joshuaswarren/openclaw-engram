@@ -79,6 +79,10 @@ import {
   ingestionSetupFrictionDefinition,
   runIngestionSetupFrictionBenchmark,
 } from "./benchmarks/remnic/ingestion-setup-friction/runner.js";
+import {
+  ingestionCitationAccuracyDefinition,
+  runIngestionCitationAccuracyBenchmark,
+} from "./benchmarks/remnic/ingestion-citation-accuracy/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -161,6 +165,11 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...ingestionSetupFrictionDefinition,
     run: runIngestionSetupFrictionBenchmark as (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>,
+  },
+  {
+    ...ingestionCitationAccuracyDefinition,
+    runnerAvailable: false,
+    run: runIngestionCitationAccuracyBenchmark,
   },
 ];
 
