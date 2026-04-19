@@ -9,7 +9,7 @@ test("parseConfig sets lifecycle policy defaults with policy disabled", () => {
   assert.equal(cfg.lifecyclePromoteHeatThreshold, 0.55);
   assert.equal(cfg.lifecycleStaleDecayThreshold, 0.65);
   assert.equal(cfg.lifecycleArchiveDecayThreshold, 0.85);
-  assert.deepEqual(cfg.lifecycleProtectedCategories, ["decision", "principle", "commitment", "preference"]);
+  assert.deepEqual(cfg.lifecycleProtectedCategories, ["decision", "principle", "commitment", "preference", "procedure"]);
   assert.equal(cfg.lifecycleMetricsEnabled, false);
 });
 
