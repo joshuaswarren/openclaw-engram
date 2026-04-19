@@ -32,6 +32,7 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import * as childProcess from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -572,10 +573,16 @@ async function launchBenchUi(resultsDir: string): Promise<void> {
 }
 
 // Inlined copy of @remnic/bench's defaultBenchmarkBaselineDir so we don't
-// load the optional bench package just to resolve a path. Keep in sync with
-// packages/bench/src/results-store.ts:defaultBenchmarkBaselineDir.
+// load the optional bench package just to resolve a path. The home-dir
+// fallback chain must match packages/bench/src/results-store.ts exactly
+// (HOME → USERPROFILE → os.homedir()) — diverging here would make the CLI
+// and the bench package resolve different baseline directories when
+// neither env var is set, so baselines saved by one would be invisible
+// to the other. resolveHomeDir()'s literal `~` fallback is the wrong
+// shape for this use case.
 function resolveBenchBaselineDir(): string {
-  return path.join(resolveHomeDir(), ".remnic", "bench", "baselines");
+  const homeDir = process.env.HOME ?? process.env.USERPROFILE ?? os.homedir();
+  return path.join(homeDir, ".remnic", "bench", "baselines");
 }
 
 // Resolve the dataset root. In a monorepo checkout we keep using

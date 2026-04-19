@@ -35,12 +35,3 @@ export async function loadWecloneExportModule(): Promise<WecloneExportModule> {
   }
   return cached;
 }
-
-export async function tryLoadWecloneExportModule(): Promise<
-  WecloneExportModule | undefined
-> {
-  if (cached === undefined) {
-    cached = await tryImportWecloneExport();
-  }
-  return cached ?? undefined;
-}
