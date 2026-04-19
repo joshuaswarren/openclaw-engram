@@ -4,6 +4,7 @@ import path from "node:path";
 const DAY_SUMMARY_CRON_ID = "engram-day-summary";
 const GOVERNANCE_CRON_ID = "engram-nightly-governance";
 const PROCEDURAL_MINING_CRON_ID = "engram-procedural-mining";
+const CONTRADICTION_SCAN_CRON_ID = "engram-contradiction-scan";
 
 type CronJobsShape =
   | Array<Record<string, unknown>>
@@ -215,6 +216,47 @@ export async function ensureProceduralMiningCron(
       thinking: "off",
       message:
         "You are OpenClaw automation. Call tool `engram.procedure_mining_run` with empty params. " +
+        "If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
+    },
+    delivery: { mode: "none" },
+  }));
+}
+
+export async function ensureContradictionScanCron(
+  jobsPath: string,
+  options: {
+    timezone: string;
+    agentId?: string;
+    scheduleExpr?: string;
+  },
+): Promise<{ created: boolean; jobId: string }> {
+  const scheduleExpr =
+    typeof options.scheduleExpr === "string" && options.scheduleExpr.trim().length > 0
+      ? options.scheduleExpr.trim()
+      : "37 3 * * *";
+  const agentId =
+    typeof options.agentId === "string" && options.agentId.trim().length > 0
+      ? options.agentId.trim()
+      : "main";
+
+  return ensureCronJob(jobsPath, CONTRADICTION_SCAN_CRON_ID, () => ({
+    id: CONTRADICTION_SCAN_CRON_ID,
+    agentId,
+    name: "Remnic Contradiction Scan (nightly)",
+    enabled: true,
+    schedule: {
+      kind: "cron",
+      expr: scheduleExpr,
+      tz: options.timezone,
+    },
+    sessionTarget: "isolated",
+    wakeMode: "now",
+    payload: {
+      kind: "agentTurn",
+      timeoutSeconds: 900,
+      thinking: "off",
+      message:
+        "You are OpenClaw automation. Call tool `engram.contradiction_scan_run` with empty params. " +
         "If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
     },
     delivery: { mode: "none" },

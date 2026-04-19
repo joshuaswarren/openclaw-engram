@@ -1922,6 +1922,18 @@
         "default": true,
         "description": "Automatically supersede contradicted memories"
       },
+      "contradictionScan": {
+        "type": "object",
+        "description": "Configuration for the nightly contradiction-scan cron (issue #520)",
+        "properties": {
+          "enabled": { "type": "boolean", "default": true, "description": "Enable the nightly contradiction scan cron" },
+          "similarityFloor": { "type": "number", "default": 0.82, "minimum": 0, "maximum": 1, "description": "Embedding cosine similarity floor for candidate pair generation" },
+          "topicOverlapFloor": { "type": "number", "default": 0.4, "minimum": 0, "maximum": 1, "description": "Minimum topic-token Jaccard overlap for unstructured pairs" },
+          "maxPairsPerRun": { "type": "integer", "default": 500, "minimum": 1, "description": "Cap on candidate pairs evaluated per cron run" },
+          "cooldownDays": { "type": "integer", "default": 14, "minimum": 0, "description": "Cooldown in days. 0 = always re-evaluate." },
+          "autoMergeDuplicates": { "type": "boolean", "default": false, "description": "Auto-flag pairs judged duplicates for dedup (still requires user approval)" }
+        }
+      },
       "temporalSupersessionEnabled": {
         "type": "boolean",
         "default": true,
@@ -4053,6 +4065,10 @@
     "contradictionAutoResolve": {
       "label": "Auto-Resolve Contradictions",
       "help": "Automatically supersede old memories when contradiction is confirmed"
+    },
+    "contradictionScan": {
+      "label": "Contradiction Scan",
+      "help": "Nightly cron that detects semantically contradictory memory pairs for user review (issue #520)"
     },
     "temporalSupersessionEnabled": {
       "label": "Temporal Supersession",

@@ -684,6 +684,67 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // ── Contradiction Review (issue #520) ─────────────────────────────────────
+    if (req.method === "GET" && pathname === "/engram/v1/review/contradictions") {
+      const filter = parsed.searchParams.get("filter") ?? "unresolved";
+      const namespace = parsed.searchParams.get("namespace") ?? undefined;
+      const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "50", 10);
+      const { listPairs } = await import("./contradiction/contradiction-review.js");
+      const result = listPairs(this.service.memoryDir, {
+        filter: filter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user",
+        namespace,
+        limit: Number.isFinite(limitRaw) ? limitRaw : 50,
+      });
+      this.respondJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === "GET" && pathname.startsWith("/engram/v1/review/contradictions/")) {
+      const pairId = pathname.split("/").pop() ?? "";
+      const { readPair } = await import("./contradiction/contradiction-review.js");
+      const pair = readPair(this.service.memoryDir, pairId);
+      if (!pair) {
+        this.respondJson(res, 404, { error: "pair_not_found" });
+        return;
+      }
+      this.respondJson(res, 200, pair);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/review/resolve") {
+      const body = await this.readJsonBody(req) as Record<string, unknown>;
+      const pairId = typeof body.pairId === "string" ? body.pairId : "";
+      const verb = typeof body.verb === "string" ? body.verb : "";
+      if (!pairId || !verb) {
+        this.respondJson(res, 400, { error: "pairId and verb are required" });
+        return;
+      }
+      const { isValidResolutionVerb, executeResolution } = await import("./contradiction/resolution.js");
+      if (!isValidResolutionVerb(verb)) {
+        this.respondJson(res, 400, { error: `Invalid verb: ${verb}. Must be one of: keep-a, keep-b, merge, both-valid, needs-more-context` });
+        return;
+      }
+      const result = await executeResolution(this.service.memoryDir, this.service.storageRef, pairId, verb);
+      this.respondJson(res, 200, result);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/engram/v1/contradiction-scan") {
+      const body = await this.readJsonBody(req) as Record<string, unknown>;
+      const { runContradictionScan } = await import("./contradiction/contradiction-scan.js");
+      const result = await runContradictionScan({
+        storage: this.service.storageRef,
+        config: this.service.configRef,
+        memoryDir: this.service.memoryDir,
+        embeddingLookup: this.service.embeddingLookupRef,
+        localLlm: this.service.localLlmRef,
+        fallbackLlm: this.service.fallbackLlmRef,
+        namespace: typeof body.namespace === "string" ? body.namespace : undefined,
+      });
+      this.respondJson(res, 200, result);
+      return;
+    }
+
     this.respondJson(res, 404, { error: "not_found", code: "not_found" });
   }
 
