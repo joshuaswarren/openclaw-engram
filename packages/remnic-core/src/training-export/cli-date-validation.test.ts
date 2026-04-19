@@ -238,4 +238,21 @@ describe("parseStrictCliDate", () => {
       /time components out of range/,
     );
   });
+
+  it("rejects second 60 (leap second — Date cannot represent it)", () => {
+    // JavaScript's Date silently normalises :60 to :00 of the next minute,
+    // which would make a "strict" parser return a different timestamp than
+    // the user specified. Reject it up front.
+    assert.throws(
+      () => parseStrictCliDate("2026-01-15T12:00:60", "--since"),
+      /time components out of range/,
+    );
+  });
+
+  it("rejects second 61", () => {
+    assert.throws(
+      () => parseStrictCliDate("2026-01-15T12:00:61", "--until"),
+      /time components out of range/,
+    );
+  });
 });

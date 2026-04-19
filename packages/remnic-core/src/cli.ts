@@ -2202,11 +2202,16 @@ export function parseStrictCliDate(value: string, flagName: string): Date {
   }
 
   // 3. Optional time-component validation.
+  //    JavaScript's Date cannot represent a leap second: `:60` is silently
+  //    normalised to `:00` of the following minute, which would make a
+  //    "strict" validator return a different timestamp than the user
+  //    requested. Reject second == 60 outright so a strict parse cannot
+  //    round-trip to a different clock value.
   if (match[4] !== undefined) {
     const hour = Number(match[4]);
     const minute = Number(match[5]);
     const second = match[6] !== undefined ? Number(match[6]) : 0;
-    if (hour > 23 || minute > 59 || second > 60 /* leap second */) {
+    if (hour > 23 || minute > 59 || second > 59) {
       throw new Error(
         `Invalid ${flagName} value "${value}": time components out of range.`,
       );

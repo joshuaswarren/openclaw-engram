@@ -141,8 +141,20 @@ async function collectMarkdownFiles(
         await walk(full);
       } else if (entry.isFile() && entry.name.endsWith(".md")) {
         // Defense in depth: confirm the resolved real path still lives under
-        // the canonical containment root. This covers edge cases like a
-        // hard link placed inside memoryDir that targets data elsewhere.
+        // the canonical containment root. `realpath` alone is not enough to
+        // catch hard links that point at out-of-tree inodes (a hard link IS
+        // the file, so realpath returns the in-tree path). We therefore also
+        // reject entries whose `nlink > 1`: memory files should have a single
+        // directory entry, and any additional hard link is a potential
+        // exfiltration vector that the operator did not intend.
+        let st: import("node:fs").Stats | null = null;
+        try {
+          st = await lstat(full);
+        } catch {
+          continue;
+        }
+        if (st.nlink > 1) continue;
+
         const real = await safeRealpath(full);
         if (!real) continue;
         if (real !== containmentRoot && !real.startsWith(containmentRoot + path.sep)) {
@@ -189,6 +201,8 @@ function buildInstruction(category: string, tags: string[]): string {
       return `Recall a skill${tagSuffix}`;
     case "rule":
       return `Recall a rule${tagSuffix}`;
+    case "personal":
+      return `Recall personal information${tagSuffix}`;
     default:
       return `Recall a memory${tagSuffix}`;
   }

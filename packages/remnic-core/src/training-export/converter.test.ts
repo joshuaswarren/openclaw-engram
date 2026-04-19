@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -359,6 +359,67 @@ describe("convertMemoriesToRecords", () => {
     for (const r of records) {
       assert.doesNotMatch(r.output, /EXFILTRATED/);
     }
+  });
+
+  it("produces a descriptive instruction for personal category", async () => {
+    const dir = await makeTmpDir();
+    await writeSyntheticMemory(dir, "facts", "personal.md", {
+      id: "p1",
+      category: "personal",
+      content: "Something personal.",
+    });
+
+    const records = await convertMemoriesToRecords({ memoryDir: dir });
+    assert.equal(records.length, 1);
+    // Must NOT fall through to the generic "Recall a memory" default.
+    assert.match(records[0].instruction, /personal information/);
+  });
+
+  it("refuses to export .md files that have multiple hard links (nlink > 1)", async () => {
+    const dir = await makeTmpDir();
+    const outsideDir = await makeTmpDir();
+
+    // Write a secret file outside memoryDir, then hard-link it into memoryDir.
+    const secretPath = path.join(outsideDir, "secret.md");
+    await writeFile(
+      secretPath,
+      [
+        "---",
+        "id: secret",
+        "category: fact",
+        "confidence: 0.99",
+        "tags: []",
+        "---",
+        "",
+        "EXFILTRATED SECRET CONTENT",
+      ].join("\n"),
+      "utf-8",
+    );
+    await mkdir(path.join(dir, "facts"), { recursive: true });
+    try {
+      await link(secretPath, path.join(dir, "facts", "leak.md"));
+    } catch {
+      // Hard links across filesystems (EXDEV) or on systems without link
+      // support are not testable here; skip in that case.
+      return;
+    }
+
+    // Also write a normal, single-link memory so we can confirm the pipeline
+    // still processes legitimate files.
+    await writeSyntheticMemory(dir, "facts", "normal.md", {
+      id: "normal",
+      content: "Normal memory.",
+    });
+
+    const records = await convertMemoriesToRecords({ memoryDir: dir });
+    for (const r of records) {
+      assert.doesNotMatch(r.output, /EXFILTRATED/);
+    }
+    // The single-link memory must still be exported.
+    assert.ok(
+      records.some((r) => r.sourceIds?.[0] === "normal"),
+      "legitimate (single-link) memory must still be exported",
+    );
   });
 
   // --- Determinism: output order must not depend on readdir ordering ---
