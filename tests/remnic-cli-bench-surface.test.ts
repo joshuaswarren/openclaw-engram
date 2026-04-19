@@ -281,7 +281,6 @@ export async function buildBenchmarkPublishFeed() { return { target: "remnic-ai"
 export function checkRegression() { return null; }
 export function defaultBenchmarkBaselineDir() { return ""; }
 export function defaultBenchmarkPublishPath() { return ""; }
-export function getBenchmarkLowerIsBetter() { return false; }
 export async function discoverAllProviders() { return []; }
 export function getBenchmarkLowerIsBetter() { return new Set(); }
 export async function listBenchmarkBaselines() { return []; }
@@ -320,30 +319,6 @@ export function ensureWecloneImportAdapterRegistered() {}
 `,
     ),
   ];
-
-  if (stubbedExportModule) {
-    mkdirSync(exportModuleDist, { recursive: true });
-    if (createdExportPackageJson) {
-      writeFileSync(
-        exportPackageJson,
-        JSON.stringify({
-          name: "@remnic/export-weclone",
-          type: "module",
-          exports: {
-            ".": "./dist/index.js",
-          },
-        }),
-      );
-    }
-    writeFileSync(
-      exportModuleEntry,
-      `
-export function ensureWecloneExportAdapterRegistered() { return false; }
-export function synthesizeTrainingPairs() { return []; }
-export function sweepPii(records) { return { records, redactions: [] }; }
-`,
-    );
-  }
 
   const originalExit = process.exit;
   const exitCalls: number[] = [];
