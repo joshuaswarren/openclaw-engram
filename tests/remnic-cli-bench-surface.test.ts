@@ -137,9 +137,12 @@ test("bench compare routes through stored package results with threshold and res
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
   const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
 
-  assert.match(source, /compareResults,/);
-  assert.match(source, /loadBenchmarkResult,/);
-  assert.match(source, /resolveBenchmarkResultReference,/);
+  assert.match(source, /let compareResults: BenchRuntime\["compareResults"\] = missingLazyRuntime\(/);
+  assert.match(source, /let loadBenchmarkResult: BenchRuntime\["loadBenchmarkResult"\] = missingLazyRuntime\(/);
+  assert.match(source, /let resolveBenchmarkResultReference: BenchRuntime\["resolveBenchmarkResultReference"\] = missingLazyRuntime\(/);
+  assert.match(source, /compareResults = bench\.compareResults;/);
+  assert.match(source, /loadBenchmarkResult = bench\.loadBenchmarkResult;/);
+  assert.match(source, /resolveBenchmarkResultReference = bench\.resolveBenchmarkResultReference;/);
   assert.match(source, /async function compareBenchPackageResults\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /if \(parsed\.action === "compare"\) \{\s*await compareBenchPackageResults\(parsed\);/s);
   assert.match(source, /compare requires exactly two stored result references/i);
@@ -158,12 +161,18 @@ test("bench results, baseline, and export route through the stored package resul
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
   const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
 
-  assert.match(source, /defaultBenchmarkBaselineDir,/);
-  assert.match(source, /listBenchmarkBaselines,/);
-  assert.match(source, /loadBenchmarkBaseline,/);
-  assert.match(source, /listBenchmarkResults,/);
-  assert.match(source, /renderBenchmarkResultExport,/);
-  assert.match(source, /saveBenchmarkBaseline,/);
+  assert.match(source, /let defaultBenchmarkBaselineDir: BenchRuntime\["defaultBenchmarkBaselineDir"\] = missingLazyRuntime\(/);
+  assert.match(source, /let listBenchmarkBaselines: BenchRuntime\["listBenchmarkBaselines"\] = missingLazyRuntime\(/);
+  assert.match(source, /let loadBenchmarkBaseline: BenchRuntime\["loadBenchmarkBaseline"\] = missingLazyRuntime\(/);
+  assert.match(source, /let listBenchmarkResults: BenchRuntime\["listBenchmarkResults"\] = missingLazyRuntime\(/);
+  assert.match(source, /let renderBenchmarkResultExport: BenchRuntime\["renderBenchmarkResultExport"\] = missingLazyRuntime\(/);
+  assert.match(source, /let saveBenchmarkBaseline: BenchRuntime\["saveBenchmarkBaseline"\] = missingLazyRuntime\(/);
+  assert.match(source, /defaultBenchmarkBaselineDir = bench\.defaultBenchmarkBaselineDir;/);
+  assert.match(source, /listBenchmarkBaselines = bench\.listBenchmarkBaselines;/);
+  assert.match(source, /loadBenchmarkBaseline = bench\.loadBenchmarkBaseline;/);
+  assert.match(source, /listBenchmarkResults = bench\.listBenchmarkResults;/);
+  assert.match(source, /renderBenchmarkResultExport = bench\.renderBenchmarkResultExport;/);
+  assert.match(source, /saveBenchmarkBaseline = bench\.saveBenchmarkBaseline;/);
   assert.match(source, /async function showBenchPackageResults\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /async function manageBenchBaselines\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /async function exportBenchPackageResult\(parsed: ParsedBenchArgs\): Promise<void>/);
@@ -192,7 +201,8 @@ test("bench providers discovery is exposed as a package-backed CLI surface", asy
   const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
   const readme = await readFile("packages/remnic-cli/README.md", "utf8");
 
-  assert.match(source, /discoverAllProviders,/);
+  assert.match(source, /let discoverAllProviders: BenchRuntime\["discoverAllProviders"\] = missingLazyRuntime\(/);
+  assert.match(source, /discoverAllProviders = bench\.discoverAllProviders;/);
   assert.match(source, /Usage: remnic bench <list\|run\|datasets\|runs\|compare\|results\|baseline\|export\|publish\|ui\|providers>/);
   assert.match(source, /remnic bench providers discover/);
   assert.match(source, /async function discoverBenchProviders\(parsed: ParsedBenchArgs\): Promise<void>/);
@@ -503,9 +513,12 @@ test("bench publish routes through the stored package feed helpers", async () =>
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
   const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
 
-  assert.match(source, /buildBenchmarkPublishFeed,/);
-  assert.match(source, /defaultBenchmarkPublishPath,/);
-  assert.match(source, /writeBenchmarkPublishFeed,/);
+  assert.match(source, /let buildBenchmarkPublishFeed: BenchRuntime\["buildBenchmarkPublishFeed"\] = missingLazyRuntime\(/);
+  assert.match(source, /let defaultBenchmarkPublishPath: BenchRuntime\["defaultBenchmarkPublishPath"\] = missingLazyRuntime\(/);
+  assert.match(source, /let writeBenchmarkPublishFeed: BenchRuntime\["writeBenchmarkPublishFeed"\] = missingLazyRuntime\(/);
+  assert.match(source, /buildBenchmarkPublishFeed = bench\.buildBenchmarkPublishFeed;/);
+  assert.match(source, /defaultBenchmarkPublishPath = bench\.defaultBenchmarkPublishPath;/);
+  assert.match(source, /writeBenchmarkPublishFeed = bench\.writeBenchmarkPublishFeed;/);
   assert.match(source, /async function publishBenchPackageResults\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /publish requires --target remnic-ai/);
   assert.match(source, /if \(feed\.benchmarks\.length === 0\) \{/);
@@ -532,7 +545,7 @@ test("parseBenchArgs rejects unknown bench publish targets", async () => {
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
 
-  assert.match(source, /type BenchmarkDefinition,\s*\n\s*\} from "@remnic\/bench";/s);
+  assert.match(source, /import type \{ BenchConfig, BenchmarkDefinition \} from "@remnic\/bench";/);
   assert.match(source, /async function loadBenchDefinitionsFromPackage\(\): Promise<BenchmarkDefinition\[\] \| undefined>/);
   assert.match(source, /listBenchmarks\?: \(\) => BenchmarkDefinition\[\];/);
   assert.doesNotMatch(source, /interface PackageBenchDefinition/);

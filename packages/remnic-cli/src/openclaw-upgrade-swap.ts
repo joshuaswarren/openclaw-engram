@@ -13,6 +13,11 @@ export interface RollbackOpenclawUpgradeOptions {
   rollbackDir?: string;
 }
 
+export interface BestEffortGatewayRestartResult {
+  message: string;
+  restarted: boolean;
+}
+
 export function swapDirectoryWithRollback(
   stagedDir: string,
   targetDir: string,
@@ -128,4 +133,26 @@ export function rollbackOpenclawUpgrade({
   }
 
   return notes;
+}
+
+export function runBestEffortGatewayRestart(
+  restartGateway: () => void,
+  gatewayLabel: string,
+): BestEffortGatewayRestartResult {
+  try {
+    restartGateway();
+    return {
+      message: `Restarted OpenClaw gateway via launchctl kickstart (${gatewayLabel}).`,
+      restarted: true,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    return {
+      message:
+        `Warning: the upgrade completed, but the automatic OpenClaw gateway restart failed: ${reason}\n` +
+        "Run this manually when you're ready:\n" +
+        `  launchctl kickstart -k gui/$(id -u)/${gatewayLabel}`,
+      restarted: false,
+    };
+  }
 }

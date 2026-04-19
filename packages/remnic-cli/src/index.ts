@@ -131,6 +131,7 @@ import {
 } from "./bench-args.js";
 import {
   cleanupRollbackDirectory,
+  runBestEffortGatewayRestart,
   rollbackOpenclawUpgrade,
   swapDirectoryWithRollback,
 } from "./openclaw-upgrade-swap.js";
@@ -4548,8 +4549,8 @@ async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
   );
 
   if (opts.restartGateway) {
-    restartOpenclawGateway();
-    console.log(`Restarted OpenClaw gateway via launchctl kickstart (${OPENCLAW_GATEWAY_LABEL}).`);
+    const restartResult = runBestEffortGatewayRestart(restartOpenclawGateway, OPENCLAW_GATEWAY_LABEL);
+    console.log(restartResult.message);
   } else {
     console.log("\nGateway restart skipped (--no-restart).");
     console.log("Run this manually when you're ready:");

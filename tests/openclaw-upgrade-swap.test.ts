@@ -8,6 +8,7 @@ import { mkdtemp } from "node:fs/promises";
 import {
   cleanupRollbackDirectory,
   restoreDirectoryFromRollback,
+  runBestEffortGatewayRestart,
   rollbackOpenclawUpgrade,
   swapDirectoryWithRollback,
 } from "../packages/remnic-cli/src/openclaw-upgrade-swap.ts";
@@ -114,4 +115,21 @@ test("rollbackOpenclawUpgrade falls back to the durable plugin backup when rollb
 
   assert.equal(readMarker(pluginDir), "old-plugin");
   assert.ok(notes.some((note) => note.includes("Restored previous plugin from backup")));
+});
+
+test("runBestEffortGatewayRestart reports success when launchctl restart works", () => {
+  const result = runBestEffortGatewayRestart(() => {}, "ai.openclaw.gateway");
+
+  assert.equal(result.restarted, true);
+  assert.match(result.message, /Restarted OpenClaw gateway/);
+});
+
+test("runBestEffortGatewayRestart degrades to a warning when launchctl restart fails", () => {
+  const result = runBestEffortGatewayRestart(() => {
+    throw new Error("launchctl failed");
+  }, "ai.openclaw.gateway");
+
+  assert.equal(result.restarted, false);
+  assert.match(result.message, /upgrade completed, but the automatic OpenClaw gateway restart failed/);
+  assert.match(result.message, /launchctl kickstart -k gui\/\$\(id -u\)\/ai\.openclaw\.gateway/);
 });
