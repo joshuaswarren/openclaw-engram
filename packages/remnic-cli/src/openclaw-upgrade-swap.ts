@@ -22,6 +22,11 @@ function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function createSiblingSwapPath(targetDir: string, label: string): string {
+  const nonce = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+  return path.join(path.dirname(targetDir), `.${path.basename(targetDir)}.${label}.${nonce}`);
+}
+
 export function swapDirectoryWithRollback(
   stagedDir: string,
   targetDir: string,
@@ -82,15 +87,40 @@ export function restoreDirectoryFromRollback(targetDir: string, rollbackDir: str
     throw new Error(`Rollback directory is missing: ${rollbackDir}`);
   }
 
-  fs.rmSync(targetDir, { recursive: true, force: true });
+  fs.mkdirSync(path.dirname(targetDir), { recursive: true });
+  const displacedDir = fs.existsSync(targetDir)
+    ? createSiblingSwapPath(targetDir, "rollback-restore")
+    : undefined;
+
+  if (displacedDir) {
+    fs.renameSync(targetDir, displacedDir);
+  }
+
   try {
     fs.renameSync(rollbackDir, targetDir);
   } catch (restoreError) {
+    if (displacedDir && fs.existsSync(displacedDir)) {
+      try {
+        fs.renameSync(displacedDir, targetDir);
+      } catch (revertError) {
+        throw new AggregateError(
+          [restoreError, revertError],
+          `Failed to restore the previous plugin copy into ${targetDir}, and failed to put the ` +
+          `current plugin copy back in place. The last known-good plugin remains preserved at ` +
+          `${rollbackDir}. The displaced plugin copy remains preserved at ${displacedDir}.`,
+        );
+      }
+    }
+
     throw new Error(
       `Failed to restore the previous plugin copy into ${targetDir}. ` +
       `The last known-good plugin remains preserved at ${rollbackDir}.`,
       { cause: restoreError },
     );
+  }
+
+  if (displacedDir) {
+    fs.rmSync(displacedDir, { recursive: true, force: true });
   }
 }
 
@@ -99,9 +129,48 @@ function restoreDirectoryFromBackup(targetDir: string, backupDir: string): void 
     throw new Error(`Plugin backup directory is missing: ${backupDir}`);
   }
 
-  fs.rmSync(targetDir, { recursive: true, force: true });
   fs.mkdirSync(path.dirname(targetDir), { recursive: true });
-  fs.cpSync(backupDir, targetDir, { recursive: true });
+
+  const stagedDir = createSiblingSwapPath(targetDir, "backup-restore");
+  const displacedDir = fs.existsSync(targetDir)
+    ? createSiblingSwapPath(targetDir, "pre-backup-restore")
+    : undefined;
+
+  fs.cpSync(backupDir, stagedDir, { recursive: true });
+
+  if (displacedDir) {
+    fs.renameSync(targetDir, displacedDir);
+  }
+
+  try {
+    fs.renameSync(stagedDir, targetDir);
+  } catch (restoreError) {
+    fs.rmSync(targetDir, { recursive: true, force: true });
+
+    if (displacedDir && fs.existsSync(displacedDir)) {
+      try {
+        fs.renameSync(displacedDir, targetDir);
+      } catch (revertError) {
+        throw new AggregateError(
+          [restoreError, revertError],
+          `Failed to restore the plugin backup into ${targetDir}, and failed to put the current ` +
+          `plugin copy back in place. The durable backup remains preserved at ${backupDir}. ` +
+          `The displaced plugin copy remains preserved at ${displacedDir}.`,
+        );
+      }
+    }
+
+    fs.rmSync(stagedDir, { recursive: true, force: true });
+    throw new Error(
+      `Failed to restore the plugin backup into ${targetDir}. ` +
+      `The durable backup remains preserved at ${backupDir}.`,
+      { cause: restoreError },
+    );
+  }
+
+  if (displacedDir) {
+    fs.rmSync(displacedDir, { recursive: true, force: true });
+  }
 }
 
 function restoreFileFromBackup(targetPath: string, backupPath: string): void {

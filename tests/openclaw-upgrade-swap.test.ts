@@ -98,6 +98,40 @@ test("restoreDirectoryFromRollback reinstates the previous plugin copy", async (
   assert.equal(fs.existsSync(rollbackDir), false);
 });
 
+test("restoreDirectoryFromRollback keeps the current plugin if the rollback rename fails", async () => {
+  const tmp = await makeTmpDir();
+  const pluginDir = path.join(tmp, "extensions", "openclaw-remnic");
+  const stagedDir = path.join(tmp, "staged");
+  const rollbackDir = path.join(tmp, "rollback");
+
+  writeMarker(pluginDir, "old-plugin");
+  writeMarker(stagedDir, "new-plugin");
+
+  const result = swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);
+  assert.equal(readMarker(pluginDir), "new-plugin");
+
+  const renameSync = fs.renameSync;
+  let rollbackRenameSeen = false;
+  fs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+    if (String(from) === result.rollbackDir && String(to) === pluginDir && !rollbackRenameSeen) {
+      rollbackRenameSeen = true;
+      throw new Error("restore failed");
+    }
+    return renameSync(from, to);
+  }) as typeof fs.renameSync;
+
+  try {
+    assert.throws(
+      () => restoreDirectoryFromRollback(pluginDir, result.rollbackDir!),
+      /Failed to restore the previous plugin copy/,
+    );
+    assert.equal(readMarker(pluginDir), "new-plugin");
+    assert.equal(readMarker(result.rollbackDir!), "old-plugin");
+  } finally {
+    fs.renameSync = renameSync;
+  }
+});
+
 test("rollbackOpenclawUpgrade restores plugin and config from rollback artifacts", async () => {
   const tmp = await makeTmpDir();
   const pluginDir = path.join(tmp, "extensions", "openclaw-remnic");
@@ -142,6 +176,46 @@ test("rollbackOpenclawUpgrade falls back to the durable plugin backup when rollb
 
   assert.equal(readMarker(pluginDir), "old-plugin");
   assert.ok(notes.some((note) => note.includes("Restored previous plugin from backup")));
+});
+
+test("rollbackOpenclawUpgrade keeps the current plugin when backup restore cannot be swapped in", async () => {
+  const tmp = await makeTmpDir();
+  const pluginDir = path.join(tmp, "extensions", "openclaw-remnic");
+  const pluginBackupDir = path.join(tmp, "backups", "extensions", "openclaw-remnic");
+  const configPath = path.join(tmp, "openclaw.json");
+
+  writeMarker(pluginDir, "new-plugin");
+  writeMarker(pluginBackupDir, "old-plugin");
+  fs.writeFileSync(configPath, '{"plugins":{"slots":{"memory":"broken"}}}\n', "utf8");
+
+  const renameSync = fs.renameSync;
+  let stagedRenameSeen = false;
+  fs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+    if (
+      String(to) === pluginDir &&
+      String(from).includes(".openclaw-remnic.backup-restore.") &&
+      !stagedRenameSeen
+    ) {
+      stagedRenameSeen = true;
+      throw new Error("swap failed");
+    }
+    return renameSync(from, to);
+  }) as typeof fs.renameSync;
+
+  try {
+    assert.throws(
+      () => rollbackOpenclawUpgrade({
+        configPath,
+        pluginBackupDir,
+        pluginDir,
+      }),
+      /Failed to restore the plugin backup into/,
+    );
+    assert.equal(readMarker(pluginDir), "new-plugin");
+    assert.equal(readMarker(pluginBackupDir), "old-plugin");
+  } finally {
+    fs.renameSync = renameSync;
+  }
 });
 
 test("runBestEffortGatewayRestart reports success when launchctl restart works", () => {
