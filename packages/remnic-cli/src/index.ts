@@ -586,21 +586,50 @@ function resolveBenchBaselineDir(): string {
   return defaultBenchmarkBaselineDir();
 }
 
+// Resolve the dataset root. In a monorepo checkout we keep using
+// evals/datasets so local dev state stays stable; in a published CLI
+// install CLI_REPO_ROOT points under node_modules (not user-writable
+// and missing the repo-only evals/ tree) so we fall back to
+// ~/.remnic/bench/datasets.
 function resolveRepoDatasetRoot(): string {
-  return path.join(CLI_REPO_ROOT, "evals", "datasets");
+  const repoCandidate = path.join(CLI_REPO_ROOT, "evals", "datasets");
+  if (isRepoCheckout()) {
+    return repoCandidate;
+  }
+  return path.join(resolveHomeDir(), ".remnic", "bench", "datasets");
 }
 
 function listDownloadableBenchmarks(): string[] {
   return [...DOWNLOADABLE_BENCHMARK_DATASETS];
 }
 
+// The download script is shipped with the CLI package at
+// dist/assets/download-datasets.sh. When running from a monorepo
+// checkout the built copy may be absent, so we also accept the
+// in-repo source path as a fallback.
 function resolveDatasetDownloadScriptPath(): string {
+  const bundled = path.join(CLI_MODULE_DIR, "assets", "download-datasets.sh");
+  if (fs.existsSync(bundled)) {
+    return bundled;
+  }
   return path.join(CLI_REPO_ROOT, "evals", "scripts", "download-datasets.sh");
+}
+
+function isRepoCheckout(): boolean {
+  // Treat the install as a repo checkout only when the monorepo
+  // marker files are present next to CLI_REPO_ROOT. In published
+  // @remnic/cli installs, CLI_REPO_ROOT points inside node_modules
+  // where these files do not exist.
+  return (
+    fs.existsSync(path.join(CLI_REPO_ROOT, "pnpm-workspace.yaml")) &&
+    fs.existsSync(path.join(CLI_REPO_ROOT, "evals", "scripts", "download-datasets.sh"))
+  );
 }
 
 function runDatasetDownloadScript(
   scriptPath: string,
   benchmarkId: string,
+  datasetRoot: string,
   jsonMode: boolean,
 ): void {
   // In --json mode, redirect the script's stdout to parent stderr so
@@ -608,10 +637,15 @@ function runDatasetDownloadScript(
   const stdio: childProcess.StdioOptions = jsonMode
     ? ["inherit", process.stderr, "inherit"]
     : "inherit";
+  // Thread the resolved dataset root through DATASETS_DIR so the
+  // script writes to the same location `datasets status` reads from,
+  // regardless of where the script file itself lives (repo vs
+  // packaged node_modules install).
+  const env = { ...process.env, DATASETS_DIR: datasetRoot };
   const options: childProcess.SpawnSyncOptions = {
     cwd: CLI_REPO_ROOT,
     stdio,
-    env: process.env,
+    env,
   };
   const args = ["--benchmark", benchmarkId];
 
@@ -1037,7 +1071,7 @@ async function manageBenchDatasets(parsed: ParsedBenchArgs): Promise<void> {
   const selected = resolveSelectedDatasetDownloads(parsed);
   const downloaded: Array<{ benchmark: string; path: string }> = [];
   for (const benchmarkId of selected) {
-    runDatasetDownloadScript(scriptPath, benchmarkId, parsed.json === true);
+    runDatasetDownloadScript(scriptPath, benchmarkId, datasetRoot, parsed.json === true);
     downloaded.push({
       benchmark: benchmarkId,
       path: path.join(datasetRoot, benchmarkId),
