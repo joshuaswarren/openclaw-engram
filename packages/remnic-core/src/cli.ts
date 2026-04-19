@@ -3871,18 +3871,19 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const batchSizeRaw = parseInt(String(options.batchSize ?? "50"), 10);
           const batchSize = Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? batchSizeRaw : 50;
           const platformRaw = typeof options.platform === "string" ? options.platform.trim() : "";
-          // Counts are anchored at the actual write root that extraction
-          // targets (the orchestrator's default-namespace storage), not a
-          // CLI-supplied override. ingestBulkImportBatch uses a session key
-          // that resolves to the default principal → default namespace, so
-          // `writeRoot` always matches where memories land. Namespace-scoped
-          // bulk-import is a separate feature (see follow-up in PR #515) —
-          // it requires threading a namespace override through the write
-          // path of the extraction pipeline, which is not wired today.
-          const defaultStorage = await orchestrator.getStorageForNamespace(
-            orchestrator.config.defaultNamespace,
+          // Ask the orchestrator for the EXACT namespace bulk-import will
+          // write to, rather than assuming `config.defaultNamespace`. The two
+          // can differ — e.g. when `namespacesEnabled` is on and a policy
+          // named `"default"` exists alongside a different
+          // `config.defaultNamespace`, `defaultNamespaceForPrincipal` would
+          // pick the policy's `"default"`. Using the orchestrator's
+          // `bulkImportWriteNamespace()` guarantees the snapshot anchor
+          // matches `runExtraction`'s writeNamespaceOverride.
+          const writeNamespace = orchestrator.bulkImportWriteNamespace();
+          const writeStorage = await orchestrator.getStorageForNamespace(
+            writeNamespace,
           );
-          const writeRoot = defaultStorage.dir;
+          const writeRoot = writeStorage.dir;
           const ingestBatch: ProcessBatchFn = async (turns) => {
             // Filename-set diff correctly excludes files that already existed
             // (vs. a naïve `after - before` integer subtraction, which would
