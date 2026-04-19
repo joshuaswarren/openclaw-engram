@@ -80,9 +80,8 @@ export async function resolveBenchRuntimeProfile(
     options.judgeModel,
     options.judgeBaseUrl,
   );
-
-  const responder = systemProvider
-    ? createProviderBackedResponder(asProviderFactoryConfig(systemProvider))
+  const responderFactoryConfig = systemProvider
+    ? asProviderFactoryConfig(systemProvider)
     : undefined;
   const judgeFactoryConfig = judgeProvider
     ? asProviderFactoryConfig(judgeProvider)
@@ -98,6 +97,9 @@ export async function resolveBenchRuntimeProfile(
     : undefined;
 
   if (profile === "baseline") {
+    const responder = responderFactoryConfig
+      ? createProviderBackedResponder(responderFactoryConfig)
+      : undefined;
     const baselineConfig = buildBenchBaselineRemnicConfig();
     const persistedRemnicConfig = sanitizePersistedConfig(baselineConfig);
     const effectiveRemnicConfig = withAssistantHooks(
@@ -120,6 +122,9 @@ export async function resolveBenchRuntimeProfile(
   }
 
   if (profile === "real") {
+    const responder = responderFactoryConfig
+      ? createProviderBackedResponder(responderFactoryConfig)
+      : undefined;
     const fileConfig = options.remnicConfigPath
       ? await loadRemnicConfigFile(options.remnicConfigPath)
       : {};

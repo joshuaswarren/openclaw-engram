@@ -106,7 +106,6 @@ export {
 } from "./answering.js";
 export {
   createGatewayResponder,
-  createJudgeFromProvider,
   createProviderBackedJudge,
   createProviderBackedResponder,
   createProviderBackedStructuredJudge,
