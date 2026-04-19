@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -351,6 +351,49 @@ export async function resolveBenchmarkResultReference(
     (summary) => path.basename(summary.path) === reference,
   );
   return basenameMatch;
+}
+
+export async function deleteBenchmarkResults(
+  outputDir: string,
+  references: string[],
+): Promise<{
+  deleted: StoredBenchmarkResultSummary[];
+  missing: string[];
+}> {
+  const summaries = await listBenchmarkResults(outputDir);
+  const deleted: StoredBenchmarkResultSummary[] = [];
+  const missing: string[] = [];
+  const seenPaths = new Set<string>();
+
+  for (const reference of references) {
+    let summary: StoredBenchmarkResultSummary | undefined;
+    if (fs.existsSync(reference)) {
+      try {
+        const result = await loadBenchmarkResult(reference);
+        summary = toSummary(result, reference);
+      } catch {
+        summary = undefined;
+      }
+    }
+    if (!summary) {
+      summary =
+        summaries.find((entry) => entry.id === reference) ??
+        summaries.find((entry) => path.basename(entry.path) === reference);
+    }
+    if (!summary) {
+      missing.push(reference);
+      continue;
+    }
+    if (seenPaths.has(summary.path)) {
+      continue;
+    }
+
+    await unlink(summary.path);
+    seenPaths.add(summary.path);
+    deleted.push(summary);
+  }
+
+  return { deleted, missing };
 }
 
 function comparePublishedBenchmarkEntries(

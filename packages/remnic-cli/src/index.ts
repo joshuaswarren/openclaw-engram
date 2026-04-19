@@ -139,6 +139,7 @@ import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 import {
   buildBenchmarkPublishFeed,
   compareResults,
+  deleteBenchmarkResults,
   getBenchmarkLowerIsBetter,
   defaultBenchmarkBaselineDir,
   discoverAllProviders,
@@ -313,12 +314,18 @@ type PackageBenchModule = {
 };
 
 export function getBenchUsageText(): string {
-  return `Usage: remnic bench <list|run|compare|results|baseline|export|publish|ui|providers> [options] [benchmark...]
-       remnic benchmark <list|run|compare|results|baseline|export|publish|ui|providers|check|report> [options] [benchmark...]
+  return `Usage: remnic bench <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers> [options] [benchmark...]
+       remnic benchmark <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers|check|report> [options] [benchmark...]
 
 Commands:
   list                     List published benchmark packs
   run [benchmark...]       Run one or more benchmark packs
+  datasets download [benchmark...]
+                           Download local datasets for supported published benchmarks
+  datasets status          Show local dataset availability for supported benchmarks
+  runs list                List stored benchmark runs
+  runs show <run>          Show one stored benchmark run
+  runs delete <run...>     Delete one or more stored benchmark runs
   compare <base> <cand>    Compare two stored benchmark runs by id or file path
   results [run]            List stored runs or inspect a stored run
   baseline save <name> [run]
@@ -349,6 +356,12 @@ Options:
 
 Examples:
   remnic bench list
+  remnic bench datasets status
+  remnic bench datasets download longmemeval
+  remnic bench datasets download --all
+  remnic bench runs list
+  remnic bench runs show candidate-run --detail
+  remnic bench runs delete candidate-run
   remnic bench run --quick longmemeval
   remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
   remnic bench compare base-run candidate-run
@@ -475,6 +488,14 @@ function resolveBenchOutputDir(): string {
   return path.join(resolveHomeDir(), ".remnic", "bench", "results");
 }
 
+const DOWNLOADABLE_BENCHMARK_DATASETS = [
+  "ama-bench",
+  "memory-arena",
+  "amemgym",
+  "longmemeval",
+  "locomo",
+] as const;
+
 async function launchBenchUi(resultsDir: string): Promise<void> {
   const benchUiDir = path.join(CLI_REPO_ROOT, "packages", "bench-ui");
   const pnpmCmd = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
@@ -512,6 +533,41 @@ async function launchBenchUi(resultsDir: string): Promise<void> {
 
 function resolveBenchBaselineDir(): string {
   return defaultBenchmarkBaselineDir();
+}
+
+function resolveRepoDatasetRoot(): string {
+  return path.join(CLI_REPO_ROOT, "evals", "datasets");
+}
+
+function listDownloadableBenchmarks(): string[] {
+  return [...DOWNLOADABLE_BENCHMARK_DATASETS];
+}
+
+function resolveDatasetDownloadScriptPath(): string {
+  return path.join(CLI_REPO_ROOT, "evals", "scripts", "download-datasets.sh");
+}
+
+function resolveSelectedDatasetDownloads(parsed: ParsedBenchArgs): string[] {
+  const supported = listDownloadableBenchmarks();
+  if (parsed.all) {
+    return supported;
+  }
+  if (parsed.benchmarks.length === 0) {
+    console.error(
+      "ERROR: datasets download requires at least one benchmark id or --all. Usage: remnic bench datasets download <benchmark...> [--all] [--json]",
+    );
+    process.exit(1);
+  }
+
+  const selected = [...new Set(parsed.benchmarks)];
+  const unsupported = selected.filter((benchmarkId) => !supported.includes(benchmarkId));
+  if (unsupported.length > 0) {
+    console.error(
+      `ERROR: unsupported downloadable benchmark dataset(s): ${unsupported.join(", ")}. Supported datasets: ${supported.join(", ")}.`,
+    );
+    process.exit(1);
+  }
+  return selected;
 }
 
 function resolveBenchDatasetDir(
@@ -840,6 +896,150 @@ async function exportBenchPackageResult(parsed: ParsedBenchArgs): Promise<void> 
   }
 
   process.stdout.write(rendered);
+}
+
+async function manageBenchDatasets(parsed: ParsedBenchArgs): Promise<void> {
+  const datasetRoot = resolveRepoDatasetRoot();
+  const supported = listDownloadableBenchmarks();
+
+  if (parsed.datasetAction === "status") {
+    if (parsed.benchmarks.length > 0 || parsed.all) {
+      console.error(
+        "ERROR: datasets status does not accept benchmark names or --all. Usage: remnic bench datasets status [--json]",
+      );
+      process.exit(1);
+    }
+
+    const status = supported.map((benchmarkId) => {
+      const datasetPath = path.join(datasetRoot, benchmarkId);
+      let downloaded = false;
+      try {
+        downloaded = fs.statSync(datasetPath).isDirectory();
+      } catch {
+        downloaded = false;
+      }
+      return {
+        benchmark: benchmarkId,
+        downloaded,
+        path: datasetPath,
+      };
+    });
+
+    if (parsed.json) {
+      console.log(JSON.stringify(status, null, 2));
+      return;
+    }
+
+    console.log("Downloadable benchmark datasets:");
+    for (const entry of status) {
+      console.log(
+        `  ${entry.benchmark.padEnd(16)} ${entry.downloaded ? "downloaded" : "missing"}  ${entry.path}`,
+      );
+    }
+    console.log("");
+    console.log(
+      "Only the script-backed published datasets are managed here. Other benchmark fixtures remain repo-managed or manual.",
+    );
+    return;
+  }
+
+  if (parsed.datasetAction !== "download") {
+    console.error("ERROR: datasets requires a subcommand: download or status.");
+    process.exit(1);
+  }
+
+  const scriptPath = resolveDatasetDownloadScriptPath();
+  if (!fs.existsSync(scriptPath)) {
+    console.error(`ERROR: dataset download script not found: ${scriptPath}`);
+    process.exit(1);
+  }
+
+  const selected = resolveSelectedDatasetDownloads(parsed);
+  const downloaded: Array<{ benchmark: string; path: string }> = [];
+  for (const benchmarkId of selected) {
+    childProcess.execFileSync("bash", [scriptPath, "--benchmark", benchmarkId], {
+      cwd: CLI_REPO_ROOT,
+      stdio: "inherit",
+      env: process.env,
+    });
+    downloaded.push({
+      benchmark: benchmarkId,
+      path: path.join(datasetRoot, benchmarkId),
+    });
+  }
+
+  if (parsed.json) {
+    console.log(JSON.stringify(downloaded, null, 2));
+    return;
+  }
+
+  console.log("Downloaded benchmark datasets:");
+  for (const entry of downloaded) {
+    console.log(`  ${entry.benchmark}  ${entry.path}`);
+  }
+}
+
+async function manageBenchRuns(parsed: ParsedBenchArgs): Promise<void> {
+  const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+
+  if (parsed.runAction === "list") {
+    if (parsed.benchmarks.length > 0 || parsed.all) {
+      console.error(
+        "ERROR: runs list does not accept benchmark names or --all. Usage: remnic bench runs list [--results-dir <path>] [--json]",
+      );
+      process.exit(1);
+    }
+    await showBenchPackageResults({ ...parsed, action: "results", benchmarks: [] });
+    return;
+  }
+
+  if (parsed.runAction === "show") {
+    if (parsed.benchmarks.length !== 1 || parsed.all) {
+      console.error(
+        "ERROR: runs show requires exactly one stored result reference. Usage: remnic bench runs show <run> [--detail] [--results-dir <path>] [--json]",
+      );
+      process.exit(1);
+    }
+    await showBenchPackageResults(parsed);
+    return;
+  }
+
+  if (parsed.runAction === "delete") {
+    if (parsed.benchmarks.length === 0 || parsed.all) {
+      console.error(
+        "ERROR: runs delete requires at least one stored result reference. Usage: remnic bench runs delete <run...> [--results-dir <path>] [--json]",
+      );
+      process.exit(1);
+    }
+    const deleted = await deleteBenchmarkResults(resultsDir, parsed.benchmarks);
+    if (parsed.json) {
+      console.log(JSON.stringify(deleted, null, 2));
+    } else {
+      if (deleted.deleted.length === 0) {
+        console.log("No benchmark runs were deleted.");
+      } else {
+        console.log("Deleted benchmark runs:");
+        for (const summary of deleted.deleted) {
+          console.log(`  ${summary.id}  ${summary.path}`);
+        }
+      }
+
+      if (deleted.missing.length > 0) {
+        console.log("Missing benchmark runs:");
+        for (const reference of deleted.missing) {
+          console.log(`  ${reference}`);
+        }
+      }
+    }
+
+    if (deleted.missing.length > 0) {
+      process.exit(1);
+    }
+    return;
+  }
+
+  console.error("ERROR: runs requires a subcommand: list, show, or delete.");
+  process.exit(1);
 }
 
 async function discoverBenchProviders(parsed: ParsedBenchArgs): Promise<void> {
@@ -2851,6 +3051,16 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.action === "datasets") {
+    await manageBenchDatasets(parsed);
+    return;
+  }
+
+  if (parsed.action === "runs") {
+    await manageBenchRuns(parsed);
+    return;
+  }
+
   if (parsed.action === "publish") {
     await publishBenchPackageResults(parsed);
     return;
@@ -4659,9 +4869,9 @@ Usage:
   remnic extensions <list|show|validate|reload>  Manage memory extensions
   remnic space <list|switch|create|delete|push|pull|share|promote|audit>  Manage spaces
     create accepts --parent <id> to set parent-child relationship
-  remnic bench <list|run|compare|results|baseline|export|publish|ui|providers> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv|html>] [--output <path>] [--target remnic-ai] [--json]
+  remnic bench <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers> [benchmark...] [--quick] [--all] [--dataset-dir <path>] [--results-dir <path>] [--baselines-dir <path>] [--threshold <value>] [--detail] [--format <json|csv|html>] [--output <path>] [--target remnic-ai] [--json]
     benchmark is kept as a compatibility alias. check/report remain under that alias.
-  remnic benchmark <list|run|compare|results|baseline|export|publish|ui|providers|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
+  remnic benchmark <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers|check|report> [queries...] [--explain] [--baseline=<path>] [--report=<path>]
   remnic briefing [--since <window>] [--focus <filter>] [--save] [--format markdown|json]
     Daily context briefing. Windows: yesterday, today, NNh, NNd, NNw.
     Focus: person:<name>, project:<name>, topic:<name>.

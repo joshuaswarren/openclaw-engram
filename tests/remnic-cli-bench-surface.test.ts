@@ -12,7 +12,7 @@ test("remnic CLI source wires the new bench command and keeps benchmark as an al
   assert.match(source, /case "bench": \{/);
   assert.match(source, /case "benchmark": \{/);
   assert.match(source, /await cmdBench\(rest\);/);
-  assert.match(source, /remnic bench <list\|run\|compare\|results\|baseline\|export\|publish\|ui\|providers>/);
+  assert.match(source, /remnic bench <list\|run\|datasets\|runs\|compare\|results\|baseline\|export\|publish\|ui\|providers>/);
   assert.match(source, /benchmark is kept as a compatibility alias/i);
 });
 
@@ -49,6 +49,9 @@ test("CLI README documents bench list and quick-run examples", async () => {
   const readme = await readFile("packages/remnic-cli/README.md", "utf8");
 
   assert.match(readme, /remnic bench list/);
+  assert.match(readme, /remnic bench datasets download longmemeval/);
+  assert.match(readme, /remnic bench runs list/);
+  assert.match(readme, /remnic bench runs show candidate-run --detail/);
   assert.match(readme, /remnic bench run --quick longmemeval/);
   assert.match(readme, /--dataset-dir ~\/datasets\/longmemeval/);
   assert.match(readme, /remnic bench compare base-run candidate-run/);
@@ -91,7 +94,10 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /async function runCustomBenchViaPackage\(parsed: ParsedBenchArgs\): Promise<boolean>/);
   assert.match(parserSource, /function readBenchOptionValue\(argv: string\[\], flag: string\)/);
   assert.match(parserSource, /function collectBenchmarks\(argv: string\[\]\): string\[\]/);
-  assert.match(parserSource, /const benchmarkArgs = action === "baseline" \|\| action === "providers" \? args\.slice\(1\) : args;/);
+  assert.match(
+    parserSource,
+    /const benchmarkArgs =[\s\S]*action === "baseline"[\s\S]*action === "datasets"[\s\S]*action === "providers"[\s\S]*action === "runs"[\s\S]*args\.slice\(1\)[\s\S]*:\s*args;/,
+  );
   assert.match(parserSource, /const benchmarks = collectBenchmarks\(benchmarkArgs\);/);
   assert.match(parserSource, /requires a value\./);
   assert.match(parserSource, /arg === "--dataset-dir"[\s\S]*arg === "--results-dir"[\s\S]*arg === "--baselines-dir"[\s\S]*arg === "--threshold"[\s\S]*arg === "--custom"[\s\S]*arg === "--format"[\s\S]*arg === "--output"/);
@@ -128,7 +134,7 @@ test("bench compare routes through stored package results with threshold and res
   assert.match(source, /parsed\.resultsDir \?\? resolveBenchOutputDir\(\)/);
   assert.match(source, /compareResults\(\s*baseline,\s*candidate,\s*parsed\.threshold \?\? 0\.05/s);
   assert.match(source, /benchmark mismatch: \$\{baseline\.meta\.benchmark\} vs \$\{candidate\.meta\.benchmark\}/);
-  assert.match(parserSource, /export type BenchAction =[\s\S]*"results"[\s\S]*"baseline"[\s\S]*"export"[\s\S]*"publish"[\s\S]*"check"[\s\S]*"report";/);
+  assert.match(parserSource, /export type BenchAction =[\s\S]*"datasets"[\s\S]*"runs"[\s\S]*"results"[\s\S]*"baseline"[\s\S]*"export"[\s\S]*"publish"[\s\S]*"check"[\s\S]*"report";/);
   assert.match(parserSource, /const resultsDir = readBenchOptionValue\(args, "--results-dir"\);/);
   assert.match(parserSource, /const thresholdRaw = readBenchOptionValue\(args, "--threshold"\);/);
   assert.match(parserSource, /ERROR: --threshold must be a non-negative number\./);
@@ -175,7 +181,7 @@ test("bench providers discovery is exposed as a package-backed CLI surface", asy
   const readme = await readFile("packages/remnic-cli/README.md", "utf8");
 
   assert.match(source, /discoverAllProviders,/);
-  assert.match(source, /Usage: remnic bench <list\|run\|compare\|results\|baseline\|export\|publish\|ui\|providers>/);
+  assert.match(source, /Usage: remnic bench <list\|run\|datasets\|runs\|compare\|results\|baseline\|export\|publish\|ui\|providers>/);
   assert.match(source, /remnic bench providers discover/);
   assert.match(source, /async function discoverBenchProviders\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /providers discover does not accept positional arguments/);
@@ -196,6 +202,51 @@ test("bench surface retains local UI compatibility alongside providers discovery
   assert.match(parserSource, /first === "ui"/);
   assert.match(source, /ui\s+Launch the local benchmark overview UI/);
   assert.match(source, /if \(parsed\.action === "ui"\) \{\s*await launchBenchUi\(parsed\.resultsDir \?\? resolveBenchOutputDir\(\)\);\s*return;\s*\}/s);
+});
+
+test("bench datasets and runs surfaces are exposed through parser, help text, and README", async () => {
+  const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
+  const readme = await readFile("packages/remnic-cli/README.md", "utf8");
+
+  assert.match(parserSource, /\| "datasets"/);
+  assert.match(parserSource, /\| "runs"/);
+  assert.match(parserSource, /export type BenchDatasetAction = "download" \| "status";/);
+  assert.match(parserSource, /export type BenchRunAction = "list" \| "show" \| "delete";/);
+  assert.match(parserSource, /datasetAction\?: BenchDatasetAction;/);
+  assert.match(parserSource, /runAction\?: BenchRunAction;/);
+  assert.match(parserSource, /first === "datasets"/);
+  assert.match(parserSource, /first === "runs"/);
+  assert.match(source, /datasets download \[benchmark\.\.\.\]/);
+  assert.match(source, /datasets status/);
+  assert.match(source, /runs list/);
+  assert.match(source, /runs show <run>/);
+  assert.match(source, /runs delete <run\.\.\.>/);
+  assert.match(source, /async function manageBenchDatasets\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /async function manageBenchRuns\(parsed: ParsedBenchArgs\): Promise<void>/);
+  assert.match(source, /if \(parsed\.action === "datasets"\) \{\s*await manageBenchDatasets\(parsed\);/s);
+  assert.match(source, /if \(parsed\.action === "runs"\) \{\s*await manageBenchRuns\(parsed\);/s);
+  assert.match(readme, /remnic bench datasets status/);
+  assert.match(readme, /remnic bench datasets download longmemeval/);
+  assert.match(readme, /remnic bench runs list/);
+  assert.match(readme, /remnic bench runs show candidate-run --detail/);
+  assert.match(readme, /remnic bench runs delete candidate-run/);
+});
+
+test("parseBenchArgs supports datasets download and runs show aliases", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const datasets = parseBenchArgs(["datasets", "download", "longmemeval", "--json"]);
+  assert.equal(datasets.action, "datasets");
+  assert.equal(datasets.datasetAction, "download");
+  assert.deepEqual(datasets.benchmarks, ["longmemeval"]);
+  assert.equal(datasets.json, true);
+
+  const runs = parseBenchArgs(["runs", "show", "candidate-run", "--detail"]);
+  assert.equal(runs.action, "runs");
+  assert.equal(runs.runAction, "show");
+  assert.deepEqual(runs.benchmarks, ["candidate-run"]);
+  assert.equal(runs.detail, true);
 });
 
 test("parseBenchArgs supports the providers discovery surface", async () => {
@@ -237,32 +288,36 @@ test("bench providers discover rejects unexpected trailing positional args", asy
   const exportModuleEntry = join(exportModuleDist, "index.js");
   const exportPackageJson = join(exportModuleRoot, "package.json");
   const cliEntry = pathToFileURL(join(repoRoot, "packages/remnic-cli/src/index.ts")).href;
-  const stubbedBenchModule = !existsSync(benchModuleEntry);
   const stubbedExportModule = !existsSync(exportModuleEntry);
+  const existingEntry = existsSync(benchModuleEntry)
+    ? await readFile(benchModuleEntry, "utf8")
+    : undefined;
+  const existingPackageJson = existsSync(benchPackageJson)
+    ? await readFile(benchPackageJson, "utf8")
+    : undefined;
   const createdModuleRoot = !existsSync(benchModuleLinkRoot);
-  const createdPackageJson = stubbedBenchModule && !existsSync(benchPackageJson);
-  const createdDistDir = stubbedBenchModule && !existsSync(benchModuleDist);
+  const createdPackageJson = !existsSync(benchPackageJson);
+  const createdDistDir = !existsSync(benchModuleDist);
   const createdExportModuleRoot = !existsSync(exportModuleLinkRoot);
   const createdExportPackageJson = stubbedExportModule && !existsSync(exportPackageJson);
   const createdExportDistDir = stubbedExportModule && !existsSync(exportModuleDist);
 
-  if (stubbedBenchModule) {
-    mkdirSync(benchModuleDist, { recursive: true });
-    if (createdPackageJson) {
-      writeFileSync(
-        benchPackageJson,
-        JSON.stringify({
-          name: "@remnic/bench",
-          type: "module",
-          exports: {
-            ".": "./dist/index.js",
-          },
-        }),
-      );
-    }
+  mkdirSync(benchModuleDist, { recursive: true });
+  if (createdPackageJson) {
     writeFileSync(
-      benchModuleEntry,
-      `
+      benchPackageJson,
+      JSON.stringify({
+        name: "@remnic/bench",
+        type: "module",
+        exports: {
+          ".": "./dist/index.js",
+        },
+      }),
+    );
+  }
+  writeFileSync(
+    benchModuleEntry,
+    `
 export function compareResults() {}
 export async function buildBenchmarkPublishFeed() { return { target: "remnic-ai", generatedAt: new Date(0).toISOString(), benchmarks: [] }; }
 export function checkRegression() { return null; }
@@ -281,10 +336,10 @@ export async function loadBenchmarkResult() { return null; }
 export function renderBenchmarkResultExport() { return ""; }
 export async function resolveBenchmarkResultReference() { return null; }
 export async function saveBenchmarkBaseline() { return null; }
+export async function deleteBenchmarkResults() { return { deleted: [], missing: [] }; }
 export async function writeBenchmarkPublishFeed() { return ""; }
 `,
-    );
-  }
+  );
 
   if (stubbedExportModule) {
     mkdirSync(exportModuleDist, { recursive: true });
@@ -339,17 +394,21 @@ export function sweepPii(records) { return { records, redactions: [] }; }
         rmSync(exportModuleRoot, { recursive: true, force: true });
       }
     }
-    if (stubbedBenchModule) {
+    if (existingEntry !== undefined) {
+      writeFileSync(benchModuleEntry, existingEntry);
+    } else {
       rmSync(benchModuleEntry, { force: true });
-      if (createdDistDir) {
-        rmSync(benchModuleDist, { recursive: true, force: true });
-      }
-      if (createdPackageJson) {
-        rmSync(benchPackageJson, { force: true });
-      }
-      if (createdModuleRoot) {
-        rmSync(benchModuleRoot, { recursive: true, force: true });
-      }
+    }
+    if (existingPackageJson !== undefined) {
+      writeFileSync(benchPackageJson, existingPackageJson);
+    } else if (createdPackageJson) {
+      rmSync(benchPackageJson, { force: true });
+    }
+    if (createdDistDir) {
+      rmSync(benchModuleDist, { recursive: true, force: true });
+    }
+    if (createdModuleRoot) {
+      rmSync(benchModuleRoot, { recursive: true, force: true });
     }
   }
 });
