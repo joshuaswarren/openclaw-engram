@@ -45,6 +45,7 @@ export async function runRetrievalTemporalBenchmark(
   const tasks: TaskResult[] = [];
 
   for (const sample of cases) {
+    validateHalfOpenWindow(sample.window.start, sample.window.end);
     const startedAt = performance.now();
     const rankedPages = rankPages(sample.query, sample.pages);
     const latencyMs = Math.round(performance.now() - startedAt);
@@ -182,6 +183,16 @@ function pageHasTemporalEvidenceInWindow(
   startIso: string,
   endIso: string,
 ): boolean {
+  const { startMs, endMs } = validateHalfOpenWindow(startIso, endIso);
+
+  const evidenceTimestamps = collectEvidenceTimestamps(page);
+  return evidenceTimestamps.some((timestamp) => timestamp >= startMs && timestamp < endMs);
+}
+
+function validateHalfOpenWindow(
+  startIso: string,
+  endIso: string,
+): { startMs: number; endMs: number } {
   const startMs = parseStrictIsoTimestamp(startIso);
   const endMs = parseStrictIsoTimestamp(endIso);
 
@@ -189,8 +200,7 @@ function pageHasTemporalEvidenceInWindow(
     throw new Error("retrieval-temporal window must use valid half-open ISO timestamps");
   }
 
-  const evidenceTimestamps = collectEvidenceTimestamps(page);
-  return evidenceTimestamps.some((timestamp) => timestamp >= startMs && timestamp < endMs);
+  return { startMs, endMs };
 }
 
 function collectEvidenceTimestamps(page: SchemaTierPage): number[] {

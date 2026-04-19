@@ -189,6 +189,30 @@ test("runBenchmark rejects overflowed window timestamps in retrieval-temporal ca
   }
 });
 
+test("runBenchmark rejects overflowed window timestamps even without expected temporal pages", async () => {
+  const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:alex-last-tuesday-meeting");
+  assert.ok(temporalCase);
+
+  const originalWindow = { ...temporalCase.window };
+  const originalExpectedPageIds = [...temporalCase.expectedPageIds];
+
+  try {
+    temporalCase.window.start = "2026-06-31T00:00:00.000Z";
+    temporalCase.expectedPageIds = [];
+
+    await assert.rejects(
+      () => runBenchmark("retrieval-temporal", {
+        mode: "full",
+        system: adapter,
+      }),
+      /retrieval-temporal window must use valid half-open ISO timestamps/,
+    );
+  } finally {
+    temporalCase.window = originalWindow;
+    temporalCase.expectedPageIds = originalExpectedPageIds;
+  }
+});
+
 test("runBenchmark rejects overflowed created timestamps in retrieval-temporal evidence", async () => {
   const temporalCase = RETRIEVAL_TEMPORAL_FIXTURE.find((entry) => entry.id === "clean:morgan-q3-commitments");
   assert.ok(temporalCase);
