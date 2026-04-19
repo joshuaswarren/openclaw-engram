@@ -215,7 +215,22 @@ export async function convertMemoriesToRecords(
   // entry itself rather than the directory it points to. Node's lstat on
   // "link/" resolves through the symlink and reports a directory, not a
   // symlink — the trailing slash strips the symlink-root guard entirely.
-  const normalizedMemoryDir = memoryDir.replace(/[/\\]+$/, "");
+  //
+  // Use path.normalize() to collapse redundant separators, then strip a
+  // single trailing separator only when the result is not a filesystem root
+  // (e.g. "/" on POSIX or "C:\" on Windows). A regex with repeated-separator
+  // alternation ([/\\]+) causes polynomial backtracking on adversarial input;
+  // the character-by-character approach below avoids that entirely.
+  let normalizedMemoryDir = path.normalize(memoryDir);
+  // path.normalize strips redundant slashes but preserves trailing sep on root
+  // paths ("/" stays "/", "C:\" stays "C:\"). Strip a single trailing sep only
+  // when the result is longer than the root portion.
+  if (
+    normalizedMemoryDir.length > path.parse(normalizedMemoryDir).root.length &&
+    (normalizedMemoryDir.endsWith("/") || normalizedMemoryDir.endsWith(path.sep))
+  ) {
+    normalizedMemoryDir = normalizedMemoryDir.slice(0, -1);
+  }
 
   // Reject symlinked memoryDir root — a symlink could redirect the entire
   // memory tree to an attacker-controlled location, bypassing per-file checks.
@@ -292,8 +307,10 @@ export async function convertMemoriesToRecords(
     parsed.filePath = filePath;
 
     // Entity files from entities/ directory: override default category and
-    // derive sourceId from filename when frontmatter ID is missing
-    const entitiesPrefix = path.join(memoryDir, "entities") + path.sep;
+    // derive sourceId from filename when frontmatter ID is missing.
+    // Use normalizedMemoryDir (not raw memoryDir) so the prefix matches the
+    // paths in allFiles, which were collected from dirs built via normalizedMemoryDir.
+    const entitiesPrefix = path.join(normalizedMemoryDir, "entities") + path.sep;
     if (filePath.startsWith(entitiesPrefix)) {
       // Default category from parseFrontmatter is "fact" — override to "entity"
       // if the frontmatter didn't explicitly set a different category
