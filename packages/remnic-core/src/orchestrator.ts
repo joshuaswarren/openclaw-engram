@@ -1937,8 +1937,6 @@ export class Orchestrator {
 
   private async deferredInitialize(signal: AbortSignal): Promise<void> {
 
-    if (signal.aborted) return;
-
     // Sync QMD index with current disk state so recall finds recently-written
     // facts. Without this, the index stays stale from the last extraction-
     // triggered update — which can be days ago if the daemon restarted without
