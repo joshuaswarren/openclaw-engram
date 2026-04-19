@@ -322,8 +322,10 @@ What's actually on disk today:
 - `packages/remnic-core/src/types.ts` — `RecallTierExplain` interface.
   Declared but not yet attached to `LastRecallSnapshot` (see
   `packages/remnic-core/src/recall-state.ts`).
-- Bench fixture under
-  `packages/bench/src/benchmarks/remnic/retrieval-direct-answer/`.
+- No dedicated bench fixture yet. A `retrieval-direct-answer` fixture is
+  planned under `packages/bench/src/benchmarks/remnic/` but not yet
+  in-tree (existing retrieval fixtures there are `retrieval-personalization`
+  and `retrieval-temporal`).
 
 What does NOT exist yet, despite being referenced in the design docs:
 

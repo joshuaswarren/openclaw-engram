@@ -82,9 +82,11 @@ Planned behavior: when **`recallDirectAnswerEnabled`** is true, Remnic will run 
 
 What exists today:
 
-- `packages/remnic-core/src/direct-answer.ts` — pure eligibility function (`evaluateDirectAnswer`) exercised by unit tests and the `retrieval-direct-answer` bench fixture.
-- `packages/remnic-core/src/direct-answer-wiring.ts` — `tryDirectAnswer(...)` source-agnostic binding, callable by tests and bench harnesses but not yet invoked by the orchestrator.
+- `packages/remnic-core/src/direct-answer.ts` — pure eligibility function (`isDirectAnswerEligible`) exercised by unit tests.
+- `packages/remnic-core/src/direct-answer-wiring.ts` — `tryDirectAnswer(...)` source-agnostic binding, callable by tests but not yet invoked by the orchestrator.
 - The five `recallDirectAnswer*` config keys below (parsed and validated; no runtime callers yet).
+
+A dedicated `retrieval-direct-answer` bench fixture is planned but not yet in-tree.
 
 Planned eligibility ladder (in order, unchanged between observation and short-circuit modes):
 

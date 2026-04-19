@@ -125,7 +125,7 @@ When populated, labels will identify which gate eliminated at least one candidat
 ## Related reading
 
 - [Advanced Retrieval](./advanced-retrieval.md) — sibling tiers (query expansion, re-ranking, feedback loop, procedural recall) and current status of the direct-answer slice.
-- Module: `packages/remnic-core/src/direct-answer.ts` — pure eligibility gate (shipped).
-- Module: `packages/remnic-core/src/direct-answer-wiring.ts` — source-agnostic wiring function `tryDirectAnswer` (shipped; not yet invoked by the orchestrator).
+- Module: `packages/remnic-core/src/direct-answer.ts` — pure eligibility gate `isDirectAnswerEligible(...)` (shipped).
+- Module: `packages/remnic-core/src/direct-answer-wiring.ts` — source-agnostic wiring function `tryDirectAnswer(...)` (shipped; not yet invoked by the orchestrator).
 - Type: `packages/remnic-core/src/types.ts` → `RecallTierExplain` (shipped as a type; not yet attached to `LastRecallSnapshot`).
-- Bench: `packages/bench/src/benchmarks/remnic/retrieval-direct-answer/` — synthetic precision + latency fixture.
+- Bench: a dedicated `retrieval-direct-answer` fixture under `packages/bench/src/benchmarks/remnic/` is planned but **not yet in-tree**. Today's in-tree retrieval benchmarks are `retrieval-personalization` and `retrieval-temporal`.
