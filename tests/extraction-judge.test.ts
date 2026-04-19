@@ -4,6 +4,7 @@ import {
   judgeFactDurability,
   clearVerdictCache,
   verdictCacheSize,
+  validateProcedureExtraction,
   type JudgeCandidate,
 } from "../packages/remnic-core/src/extraction-judge.ts";
 import { parseConfig } from "../packages/remnic-core/src/config.ts";
@@ -425,4 +426,34 @@ test("judge elapsed time is reported", async () => {
   const result = await judgeFactDurability(candidates, config, mockLocalLlm as any, null);
   assert.ok(typeof result.elapsed === "number");
   assert.ok(result.elapsed >= 0);
+});
+
+test("validateProcedureExtraction approves two steps with trigger phrasing", () => {
+  const v = validateProcedureExtraction({
+    content: "When you deploy to production, follow this checklist.",
+    procedureSteps: [
+      { order: 1, intent: "Run the test suite" },
+      { order: 2, intent: "Push the release tag" },
+    ],
+  });
+  assert.equal(v.durable, true);
+});
+
+test("validateProcedureExtraction rejects fewer than two steps", () => {
+  const v = validateProcedureExtraction({
+    content: "When you deploy, do the thing.",
+    procedureSteps: [{ order: 1, intent: "Only one step" }],
+  });
+  assert.equal(v.durable, false);
+});
+
+test("validateProcedureExtraction rejects missing trigger phrasing", () => {
+  const v = validateProcedureExtraction({
+    content: "Release checklist for the service.",
+    procedureSteps: [
+      { order: 1, intent: "Run tests" },
+      { order: 2, intent: "Tag release" },
+    ],
+  });
+  assert.equal(v.durable, false);
 });

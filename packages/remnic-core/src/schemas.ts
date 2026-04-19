@@ -37,8 +37,35 @@ export function parseMemoryActionEligibilityContext(
   };
 }
 
+export const ProcedureStepExtractSchema = z.object({
+  order: z.number(),
+  intent: z.string(),
+  toolCall: z
+    .object({
+      kind: z.string(),
+      signature: z.string(),
+    })
+    .optional()
+    .nullable(),
+  expectedOutcome: z.string().optional().nullable(),
+  optional: z.boolean().optional().nullable(),
+});
+
 export const ExtractedFactSchema = z.object({
-  category: z.enum(["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule"]),
+  category: z.enum([
+    "fact",
+    "preference",
+    "correction",
+    "entity",
+    "decision",
+    "relationship",
+    "principle",
+    "commitment",
+    "moment",
+    "skill",
+    "rule",
+    "procedure",
+  ]),
   content: z
     .string()
     .describe("The memory content — a clear, standalone statement"),
@@ -63,6 +90,13 @@ export const ExtractedFactSchema = z.object({
     .optional()
     .nullable()
     .describe("Structured key-value attributes when the fact contains measurable or categorical data (e.g., {\"price\": \"29.99\", \"color\": \"blue\", \"date\": \"2024-03-15\"})."),
+  procedureSteps: z
+    .array(ProcedureStepExtractSchema)
+    .optional()
+    .nullable()
+    .describe(
+      'For category "procedure" only: ordered steps (intent per step). At least two steps; include explicit trigger phrasing in content (e.g. "When you deploy…").',
+    ),
 });
 
 export const EntityMentionSchema = z.object({

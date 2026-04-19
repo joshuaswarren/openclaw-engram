@@ -1433,6 +1433,14 @@ export interface MemoryFile {
   content: string;
 }
 
+/** Ordered step for extracted procedure memories (issue #519). */
+export interface ExtractedProcedureStep {
+  order: number;
+  intent: string;
+  toolCall?: { kind: string; signature: string };
+  expectedOutcome?: string;
+  optional?: boolean;
+}
 
 export interface ExtractedFact {
   category: MemoryCategory;
@@ -1444,6 +1452,8 @@ export interface ExtractedFact {
   promptedByQuestion?: string;
   /** Structured key-value attributes extracted from the content (e.g., product attributes, dates, quantities). */
   structuredAttributes?: Record<string, string>;
+  /** When category is `procedure`, ordered steps with intents (persisted under procedures/). */
+  procedureSteps?: ExtractedProcedureStep[];
 }
 
 export interface MemoryIntent {
