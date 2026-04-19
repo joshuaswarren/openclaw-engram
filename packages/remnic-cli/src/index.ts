@@ -703,11 +703,31 @@ function resolveBenchDatasetDir(
     return undefined;
   }
 
+  // Match the dataset root that `datasets download` and `datasets
+  // status` use so full benchmark runs can consume a dataset that
+  // was just downloaded through the packaged CLI without requiring
+  // an explicit `--dataset-dir` override.
+  const managedRoot = resolveRepoDatasetRoot();
+  const managedDatasetDir = path.join(managedRoot, benchmarkId);
+  if (isExistingDirectory(managedDatasetDir)) {
+    return managedDatasetDir;
+  }
+
+  // Fall back to the in-repo evals/datasets/<benchmark> location so
+  // monorepo checkouts that keep datasets committed continue to work.
   const repoDatasetDir = path.join(CLI_REPO_ROOT, "evals", "datasets", benchmarkId);
+  if (isExistingDirectory(repoDatasetDir)) {
+    return repoDatasetDir;
+  }
+
+  return undefined;
+}
+
+function isExistingDirectory(candidate: string): boolean {
   try {
-    return fs.statSync(repoDatasetDir).isDirectory() ? repoDatasetDir : undefined;
+    return fs.statSync(candidate).isDirectory();
   } catch {
-    return undefined;
+    return false;
   }
 }
 
@@ -1268,7 +1288,7 @@ async function runBenchViaPackage(
   );
   if (!parsed.quick && !datasetDir) {
     throw new Error(
-      `full benchmark runs for "${benchmarkId}" require dataset files. Pass --dataset-dir <path> or run from a Remnic repo checkout with evals/datasets/${benchmarkId}.`,
+      `full benchmark runs for "${benchmarkId}" require dataset files. Run "remnic bench datasets download ${benchmarkId}" or pass --dataset-dir <path>.`,
     );
   }
 
