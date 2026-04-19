@@ -4686,6 +4686,15 @@ interface ParsedTrainingExportArgs {
   synthesize: boolean;
   maxPairsPerRecord?: number;
   privacySweep: boolean;
+  /**
+   * Whether the user explicitly chose the privacy-sweep value on the
+   * command line (via `--privacy-sweep` or `--no-privacy-sweep`). When
+   * true, runtime code treats a mismatch with the adapter as a hard
+   * error (don't silently skip something the user asked for). When
+   * false, it means we're using the default, so we can downgrade to a
+   * warning if the adapter doesn't support sweep.
+   */
+  privacySweepExplicit: boolean;
   dryRun: boolean;
 }
 
@@ -4802,9 +4811,15 @@ export function parseTrainingExportArgs(
   // turns Remnic's flat records into conversational Q/A pairs. Users of other
   // formats (or raw Alpaca) can opt out.
   const synthesize = hasFlag(rest, "--synthesize");
-  // `--privacy-sweep` is on by default for WeClone and any other adapter that
-  // will be shared as a training dataset. Off switch: --no-privacy-sweep.
-  const privacySweep = !hasFlag(rest, "--no-privacy-sweep");
+  // `--privacy-sweep` is on by default for WeClone and any other adapter
+  // that will be shared as a training dataset. Off switch:
+  // `--no-privacy-sweep`. We also track whether the choice was explicit
+  // so runtime code can distinguish "user asked for this" (hard error
+  // on mismatch) from "default, we can fall back with a warning".
+  const privacySweepOff = hasFlag(rest, "--no-privacy-sweep");
+  const privacySweepOn = hasFlag(rest, "--privacy-sweep");
+  const privacySweepExplicit = privacySweepOff || privacySweepOn;
+  const privacySweep = !privacySweepOff;
 
   return {
     format,
@@ -4818,6 +4833,7 @@ export function parseTrainingExportArgs(
     synthesize,
     maxPairsPerRecord,
     privacySweep,
+    privacySweepExplicit,
     dryRun,
   };
 }
@@ -4931,16 +4947,29 @@ export async function runTrainingExport(
 
   let redactedCount = 0;
   if (args.privacySweep) {
-    if (!adapterIsWeclone) {
+    if (adapterIsWeclone) {
+      const mod = await ensureWeclone();
+      const swept = mod.sweepPii(records);
+      records = swept.cleanRecords;
+      redactedCount = swept.redactedCount;
+    } else {
+      // privacy-sweep defaults ON because training-export data is
+      // shareable. The sweep itself is weclone-specific today, so on a
+      // non-weclone adapter we refuse to export rather than silently
+      // skip redaction (Codex P1 would have us fail; a warn-and-export
+      // pattern would still leak PII). The error message makes the
+      // opt-out path obvious so the "default breaks my plugin format"
+      // complaint (Cursor Medium) is a one-flag fix, not a mystery.
+      const explicitness = args.privacySweepExplicit
+        ? "was requested"
+        : "defaults on for training exports";
       throw new Error(
-        `--privacy-sweep is only implemented for --format weclone (${adapter.name} would silently skip redaction, which is unsafe). ` +
-          `Rerun with --format weclone to redact PII, or pass --no-privacy-sweep to export ${adapter.name} records as-is after confirming they are safe to emit.`,
+        `--privacy-sweep ${explicitness}, but --format "${adapter.name}" has no PII sweep implementation. ` +
+          `To proceed safely, either:\n` +
+          `  1. Rerun with --format weclone (which supports PII redaction), OR\n` +
+          `  2. Pass --no-privacy-sweep to export ${adapter.name} records as-is (only do this after confirming they are safe to share).`,
       );
     }
-    const mod = await ensureWeclone();
-    const swept = mod.sweepPii(records);
-    records = swept.cleanRecords;
-    redactedCount = swept.redactedCount;
   }
 
   if (args.dryRun) {
