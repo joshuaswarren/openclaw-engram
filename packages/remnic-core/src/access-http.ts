@@ -358,7 +358,16 @@ export class EngramAccessHttpServer {
     if (req.method === "GET" && pathname === "/engram/v1/recall/tier-explain") {
       const sessionParam = parsed.searchParams.get("session");
       const sessionKey = sessionParam && sessionParam.length > 0 ? sessionParam : undefined;
-      const payload = await this.service.recallTierExplain(sessionKey);
+      const namespaceParam = parsed.searchParams.get("namespace");
+      const namespace = this.resolveNamespace(
+        req,
+        namespaceParam && namespaceParam.length > 0 ? namespaceParam : undefined,
+      );
+      const payload = await this.service.recallTierExplain(
+        sessionKey,
+        namespace,
+        this.resolveRequestPrincipal(req),
+      );
       this.respondJson(res, 200, payload);
       return;
     }

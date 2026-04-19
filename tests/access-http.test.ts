@@ -60,12 +60,16 @@ function createFakeService(): EngramAccessService {
       intent: null,
       graph: null,
     }),
-    recallTierExplain: async (sessionKey?: string) => ({
+    recallTierExplain: async (
+      sessionKey?: string,
+      namespace?: string,
+      _authenticatedPrincipal?: string,
+    ) => ({
       hasExplain: true,
       snapshotFound: true,
       sessionKey: sessionKey ?? "default",
       recordedAt: "2026-04-19T17:30:00.000Z",
-      namespace: "global",
+      namespace: namespace ?? "global",
       memoryIds: ["fact-1"],
       source: "direct-answer",
       sourcesUsed: ["direct-answer"],

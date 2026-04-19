@@ -2645,15 +2645,70 @@ export class EngramAccessService {
    * Orthogonal to `recallExplain()` above, which returns a graph-path
    * explanation document.  This is the per-result annotation introduced
    * by the direct-answer retrieval tier.
+   *
+   * ACL model mirrors `recallExplain()`: when namespaces are enabled,
+   * an explicit `namespace` override is checked with `canReadNamespace`
+   * and snapshots are filtered to that namespace.  When namespaces are
+   * enabled and no namespace is provided, we require an authenticated
+   * principal (via `sessionKey` or a trusted header) and silently
+   * filter the global most-recent snapshot to those the principal can
+   * read — preventing cross-tenant metadata leaks.
+   *
+   * We intentionally do NOT call `lastRecall.load()` here: the
+   * orchestrator loads the snapshot store once at init, and an
+   * unconditional `load()` on every request races with in-flight
+   * `record()` writes (the write reads `this.state` after an `await`,
+   * which `load()` can replace with stale disk state between calls).
    */
-  async recallTierExplain(sessionKey?: string) {
-    // Ensure the on-disk snapshot store is loaded — HTTP/MCP callers
-    // may hit this endpoint after a gateway restart before any recall
-    // has primed the store in memory.
-    await this.orchestrator.lastRecall.load();
-    const snapshot = sessionKey
+  async recallTierExplain(
+    sessionKey?: string,
+    namespace?: string,
+    authenticatedPrincipal?: string,
+  ) {
+    const namespacesEnabled = this.orchestrator.config.namespacesEnabled;
+    const requestedNamespace = namespace?.trim()
+      ? this.resolveNamespace(namespace)
+      : undefined;
+
+    // Resolve principal: prefer a trusted authenticated principal (e.g.,
+    // from a verified bearer subject), then the session-derived principal.
+    const principal = authenticatedPrincipal?.trim()
+      || resolvePrincipal(sessionKey, this.orchestrator.config);
+
+    // Enforce explicit namespace override ACL.  Match `recallExplain`'s
+    // return-empty-on-denied semantics (no throw) so callers can't
+    // distinguish "no recall" from "forbidden" via a 4xx oracle.
+    if (requestedNamespace) {
+      if (!canReadNamespace(principal, requestedNamespace, this.orchestrator.config)) {
+        return toRecallExplainJson(null);
+      }
+    } else if (namespacesEnabled && !authenticatedPrincipal?.trim() && !sessionKey?.trim()) {
+      // Namespaces enabled but caller is unauthenticated and did not
+      // pass a session — unsafe to return the global most-recent.
+      return toRecallExplainJson(null);
+    }
+
+    const candidate = sessionKey
       ? this.orchestrator.lastRecall.get(sessionKey)
       : this.orchestrator.lastRecall.getMostRecent();
+
+    // Apply namespace / ACL filter to the candidate snapshot.  A
+    // requested namespace must match exactly; otherwise (global
+    // most-recent with namespaces enabled) the snapshot's namespace
+    // must be readable by the resolved principal.
+    const snapshot = (() => {
+      if (!candidate) return null;
+      if (requestedNamespace) {
+        return candidate.namespace === requestedNamespace ? candidate : null;
+      }
+      if (!namespacesEnabled) return candidate;
+      const snapshotNs = candidate.namespace
+        ?? this.orchestrator.config.defaultNamespace;
+      return canReadNamespace(principal, snapshotNs, this.orchestrator.config)
+        ? candidate
+        : null;
+    })();
+
     return toRecallExplainJson(snapshot);
   }
 

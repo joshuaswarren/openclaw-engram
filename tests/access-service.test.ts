@@ -790,6 +790,232 @@ test("access service recallExplain filters session snapshots by the requested na
   assert.equal(response.snapshot, undefined);
 });
 
+// ---------------------------------------------------------------------------
+// recallTierExplain — issue #518, slice 5.  These tests exercise the ACL +
+// no-race-load invariants added in response to AI review feedback (cursor +
+// chatgpt-codex-connector) on the slice 5 PR.
+// ---------------------------------------------------------------------------
+
+function makeTierExplainOrchestrator(opts: {
+  namespacesEnabled: boolean;
+  snapshot: unknown;
+  sessionSnapshotByKey?: Record<string, unknown>;
+  loadCalls?: { count: number };
+}) {
+  return {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: opts.namespacesEnabled,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [
+        { match: "project-x:", principal: "project-x" },
+        { match: "secret-team:", principal: "secret-team" },
+      ],
+      namespacePolicies: [
+        {
+          name: "project-x",
+          readPrincipals: ["project-x"],
+          writePrincipals: ["project-x"],
+        },
+        {
+          name: "secret-team",
+          readPrincipals: ["secret-team"],
+          writePrincipals: ["secret-team"],
+        },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      load: async () => {
+        if (opts.loadCalls) opts.loadCalls.count += 1;
+      },
+      get: (key: string) => opts.sessionSnapshotByKey?.[key] ?? null,
+      getMostRecent: () => opts.snapshot,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  };
+}
+
+test("recallTierExplain does not call lastRecall.load() on every request (race fix)", async () => {
+  const loadCalls = { count: 0 };
+  const snapshot = {
+    sessionKey: "default",
+    recordedAt: "2026-04-19T00:00:00.000Z",
+    queryHash: "h",
+    queryLen: 1,
+    memoryIds: ["fact-1"],
+    namespace: "global",
+  };
+  const service = new EngramAccessService(
+    makeTierExplainOrchestrator({
+      namespacesEnabled: false,
+      snapshot,
+      loadCalls,
+    }) as any,
+  );
+
+  await service.recallTierExplain();
+  await service.recallTierExplain();
+  await service.recallTierExplain("some-session");
+
+  assert.equal(
+    loadCalls.count,
+    0,
+    "recallTierExplain must not call lastRecall.load(); orchestrator loads it at init. Calling load() on every request races with in-flight record() writes.",
+  );
+});
+
+test("recallTierExplain denies cross-tenant namespace override via ACL", async () => {
+  const service = new EngramAccessService(
+    makeTierExplainOrchestrator({
+      namespacesEnabled: true,
+      snapshot: {
+        sessionKey: "secret-team:session",
+        recordedAt: "2026-04-19T00:00:00.000Z",
+        queryHash: "h",
+        queryLen: 1,
+        memoryIds: ["fact-secret"],
+        namespace: "secret-team",
+      },
+    }) as any,
+  );
+
+  // Caller with project-x principal asks for secret-team namespace.
+  const response = await service.recallTierExplain(
+    "project-x:session",
+    "secret-team",
+    undefined,
+  ) as { hasExplain: boolean; snapshotFound: boolean; memoryIds: unknown[] };
+
+  assert.equal(response.hasExplain, false);
+  assert.equal(response.snapshotFound, false);
+  assert.deepEqual(response.memoryIds, []);
+});
+
+test("recallTierExplain with no namespace filters global most-recent by principal ACL", async () => {
+  const service = new EngramAccessService(
+    makeTierExplainOrchestrator({
+      namespacesEnabled: true,
+      // Most-recent snapshot belongs to secret-team.
+      snapshot: {
+        sessionKey: "secret-team:session",
+        recordedAt: "2026-04-19T00:00:00.000Z",
+        queryHash: "h",
+        queryLen: 1,
+        memoryIds: ["fact-secret"],
+        namespace: "secret-team",
+      },
+    }) as any,
+  );
+
+  // project-x caller must NOT see secret-team metadata when asking for
+  // global most-recent.  Previous implementation leaked cross-tenant data.
+  const response = await service.recallTierExplain(
+    "project-x:session",
+    undefined,
+    undefined,
+  ) as { snapshotFound: boolean; memoryIds: unknown[]; namespace: unknown };
+
+  assert.equal(response.snapshotFound, false);
+  assert.deepEqual(response.memoryIds, []);
+  assert.equal(response.namespace, null);
+});
+
+test("recallTierExplain rejects unauthenticated caller when namespaces are enabled and no session supplied", async () => {
+  const service = new EngramAccessService(
+    makeTierExplainOrchestrator({
+      namespacesEnabled: true,
+      snapshot: {
+        sessionKey: "project-x:session",
+        recordedAt: "2026-04-19T00:00:00.000Z",
+        queryHash: "h",
+        queryLen: 1,
+        memoryIds: ["fact-1"],
+        namespace: "project-x",
+      },
+    }) as any,
+  );
+
+  // No sessionKey, no namespace, no authenticatedPrincipal — must return empty.
+  const response = await service.recallTierExplain() as {
+    snapshotFound: boolean;
+    memoryIds: unknown[];
+  };
+  assert.equal(response.snapshotFound, false);
+  assert.deepEqual(response.memoryIds, []);
+});
+
+test("recallTierExplain returns snapshot for authorized principal on matching namespace", async () => {
+  const service = new EngramAccessService(
+    makeTierExplainOrchestrator({
+      namespacesEnabled: true,
+      snapshot: null,
+      sessionSnapshotByKey: {
+        "project-x:session": {
+          sessionKey: "project-x:session",
+          recordedAt: "2026-04-19T00:00:00.000Z",
+          queryHash: "h",
+          queryLen: 1,
+          memoryIds: ["fact-1"],
+          namespace: "project-x",
+          tierExplain: {
+            tier: "direct-answer",
+            tierReason: "unambiguous",
+            filteredBy: [],
+            candidatesConsidered: 3,
+          },
+        },
+      },
+    }) as any,
+  );
+
+  const response = await service.recallTierExplain(
+    "project-x:session",
+    "project-x",
+    undefined,
+  ) as {
+    hasExplain: boolean;
+    snapshotFound: boolean;
+    tierExplain: { tier: string } | null;
+  };
+  assert.equal(response.snapshotFound, true);
+  assert.equal(response.hasExplain, true);
+  assert.equal(response.tierExplain?.tier, "direct-answer");
+});
+
+test("recallTierExplain with namespaces disabled returns the snapshot without ACL filtering", async () => {
+  const snapshot = {
+    sessionKey: "any-session",
+    recordedAt: "2026-04-19T00:00:00.000Z",
+    queryHash: "h",
+    queryLen: 1,
+    memoryIds: ["fact-1"],
+    namespace: "global",
+  };
+  const service = new EngramAccessService(
+    makeTierExplainOrchestrator({
+      namespacesEnabled: false,
+      snapshot,
+    }) as any,
+  );
+
+  const response = await service.recallTierExplain() as {
+    snapshotFound: boolean;
+    memoryIds: string[];
+  };
+  assert.equal(response.snapshotFound, true);
+  assert.deepEqual(response.memoryIds, ["fact-1"]);
+});
+
 test("access service memoryStore persists and enforces idempotency conflicts", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-access-service-store-"));
   try {
