@@ -567,6 +567,11 @@ export {
   type ProcessBatchResult,
 } from "./bulk-import/index.js";
 
+export {
+  runBulkImportCliCommand,
+  type BulkImportCliCommandOptions,
+} from "./cli.js";
+
 // ---------------------------------------------------------------------------
 // Training-data export (issue #459)
 // ---------------------------------------------------------------------------
