@@ -15,6 +15,7 @@ import {
   aggregateTaskScores,
   timed,
 } from "../../../scorer.js";
+import { buildBenchmarkRunSeeds } from "../../../run-seeds.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import { bootstrapMeanConfidenceInterval } from "../../../stats/bootstrap.js";
 import type {
@@ -286,13 +287,10 @@ function resolveSeeds(
   const requested =
     runnerOptions.runCount ??
     (resolved.mode === "quick" ? 2 : DEFAULT_RUN_COUNT);
-  if (!Number.isInteger(requested) || requested < 1) {
-    throw new Error(
-      `Assistant benchmark runCount must be a positive integer, received ${requested}`,
-    );
-  }
-  const base = resolved.seed ?? 0;
-  return Array.from({ length: requested }, (_, index) => base + index);
+  // Delegate to the shared helper so seed-sequence generation stays in one
+  // place; `buildBenchmarkRunSeeds` also validates the runCount / baseSeed
+  // inputs.
+  return buildBenchmarkRunSeeds(requested, resolved.seed);
 }
 
 function buildRunId(benchmarkId: string): string {
