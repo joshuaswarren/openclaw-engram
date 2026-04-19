@@ -256,6 +256,17 @@ test("getBenchmark returns ingestion-schema-completeness metadata (not yet runna
   assert.equal(benchmark?.meta.category, "ingestion");
 });
 
+test("getBenchmark returns ingestion-citation-accuracy metadata (not yet runnable)", () => {
+  const benchmark = getBenchmark("ingestion-citation-accuracy");
+
+  assert.ok(benchmark);
+  assert.equal(benchmark?.id, "ingestion-citation-accuracy");
+  assert.equal(benchmark?.status, "ready");
+  assert.equal(benchmark?.runnerAvailable, false);
+  assert.equal(benchmark?.tier, "remnic");
+  assert.equal(benchmark?.meta.category, "ingestion");
+});
+
 test("BenchmarkResult schema captures the phase-1 package contract", () => {
   assert.equal(BENCHMARK_RESULT_SCHEMA.type, "object");
   assert.deepEqual(BENCHMARK_RESULT_SCHEMA.required, [

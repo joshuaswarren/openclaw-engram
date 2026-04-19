@@ -31,8 +31,29 @@ export const ingestionCitationAccuracyDefinition: BenchmarkDefinition = {
   },
 };
 
-function extractClaims(pages: ExtractedPage[]): Array<{ claim: string; sourceContent: string }> {
-  const claims: Array<{ claim: string; sourceContent: string }> = [];
+/**
+ * Extract a narrow context window around a sentence within the full text.
+ * Returns up to 2 sentences before and after the target sentence so the judge
+ * sees claim-specific evidence rather than the entire page body.
+ */
+function extractClaimContext(fullText: string, sentence: string): string {
+  const sentences = fullText
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+
+  const idx = sentences.findIndex((s) => s.includes(sentence) || sentence.includes(s));
+  if (idx < 0) return sentence;
+
+  const start = Math.max(0, idx - 2);
+  const end = Math.min(sentences.length, idx + 3);
+  return sentences.slice(start, end).join(" ");
+}
+
+function extractClaims(
+  pages: ExtractedPage[],
+): Array<{ claim: string; claimContext: string; pageRef: string; seeAlso: string[] }> {
+  const claims: Array<{ claim: string; claimContext: string; pageRef: string; seeAlso: string[] }> = [];
   for (const page of pages) {
     if (!page.content) continue;
     const sentences = page.content
@@ -40,10 +61,61 @@ function extractClaims(pages: ExtractedPage[]): Array<{ claim: string; sourceCon
       .map((s) => s.trim())
       .filter((s) => s.length > 20);
     for (const sentence of sentences) {
-      claims.push({ claim: sentence, sourceContent: page.content });
+      claims.push({
+        claim: sentence,
+        claimContext: extractClaimContext(page.content, sentence),
+        pageRef: page.path,
+        seeAlso: page.seeAlso,
+      });
     }
   }
   return claims;
+}
+
+/**
+ * Build the cited source content for a claim by resolving its page's seeAlso
+ * references against the fixture file map. Falls back to a basename match if
+ * no seeAlso entry resolves directly, and falls back to all sources only if
+ * no narrower match is available. This prevents a misattributed citation from
+ * scoring as valid just because the claim is supported somewhere else in the
+ * merged corpus.
+ */
+function resolveCitedSources(
+  seeAlso: string[],
+  pageRef: string,
+  sourceContentMap: Map<string, string>,
+): string {
+  const resolved: string[] = [];
+
+  for (const ref of seeAlso) {
+    const refBase = path.basename(ref).toLowerCase();
+    for (const [relativePath, content] of sourceContentMap) {
+      if (
+        relativePath === ref ||
+        relativePath.endsWith(ref) ||
+        path.basename(relativePath).toLowerCase() === refBase
+      ) {
+        resolved.push(content);
+        break;
+      }
+    }
+  }
+
+  if (resolved.length > 0) {
+    return resolved.join("\n\n---\n\n");
+  }
+
+  // Fall back to a source whose basename matches the page path
+  const pageBase = path.basename(pageRef).toLowerCase();
+  for (const [relativePath, content] of sourceContentMap) {
+    if (path.basename(relativePath).toLowerCase() === pageBase) {
+      return content;
+    }
+  }
+
+  // Last resort: all sources (equivalent to original behaviour, but only reached
+  // when citation metadata is entirely absent)
+  return Array.from(sourceContentMap.values()).join("\n\n---\n\n");
 }
 
 export async function runIngestionCitationAccuracyBenchmark(
@@ -64,7 +136,9 @@ export async function runIngestionCitationAccuracyBenchmark(
       await writeFile(filePath, file.content, "utf8");
     }
 
-    const { result: ingestionLog, durationMs } = await timed(() =>
+    const benchmarkStart = performance.now();
+
+    const { result: ingestionLog, durationMs: ingestionDurationMs } = await timed(() =>
       options.ingestionAdapter!.ingest(fixtureDir),
     );
 
@@ -73,18 +147,22 @@ export async function runIngestionCitationAccuracyBenchmark(
 
     const judge: BenchJudge | undefined = options.system?.judge;
 
-    const originalSources = fixture.files.map((f) => f.content).join("\n\n---\n\n");
+    // Build a map from relativePath → content for citation-aware source resolution
+    const sourceContentMap = new Map<string, string>(
+      fixture.files.map((f) => [f.relativePath, f.content]),
+    );
 
     let validCitations = 0;
     let scoredClaims = 0;
 
     if (claims.length > 0) {
-      for (const { claim, sourceContent } of claims) {
+      for (const { claim, claimContext, pageRef, seeAlso } of claims) {
+        const citedSources = resolveCitedSources(seeAlso, pageRef, sourceContentMap);
         const score = await llmJudgeScore(
           judge,
-          `Does the page content support this claim with evidence from the original sources? Claim: "${claim}"`,
-          sourceContent,
-          originalSources,
+          `Does the cited source content support this claim? Claim: "${claim}"`,
+          claimContext,
+          citedSources,
         );
         if (score >= 0) {
           scoredClaims += 1;
@@ -94,6 +172,9 @@ export async function runIngestionCitationAccuracyBenchmark(
         }
       }
     }
+
+    // Total latency includes both ingestion and judge scoring time
+    const totalDurationMs = Math.round(performance.now() - benchmarkStart);
 
     const citationAccuracy = scoredClaims > 0 ? validCitations / scoredClaims : -1;
 
@@ -114,7 +195,7 @@ export async function runIngestionCitationAccuracyBenchmark(
           ? `${validCitations}/${scoredClaims} claims cite valid source chunks (${claims.length} total claims)`
           : `No judge available; ${claims.length} claims extracted`,
         scores,
-        latencyMs: durationMs,
+        latencyMs: totalDurationMs,
         tokens: { input: 0, output: 0 },
         details: {
           fixtureId: fixture.id,
@@ -123,6 +204,7 @@ export async function runIngestionCitationAccuracyBenchmark(
           validCitations,
           citationAccuracy,
           judgeAvailable: judge !== undefined,
+          ingestionDurationMs,
           ingestionErrors: ingestionLog.errors,
         },
       },
@@ -153,8 +235,8 @@ export async function runIngestionCitationAccuracyBenchmark(
         inputTokens: 0,
         outputTokens: 0,
         estimatedCostUsd: 0,
-        totalLatencyMs: durationMs,
-        meanQueryLatencyMs: durationMs,
+        totalLatencyMs: totalDurationMs,
+        meanQueryLatencyMs: totalDurationMs,
       },
       results: {
         tasks,
