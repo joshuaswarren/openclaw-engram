@@ -4100,9 +4100,11 @@ export class Orchestrator {
           );
         }
       }
-      // Tracks the namespace each candidate memory came from so
-      // `trustZoneFor(memoryId)` can disambiguate cross-tenant
-      // collisions on the same recordId.
+      // Track each candidate memory's namespace keyed by `memory.path`.
+      // `memory.path` is globally unique (the disk path of the file),
+      // unlike `memory.frontmatter.id` which can collide across
+      // namespaces.  Using path keeps the namespace resolution
+      // collision-free during `trustZoneFor`.
       const memoryNamespaceByPath = new Map<string, string>();
 
       // Track the pre-filter candidate count so `candidatesConsidered`
@@ -4111,11 +4113,6 @@ export class Orchestrator {
       // labels in `result.filteredBy` are unique strings per filter
       // stage, so summing them would cap at ~6 regardless of input size.
       let candidatesConsidered = 0;
-      // memoryId → memory.path lookup so `trustZoneFor` can recover
-      // the namespace via the path-indexed map above.  Falls back to
-      // a global scan if the eligibility gate supplied an id we
-      // didn't register (defensive; shouldn't happen in practice).
-      const memoryPathById = new Map<string, string>();
 
       const sources: DirectAnswerSources = {
         taxonomy: DEFAULT_TAXONOMY,
@@ -4131,19 +4128,22 @@ export class Orchestrator {
               if ((m.frontmatter.status ?? "active") === "active") {
                 union.push(m);
                 memoryNamespaceByPath.set(m.path, ns);
-                memoryPathById.set(m.frontmatter.id, m.path);
               }
             }
           }
           candidatesConsidered = union.length;
           return union;
         },
-        trustZoneFor: async (memoryId: string) => {
-          const memoryPath = memoryPathById.get(memoryId);
-          if (!memoryPath) return null;
-          const ns = memoryNamespaceByPath.get(memoryPath);
+        trustZoneFor: async (memory: MemoryFile) => {
+          // Namespace-resolve via the unique `memory.path` rather than
+          // `memory.frontmatter.id`; IDs can collide across tenants.
+          const ns = memoryNamespaceByPath.get(memory.path);
           if (!ns) return null;
-          return trustZoneByNsAndRecordId.get(trustZoneKey(ns, memoryId)) ?? null;
+          return (
+            trustZoneByNsAndRecordId.get(
+              trustZoneKey(ns, memory.frontmatter.id),
+            ) ?? null
+          );
         },
         importanceFor: (memory) =>
           typeof memory.frontmatter.importance?.score === "number"

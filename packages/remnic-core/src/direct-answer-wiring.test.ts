@@ -76,9 +76,9 @@ function makeMockSources(init: {
       calls.listCandidates += 1;
       return init.memories ?? [];
     },
-    trustZoneFor: async (id: string) => {
-      calls.trustZone.push(id);
-      return init.trustZones?.[id] ?? null;
+    trustZoneFor: async (memory: MemoryFile) => {
+      calls.trustZone.push(memory.frontmatter.id);
+      return init.trustZones?.[memory.frontmatter.id] ?? null;
     },
     importanceFor: (memory: MemoryFile) => {
       calls.importance.push(memory.frontmatter.id);
@@ -309,8 +309,8 @@ test("tryDirectAnswer throws AbortError when signal aborts mid-loop", async () =
   const sources: DirectAnswerSources = {
     taxonomy: DEFAULT_TAXONOMY,
     listCandidateMemories: async () => [first, second],
-    trustZoneFor: async (id: string) => {
-      if (id === "first") {
+    trustZoneFor: async (memory: MemoryFile) => {
+      if (memory.frontmatter.id === "first") {
         // Simulate the caller aborting recall while resolving the first
         // candidate.  Abort between the accessor call and the loop guard.
         controller.abort();
@@ -379,8 +379,8 @@ test("tryDirectAnswer throws when abort lands during trustZoneFor on the last of
   const sources: DirectAnswerSources = {
     taxonomy: DEFAULT_TAXONOMY,
     listCandidateMemories: async () => memories,
-    trustZoneFor: async (id: string) => {
-      if (id === "last") controller.abort();
+    trustZoneFor: async (memory: MemoryFile) => {
+      if (memory.frontmatter.id === "last") controller.abort();
       return "trusted";
     },
     importanceFor: () => 0.9,
