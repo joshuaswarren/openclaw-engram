@@ -107,18 +107,32 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
 async function findRuntimeModules(): Promise<string[]> {
   const { readdirSync } = await import("node:fs");
   const { createRequire } = await import("node:module");
+  const { execFileSync } = await import("node:child_process");
   const candidates: string[] = [];
 
   // Discover the openclaw dist directory from the installed package,
   // regardless of how it was installed (Homebrew, npm global, local, etc.)
   const distDirs: string[] = [];
+  const pushDistDirs = (entryPath: string): void => {
+    const resolvedEntryDir = path.dirname(entryPath);
+    const packageRoot = path.basename(resolvedEntryDir) === "dist"
+      ? path.resolve(resolvedEntryDir, "..")
+      : resolvedEntryDir;
+    const candidateDistDirs = [
+      path.join(packageRoot, "dist"),
+      path.join(packageRoot, "..", "dist"),
+    ];
+    for (const candidate of candidateDistDirs) {
+      const resolved = path.resolve(candidate);
+      if (!distDirs.includes(resolved)) distDirs.push(resolved);
+    }
+  };
 
   try {
     // require.resolve finds the package from the current process context
     const req = createRequire(import.meta.url);
     const openclawMain = req.resolve("openclaw");
-    const openclawDist = path.join(path.dirname(openclawMain), "..", "dist");
-    if (openclawDist) distDirs.push(path.resolve(openclawDist));
+    pushDistDirs(openclawMain);
   } catch {
     // openclaw not resolvable from plugin context — try alternate paths
   }
@@ -131,9 +145,22 @@ async function findRuntimeModules(): Promise<string[]> {
     if (mainScript) {
       const realScript = realpathSync(mainScript);
       if (realScript.includes("openclaw")) {
-        const distDir = path.dirname(realScript);
-        if (!distDirs.includes(distDir)) distDirs.push(distDir);
+        pushDistDirs(realScript);
       }
+    }
+  } catch {
+    // Silent
+  }
+
+  // Fallback: inspect the installed openclaw binary on PATH (Homebrew/global npm).
+  try {
+    const openclawBin = execFileSync("which", ["openclaw"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    if (openclawBin) {
+      const { realpathSync } = await import("node:fs");
+      pushDistDirs(realpathSync(openclawBin));
     }
   } catch {
     // Silent
@@ -170,8 +197,12 @@ export async function resolveProviderApiKey(
   gatewayConfig?: unknown,
   agentDir?: string,
 ): Promise<string | undefined> {
+  const resolvedAgentDir = path.resolve(
+    agentDir ?? path.join(os.homedir(), ".openclaw", "agents", "main", "agent"),
+  );
+
   // Check cache first
-  const cacheKey = `provider:${providerId}`;
+  const cacheKey = `provider:${providerId}:agentDir:${resolvedAgentDir}`;
   if (resolvedCache.has(cacheKey)) {
     return resolvedCache.get(cacheKey);
   }
@@ -202,7 +233,6 @@ export async function resolveProviderApiKey(
   const resolver = await getGatewayResolver();
   if (resolver) {
     try {
-      const resolvedAgentDir = agentDir ?? path.join(os.homedir(), ".openclaw", "agents", "main", "agent");
       const auth = await resolver({ provider: providerId, cfg: gatewayConfig, agentDir: resolvedAgentDir });
       if (auth?.apiKey) {
         resolved = auth.apiKey;
@@ -272,5 +302,11 @@ export function clearSecretCache(): void {
   _resolveApiKeyForProvider = null;
   _getRuntimeAuthForModel = null;
   _resolverLoaded = false;
+  _resolverNextRetryAt = 0;
+}
+
+export function __setGatewayResolverForTest(resolver: ResolveApiKeyFn | null): void {
+  _resolveApiKeyForProvider = resolver;
+  _resolverLoaded = resolver !== null;
   _resolverNextRetryAt = 0;
 }

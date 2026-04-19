@@ -102,6 +102,59 @@ test("gateway responder requires gateway config", () => {
   );
 });
 
+test("gateway responder forwards profile-scoped auth context to the fallback client", async () => {
+  let capturedGatewayConfig: unknown;
+  let capturedRuntimeContext: unknown;
+
+  const responder = createGatewayResponder({
+    gatewayConfig: {
+      agents: {
+        defaults: {
+          model: {
+            primary: "openai/gpt-5.4-mini",
+          },
+        },
+      },
+    },
+    agentId: "memory-primary",
+    agentDir: "/tmp/openclaw-profile/agents/main/agent",
+    workspaceDir: "/tmp/openclaw-profile/workspace",
+    llmFactory(gatewayConfig, runtimeContext) {
+      capturedGatewayConfig = gatewayConfig;
+      capturedRuntimeContext = runtimeContext;
+      return {
+        async chatCompletion() {
+          return {
+            content: "answer",
+            modelUsed: "openai/gpt-5.4-mini",
+            usage: {
+              inputTokens: 5,
+              outputTokens: 2,
+            },
+          };
+        },
+      };
+    },
+  });
+
+  const response = await responder.respond("What changed?", "Context");
+
+  assert.equal(response.text, "answer");
+  assert.deepEqual(capturedGatewayConfig, {
+    agents: {
+      defaults: {
+        model: {
+          primary: "openai/gpt-5.4-mini",
+        },
+      },
+    },
+  });
+  assert.deepEqual(capturedRuntimeContext, {
+    agentDir: "/tmp/openclaw-profile/agents/main/agent",
+    workspaceDir: "/tmp/openclaw-profile/workspace",
+  });
+});
+
 test("provider-backed judge parses fraction and percent score formats", async () => {
   const fractionJudge = createProviderBackedJudge(
     { provider: "openai", model: "gpt-5.4-mini" },

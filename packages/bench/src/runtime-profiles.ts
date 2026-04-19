@@ -1,6 +1,8 @@
+import path from "node:path";
 import { readFile } from "node:fs/promises";
 
 import {
+  type FallbackLlmRuntimeContext,
   resolveRemnicPluginEntry,
   type GatewayConfig,
 } from "@remnic/core";
@@ -188,6 +190,7 @@ export async function resolveBenchRuntimeProfile(
   const gatewayResponder = createGatewayResponder({
     gatewayConfig,
     agentId: gatewayAgentId,
+    ...openclawRuntime.runtimeContext,
   });
   const persistedRemnicConfig = sanitizePersistedConfig(
     {
@@ -248,6 +251,7 @@ async function loadOpenclawRuntimeConfig(
   remnicConfig: Record<string, unknown>;
   gatewayConfig: GatewayConfig;
   persistedGatewayConfig: GatewayConfig;
+  runtimeContext: FallbackLlmRuntimeContext;
 }> {
   if (!filePath) {
     throw new Error("openclaw-chain runtime profile requires an OpenClaw config path");
@@ -267,6 +271,17 @@ async function loadOpenclawRuntimeConfig(
     remnicConfig,
     gatewayConfig,
     persistedGatewayConfig: sanitizeGatewayConfig(gatewayConfig),
+    runtimeContext: deriveOpenclawRuntimeContext(filePath),
+  };
+}
+
+export function deriveOpenclawRuntimeContext(
+  configPath: string,
+): FallbackLlmRuntimeContext {
+  const rootDir = path.dirname(path.resolve(configPath));
+  return {
+    agentDir: path.join(rootDir, "agents", "main", "agent"),
+    workspaceDir: path.join(rootDir, "workspace"),
   };
 }
 

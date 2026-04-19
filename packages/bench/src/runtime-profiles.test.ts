@@ -5,7 +5,10 @@ import path from "node:path";
 import test from "node:test";
 
 import { buildBenchBaselineRemnicConfig } from "./adapters/remnic-adapter.ts";
-import { resolveBenchRuntimeProfile } from "./runtime-profiles.ts";
+import {
+  deriveOpenclawRuntimeContext,
+  resolveBenchRuntimeProfile,
+} from "./runtime-profiles.ts";
 
 test("baseline runtime profile keeps the stripped retrieval-only config", async () => {
   const resolved = await resolveBenchRuntimeProfile({
@@ -151,6 +154,17 @@ test("openclaw-chain runtime profile loads OpenClaw config and forces gateway ro
     "test-key",
   );
   assert.equal(resolved.adapterOptions.preserveRuntimeDefaults, true);
+});
+
+test("deriveOpenclawRuntimeContext keeps gateway auth scoped to the selected config root", () => {
+  const runtimeContext = deriveOpenclawRuntimeContext(
+    "/tmp/custom-openclaw-profile/openclaw.json",
+  );
+
+  assert.deepEqual(runtimeContext, {
+    agentDir: "/tmp/custom-openclaw-profile/agents/main/agent",
+    workspaceDir: "/tmp/custom-openclaw-profile/workspace",
+  });
 });
 
 test("openclaw-chain ignores direct system-provider overrides and keeps gateway routing", async () => {

@@ -136,10 +136,7 @@ import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 // top level (erased at compile time); runtime access goes through
 // loadBenchModule() / tryLoadBenchModule() so the CLI stays functional for
 // users who never run `remnic bench *`.
-import {
-  loadBenchModule,
-  tryLoadBenchModule,
-} from "./optional-bench.js";
+import { loadBenchModule, tryLoadBenchModule } from "./optional-bench.js";
 import type {
   BenchConfig,
   BenchmarkDefinition,

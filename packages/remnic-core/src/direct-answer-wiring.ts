@@ -178,4 +178,3 @@ export async function tryDirectAnswer(
     queryEntityRefs,
   });
 }
-

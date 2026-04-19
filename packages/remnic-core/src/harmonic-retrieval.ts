@@ -221,4 +221,3 @@ export async function searchHarmonicRetrieval(options: {
     )
     .slice(0, options.maxResults);
 }
-

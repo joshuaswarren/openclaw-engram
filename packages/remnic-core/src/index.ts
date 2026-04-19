@@ -604,7 +604,12 @@ export {
   type BulkImportCliCommandOptions,
 } from "./cli.js";
 
-export { FallbackLlmClient, type FallbackLlmOptions, type FallbackLlmResponse } from "./fallback-llm.js";
+export {
+  FallbackLlmClient,
+  type FallbackLlmOptions,
+  type FallbackLlmResponse,
+  type FallbackLlmRuntimeContext,
+} from "./fallback-llm.js";
 
 // ---------------------------------------------------------------------------
 // Training-data export (issue #459)
