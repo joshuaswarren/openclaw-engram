@@ -25,7 +25,9 @@
     "src/adapters/**/*.ts",
     "src/fixtures/**/*.ts",
     "src/integrity/**/*.ts",
+    "src/judges/**/*.ts",
     "src/providers/**/*.ts",
+    "src/stats/**/*.ts",
     "src/benchmarks/published/**/*.ts",
     "src/benchmarks/custom/**/*.ts",
     "src/benchmarks/remnic/**/*.ts"

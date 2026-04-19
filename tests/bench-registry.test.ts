@@ -32,6 +32,10 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "ingestion-backlink-f1",
       "ingestion-setup-friction",
       "ingestion-citation-accuracy",
+      "assistant-morning-brief",
+      "assistant-meeting-prep",
+      "assistant-next-best-action",
+      "assistant-synthesis",
     ],
   );
   assert.deepEqual(
@@ -57,11 +61,15 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "remnic",
       "remnic",
       "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
+      "remnic",
     ],
   );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,ingestion-entity-recall,ingestion-backlink-f1",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,ingestion-entity-recall,ingestion-backlink-f1,assistant-morning-brief,assistant-meeting-prep,assistant-next-best-action,assistant-synthesis",
   );
   // Schema completeness, setup friction, and citation accuracy remain gated off until their adapter contracts are wired.
   assert.equal(getBenchmark("ingestion-schema-completeness")?.runnerAvailable, false);
