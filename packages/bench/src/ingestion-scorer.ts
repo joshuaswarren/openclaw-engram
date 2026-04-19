@@ -134,19 +134,24 @@ export function schemaCompleteness(
       totalApplicable++;
       const passes = matchedPage ? matchedPage.frontmatter[field] !== undefined : false;
       if (passes) totalPassing++;
-      fieldPasses[field]?.push(passes ? 1 : 0);
+      if (!(field in fieldPasses)) fieldPasses[field] = [];
+      fieldPasses[field]!.push(passes ? 1 : 0);
     }
 
     if (gp.expectExecSummary) {
       totalApplicable++;
       const passes = matchedPage?.hasExecSummary ?? false;
       if (passes) totalPassing++;
+      if (!("field_exec_summary" in fieldPasses)) fieldPasses["field_exec_summary"] = [];
+      fieldPasses["field_exec_summary"]!.push(passes ? 1 : 0);
     }
 
     if (gp.expectTimeline) {
       totalApplicable++;
       const passes = matchedPage?.hasTimeline ?? false;
       if (passes) totalPassing++;
+      if (!("field_timeline" in fieldPasses)) fieldPasses["field_timeline"] = [];
+      fieldPasses["field_timeline"]!.push(passes ? 1 : 0);
     }
 
     if (gp.expectSeeAlso && gp.expectSeeAlso.length > 0) {

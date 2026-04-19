@@ -172,7 +172,5 @@ export {
 export {
   matchEntity,
   entityRecall,
-  linkMatches,
-  backlinkF1,
   schemaCompleteness,
 } from "./ingestion-scorer.js";
