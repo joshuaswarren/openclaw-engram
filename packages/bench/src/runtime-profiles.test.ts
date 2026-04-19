@@ -40,7 +40,8 @@ test("real runtime profile preserves the configured Remnic retrieval settings", 
       apikey: "compact-secret",
       authtoken: "compact-token",
       clientsecret: "compact-client-secret",
-      sessionToken: "metadata-not-a-secret",
+      oauthToken: "oauth-token",
+      sessionTokenCount: 3,
     },
   }),
   );
@@ -61,14 +62,16 @@ test("real runtime profile preserves the configured Remnic retrieval settings", 
   assert.equal(resolved.remnicConfig.apikey, "[redacted]");
   assert.equal(resolved.remnicConfig.authtoken, "[redacted]");
   assert.equal(resolved.remnicConfig.clientsecret, "[redacted]");
-  assert.equal(resolved.remnicConfig.sessionToken, "metadata-not-a-secret");
+  assert.equal(resolved.remnicConfig.oauthToken, "[redacted]");
+  assert.equal(resolved.remnicConfig.sessionTokenCount, 3);
   assert.equal(resolved.effectiveRemnicConfig.openaiApiKey, "super-secret");
   assert.equal(resolved.effectiveRemnicConfig.secretKey, "secondary-secret");
   assert.equal(resolved.effectiveRemnicConfig.refreshToken, "oauth-refresh-token");
   assert.equal(resolved.effectiveRemnicConfig.apikey, "compact-secret");
   assert.equal(resolved.effectiveRemnicConfig.authtoken, "compact-token");
   assert.equal(resolved.effectiveRemnicConfig.clientsecret, "compact-client-secret");
-  assert.equal(resolved.effectiveRemnicConfig.sessionToken, "metadata-not-a-secret");
+  assert.equal(resolved.effectiveRemnicConfig.oauthToken, "oauth-token");
+  assert.equal(resolved.effectiveRemnicConfig.sessionTokenCount, 3);
   assert.equal(
     (resolved.adapterOptions.configOverrides as { openaiApiKey?: string }).openaiApiKey,
     "super-secret",

@@ -141,6 +141,7 @@ export async function llmJudgeScoreDetailed(
     };
   }
 
+  const startedAt = performance.now();
   try {
     if (judge.scoreWithMetrics) {
       return await judge.scoreWithMetrics(question, predicted, expected);
@@ -159,7 +160,7 @@ export async function llmJudgeScoreDetailed(
     return {
       score: -1,
       tokens: { input: 0, output: 0 },
-      latencyMs: 0,
+      latencyMs: Math.round(performance.now() - startedAt),
     };
   }
 }
