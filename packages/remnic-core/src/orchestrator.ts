@@ -22,10 +22,12 @@ import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   judgeFactDurability,
   createVerdictCache,
+  validateProcedureExtraction,
   type JudgeBatchResult,
   type JudgeCandidate,
   type JudgeVerdict,
 } from "./extraction-judge.js";
+import { buildProcedurePersistBody } from "./procedural/procedure-types.js";
 import {
   attachCitation,
   type CitationContext,
@@ -2263,6 +2265,7 @@ export class Orchestrator {
       log.debug(`nightly governance cron auto-register error: ${err}`);
     }
   }
+
 
   async applyBehaviorRuntimePolicy(
     state: BehaviorLoopPolicyState,
@@ -6756,6 +6759,7 @@ export class Orchestrator {
       return section;
     })();
 
+
     const compoundingPromise = observeEnrichmentPromise(
       (async (): Promise<string | null> => {
         const t0 = Date.now();
@@ -7022,6 +7026,7 @@ export class Orchestrator {
         calibrationSection,
       );
     }
+
 
     // 1a. Identity continuity
     if (identityContinuity) {
@@ -9817,6 +9822,9 @@ export class Orchestrator {
           // category slugs defined in the taxonomy; the fallback is the
           // original ExtractedFact.category which is already typed.
           const judgeCategory = (preRoutedCategories[fi] ?? f.category) as import("./types.js").MemoryCategory;
+          if (judgeCategory === "procedure") {
+            continue;
+          }
           const tags = Array.isArray(f.tags) ? f.tags : [];
           const imp = scoreImportance(
             f.content,
@@ -9955,6 +9963,11 @@ export class Orchestrator {
         fact.tags,
       );
 
+      if (writeCategory === "procedure" && this.config.procedural?.enabled !== true) {
+        log.debug("persistExtraction: skip procedure memory (procedural.enabled is false)");
+        continue;
+      }
+
       // Importance write-gate (issue #372). Drop facts whose locally-scored
       // level falls below the configured minimum BEFORE the semantic dedup
       // lookup so that low-importance facts never incur an embedding search.
@@ -9996,6 +10009,27 @@ export class Orchestrator {
             judgeGatedCount++;
             log.debug(
               `extraction-judge: rejected "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
+            );
+            continue;
+          }
+        }
+      }
+
+      // Procedure extraction gate (issue #519): ≥2 steps + trigger phrasing.
+      // Runs even when extractionJudgeEnabled is false (durability judge is unrelated).
+      if (writeCategory === "procedure") {
+        const procGate = validateProcedureExtraction({
+          content: fact.content,
+          procedureSteps: fact.procedureSteps,
+        });
+        if (!procGate.durable) {
+          if (this.config.extractionJudgeShadow) {
+            log.info(
+              `extraction-procedure-gate[shadow]: would reject "${fact.content.slice(0, 60)}…" reason="${procGate.reason}"`,
+            );
+          } else {
+            log.debug(
+              `extraction-procedure-gate: rejected "${fact.content.slice(0, 60)}…" reason="${procGate.reason}"`,
             );
             continue;
           }
@@ -10177,7 +10211,7 @@ export class Orchestrator {
       // When semanticChunkingEnabled is true, prefer the embedding-based
       // semantic chunker which produces more coherent topic-aligned segments.
       // Falls back to the recursive sentence-boundary chunker on failure.
-      if (this.config.chunkingEnabled) {
+      if (this.config.chunkingEnabled && writeCategory !== "procedure") {
         let chunkResult: { chunked: boolean; chunks: { content: string; index: number; tokenCount: number }[] };
 
         if (this.config.semanticChunkingEnabled) {
@@ -10451,9 +10485,12 @@ export class Orchestrator {
       }
 
       // Classify memory kind (v8.0 Phase 2B: HiMem episode/note dual store)
-      const memoryKind = this.config.episodeNoteModeEnabled
-        ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
-        : undefined;
+      const memoryKind =
+        writeCategory === "procedure"
+          ? undefined
+          : this.config.episodeNoteModeEnabled
+            ? classifyMemoryKind(fact.content, fact.tags ?? [], writeCategory)
+            : undefined;
 
       // Normal write (no chunking)
       //
@@ -10471,7 +10508,11 @@ export class Orchestrator {
       // write and defeat cross-session dedup (see `findDuplicateExplicitCapture`
       // in explicit-capture.ts which calls `hasFactContentHash(candidate.content)`
       // on raw content).
-      const citedFactContent = applyInlineCitation(fact.content);
+      const rawPersistBody =
+        writeCategory === "procedure"
+          ? buildProcedurePersistBody(fact.content, fact.procedureSteps)
+          : fact.content;
+      const citedFactContent = applyInlineCitation(rawPersistBody);
       const memoryId = await targetStorage.writeMemory(
         writeCategory,
         citedFactContent,
@@ -10491,7 +10532,7 @@ export class Orchestrator {
           intentEntityTypes: inferredIntent?.entityTypes,
           memoryKind,
           structuredAttributes: fact.structuredAttributes,
-          contentHashSource: fact.content,
+          contentHashSource: writeCategory === "fact" ? fact.content : undefined,
         },
       );
       if (routedRuleId) {
