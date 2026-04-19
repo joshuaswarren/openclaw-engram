@@ -10,7 +10,7 @@ import type {
   ResolvedRunBenchmarkOptions,
   TaskResult,
 } from "../../../types.js";
-import { aggregateTaskScores, precisionAtK } from "../../../scorer.js";
+import { precisionAtK } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import type { SchemaTierPage } from "../../../fixtures/schema-tiers/index.js";
 import {
