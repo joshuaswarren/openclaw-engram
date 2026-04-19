@@ -48,13 +48,15 @@ export async function runRetrievalTemporalBenchmark(
     const startedAt = performance.now();
     const rankedPages = rankPages(sample.query, sample.pages);
     const latencyMs = Math.round(performance.now() - startedAt);
+    const topRetrievedPageIds = rankedPages.slice(0, 5).map((page) => page.id);
+    const matchedPageIds = matchingPageIds(rankedPages, sample);
     const expectedJson = JSON.stringify({
       expectedPageIds: sample.expectedPageIds,
       window: sample.window,
     });
     const actualJson = JSON.stringify({
-      retrievedPageIds: rankedPages.slice(0, 5).map((page) => page.id),
-      matchingPageIds: matchingPageIds(rankedPages, sample),
+      retrievedPageIds: topRetrievedPageIds,
+      matchingPageIds: matchedPageIds,
     });
 
     tasks.push({
@@ -72,8 +74,8 @@ export async function runRetrievalTemporalBenchmark(
       details: {
         tier: sample.tier,
         window: sample.window,
-        retrievedPageIds: rankedPages.slice(0, 5).map((page) => page.id),
-        matchingPageIds: matchingPageIds(rankedPages, sample),
+        retrievedPageIds: topRetrievedPageIds,
+        matchingPageIds: matchedPageIds,
       },
     });
   }
