@@ -116,6 +116,22 @@ for (const benchmarkId of assistantBenchmarks) {
       const perSeed = (task.details as Record<string, unknown>).perSeedScores;
       assert.ok(Array.isArray(perSeed), "perSeedScores should be an array");
       assert.equal(perSeed.length, 3);
+
+      // Per-seed latencies must sum to the task-level latency so
+      // `cost.totalLatencyMs` reflects real runtime across seeds. See
+      // codex review P2 on PR #508.
+      const perSeedLatencies = perSeed.map(
+        (entry) => (entry as { latencyMs: number }).latencyMs,
+      );
+      const latencySum = perSeedLatencies.reduce(
+        (sum, value) => sum + value,
+        0,
+      );
+      assert.equal(
+        task.latencyMs,
+        latencySum,
+        "task.latencyMs should be the sum of per-seed latencies",
+      );
     }
 
     // Statistical block should include CI for each dimension.

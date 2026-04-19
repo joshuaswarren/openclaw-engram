@@ -275,6 +275,13 @@ export function parseRubricResponse(raw: string): {
 /**
  * Spot-check logger that appends selected judge decisions to a JSONL file.
  * The caller controls the `runId` to keep logs grouped per-run.
+ *
+ * Logging is a diagnostic side effect, so any filesystem error (non-writable
+ * directory, path conflict with an existing file, mid-run ENOSPC, etc.) is
+ * caught and downgraded to a one-time `console.warn` rather than aborting
+ * the benchmark run. We also fail-safe the `mkdirSync` at construction
+ * time: if the directory cannot be created, we return a no-op logger so
+ * callers can still run the benchmark end-to-end.
  */
 export function createSpotCheckFileLogger(options: {
   runId: string;
@@ -297,9 +304,20 @@ export function createSpotCheckFileLogger(options: {
     );
   }
 
-  mkdirSync(directory, { recursive: true });
+  try {
+    mkdirSync(directory, { recursive: true });
+  } catch (error) {
+    console.warn(
+      `[sealed-rubric] spot-check logger disabled: could not create directory ${directory}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    return { log() {} };
+  }
+
   const logPath = path.join(directory, `${runId}.jsonl`);
   let written = 0;
+  let warnedOnWriteFailure = false;
   const cap = typeof sampleSize === "number" && sampleSize > 0 ? sampleSize : 5;
   const rate = typeof sampleRate === "number" ? sampleRate : 0.25;
 
@@ -320,8 +338,19 @@ export function createSpotCheckFileLogger(options: {
         scenarioPreview: truncate(context.scenario, 240),
         outputPreview: truncate(context.assistantOutput, 240),
       };
-      appendFileSync(logPath, `${JSON.stringify(entry)}\n`, "utf8");
-      written += 1;
+      try {
+        appendFileSync(logPath, `${JSON.stringify(entry)}\n`, "utf8");
+        written += 1;
+      } catch (error) {
+        if (!warnedOnWriteFailure) {
+          console.warn(
+            `[sealed-rubric] spot-check write failed for ${logPath}: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          warnedOnWriteFailure = true;
+        }
+      }
     },
   };
 }

@@ -121,7 +121,10 @@ export async function runAssistantBenchmark(
   const statistics = buildStatistics(tasks, runnerOptions.random);
 
   const remnicVersion = await getRemnicVersion();
+  // `task.latencyMs` now holds the summed per-seed wall-clock for that
+  // scenario, so the bench-level totals below roll up to real runtime.
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const totalSeedExecutions = tasks.length * runCount;
 
   return {
     meta: {
@@ -153,8 +156,10 @@ export async function runAssistantBenchmark(
       outputTokens: 0,
       estimatedCostUsd: 0,
       totalLatencyMs,
+      // Mean latency per seed execution (one agent call + one judge call),
+      // which is the actual per-query unit of work in the Assistant tier.
       meanQueryLatencyMs:
-        tasks.length > 0 ? totalLatencyMs / tasks.length : 0,
+        totalSeedExecutions > 0 ? totalLatencyMs / totalSeedExecutions : 0,
     },
     results: {
       tasks,
@@ -193,25 +198,32 @@ function collapseScenario(
   ) / ASSISTANT_RUBRIC_DIMENSIONS.length;
   scores.overall = roundScore(overall);
 
+  // Report cumulative wall-clock per task (sum across seeds) so the
+  // downstream `cost.totalLatencyMs = Σ task.latencyMs` aggregation in
+  // `runAssistantBenchmark` reflects real runtime across seeded runs.
+  // Under-reporting here makes multi-seed Assistant runs look artificially
+  // cheap compared to their single-seed counterparts.
+  const totalTaskLatencyMs = perSeed.reduce(
+    (sum, run) => sum + run.latencyMs,
+    0,
+  );
+  const meanSeedLatencyMs =
+    perSeed.length > 0 ? Math.round(totalTaskLatencyMs / perSeed.length) : 0;
+
   return {
     taskId: scenario.id,
     question: scenario.scenarioPrompt,
     expected: "<rubric-judged>",
     actual: perSeed[0]?.assistantOutput ?? "",
     scores,
-    latencyMs:
-      perSeed.length > 0
-        ? Math.round(
-            perSeed.reduce((sum, run) => sum + run.latencyMs, 0) /
-              perSeed.length,
-          )
-        : 0,
+    latencyMs: totalTaskLatencyMs,
     tokens: { input: 0, output: 0 },
     details: {
       focus: scenario.focus,
       rubricId: rubric.id,
       rubricSha256: rubric.sha256,
       perSeedScores,
+      meanSeedLatencyMs,
       judgeParseFailures: perSeedScores.filter((run) => !run.parseOk).length,
     },
   };

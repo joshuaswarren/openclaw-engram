@@ -147,6 +147,60 @@ test("runSealedJudge parses valid judge JSON and records rubric provenance", asy
   assert.equal(decision.scores.calibration, 5);
 });
 
+test("createSpotCheckFileLogger degrades to a no-op when the directory cannot be created", async () => {
+  const { createSpotCheckFileLogger } = await import(
+    "../packages/bench/src/judges/sealed-rubric.js"
+  );
+  const rubric = loadSealedRubric();
+  const root = mkdtempSync(path.join(tmpdir(), "remnic-spotcheck-conflict-"));
+  // Write a regular file at `collision`, then ask the logger to create a
+  // directory _inside_ that file path. `mkdirSync` must throw because
+  // `collision` is not a directory, and the logger must swallow the error.
+  const collisionPath = path.join(root, "collision");
+  const fs = await import("node:fs");
+  fs.writeFileSync(collisionPath, "blocker");
+  const originalWarn = console.warn;
+  const warnings: string[] = [];
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args.join(" "));
+  };
+  try {
+    const logger = createSpotCheckFileLogger({
+      runId: "test-no-dir",
+      directory: path.join(collisionPath, "inner"),
+      sampleRate: 1,
+      sampleSize: 3,
+      random: () => 0,
+    });
+
+    // Call log — must not throw.
+    logger.log(
+      {
+        taskId: "t1",
+        rubricId: rubric.id,
+        rubricSha256: rubric.sha256,
+        scores: zeroScores(),
+        notes: "ok",
+        rawResponse: "",
+        parseOk: true,
+      },
+      {
+        taskId: "t1",
+        scenario: "s",
+        memorySummary: "m",
+        assistantOutput: "o",
+      },
+    );
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  assert.ok(
+    warnings.some((line) => line.includes("spot-check logger disabled")),
+    "logger should warn once when mkdirSync throws",
+  );
+});
+
 test("createDeterministicSpotCheckLogger writes jsonl entries up to sampleSize", async () => {
   const rubric = loadSealedRubric();
   const dir = mkdtempSync(path.join(tmpdir(), "remnic-spotcheck-"));
