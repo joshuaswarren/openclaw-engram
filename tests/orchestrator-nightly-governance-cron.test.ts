@@ -93,3 +93,27 @@ test("initialize triggers nightly governance cron auto-register when explicitly 
     await rm(workspaceDir, { recursive: true, force: true });
   }
 });
+
+test("abortDeferredInit stops deferred initialization before cron registration", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-abort-deferred-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-abort-deferred-workspace-"));
+  try {
+    const orchestrator = new Orchestrator(buildConfig(memoryDir, workspaceDir, true)) as any;
+    stubInitializeDependencies(orchestrator);
+
+    let nightlyCalls = 0;
+    orchestrator.autoRegisterNightlyGovernanceCron = () => {
+      nightlyCalls += 1;
+      return Promise.resolve();
+    };
+
+    await orchestrator.initialize();
+    orchestrator.abortDeferredInit();
+    await orchestrator.deferredReady;
+
+    assert.equal(nightlyCalls, 0);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});

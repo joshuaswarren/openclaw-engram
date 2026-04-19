@@ -80,6 +80,25 @@ function envOverrides(): Partial<ServerConfig["server"]> & { remnic?: Record<str
   return { ...overrides, ...(Object.keys(remnic).length > 0 ? { remnic } : {}) };
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
+/**
+ * Like `setTimeout` wrapped in a Promise, but respects an `AbortSignal`.
+ * Resolves immediately (without throwing) when the signal fires so the
+ * caller can check `signal.aborted` and exit cleanly.
+ */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 // ── Server startup ──────────────────────────────────────────────────────────
 
 export interface ServerResult {
@@ -88,6 +107,10 @@ export interface ServerResult {
   httpServer: EngramAccessHttpServer;
   host: string;
   port: number;
+  /** Cancel any pending startup-sync retry timers. Called automatically on shutdown. */
+  cancelStartupSync: () => void;
+  /** Abort deferred orchestrator initialization (QMD sync, warmup, cache). */
+  abortDeferredInit: () => void;
 }
 
 export async function startServer(options?: {
@@ -118,6 +141,9 @@ export async function startServer(options?: {
   const config = parseConfig(remnicConfig);
   const orchestrator = new Orchestrator(config);
   await orchestrator.initialize();
+
+  // Start the HTTP server immediately so health checks, MCP handshakes,
+  // and liveness probes can connect while deferred init is still running.
   const service = new EngramAccessService(orchestrator);
 
   const authToken = serverConfig.authToken ?? readCompatEnv("REMNIC_AUTH_TOKEN", "ENGRAM_AUTH_TOKEN") ?? "";
@@ -143,7 +169,62 @@ export async function startServer(options?: {
 
   const { host, port } = await httpServer.start();
 
-  return { config, service, httpServer, host, port };
+  // Fire-and-forget: wait for deferred init (QMD probe, collection setup,
+  // warmup) then check QMD availability and retry if needed. This does NOT
+  // block the server listener — connections are accepted immediately above.
+  // An AbortController allows the shutdown handler to cancel pending retries.
+  const startupSyncAbort = new AbortController();
+
+  orchestrator.deferredReady.then(() => {
+    // Skip retries when search is intentionally disabled (noop backend).
+    if (orchestrator.qmd.debugStatus() === "backend=noop") {
+      log.debug("QMD startup-sync: search backend is noop, skipping retries");
+      return;
+    }
+
+    // Retry when either: (a) QMD is not available yet (cold-start race), or
+    // (b) QMD is available but the deferred init sync step failed silently
+    // (e.g., update errors swallowed by backend, throttle skip, transient
+    // network failure). Without (b), the daemon permanently serves stale
+    // recall after a failed sync despite healthy QMD probe.
+    const needsRetry = !orchestrator.qmd.isAvailable() || !orchestrator.deferredSyncSucceeded;
+    if (!needsRetry) {
+      log.debug("QMD startup-sync: deferred init completed successfully, no retries needed");
+      return;
+    }
+
+    const RETRY_DELAYS_MS = [5_000, 15_000, 30_000, 60_000, 120_000];
+    (async () => {
+      for (const delay of RETRY_DELAYS_MS) {
+        await abortableDelay(delay, startupSyncAbort.signal);
+
+        if (startupSyncAbort.signal.aborted) {
+          log.debug("QMD startup-sync retry: cancelled by shutdown");
+          return;
+        }
+
+        const synced = await orchestrator.startupSearchSync();
+        if (!synced) {
+          if (orchestrator.qmd.debugStatus() === "backend=noop") {
+            log.debug("QMD startup-sync retry: search intentionally disabled; stopping retries");
+            return;
+          }
+          log.debug(`QMD startup-sync retry: not available yet (next retry in ${RETRY_DELAYS_MS[RETRY_DELAYS_MS.indexOf(delay) + 1] ?? "n/a"}ms)`);
+          continue;
+        }
+
+        return; // sync succeeded, stop retrying
+      }
+
+      log.warn("QMD startup-sync retry: exhausted all retries; search index may be stale");
+    })().catch((err) => {
+      log.warn(`QMD startup-sync retry: unexpected error: ${err}`);
+    });
+  }).catch((err) => {
+    log.warn(`Deferred init error: ${err}`);
+  });
+
+  return { config, service, httpServer, host, port, cancelStartupSync: () => startupSyncAbort.abort(), abortDeferredInit: () => orchestrator.abortDeferredInit() };
 }
 
 // ── CLI entry point ──────────────────────────────────────────────────────────
@@ -206,6 +287,8 @@ Environment:
   // Graceful shutdown
   const shutdown = async (signal: string) => {
     console.log(`\nReceived ${signal}, shutting down...`);
+    result.cancelStartupSync();
+    result.abortDeferredInit();
     await result.httpServer.stop();
     process.exit(0);
   };

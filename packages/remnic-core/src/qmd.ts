@@ -793,9 +793,26 @@ function getSharedDaemonSession(qmdPath: string): QmdDaemonSession {
 
 export class QmdClient implements SearchBackend {
   private available: boolean | null = null;
-  private lastUpdateFailAtMs: number | null = null;
+  private _lastUpdateFailAtMs: number | null = null;
   private lastEmbedFailAtMs: number | null = null;
   private lastUpdateRunAtMs: number | null = null;
+
+  get lastUpdateFailedAtMs(): number | null {
+    return this._lastUpdateFailAtMs;
+  }
+
+  get lastUpdateRanAtMs(): number | null {
+    return this.lastUpdateRunAtMs;
+  }
+
+  resetUpdateThrottles(): void {
+    this._lastUpdateFailAtMs = null;
+    this.lastUpdateRunAtMs = null;
+    const gs = getGlobalQmdState();
+    gs.lastGlobalUpdateRunAtMs = null;
+    gs.lastGlobalUpdateFailAtMs = null;
+  }
+
   private readonly updateTimeoutMs: number;
   private readonly updateMinIntervalMs: number;
   private readonly slowLog?: { enabled: boolean; thresholdMs: number };
@@ -1663,8 +1680,8 @@ export class QmdClient implements SearchBackend {
         return;
       }
       if (
-        this.lastUpdateFailAtMs &&
-        now - this.lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
+        this._lastUpdateFailAtMs &&
+        now - this._lastUpdateFailAtMs < QMD_UPDATE_BACKOFF_MS
       ) {
         log.debug("QMD update: suppressed due to recent failures (backoff)");
         return;
@@ -1712,7 +1729,7 @@ export class QmdClient implements SearchBackend {
         globalState.lastUpdateFailByCollectionMs[name] = at;
         globalState.lastGlobalUpdateFailAtMs = at;
       } else {
-        this.lastUpdateFailAtMs = at;
+        this._lastUpdateFailAtMs = at;
         globalState.lastGlobalUpdateFailAtMs = at;
       }
       const msg = err instanceof Error ? err.message : String(err);
