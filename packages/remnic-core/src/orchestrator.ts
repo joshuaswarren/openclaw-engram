@@ -4023,10 +4023,18 @@ export class Orchestrator {
   ): Promise<void> {
     const tierStart = Date.now();
     try {
+      // Resolve the namespace-scoped storage up front so both trust-zone
+      // listing and candidate memory listing read from the same root.
+      // In `namespacesEnabled` deployments, the global/default
+      // `memoryDir` does not contain per-namespace trust-zone files;
+      // loading trust zones from there would silently return empty
+      // and cause the eligibility gate to drop every candidate as
+      // non-trusted, skewing observation-mode tier decisions.
+      const storage = await this.storageRouter.storageFor(namespace);
       // Read all trust-zone records up front; map by record ID for O(1)
       // lookup inside the wiring's per-candidate call.
       const trustZones = await listTrustZoneRecords({
-        memoryDir: this.config.memoryDir,
+        memoryDir: storage.dir,
         trustZoneStoreDir: this.config.trustZoneStoreDir,
         limit: 200,
       }).catch(() => ({ allRecords: [] as Array<{ recordId: string; zone: "quarantine" | "working" | "trusted" }> }));
@@ -4044,10 +4052,12 @@ export class Orchestrator {
 
       const sources: DirectAnswerSources = {
         taxonomy: DEFAULT_TAXONOMY,
-        listCandidateMemories: async ({ namespace: ns, abortSignal }) => {
-          // Resolve the namespace-scoped storage so `namespacesEnabled`
-          // deployments can't score a winner from the wrong tenant.
-          const storage = await this.storageRouter.storageFor(ns);
+        listCandidateMemories: async ({ abortSignal }) => {
+          // Reuse the namespace-scoped storage resolved above so the
+          // candidate list and trust-zone records are always read from
+          // the same namespace root — prevents a split-brain where a
+          // later `storageFor(ns)` could resolve differently and skew
+          // observation decisions.
           const all = await storage.readAllMemories();
           if (abortSignal?.aborted) return [];
           const active = all.filter(
