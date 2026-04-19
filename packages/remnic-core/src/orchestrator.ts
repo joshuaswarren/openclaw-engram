@@ -3949,14 +3949,36 @@ export class Orchestrator {
       if (this.config.recallDirectAnswerEnabled && sessionKey) {
         const principal = resolvePrincipal(sessionKey, this.config);
         const namespaceOverride = options.namespace?.trim() || undefined;
-        // Scope the observation to the same namespace recallInternal
-        // served so namespacesEnabled deployments don't leak candidates
-        // from a different tenant into the snapshot's sourceAnchors.
-        const observationNamespace =
+        // Mirror recallInternal's namespace selection: when no override
+        // is provided, recall may search all readable namespaces for the
+        // principal (`recallNamespacesForPrincipal`).  Evaluate the
+        // direct-answer gate over the same namespace set so the observer
+        // can't miss valid candidates that live in `shared` or other
+        // readable namespaces and misreport the tier decision.
+        const observationNamespaces: string[] =
           namespaceOverride &&
           canReadNamespace(principal, namespaceOverride, this.config)
-            ? namespaceOverride
-            : defaultNamespaceForPrincipal(principal, this.config);
+            ? [namespaceOverride]
+            : recallNamespacesForPrincipal(principal, this.config);
+        // Normalize the query through the same `buildRecallQueryPolicy`
+        // path recallInternal uses, so observation scores the same text
+        // recall actually ran — important for cron/instruction-heavy
+        // prompts where normalization can materially shorten or
+        // restructure the query.
+        const observationQueryPolicy = buildRecallQueryPolicy(
+          prompt,
+          sessionKey,
+          {
+            cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
+            cronRecallNormalizedQueryMaxChars:
+              this.config.cronRecallNormalizedQueryMaxChars,
+            cronRecallInstructionHeavyTokenCap:
+              this.effectiveCronRecallInstructionHeavyTokenCap(),
+            cronConversationRecallMode: this.config.cronConversationRecallMode,
+          },
+        );
+        const observationQuery =
+          observationQueryPolicy.retrievalQuery || prompt;
         // Capture the identity of the snapshot just written by
         // recallInternal.  Back-to-back recalls on the same sessionKey
         // overwrite this snapshot, so before the async annotation lands
@@ -3974,9 +3996,9 @@ export class Orchestrator {
         const previous = this.directAnswerObservationChain;
         this.directAnswerObservationChain = previous.then(() =>
           this.annotateDirectAnswerTier(
-            prompt,
+            observationQuery,
             sessionKey,
-            observationNamespace,
+            observationNamespaces,
             expectedIdentity,
             abortController.signal,
           ).catch((err) => {
@@ -4017,30 +4039,51 @@ export class Orchestrator {
   private async annotateDirectAnswerTier(
     prompt: string,
     sessionKey: string,
-    namespace: string,
+    namespaces: string[],
     expectedIdentity: { traceId?: string; recordedAt?: string } | undefined,
     parentAbortSignal?: AbortSignal,
   ): Promise<void> {
     const tierStart = Date.now();
     try {
-      // Resolve the namespace-scoped storage up front so both trust-zone
-      // listing and candidate memory listing read from the same root.
-      // In `namespacesEnabled` deployments, the global/default
-      // `memoryDir` does not contain per-namespace trust-zone files;
-      // loading trust zones from there would silently return empty
-      // and cause the eligibility gate to drop every candidate as
-      // non-trusted, skewing observation-mode tier decisions.
-      const storage = await this.storageRouter.storageFor(namespace);
-      // Read all trust-zone records up front; map by record ID for O(1)
-      // lookup inside the wiring's per-candidate call.
-      const trustZones = await listTrustZoneRecords({
-        memoryDir: storage.dir,
-        trustZoneStoreDir: this.config.trustZoneStoreDir,
-        limit: 200,
-      }).catch(() => ({ allRecords: [] as Array<{ recordId: string; zone: "quarantine" | "working" | "trusted" }> }));
-      const trustZoneByRecordId = new Map<string, "quarantine" | "working" | "trusted">();
-      for (const record of trustZones.allRecords ?? []) {
-        trustZoneByRecordId.set(record.recordId, record.zone);
+      // Evaluate across every readable namespace recall itself would
+      // have searched.  In `namespacesEnabled` deployments recall fans
+      // out over `recallNamespacesForPrincipal`, so the observer must
+      // union candidates and trust-zone records across the same set —
+      // otherwise a winner living in `shared` (or another readable
+      // namespace) is invisible to the observer and `tierExplain`
+      // would misreport the eligibility verdict for that recall.
+      const scopedNamespaces = namespaces.length > 0
+        ? namespaces
+        : [this.config.defaultNamespace];
+      const trustZoneByRecordId = new Map<
+        string,
+        "quarantine" | "working" | "trusted"
+      >();
+      // Preserve namespace-scoped storage handles so candidate
+      // listing below reads from exactly the same roots we loaded
+      // trust-zone records from — prevents a split-brain where a
+      // later `storageFor(ns)` could resolve differently and skew
+      // observation decisions.
+      const scopedStorages = new Map<
+        string,
+        Awaited<ReturnType<typeof this.storageRouter.storageFor>>
+      >();
+      for (const ns of scopedNamespaces) {
+        const storage = await this.storageRouter.storageFor(ns);
+        scopedStorages.set(ns, storage);
+        const trustZones = await listTrustZoneRecords({
+          memoryDir: storage.dir,
+          trustZoneStoreDir: this.config.trustZoneStoreDir,
+          limit: 200,
+        }).catch(() => ({
+          allRecords: [] as Array<{
+            recordId: string;
+            zone: "quarantine" | "working" | "trusted";
+          }>,
+        }));
+        for (const record of trustZones.allRecords ?? []) {
+          trustZoneByRecordId.set(record.recordId, record.zone);
+        }
       }
 
       // Track the pre-filter candidate count so `candidatesConsidered`
@@ -4053,18 +4096,21 @@ export class Orchestrator {
       const sources: DirectAnswerSources = {
         taxonomy: DEFAULT_TAXONOMY,
         listCandidateMemories: async ({ abortSignal }) => {
-          // Reuse the namespace-scoped storage resolved above so the
-          // candidate list and trust-zone records are always read from
-          // the same namespace root — prevents a split-brain where a
-          // later `storageFor(ns)` could resolve differently and skew
-          // observation decisions.
-          const all = await storage.readAllMemories();
-          if (abortSignal?.aborted) return [];
-          const active = all.filter(
-            (m) => (m.frontmatter.status ?? "active") === "active",
-          );
-          candidatesConsidered = active.length;
-          return active;
+          const union: MemoryFile[] = [];
+          for (const ns of scopedNamespaces) {
+            if (abortSignal?.aborted) return [];
+            const storage =
+              scopedStorages.get(ns) ??
+              (await this.storageRouter.storageFor(ns));
+            const all = await storage.readAllMemories();
+            for (const m of all) {
+              if ((m.frontmatter.status ?? "active") === "active") {
+                union.push(m);
+              }
+            }
+          }
+          candidatesConsidered = union.length;
+          return union;
         },
         trustZoneFor: async (memoryId: string) =>
           trustZoneByRecordId.get(memoryId) ?? null,
@@ -4076,7 +4122,11 @@ export class Orchestrator {
 
       const result = await tryDirectAnswer({
         query: prompt,
-        namespace,
+        // The wiring passes this namespace through to the caller's
+        // `listCandidateMemories` hook; we perform our own multi-ns
+        // union above and ignore it, so pass the primary namespace
+        // (the one recordeded on the snapshot) for logging/symmetry.
+        namespace: scopedNamespaces[0] ?? this.config.defaultNamespace,
         config: this.config,
         sources,
         abortSignal: parentAbortSignal,
