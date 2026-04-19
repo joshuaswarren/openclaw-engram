@@ -311,13 +311,39 @@ export class LastRecallStore {
    *
    * No-op when no snapshot exists for the given session; callers do
    * not need to guard on existence.
+   *
+   * When `expected` is supplied, the write is further guarded against
+   * concurrent recall races: back-to-back recalls on the same session
+   * key overwrite the stored snapshot immediately, while the async
+   * observation hook can race to land after a newer recall's snapshot
+   * was already recorded.  The `expected.traceId` / `expected.recordedAt`
+   * fields identify the snapshot the caller *computed against*; if
+   * neither matches the current snapshot, the annotation is dropped
+   * rather than attached to a newer query it was not computed for.
    */
   async annotateTierExplain(
     sessionKey: string,
     tierExplain: RecallTierExplain,
+    expected?: { traceId?: string; recordedAt?: string },
   ): Promise<void> {
     const current = this.state[sessionKey];
     if (!current) return;
+    if (expected) {
+      const traceIdMatches =
+        expected.traceId !== undefined && current.traceId === expected.traceId;
+      const recordedAtMatches =
+        expected.recordedAt !== undefined &&
+        current.recordedAt === expected.recordedAt;
+      // Prefer traceId when the caller supplied it; fall back to
+      // recordedAt when traceId is absent.  Reject the write if
+      // neither identifier matches so a stale observation from a
+      // prior recall cannot overwrite a newer session snapshot.
+      if (expected.traceId !== undefined) {
+        if (!traceIdMatches) return;
+      } else if (expected.recordedAt !== undefined && !recordedAtMatches) {
+        return;
+      }
+    }
     this.state[sessionKey] = {
       ...current,
       tierExplain: cloneTierExplain(tierExplain),

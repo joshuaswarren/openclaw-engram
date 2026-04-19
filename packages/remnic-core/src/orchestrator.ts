@@ -3957,12 +3957,27 @@ export class Orchestrator {
           canReadNamespace(principal, namespaceOverride, this.config)
             ? namespaceOverride
             : defaultNamespaceForPrincipal(principal, this.config);
+        // Capture the identity of the snapshot just written by
+        // recallInternal.  Back-to-back recalls on the same sessionKey
+        // overwrite this snapshot, so before the async annotation lands
+        // we check the current snapshot still matches.  Without this
+        // guard, an older observation could attach its tier-explain
+        // block onto a newer query's snapshot and misreport which
+        // tier served the latest recall in `--explain` output.
+        const expectedSnapshot = this.lastRecall.get(sessionKey);
+        const expectedIdentity = expectedSnapshot
+          ? {
+              traceId: expectedSnapshot.traceId,
+              recordedAt: expectedSnapshot.recordedAt,
+            }
+          : undefined;
         const previous = this.directAnswerObservationChain;
         this.directAnswerObservationChain = previous.then(() =>
           this.annotateDirectAnswerTier(
             prompt,
             sessionKey,
             observationNamespace,
+            expectedIdentity,
             abortController.signal,
           ).catch((err) => {
             log.debug(`direct-answer observation chain error: ${err}`);
@@ -4003,6 +4018,7 @@ export class Orchestrator {
     prompt: string,
     sessionKey: string,
     namespace: string,
+    expectedIdentity: { traceId?: string; recordedAt?: string } | undefined,
     parentAbortSignal?: AbortSignal,
   ): Promise<void> {
     const tierStart = Date.now();
@@ -4069,7 +4085,17 @@ export class Orchestrator {
         latencyMs: Date.now() - tierStart,
         sourceAnchors: [{ path: result.winner.memory.path }],
       };
-      await this.lastRecall.annotateTierExplain(sessionKey, explain);
+      // Pass the expected identity captured at enqueue time so the
+      // annotation is dropped if a subsequent recall has already
+      // replaced the session's snapshot.  Without this guard, an older
+      // observation's tier-explain block would be attached to the
+      // newer snapshot and misreport which tier served the latest
+      // recall in CLI/HTTP/MCP --explain output.
+      await this.lastRecall.annotateTierExplain(
+        sessionKey,
+        explain,
+        expectedIdentity,
+      );
     } catch (err) {
       if (err instanceof Error && err.name === "AbortError") return;
       log.debug(`direct-answer observation failed: ${err}`);
