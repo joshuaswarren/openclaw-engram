@@ -26,7 +26,7 @@ import {
 
 function sliceWithBudget<T>(cases: T[], budget: number): { picked: T[]; remaining: number } {
   if (!Number.isFinite(budget)) {
-    return { picked: cases, remaining: 0 };
+    return { picked: cases, remaining: Number.POSITIVE_INFINITY };
   }
   if (budget <= 0) {
     return { picked: [], remaining: 0 };
