@@ -29,7 +29,7 @@ interface BenchAdapterBaseConfig {
   lcmEnabled: true;
 }
 
-const BENCH_ADAPTER_SHARED_CONFIG: Record<string, unknown> = {
+export const BENCH_ADAPTER_SHARED_CONFIG: Record<string, unknown> = {
   qmdEnabled: false,
   qmdColdTierEnabled: false,
   transcriptEnabled: false,
@@ -67,7 +67,7 @@ const BENCH_ADAPTER_SHARED_CONFIG: Record<string, unknown> = {
   episodeNoteModeEnabled: false,
 };
 
-const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, unknown>> = {
+export const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, unknown>> = {
   direct: {
     extractionDedupeEnabled: true,
     extractionMinChars: 10,
@@ -81,6 +81,14 @@ const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, unknown
     recallPlannerEnabled: false,
   },
 };
+
+export function buildBenchBaselineRemnicConfig(): Record<string, unknown> {
+  return {
+    ...BENCH_ADAPTER_SHARED_CONFIG,
+    ...BENCH_ADAPTER_MODE_CONFIG.direct,
+    lcmEnabled: true,
+  };
+}
 
 export function buildBenchAdapterConfig(
   mode: BenchAdapterMode,

@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildBenchAdapterConfig } from "./remnic-adapter.ts";
+import {
+  buildBenchAdapterConfig,
+  buildBenchBaselineRemnicConfig,
+} from "./remnic-adapter.ts";
 
 const BASE_CONFIG = {
   memoryDir: "/tmp/remnic-bench-memory",
@@ -17,6 +20,13 @@ test("direct adapter keeps its recall-friendly defaults without overrides", () =
   assert.equal(config.extractionMinUserTurns, 0);
   assert.equal(config.recallPlannerEnabled, true);
   assert.equal(config.queryExpansionEnabled, false);
+});
+
+test("persisted baseline config stays aligned with direct adapter defaults", () => {
+  const { memoryDir: _memoryDir, workspaceDir: _workspaceDir, ...directConfig } =
+    buildBenchAdapterConfig("direct", BASE_CONFIG);
+
+  assert.deepEqual(buildBenchBaselineRemnicConfig(), directConfig);
 });
 
 test("adapter sandbox paths cannot be overridden by runtime config", () => {

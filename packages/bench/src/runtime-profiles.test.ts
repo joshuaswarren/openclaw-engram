@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import { buildBenchBaselineRemnicConfig } from "./adapters/remnic-adapter.ts";
 import { resolveBenchRuntimeProfile } from "./runtime-profiles.ts";
 
 test("baseline runtime profile keeps the stripped retrieval-only config", async () => {
@@ -12,6 +13,7 @@ test("baseline runtime profile keeps the stripped retrieval-only config", async 
   });
 
   assert.equal(resolved.profile, "baseline");
+  assert.deepEqual(resolved.remnicConfig, buildBenchBaselineRemnicConfig());
   assert.equal(resolved.remnicConfig.qmdEnabled, false);
   assert.equal(resolved.remnicConfig.queryExpansionEnabled, false);
   assert.equal(resolved.remnicConfig.rerankEnabled, false);

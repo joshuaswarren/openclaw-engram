@@ -8,6 +8,7 @@ import type {
   BenchJudge,
   BenchResponder,
 } from "./adapters/types.js";
+import { buildBenchBaselineRemnicConfig } from "./adapters/remnic-adapter.ts";
 import {
   ASSISTANT_AGENT_CONFIG_KEY,
   ASSISTANT_JUDGE_CONFIG_KEY,
@@ -61,49 +62,6 @@ const GATEWAY_SECRET_SUFFIXES = [
   "token",
 ] as const;
 
-const BASELINE_REMNIC_CONFIG: Record<string, unknown> = {
-  qmdEnabled: false,
-  qmdColdTierEnabled: false,
-  transcriptEnabled: false,
-  hourlySummariesEnabled: false,
-  daySummaryEnabled: false,
-  identityEnabled: false,
-  identityContinuityEnabled: false,
-  namespacesEnabled: false,
-  sharedContextEnabled: false,
-  workTasksEnabled: false,
-  workProjectsEnabled: false,
-  commitmentLedgerEnabled: false,
-  resumeBundlesEnabled: false,
-  nativeKnowledge: { enabled: false },
-  lcmEnabled: true,
-  lcmLeafBatchSize: 4,
-  lcmRollupFanIn: 3,
-  lcmFreshTailTurns: 8,
-  lcmMaxDepth: 4,
-  lcmDeterministicMaxTokens: 512,
-  lcmRecallBudgetShare: 1.0,
-  extractionDedupeEnabled: true,
-  extractionMinChars: 10,
-  extractionMinUserTurns: 0,
-  recallPlannerEnabled: true,
-  queryExpansionEnabled: false,
-  rerankEnabled: false,
-  memoryBoxesEnabled: false,
-  traceWeaverEnabled: false,
-  threadingEnabled: false,
-  factDeduplicationEnabled: false,
-  knowledgeIndexEnabled: false,
-  entityRetrievalEnabled: false,
-  verifiedRecallEnabled: false,
-  queryAwareIndexingEnabled: false,
-  contradictionDetectionEnabled: false,
-  memoryLinkingEnabled: false,
-  topicExtractionEnabled: false,
-  chunkingEnabled: true,
-  episodeNoteModeEnabled: false,
-};
-
 export async function resolveBenchRuntimeProfile(
   options: ResolveBenchRuntimeProfileOptions,
 ): Promise<ResolvedBenchRuntimeProfile> {
@@ -132,11 +90,10 @@ export async function resolveBenchRuntimeProfile(
     : undefined;
 
   if (profile === "baseline") {
-    const persistedRemnicConfig = sanitizePersistedConfig({
-      ...BASELINE_REMNIC_CONFIG,
-    });
+    const baselineConfig = buildBenchBaselineRemnicConfig();
+    const persistedRemnicConfig = sanitizePersistedConfig(baselineConfig);
     const effectiveRemnicConfig = withAssistantHooks(
-      { ...BASELINE_REMNIC_CONFIG },
+      { ...baselineConfig },
       responder,
       structuredJudge,
     );
