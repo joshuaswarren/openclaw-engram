@@ -308,9 +308,10 @@ describe("integration: WeClone → @remnic/core bulk-import", () => {
       { maxTurnsPerChunk: 4, overlapTurns: 1 },
     );
 
-    // Sliding window: step = 4 - 1 = 3, starts at 0, 3, 6, 9 — last chunk
-    // reaches the end of the array and stops.
-    assert.ok(chunks.length >= 3);
+    // Sliding window: step = 4 - 1 = 3. Windows start at 0, 3, 6. The
+    // third window covers msg-6..msg-9 (end === turns.length), so the
+    // loop breaks and we get exactly 3 chunks.
+    assert.equal(chunks.length, 3);
     assert.equal(chunks[0][0].content, "msg-0");
     assert.equal(chunks[0].at(-1)?.content, "msg-3");
     // Overlap of 1 means chunk 1 starts at msg-3 (overlap with chunk 0's tail)
