@@ -45,10 +45,10 @@ export function swapDirectoryWithRollback(
         fs.renameSync(rollbackDir, targetDir);
         hasRollbackCopy = false;
       } catch (restoreError) {
-        throw new Error(
+        throw new AggregateError(
+          [swapError, restoreError],
           `Failed to stage upgraded plugin and failed to restore the previous plugin copy. ` +
           `The last known-good plugin remains preserved at ${rollbackDir}.`,
-          { cause: restoreError },
         );
       }
     }

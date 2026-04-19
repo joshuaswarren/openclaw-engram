@@ -152,3 +152,43 @@ test("createOpenclawUpgradeRollbackFailure preserves both the install and rollba
   assert.match(error.message, /Automatic rollback also failed: restore rename failed/);
   assert.match(error.message, /Original upgrade failure: package\.json parse failed/);
 });
+
+test("swapDirectoryWithRollback preserves both swap and restore failures", async () => {
+  const tmp = await makeTmpDir();
+  const pluginDir = path.join(tmp, "extensions", "openclaw-remnic");
+  const stagedDir = path.join(tmp, "staged");
+  const rollbackDir = path.join(tmp, "rollback");
+
+  writeMarker(pluginDir, "old-plugin");
+  writeMarker(stagedDir, "new-plugin");
+
+  const renameSync = fs.renameSync;
+  let renameCalls = 0;
+  fs.renameSync = ((from: fs.PathLike, to: fs.PathLike) => {
+    renameCalls += 1;
+    if (renameCalls === 2) {
+      throw new Error("swap failed");
+    }
+    if (renameCalls === 3) {
+      throw new Error("restore failed");
+    }
+    return renameSync(from, to);
+  }) as typeof fs.renameSync;
+
+  try {
+    assert.throws(
+      () => swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir),
+      (error: unknown) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.errors.length, 2);
+        assert.equal((error.errors[0] as Error).message, "swap failed");
+        assert.equal((error.errors[1] as Error).message, "restore failed");
+        assert.match(error.message, /Failed to stage upgraded plugin/);
+        return true;
+      },
+    );
+    assert.equal(readMarker(rollbackDir), "old-plugin");
+  } finally {
+    fs.renameSync = renameSync;
+  }
+});
