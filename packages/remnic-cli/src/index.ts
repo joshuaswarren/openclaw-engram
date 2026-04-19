@@ -405,6 +405,18 @@ type PackageBenchModule = {
   }) => Promise<{ destroy(): Promise<void> }>;
 };
 
+type PackageBenchAdapterFactory = NonNullable<
+  PackageBenchModule["createLightweightAdapter"] | PackageBenchModule["createRemnicAdapter"]
+>;
+
+type PackageBenchAdapterMode = "lightweight" | "direct";
+
+export interface PackageBenchExecutionPlan {
+  runtime: ResolvedBenchRuntimeProfile;
+  createAdapter: PackageBenchAdapterFactory;
+  adapterMode: PackageBenchAdapterMode;
+}
+
 export function getBenchUsageText(): string {
   return `Usage: remnic bench <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers> [options] [benchmark...]
        remnic benchmark <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers|check|report> [options] [benchmark...]
@@ -1457,17 +1469,16 @@ async function runBenchViaPackage(
     );
   }
 
-  const runtime = await resolvePackageBenchRuntime(
+  const plans = await buildPackageBenchExecutionPlans(
     benchModule,
     parsed,
-    runtimeProfile,
+    [runtimeProfile],
   );
-  const createAdapter =
-    parsed.quick && runtime.profile === "baseline"
-      ? benchModule.createLightweightAdapter
-      : benchModule.createRemnicAdapter;
-
-  if (!createAdapter) {
+  if (!plans) {
+    return false;
+  }
+  const [plan] = plans;
+  if (!plan) {
     return false;
   }
 
@@ -1483,11 +1494,7 @@ async function runBenchViaPackage(
     );
   }
 
-  const system = await createAdapter(runtime.adapterOptions);
-  const adapterMode =
-    parsed.quick && runtime.profile === "baseline"
-      ? "lightweight"
-      : "direct";
+  const system = await plan.createAdapter(plan.runtime.adapterOptions);
 
   try {
     const result = await benchModule.runBenchmark(benchmarkId, {
@@ -1495,15 +1502,15 @@ async function runBenchViaPackage(
       datasetDir,
       outputDir,
       limit: parsed.quick ? 1 : undefined,
-      adapterMode,
-      runtimeProfile: runtime.profile,
-      systemProvider: runtime.systemProvider,
-      judgeProvider: runtime.judgeProvider,
-      remnicConfig: runtime.effectiveRemnicConfig,
+      adapterMode: plan.adapterMode,
+      runtimeProfile: plan.runtime.profile,
+      systemProvider: plan.runtime.systemProvider,
+      judgeProvider: plan.runtime.judgeProvider,
+      remnicConfig: plan.runtime.effectiveRemnicConfig,
       system,
     });
-    result.config.runtimeProfile = runtime.profile;
-    result.config.remnicConfig = runtime.remnicConfig;
+    result.config.runtimeProfile = plan.runtime.profile;
+    result.config.remnicConfig = plan.runtime.remnicConfig;
     const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
     if (parsed.json) {
       console.log(JSON.stringify(result, null, 2));
@@ -1529,42 +1536,33 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
     return false;
   }
 
+  const plans = await buildPackageBenchExecutionPlans(
+    benchModule,
+    parsed,
+    runtimeProfiles,
+  );
+  if (!plans) {
+    return false;
+  }
+
   const outputDir = resolveBenchOutputDir();
-  for (const runtimeProfile of runtimeProfiles) {
-    const runtime = await resolvePackageBenchRuntime(
-      benchModule,
-      parsed,
-      runtimeProfile,
-    );
-    const createAdapter =
-      parsed.quick && runtime.profile === "baseline"
-        ? benchModule.createLightweightAdapter
-        : benchModule.createRemnicAdapter;
-
-    if (!createAdapter) {
-      return false;
-    }
-
-    const system = await createAdapter(runtime.adapterOptions);
-    const adapterMode =
-      parsed.quick && runtime.profile === "baseline"
-        ? "lightweight"
-        : "direct";
+  for (const plan of plans) {
+    const system = await plan.createAdapter(plan.runtime.adapterOptions);
 
     try {
       const result = await benchModule.runCustomBenchmarkFile(parsed.custom!, {
         mode: parsed.quick ? "quick" : "full",
         outputDir,
         limit: parsed.quick ? 1 : undefined,
-        adapterMode,
-        runtimeProfile: runtime.profile,
-        systemProvider: runtime.systemProvider,
-        judgeProvider: runtime.judgeProvider,
-        remnicConfig: runtime.effectiveRemnicConfig,
+        adapterMode: plan.adapterMode,
+        runtimeProfile: plan.runtime.profile,
+        systemProvider: plan.runtime.systemProvider,
+        judgeProvider: plan.runtime.judgeProvider,
+        remnicConfig: plan.runtime.effectiveRemnicConfig,
         system,
       });
-      result.config.runtimeProfile = runtime.profile;
-      result.config.remnicConfig = runtime.remnicConfig;
+      result.config.runtimeProfile = plan.runtime.profile;
+      result.config.remnicConfig = plan.runtime.remnicConfig;
       const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
       if (parsed.json) {
         console.log(JSON.stringify(result, null, 2));
@@ -1626,6 +1624,56 @@ function resolveBenchRunProfiles(
   parsed: ParsedBenchArgs,
 ): BenchRuntimeProfile[] {
   return parsed.matrixProfiles ?? [parsed.runtimeProfile ?? "baseline"];
+}
+
+function resolvePackageBenchAdapterMode(
+  quick: boolean,
+  runtimeProfile: BenchRuntimeProfile,
+): PackageBenchAdapterMode {
+  return quick && runtimeProfile === "baseline" ? "lightweight" : "direct";
+}
+
+function resolvePackageBenchAdapterFactory(
+  benchModule: PackageBenchModule,
+  quick: boolean,
+  runtimeProfile: BenchRuntimeProfile,
+): PackageBenchAdapterFactory | undefined {
+  return resolvePackageBenchAdapterMode(quick, runtimeProfile) === "lightweight"
+    ? benchModule.createLightweightAdapter
+    : benchModule.createRemnicAdapter;
+}
+
+export async function buildPackageBenchExecutionPlans(
+  benchModule: PackageBenchModule,
+  parsed: ParsedBenchArgs,
+  runtimeProfiles: BenchRuntimeProfile[],
+): Promise<PackageBenchExecutionPlan[] | false> {
+  const plans: PackageBenchExecutionPlan[] = [];
+
+  for (const runtimeProfile of runtimeProfiles) {
+    const runtime = await resolvePackageBenchRuntime(
+      benchModule,
+      parsed,
+      runtimeProfile,
+    );
+    const createAdapter = resolvePackageBenchAdapterFactory(
+      benchModule,
+      parsed.quick,
+      runtime.profile,
+    );
+
+    if (!createAdapter) {
+      return false;
+    }
+
+    plans.push({
+      runtime,
+      createAdapter,
+      adapterMode: resolvePackageBenchAdapterMode(parsed.quick, runtime.profile),
+    });
+  }
+
+  return plans;
 }
 
 async function resolvePackageBenchRuntime(

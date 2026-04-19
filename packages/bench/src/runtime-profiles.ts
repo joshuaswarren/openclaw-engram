@@ -403,6 +403,14 @@ function isSecretKey(key: string): boolean {
     return true;
   }
 
+  if (
+    SECRET_KEY_SEGMENT_SUFFIXES.has(
+      normalized as (typeof SECRET_KEY_SEGMENT_SUFFIXES extends Set<infer T> ? T : never),
+    )
+  ) {
+    return true;
+  }
+
   for (let width = 2; width <= Math.min(3, segments.length); width += 1) {
     const candidate = segments.slice(-width).join("");
     if (SECRET_KEY_SEGMENT_SUFFIXES.has(candidate as (typeof SECRET_KEY_SEGMENT_SUFFIXES extends Set<infer T> ? T : never))) {

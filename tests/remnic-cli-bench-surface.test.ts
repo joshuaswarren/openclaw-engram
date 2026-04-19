@@ -110,9 +110,10 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /if \(!parsed\.quick && !datasetDir\) \{\s*throw new Error\(/s);
   assert.match(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
   assert.match(source, /const runtime = await resolvePackageBenchRuntime\(/);
-  assert.match(source, /const system = await createAdapter\(runtime\.adapterOptions\);/);
-  assert.match(source, /remnicConfig: runtime\.effectiveRemnicConfig,/);
-  assert.match(source, /result\.config\.remnicConfig = runtime\.remnicConfig;/);
+  assert.match(source, /const plans = await buildPackageBenchExecutionPlans\(/);
+  assert.match(source, /const system = await plan\.createAdapter\(plan\.runtime\.adapterOptions\);/);
+  assert.match(source, /remnicConfig: plan\.runtime\.effectiveRemnicConfig,/);
+  assert.match(source, /result\.config\.remnicConfig = plan\.runtime\.remnicConfig;/);
 });
 
 test("parseBenchArgs supports custom benchmark files without counting them as benchmark ids", async () => {
@@ -737,6 +738,135 @@ export function ensureWecloneImportAdapterRegistered() {}
     assert.equal(openclaw.judgeModel, "claude-sonnet-4-5");
     assert.equal(openclaw.gatewayAgentId, "memory-primary");
     assert.equal(openclaw.fastGatewayAgentId, "memory-fast");
+  } finally {
+    for (const stub of stubs) stub.cleanup();
+  }
+});
+
+test("buildPackageBenchExecutionPlans preflights the full custom matrix before any adapter runs", async () => {
+  const __dirname = dirname(fileURLToPath(import.meta.url));
+  const repoRoot = join(__dirname, "..");
+
+  interface StubHandle {
+    cleanup: () => void;
+  }
+
+  const stubWorkspacePackage = (
+    packageName: string,
+    moduleBody: string,
+  ): StubHandle => {
+    const linkRoot = join(repoRoot, "packages/remnic-cli/node_modules", packageName);
+    const moduleRoot = existsSync(linkRoot) ? realpathSync(linkRoot) : linkRoot;
+    const distDir = join(moduleRoot, "dist");
+    const entry = join(distDir, "index.js");
+    const packageJson = join(moduleRoot, "package.json");
+    const needsEntry = !existsSync(entry);
+    const createdLinkRoot = !existsSync(linkRoot);
+    const createdPackageJson = needsEntry && !existsSync(packageJson);
+    const createdDistDir = needsEntry && !existsSync(distDir);
+
+    if (needsEntry) {
+      mkdirSync(distDir, { recursive: true });
+      if (createdPackageJson) {
+        writeFileSync(
+          packageJson,
+          JSON.stringify({
+            name: packageName,
+            type: "module",
+            exports: { ".": "./dist/index.js" },
+          }),
+        );
+      }
+      writeFileSync(entry, moduleBody);
+    }
+
+    return {
+      cleanup: () => {
+        if (!needsEntry) return;
+        rmSync(entry, { force: true });
+        if (createdDistDir) rmSync(distDir, { recursive: true, force: true });
+        if (createdPackageJson) rmSync(packageJson, { force: true });
+        if (createdLinkRoot) rmSync(moduleRoot, { recursive: true, force: true });
+      },
+    };
+  };
+
+  const stubs: StubHandle[] = [
+    stubWorkspacePackage(
+      "@remnic/bench",
+      `
+export function compareResults() {}
+export async function buildBenchmarkPublishFeed() { return { target: "remnic-ai", generatedAt: new Date(0).toISOString(), benchmarks: [] }; }
+export function checkRegression() { return null; }
+export function defaultBenchmarkBaselineDir() { return ""; }
+export function defaultBenchmarkPublishPath() { return ""; }
+export async function discoverAllProviders() { return []; }
+export function getBenchmarkLowerIsBetter() { return new Set(); }
+export async function listBenchmarkBaselines() { return []; }
+export async function listBenchmarkResults() { return []; }
+export async function loadBenchmarkBaseline() { return null; }
+export async function runBenchSuite() { return null; }
+export async function runExplain() { return null; }
+export async function loadBaseline() { return null; }
+export async function saveBaseline() { return null; }
+export async function loadBenchmarkResult() { return null; }
+export function renderBenchmarkResultExport() { return ""; }
+export async function resolveBenchmarkResultReference() { return null; }
+export async function saveBenchmarkBaseline() { return null; }
+export async function writeBenchmarkPublishFeed() { return ""; }
+`,
+    ),
+    stubWorkspacePackage(
+      "@remnic/export-weclone",
+      `
+export const wecloneExportAdapter = { name: "weclone", fileExtension: "json", formatRecords: () => "" };
+export function ensureWecloneExportAdapterRegistered() {}
+export function synthesizeTrainingPairs() { return []; }
+export function sweepPii(input) { return input; }
+`,
+    ),
+    stubWorkspacePackage(
+      "@remnic/import-weclone",
+      `
+export const wecloneImportAdapter = { name: "weclone", parse: async () => ({ turns: [], metadata: {} }) };
+export function ensureWecloneImportAdapterRegistered() {}
+`,
+    ),
+  ];
+
+  try {
+    const { buildPackageBenchExecutionPlans } = await import(
+      `../packages/remnic-cli/src/index.ts?matrix-preflight=${Date.now()}`
+    );
+
+    const parsed = {
+      action: "run",
+      benchmarks: [],
+      quick: true,
+      all: false,
+      json: false,
+      detail: false,
+    } as const;
+
+    const plans = await buildPackageBenchExecutionPlans(
+      {
+        resolveBenchRuntimeProfile: async (options) => ({
+          profile: options.runtimeProfile ?? "baseline",
+          remnicConfig: {},
+          effectiveRemnicConfig: {},
+          adapterOptions: {},
+          systemProvider: null,
+          judgeProvider: null,
+        }),
+        createLightweightAdapter: async () => {
+          throw new Error("adapter construction should not happen during plan building");
+        },
+      },
+      parsed,
+      ["baseline", "real"],
+    );
+
+    assert.equal(plans, false);
   } finally {
     for (const stub of stubs) stub.cleanup();
   }
