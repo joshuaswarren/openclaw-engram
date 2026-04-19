@@ -82,12 +82,16 @@ export const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, 
   },
 };
 
+function cloneBenchConfig(config: Record<string, unknown>): Record<string, unknown> {
+  return structuredClone(config);
+}
+
 export function buildBenchBaselineRemnicConfig(): Record<string, unknown> {
-  return {
+  return cloneBenchConfig({
     ...BENCH_ADAPTER_SHARED_CONFIG,
     ...BENCH_ADAPTER_MODE_CONFIG.direct,
     lcmEnabled: true,
-  };
+  });
 }
 
 export function buildBenchAdapterConfig(
@@ -106,20 +110,20 @@ export function buildBenchAdapterConfig(
   };
 
   if (mode === "lightweight") {
-    return {
+    return cloneBenchConfig({
       ...baseConfig,
       ...overrides,
       ...modeConfig,
       ...sandboxConfig,
-    };
+    });
   }
 
-  return {
+  return cloneBenchConfig({
     ...baseConfig,
     ...modeConfig,
     ...overrides,
     ...sandboxConfig,
-  };
+  });
 }
 
 async function createBenchOrchestrator(

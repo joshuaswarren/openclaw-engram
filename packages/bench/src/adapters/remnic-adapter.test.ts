@@ -61,5 +61,22 @@ test("lightweight adapter keeps smoke-run guardrails even when overrides conflic
   assert.equal(config.extractionMinChars, 1000000);
   assert.equal(config.extractionMinUserTurns, 1000000);
   assert.equal(config.recallPlannerEnabled, false);
-  assert.equal(config.assistantHook, assistantHook);
+  assert.deepEqual(config.assistantHook, assistantHook);
+});
+
+test("benchmark config builders do not share nested nativeKnowledge state", () => {
+  const first = buildBenchAdapterConfig("direct", BASE_CONFIG) as {
+    nativeKnowledge: { enabled: boolean };
+  };
+  const second = buildBenchAdapterConfig("direct", BASE_CONFIG) as {
+    nativeKnowledge: { enabled: boolean };
+  };
+  const baseline = buildBenchBaselineRemnicConfig() as {
+    nativeKnowledge: { enabled: boolean };
+  };
+
+  first.nativeKnowledge.enabled = true;
+
+  assert.equal(second.nativeKnowledge.enabled, false);
+  assert.equal(baseline.nativeKnowledge.enabled, false);
 });
