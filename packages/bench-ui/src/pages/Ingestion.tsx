@@ -117,7 +117,7 @@ export function Ingestion({ payload }: { payload: BenchResultSummaryPayload }) {
                   </td>
                   <td>{card?.latest.primaryMetric ?? <span className="muted-copy">—</span>}</td>
                   <td>{card ? formatMetricValue(card.latest.primaryScore, card.latest.primaryMetric ?? undefined) : <span className="muted-copy">—</span>}</td>
-                  <td>{card ? formatDelta(card.delta) : <span className="muted-copy">—</span>}</td>
+                  <td>{card ? formatDelta(card.delta, card.latest.primaryMetric ?? undefined) : <span className="muted-copy">—</span>}</td>
                 </tr>
               );
             })}
