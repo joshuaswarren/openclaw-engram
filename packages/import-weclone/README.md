@@ -14,8 +14,11 @@ layer for AI agents.
 npm install @remnic/import-weclone
 ```
 
-The importer is discovered automatically by `@remnic/core` when the package is
-present in the workspace; no explicit registration is required.
+Importing this package registers the WeClone adapter with the core
+bulk-import registry as a side effect, so `openclaw engram bulk-import
+--source weclone ...` works without any explicit setup. Tests that call
+`clearBulkImportSources()` can re-register via
+`ensureWecloneImportAdapterRegistered()`.
 
 ## Why WeClone?
 
@@ -87,26 +90,27 @@ openclaw engram bulk-import \
   --platform telegram \
   --dry-run
 
-# Specify a target namespace for the imported memories
+# Persist: run extraction over the export and write memories to disk
 openclaw engram bulk-import \
   --source weclone \
   --file ./preprocessed_telegram.json \
-  --platform telegram \
-  --namespace personal-chat-history \
-  --dry-run
+  --platform telegram
 
 # Strict mode: fail on any invalid message instead of skipping
 openclaw engram bulk-import \
   --source weclone \
   --file ./preprocessed_telegram.json \
   --platform telegram \
-  --strict \
-  --dry-run
+  --strict
 ```
 
-Persistence is currently guarded: invocations without `--dry-run` throw
-`Bulk import persistence is not yet wired` until the orchestrator integration
-lands. Use `--dry-run` to validate your export end-to-end.
+Persistence is wired through the Remnic orchestrator's extraction pipeline.
+Each batch is buffered and extracted the same way an organic conversation
+would be; memories land under the orchestrator's default-namespace root
+(`memoryDir/facts/` by default). Use `--dry-run` to validate an export
+before committing to the extraction cost. Per-invocation namespace
+override for bulk-import writes is not yet wired — see the note in
+[`docs/import-export.md`](../../docs/import-export.md).
 
 ## Programmatic usage
 
@@ -117,34 +121,34 @@ import {
   groupIntoThreads,
   mapParticipants,
   chunkThreads,
+  // Side-effect import also registers the bulk-import adapter; see `index.ts`.
   wecloneImportAdapter,
 } from "@remnic/import-weclone";
 import {
-  registerBulkImportSource,
+  getBulkImportSource,
   runBulkImportPipeline,
 } from "@remnic/core";
 
-// 1) Register the adapter (core auto-registers if the package is installed).
-registerBulkImportSource(wecloneImportAdapter);
+// The adapter is registered automatically on import. Look it up:
+const adapter = getBulkImportSource("weclone");
 
-// 2) Parse a WeClone-preprocessed export.
+// 1) Parse a WeClone-preprocessed export.
 const raw = JSON.parse(readFileSync("./export.json", "utf8"));
 const source = parseWeCloneExport(raw, { platform: "telegram" });
 
-// 3) Pre-process into threads, participants, chunks.
+// 2) Pre-process into threads, participants, chunks.
 const threads = groupIntoThreads(source.turns);
 const participants = mapParticipants(source.turns);
 const chunks = chunkThreads(threads, { maxTurnsPerChunk: 20 });
 
-// 4) Feed the result into the core bulk-import pipeline.
+// 3) Run the bulk-import pipeline. In dryRun mode `processBatch` is never
+//    called; for real persistence the host CLI supplies an `ingestBatch`
+//    callback that wraps `orchestrator.ingestBulkImportBatch` (see
+//    `openclaw engram bulk-import`).
 const result = await runBulkImportPipeline(
   source,
   { batchSize: 20, dryRun: true, dedup: true, trustLevel: "import" },
-  async (batch) => ({
-    memoriesCreated: batch.length,
-    duplicatesSkipped: 0,
-    entitiesCreated: 0,
-  }),
+  async () => ({ memoriesCreated: 0, duplicatesSkipped: 0 }),
 );
 ```
 
@@ -203,9 +207,11 @@ substrings like `ai` (e.g. `Aidan`, `Caitlin`) are not mis-classified.
 
 ## Design notes
 
-- **Imported memories get a lower trust level.** The pipeline tags them with
-  `trustLevel: "import"` so a large historical import does not outweigh
-  organic memories in recall ranking.
+- **Imported memories are tagged with `trustLevel: "import"`** in the
+  pipeline options so downstream ranking/dedup can reason about their
+  provenance. The confidence-weighted ranking discount described in the
+  original issue is tracked as a follow-up — today the flag is plumbed but
+  not consumed by the recall ranker.
 - **Threads are conversation boundaries, not days.** The default 30-minute
   gap with reply-chain merging produces coherent extraction batches without
   relying on calendar boundaries.

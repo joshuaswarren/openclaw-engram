@@ -2,6 +2,13 @@
 // @remnic/import-weclone — public surface
 // ---------------------------------------------------------------------------
 
+import {
+  getBulkImportSource,
+  registerBulkImportSource,
+} from "@remnic/core";
+
+import { wecloneImportAdapter } from "./adapter.js";
+
 export { wecloneImportAdapter } from "./adapter.js";
 
 export {
@@ -34,3 +41,34 @@ export {
   type ImportProgress,
   type ProgressCallback,
 } from "./progress.js";
+
+/**
+ * Idempotently register the WeClone adapter with the core bulk-import
+ * registry. Callable multiple times without throwing (CLAUDE.md #13:
+ * secondary calls must not crash host processes that pre-register the
+ * adapter for test fixtures).
+ *
+ * Returns true when the adapter was newly registered, false when an adapter
+ * with the same name already exists.
+ */
+export function ensureWecloneImportAdapterRegistered(): boolean {
+  if (getBulkImportSource(wecloneImportAdapter.name) !== undefined) {
+    return false;
+  }
+  registerBulkImportSource(wecloneImportAdapter);
+  return true;
+}
+
+// Side-effect registration: importing this module registers the adapter.
+// Callers that need to manage registration manually (e.g. tests that call
+// `clearBulkImportSources()`) can re-invoke
+// `ensureWecloneImportAdapterRegistered()` after clearing.
+//
+// The try/catch keeps import-time errors from breaking unrelated callers —
+// the adapter's `parse` is pure, so a failure here would be surprising, but
+// defensive coding keeps CLI startup resilient.
+try {
+  ensureWecloneImportAdapterRegistered();
+} catch {
+  // Swallow — explicit callers can re-invoke ensureWecloneImportAdapterRegistered().
+}

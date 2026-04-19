@@ -1,7 +1,7 @@
 import { log } from "./logger.js";
 import path from "node:path";
 import os from "node:os";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import {
   mkdir,
@@ -189,6 +189,7 @@ import {
   searchNativeKnowledge,
 } from "./native-knowledge.js";
 import { normalizeReplaySessionKey, type ReplayTurn } from "./replay/types.js";
+import type { ImportTurn } from "./bulk-import/types.js";
 import {
   confidenceTier,
   type MemoryIntent,
@@ -8331,6 +8332,106 @@ export class Orchestrator {
     }
   }
 
+  /**
+   * Return the namespace that `ingestBulkImportBatch` writes into (#460).
+   *
+   * Exposed so host CLIs can snapshot the same storage root that extraction
+   * actually writes to, avoiding the "CLI counts files at namespace A while
+   * writes land in namespace B" footgun that a naïve
+   * `config.defaultNamespace` snapshot could hit when a namespace policy
+   * named `"default"` also exists.
+   *
+   * Today bulk-import is pinned to `config.defaultNamespace`; future
+   * per-invocation namespace routing would thread an explicit target here
+   * and through `ingestBulkImportBatch`.
+   */
+  bulkImportWriteNamespace(): string {
+    return this.config.defaultNamespace;
+  }
+
+  /**
+   * Ingest a batch of bulk-import turns (#460). Like ingestReplayBatch, this
+   * normalizes user/assistant turns into the extraction buffer and awaits
+   * settlement, but it intentionally bypasses the captureMode="explicit"
+   * gate because bulk-import is itself an explicit user action — the user
+   * ran `bulk-import --source <name> --file ...` and would be surprised to
+   * see the command silently no-op when capture is otherwise restricted.
+   *
+   * Turns with role="other" are skipped (not supported by the extraction
+   * pipeline).
+   *
+   * Two design decisions worth calling out:
+   *
+   * - **sessionKey is truthy and per-batch-unique.**
+   *   `ThreadingManager.shouldStartNewThread` only applies the session-key
+   *   boundary check when `turn.sessionKey` is truthy (threading.ts:82);
+   *   with an empty string, imported turns could attach to the current
+   *   live thread or merge across unrelated import batches. A unique
+   *   `bulk-import:batch:<timestamp>-<rand>` key forces a fresh thread per
+   *   batch without matching common prefix/map rules in
+   *   `principalFromSessionKeyRules`. (Catch-all regex rules could still
+   *   remap the principal, but that only affects metadata provenance —
+   *   see the next point for why write routing is unaffected.)
+   *
+   * - **writeNamespaceOverride pins the storage target.**
+   *   We pass `writeNamespaceOverride: this.bulkImportWriteNamespace()` to
+   *   `queueBufferedExtraction`, which tells `runExtraction` to skip
+   *   `defaultNamespaceForPrincipal` and write directly into the
+   *   orchestrator's declared bulk-import write namespace. This keeps
+   *   writes deterministic even when namespace policies named `"default"`
+   *   exist alongside a different `config.defaultNamespace`, and also
+   *   guards against regex-catch-all principal rules steering bulk-import
+   *   into an unexpected tenant.
+   *
+   * Per-invocation namespace routing (letting callers target a namespace
+   * other than `bulkImportWriteNamespace()`) is a separate feature tracked
+   * as a follow-up — the hook is the `writeNamespaceOverride` option, but
+   * the CLI surface does not yet expose a `--namespace` flag.
+   */
+  async ingestBulkImportBatch(
+    turns: ImportTurn[],
+    options: {
+      deadlineMs?: number;
+    } = {},
+  ): Promise<void> {
+    if (!Array.isArray(turns) || turns.length === 0) return;
+
+    // Per-batch unique sessionKey keeps threading honest without matching
+    // typical prefix/map routing rules.  Combined with writeNamespaceOverride
+    // below, the storage target is independent of principal resolution.
+    // Uses crypto.randomBytes (not Math.random) so CodeQL does not flag a
+    // security-context insecure-randomness use even though this value never
+    // leaves the process; the bytes just need to be collision-resistant
+    // across concurrent bulk-import batches.
+    const sessionKey =
+      `bulk-import:batch:${Date.now().toString(36)}-` +
+      randomBytes(6).toString("hex");
+
+    const sessionTurns: BufferTurn[] = [];
+    for (const turn of turns) {
+      if (turn.role !== "user" && turn.role !== "assistant") continue;
+      sessionTurns.push({
+        role: turn.role,
+        content: turn.content,
+        timestamp: turn.timestamp,
+        sessionKey,
+      });
+    }
+    if (sessionTurns.length === 0) return;
+
+    await new Promise<void>((resolve, reject) => {
+      void this.queueBufferedExtraction(sessionTurns, "trigger_mode", {
+        skipDedupeCheck: true,
+        clearBufferAfterExtraction: false,
+        skipCharThreshold: true,
+        bufferKey: sessionKey,
+        extractionDeadlineMs: options.deadlineMs,
+        writeNamespaceOverride: this.bulkImportWriteNamespace(),
+        onTaskSettled: (err) => (err ? reject(err) : resolve()),
+      }).catch(reject);
+    });
+  }
+
   async observeSessionHeartbeat(
     sessionKey: string,
     options: { bufferKey?: string } = {},
@@ -8412,6 +8513,14 @@ export class Orchestrator {
       onTaskSettled?: (error?: unknown) => void;
       bufferKey?: string;
       abortSignal?: AbortSignal;
+      /**
+       * Explicit namespace override for the write path (#460).  When set,
+       * `runExtraction` writes to this namespace instead of deriving one
+       * from `defaultNamespaceForPrincipal(resolvePrincipal(sessionKey))`.
+       * Used by bulk-import to pin writes to a deterministic namespace
+       * regardless of user-configured principal routing rules.
+       */
+      writeNamespaceOverride?: string;
     } = {},
   ): Promise<void> {
     const bufferKey = options.bufferKey ?? turnsToExtract[0]?.sessionKey ?? "default";
@@ -8433,6 +8542,7 @@ export class Orchestrator {
           deadlineMs: options.extractionDeadlineMs,
           bufferKey,
           abortSignal: options.abortSignal,
+          writeNamespaceOverride: options.writeNamespaceOverride,
         });
         options.onTaskSettled?.();
       } catch (err) {
@@ -8542,6 +8652,14 @@ export class Orchestrator {
       deadlineMs?: number;
       bufferKey?: string;
       abortSignal?: AbortSignal;
+      /**
+       * Explicit namespace override for the write path (#460).  When set,
+       * extraction writes go to this namespace instead of the one derived
+       * from `defaultNamespaceForPrincipal(resolvePrincipal(sessionKey))`.
+       * The resolved `principal` is still threaded into memory metadata
+       * for provenance; only the storage target is overridden.
+       */
+      writeNamespaceOverride?: string;
     } = {},
   ): Promise<void> {
     log.debug(`running extraction on ${turns.length} turns`);
@@ -8610,7 +8728,11 @@ export class Orchestrator {
     }
 
     const principal = resolvePrincipal(sessionKey, this.config);
-    const selfNamespace = defaultNamespaceForPrincipal(principal, this.config);
+    const selfNamespace =
+      typeof options.writeNamespaceOverride === "string" &&
+      options.writeNamespaceOverride.length > 0
+        ? options.writeNamespaceOverride
+        : defaultNamespaceForPrincipal(principal, this.config);
     const storage = await this.storageRouter.storageFor(selfNamespace);
     const shouldPersistProcessedFingerprint = normalizedTurns.some(
       (turn) => turn.persistProcessedFingerprint === true,
