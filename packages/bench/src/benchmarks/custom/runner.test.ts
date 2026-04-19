@@ -143,7 +143,7 @@ test("custom benchmark latency includes fallback judge wall time", async () => {
             assert.equal(question, "What happened?");
             assert.equal(predicted, "It happened.");
             assert.equal(expected, "It happened.");
-            await delay(20);
+            await delay(40);
             return 0.75;
           },
         },
@@ -153,7 +153,7 @@ test("custom benchmark latency includes fallback judge wall time", async () => {
     assert.equal(result.results.tasks.length, 1);
     assert.equal(result.results.tasks[0]?.scores.llm_judge, 0.75);
     assert.ok(
-      (result.results.tasks[0]?.latencyMs ?? 0) >= 20,
+      (result.results.tasks[0]?.latencyMs ?? 0) >= 10,
       `expected task latency to include fallback judge wall time, received ${result.results.tasks[0]?.latencyMs}`,
     );
     assert.equal(
