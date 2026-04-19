@@ -111,6 +111,8 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
   assert.match(source, /const runtime = await resolvePackageBenchRuntime\(/);
   assert.match(source, /const system = await createAdapter\(runtime\.adapterOptions\);/);
+  assert.match(source, /remnicConfig: runtime\.effectiveRemnicConfig,/);
+  assert.match(source, /result\.config\.remnicConfig = runtime\.remnicConfig;/);
 });
 
 test("parseBenchArgs supports custom benchmark files without counting them as benchmark ids", async () => {

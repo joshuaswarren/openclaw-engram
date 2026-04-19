@@ -183,15 +183,42 @@ function validateProviderConfig(
 }
 
 function parseScalarJudgeScore(raw: string): number {
-  const match = raw.match(/-?\d+(?:\.\d+)?/);
-  if (!match) {
+  const trimmed = raw.trim();
+
+  const fractionMatch = trimmed.match(/(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/);
+  if (fractionMatch) {
+    const numerator = Number.parseFloat(fractionMatch[1]);
+    const denominator = Number.parseFloat(fractionMatch[2]);
+    if (
+      Number.isFinite(numerator) &&
+      Number.isFinite(denominator) &&
+      denominator > 0
+    ) {
+      return clampNormalizedScore(numerator / denominator);
+    }
+  }
+
+  const percentMatch = trimmed.match(/(-?\d+(?:\.\d+)?)\s*%/);
+  if (percentMatch) {
+    const percent = Number.parseFloat(percentMatch[1]);
+    if (Number.isFinite(percent)) {
+      return clampNormalizedScore(percent / 100);
+    }
+  }
+
+  const scalarMatch = trimmed.match(/-?\d+(?:\.\d+)?/);
+  if (!scalarMatch) {
     return -1;
   }
 
-  const value = Number.parseFloat(match[0]);
+  const value = Number.parseFloat(scalarMatch[0]);
   if (!Number.isFinite(value)) {
     return -1;
   }
 
+  return clampNormalizedScore(value);
+}
+
+function clampNormalizedScore(value: number): number {
   return Math.max(0, Math.min(1, Number(value.toFixed(4))));
 }

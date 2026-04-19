@@ -14,6 +14,7 @@ test("baseline runtime profile keeps the stripped retrieval-only config", async 
 
   assert.equal(resolved.profile, "baseline");
   assert.deepEqual(resolved.remnicConfig, buildBenchBaselineRemnicConfig());
+  assert.deepEqual(resolved.effectiveRemnicConfig, buildBenchBaselineRemnicConfig());
   assert.equal(resolved.remnicConfig.qmdEnabled, false);
   assert.equal(resolved.remnicConfig.queryExpansionEnabled, false);
   assert.equal(resolved.remnicConfig.rerankEnabled, false);
@@ -49,6 +50,7 @@ test("real runtime profile preserves the configured Remnic retrieval settings", 
   assert.equal(resolved.remnicConfig.rerankEnabled, true);
   assert.equal(resolved.remnicConfig.verifiedRecallEnabled, true);
   assert.equal(resolved.remnicConfig.openaiApiKey, undefined);
+  assert.equal(resolved.effectiveRemnicConfig.openaiApiKey, "super-secret");
   assert.equal(
     (resolved.adapterOptions.configOverrides as { openaiApiKey?: string }).openaiApiKey,
     "super-secret",
@@ -119,6 +121,12 @@ test("openclaw-chain runtime profile loads OpenClaw config and forces gateway ro
       models?: { providers?: { openai?: { apiKey?: string } } };
     }).models?.providers?.openai?.apiKey,
     undefined,
+  );
+  assert.equal(
+    (resolved.effectiveRemnicConfig.gatewayConfig as {
+      models?: { providers?: { openai?: { apiKey?: string } } };
+    }).models?.providers?.openai?.apiKey,
+    "test-key",
   );
 });
 

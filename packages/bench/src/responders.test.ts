@@ -95,3 +95,17 @@ test("gateway responder requires gateway config", () => {
     /gateway responder requires gatewayConfig/i,
   );
 });
+
+test("provider-backed judge parses fraction and percent score formats", async () => {
+  const fractionJudge = createProviderBackedJudge(
+    { provider: "openai", model: "gpt-5.4-mini" },
+    createFakeProvider("8/10"),
+  );
+  assert.equal(await fractionJudge.score("q", "predicted", "expected"), 0.8);
+
+  const percentJudge = createProviderBackedJudge(
+    { provider: "openai", model: "gpt-5.4-mini" },
+    createFakeProvider("75%"),
+  );
+  assert.equal(await percentJudge.score("q", "predicted", "expected"), 0.75);
+});
