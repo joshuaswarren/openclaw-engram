@@ -109,6 +109,12 @@ test("provider-backed judge parses fraction and percent score formats", async ()
   );
   assert.equal(await fractionJudge.score("q", "predicted", "expected"), 0.8);
 
+  const extendedFractionJudge = createProviderBackedJudge(
+    { provider: "openai", model: "gpt-5.4-mini" },
+    createFakeProvider("Score: 7/20"),
+  );
+  assert.equal(await extendedFractionJudge.score("q", "predicted", "expected"), 0.35);
+
   const percentJudge = createProviderBackedJudge(
     { provider: "openai", model: "gpt-5.4-mini" },
     createFakeProvider("75%"),
@@ -126,6 +132,15 @@ test("provider-backed judge ignores date-like fractions and uses the trailing sc
   const judge = createProviderBackedJudge(
     { provider: "openai", model: "gpt-5.4-mini" },
     createFakeProvider("Reviewed on 2026/04/19. Final score: 0.4"),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 0.4);
+});
+
+test("provider-backed judge does not treat month/day text as a slash score", async () => {
+  const judge = createProviderBackedJudge(
+    { provider: "openai", model: "gpt-5.4-mini" },
+    createFakeProvider("Reviewed on 4/20. Final score: 0.4"),
   );
 
   assert.equal(await judge.score("q", "predicted", "expected"), 0.4);

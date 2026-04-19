@@ -208,7 +208,7 @@ function parseScalarJudgeScore(raw: string): number {
   for (const match of fractionMatches.reverse()) {
     const numerator = Number.parseFloat(match[1]);
     const denominator = Number.parseFloat(match[2]);
-    if (isPlausibleScoreFraction(numerator, denominator)) {
+    if (isPlausibleSlashScoreFraction(trimmed, match, numerator, denominator)) {
       return clampNormalizedScore(numerator / denominator);
     }
   }
@@ -256,7 +256,38 @@ function isPlausibleScoreFraction(
     return false;
   }
 
-  return denominator <= 10 || denominator === 100;
+  return denominator <= 10 || denominator === 100 || denominator % 5 === 0;
+}
+
+function isPlausibleSlashScoreFraction(
+  raw: string,
+  match: RegExpMatchArray,
+  numerator: number,
+  denominator: number,
+): boolean {
+  if (!isPlausibleScoreFraction(numerator, denominator)) {
+    return false;
+  }
+
+  if (denominator <= 10 || denominator === 100) {
+    return true;
+  }
+
+  const start = match.index ?? -1;
+  if (start < 0) {
+    return false;
+  }
+
+  const candidate = match[0].trim();
+  if (raw.trim() === candidate) {
+    return true;
+  }
+
+  const beforeContext = raw
+    .slice(Math.max(0, start - 20), start)
+    .toLowerCase();
+
+  return /\b(score|rated|rating|grade|graded|result|overall|final)\b/.test(beforeContext);
 }
 
 function clampNormalizedScore(value: number): number {
