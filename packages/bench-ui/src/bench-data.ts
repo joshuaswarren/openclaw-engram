@@ -159,6 +159,11 @@ export function humanizeIdentifier(value: string): string {
 
 const rawCountMetrics = new Set([
   "search_hits",
+  // ingestion-setup-friction raw count metrics — lower is better
+  "setup_friction",
+  "commands_count",
+  "prompts_count",
+  "errors_count",
 ]);
 
 function isRawCountMetric(metricName?: string): boolean {
