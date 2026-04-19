@@ -19,4 +19,7 @@ export {
 
 export { convertMemoriesToRecords } from "./converter.js";
 
-export { parseStrictCliDate, isCalendarDateValid } from "./date-parse.js";
+// `parseStrictCliDate` is the only public surface; `isCalendarDateValid`
+// is an internal helper (not re-exported). Exposing it as a public API
+// would commit to maintaining it indefinitely for no external caller.
+export { parseStrictCliDate } from "./date-parse.js";

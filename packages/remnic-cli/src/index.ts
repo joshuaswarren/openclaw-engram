@@ -3991,8 +3991,33 @@ interface ParsedTrainingExportArgs {
 }
 
 /**
- * Parse training:export CLI flags. Rejects unknown values instead of
- * silently defaulting, per CLAUDE.md #14/#51.
+ * Resolve a value-taking flag, rejecting the "flag present but missing
+ * value" case (e.g. `--memory-dir --since 2026-01-01`). CLAUDE.md #14
+ * requires that `--foo` without an argument throws rather than silently
+ * defaulting — critical here because `training:export` emits shareable
+ * data and a wrongly-broadened filter would leak memories the user
+ * intended to exclude (Codex review, PR #509).
+ *
+ * Returns `undefined` only when the flag is absent; throws when the flag
+ * is present but its value is missing or shaped like another flag.
+ */
+function resolveRequiredValueFlag(
+  args: string[],
+  flag: string,
+): string | undefined {
+  if (!hasFlag(args, flag)) return undefined;
+  const value = resolveFlagStrict(args, flag);
+  if (value === undefined) {
+    throw new Error(
+      `${flag} requires a value. Provide it as \`${flag} <value>\`, not as a bare flag.`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Parse training:export CLI flags. Rejects unknown values and missing
+ * flag values instead of silently defaulting, per CLAUDE.md #14/#51.
  *
  * Exported for testability.
  */
@@ -4000,7 +4025,7 @@ export function parseTrainingExportArgs(
   rest: string[],
   defaultMemoryDir: string,
 ): ParsedTrainingExportArgs {
-  const format = resolveFlagStrict(rest, "--format");
+  const format = resolveRequiredValueFlag(rest, "--format");
   if (!format) {
     throw new Error(
       "--format <name> is required. Run `remnic training:export --help` for the list of registered adapters.",
@@ -4016,7 +4041,8 @@ export function parseTrainingExportArgs(
 
   // Accept --out as a short alias for --output (issue #459 spec uses both).
   const outputRaw =
-    resolveFlagStrict(rest, "--output") ?? resolveFlagStrict(rest, "--out");
+    resolveRequiredValueFlag(rest, "--output") ??
+    resolveRequiredValueFlag(rest, "--out");
   if (!outputRaw && !dryRun) {
     throw new Error(
       "--output <path> (or --out <path>) is required for training:export. " +
@@ -4034,13 +4060,13 @@ export function parseTrainingExportArgs(
   // input consistently, not just the explicit flag). `resolveMemoryDir`
   // can surface a tilde-prefixed path from config or env — validating that
   // without expansion would reject otherwise-valid memory stores.
-  const memoryDirFlag = resolveFlagStrict(rest, "--memory-dir");
+  const memoryDirFlag = resolveRequiredValueFlag(rest, "--memory-dir");
   const memoryDir = expandTilde(memoryDirFlag ?? defaultMemoryDir);
 
-  const since = resolveFlagStrict(rest, "--since");
-  const until = resolveFlagStrict(rest, "--until");
+  const since = resolveRequiredValueFlag(rest, "--since");
+  const until = resolveRequiredValueFlag(rest, "--until");
 
-  const minConfidenceRaw = resolveFlagStrict(rest, "--min-confidence");
+  const minConfidenceRaw = resolveRequiredValueFlag(rest, "--min-confidence");
   let minConfidence: number | undefined;
   if (minConfidenceRaw !== undefined) {
     const n = Number(minConfidenceRaw);
@@ -4052,7 +4078,7 @@ export function parseTrainingExportArgs(
     minConfidence = n;
   }
 
-  const categoriesRaw = resolveFlagStrict(rest, "--categories");
+  const categoriesRaw = resolveRequiredValueFlag(rest, "--categories");
   const categories = categoriesRaw
     ? categoriesRaw
         .split(",")
@@ -4060,7 +4086,7 @@ export function parseTrainingExportArgs(
         .filter((c) => c.length > 0)
     : undefined;
 
-  const maxPairsRaw = resolveFlagStrict(rest, "--max-pairs-per-record");
+  const maxPairsRaw = resolveRequiredValueFlag(rest, "--max-pairs-per-record");
   let maxPairsPerRecord: number | undefined;
   if (maxPairsRaw !== undefined) {
     const n = Number(maxPairsRaw);
