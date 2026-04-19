@@ -1,5 +1,9 @@
-# Directories that contain user memory data — never index for AI context.
-# These paths exist only at runtime on the user's machine, not in this repo.
+# ============================================================
+# .cursorignore — Files excluded from ALL Cursor features
+# including BugBot code review.
+# ============================================================
+
+# User memory data (runtime only, never in repo)
 facts/
 entities/
 corrections/
@@ -24,3 +28,44 @@ node_modules/
 # OS artefacts
 .DS_Store
 Thumbs.db
+
+# Lock files (dependency updates, not logic)
+pnpm-lock.yaml
+package-lock.json
+
+# Generated docs and changelogs
+CHANGELOG.md
+
+# Eval data (downloaded, not authored)
+evals/datasets/
+evals/results/
+
+# Admin console (separate concern)
+admin-console/
+
+# Dashboard (separate concern)
+dashboard/
+
+# Bench UI (separate concern)
+packages/bench-ui/
+
+# Git worktrees and temp branches
+.claude/worktrees/
+.worktrees/
+
+# Claude session artifacts
+.claude/
+.pr-loop/
+.worktale/
+PR_PREFLIGHT.md
+THEORY.MD
+
+# Logs
+logs/
+
+# Compressed archives
+*.tgz
+*.gz
+
+# Debug/temp files
+irc-debug.ts
