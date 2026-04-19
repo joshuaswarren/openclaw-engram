@@ -14,6 +14,11 @@ import { aggregateTaskScores, precisionAtK } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import type { SchemaTierPage } from "../../../fixtures/schema-tiers/index.js";
 import {
+  overlapCount,
+  pairIdFromTaskId,
+  prefixAggregates,
+} from "../retrieval-shared.js";
+import {
   RETRIEVAL_PERSONALIZATION_FIXTURE,
   RETRIEVAL_PERSONALIZATION_SMOKE_FIXTURE,
   type RetrievalPersonalizationCase,
@@ -165,14 +170,6 @@ function tokenize(value: string): Set<string> {
   );
 }
 
-function overlapCount(left: Set<string>, right: Set<string>): number {
-  let count = 0;
-  for (const token of right) {
-    if (left.has(token)) count += 1;
-  }
-  return count;
-}
-
 function schemaPenalty(queryTokens: Set<string>, page: SchemaTierPage): number {
   let penalty = 0;
 
@@ -192,10 +189,10 @@ function buildTieredAggregates(tasks: TaskResult[]): AggregateMetrics {
   const cleanTasks = tasks.filter((task) => task.details?.tier === "clean");
   const dirtyTasks = tasks.filter((task) => task.details?.tier === "dirty");
   const dirtyTasksByPairId = new Map(
-    dirtyTasks.map((task) => [pairId(task.taskId), task]),
+    dirtyTasks.map((task) => [pairIdFromTaskId(task.taskId), task]),
   );
   const pairedDeltas = cleanTasks.flatMap((task) => {
-    const dirtyTask = dirtyTasksByPairId.get(pairId(task.taskId));
+    const dirtyTask = dirtyTasksByPairId.get(pairIdFromTaskId(task.taskId));
     if (!dirtyTask) return [];
 
     return [{
@@ -210,21 +207,4 @@ function buildTieredAggregates(tasks: TaskResult[]): AggregateMetrics {
     ...prefixAggregates("dirty", aggregateTaskScores(dirtyTasks.map((task) => task.scores))),
     ...prefixAggregates("dirty_penalty", aggregateTaskScores(pairedDeltas)),
   };
-}
-
-function prefixAggregates(
-  prefix: string,
-  aggregates: AggregateMetrics,
-): AggregateMetrics {
-  const prefixed: AggregateMetrics = {};
-
-  for (const [metric, aggregate] of Object.entries(aggregates)) {
-    prefixed[`${prefix}.${metric}`] = aggregate;
-  }
-
-  return prefixed;
-}
-
-function pairId(taskId: string): string {
-  return taskId.replace(/^(clean|dirty):/, "");
 }

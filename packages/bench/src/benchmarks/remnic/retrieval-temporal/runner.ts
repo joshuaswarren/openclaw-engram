@@ -14,6 +14,11 @@ import { aggregateTaskScores } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import type { SchemaTierPage } from "../../../fixtures/schema-tiers/index.js";
 import {
+  overlapCount,
+  pairIdFromTaskId,
+  prefixAggregates,
+} from "../retrieval-shared.js";
+import {
   RETRIEVAL_TEMPORAL_FIXTURE,
   RETRIEVAL_TEMPORAL_SMOKE_FIXTURE,
   type RetrievalTemporalCase,
@@ -179,10 +184,10 @@ function pageHasTemporalEvidenceInWindow(
   startIso: string,
   endIso: string,
 ): boolean {
-  const startMs = Date.parse(startIso);
-  const endMs = Date.parse(endIso);
+  const startMs = parseStrictIsoTimestamp(startIso);
+  const endMs = parseStrictIsoTimestamp(endIso);
 
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || startMs >= endMs) {
+  if (startMs === null || endMs === null || startMs >= endMs) {
     throw new Error("retrieval-temporal window must use valid half-open ISO timestamps");
   }
 
@@ -206,8 +211,7 @@ function collectEvidenceTimestamps(page: SchemaTierPage): number[] {
 
 function parseTimestamp(value: string | undefined): number | null {
   if (!value) return null;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : null;
+  return parseStrictIsoTimestamp(value);
 }
 
 function parseTimelineEntry(entry: string): number | null {
@@ -230,6 +234,19 @@ function parseTimelineEntry(entry: string): number | null {
   return date.getTime();
 }
 
+function parseStrictIsoTimestamp(value: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)) {
+    return null;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString() === value ? date.getTime() : null;
+}
+
 function matchingPageIds(
   rankedPages: SchemaTierPage[],
   sample: RetrievalTemporalCase,
@@ -249,22 +266,14 @@ function tokenize(value: string): Set<string> {
   );
 }
 
-function overlapCount(left: Set<string>, right: Set<string>): number {
-  let count = 0;
-  for (const token of right) {
-    if (left.has(token)) count += 1;
-  }
-  return count;
-}
-
 function buildTieredAggregates(tasks: TaskResult[]): AggregateMetrics {
   const cleanTasks = tasks.filter((task) => task.details?.tier === "clean");
   const dirtyTasks = tasks.filter((task) => task.details?.tier === "dirty");
   const dirtyTasksByPairId = new Map(
-    dirtyTasks.map((task) => [pairId(task.taskId), task]),
+    dirtyTasks.map((task) => [pairIdFromTaskId(task.taskId), task]),
   );
   const pairedDeltas = cleanTasks.flatMap((task) => {
-    const dirtyTask = dirtyTasksByPairId.get(pairId(task.taskId));
+    const dirtyTask = dirtyTasksByPairId.get(pairIdFromTaskId(task.taskId));
     if (!dirtyTask) return [];
 
     return [{
@@ -279,21 +288,4 @@ function buildTieredAggregates(tasks: TaskResult[]): AggregateMetrics {
     ...prefixAggregates("dirty", aggregateTaskScores(dirtyTasks.map((task) => task.scores))),
     ...prefixAggregates("dirty_penalty", aggregateTaskScores(pairedDeltas)),
   };
-}
-
-function prefixAggregates(
-  prefix: string,
-  aggregates: AggregateMetrics,
-): AggregateMetrics {
-  const prefixed: AggregateMetrics = {};
-
-  for (const [metric, aggregate] of Object.entries(aggregates)) {
-    prefixed[`${prefix}.${metric}`] = aggregate;
-  }
-
-  return prefixed;
-}
-
-function pairId(taskId: string): string {
-  return taskId.replace(/^(clean|dirty):/, "");
 }

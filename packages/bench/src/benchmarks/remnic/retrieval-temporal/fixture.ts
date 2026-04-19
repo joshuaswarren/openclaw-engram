@@ -8,7 +8,6 @@ import {
 
 export interface RetrievalTemporalCase {
   id: string;
-  pairId: string;
   title: string;
   tier: SchemaTierName;
   query: string;
@@ -41,7 +40,6 @@ function buildCase(
 ): RetrievalTemporalCase {
   return {
     id: `${tier}:${sample.id}`,
-    pairId: sample.id,
     title: `${sample.id} (${tier})`,
     tier,
     query: sample.query,
