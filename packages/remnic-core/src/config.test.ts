@@ -149,6 +149,31 @@ test("parseConfig recallDirectAnswerTokenOverlapFloor=1.5 falls back to default"
   assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0.55);
 });
 
+test('parseConfig recallDirectAnswerTokenOverlapFloor="0.8" (string) coerces to 0.8 (rule 28)', () => {
+  const result = parseConfig({ recallDirectAnswerTokenOverlapFloor: "0.8" });
+  assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0.8);
+});
+
+test('parseConfig recallDirectAnswerTokenOverlapFloor="0" (string) coerces to 0', () => {
+  const result = parseConfig({ recallDirectAnswerTokenOverlapFloor: "0" });
+  assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0);
+});
+
+test('parseConfig recallDirectAnswerTokenOverlapFloor="not-a-number" falls back to default', () => {
+  const result = parseConfig({ recallDirectAnswerTokenOverlapFloor: "not-a-number" });
+  assert.equal(result.recallDirectAnswerTokenOverlapFloor, 0.55);
+});
+
+test('parseConfig recallDirectAnswerImportanceFloor="0.9" (string) coerces to 0.9', () => {
+  const result = parseConfig({ recallDirectAnswerImportanceFloor: "0.9" });
+  assert.equal(result.recallDirectAnswerImportanceFloor, 0.9);
+});
+
+test('parseConfig recallDirectAnswerAmbiguityMargin="0.25" (string) coerces to 0.25', () => {
+  const result = parseConfig({ recallDirectAnswerAmbiguityMargin: "0.25" });
+  assert.equal(result.recallDirectAnswerAmbiguityMargin, 0.25);
+});
+
 test("parseConfig recallDirectAnswerImportanceFloor defaults to 0.7", () => {
   const result = parseConfig({});
   assert.equal(result.recallDirectAnswerImportanceFloor, 0.7);

@@ -25,7 +25,7 @@ import { normalizeEntitySchemas } from "./entity-schema.js";
 // boolean-coercion logic that connectors/index.ts already exports. The helper
 // lives in connectors/coerce.ts (a tiny, dependency-free module) so neither
 // config.ts → connectors/index.ts nor the reverse circular import arises.
-import { coerceBool, coerceInstallExtension } from "./connectors/coerce.js";
+import { coerceBool, coerceInstallExtension, coerceNumber } from "./connectors/coerce.js";
 
 const DEFAULT_MEMORY_DIR = path.join(
   resolveHomeDir(),
@@ -841,24 +841,18 @@ export function parseConfig(raw: unknown): PluginConfig {
     // Direct-answer retrieval tier (issue #518)
     recallDirectAnswerEnabled:
       coerceBool(cfg.recallDirectAnswerEnabled) ?? false,
-    recallDirectAnswerTokenOverlapFloor:
-      typeof cfg.recallDirectAnswerTokenOverlapFloor === "number" &&
-      cfg.recallDirectAnswerTokenOverlapFloor >= 0 &&
-      cfg.recallDirectAnswerTokenOverlapFloor <= 1
-        ? cfg.recallDirectAnswerTokenOverlapFloor
-        : 0.55,
-    recallDirectAnswerImportanceFloor:
-      typeof cfg.recallDirectAnswerImportanceFloor === "number" &&
-      cfg.recallDirectAnswerImportanceFloor >= 0 &&
-      cfg.recallDirectAnswerImportanceFloor <= 1
-        ? cfg.recallDirectAnswerImportanceFloor
-        : 0.7,
-    recallDirectAnswerAmbiguityMargin:
-      typeof cfg.recallDirectAnswerAmbiguityMargin === "number" &&
-      cfg.recallDirectAnswerAmbiguityMargin >= 0 &&
-      cfg.recallDirectAnswerAmbiguityMargin <= 1
-        ? cfg.recallDirectAnswerAmbiguityMargin
-        : 0.15,
+    recallDirectAnswerTokenOverlapFloor: (() => {
+      const n = coerceNumber(cfg.recallDirectAnswerTokenOverlapFloor);
+      return n !== undefined && n >= 0 && n <= 1 ? n : 0.55;
+    })(),
+    recallDirectAnswerImportanceFloor: (() => {
+      const n = coerceNumber(cfg.recallDirectAnswerImportanceFloor);
+      return n !== undefined && n >= 0 && n <= 1 ? n : 0.7;
+    })(),
+    recallDirectAnswerAmbiguityMargin: (() => {
+      const n = coerceNumber(cfg.recallDirectAnswerAmbiguityMargin);
+      return n !== undefined && n >= 0 && n <= 1 ? n : 0.15;
+    })(),
     recallDirectAnswerEligibleTaxonomyBuckets: Array.isArray(
       cfg.recallDirectAnswerEligibleTaxonomyBuckets,
     )
