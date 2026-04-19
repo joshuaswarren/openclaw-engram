@@ -271,6 +271,60 @@ See the [Hermes plugin reference](../plugins/hermes.md) for the `remnic-hermes` 
 
 ---
 
+## WeClone Avatar
+
+[WeClone](https://github.com/xming521/weclone) fine-tunes a model on your chat
+history, then serves it via an OpenAI-compatible API. Remnic's `weclone`
+connector adds persistent memory on top, so the deployed avatar remembers
+prior conversations instead of being stateless at inference time.
+
+### Install
+
+```bash
+remnic connectors install weclone \
+  --config wecloneApiUrl=http://localhost:8000/v1 \
+  --config proxyPort=8100
+```
+
+This writes two files:
+
+- `~/.config/engram/.engram-connectors/connectors/weclone.json` — registry entry
+  used by `remnic connectors list / remove / doctor`.
+- `~/.remnic/connectors/weclone.json` — proxy config read by
+  `remnic-weclone-proxy` at startup. A Remnic daemon auth token is minted and
+  stored here so the proxy can authenticate without additional setup.
+
+### Run
+
+```bash
+remnic-weclone-proxy
+```
+
+Point your bot/client at `http://localhost:8100/v1` (or whichever `proxyPort`
+you chose). All OpenAI-compatible requests are transparently proxied, with
+memory injection applied only to `POST /v1/chat/completions`.
+
+### Per-caller session isolation
+
+For multi-user avatars, install with `sessionStrategy=caller-id`:
+
+```bash
+remnic connectors install weclone --force \
+  --config sessionStrategy=caller-id
+```
+
+Callers should pass their identity via the `X-Caller-Id` header (or the
+OpenAI-compatible `user` field in the request body). The proxy maps this to
+a Remnic session key so each user's memory is isolated.
+
+**Capabilities:** observe, recall (store/search happen inside Remnic itself,
+not via the WeClone proxy).
+
+See the [connector package README](https://github.com/joshuaswarren/remnic/tree/main/packages/connector-weclone)
+for the full config reference and architecture diagram.
+
+---
+
 ## Generic MCP Client
 
 Any tool that supports the [Model Context Protocol](https://modelcontextprotocol.io/) can connect to Engram. Point your client at:
