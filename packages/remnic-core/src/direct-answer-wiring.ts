@@ -28,6 +28,7 @@ import type { MemoryFile, PluginConfig } from "./types.js";
 import type { TrustZoneName } from "./trust-zones.js";
 import type { Taxonomy } from "./taxonomy/types.js";
 import { resolveCategory } from "./taxonomy/resolver.js";
+import { normalizeRecallTokens } from "./recall-tokenization.js";
 import {
   isDirectAnswerEligible,
   type DirectAnswerCandidate,
@@ -102,6 +103,21 @@ export async function tryDirectAnswer(
 
   // Short-circuit disabled case before touching any I/O.
   if (!eligibilityConfig.enabled) {
+    return isDirectAnswerEligible({
+      query,
+      candidates: [],
+      config: eligibilityConfig,
+      queryEntityRefs,
+    });
+  }
+
+  // Short-circuit empty-query case before any I/O.  isDirectAnswerEligible
+  // deterministically returns reason "empty-query" when the query
+  // normalizes to zero searchable tokens; there's no point materializing
+  // candidates just to reach the same verdict, and doing so would
+  // surface avoidable upstream errors for requests that should exit
+  // immediately.
+  if (normalizeRecallTokens(query).length === 0) {
     return isDirectAnswerEligible({
       query,
       candidates: [],

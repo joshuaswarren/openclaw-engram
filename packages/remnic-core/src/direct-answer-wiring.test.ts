@@ -104,6 +104,29 @@ test("tryDirectAnswer disabled-path does not call any source accessor", async ()
   assert.deepEqual(sources.calls.importance, []);
 });
 
+// ── Empty-query short-circuit: no I/O ───────────────────────────────────────
+
+test("tryDirectAnswer skips all I/O when query normalizes to zero searchable tokens", async () => {
+  // Regression for PR #533 second-round P2 review: isDirectAnswerEligible
+  // deterministically returns "empty-query" in that case, so the wiring
+  // must not materialize candidates or call trust-zone/importance first.
+  const sources = makeMockSources({
+    memories: [makeMemory({ tags: ["pnpm"], content: "remnic uses pnpm" })],
+    trustZones: { m1: "trusted" },
+    importance: { m1: 0.9 },
+  });
+  const result = await tryDirectAnswer({
+    query: "? !!!  ",
+    namespace: "default",
+    config: BASE_CONFIG,
+    sources,
+  });
+  assert.equal(result.reason, "empty-query");
+  assert.equal(sources.calls.listCandidates, 0);
+  assert.deepEqual(sources.calls.trustZone, []);
+  assert.deepEqual(sources.calls.importance, []);
+});
+
 // ── Empty memory list ───────────────────────────────────────────────────────
 
 test("tryDirectAnswer with empty memory list returns no-candidates", async () => {
