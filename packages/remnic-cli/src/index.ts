@@ -4856,12 +4856,12 @@ export async function runTrainingExport(
   };
 
   let adapter = getTrainingExportAdapter(args.format);
-  if (!adapter) {
-    // Either the format is weclone but the adapter hasn't been
-    // registered in this process yet, or it's genuinely unknown. Try
-    // registering weclone first; if the format still isn't found, fall
-    // through to the normal "unknown format" error with the real list
-    // of registered adapters.
+  if (!adapter && args.format === "weclone") {
+    // The format is specifically weclone and the adapter hasn't been
+    // registered in this process yet. Only load the optional package
+    // in this case — a typo or genuinely unsupported format should
+    // surface the normal "unknown format" error below, not a weclone
+    // install hint. (Codex feedback on PR #545.)
     const mod = await ensureWeclone();
     mod.ensureWecloneExportAdapterRegistered();
     adapter = getTrainingExportAdapter(args.format);
@@ -4909,39 +4909,38 @@ export async function runTrainingExport(
 
   // synthesize and privacy-sweep currently live in @remnic/export-weclone
   // and produce weclone-shaped output. When the selected adapter isn't
-  // the weclone one (e.g. a plugin-registered format), running these
-  // transforms would be semantically wrong AND would force users to
-  // install an optional package they never asked for, so we skip them
-  // with a clear note instead. privacy-sweep defaults to true, so this
-  // scope check is what actually preserves the à-la-carte contract for
-  // non-weclone formats. (Codex feedback on PR #545.)
+  // the weclone one, we cannot run them — but we must NOT silently
+  // skip privacy-sweep, because it's a security guard that defaults on
+  // and a quiet no-op would let PII leak through plugin/custom formats.
+  // Hard-fail with a clear remediation path instead, so users either
+  // pick --format weclone or explicitly opt out with --no-privacy-sweep.
+  // (Codex P2+P1 feedback on PR #545.)
   const adapterIsWeclone = adapter.name === "weclone";
   if (args.synthesize) {
-    if (adapterIsWeclone) {
-      const mod = await ensureWeclone();
-      records = mod.synthesizeTrainingPairs(records, {
-        maxPairsPerRecord: args.maxPairsPerRecord,
-      });
-    } else {
-      stdout.write(
-        `Note: --synthesize is ignored for --format "${adapter.name}" (weclone-only).\n`,
+    if (!adapterIsWeclone) {
+      throw new Error(
+        `--synthesize is only supported by --format weclone. Got --format ${adapter.name}. ` +
+          `Either rerun with --format weclone or drop --synthesize.`,
       );
     }
+    const mod = await ensureWeclone();
+    records = mod.synthesizeTrainingPairs(records, {
+      maxPairsPerRecord: args.maxPairsPerRecord,
+    });
   }
 
   let redactedCount = 0;
   if (args.privacySweep) {
-    if (adapterIsWeclone) {
-      const mod = await ensureWeclone();
-      const swept = mod.sweepPii(records);
-      records = swept.cleanRecords;
-      redactedCount = swept.redactedCount;
+    if (!adapterIsWeclone) {
+      throw new Error(
+        `--privacy-sweep is only implemented for --format weclone (${adapter.name} would silently skip redaction, which is unsafe). ` +
+          `Rerun with --format weclone to redact PII, or pass --no-privacy-sweep to export ${adapter.name} records as-is after confirming they are safe to emit.`,
+      );
     }
-    // Silent no-op for non-weclone adapters: privacy-sweep defaults to
-    // true, so logging a note for every run would be noisy. Adapters
-    // registered outside weclone are expected to handle their own PII
-    // story; users who specifically need the weclone sweep should pick
-    // --format weclone.
+    const mod = await ensureWeclone();
+    const swept = mod.sweepPii(records);
+    records = swept.cleanRecords;
+    redactedCount = swept.redactedCount;
   }
 
   if (args.dryRun) {
