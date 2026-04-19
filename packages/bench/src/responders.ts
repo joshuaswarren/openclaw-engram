@@ -205,7 +205,7 @@ function parseScalarJudgeScore(raw: string): number {
   const fractionMatches = [
     ...trimmed.matchAll(/(-?\d+(?:\.\d+)?)\s*\/\s*(-?\d+(?:\.\d+)?)/g),
   ];
-  for (const match of [...fractionMatches].reverse()) {
+  for (const match of fractionMatches.reverse()) {
     const numerator = Number.parseFloat(match[1]);
     const denominator = Number.parseFloat(match[2]);
     if (isPlausibleScoreFraction(numerator, denominator)) {
@@ -214,7 +214,7 @@ function parseScalarJudgeScore(raw: string): number {
   }
 
   const percentMatches = [...trimmed.matchAll(/(-?\d+(?:\.\d+)?)\s*%/g)];
-  for (const match of [...percentMatches].reverse()) {
+  for (const match of percentMatches.reverse()) {
     const percent = Number.parseFloat(match[1]);
     if (Number.isFinite(percent)) {
       return clampNormalizedScore(percent / 100);
@@ -222,7 +222,7 @@ function parseScalarJudgeScore(raw: string): number {
   }
 
   const outOfMatches = [...trimmed.matchAll(SCORE_OUT_OF_REGEX)];
-  for (const match of [...outOfMatches].reverse()) {
+  for (const match of outOfMatches.reverse()) {
     const numerator = Number.parseFloat(match[1]);
     const denominator = Number.parseFloat(match[2]);
     if (isPlausibleScoreFraction(numerator, denominator)) {
