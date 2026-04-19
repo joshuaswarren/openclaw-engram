@@ -123,6 +123,7 @@ import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
 import {
   buildBenchmarkPublishFeed,
   compareResults,
+  getBenchmarkLowerIsBetter,
   defaultBenchmarkBaselineDir,
   discoverAllProviders,
   defaultBenchmarkPublishPath,
@@ -641,6 +642,7 @@ async function compareBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
     baseline,
     candidate,
     parsed.threshold ?? 0.05,
+    getBenchmarkLowerIsBetter(candidate.meta.benchmark),
   );
 
   if (parsed.json) {
