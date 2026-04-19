@@ -104,9 +104,9 @@ test("parseConfig preserves custom entity schemas without code changes", () => {
 
 // ── Issue #518: direct-answer retrieval tier config ─────────────────────────
 
-test("parseConfig recallDirectAnswerEnabled defaults to false", () => {
+test("parseConfig recallDirectAnswerEnabled defaults to true (slice 8a flip)", () => {
   const result = parseConfig({});
-  assert.equal(result.recallDirectAnswerEnabled, false);
+  assert.equal(result.recallDirectAnswerEnabled, true);
 });
 
 test('parseConfig recallDirectAnswerEnabled coerces string "true" to boolean true', () => {

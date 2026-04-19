@@ -1876,8 +1876,8 @@
       },
       "recallDirectAnswerEnabled": {
         "type": "boolean",
-        "default": false,
-        "description": "When true, recall checks whether a single validated high-trust memory can answer the query before QMD runs (issue #518). Default off until bench validation."
+        "default": true,
+        "description": "When true, recall runs the direct-answer tier in observation mode: annotates LastRecallSnapshot.tierExplain with which tier would have served the query (issue #518). Does not short-circuit the QMD path in the current release."
       },
       "recallDirectAnswerTokenOverlapFloor": {
         "type": "number",
