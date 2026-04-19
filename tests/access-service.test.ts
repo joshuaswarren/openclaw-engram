@@ -901,11 +901,13 @@ test("recallTierExplain denies cross-tenant namespace override via ACL", async (
   assert.deepEqual(response.memoryIds, []);
 });
 
-test("recallTierExplain with no namespace filters global most-recent by principal ACL", async () => {
+test("recallTierExplain with no sessionKey filters global most-recent by principal ACL", async () => {
   const service = new EngramAccessService(
     makeTierExplainOrchestrator({
       namespacesEnabled: true,
-      // Most-recent snapshot belongs to secret-team.
+      // Most-recent snapshot belongs to secret-team.  No session-keyed
+      // snapshot — this forces the service down the getMostRecent()
+      // branch where the ACL filter must execute.
       snapshot: {
         sessionKey: "secret-team:session",
         recordedAt: "2026-04-19T00:00:00.000Z",
@@ -917,17 +919,49 @@ test("recallTierExplain with no namespace filters global most-recent by principa
     }) as any,
   );
 
-  // project-x caller must NOT see secret-team metadata when asking for
-  // global most-recent.  Previous implementation leaked cross-tenant data.
+  // project-x caller (via authenticatedPrincipal, no sessionKey) must
+  // NOT see secret-team metadata when asking for global most-recent.
+  // This exercises the getMostRecent() + canReadNamespace() filter
+  // path (not the sessionKey lookup path).
   const response = await service.recallTierExplain(
-    "project-x:session",
     undefined,
     undefined,
+    "project-x",
   ) as { snapshotFound: boolean; memoryIds: unknown[]; namespace: unknown };
 
   assert.equal(response.snapshotFound, false);
   assert.deepEqual(response.memoryIds, []);
   assert.equal(response.namespace, null);
+});
+
+test("recallTierExplain with authorized principal sees global most-recent in their namespace", async () => {
+  // Complement to the previous test: verify the ACL filter allows the
+  // snapshot through when the principal CAN read the snapshot's
+  // namespace, so we know the test above is failing for the right
+  // reason (denial) rather than because the snapshot is unreachable.
+  const service = new EngramAccessService(
+    makeTierExplainOrchestrator({
+      namespacesEnabled: true,
+      snapshot: {
+        sessionKey: "secret-team:session",
+        recordedAt: "2026-04-19T00:00:00.000Z",
+        queryHash: "h",
+        queryLen: 1,
+        memoryIds: ["fact-secret"],
+        namespace: "secret-team",
+      },
+    }) as any,
+  );
+
+  const response = await service.recallTierExplain(
+    undefined,
+    undefined,
+    "secret-team",
+  ) as { snapshotFound: boolean; memoryIds: string[]; namespace: string | null };
+
+  assert.equal(response.snapshotFound, true);
+  assert.deepEqual(response.memoryIds, ["fact-secret"]);
+  assert.equal(response.namespace, "secret-team");
 });
 
 test("recallTierExplain rejects unauthenticated caller when namespaces are enabled and no session supplied", async () => {
