@@ -236,6 +236,65 @@ test("installConnector weclone force-reinstall preserves prior custom fields", a
   );
 });
 
+test("removeConnector weclone uses persisted proxyConfigPath even if REMNIC_HOME changed", async (t) => {
+  // Install into one REMNIC_HOME, then call remove with a DIFFERENT REMNIC_HOME.
+  // The persisted absolute path must win so the original file is deleted even
+  // if the env changed between install and remove (e.g. user rotates their
+  // home dir, or REMNIC_HOME was scoped to a shell that later unset it).
+  const sandbox = makeSandbox(t);
+  const altRemnicHome = path.join(sandbox.root, "alt-remnic-home");
+  fs.mkdirSync(altRemnicHome, { recursive: true });
+
+  let installedProxyPath = "";
+  let installedConfigPath = "";
+
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: sandbox.remnicHome,
+    },
+    () => {
+      const installResult = installConnector({ connectorId: "weclone" });
+      assert.equal(installResult.status, "installed");
+      installedProxyPath = resolveWeCloneProxyConfigPath();
+      installedConfigPath = installResult.configPath as string;
+      assert.ok(fs.existsSync(installedProxyPath), "precondition: proxy config exists at install-time path");
+    },
+  );
+
+  // Simulate env change: point REMNIC_HOME at a different directory during
+  // remove. The original proxy file is at installedProxyPath — if removal
+  // were to naively re-resolve from env, it would try to delete a non-existent
+  // path under altRemnicHome and leave the real file behind.
+  await withEnv(
+    {
+      HOME: sandbox.home,
+      USERPROFILE: sandbox.home,
+      XDG_CONFIG_HOME: sandbox.xdgConfigHome,
+      REMNIC_HOME: altRemnicHome,
+    },
+    () => {
+      // Sanity: the env-derived path now resolves somewhere else.
+      const envDerived = resolveWeCloneProxyConfigPath();
+      assert.notEqual(envDerived, installedProxyPath);
+
+      const removeResult = removeConnector("weclone");
+      assert.equal(removeResult.status, "removed");
+
+      // The ORIGINAL proxy config file must have been deleted via the persisted
+      // proxyConfigPath — not left behind because env has moved on.
+      assert.equal(
+        fs.existsSync(installedProxyPath),
+        false,
+        "original proxy config must be deleted via persisted proxyConfigPath even after REMNIC_HOME changed",
+      );
+      assert.equal(fs.existsSync(installedConfigPath), false, "registry config must also be deleted");
+    },
+  );
+});
+
 test("removeConnector weclone cleans up both registry and proxy config files", async (t) => {
   const sandbox = makeSandbox(t);
   await withEnv(

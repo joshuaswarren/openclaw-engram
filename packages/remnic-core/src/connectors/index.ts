@@ -1492,6 +1492,32 @@ export function removeConnector(connectorId: string): RemoveResult {
     }
   }
 
+  // For weclone, read the persisted proxy config path from the saved registry
+  // config BEFORE deleting it. Using the persisted absolute path (rather than
+  // recomputing from current REMNIC_HOME / ENGRAM_HOME / $HOME) guarantees
+  // that a remove still targets the original file even if the environment
+  // has changed between install and remove. Falls back to the env-derived
+  // path only if the saved config is missing or malformed.
+  let weCloneProxyConfigPath: string | null = null;
+  if (connectorId === "weclone") {
+    try {
+      const stored = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+      if (typeof stored.proxyConfigPath === "string" && stored.proxyConfigPath.length > 0) {
+        weCloneProxyConfigPath = stored.proxyConfigPath;
+      }
+    } catch {
+      // Registry config unreadable — fall back to env-derived path below.
+    }
+    if (weCloneProxyConfigPath === null) {
+      try {
+        weCloneProxyConfigPath = resolveWeCloneProxyConfigPath();
+      } catch {
+        // Resolution failed (e.g. no HOME) — leave null so the cleanup block
+        // skips gracefully rather than crashing the whole remove.
+      }
+    }
+  }
+
   // Finding 4: if the codex-cli config exists but failed to parse, abort the
   // entire removal. Leave both the config file AND the extension directory
   // untouched so the operator can inspect/fix the config file and retry.
@@ -1569,20 +1595,31 @@ export function removeConnector(connectorId: string): RemoveResult {
     notes.push(`Warning: token revocation failed — ${revokeMsg}. The token for ${connectorId} may still be present in tokens.json.`);
   }
 
-  // WeClone-specific: remove the proxy config file at ~/.remnic/connectors/weclone.json.
-  // Only attempted after successful connector-registry file removal so the two
-  // locations stay consistent. Non-fatal — absence is treated as success.
+  // WeClone-specific: remove the proxy config file at the path persisted in
+  // the registry config (read above before the registry file was deleted).
+  // Using the persisted absolute path — not a re-derivation from the current
+  // environment — is load-bearing: if REMNIC_HOME / ENGRAM_HOME changes (or
+  // is unset) between install and remove, recomputing here would leave the
+  // original proxy config (with a live bearer token) on disk while reporting
+  // success. Non-fatal: if the file is already absent or the path could not
+  // be determined, skip with a note.
   if (connectorId === "weclone") {
-    try {
-      const proxyConfigPath = resolveWeCloneProxyConfigPath();
-      if (fs.existsSync(proxyConfigPath)) {
-        fs.unlinkSync(proxyConfigPath);
-        notes.push(`Removed WeClone proxy config: ${proxyConfigPath}`);
-      }
-    } catch (err) {
+    if (weCloneProxyConfigPath === null) {
       notes.push(
-        `WeClone proxy config cleanup skipped: ${err instanceof Error ? err.message : String(err)}`,
+        "WeClone proxy config cleanup skipped: no persisted path found in saved config " +
+          "(likely a legacy install predating proxyConfigPath provenance).",
       );
+    } else {
+      try {
+        if (fs.existsSync(weCloneProxyConfigPath)) {
+          fs.unlinkSync(weCloneProxyConfigPath);
+          notes.push(`Removed WeClone proxy config: ${weCloneProxyConfigPath}`);
+        }
+      } catch (err) {
+        notes.push(
+          `WeClone proxy config cleanup skipped: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
   }
 
