@@ -2198,10 +2198,20 @@ const pluginDefinition = {
         typeof orchestrator.config.qmdPath === "string" && orchestrator.config.qmdPath.trim().length > 0
           ? orchestrator.config.qmdPath.trim()
           : "qmd";
-      const readAllowedRoots = [capabilityWorkspaceDir, orchestrator.config.memoryDir].filter(
-        (root): root is string => typeof root === "string" && root.length > 0,
-      );
-      const canonicalizeForContainment = async (rawPath: string): Promise<string> => {
+      // Runtime reads are restricted to memory files only. The agent
+      // workspace root would be too broad (it contains logs, configs,
+      // secrets, etc.), so we allowlist only the memory root plus the
+      // workspace's memory subdirectory if it exists. The extension
+      // check in resolveReadablePath further narrows to markdown.
+      const readAllowedRoots = [
+        orchestrator.config.memoryDir,
+        capabilityWorkspaceDir ? path.join(capabilityWorkspaceDir, "memory") : undefined,
+      ].filter((root): root is string => typeof root === "string" && root.length > 0);
+      // Init-time canonicalization tolerates realpath failure (roots may
+      // not exist yet at plugin start) — the lexical fallback is fine
+      // because readAllowedCanonicalRootsPromise is only used as the
+      // containment target, not as a path we open.
+      const canonicalizeRootForContainment = async (rawPath: string): Promise<string> => {
         const resolved = path.resolve(rawPath);
         try {
           return path.normalize(await realpath(resolved));
@@ -2209,11 +2219,31 @@ const pluginDefinition = {
           return path.normalize(resolved);
         }
       };
+      // Check-time canonicalization is strict — realpath failure means
+      // the file does not exist or its symlink chain is broken. Falling
+      // back to lexical normalization there would re-open the TOCTOU
+      // window by letting a non-existent path pass the containment
+      // check; a symlink could then be created between check and open.
+      const canonicalizeForRead = async (rawPath: string): Promise<string> => {
+        const resolved = path.resolve(rawPath);
+        const real = await realpath(resolved);
+        return path.normalize(real);
+      };
       const readAllowedCanonicalRootsPromise = Promise.all(
-        readAllowedRoots.map((root) => canonicalizeForContainment(root)),
+        readAllowedRoots.map((root) => canonicalizeRootForContainment(root)),
       );
       const isWithinAllowedRoot = async (candidatePath: string): Promise<boolean> => {
-        const canonicalCandidatePath = await canonicalizeForContainment(candidatePath);
+        // Use strict canonicalization here too so callers of this helper
+        // (if any) benefit from the same TOCTOU protection as
+        // resolveReadablePath. Kept for backwards compatibility with any
+        // downstream consumer; resolveReadablePath now short-circuits
+        // past this helper.
+        let canonicalCandidatePath: string;
+        try {
+          canonicalCandidatePath = await canonicalizeForRead(candidatePath);
+        } catch {
+          return false;
+        }
         const canonicalRoots = await readAllowedCanonicalRootsPromise;
         return canonicalRoots.some((root) => {
           const relative = path.relative(root, canonicalCandidatePath);
@@ -2234,12 +2264,18 @@ const pluginDefinition = {
         const absolutePath = path.isAbsolute(requestedPath)
           ? path.resolve(requestedPath)
           : path.resolve(capabilityWorkspaceDir, requestedPath);
-        // Canonicalize once and return the canonical path so the subsequent
-        // readFile() opens the same inode we validated. Returning the
-        // pre-canonicalization path creates a check/use race where a
-        // symlink inside an allowed root could be swapped between the
-        // containment check and the read.
-        const canonicalPath = await canonicalizeForContainment(absolutePath);
+        // Canonicalize strictly: realpath failure = reject. A lexical
+        // fallback here would let a non-existent path pass the
+        // containment check, after which a symlink could be created
+        // pointing outside the allowlist before readFile() runs.
+        let canonicalPath: string;
+        try {
+          canonicalPath = await canonicalizeForRead(absolutePath);
+        } catch (err) {
+          throw new Error(
+            `memory read rejected (path unresolvable): ${requestedPath}`,
+          );
+        }
         const canonicalRoots = await readAllowedCanonicalRootsPromise;
         const contained = canonicalRoots.some((root) => {
           const relative = path.relative(root, canonicalPath);
@@ -2248,11 +2284,20 @@ const pluginDefinition = {
         if (!contained) {
           throw new Error(`memory read outside allowed roots: ${requestedPath}`);
         }
+        // Restrict to markdown memory files — the allowed roots contain
+        // other file types (attachments, index files, snapshots) that
+        // should not be readable via this runtime capability.
+        if (!canonicalPath.toLowerCase().endsWith(".md")) {
+          throw new Error(
+            `memory read restricted to .md files: ${requestedPath}`,
+          );
+        }
         return canonicalPath;
       };
       type RuntimeMemorySource = "memory" | "sessions";
       type RuntimeSearchOptions = {
         maxResults?: number;
+        minScore?: number;
         sessionKey?: string;
         qmdSearchModeOverride?: "query" | "search" | "vsearch";
       };
@@ -2393,7 +2438,16 @@ const pluginDefinition = {
                     source: normalizedPath.includes("sessions/") ? "sessions" : "memory",
                     citation: normalizedPath,
                   };
-                });
+                })
+                // Honor caller-supplied minScore. The underlying search
+                // orchestrator does not filter on score directly, so the
+                // threshold must be applied here before results leave
+                // the manager.
+                .filter((result) =>
+                  typeof opts?.minScore === "number" && Number.isFinite(opts.minScore)
+                    ? result.score >= opts.minScore
+                    : true,
+                );
               },
               async readFile(params: RuntimeReadParams) {
                 const requestedPath = normalizeWorkspacePath(params.relPath);
