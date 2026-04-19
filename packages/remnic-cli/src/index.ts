@@ -4907,19 +4907,41 @@ export async function runTrainingExport(
   let records: TrainingExportRecord[] = await convertMemoriesToRecords(convertOptions);
   const recordsRead = records.length;
 
+  // synthesize and privacy-sweep currently live in @remnic/export-weclone
+  // and produce weclone-shaped output. When the selected adapter isn't
+  // the weclone one (e.g. a plugin-registered format), running these
+  // transforms would be semantically wrong AND would force users to
+  // install an optional package they never asked for, so we skip them
+  // with a clear note instead. privacy-sweep defaults to true, so this
+  // scope check is what actually preserves the à-la-carte contract for
+  // non-weclone formats. (Codex feedback on PR #545.)
+  const adapterIsWeclone = adapter.name === "weclone";
   if (args.synthesize) {
-    const mod = await ensureWeclone();
-    records = mod.synthesizeTrainingPairs(records, {
-      maxPairsPerRecord: args.maxPairsPerRecord,
-    });
+    if (adapterIsWeclone) {
+      const mod = await ensureWeclone();
+      records = mod.synthesizeTrainingPairs(records, {
+        maxPairsPerRecord: args.maxPairsPerRecord,
+      });
+    } else {
+      stdout.write(
+        `Note: --synthesize is ignored for --format "${adapter.name}" (weclone-only).\n`,
+      );
+    }
   }
 
   let redactedCount = 0;
   if (args.privacySweep) {
-    const mod = await ensureWeclone();
-    const swept = mod.sweepPii(records);
-    records = swept.cleanRecords;
-    redactedCount = swept.redactedCount;
+    if (adapterIsWeclone) {
+      const mod = await ensureWeclone();
+      const swept = mod.sweepPii(records);
+      records = swept.cleanRecords;
+      redactedCount = swept.redactedCount;
+    }
+    // Silent no-op for non-weclone adapters: privacy-sweep defaults to
+    // true, so logging a note for every run would be noisy. Adapters
+    // registered outside weclone are expected to handle their own PII
+    // story; users who specifically need the weclone sweep should pick
+    // --format weclone.
   }
 
   if (args.dryRun) {

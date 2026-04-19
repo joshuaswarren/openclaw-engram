@@ -11,26 +11,23 @@
 // same pattern). Mirrors CLAUDE.md invariant: "CLI and plugins MUST load
 // optional workspace packages via computed-specifier dynamic imports."
 
+import { isSpecifierNotFoundError } from "./optional-module-loader.js";
+
 type BenchModule = typeof import("@remnic/bench");
+
+const SPECIFIER = "@remnic/" + "bench";
 
 let cached: BenchModule | null | undefined;
 
-function isModuleNotFoundError(err: unknown): boolean {
-  // Node's ESM loader uses ERR_MODULE_NOT_FOUND; CJS and some bundlers
-  // surface the older MODULE_NOT_FOUND code. Either means "the package
-  // isn't installed" — anything else (syntax error, init throw, etc.)
-  // is a real bug inside @remnic/bench that we must surface, not mask
-  // with an install hint.
-  const code = (err as { code?: unknown } | null)?.code;
-  return code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND";
-}
-
 async function tryImportBench(): Promise<BenchModule | null> {
   try {
-    const specifier = "@remnic/" + "bench";
-    return (await import(specifier)) as BenchModule;
+    return (await import(SPECIFIER)) as BenchModule;
   } catch (err) {
-    if (isModuleNotFoundError(err)) {
+    // Only swallow "this package isn't installed" errors. Syntax
+    // errors, init throws, or ERR_MODULE_NOT_FOUND from a transitive
+    // miss inside @remnic/bench must all surface so broken releases
+    // are diagnosable instead of producing a misleading install hint.
+    if (isSpecifierNotFoundError(err, SPECIFIER)) {
       return null;
     }
     throw err;
