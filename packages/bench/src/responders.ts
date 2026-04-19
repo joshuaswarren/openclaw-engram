@@ -67,7 +67,7 @@ export function createProviderBackedResponder(
   return createResponderFromProvider(providerInstance ?? createProvider(config));
 }
 
-export function createJudgeFromProvider(provider: LlmProvider): BenchJudge {
+function createJudgeFromProvider(provider: LlmProvider): BenchJudge {
   return {
     async score(question: string, predicted: string, expected: string): Promise<number> {
       const completion = await provider.complete(
