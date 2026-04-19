@@ -25,7 +25,7 @@
   },
   "scripts": {
     "prebuild": "node ../../scripts/ensure-cli-bench-build-deps.mjs",
-    "build": "tsup --config tsup.config.ts",
+    "build": "tsup --config tsup.config.ts && node scripts/copy-bench-assets.mjs",
     "check-types": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

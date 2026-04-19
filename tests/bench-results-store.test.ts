@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   buildBenchmarkPublishFeed,
+  deleteBenchmarkResults,
   defaultBenchmarkBaselineDir,
   defaultBenchmarkPublishPath,
   listBenchmarkBaselines,
@@ -158,6 +159,27 @@ test("resolveBenchmarkResultReference falls back to id matching when a same-name
   } finally {
     process.chdir(cwd);
   }
+});
+
+test("deleteBenchmarkResults removes matched stored results and reports unmatched references", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-delete-"));
+  const firstPath = path.join(root, "first.json");
+  const secondPath = path.join(root, "second.json");
+  await writeFile(
+    firstPath,
+    `${JSON.stringify(buildResult("run-first", "2026-04-18T03:00:00.000Z"))}\n`,
+  );
+  await writeFile(
+    secondPath,
+    `${JSON.stringify(buildResult("run-second", "2026-04-18T04:00:00.000Z"))}\n`,
+  );
+
+  const result = await deleteBenchmarkResults(root, ["run-first", "missing-run"]);
+  const listed = await listBenchmarkResults(root);
+
+  assert.deepEqual(result.deleted.map((entry) => entry.id), ["run-first"]);
+  assert.deepEqual(result.missing, ["missing-run"]);
+  assert.deepEqual(listed.map((entry) => entry.id), ["run-second"]);
 });
 
 test("saveBenchmarkBaseline persists a named baseline and listBenchmarkBaselines returns newest first", async () => {
