@@ -3,6 +3,15 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { BenchmarkMode, BenchmarkResult } from "./types.js";
+import {
+  assertIntegrityMetaPresent,
+  integrityMetaIsComplete,
+} from "./integrity/types.js";
+import {
+  checkDatasetContamination,
+  EMPTY_CONTAMINATION_MANIFEST,
+  type ContaminationManifest,
+} from "./integrity/contamination.js";
 
 export interface StoredBenchmarkResultSummary {
   id: string;
@@ -47,12 +56,34 @@ export interface PublishedBenchmarkFeedEntry {
   aggregateMetrics: BenchmarkResult["results"]["aggregates"];
   cost: BenchmarkResult["cost"];
   environment: BenchmarkResult["environment"];
+  integrity: {
+    splitType: NonNullable<BenchmarkResult["meta"]["splitType"]>;
+    qrelsSealedHash: string;
+    judgePromptHash: string;
+    datasetHash: string;
+    canaryScore?: number;
+  };
+}
+
+export interface BuildBenchmarkPublishFeedOptions {
+  /**
+   * Contamination manifest applied to every candidate result. A result whose
+   * `datasetHash` matches an entry is dropped from the published feed.
+   * Defaults to the empty manifest.
+   */
+  contaminationManifest?: ContaminationManifest;
 }
 
 export interface PublishedBenchmarkFeed {
   target: BenchmarkPublishTarget;
   generatedAt: string;
   benchmarks: PublishedBenchmarkFeedEntry[];
+  /**
+   * Records for every candidate result that was considered but dropped from
+   * this feed because of an integrity concern. Exposed so tooling can surface
+   * the dropped runs without grep-ing logs.
+   */
+  skipped?: PublishSkipRecord[];
 }
 
 const BASELINE_NAME_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -342,9 +373,93 @@ function isPublishableResultForTarget(
   }
 }
 
+/**
+ * Throws if the result is missing any required integrity field. Called
+ * explicitly by tooling (e.g. `remnic bench publish --strict`) that needs to
+ * surface integrity gaps as errors rather than silently skipping the run.
+ * The feed builder uses `isResultPublishable` below to filter non-fatal
+ * conditions (public split, missing integrity) so a single bad result does
+ * not block publishing older, valid holdout runs.
+ */
+export function assertPublishableIntegrity(
+  result: BenchmarkResult,
+  target: BenchmarkPublishTarget,
+): void {
+  assertIntegrityMetaPresent(result.meta);
+  if (target === "remnic-ai" && result.meta.splitType !== "holdout") {
+    throw new Error(
+      `Published leaderboard only accepts holdout-split results; got splitType="${String(result.meta.splitType)}".`,
+    );
+  }
+}
+
+export type PublishSkipReason =
+  | "missing-integrity"
+  | "non-holdout-split"
+  | "contaminated-dataset";
+
+export interface PublishSkipRecord {
+  resultId: string;
+  path: string;
+  reason: PublishSkipReason;
+  detail: string;
+}
+
+/**
+ * Decide whether a single result should contribute to a published feed for
+ * the given target. Returns `null` when the result is publishable; otherwise
+ * returns a structured skip reason. Called per-result so newer results with
+ * missing/public metadata do not block older valid holdout runs for the same
+ * benchmark.
+ */
+function classifyPublishCandidate(
+  result: BenchmarkResult,
+  target: BenchmarkPublishTarget,
+  contaminationManifest: ContaminationManifest,
+): PublishSkipRecord | null {
+  if (!integrityMetaIsComplete(result.meta)) {
+    return {
+      resultId: result.meta.id,
+      path: "",
+      reason: "missing-integrity",
+      detail: "Result is missing one or more required integrity fields.",
+    };
+  }
+
+  if (target === "remnic-ai" && result.meta.splitType !== "holdout") {
+    return {
+      resultId: result.meta.id,
+      path: "",
+      reason: "non-holdout-split",
+      detail: `Leaderboard only accepts holdout-split results; got "${result.meta.splitType}".`,
+    };
+  }
+
+  const contamination = checkDatasetContamination(
+    result.meta.datasetHash,
+    contaminationManifest,
+  );
+  if (!contamination.clean) {
+    return {
+      resultId: result.meta.id,
+      path: "",
+      reason: "contaminated-dataset",
+      detail: `datasetHash ${result.meta.datasetHash} appears on the contamination manifest (${contamination.matched?.reason ?? "unspecified reason"}).`,
+    };
+  }
+
+  return null;
+}
+
 function toPublishedBenchmarkFeedEntry(
   result: BenchmarkResult,
 ): PublishedBenchmarkFeedEntry {
+  if (!integrityMetaIsComplete(result.meta)) {
+    throw new Error(
+      "toPublishedBenchmarkFeedEntry called with a result missing integrity metadata; call assertPublishableIntegrity first.",
+    );
+  }
+
   return {
     benchmark: result.meta.benchmark,
     benchmarkTier: result.meta.benchmarkTier,
@@ -357,15 +472,28 @@ function toPublishedBenchmarkFeedEntry(
     aggregateMetrics: result.results.aggregates,
     cost: result.cost,
     environment: result.environment,
+    integrity: {
+      splitType: result.meta.splitType,
+      qrelsSealedHash: result.meta.qrelsSealedHash,
+      judgePromptHash: result.meta.judgePromptHash,
+      datasetHash: result.meta.datasetHash,
+      ...(result.meta.canaryScore !== undefined
+        ? { canaryScore: result.meta.canaryScore }
+        : {}),
+    },
   };
 }
 
 export async function buildBenchmarkPublishFeed(
   outputDir: string,
   target: BenchmarkPublishTarget,
+  options: BuildBenchmarkPublishFeedOptions = {},
 ): Promise<PublishedBenchmarkFeed> {
   const summaries = await listBenchmarkResults(outputDir);
+  const contaminationManifest =
+    options.contaminationManifest ?? EMPTY_CONTAMINATION_MANIFEST;
   const latestByBenchmark = new Map<string, PublishedBenchmarkFeedEntry>();
+  const skipped: PublishSkipRecord[] = [];
 
   for (const summary of summaries) {
     if (latestByBenchmark.has(summary.benchmark)) {
@@ -376,6 +504,16 @@ export async function buildBenchmarkPublishFeed(
     if (!isPublishableResultForTarget(result, target)) {
       continue;
     }
+
+    // Classify rather than throw so a newer public-split / missing-integrity
+    // result does NOT block older, valid holdout runs for the same benchmark
+    // from reaching the leaderboard.
+    const skip = classifyPublishCandidate(result, target, contaminationManifest);
+    if (skip) {
+      skipped.push({ ...skip, path: summary.path });
+      continue;
+    }
+
     latestByBenchmark.set(
       summary.benchmark,
       toPublishedBenchmarkFeedEntry(result),
@@ -386,6 +524,7 @@ export async function buildBenchmarkPublishFeed(
     target,
     generatedAt: new Date().toISOString(),
     benchmarks: [...latestByBenchmark.values()].sort(comparePublishedBenchmarkEntries),
+    skipped,
   };
 }
 

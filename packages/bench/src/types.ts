@@ -2,6 +2,11 @@
  * @remnic/bench — Phase 1 benchmark engine types
  */
 
+import type {
+  BenchmarkIntegrityMeta,
+  BenchmarkSplitType,
+} from "./integrity/types.js";
+
 export type BenchmarkMode = "full" | "quick";
 export type BenchmarkTier = "published" | "remnic" | "custom";
 export type BenchmarkStatus = "ready" | "planned";
@@ -101,6 +106,22 @@ export interface BenchmarkResult {
     mode: BenchmarkMode;
     runCount: number;
     seeds: number[];
+    /**
+     * Which dataset split produced this result. Public leaderboard scores
+     * only accept `holdout`; `public` is for self-reporting and iteration.
+     */
+    splitType?: BenchmarkSplitType;
+    /** SHA-256 of the sealed qrels artifact used by the judge. */
+    qrelsSealedHash?: string;
+    /** SHA-256 of the rendered judge prompt (post-template expansion). */
+    judgePromptHash?: string;
+    /** SHA-256 of the dataset payload as served to the runner. */
+    datasetHash?: string;
+    /**
+     * Canary-adapter score from the audit run that produced this result.
+     * Must stay below the benchmark's canary floor.
+     */
+    canaryScore?: number;
   };
   config: {
     systemProvider: ProviderConfig | null;
@@ -134,7 +155,15 @@ export interface BenchmarkMeta {
   description: string;
   category: BenchmarkCategory;
   citation?: string;
+  /**
+   * Optional integrity metadata declared on the benchmark itself (as opposed
+   * to each result). When set, the publishing pipeline pins result-time
+   * integrity hashes against these values.
+   */
+  integrity?: BenchmarkIntegrityMeta;
 }
+
+export type { BenchmarkIntegrityMeta, BenchmarkSplitType } from "./integrity/types.js";
 
 export interface BenchmarkDefinition {
   id: string;
