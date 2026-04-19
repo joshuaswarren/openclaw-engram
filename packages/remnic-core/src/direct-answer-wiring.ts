@@ -127,9 +127,9 @@ export async function tryDirectAnswer(
     });
   }
 
-  throwIfAborted(abortSignal);
+  throwIfAborted(abortSignal, "direct-answer wiring aborted");
   const memories = await sources.listCandidateMemories({ namespace, abortSignal });
-  throwIfAborted(abortSignal);
+  throwIfAborted(abortSignal, "direct-answer wiring aborted");
   const candidates: DirectAnswerCandidate[] = [];
 
   for (const memory of memories) {
@@ -139,10 +139,10 @@ export async function tryDirectAnswer(
     // chance to reject.  The check repeats after every await so an
     // abort that lands during the in-flight I/O on the final memory
     // (after which no further iteration would exist) still stops us.
-    throwIfAborted(abortSignal);
+    throwIfAborted(abortSignal, "direct-answer wiring aborted");
 
     const trustZone = await sources.trustZoneFor(memory.frontmatter.id);
-    throwIfAborted(abortSignal);
+    throwIfAborted(abortSignal, "direct-answer wiring aborted");
 
     // Cheap pre-filter: non-trusted memories can't qualify, so skip
     // taxonomy and importance resolution for them.
@@ -169,7 +169,7 @@ export async function tryDirectAnswer(
   // Final check — if abort landed during the trust-zone await for the
   // last memory, the loop condition no longer fires.  Guard before we
   // hand candidates to the eligibility gate.
-  throwIfAborted(abortSignal);
+  throwIfAborted(abortSignal, "direct-answer wiring aborted");
 
   return isDirectAnswerEligible({
     query,
