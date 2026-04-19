@@ -1184,6 +1184,11 @@ export class Orchestrator {
   private utilityRuntimeValues: UtilityRuntimeValues | null = null;
   private evalShadowWriteChain: Promise<void> = Promise.resolve();
 
+  // Pending background observation-mode direct-answer annotations (#518 slice 3c).
+  // Tracks fire-and-forget `annotateDirectAnswerTier` calls so callers (tests,
+  // lifecycle shutdown) can await their completion without blocking `recall()`.
+  private directAnswerObservationChain: Promise<void> = Promise.resolve();
+
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
   private resolveInit: (() => void) | null = null;
@@ -2708,6 +2713,45 @@ export class Orchestrator {
     return true;
   }
 
+  /**
+   * Await the in-flight observation-mode direct-answer annotation chain.
+   *
+   * The observation hook in `recall()` is deliberately fire-and-forget so
+   * annotation latency (I/O for trust-zone and memory listing) can never
+   * delay the user's recall response.  Tests that assert on the attached
+   * tierExplain snapshot need a deterministic way to wait for that
+   * background work to settle.
+   *
+   * Resolves to `true` when the chain settled (or no work was pending) and
+   * `false` on timeout.
+   */
+  async waitForDirectAnswerObservationIdle(
+    timeoutMs: number = 60_000,
+  ): Promise<boolean> {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    try {
+      const timeoutPromise = new Promise<"timeout">((resolve) => {
+        timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
+      });
+      const result = await Promise.race([
+        // The chain itself already swallows rejections via `.catch`, so this
+        // resolve is safe.  `then(() => "ok")` lets us distinguish completion
+        // from the timeout branch without losing type safety.
+        this.directAnswerObservationChain.then(() => "ok" as const),
+        timeoutPromise,
+      ]);
+      if (result === "timeout") {
+        log.warn(
+          `waitForDirectAnswerObservationIdle timed out after ${timeoutMs}ms`,
+        );
+        return false;
+      }
+      return true;
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
   async getStorage(namespace?: string): Promise<StorageManager> {
     const ns =
       namespace && namespace.length > 0
@@ -3892,11 +3936,38 @@ export class Orchestrator {
       }
 
       // Observation-mode direct-answer tier (issue #518 slice 3c).
-      // Runs after the user's recall already succeeded so no annotation
-      // error can corrupt the caller's answer.  Feature-gated behind
-      // `recallDirectAnswerEnabled` (default false).
+      //
+      // Runs after the user's recall already succeeded, fire-and-forget,
+      // so annotation latency (trust-zone listing, full memory fetch,
+      // eligibility gate, snapshot write) can never delay the caller's
+      // response.  Feature-gated behind `recallDirectAnswerEnabled`
+      // (default false).  Errors inside the observation are swallowed
+      // by `annotateDirectAnswerTier` itself; the outer `.catch` here is
+      // defense-in-depth so a throw in the sync setup path also can't
+      // poison the chain.  Tests needing the snapshot to be annotated
+      // can `await orchestrator.waitForDirectAnswerObservationIdle()`.
       if (this.config.recallDirectAnswerEnabled && sessionKey) {
-        await this.annotateDirectAnswerTier(prompt, sessionKey, abortController.signal);
+        const principal = resolvePrincipal(sessionKey, this.config);
+        const namespaceOverride = options.namespace?.trim() || undefined;
+        // Scope the observation to the same namespace recallInternal
+        // served so namespacesEnabled deployments don't leak candidates
+        // from a different tenant into the snapshot's sourceAnchors.
+        const observationNamespace =
+          namespaceOverride &&
+          canReadNamespace(principal, namespaceOverride, this.config)
+            ? namespaceOverride
+            : defaultNamespaceForPrincipal(principal, this.config);
+        const previous = this.directAnswerObservationChain;
+        this.directAnswerObservationChain = previous.then(() =>
+          this.annotateDirectAnswerTier(
+            prompt,
+            sessionKey,
+            observationNamespace,
+            abortController.signal,
+          ).catch((err) => {
+            log.debug(`direct-answer observation chain error: ${err}`);
+          }),
+        );
       }
 
       return recallResult;
@@ -3931,11 +4002,11 @@ export class Orchestrator {
   private async annotateDirectAnswerTier(
     prompt: string,
     sessionKey: string,
+    namespace: string,
     parentAbortSignal?: AbortSignal,
   ): Promise<void> {
     const tierStart = Date.now();
     try {
-      const namespace = this.config.defaultNamespace;
       // Read all trust-zone records up front; map by record ID for O(1)
       // lookup inside the wiring's per-candidate call.
       const trustZones = await listTrustZoneRecords({
@@ -3948,13 +4019,26 @@ export class Orchestrator {
         trustZoneByRecordId.set(record.recordId, record.zone);
       }
 
+      // Track the pre-filter candidate count so `candidatesConsidered`
+      // reflects the number of memories the eligibility gate actually
+      // evaluated — not the count of filter labels that fired.  Filter
+      // labels in `result.filteredBy` are unique strings per filter
+      // stage, so summing them would cap at ~6 regardless of input size.
+      let candidatesConsidered = 0;
+
       const sources: DirectAnswerSources = {
         taxonomy: DEFAULT_TAXONOMY,
-        listCandidateMemories: async () => {
-          const all = await this.storage.readAllMemories();
-          return all.filter(
+        listCandidateMemories: async ({ namespace: ns, abortSignal }) => {
+          // Resolve the namespace-scoped storage so `namespacesEnabled`
+          // deployments can't score a winner from the wrong tenant.
+          const storage = await this.storageRouter.storageFor(ns);
+          const all = await storage.readAllMemories();
+          if (abortSignal?.aborted) return [];
+          const active = all.filter(
             (m) => (m.frontmatter.status ?? "active") === "active",
           );
+          candidatesConsidered = active.length;
+          return active;
         },
         trustZoneFor: async (memoryId: string) =>
           trustZoneByRecordId.get(memoryId) ?? null,
@@ -3981,7 +4065,7 @@ export class Orchestrator {
         tier: "direct-answer",
         tierReason: result.narrative,
         filteredBy: result.filteredBy,
-        candidatesConsidered: (result.winner ? 1 : 0) + result.filteredBy.length,
+        candidatesConsidered,
         latencyMs: Date.now() - tierStart,
         sourceAnchors: [{ path: result.winner.memory.path }],
       };
