@@ -1,5 +1,14 @@
 import type { BenchIntegritySummary } from "../bench-data";
 
+/**
+ * Integrity badge levels rendered on the dashboard.
+ *
+ * - `verified`   — sealed hashes present, holdout split, canary under floor.
+ * - `partial`    — most safeguards active, but at least one is missing or
+ *                  the result is a public-split / legacy record.
+ * - `unverified` — seals missing or canary above floor; treat result with
+ *                  suspicion.
+ */
 export type IntegrityBadgeLevel = "verified" | "partial" | "unverified";
 
 export interface IntegrityBadgeModel {
