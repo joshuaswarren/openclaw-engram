@@ -59,6 +59,10 @@ import {
   pageVersioningDefinition,
   runPageVersioningBenchmark,
 } from "./benchmarks/remnic/page-versioning/runner.js";
+import {
+  retrievalPersonalizationDefinition,
+  runRetrievalPersonalizationBenchmark,
+} from "./benchmarks/remnic/retrieval-personalization/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -120,6 +124,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...pageVersioningDefinition,
     run: runPageVersioningBenchmark,
+  },
+  {
+    ...retrievalPersonalizationDefinition,
+    run: runRetrievalPersonalizationBenchmark,
   },
 ];
 
