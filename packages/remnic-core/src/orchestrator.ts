@@ -3979,23 +3979,6 @@ export class Orchestrator {
   }
 
   /**
-   * Observation-mode direct-answer tier (issue #518 slice 3c).
-   *
-   * Runs after `recallInternal` has already produced the caller's
-   * answer and persisted a snapshot.  Fires `tryDirectAnswer`, and
-   * when the eligibility gate returns a winner, annotates the
-   * snapshot with a RecallTierExplain block so CLI / HTTP / MCP
-   * surfaces can show which tier would have served the query.
-   *
-   * Does not short-circuit the recall response — the caller already
-   * has it.  A future slice may wire the short-circuit path once
-   * the bench confirms direct-answer decisions match what full
-   * recall returned.
-   *
-   * All errors are logged and swallowed so observation can never
-   * corrupt the user's recall response.
-   */
-  /**
    * Build the observation identity + sources and append the
    * fire-and-forget annotation to the direct-answer chain.  Extracted
    * from `recall()` so that a sync throw in any of the setup helpers
@@ -4072,6 +4055,23 @@ export class Orchestrator {
     );
   }
 
+  /**
+   * Observation-mode direct-answer tier (issue #518 slice 3c).
+   *
+   * Runs after `recallInternal` has already produced the caller's
+   * answer and persisted a snapshot.  Fires `tryDirectAnswer`, and
+   * when the eligibility gate returns a winner, annotates the
+   * snapshot with a RecallTierExplain block so CLI / HTTP / MCP
+   * surfaces can show which tier would have served the query.
+   *
+   * Does not short-circuit the recall response — the caller already
+   * has it.  A future slice may wire the short-circuit path once
+   * the bench confirms direct-answer decisions match what full
+   * recall returned.
+   *
+   * All errors are logged and swallowed so observation can never
+   * corrupt the user's recall response.
+   */
   private async annotateDirectAnswerTier(
     prompt: string,
     sessionKey: string,
