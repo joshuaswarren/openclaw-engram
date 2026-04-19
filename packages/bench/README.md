@@ -47,9 +47,13 @@ remnic bench runs show <run-id> --detail
 # Compare two runs:
 remnic bench compare base-run candidate-run
 
-# Save a baseline and gate CI on it:
+# Save a baseline (archives the run under ~/.remnic/bench/baselines):
 remnic bench baseline save dashboard-v1 candidate-run
-remnic bench compare dashboard-v1 nightly-run --threshold 0.02
+
+# Gate CI against a stored run with a 2% threshold (compare takes run
+# ids / paths, not baseline names — use `baseline save` for archival,
+# then reference the underlying run id in `compare`):
+remnic bench compare candidate-run nightly-run --threshold 0.02
 
 # Ship results to remnic.ai:
 remnic bench publish --target remnic-ai

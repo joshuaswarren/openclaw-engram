@@ -58,7 +58,7 @@ The plugin expects a Remnic daemon reachable at `http://localhost:4318/mcp` with
 }
 ```
 
-Replace `{{REMNIC_TOKEN}}` with a token minted via `remnic token create`.
+Replace `{{REMNIC_TOKEN}}` with a token minted via `remnic token generate <connector-id>`.
 
 ## Agent note
 
