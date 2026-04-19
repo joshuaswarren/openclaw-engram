@@ -393,11 +393,13 @@ type PackageBenchModule = {
   }, outputDir: string) => Promise<string>;
   createLightweightAdapter?: (options?: {
     configOverrides?: Record<string, unknown>;
+    preserveRuntimeDefaults?: boolean;
     responder?: unknown;
     judge?: unknown;
   }) => Promise<{ destroy(): Promise<void> }>;
   createRemnicAdapter?: (options?: {
     configOverrides?: Record<string, unknown>;
+    preserveRuntimeDefaults?: boolean;
     responder?: unknown;
     judge?: unknown;
   }) => Promise<{ destroy(): Promise<void> }>;

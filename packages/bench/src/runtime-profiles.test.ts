@@ -58,6 +58,7 @@ test("real runtime profile preserves the configured Remnic retrieval settings", 
     (resolved.adapterOptions.configOverrides as { openaiApiKey?: string }).openaiApiKey,
     "super-secret",
   );
+  assert.equal(resolved.adapterOptions.preserveRuntimeDefaults, true);
   assert.equal(resolved.systemProvider, null);
   assert.equal(resolved.judgeProvider, null);
 });
@@ -131,6 +132,7 @@ test("openclaw-chain runtime profile loads OpenClaw config and forces gateway ro
     }).models?.providers?.openai?.apiKey,
     "test-key",
   );
+  assert.equal(resolved.adapterOptions.preserveRuntimeDefaults, true);
 });
 
 test("openclaw-chain ignores direct system-provider overrides and keeps gateway routing", async () => {

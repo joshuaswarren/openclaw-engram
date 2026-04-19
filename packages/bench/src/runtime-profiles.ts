@@ -46,6 +46,7 @@ export interface ResolvedBenchRuntimeProfile {
   effectiveRemnicConfig: Record<string, unknown>;
   adapterOptions: {
     configOverrides: Record<string, unknown>;
+    preserveRuntimeDefaults?: boolean;
     responder?: BenchResponder;
     judge?: BenchJudge;
   };
@@ -157,6 +158,7 @@ export async function resolveBenchRuntimeProfile(
       effectiveRemnicConfig,
       adapterOptions: {
         configOverrides: effectiveRemnicConfig,
+        preserveRuntimeDefaults: true,
         responder,
         judge,
       },
@@ -206,6 +208,7 @@ export async function resolveBenchRuntimeProfile(
     effectiveRemnicConfig,
     adapterOptions: {
       configOverrides: effectiveRemnicConfig,
+      preserveRuntimeDefaults: true,
       responder: gatewayResponder,
       judge,
     },

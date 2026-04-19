@@ -17,6 +17,7 @@ import type {
 
 export interface RemnicAdapterOptions {
   configOverrides?: Record<string, unknown>;
+  preserveRuntimeDefaults?: boolean;
   responder?: BenchResponder;
   judge?: BenchJudge;
 }
@@ -118,6 +119,7 @@ export function buildBenchAdapterConfig(
   mode: BenchAdapterMode,
   baseConfig: BenchAdapterBaseConfig,
   overrides: Record<string, unknown> = {},
+  options: { preserveRuntimeDefaults?: boolean } = {},
 ): Record<string, unknown> {
   const sandboxConfig = {
     memoryDir: baseConfig.memoryDir,
@@ -138,6 +140,14 @@ export function buildBenchAdapterConfig(
     });
   }
 
+  if (options.preserveRuntimeDefaults === true) {
+    return cloneBenchConfig({
+      ...baseConfig,
+      ...overrides,
+      ...sandboxConfig,
+    });
+  }
+
   return cloneBenchConfig({
     ...baseConfig,
     ...modeConfig,
@@ -149,6 +159,7 @@ export function buildBenchAdapterConfig(
 async function createBenchOrchestrator(
   mode: BenchAdapterMode,
   overrides?: Record<string, unknown>,
+  preserveRuntimeDefaults = false,
 ): Promise<{ tempDir: string; orchestrator: Orchestrator }> {
   const tempDir = await mkdtemp(path.join(tmpdir(), `remnic-bench-${mode}-`));
   await mkdir(path.join(tempDir, "state"), { recursive: true });
@@ -160,7 +171,11 @@ async function createBenchOrchestrator(
   };
 
   const orchestrator = new Orchestrator(
-    parseConfig(buildBenchAdapterConfig(mode, commonConfig, overrides)),
+    parseConfig(
+      buildBenchAdapterConfig(mode, commonConfig, overrides, {
+        preserveRuntimeDefaults,
+      }),
+    ),
   );
 
   await orchestrator.initialize();
@@ -175,7 +190,11 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
   return async function createAdapter(
     options: RemnicAdapterOptions = {},
   ): Promise<BenchMemoryAdapter> {
-    let state = await createBenchOrchestrator(mode, options.configOverrides);
+    let state = await createBenchOrchestrator(
+      mode,
+      options.configOverrides,
+      options.preserveRuntimeDefaults === true,
+    );
 
     const getEngine = () => {
       const engine = state.orchestrator.lcmEngine;
@@ -192,7 +211,11 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
     const rebuild = async (): Promise<void> => {
       await cleanup();
-      state = await createBenchOrchestrator(mode, options.configOverrides);
+      state = await createBenchOrchestrator(
+        mode,
+        options.configOverrides,
+        options.preserveRuntimeDefaults === true,
+      );
     };
 
     return {

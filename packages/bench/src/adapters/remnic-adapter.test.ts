@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { parseConfig } from "@remnic/core";
 
 import {
   buildBenchAdapterConfig,
@@ -105,4 +106,19 @@ test("benchmark config builders preserve function-valued assistant hooks", async
   assert.deepEqual(await config.assistantJudge.evaluate(), { score: 0.8 });
   assert.notEqual(config.assistantAgent, assistantAgent);
   assert.notEqual(config.assistantJudge, assistantJudge);
+});
+
+test("runtime-backed direct configs preserve core defaults for omitted keys", () => {
+  const parsed = parseConfig(
+    buildBenchAdapterConfig(
+      "direct",
+      BASE_CONFIG,
+      { assistantAgent: { enabled: true } },
+      { preserveRuntimeDefaults: true },
+    ),
+  );
+
+  assert.equal(parsed.qmdEnabled, true);
+  assert.equal(parsed.identityEnabled, true);
+  assert.equal(parsed.workspaceDir, BASE_CONFIG.workspaceDir);
 });
