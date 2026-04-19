@@ -4052,13 +4052,25 @@ export class Orchestrator {
       // otherwise a winner living in `shared` (or another readable
       // namespace) is invisible to the observer and `tierExplain`
       // would misreport the eligibility verdict for that recall.
-      const scopedNamespaces = namespaces.length > 0
-        ? namespaces
-        : [this.config.defaultNamespace];
-      const trustZoneByRecordId = new Map<
+      //
+      // When the principal has no readable namespaces (empty list),
+      // recall itself searches nothing; observation must follow suit.
+      // A `defaultNamespace` fallback here would annotate with a
+      // winner from a namespace recall did not actually consult,
+      // which is a cross-tenant leak in explain output.
+      if (namespaces.length === 0) return;
+      const scopedNamespaces = namespaces;
+      // Trust-zone map keyed by `"namespace:recordId"` so the same
+      // recordId appearing in two namespaces doesn't clobber each
+      // other's zone.  Without this, two candidates that share an id
+      // across tenants would both inherit whichever zone was loaded
+      // last, silently admitting or dropping direct-answer candidates.
+      const trustZoneByNsAndRecordId = new Map<
         string,
         "quarantine" | "working" | "trusted"
       >();
+      const trustZoneKey = (ns: string, recordId: string) =>
+        `${ns}\u0000${recordId}`;
       // Preserve namespace-scoped storage handles so candidate
       // listing below reads from exactly the same roots we loaded
       // trust-zone records from — prevents a split-brain where a
@@ -4082,9 +4094,16 @@ export class Orchestrator {
           }>,
         }));
         for (const record of trustZones.allRecords ?? []) {
-          trustZoneByRecordId.set(record.recordId, record.zone);
+          trustZoneByNsAndRecordId.set(
+            trustZoneKey(ns, record.recordId),
+            record.zone,
+          );
         }
       }
+      // Tracks the namespace each candidate memory came from so
+      // `trustZoneFor(memoryId)` can disambiguate cross-tenant
+      // collisions on the same recordId.
+      const memoryNamespaceByPath = new Map<string, string>();
 
       // Track the pre-filter candidate count so `candidatesConsidered`
       // reflects the number of memories the eligibility gate actually
@@ -4092,6 +4111,11 @@ export class Orchestrator {
       // labels in `result.filteredBy` are unique strings per filter
       // stage, so summing them would cap at ~6 regardless of input size.
       let candidatesConsidered = 0;
+      // memoryId → memory.path lookup so `trustZoneFor` can recover
+      // the namespace via the path-indexed map above.  Falls back to
+      // a global scan if the eligibility gate supplied an id we
+      // didn't register (defensive; shouldn't happen in practice).
+      const memoryPathById = new Map<string, string>();
 
       const sources: DirectAnswerSources = {
         taxonomy: DEFAULT_TAXONOMY,
@@ -4106,14 +4130,21 @@ export class Orchestrator {
             for (const m of all) {
               if ((m.frontmatter.status ?? "active") === "active") {
                 union.push(m);
+                memoryNamespaceByPath.set(m.path, ns);
+                memoryPathById.set(m.frontmatter.id, m.path);
               }
             }
           }
           candidatesConsidered = union.length;
           return union;
         },
-        trustZoneFor: async (memoryId: string) =>
-          trustZoneByRecordId.get(memoryId) ?? null,
+        trustZoneFor: async (memoryId: string) => {
+          const memoryPath = memoryPathById.get(memoryId);
+          if (!memoryPath) return null;
+          const ns = memoryNamespaceByPath.get(memoryPath);
+          if (!ns) return null;
+          return trustZoneByNsAndRecordId.get(trustZoneKey(ns, memoryId)) ?? null;
+        },
         importanceFor: (memory) =>
           typeof memory.frontmatter.importance?.score === "number"
             ? memory.frontmatter.importance.score
@@ -4125,8 +4156,8 @@ export class Orchestrator {
         // The wiring passes this namespace through to the caller's
         // `listCandidateMemories` hook; we perform our own multi-ns
         // union above and ignore it, so pass the primary namespace
-        // (the one recordeded on the snapshot) for logging/symmetry.
-        namespace: scopedNamespaces[0] ?? this.config.defaultNamespace,
+        // (the one recorded on the snapshot) for logging/symmetry.
+        namespace: scopedNamespaces[0]!,
         config: this.config,
         sources,
         abortSignal: parentAbortSignal,
