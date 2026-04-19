@@ -227,6 +227,57 @@ test("toRecallExplainText prints (unknown) for malformed sessionKey / recordedAt
   assert.ok(!out.includes("[object Object]"));
 });
 
+// Regression for cursor Bugbot on PR #537: typeof NaN === "number", so a
+// plain typeof guard let NaN/Infinity through from a corrupt last_recall.json.
+// JSON.stringify(NaN) emits `null`, breaking the advertised `number` schema,
+// and the text renderer would have printed `latency-ms: NaN`.
+test("toRecallExplainJson rejects NaN and Infinity in numeric fields", () => {
+  const snapshot = {
+    sessionKey: "s",
+    recordedAt: "t",
+    memoryIds: [],
+    latencyMs: Number.NaN,
+    tierExplain: {
+      tier: "direct-answer",
+      tierReason: "",
+      filteredBy: [],
+      candidatesConsidered: Number.NaN,
+      latencyMs: Number.POSITIVE_INFINITY,
+      sourceAnchors: [
+        { path: "/a.md", lineRange: [Number.NaN, 2] },
+        { path: "/b.md", lineRange: [3, Number.POSITIVE_INFINITY] },
+        { path: "/c.md", lineRange: [5, 9] },
+      ],
+    },
+  } as unknown as LastRecallSnapshot;
+  const payload = toRecallExplainJson(snapshot);
+  assert.equal(payload.latencyMs, null);
+  assert.ok(payload.tierExplain);
+  // NaN/Infinity fall back to 0 inside the normalized explain
+  assert.equal(payload.tierExplain.candidatesConsidered, 0);
+  assert.equal(payload.tierExplain.latencyMs, 0);
+  // Only the well-formed anchor survives; malformed ranges are dropped (the
+  // path is still preserved).
+  const good = payload.tierExplain.sourceAnchors?.find((a) => a.path === "/c.md");
+  assert.deepEqual(good?.lineRange, [5, 9]);
+  const badA = payload.tierExplain.sourceAnchors?.find((a) => a.path === "/a.md");
+  assert.equal(badA?.lineRange, undefined);
+  const badB = payload.tierExplain.sourceAnchors?.find((a) => a.path === "/b.md");
+  assert.equal(badB?.lineRange, undefined);
+});
+
+test("toRecallExplainText skips the latency-ms line when latencyMs is NaN", () => {
+  const snapshot = {
+    sessionKey: "s",
+    recordedAt: "t",
+    memoryIds: [],
+    latencyMs: Number.NaN,
+  } as unknown as LastRecallSnapshot;
+  const out = toRecallExplainText(snapshot);
+  assert.ok(!out.includes("latency-ms"));
+  assert.ok(!out.includes("NaN"));
+});
+
 test("toRecallExplainText renders a malformed tierExplain with empty filtered-by instead of throwing", () => {
   const malformed = {
     tier: "direct-answer",

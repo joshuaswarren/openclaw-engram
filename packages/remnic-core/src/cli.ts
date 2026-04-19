@@ -3436,9 +3436,20 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             typeof options.session === "string" && options.session.length > 0
               ? options.session
               : undefined;
-          const snapshot = sessionKey
-            ? orchestrator.lastRecall.get(sessionKey)
-            : orchestrator.lastRecall.getMostRecent();
+          // `orchestrator.lastRecall.getMostRecent()` sorts via
+          // `recordedAt.localeCompare(...)`, which throws if a stale/corrupt
+          // `last_recall.json` contains a non-string `recordedAt`. Degrade to
+          // the "no snapshot" response so the CLI stays usable even against
+          // malformed on-disk state (and let renderRecallExplain's own
+          // defensive normalization handle any surviving bad fields).
+          let snapshot: ReturnType<typeof orchestrator.lastRecall.get> = null;
+          try {
+            snapshot = sessionKey
+              ? orchestrator.lastRecall.get(sessionKey)
+              : orchestrator.lastRecall.getMostRecent();
+          } catch {
+            snapshot = null;
+          }
           console.log(renderRecallExplain(snapshot, format));
         });
 

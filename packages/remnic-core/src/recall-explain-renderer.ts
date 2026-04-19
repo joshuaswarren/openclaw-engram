@@ -38,6 +38,18 @@ function sanitizeString(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
 }
 
+/**
+ * Narrow an arbitrary persisted numeric field to a finite number or null.
+ * `typeof NaN === "number"`, so a plain `typeof` check lets corrupt state
+ * through.  `JSON.stringify(NaN)` silently emits `null`, so the JSON payload
+ * ends up contradicting its own `number` schema; the text renderer would
+ * print literal `NaN`.  Use `Number.isFinite` to match other defensive
+ * parsers in the codebase (recall-state.ts, access-mcp.ts).
+ */
+function sanitizeFiniteNumber(v: unknown): number | null {
+  return typeof v === "number" && Number.isFinite(v) ? v : null;
+}
+
 export type RecallExplainFormat = "text" | "json";
 
 export interface RecallExplainJsonPayload {
@@ -83,12 +95,14 @@ function normalizeTierExplain(value: unknown): RecallTierExplain | null {
         )
         .map((a) => {
           const lr = (a as { lineRange?: unknown }).lineRange;
+          // Require both entries to be finite numbers — NaN/Infinity from a
+          // corrupt snapshot would otherwise pass a plain typeof check.
           const lineRange =
             Array.isArray(lr) &&
             lr.length === 2 &&
-            typeof lr[0] === "number" &&
-            typeof lr[1] === "number"
-              ? ([lr[0], lr[1]] as [number, number])
+            Number.isFinite(lr[0]) &&
+            Number.isFinite(lr[1])
+              ? ([lr[0] as number, lr[1] as number] as [number, number])
               : undefined;
           return lineRange
             ? { path: (a as { path: string }).path, lineRange }
@@ -104,9 +118,8 @@ function normalizeTierExplain(value: unknown): RecallTierExplain | null {
     tier: isRetrievalTier(raw.tier) ? raw.tier : "hybrid",
     tierReason: typeof raw.tierReason === "string" ? raw.tierReason : "",
     filteredBy,
-    candidatesConsidered:
-      typeof raw.candidatesConsidered === "number" ? raw.candidatesConsidered : 0,
-    latencyMs: typeof raw.latencyMs === "number" ? raw.latencyMs : 0,
+    candidatesConsidered: sanitizeFiniteNumber(raw.candidatesConsidered) ?? 0,
+    latencyMs: sanitizeFiniteNumber(raw.latencyMs) ?? 0,
     ...(sourceAnchors !== undefined ? { sourceAnchors } : {}),
   };
 }
@@ -149,7 +162,7 @@ export function toRecallExplainJson(
     sourcesUsed: Array.isArray(snapshot.sourcesUsed)
       ? snapshot.sourcesUsed.filter((x): x is string => typeof x === "string")
       : null,
-    latencyMs: typeof snapshot.latencyMs === "number" ? snapshot.latencyMs : null,
+    latencyMs: sanitizeFiniteNumber(snapshot.latencyMs),
     tierExplain: normalizedExplain,
   };
 }
@@ -184,8 +197,9 @@ export function toRecallExplainText(
   if (sourcesUsed.length > 0) {
     lines.push(`sources-used: ${sourcesUsed.join(", ")}`);
   }
-  if (typeof snapshot.latencyMs === "number") {
-    lines.push(`latency-ms: ${snapshot.latencyMs}`);
+  const latencyMs = sanitizeFiniteNumber(snapshot.latencyMs);
+  if (latencyMs !== null) {
+    lines.push(`latency-ms: ${latencyMs}`);
   }
   const memoryIds = Array.isArray(snapshot.memoryIds)
     ? snapshot.memoryIds.filter((x): x is string => typeof x === "string")
