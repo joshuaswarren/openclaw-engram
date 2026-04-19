@@ -124,44 +124,30 @@ import {
   type TrainingExportOptions,
   type TrainingExportRecord,
 } from "@remnic/core";
-// Side-effect import: registers the weclone adapter with the core registry.
-// `ensureWecloneExportAdapterRegistered` is exported for idempotent explicit
-// calls from tests that reset the registry between cases.
-import {
-  ensureWecloneExportAdapterRegistered,
-  synthesizeTrainingPairs,
-  sweepPii,
-} from "@remnic/export-weclone";
+// @remnic/export-weclone is an optional install surface (training:export
+// only uses it). Load lazily so the CLI works without it — see
+// optional-weclone-export.ts for the install-hint behaviour.
+import { loadWecloneExportModule } from "./optional-weclone-export.js";
 import type {
   BinaryLifecycleConfig,
 } from "@remnic/core";
 import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
+// @remnic/bench is an optional install surface. Import types only at the
+// top level (erased at compile time); runtime access goes through
+// loadBenchModule() / tryLoadBenchModule() so the CLI stays functional for
+// users who never run `remnic bench *`.
 import {
-  buildBenchmarkPublishFeed,
-  type BenchRuntimeProfile,
-  compareResults,
-  deleteBenchmarkResults,
-  getBenchmarkLowerIsBetter,
-  defaultBenchmarkBaselineDir,
-  discoverAllProviders,
-  defaultBenchmarkPublishPath,
-  listBenchmarkBaselines,
-  listBenchmarkResults,
-  loadBenchmarkBaseline,
-  runBenchSuite,
-  runExplain,
-  loadBaseline,
-  saveBaseline,
-  checkRegression,
-  loadBenchmarkResult,
-  renderBenchmarkResultExport,
-  resolveBenchmarkResultReference,
-  saveBenchmarkBaseline,
-  writeBenchmarkPublishFeed,
-  type BenchConfig,
-  type BenchmarkDefinition,
-  type ResolveBenchRuntimeProfileOptions,
-  type ResolvedBenchRuntimeProfile,
+  loadBenchModule,
+  tryLoadBenchModule,
+} from "./optional-bench.js";
+import type {
+  BenchConfig,
+  BenchmarkDefinition,
+  BenchmarkResult,
+  ComparisonResult,
+  BenchRuntimeProfile,
+  ResolveBenchRuntimeProfileOptions,
+  ResolvedBenchRuntimeProfile,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
 import {
@@ -586,16 +572,12 @@ async function listBenchmarksFromPackage(): Promise<BenchCatalogEntry[] | undefi
 }
 
 async function loadBenchDefinitionsFromPackage(): Promise<BenchmarkDefinition[] | undefined> {
-  try {
-    const benchModule = await import("@remnic/bench") as {
-      listBenchmarks?: () => BenchmarkDefinition[];
-    };
-    if (!benchModule.listBenchmarks) return undefined;
-    const result = benchModule.listBenchmarks();
-    return Array.isArray(result) ? result : undefined;
-  } catch {
+  const benchModule = await tryLoadBenchModule();
+  if (!benchModule || typeof benchModule.listBenchmarks !== "function") {
     return undefined;
   }
+  const result = benchModule.listBenchmarks();
+  return Array.isArray(result) ? result : undefined;
 }
 
 async function resolveAllBenchmarks(): Promise<string[]> {
@@ -782,10 +764,6 @@ async function launchBenchUi(resultsDir: string): Promise<void> {
   });
 }
 
-function resolveBenchBaselineDir(): string {
-  return defaultBenchmarkBaselineDir();
-}
-
 // Resolve the dataset root. In a monorepo checkout we keep using
 // evals/datasets so local dev state stays stable; in a published CLI
 // install CLI_REPO_ROOT points under node_modules (not user-writable
@@ -947,7 +925,7 @@ function printBenchPackageSummary(
 }
 
 function printStoredBenchResultSummary(
-  result: Awaited<ReturnType<typeof loadBenchmarkResult>>,
+  result: BenchmarkResult,
   summary: { id: string; path: string },
 ): void {
   printBenchPackageSummary(result, summary.path, "Stored result");
@@ -955,7 +933,7 @@ function printStoredBenchResultSummary(
 }
 
 function printStoredBenchResultDetails(
-  result: Awaited<ReturnType<typeof loadBenchmarkResult>>,
+  result: BenchmarkResult,
   summary: { id: string; path: string },
 ): void {
   printStoredBenchResultSummary(result, summary);
@@ -978,7 +956,7 @@ function printStoredBenchResultDetails(
 }
 
 function printBenchComparisonSummary(
-  comparison: ReturnType<typeof compareResults>,
+  comparison: ComparisonResult,
   baseline: { id: string; path: string },
   candidate: { id: string; path: string },
 ): void {
@@ -1024,6 +1002,12 @@ async function compareBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
   }
 
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const {
+    resolveBenchmarkResultReference,
+    loadBenchmarkResult,
+    compareResults,
+    getBenchmarkLowerIsBetter,
+  } = await loadBenchModule();
   const [baselineRef, candidateRef] = refs;
   const baselineSummary = await resolveBenchmarkResultReference(resultsDir, baselineRef);
   const candidateSummary = await resolveBenchmarkResultReference(resultsDir, candidateRef);
@@ -1072,6 +1056,11 @@ async function compareBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
 
 async function showBenchPackageResults(parsed: ParsedBenchArgs): Promise<void> {
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const {
+    listBenchmarkResults,
+    resolveBenchmarkResultReference,
+    loadBenchmarkResult,
+  } = await loadBenchModule();
 
   if (parsed.benchmarks.length === 0) {
     const summaries = await listBenchmarkResults(resultsDir);
@@ -1121,7 +1110,21 @@ async function showBenchPackageResults(parsed: ParsedBenchArgs): Promise<void> {
 }
 
 async function manageBenchBaselines(parsed: ParsedBenchArgs): Promise<void> {
-  const baselineDir = parsed.baselinesDir ?? resolveBenchBaselineDir();
+  // This handler already needs @remnic/bench for its core work, so we
+  // resolve the default baseline dir from the package too. Inlining the
+  // path helper here created a divergence risk with no payoff, since
+  // the loader runs on the very next line regardless. (cursor feedback
+  // on PR #545)
+  const {
+    defaultBenchmarkBaselineDir,
+    listBenchmarkBaselines,
+    resolveBenchmarkResultReference,
+    listBenchmarkResults,
+    loadBenchmarkResult,
+    saveBenchmarkBaseline,
+    loadBenchmarkBaseline,
+  } = await loadBenchModule();
+  const baselineDir = parsed.baselinesDir ?? defaultBenchmarkBaselineDir();
 
   if (parsed.baselineAction === "list") {
     const baselines = await listBenchmarkBaselines(baselineDir);
@@ -1214,6 +1217,11 @@ async function exportBenchPackageResult(parsed: ParsedBenchArgs): Promise<void> 
   }
 
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const {
+    resolveBenchmarkResultReference,
+    loadBenchmarkResult,
+    renderBenchmarkResultExport,
+  } = await loadBenchModule();
   const reference = parsed.benchmarks[0]!;
   const summary = await resolveBenchmarkResultReference(resultsDir, reference);
   if (!summary) {
@@ -1337,6 +1345,7 @@ async function manageBenchRuns(parsed: ParsedBenchArgs): Promise<void> {
       );
       process.exit(1);
     }
+    const { deleteBenchmarkResults } = await loadBenchModule();
     const deleted = await deleteBenchmarkResults(resultsDir, parsed.benchmarks);
     if (parsed.json) {
       console.log(JSON.stringify(deleted, null, 2));
@@ -1376,6 +1385,7 @@ async function discoverBenchProviders(parsed: ParsedBenchArgs): Promise<void> {
     process.exit(1);
   }
 
+  const { discoverAllProviders } = await loadBenchModule();
   const discovered = await discoverAllProviders();
 
   if (parsed.json) {
@@ -1420,6 +1430,11 @@ async function publishBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
   }
 
   const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const {
+    buildBenchmarkPublishFeed,
+    defaultBenchmarkPublishPath,
+    writeBenchmarkPublishFeed,
+  } = await loadBenchModule();
   const feed = await buildBenchmarkPublishFeed(resultsDir, parsed.target);
   if (feed.benchmarks.length === 0) {
     console.error(
@@ -1450,12 +1465,9 @@ async function runBenchViaPackage(
   benchmarkId: string,
   runtimeProfile: BenchRuntimeProfile,
 ): Promise<boolean> {
-  let benchModule: PackageBenchModule;
-  try {
-    benchModule = await import("@remnic/bench") as unknown as PackageBenchModule;
-  } catch {
-    return false;
-  }
+  const loaded = await tryLoadBenchModule();
+  if (!loaded) return false;
+  const benchModule = loaded as unknown as PackageBenchModule;
 
   const definition = benchModule.getBenchmark?.(benchmarkId);
   if (!definition?.runnerAvailable || !benchModule.runBenchmark || !benchModule.writeBenchmarkResult) {
@@ -1524,12 +1536,9 @@ async function runBenchViaPackage(
 
 async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolean> {
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
-  let benchModule: PackageBenchModule;
-  try {
-    benchModule = await import("@remnic/bench") as unknown as PackageBenchModule;
-  } catch {
-    return false;
-  }
+  const loaded = await tryLoadBenchModule();
+  if (!loaded) return false;
+  const benchModule = loaded as unknown as PackageBenchModule;
 
   if (!benchModule.runCustomBenchmarkFile || !benchModule.writeBenchmarkResult) {
     return false;
@@ -1895,16 +1904,55 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
   const service = new EngramAccessService(orchestrator);
 
   if (explain) {
-    const result = await runExplain(service, queryText);
-    if (json) {
-      console.log(JSON.stringify(result, null, 2));
-    } else {
-      console.log(`Query: ${result.query}`);
-      console.log(`Tiers used: ${result.tiersUsed.join(" → ")}`);
-      console.log(`Total duration: ${result.totalDurationMs}ms`);
-      for (const t of result.tierResults) {
-        console.log(`  ${t.tier}: ${t.latencyMs}ms (${t.resultsCount} results)`);
+    // `query --explain` is a core-install feature; if @remnic/bench is
+    // installed we use its full tier-breakdown explainer, otherwise we
+    // fall back to a minimal "run the recall and show timing" path so
+    // the flag keeps working without forcing users to install an
+    // optional package. (Codex feedback on PR #545)
+    const bench = await tryLoadBenchModule();
+    if (bench?.runExplain) {
+      const result = await bench.runExplain(service, queryText);
+      if (json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Query: ${result.query}`);
+        console.log(`Tiers used: ${result.tiersUsed.join(" → ")}`);
+        console.log(`Total duration: ${result.totalDurationMs}ms`);
+        for (const t of result.tierResults) {
+          console.log(`  ${t.tier}: ${t.latencyMs}ms (${t.resultsCount} results)`);
+        }
       }
+      return;
+    }
+
+    const explainStart = Date.now();
+    const recallResult = await service.recall({ query: queryText, mode: "auto" });
+    const totalDurationMs = Date.now() - explainStart;
+    // recall() returns { count, results, memoryIds, ... } (see
+    // EngramAccessRecallResponse). A prior version of this fallback
+    // read .memories, which doesn't exist, so resultsCount was always
+    // 0 and users saw misleading explain output. (Codex feedback on
+    // PR #545.) Prefer the numeric count and fall back to
+    // results.length for robustness across future schema tweaks.
+    const resultsCount =
+      typeof recallResult.count === "number"
+        ? recallResult.count
+        : Array.isArray(recallResult.results)
+          ? recallResult.results.length
+          : 0;
+    const minimalExplain = {
+      query: queryText,
+      totalDurationMs,
+      resultsCount,
+      note: "Install @remnic/bench for a full tier-level explain breakdown.",
+    };
+    if (json) {
+      console.log(JSON.stringify(minimalExplain, null, 2));
+    } else {
+      console.log(`Query: ${minimalExplain.query}`);
+      console.log(`Total duration: ${minimalExplain.totalDurationMs}ms`);
+      console.log(`Results: ${minimalExplain.resultsCount}`);
+      console.log(`Note: ${minimalExplain.note}`);
     }
     return;
   }
@@ -3383,6 +3431,8 @@ async function cmdLegacyBenchmark(action: string, rest: string[], json: boolean)
   const orchestrator = new Orchestrator(config);
   const service = new EngramAccessService(orchestrator);
 
+  const { runBenchSuite, loadBaseline, checkRegression } = await loadBenchModule();
+
   const benchConfig: BenchConfig = {
     queries: rest.filter((a) => !a.startsWith("--")).length > 0
       ? rest.filter((a) => !a.startsWith("--"))
@@ -4647,6 +4697,15 @@ interface ParsedTrainingExportArgs {
   synthesize: boolean;
   maxPairsPerRecord?: number;
   privacySweep: boolean;
+  /**
+   * Whether the user explicitly chose the privacy-sweep value on the
+   * command line (via `--privacy-sweep` or `--no-privacy-sweep`). When
+   * true, runtime code treats a mismatch with the adapter as a hard
+   * error (don't silently skip something the user asked for). When
+   * false, it means we're using the default, so we can downgrade to a
+   * warning if the adapter doesn't support sweep.
+   */
+  privacySweepExplicit: boolean;
   dryRun: boolean;
 }
 
@@ -4763,9 +4822,15 @@ export function parseTrainingExportArgs(
   // turns Remnic's flat records into conversational Q/A pairs. Users of other
   // formats (or raw Alpaca) can opt out.
   const synthesize = hasFlag(rest, "--synthesize");
-  // `--privacy-sweep` is on by default for WeClone and any other adapter that
-  // will be shared as a training dataset. Off switch: --no-privacy-sweep.
-  const privacySweep = !hasFlag(rest, "--no-privacy-sweep");
+  // `--privacy-sweep` is on by default for WeClone and any other adapter
+  // that will be shared as a training dataset. Off switch:
+  // `--no-privacy-sweep`. We also track whether the choice was explicit
+  // so runtime code can distinguish "user asked for this" (hard error
+  // on mismatch) from "default, we can fall back with a warning".
+  const privacySweepOff = hasFlag(rest, "--no-privacy-sweep");
+  const privacySweepOn = hasFlag(rest, "--privacy-sweep");
+  const privacySweepExplicit = privacySweepOff || privacySweepOn;
+  const privacySweep = !privacySweepOff;
 
   return {
     format,
@@ -4779,6 +4844,7 @@ export function parseTrainingExportArgs(
     synthesize,
     maxPairsPerRecord,
     privacySweep,
+    privacySweepExplicit,
     dryRun,
   };
 }
@@ -4800,13 +4866,33 @@ export async function runTrainingExport(
   redactedCount: number;
   outputPath: string | null;
 }> {
-  // Ensure the WeClone adapter (and any others registered via side-effect
-  // imports) are available before we ask the registry. `ensureWecloneExportAdapterRegistered`
-  // is idempotent — safe to call even when the adapter is already registered
-  // by a previous CLI invocation in the same process.
-  ensureWecloneExportAdapterRegistered();
+  // Resolve the adapter from the registry first. If the user picks a
+  // non-weclone format (registered elsewhere), we never touch the
+  // optional @remnic/export-weclone package. If the format isn't
+  // registered yet, we lazily load weclone to register its adapter and
+  // try again — that keeps weclone a true à-la-carte install while
+  // still supporting `--format weclone` out of the box.
+  // (Codex feedback on PR #545.)
+  type WecloneExportModule = Awaited<ReturnType<typeof loadWecloneExportModule>>;
+  let wecloneExport: WecloneExportModule | undefined;
+  const ensureWeclone = async (): Promise<WecloneExportModule> => {
+    if (!wecloneExport) {
+      wecloneExport = await loadWecloneExportModule();
+    }
+    return wecloneExport;
+  };
 
-  const adapter = getTrainingExportAdapter(args.format);
+  let adapter = getTrainingExportAdapter(args.format);
+  if (!adapter && args.format === "weclone") {
+    // The format is specifically weclone and the adapter hasn't been
+    // registered in this process yet. Only load the optional package
+    // in this case — a typo or genuinely unsupported format should
+    // surface the normal "unknown format" error below, not a weclone
+    // install hint. (Codex feedback on PR #545.)
+    const mod = await ensureWeclone();
+    mod.ensureWecloneExportAdapterRegistered();
+    adapter = getTrainingExportAdapter(args.format);
+  }
   if (!adapter) {
     const registered = listTrainingExportAdapters();
     const validList =
@@ -4848,17 +4934,53 @@ export async function runTrainingExport(
   let records: TrainingExportRecord[] = await convertMemoriesToRecords(convertOptions);
   const recordsRead = records.length;
 
+  // synthesize and privacy-sweep currently live in @remnic/export-weclone
+  // and produce weclone-shaped output. When the selected adapter isn't
+  // the weclone one, we cannot run them — but we must NOT silently
+  // skip privacy-sweep, because it's a security guard that defaults on
+  // and a quiet no-op would let PII leak through plugin/custom formats.
+  // Hard-fail with a clear remediation path instead, so users either
+  // pick --format weclone or explicitly opt out with --no-privacy-sweep.
+  // (Codex P2+P1 feedback on PR #545.)
+  const adapterIsWeclone = adapter.name === "weclone";
   if (args.synthesize) {
-    records = synthesizeTrainingPairs(records, {
+    if (!adapterIsWeclone) {
+      throw new Error(
+        `--synthesize is only supported by --format weclone. Got --format ${adapter.name}. ` +
+          `Either rerun with --format weclone or drop --synthesize.`,
+      );
+    }
+    const mod = await ensureWeclone();
+    records = mod.synthesizeTrainingPairs(records, {
       maxPairsPerRecord: args.maxPairsPerRecord,
     });
   }
 
   let redactedCount = 0;
   if (args.privacySweep) {
-    const swept = sweepPii(records);
-    records = swept.cleanRecords;
-    redactedCount = swept.redactedCount;
+    if (adapterIsWeclone) {
+      const mod = await ensureWeclone();
+      const swept = mod.sweepPii(records);
+      records = swept.cleanRecords;
+      redactedCount = swept.redactedCount;
+    } else {
+      // privacy-sweep defaults ON because training-export data is
+      // shareable. The sweep itself is weclone-specific today, so on a
+      // non-weclone adapter we refuse to export rather than silently
+      // skip redaction (Codex P1 would have us fail; a warn-and-export
+      // pattern would still leak PII). The error message makes the
+      // opt-out path obvious so the "default breaks my plugin format"
+      // complaint (Cursor Medium) is a one-flag fix, not a mystery.
+      const explicitness = args.privacySweepExplicit
+        ? "was requested"
+        : "defaults on for training exports";
+      throw new Error(
+        `--privacy-sweep ${explicitness}, but --format "${adapter.name}" has no PII sweep implementation. ` +
+          `To proceed safely, either:\n` +
+          `  1. Rerun with --format weclone (which supports PII redaction), OR\n` +
+          `  2. Pass --no-privacy-sweep to export ${adapter.name} records as-is (only do this after confirming they are safe to share).`,
+      );
+    }
   }
 
   if (args.dryRun) {

@@ -41,6 +41,9 @@ Published automatically by `.github/workflows/release-and-publish.yml`:
 | `packages/plugin-codex` | `@remnic/plugin-codex` | npm |
 | `packages/connector-replit` | `@remnic/replit` | npm |
 | `packages/bench` | `@remnic/bench` | npm |
+| `packages/export-weclone` | `@remnic/export-weclone` | npm |
+| `packages/import-weclone` | `@remnic/import-weclone` | npm |
+| `packages/connector-weclone` | `@remnic/connector-weclone` | npm |
 | `packages/hermes-provider` | `@remnic/hermes-provider` | npm |
 
 All npm publishes include provenance attestations.

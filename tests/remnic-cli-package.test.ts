@@ -2,29 +2,80 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 
-test("remnic CLI bundles private bench helpers instead of publishing them as runtime dependencies", async () => {
-  const [pkgRaw, tsupRaw, buildHelperRaw] = await Promise.all([
-    readFile("packages/remnic-cli/package.json", "utf8"),
-    readFile("packages/remnic-cli/tsup.config.ts", "utf8"),
-    readFile("scripts/ensure-cli-bench-build-deps.mjs", "utf8"),
-  ]);
+test("remnic CLI keeps optional à-la-carte packages external and loads them via dynamic imports", async () => {
+  const [pkgRaw, tsupRaw, optionalBench, optionalWeclone, indexSource] =
+    await Promise.all([
+      readFile("packages/remnic-cli/package.json", "utf8"),
+      readFile("packages/remnic-cli/tsup.config.ts", "utf8"),
+      readFile("packages/remnic-cli/src/optional-bench.ts", "utf8"),
+      readFile("packages/remnic-cli/src/optional-weclone-export.ts", "utf8"),
+      readFile("packages/remnic-cli/src/index.ts", "utf8"),
+    ]);
   const pkg = JSON.parse(pkgRaw) as {
     scripts?: { prebuild?: string; build?: string };
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
+    peerDependencies?: Record<string, string>;
+    peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   };
 
-  assert.equal(pkg.scripts?.prebuild, "node ../../scripts/ensure-cli-bench-build-deps.mjs");
-  assert.match(pkg.scripts?.build ?? "", /^tsup --config tsup\.config\.ts(\s+&&\s+.+)?$/);
-  assert.match(tsupRaw, /noExternal:\s*\["@remnic\/bench", "@remnic\/export-weclone"\]/);
-  assert.match(buildHelperRaw, /"@remnic\/core"/);
-  assert.match(buildHelperRaw, /"@remnic\/bench"/);
-  assert.match(buildHelperRaw, /"@remnic\/export-weclone"/);
-  assert.match(buildHelperRaw, /packages", "remnic-core", "dist", "index\.js"/);
-  assert.match(buildHelperRaw, /packages", "bench", "dist", "index\.js"/);
-  assert.match(buildHelperRaw, /packages", "export-weclone", "dist", "index\.js"/);
+  // Build wiring stays intact — prebuild still ensures the monorepo sibling
+  // builds exist for local dev runs, and tsup produces dist/index.js.
+  assert.equal(
+    pkg.scripts?.prebuild,
+    "node ../../scripts/ensure-cli-bench-build-deps.mjs",
+  );
+  assert.match(
+    pkg.scripts?.build ?? "",
+    /^tsup --config tsup\.config\.ts(\s+&&\s+.+)?$/,
+  );
+
+  // À-la-carte invariant (see AGENTS.md §44 / CLAUDE.md gotcha #57):
+  // optional companion packages must stay external in the bundler config
+  // and must not appear under runtime dependencies. They belong under
+  // peerDependencies with peerDependenciesMeta marking them optional.
+  assert.match(tsupRaw, /external:[\s\S]*?"@remnic\/bench"/);
+  assert.match(tsupRaw, /external:[\s\S]*?"@remnic\/export-weclone"/);
+  assert.match(tsupRaw, /external:[\s\S]*?"@remnic\/import-weclone"/);
+  assert.doesNotMatch(tsupRaw, /noExternal:[\s\S]*?"@remnic\/bench"/);
+  assert.doesNotMatch(tsupRaw, /noExternal:[\s\S]*?"@remnic\/export-weclone"/);
+
   assert.equal(pkg.dependencies?.["@remnic/bench"], undefined);
   assert.equal(pkg.dependencies?.["@remnic/export-weclone"], undefined);
-  assert.equal(pkg.devDependencies?.["@remnic/bench"], "workspace:*");
-  assert.equal(pkg.devDependencies?.["@remnic/export-weclone"], "workspace:*");
+  assert.equal(pkg.dependencies?.["@remnic/import-weclone"], undefined);
+
+  for (const name of [
+    "@remnic/bench",
+    "@remnic/export-weclone",
+    "@remnic/import-weclone",
+  ]) {
+    const peerSpec = pkg.peerDependencies?.[name];
+    assert.ok(peerSpec, `${name} missing from peerDependencies`);
+    assert.equal(
+      pkg.peerDependenciesMeta?.[name]?.optional,
+      true,
+      `${name} must be marked optional in peerDependenciesMeta`,
+    );
+  }
+
+  // Loaders use computed specifiers so bundlers cannot statically resolve
+  // the module — otherwise esbuild/tsup will happily inline it even with
+  // external set, defeating the à-la-carte contract.
+  assert.match(optionalBench, /"@remnic\/"\s*\+\s*"bench"/);
+  assert.match(optionalWeclone, /"@remnic\/"\s*\+\s*"export-weclone"/);
+
+  // The CLI entry must reach the optional packages via the loaders, not via
+  // direct static imports.
+  assert.match(indexSource, /from "\.\/optional-bench\.js"/);
+  assert.match(indexSource, /from "\.\/optional-weclone-export\.js"/);
+  // A bare `from "@remnic/bench"` (without `import type`) would be a
+  // static runtime import that bundles the package — forbidden.
+  assert.doesNotMatch(
+    indexSource,
+    /^import\s+(?!type\b)[^;]*from "@remnic\/bench";?$/m,
+  );
+  assert.doesNotMatch(
+    indexSource,
+    /^import\s+(?!type\b)[^;]*from "@remnic\/export-weclone";?$/m,
+  );
 });

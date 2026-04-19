@@ -79,8 +79,10 @@ test("CLI uses package-owned adapters for migrated benchmark runs", async () => 
   assert.match(source, /createLightweightAdapter/);
   assert.match(source, /createRemnicAdapter/);
   assert.match(source, /async function runBenchViaPackage/);
-  assert.match(source, /try \{\s*benchModule = await import\("@remnic\/bench"\)/s);
-  assert.match(source, /\} catch \{\s*return false;\s*\}/s);
+  // Per the à-la-carte invariant (AGENTS.md §44), runBenchViaPackage must
+  // reach @remnic/bench through the optional loader so the CLI degrades
+  // gracefully when the package isn't installed.
+  assert.match(source, /const loaded = await tryLoadBenchModule\(\);\s*if \(!loaded\) return false;/s);
   assert.doesNotMatch(source, /evals\/adapter\/engram-adapter\.ts/);
 });
 
@@ -248,12 +250,14 @@ test("bench results, baseline, and export route through the stored package resul
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
   const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
 
-  assert.match(source, /defaultBenchmarkBaselineDir,/);
-  assert.match(source, /listBenchmarkBaselines,/);
-  assert.match(source, /loadBenchmarkBaseline,/);
-  assert.match(source, /listBenchmarkResults,/);
-  assert.match(source, /renderBenchmarkResultExport,/);
-  assert.match(source, /saveBenchmarkBaseline,/);
+  // Symbols are destructured from the optional bench loader inside each
+  // command handler — a bare reference is enough to prove the CLI talks to
+  // the package rather than re-implementing the helper locally.
+  assert.match(source, /\blistBenchmarkBaselines\b/);
+  assert.match(source, /\bloadBenchmarkBaseline\b/);
+  assert.match(source, /\blistBenchmarkResults\b/);
+  assert.match(source, /\brenderBenchmarkResultExport\b/);
+  assert.match(source, /\bsaveBenchmarkBaseline\b/);
   assert.match(source, /async function showBenchPackageResults\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /async function manageBenchBaselines\(parsed: ParsedBenchArgs\): Promise<void>/);
   assert.match(source, /async function exportBenchPackageResult\(parsed: ParsedBenchArgs\): Promise<void>/);
@@ -262,7 +266,7 @@ test("bench results, baseline, and export route through the stored package resul
   assert.match(source, /if \(parsed\.action === "export"\) \{\s*await exportBenchPackageResult\(parsed\);/s);
   assert.match(source, /baseline save <name> \[run\]/);
   assert.match(source, /bench export <run> --format <json\|csv\|html>/);
-  assert.match(source, /const baselineDir = parsed\.baselinesDir \?\? resolveBenchBaselineDir\(\)/);
+  assert.match(source, /const baselineDir = parsed\.baselinesDir \?\? defaultBenchmarkBaselineDir\(\)/);
   assert.match(source, /const rendered = renderBenchmarkResultExport\(result, parsed\.format\);/);
   assert.match(source, /ERROR: export requires --format json, csv, or html\./);
   assert.match(source, /printBenchPackageSummary\(result, summary\.path, "Stored result"\);/);
@@ -282,7 +286,7 @@ test("bench providers discovery is exposed as a package-backed CLI surface", asy
   const parserSource = await readFile("packages/remnic-cli/src/bench-args.ts", "utf8");
   const readme = await readFile("packages/remnic-cli/README.md", "utf8");
 
-  assert.match(source, /discoverAllProviders,/);
+  assert.match(source, /\bdiscoverAllProviders\b/);
   assert.match(source, /Usage: remnic bench <list\|run\|datasets\|runs\|compare\|results\|baseline\|export\|publish\|ui\|providers>/);
   assert.match(source, /remnic bench providers discover/);
   assert.match(source, /async function discoverBenchProviders\(parsed: ParsedBenchArgs\): Promise<void>/);
@@ -1011,9 +1015,14 @@ test("parseBenchArgs rejects unknown bench publish targets", async () => {
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
 
-  assert.match(source, /type BenchmarkDefinition,/);
+  // After the à-la-carte refactor, BenchmarkDefinition is a type-only
+  // import (erased at compile time) and loadBenchDefinitionsFromPackage
+  // goes through the optional-bench loader. The key semantic guarantee
+  // is still that the CLI reuses the package's BenchmarkDefinition type
+  // rather than re-defining its own shape.
+  assert.match(source, /BenchmarkDefinition,?[\s\S]*?\} from "@remnic\/bench";/s);
   assert.match(source, /async function loadBenchDefinitionsFromPackage\(\): Promise<BenchmarkDefinition\[\] \| undefined>/);
-  assert.match(source, /listBenchmarks\?: \(\) => BenchmarkDefinition\[\];/);
+  assert.match(source, /listBenchmarks\b/);
   assert.doesNotMatch(source, /interface PackageBenchDefinition/);
   assert.doesNotMatch(source, /listBenchmarks\?: \(\) => Promise<.*BenchmarkDefinition\[\].*\|/s);
 });

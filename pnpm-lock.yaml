@@ -68,7 +68,7 @@ importers:
   packages/bench:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../remnic-core
       yaml:
         specifier: ^2.4.2
@@ -109,7 +109,14 @@ importers:
         specifier: ^7.1.12
         version: 7.3.2(@types/node@25.5.2)(tsx@4.21.0)(yaml@2.8.3)
 
-  packages/connector-replit: {}
+  packages/connector-replit:
+    devDependencies:
+      tsup:
+        specifier: ^8.5.1
+        version: 8.5.1(postcss@8.5.10)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/connector-weclone:
     devDependencies:
@@ -126,7 +133,7 @@ importers:
   packages/export-weclone:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../remnic-core
     devDependencies:
       tsup:
@@ -151,7 +158,7 @@ importers:
   packages/import-weclone:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../remnic-core
     devDependencies:
       tsup:
@@ -169,7 +176,7 @@ importers:
   packages/plugin-codex:
     dependencies:
       '@remnic/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../remnic-core
 
   packages/plugin-openclaw:
@@ -203,6 +210,9 @@ importers:
       '@remnic/export-weclone':
         specifier: workspace:*
         version: link:../export-weclone
+      '@remnic/import-weclone':
+        specifier: workspace:*
+        version: link:../import-weclone
       tsup:
         specifier: ^8.5.1
         version: 8.5.1(postcss@8.5.10)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)

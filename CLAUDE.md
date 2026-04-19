@@ -231,6 +231,20 @@ grep "\[engram\]" ~/.openclaw/logs/gateway.log
 54. **Never delete before write in file replace operations** — `rmSync(target)` then `renameSync(tmp, target)` loses data permanently if rename fails. Write to temp first, then rename atomically. Verify rename success before cleanup. `renameSync` can fail on cross-device moves. PR #394.
 55. **Documented behavior must have a corresponding implementation and test** — if docs say "timeout is applied to all daemon calls", the provider must forward the timeout parameter AND a test must verify it. CI publish workflows must validate `github.ref == 'refs/heads/main'` on the job, not just the trigger. Config properties defined in schema must be wired end-to-end. PR #397, #398.
 56. **Never merge before AI reviewers post** — `cursor[bot]` and `chatgpt-codex-connector[bot]` take 2-5 minutes to review a PR. Merging immediately after PR creation races past them, leaving comments unaddressed on merged code. Run `scripts/pre-merge-check.sh <PR#>` before every `gh pr merge`. The script verifies: (1) both AI reviewers have posted, (2) zero unresolved threads remain. PRs #429-#439 had 5 comments missed due to this race.
+57. **À-la-carte packages must stay optional at every install layer** — users who only need memory features should not have to install benchmark, weclone, or plugin code. Optional workspace packages (`@remnic/bench`, `@remnic/export-weclone`, `@remnic/import-weclone`, etc.) MUST be loaded via computed-specifier dynamic imports (`await import("@remnic/" + "bench")`) and MUST NOT appear in any base install surface's runtime `dependencies` or `noExternal` bundler list. Declare them as `peerDependenciesMeta.*.optional = true` and surface a user-facing install hint when the dynamic import fails. See `packages/remnic-cli/src/optional-bench.ts` and `optional-weclone-export.ts` for the canonical pattern. See also the "À-la-carte packaging" section below.
+
+## À-la-carte packaging
+
+Remnic ships as a family of packages that compose. Every install surface must respect this contract:
+
+- **Core always works alone.** `@remnic/core` is the only install most users need.
+- **Optional packages never piggyback on the base install.** `@remnic/bench`, `@remnic/export-weclone`, `@remnic/import-weclone`, `@remnic/plugin-openclaw`, etc. must be separately `npm install`-able and must never be bundled, noExternal'd, or declared as a runtime `dependencies` entry on a base package.
+- **Load optional packages lazily.** Use a computed-specifier dynamic import (`await import("@remnic/" + "bench")`) so bundlers cannot statically resolve the module. Wrap in a loader helper that throws a user-facing install hint on miss. Canonical implementations: `packages/remnic-cli/src/optional-bench.ts`, `packages/remnic-cli/src/optional-weclone-export.ts`, `packages/remnic-core/src/cli.ts:ensureBuiltInBulkImportAdapters`.
+- **Declare as optional peer deps.** In the consuming package's `package.json`, list optional companions under `peerDependencies` and mark each as optional via `peerDependenciesMeta.<name>.optional = true`. Do not list them under `dependencies`.
+- **Never add to `noExternal`.** In tsup configs, optional packages must be `external` (or simply omitted from `noExternal`). Adding them to `noExternal` bundles them into the base install and breaks à-la-carte.
+- **Publish everything.** Any package that end users are expected to install (even as an extension) must be published to npm. If it's `"private": true` and you recommend it, that's a bug — ship it or remove the recommendation. The publish order in `.github/workflows/release-and-publish.yml` is the source of truth; keep it topologically sorted.
+
+When you touch any of these files — tsup configs, CLI/plugin package.json `dependencies`, or dynamic-import loaders — re-verify the contract end to end: does `npm install @remnic/cli` still work without the optional packages present? Does the CLI throw a clean install hint instead of a `MODULE_NOT_FOUND`?
 
 ## Cleaner PR Workflow
 
