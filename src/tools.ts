@@ -1964,8 +1964,8 @@ Best for:
         category: Type.Optional(
           Type.String({
             description:
-              'Category: "fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule" (default: "fact")',
-            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule"],
+              'Category: "fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule", "procedure" (default: "fact")',
+            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule", "procedure"],
           }),
         ),
         tags: Type.Optional(
@@ -2036,7 +2036,7 @@ Best for:
         category: Type.Optional(
           Type.String({
             description: "Memory category.",
-            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule"],
+            enum: ["fact", "preference", "correction", "entity", "decision", "relationship", "principle", "commitment", "moment", "skill", "rule", "procedure"],
           }),
         ),
         tags: Type.Optional(

@@ -25,6 +25,14 @@ export const DEFAULT_TAXONOMY: Taxonomy = {
       memoryCategories: ["principle", "rule", "skill"],
     },
     {
+      id: "procedures",
+      name: "Procedures",
+      description: "Ordered multi-step workflows the user repeats",
+      filingRules: ["A repeatable sequence of steps or commands for a task"],
+      priority: 25,
+      memoryCategories: ["procedure"],
+    },
+    {
       id: "entities",
       name: "Entities",
       description: "People, organizations, places, projects",

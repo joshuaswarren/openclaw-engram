@@ -38,6 +38,7 @@ const DEFAULT_CATEGORIES: readonly MemoryCategory[] = [
   "moment",
   "skill",
   "rule",
+  "procedure",
 ] as const;
 
 function normalizeNamespace(namespace: string): string {

@@ -55,6 +55,7 @@ const ALL_MEMORY_CATEGORIES: MemoryCategory[] = [
   "moment",
   "skill",
   "rule",
+  "procedure",
 ];
 
 // ── Default taxonomy structure ──────────────────────────────────────────────
@@ -154,6 +155,16 @@ describe("resolveCategory", () => {
       DEFAULT_TAXONOMY,
     );
     assert.equal(decision.categoryId, "moments");
+    assert.equal(decision.confidence, 1.0);
+  });
+
+  it("procedure -> procedures category", () => {
+    const decision = resolveCategory(
+      "When shipping: run tests, open PR, wait for CI",
+      "procedure",
+      DEFAULT_TAXONOMY,
+    );
+    assert.equal(decision.categoryId, "procedures");
     assert.equal(decision.confidence, 1.0);
   });
 
