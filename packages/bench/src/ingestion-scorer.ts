@@ -1,0 +1,176 @@
+/**
+ * Scoring utilities for ingestion benchmarks.
+ */
+
+import type {
+  ExtractedEntity,
+  ExtractedLink,
+  ExtractedPage,
+  GoldEntity,
+  GoldLink,
+  GoldPage,
+} from "./ingestion-types.js";
+
+function normalize(value: string): string {
+  return value.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "");
+}
+
+function entityNameMatches(extracted: string, gold: GoldEntity): boolean {
+  const normalizedExtracted = normalize(extracted);
+  if (normalizedExtracted === normalize(gold.name)) return true;
+  if (gold.aliases) {
+    return gold.aliases.some((alias) => normalize(alias) === normalizedExtracted);
+  }
+  return false;
+}
+
+export function matchEntity(extracted: ExtractedEntity, gold: GoldEntity): boolean {
+  return (
+    normalize(extracted.type) === normalize(gold.type) &&
+    entityNameMatches(extracted.name, gold)
+  );
+}
+
+export function entityRecall(
+  extracted: ExtractedEntity[],
+  gold: GoldEntity[],
+): { overall: number; byType: Record<string, number> } {
+  if (gold.length === 0) return { overall: 1, byType: {} };
+
+  const matched = new Set<string>();
+  const consumedExtracted = new Set<number>();
+  for (const ge of gold) {
+    const idx = extracted.findIndex((ee, i) => !consumedExtracted.has(i) && matchEntity(ee, ge));
+    if (idx >= 0) {
+      matched.add(ge.id);
+      consumedExtracted.add(idx);
+    }
+  }
+
+  const overall = matched.size / gold.length;
+
+  const typeGroups = new Map<string, GoldEntity[]>();
+  for (const ge of gold) {
+    const group = typeGroups.get(ge.type) ?? [];
+    group.push(ge);
+    typeGroups.set(ge.type, group);
+  }
+
+  const byType: Record<string, number> = {};
+  for (const [type, entities] of typeGroups) {
+    const typeMatched = entities.filter((ge) => matched.has(ge.id)).length;
+    byType[`${type}_recall`] = typeMatched / entities.length;
+  }
+
+  return { overall, byType };
+}
+
+export function linkMatches(extracted: ExtractedLink, gold: GoldLink): boolean {
+  if (gold.bidirectional) {
+    const directMatch =
+      normalize(extracted.source) === normalize(gold.source) &&
+      normalize(extracted.target) === normalize(gold.target);
+    const reverseMatch =
+      normalize(extracted.source) === normalize(gold.target) &&
+      normalize(extracted.target) === normalize(gold.source);
+    return (directMatch || reverseMatch) && normalize(extracted.relation) === normalize(gold.relation);
+  }
+
+  return (
+    normalize(extracted.source) === normalize(gold.source) &&
+    normalize(extracted.target) === normalize(gold.target) &&
+    normalize(extracted.relation) === normalize(gold.relation)
+  );
+}
+
+export function backlinkF1(
+  extracted: ExtractedLink[],
+  gold: GoldLink[],
+): { precision: number; recall: number; f1: number } {
+  if (gold.length === 0 && extracted.length === 0) {
+    return { precision: 1, recall: 1, f1: 1 };
+  }
+  if (extracted.length === 0) return { precision: 0, recall: 0, f1: 0 };
+  if (gold.length === 0) return { precision: 0, recall: 0, f1: 0 };
+
+  const matchedGold = new Set<number>();
+  let correctExtracted = 0;
+  for (const el of extracted) {
+    for (let gi = 0; gi < gold.length; gi++) {
+      if (!matchedGold.has(gi) && linkMatches(el, gold[gi]!)) {
+        matchedGold.add(gi);
+        correctExtracted++;
+        break;
+      }
+    }
+  }
+
+  const precision = correctExtracted / extracted.length;
+  const recall = matchedGold.size / gold.length;
+  const f1 = precision + recall > 0 ? (2 * precision * recall) / (precision + recall) : 0;
+
+  return { precision, recall, f1 };
+}
+
+export function schemaCompleteness(
+  pages: ExtractedPage[],
+  goldPages: GoldPage[],
+  requiredFields: readonly string[],
+): { overall: number; fieldCoverage: Record<string, number> } {
+  if (goldPages.length === 0) return { overall: 1, fieldCoverage: {} };
+
+  const fieldPasses: Record<string, number[]> = {};
+  for (const field of requiredFields) {
+    fieldPasses[field] = [];
+  }
+
+  let totalApplicable = 0;
+  let totalPassing = 0;
+
+  for (const gp of goldPages) {
+    const matchedPage = pages.find((p) => normalize(p.title) === normalize(gp.title));
+
+    for (const field of gp.requiredFields) {
+      totalApplicable++;
+      const passes = matchedPage ? matchedPage.frontmatter[field] !== undefined : false;
+      if (passes) totalPassing++;
+      if (!(field in fieldPasses)) fieldPasses[field] = [];
+      fieldPasses[field]!.push(passes ? 1 : 0);
+    }
+
+    if (gp.expectExecSummary) {
+      totalApplicable++;
+      const passes = matchedPage?.hasExecSummary ?? false;
+      if (passes) totalPassing++;
+      if (!("field_exec_summary" in fieldPasses)) fieldPasses["field_exec_summary"] = [];
+      fieldPasses["field_exec_summary"]!.push(passes ? 1 : 0);
+    }
+
+    if (gp.expectTimeline) {
+      totalApplicable++;
+      const passes = matchedPage?.hasTimeline ?? false;
+      if (passes) totalPassing++;
+      if (!("field_timeline" in fieldPasses)) fieldPasses["field_timeline"] = [];
+      fieldPasses["field_timeline"]!.push(passes ? 1 : 0);
+    }
+
+    if (gp.expectSeeAlso && gp.expectSeeAlso.length > 0) {
+      for (const expected of gp.expectSeeAlso) {
+        totalApplicable++;
+        const passes = matchedPage?.seeAlso.some((sa) => normalize(sa) === normalize(expected)) ?? false;
+        if (passes) totalPassing++;
+      }
+    }
+  }
+
+  const overall = totalApplicable > 0 ? totalPassing / totalApplicable : 1;
+
+  const fieldCoverage: Record<string, number> = {};
+  for (const [field, values] of Object.entries(fieldPasses)) {
+    if (values.length > 0) {
+      fieldCoverage[field] = values.reduce((s, v) => s + v, 0) / values.length;
+    }
+  }
+
+  return { overall, fieldCoverage };
+}
