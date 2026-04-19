@@ -107,7 +107,11 @@ async function collectMarkdownFiles(dir: string): Promise<string[]> {
       if (linkStat.isSymbolicLink()) {
         continue;
       }
-      if (entry.isDirectory()) {
+      // Gate traversal on lstat() type rather than Dirent flags: some
+      // filesystems (certain network/FUSE mounts) return DT_UNKNOWN from
+      // readdir, making entry.isDirectory()/isFile() report false for real
+      // directories and regular files. lstat() gives a definitive answer.
+      if (linkStat.isDirectory()) {
         await walk(full);
       } else if (linkStat.isFile() && entry.name.endsWith(".md")) {
         // Only accept regular files — FIFOs, sockets, device nodes, etc.
