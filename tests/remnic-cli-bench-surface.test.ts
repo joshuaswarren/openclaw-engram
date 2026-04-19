@@ -268,6 +268,7 @@ export async function buildBenchmarkPublishFeed() { return { target: "remnic-ai"
 export function checkRegression() { return null; }
 export function defaultBenchmarkBaselineDir() { return ""; }
 export function defaultBenchmarkPublishPath() { return ""; }
+export function getBenchmarkLowerIsBetter() { return false; }
 export async function discoverAllProviders() { return []; }
 export async function listBenchmarkBaselines() { return []; }
 export async function listBenchmarkResults() { return []; }
