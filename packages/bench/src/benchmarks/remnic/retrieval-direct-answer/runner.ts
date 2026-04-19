@@ -9,6 +9,7 @@
  * fast.
  */
 
+import { randomUUID } from "node:crypto";
 import { isDirectAnswerEligible, type DirectAnswerCandidate } from "@remnic/core";
 import type {
   BenchmarkDefinition,
@@ -97,7 +98,7 @@ function scoreCase(benchCase: DirectAnswerBenchCase): { scores: Record<string, n
 }
 
 export async function runRetrievalDirectAnswerBenchmark(
-  _options: ResolvedRunBenchmarkOptions,
+  options: ResolvedRunBenchmarkOptions,
 ): Promise<BenchmarkResult> {
   const tasks: TaskResult[] = [];
   const latencies: number[] = [];
@@ -124,31 +125,55 @@ export async function runRetrievalDirectAnswerBenchmark(
   }
 
   latencies.sort((a, b) => a - b);
-  const p50 = latencies[Math.floor(latencies.length * 0.5)] ?? 0;
-  const p95 = latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))] ?? 0;
+  const p50Raw = latencies[Math.floor(latencies.length * 0.5)] ?? 0;
+  const p95Raw =
+    latencies[Math.min(latencies.length - 1, Math.floor(latencies.length * 0.95))] ?? 0;
+  const p50 = Math.round(p50Raw * 100) / 100;
+  const p95 = Math.round(p95Raw * 100) / 100;
 
-  const aggregated = aggregateTaskScores(tasks);
+  const aggregated = aggregateTaskScores(tasks.map((task) => task.scores));
+  const remnicVersion = await getRemnicVersion();
+  const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
 
   return {
-    runId: `retrieval-direct-answer-${Date.now()}`,
-    benchmarkId: retrievalDirectAnswerDefinition.id,
-    startedAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
-    gitSha: await getGitSha(),
-    remnicVersion: await getRemnicVersion(),
-    mode: _options.mode,
-    tasks,
+    meta: {
+      id: randomUUID(),
+      benchmark: options.benchmark.id,
+      benchmarkTier: options.benchmark.tier,
+      version: options.benchmark.meta.version,
+      remnicVersion,
+      gitSha: getGitSha(),
+      timestamp: new Date().toISOString(),
+      mode: options.mode,
+      runCount: 1,
+      seeds: [options.seed ?? 0],
+    },
+    config: {
+      systemProvider: options.systemProvider ?? null,
+      judgeProvider: options.judgeProvider ?? null,
+      adapterMode: options.adapterMode ?? "direct",
+      remnicConfig: options.remnicConfig ?? {},
+    },
+    cost: {
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCostUsd: 0,
+      totalLatencyMs,
+      meanQueryLatencyMs: tasks.length > 0 ? totalLatencyMs / tasks.length : 0,
+    },
     results: {
-      summary: {
-        taskCount: tasks.length,
-        correctVerdicts: tasks.filter((t) => t.scores.verdict_correct === 1).length,
-        correctWinners: tasks.filter((t) => t.scores.winner_correct === 1).length,
-      },
+      tasks,
       aggregates: {
         ...aggregated,
-        latency_p50_ms: Math.round(p50 * 100) / 100,
-        latency_p95_ms: Math.round(p95 * 100) / 100,
+        latency_p50_ms: { mean: p50, median: p50, stdDev: 0, min: p50, max: p50 },
+        latency_p95_ms: { mean: p95, median: p95, stdDev: 0, min: p95, max: p95 },
       },
+    },
+    environment: {
+      os: process.platform,
+      nodeVersion: process.version,
+      hardware: process.arch,
     },
   };
 }
