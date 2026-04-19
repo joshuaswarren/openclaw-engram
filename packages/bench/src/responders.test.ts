@@ -172,3 +172,13 @@ test("provider-backed judge ignores trailing large scalar metadata after a norma
 
   assert.equal(await judge.score("q", "predicted", "expected"), 0.5);
 });
+
+test("provider-backed judge keeps out-of parsing stable across repeated calls", async () => {
+  const judge = createProviderBackedJudge(
+    { provider: "openai", model: "gpt-5.4-mini" },
+    createFakeProvider("Score: 8 out of 10"),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 0.8);
+  assert.equal(await judge.score("q", "predicted", "expected"), 0.8);
+});

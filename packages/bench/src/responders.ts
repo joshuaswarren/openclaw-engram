@@ -27,7 +27,6 @@ const DEFAULT_JUDGE_SYSTEM_PROMPT = [
   "Use 1.00 for a fully correct answer, 0.00 for a fully incorrect answer, and fractional values for partial matches.",
 ].join(" ");
 
-const SCORE_OUT_OF_REGEX = /(-?\d+(?:\.\d+)?)\s+out\s+of\s+(-?\d+(?:\.\d+)?)/gi;
 const SCORE_CUE_REGEX = /\b(score|rated|rating|grade|graded|result|overall|final)\b/;
 
 export interface GatewayResponderOptions {
@@ -222,7 +221,9 @@ function parseScalarJudgeScore(raw: string): number {
     }
   }
 
-  const outOfMatches = [...trimmed.matchAll(SCORE_OUT_OF_REGEX)];
+  const outOfMatches = [
+    ...trimmed.matchAll(/(-?\d+(?:\.\d+)?)\s+out\s+of\s+(-?\d+(?:\.\d+)?)/gi),
+  ];
   for (const match of outOfMatches.reverse()) {
     const numerator = Number.parseFloat(match[1]);
     const denominator = Number.parseFloat(match[2]);

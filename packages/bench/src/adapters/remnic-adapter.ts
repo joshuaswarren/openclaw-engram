@@ -84,7 +84,7 @@ export const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, 
 };
 
 function cloneBenchConfig(config: Record<string, unknown>): Record<string, unknown> {
-  return cloneBenchConfigValue(config);
+  return cloneBenchConfigValue(config) as Record<string, unknown>;
 }
 
 function cloneBenchConfigValue(value: unknown): unknown {
