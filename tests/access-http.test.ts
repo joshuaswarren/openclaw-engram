@@ -60,6 +60,28 @@ function createFakeService(): EngramAccessService {
       intent: null,
       graph: null,
     }),
+    recallTierExplain: async (
+      sessionKey?: string,
+      namespace?: string,
+      _authenticatedPrincipal?: string,
+    ) => ({
+      hasExplain: true,
+      snapshotFound: true,
+      sessionKey: sessionKey ?? "default",
+      recordedAt: "2026-04-19T17:30:00.000Z",
+      namespace: namespace ?? "global",
+      memoryIds: ["fact-1"],
+      source: "direct-answer",
+      sourcesUsed: ["direct-answer"],
+      latencyMs: 8,
+      tierExplain: {
+        tier: "direct-answer",
+        tierReason: "trusted decision, unambiguous",
+        filteredBy: [],
+        candidatesConsidered: 1,
+        latencyMs: 8,
+      },
+    }),
     memoryGet: async (memoryId) => ({
       found: true,
       namespace: "global",
@@ -386,6 +408,37 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
     const explain = await explainRes.json() as { found: boolean; snapshot: { sessionKey: string } };
     assert.equal(explain.found, true);
     assert.equal(explain.snapshot.sessionKey, "sess-1");
+
+    // Tier-explain endpoint (issue #518): returns the structured
+    // per-result annotation.  Uses GET + ?session= so it is trivially
+    // cacheable and doesn't require a body.
+    const tierExplainRes = await fetch(
+      `${base}/engram/v1/recall/tier-explain?session=sess-42`,
+      { headers },
+    );
+    assert.equal(tierExplainRes.status, 200);
+    const tierExplain = await tierExplainRes.json() as {
+      hasExplain: boolean;
+      snapshotFound: boolean;
+      sessionKey: string;
+      tierExplain: { tier: string; candidatesConsidered: number } | null;
+    };
+    assert.equal(tierExplain.hasExplain, true);
+    assert.equal(tierExplain.snapshotFound, true);
+    assert.equal(tierExplain.sessionKey, "sess-42");
+    assert.equal(tierExplain.tierExplain?.tier, "direct-answer");
+    assert.equal(tierExplain.tierExplain?.candidatesConsidered, 1);
+
+    // Tier-explain without a session parameter falls back to the most
+    // recent snapshot — the fake service returns the same payload, but
+    // with a default sessionKey.
+    const latestRes = await fetch(
+      `${base}/engram/v1/recall/tier-explain`,
+      { headers },
+    );
+    assert.equal(latestRes.status, 200);
+    const latest = await latestRes.json() as { sessionKey: string };
+    assert.equal(latest.sessionKey, "default");
 
     const memoryRes = await fetch(`${base}/engram/v1/memories/fact-1`, { headers });
     assert.equal(memoryRes.status, 200);
