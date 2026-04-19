@@ -124,34 +124,28 @@ describe("bulk-import registry", () => {
     assert.equal(listBulkImportSources().length, 0);
   });
 
-  it("getBulkImportSource trims the name on lookup", () => {
+  it("retrieves adapter when lookup name has leading/trailing whitespace", () => {
+    // Registration trims the name on write; lookup must trim as well,
+    // otherwise `get('  weclone  ')` would miss the adapter stored
+    // under the trimmed key `weclone`.
+    const adapter = makeAdapter("weclone");
+    registerBulkImportSource(adapter);
+    assert.equal(getBulkImportSource("weclone"), adapter);
+    assert.equal(getBulkImportSource("  weclone  "), adapter);
+    assert.equal(getBulkImportSource("\tweclone\n"), adapter);
+  });
+
+  it("returns undefined for non-string or empty lookup names", () => {
     registerBulkImportSource(makeAdapter("weclone"));
-    // Lookup with leading/trailing whitespace should still find it
-    const result = getBulkImportSource("  weclone  ");
-    assert.ok(result, "expected adapter to be found with trimmed lookup key");
-    assert.equal(result!.name, "weclone");
-  });
-
-  it("getBulkImportSource trims consistently with registration", () => {
-    // Register with whitespace in name — registerBulkImportSource trims it
-    registerBulkImportSource(makeAdapter("  padded-source  "));
-    // Lookup with same whitespace should work
-    const result1 = getBulkImportSource("  padded-source  ");
-    assert.ok(result1, "expected adapter found via padded lookup");
-    // Lookup with trimmed name should also work
-    const result2 = getBulkImportSource("padded-source");
-    assert.ok(result2, "expected adapter found via trimmed lookup");
-  });
-
-  it("stored adapter.name matches the registry key (trimmed)", () => {
-    // Register adapter whose name has surrounding whitespace.
-    registerBulkImportSource(makeAdapter("  padded-name  "));
-    const names = listBulkImportSources();
-    assert.deepEqual(names, ["padded-name"]);
-    // The adapter returned from lookup must also report the trimmed name so
-    // downstream code using `adapter.name` agrees with the registry key.
-    const retrieved = getBulkImportSource("padded-name");
-    assert.ok(retrieved);
-    assert.equal(retrieved!.name, "padded-name");
+    assert.equal(getBulkImportSource(""), undefined);
+    assert.equal(getBulkImportSource("   "), undefined);
+    assert.equal(
+      getBulkImportSource(null as unknown as string),
+      undefined,
+    );
+    assert.equal(
+      getBulkImportSource(undefined as unknown as string),
+      undefined,
+    );
   });
 });

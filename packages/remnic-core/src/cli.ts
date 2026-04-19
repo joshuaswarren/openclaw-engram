@@ -30,8 +30,10 @@ import { isReplaySource, normalizeReplaySessionKey, type ReplaySource, type Repl
 import {
   getBulkImportSource,
   listBulkImportSources,
+  registerBulkImportSource,
   runBulkImportPipeline,
   type BulkImportResult,
+  type BulkImportSourceAdapter,
   type ProcessBatchFn,
 } from "./bulk-import/index.js";
 import { archiveObservations } from "./maintenance/archive-observations.js";
@@ -2870,9 +2872,44 @@ export interface BulkImportCliCommandOptions {
   stderr: Writable;
 }
 
+/**
+ * Attempt to lazily register built-in bulk-import adapters.  Adapters
+ * live in optional workspace packages (e.g. `@remnic/import-weclone`)
+ * so that core stays framework-agnostic; we try the dynamic import and
+ * silently continue if the package is absent or the adapter is already
+ * registered.  Errors from the dynamic import are swallowed so a missing
+ * optional package does not break other bulk-import sources.
+ */
+async function ensureBuiltInBulkImportAdapters(): Promise<void> {
+  // weclone — imported via a computed specifier so the TypeScript dts
+  // resolver doesn't require `@remnic/import-weclone` to be present at
+  // core-build time.  The package declares it as an optional workspace
+  // dependency; if it's missing from a given deployment we silently
+  // skip registration.
+  if (!getBulkImportSource("weclone")) {
+    const wecloneSpecifier = "@remnic/" + "import-weclone";
+    try {
+      const mod = (await import(wecloneSpecifier)) as {
+        wecloneImportAdapter?: BulkImportSourceAdapter;
+      };
+      if (mod.wecloneImportAdapter) {
+        try {
+          registerBulkImportSource(mod.wecloneImportAdapter);
+        } catch {
+          // Already registered by another caller — fine.
+        }
+      }
+    } catch {
+      // Package not installed in this deployment; skip.
+    }
+  }
+}
+
 export async function runBulkImportCliCommand(
   opts: BulkImportCliCommandOptions,
 ): Promise<BulkImportResult> {
+  await ensureBuiltInBulkImportAdapters();
+
   const adapter = getBulkImportSource(opts.source);
   if (!adapter) {
     const registered = listBulkImportSources();
@@ -2887,20 +2924,34 @@ export async function runBulkImportCliCommand(
   }
 
   const inputRaw = await readFile(opts.file, "utf-8");
-  const parsed = await adapter.parse(inputRaw, {
-    strict: opts.strict === true,
-  });
-
-  if (!opts.dryRun) {
+  let inputParsed: unknown;
+  try {
+    inputParsed = JSON.parse(inputRaw);
+  } catch (err) {
     throw new Error(
-      "Bulk import persistence is not yet wired — use --dry-run to validate input, or implement a processBatch callback via the programmatic API",
+      `Failed to parse import file as JSON: ${(err as Error).message}`,
     );
   }
+  if (typeof inputParsed !== "object" || inputParsed === null) {
+    throw new Error(
+      "Import file must contain a JSON object or array, got " +
+        (inputParsed === null ? "null" : typeof inputParsed),
+    );
+  }
+  const parsed = await adapter.parse(inputParsed, {
+    strict: opts.strict === true,
+    platform: opts.platform,
+  });
 
-  const processBatch: ProcessBatchFn = async (turns) => {
-    // Phase 1 stub — the real extraction callback will be wired
-    // when the orchestrator integration lands in a later PR.
-    return { memoriesCreated: turns.length, duplicatesSkipped: 0 };
+  const processBatch: ProcessBatchFn = async () => {
+    // The real extraction callback will be wired when the
+    // orchestrator integration lands in a later PR.
+    // The pipeline never calls processBatch in dryRun mode,
+    // so reaching here means a non-dryRun invocation.
+    throw new Error(
+      "Bulk import persistence is not yet wired. " +
+        "Use --dryRun to validate without persisting.",
+    );
   };
 
   const result = await runBulkImportPipeline(
@@ -3683,6 +3734,64 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             }
           }
           console.log("OK");
+        });
+
+      cmd
+        .command("bulk-import")
+        .description(
+          "Bulk-import chat history via a registered source adapter " +
+            "(e.g. --source weclone). Use --dry-run while the persistence " +
+            "path is still being wired.",
+        )
+        .option("--source <source>", "Bulk-import source adapter name (e.g. weclone)")
+        .option("--file <path>", "Path to the import file (JSON)")
+        .option("--platform <platform>", "Optional platform override forwarded to the adapter")
+        .option("--namespace <ns>", "Target namespace", "")
+        .option("--batch-size <n>", "Turns per batch", "50")
+        .option("--dry-run", "Parse and validate only; do not persist")
+        .option("--strict", "Fail on any invalid source row")
+        .option("--verbose", "Print per-batch error details")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const sourceRaw = typeof options.source === "string" ? options.source.trim() : "";
+          const filePathRaw = typeof options.file === "string" ? options.file.trim() : "";
+          if (sourceRaw.length === 0) {
+            console.log("Missing --source. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json --dry-run");
+            return;
+          }
+          if (filePathRaw.length === 0) {
+            console.log("Missing --file. Example: openclaw engram bulk-import --source weclone --file /tmp/export.json --dry-run");
+            return;
+          }
+          const batchSizeRaw = parseInt(String(options.batchSize ?? "50"), 10);
+          const batchSize = Number.isFinite(batchSizeRaw) && batchSizeRaw > 0 ? batchSizeRaw : 50;
+          const namespaceRaw = typeof options.namespace === "string" ? options.namespace.trim() : "";
+          const platformRaw = typeof options.platform === "string" ? options.platform.trim() : "";
+          try {
+            const result = await runBulkImportCliCommand({
+              memoryDir: orchestrator.config.memoryDir,
+              source: sourceRaw,
+              file: filePathRaw,
+              platform: platformRaw.length > 0 ? platformRaw : undefined,
+              namespace: namespaceRaw.length > 0 ? namespaceRaw : undefined,
+              batchSize,
+              dryRun: options.dryRun === true,
+              verbose: options.verbose === true,
+              strict: options.strict === true,
+              stdout: process.stdout,
+              stderr: process.stderr,
+            });
+            if (result.errors.length > 0) {
+              console.error(`Bulk import completed with ${result.errors.length} batch error(s).`);
+              process.exitCode = 1;
+            } else {
+              console.log("OK");
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            console.error(`Bulk import failed: ${message}`);
+            process.exitCode = 1;
+          }
         });
 
       cmd
