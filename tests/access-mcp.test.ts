@@ -28,6 +28,24 @@ function createFakeService(): EngramAccessService {
       intent: null,
       graph: null,
     }),
+    recallTierExplain: async (sessionKey?: string) => ({
+      hasExplain: true,
+      snapshotFound: true,
+      sessionKey: sessionKey ?? "default",
+      recordedAt: "2026-04-19T18:00:00.000Z",
+      namespace: "global",
+      memoryIds: ["fact-1"],
+      source: "direct-answer",
+      sourcesUsed: ["direct-answer"],
+      latencyMs: 8,
+      tierExplain: {
+        tier: "direct-answer",
+        tierReason: "trusted decision, unambiguous",
+        filteredBy: [],
+        candidatesConsidered: 1,
+        latencyMs: 8,
+      },
+    }),
     memoryGet: async (memoryId) => ({
       found: true,
       namespace: "global",
@@ -156,6 +174,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
   const legacyListed = [
     "engram.recall",
     "engram.recall_explain",
+    "engram.recall_tier_explain",
     "engram.day_summary",
     "engram.memory_governance_run",
     "engram.procedure_mining_run",
@@ -216,6 +235,43 @@ test("MCP server advertises tools and dispatches recall", async () => {
   const recallResult = recall?.result as { structuredContent: { context: string; memoryIds: string[] } };
   assert.equal(recallResult.structuredContent.context, "ctx");
   assert.deepEqual(recallResult.structuredContent.memoryIds, ["fact-1"]);
+
+  // Tier-explain tool (issue #518) — accepts both legacy and
+  // canonical names; returns the structured payload from the shared
+  // renderer.
+  const legacyTierExplain = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 31,
+    method: "tools/call",
+    params: {
+      name: "engram.recall_tier_explain",
+      arguments: { sessionKey: "sess-42" },
+    },
+  });
+  const legacyTierResult = legacyTierExplain?.result as {
+    structuredContent: {
+      hasExplain: boolean;
+      sessionKey: string;
+      tierExplain: { tier: string } | null;
+    };
+  };
+  assert.equal(legacyTierResult.structuredContent.hasExplain, true);
+  assert.equal(legacyTierResult.structuredContent.sessionKey, "sess-42");
+  assert.equal(legacyTierResult.structuredContent.tierExplain?.tier, "direct-answer");
+
+  const canonicalTierExplain = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 32,
+    method: "tools/call",
+    params: {
+      name: "remnic.recall_tier_explain",
+      arguments: {},
+    },
+  });
+  const canonicalTierResult = canonicalTierExplain?.result as {
+    structuredContent: { sessionKey: string };
+  };
+  assert.equal(canonicalTierResult.structuredContent.sessionKey, "default");
 
   const store = await server.handleRequest({
     jsonrpc: "2.0",

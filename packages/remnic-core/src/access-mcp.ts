@@ -126,6 +126,22 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.recall_tier_explain",
+        description:
+          "Return a structured tier-explain payload for the last direct-answer-eligible recall (issue #518). Orthogonal to engram.recall_explain, which returns a graph-path explanation. Responses carry snapshotFound and hasExplain booleans so callers can branch without parsing.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionKey: {
+              type: "string",
+              description:
+                "Optional session key. Omit to read the most recent snapshot across sessions.",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.day_summary",
         description:
           "Generate a structured end-of-day summary. When memories is omitted or empty, auto-gathers today's facts and hourly summaries from storage.",
@@ -1040,6 +1056,12 @@ export class EngramMcpServer {
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
+      case "engram.recall_tier_explain":
+        return this.service.recallTierExplain(
+          typeof args.sessionKey === "string" && args.sessionKey.length > 0
+            ? args.sessionKey
+            : undefined,
+        );
       case "engram.day_summary":
         return this.service.daySummary({
           memories: typeof args.memories === "string" ? args.memories : "",
