@@ -124,6 +124,18 @@ test("CLI openclaw upgrade supports release and restart flags", async () => {
   );
 });
 
+test("CLI openclaw upgrade rejects missing values for value-bearing flags", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes('resolveRequiredValueFlag(args, "--version")'),
+    "CLI upgrade must reject bare --version flags instead of defaulting",
+  );
+  assert.ok(
+    src.includes('resolveRequiredValueFlag(args, "--plugin-dir")'),
+    "CLI upgrade must reject bare --plugin-dir flags",
+  );
+});
+
 test("CLI openclaw upgrade mentions backups and npm package refresh", async () => {
   const src = await readCli();
   assert.ok(
@@ -177,6 +189,15 @@ test("CLI preserves existing memoryDir on reinstall when --memory-dir not provid
   );
 });
 
+test("CLI ignores foreign slots.memory values when preserving the current OpenClaw memoryDir", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("slots.memory === REMNIC_OPENCLAW_PLUGIN_ID") &&
+      src.includes("slots.memory === REMNIC_OPENCLAW_LEGACY_PLUGIN_ID"),
+    "CLI must only trust recognized OpenClaw plugin ids when reading slots.memory",
+  );
+});
+
 test("CLI validates plugins.entries shape before using in operator", async () => {
   const src = await readCli();
   assert.ok(
@@ -206,5 +227,19 @@ test("CLI uses resolveFlagStrict for --memory-dir and --config to reject flag-li
   assert.ok(
     src.includes("resolveFlagStrict"),
     "CLI must use resolveFlagStrict for value-bearing flags in openclaw install",
+  );
+});
+
+test("CLI lazy-loads bench and training-export runtime packages", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes('import("@remnic/export-weclone")') &&
+      src.includes("ensureTrainingExportRuntimeLoaded"),
+    "CLI must lazy-load training export runtime dependencies",
+  );
+  assert.ok(
+    src.includes('import("@remnic/bench")') &&
+      src.includes("ensureBenchRuntimeLoaded"),
+    "CLI must lazy-load bench runtime dependencies",
   );
 });

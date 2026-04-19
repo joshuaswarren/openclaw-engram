@@ -117,50 +117,11 @@ import {
   resolveExtensionsRoot,
   coerceInstallExtension,
 } from "@remnic/core";
-import {
-  convertMemoriesToRecords,
-  getTrainingExportAdapter,
-  listTrainingExportAdapters,
-  parseStrictCliDate,
-  type TrainingExportOptions,
-  type TrainingExportRecord,
-} from "@remnic/core";
-// Side-effect import: registers the weclone adapter with the core registry.
-// `ensureWecloneExportAdapterRegistered` is exported for idempotent explicit
-// calls from tests that reset the registry between cases.
-import {
-  ensureWecloneExportAdapterRegistered,
-  synthesizeTrainingPairs,
-  sweepPii,
-} from "@remnic/export-weclone";
 import type {
   BinaryLifecycleConfig,
 } from "@remnic/core";
 import type { MemoryCategory, Taxonomy, TaxonomyCategory } from "@remnic/core";
-import {
-  buildBenchmarkPublishFeed,
-  compareResults,
-  deleteBenchmarkResults,
-  getBenchmarkLowerIsBetter,
-  defaultBenchmarkBaselineDir,
-  discoverAllProviders,
-  defaultBenchmarkPublishPath,
-  listBenchmarkBaselines,
-  listBenchmarkResults,
-  loadBenchmarkBaseline,
-  runBenchSuite,
-  runExplain,
-  loadBaseline,
-  saveBaseline,
-  checkRegression,
-  loadBenchmarkResult,
-  renderBenchmarkResultExport,
-  resolveBenchmarkResultReference,
-  saveBenchmarkBaseline,
-  writeBenchmarkPublishFeed,
-  type BenchConfig,
-  type BenchmarkDefinition,
-} from "@remnic/bench";
+import type { BenchConfig, BenchmarkDefinition } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
 import {
   type BenchAction,
@@ -179,6 +140,204 @@ export {
   type ParsedBenchArgs,
   parseBenchArgs,
 } from "./bench-args.js";
+
+type BenchRuntime = typeof import("@remnic/bench");
+interface CoreTrainingExportRuntime {
+  convertMemoriesToRecords(
+    options: TrainingExportOptions,
+  ): Promise<TrainingExportRecord[]>;
+  getTrainingExportAdapter(name: string): TrainingExportAdapter | undefined;
+  listTrainingExportAdapters(): string[];
+  parseStrictCliDate(value: string, flag: string): Date;
+}
+
+interface WecloneTrainingExportRuntime {
+  ensureWecloneExportAdapterRegistered(): boolean;
+  synthesizeTrainingPairs(
+    records: TrainingExportRecord[],
+    options?: { maxPairsPerRecord?: number; styleMarkers?: unknown },
+  ): TrainingExportRecord[];
+  sweepPii(records: TrainingExportRecord[]): {
+    cleanRecords: TrainingExportRecord[];
+    redactedCount: number;
+  };
+}
+
+function missingLazyRuntime<T extends (...args: any[]) => any>(
+  packageName: string,
+  symbol: string,
+): T {
+  return ((..._args: any[]) => {
+    throw new Error(
+      `Internal error: ${packageName} was not loaded before calling ${symbol}.`,
+    );
+  }) as unknown as T;
+}
+
+let benchRuntimePromise: Promise<void> | undefined;
+let buildBenchmarkPublishFeed: BenchRuntime["buildBenchmarkPublishFeed"] = missingLazyRuntime(
+  "@remnic/bench",
+  "buildBenchmarkPublishFeed",
+);
+let compareResults: BenchRuntime["compareResults"] = missingLazyRuntime(
+  "@remnic/bench",
+  "compareResults",
+);
+let deleteBenchmarkResults: BenchRuntime["deleteBenchmarkResults"] = missingLazyRuntime(
+  "@remnic/bench",
+  "deleteBenchmarkResults",
+);
+let getBenchmarkLowerIsBetter: BenchRuntime["getBenchmarkLowerIsBetter"] = missingLazyRuntime(
+  "@remnic/bench",
+  "getBenchmarkLowerIsBetter",
+);
+let defaultBenchmarkBaselineDir: BenchRuntime["defaultBenchmarkBaselineDir"] = missingLazyRuntime(
+  "@remnic/bench",
+  "defaultBenchmarkBaselineDir",
+);
+let discoverAllProviders: BenchRuntime["discoverAllProviders"] = missingLazyRuntime(
+  "@remnic/bench",
+  "discoverAllProviders",
+);
+let defaultBenchmarkPublishPath: BenchRuntime["defaultBenchmarkPublishPath"] = missingLazyRuntime(
+  "@remnic/bench",
+  "defaultBenchmarkPublishPath",
+);
+let listBenchmarkBaselines: BenchRuntime["listBenchmarkBaselines"] = missingLazyRuntime(
+  "@remnic/bench",
+  "listBenchmarkBaselines",
+);
+let listBenchmarkResults: BenchRuntime["listBenchmarkResults"] = missingLazyRuntime(
+  "@remnic/bench",
+  "listBenchmarkResults",
+);
+let loadBenchmarkBaseline: BenchRuntime["loadBenchmarkBaseline"] = missingLazyRuntime(
+  "@remnic/bench",
+  "loadBenchmarkBaseline",
+);
+let runBenchSuite: BenchRuntime["runBenchSuite"] = missingLazyRuntime(
+  "@remnic/bench",
+  "runBenchSuite",
+);
+let runExplain: BenchRuntime["runExplain"] = missingLazyRuntime(
+  "@remnic/bench",
+  "runExplain",
+);
+let loadBaseline: BenchRuntime["loadBaseline"] = missingLazyRuntime(
+  "@remnic/bench",
+  "loadBaseline",
+);
+let saveBaseline: BenchRuntime["saveBaseline"] = missingLazyRuntime(
+  "@remnic/bench",
+  "saveBaseline",
+);
+let checkRegression: BenchRuntime["checkRegression"] = missingLazyRuntime(
+  "@remnic/bench",
+  "checkRegression",
+);
+let loadBenchmarkResult: BenchRuntime["loadBenchmarkResult"] = missingLazyRuntime(
+  "@remnic/bench",
+  "loadBenchmarkResult",
+);
+let renderBenchmarkResultExport: BenchRuntime["renderBenchmarkResultExport"] = missingLazyRuntime(
+  "@remnic/bench",
+  "renderBenchmarkResultExport",
+);
+let resolveBenchmarkResultReference: BenchRuntime["resolveBenchmarkResultReference"] = missingLazyRuntime(
+  "@remnic/bench",
+  "resolveBenchmarkResultReference",
+);
+let saveBenchmarkBaseline: BenchRuntime["saveBenchmarkBaseline"] = missingLazyRuntime(
+  "@remnic/bench",
+  "saveBenchmarkBaseline",
+);
+let writeBenchmarkPublishFeed: BenchRuntime["writeBenchmarkPublishFeed"] = missingLazyRuntime(
+  "@remnic/bench",
+  "writeBenchmarkPublishFeed",
+);
+
+let trainingExportRuntimePromise: Promise<void> | undefined;
+let convertMemoriesToRecords: CoreTrainingExportRuntime["convertMemoriesToRecords"] = missingLazyRuntime(
+  "@remnic/core",
+  "convertMemoriesToRecords",
+);
+let getTrainingExportAdapter: CoreTrainingExportRuntime["getTrainingExportAdapter"] = missingLazyRuntime(
+  "@remnic/core",
+  "getTrainingExportAdapter",
+);
+let listTrainingExportAdapters: CoreTrainingExportRuntime["listTrainingExportAdapters"] = missingLazyRuntime(
+  "@remnic/core",
+  "listTrainingExportAdapters",
+);
+let parseStrictCliDate: CoreTrainingExportRuntime["parseStrictCliDate"] = missingLazyRuntime(
+  "@remnic/core",
+  "parseStrictCliDate",
+);
+let ensureWecloneExportAdapterRegistered: WecloneTrainingExportRuntime["ensureWecloneExportAdapterRegistered"] = missingLazyRuntime(
+  "@remnic/export-weclone",
+  "ensureWecloneExportAdapterRegistered",
+);
+let synthesizeTrainingPairs: WecloneTrainingExportRuntime["synthesizeTrainingPairs"] = missingLazyRuntime(
+  "@remnic/export-weclone",
+  "synthesizeTrainingPairs",
+);
+let sweepPii: WecloneTrainingExportRuntime["sweepPii"] = missingLazyRuntime(
+  "@remnic/export-weclone",
+  "sweepPii",
+);
+
+async function ensureBenchRuntimeLoaded(): Promise<void> {
+  if (benchRuntimePromise) {
+    await benchRuntimePromise;
+    return;
+  }
+  benchRuntimePromise = import("@remnic/bench").then((bench) => {
+    buildBenchmarkPublishFeed = bench.buildBenchmarkPublishFeed;
+    compareResults = bench.compareResults;
+    deleteBenchmarkResults = bench.deleteBenchmarkResults;
+    getBenchmarkLowerIsBetter = bench.getBenchmarkLowerIsBetter;
+    defaultBenchmarkBaselineDir = bench.defaultBenchmarkBaselineDir;
+    discoverAllProviders = bench.discoverAllProviders;
+    defaultBenchmarkPublishPath = bench.defaultBenchmarkPublishPath;
+    listBenchmarkBaselines = bench.listBenchmarkBaselines;
+    listBenchmarkResults = bench.listBenchmarkResults;
+    loadBenchmarkBaseline = bench.loadBenchmarkBaseline;
+    runBenchSuite = bench.runBenchSuite;
+    runExplain = bench.runExplain;
+    loadBaseline = bench.loadBaseline;
+    saveBaseline = bench.saveBaseline;
+    checkRegression = bench.checkRegression;
+    loadBenchmarkResult = bench.loadBenchmarkResult;
+    renderBenchmarkResultExport = bench.renderBenchmarkResultExport;
+    resolveBenchmarkResultReference = bench.resolveBenchmarkResultReference;
+    saveBenchmarkBaseline = bench.saveBenchmarkBaseline;
+    writeBenchmarkPublishFeed = bench.writeBenchmarkPublishFeed;
+  });
+  await benchRuntimePromise;
+}
+
+async function ensureTrainingExportRuntimeLoaded(): Promise<void> {
+  if (trainingExportRuntimePromise) {
+    await trainingExportRuntimePromise;
+    return;
+  }
+  trainingExportRuntimePromise = Promise.all([
+    import("@remnic/core"),
+    import("@remnic/export-weclone"),
+  ]).then(([core, weclone]) => {
+    const coreRuntime = core as unknown as CoreTrainingExportRuntime;
+    const wecloneRuntime = weclone as unknown as WecloneTrainingExportRuntime;
+    convertMemoriesToRecords = coreRuntime.convertMemoriesToRecords;
+    getTrainingExportAdapter = coreRuntime.getTrainingExportAdapter;
+    listTrainingExportAdapters = coreRuntime.listTrainingExportAdapters;
+    parseStrictCliDate = coreRuntime.parseStrictCliDate;
+    ensureWecloneExportAdapterRegistered =
+      wecloneRuntime.ensureWecloneExportAdapterRegistered;
+    synthesizeTrainingPairs = wecloneRuntime.synthesizeTrainingPairs;
+    sweepPii = wecloneRuntime.sweepPii;
+  });
+  await trainingExportRuntimePromise;
+}
 
 // ── Host-specific publisher registrations ───────────────────────────────────
 // Publisher classes live in @remnic/core, but wiring them into the registry
@@ -282,6 +441,7 @@ const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
 type PackageBenchModule = {
   getBenchmark?: (id: string) => {
     runnerAvailable?: boolean;
+    meta?: { category?: string };
   } | undefined;
   runBenchmark?: (id: string, options: {
     mode?: "full" | "quick";
@@ -314,6 +474,30 @@ type PackageBenchModule = {
   createLightweightAdapter?: () => Promise<{ destroy(): Promise<void> }>;
   createRemnicAdapter?: () => Promise<{ destroy(): Promise<void> }>;
 };
+
+interface TrainingExportOptions {
+  memoryDir: string;
+  since?: Date;
+  until?: Date;
+  minConfidence?: number;
+  categories?: string[];
+  includeEntities?: boolean;
+}
+
+interface TrainingExportRecord {
+  instruction: string;
+  input: string;
+  output: string;
+  category?: string;
+  confidence?: number;
+  sourceIds?: string[];
+}
+
+interface TrainingExportAdapter {
+  name: string;
+  formatRecords(records: TrainingExportRecord[]): string;
+  fileExtension: string;
+}
 
 export function getBenchUsageText(): string {
   return `Usage: remnic bench <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers> [options] [benchmark...]
@@ -1563,7 +1747,11 @@ function resolveCurrentOpenclawMemoryDir(
   slots: Record<string, unknown>,
   fallbackMemoryDir: string,
 ): string {
-  const slotValue = typeof slots.memory === "string" ? slots.memory : undefined;
+  const slotValue =
+    slots.memory === REMNIC_OPENCLAW_PLUGIN_ID ||
+    slots.memory === REMNIC_OPENCLAW_LEGACY_PLUGIN_ID
+      ? slots.memory
+      : undefined;
   const candidateIds = [
     slotValue,
     REMNIC_OPENCLAW_PLUGIN_ID,
@@ -1774,6 +1962,7 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
   const service = new EngramAccessService(orchestrator);
 
   if (explain) {
+    await ensureBenchRuntimeLoaded();
     const result = await runExplain(service, queryText);
     if (json) {
       console.log(JSON.stringify(result, null, 2));
@@ -4733,6 +4922,8 @@ export async function runTrainingExport(
   redactedCount: number;
   outputPath: string | null;
 }> {
+  await ensureTrainingExportRuntimeLoaded();
+
   // Ensure the WeClone adapter (and any others registered via side-effect
   // imports) are available before we ask the registry. `ensureWecloneExportAdapterRegistered`
   // is idempotent — safe to call even when the adapter is already registered
@@ -5109,11 +5300,13 @@ Options:
     }
 
     case "bench": {
+      await ensureBenchRuntimeLoaded();
       await cmdBench(rest);
       break;
     }
 
     case "benchmark": {
+      await ensureBenchRuntimeLoaded();
       await cmdBench(rest);
       break;
     }
@@ -5201,16 +5394,16 @@ Other:
       if (subAction === "install") {
         const yes = args.includes("--yes") || args.includes("-y") || args.includes("--force");
         const dryRun = args.includes("--dry-run");
-        const memoryDir = resolveFlagStrict(args, "--memory-dir");
-        const configOverride = resolveFlagStrict(args, "--config");
+        const memoryDir = resolveRequiredValueFlag(args, "--memory-dir");
+        const configOverride = resolveRequiredValueFlag(args, "--config");
         await cmdOpenclawInstall({ yes, dryRun, memoryDir, configPath: configOverride });
       } else if (subAction === "upgrade") {
         const yes = args.includes("--yes") || args.includes("-y") || args.includes("--force");
         const dryRun = args.includes("--dry-run");
-        const memoryDir = resolveFlagStrict(args, "--memory-dir");
-        const configOverride = resolveFlagStrict(args, "--config");
-        const version = resolveFlagStrict(args, "--version");
-        const pluginDir = resolveFlagStrict(args, "--plugin-dir");
+        const memoryDir = resolveRequiredValueFlag(args, "--memory-dir");
+        const configOverride = resolveRequiredValueFlag(args, "--config");
+        const version = resolveRequiredValueFlag(args, "--version");
+        const pluginDir = resolveRequiredValueFlag(args, "--plugin-dir");
         const restartGateway = !args.includes("--no-restart");
         await cmdOpenclawUpgrade({
           yes,
