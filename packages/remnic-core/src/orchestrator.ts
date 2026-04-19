@@ -2114,6 +2114,14 @@ export class Orchestrator {
     const defaultState =
       states.find((e) => e.namespace === this.config.defaultNamespace)?.state ?? "unknown";
     if (defaultState === "missing") {
+      // Reset the real backend's available flag before replacing it with noop.
+      // probe() set available=true earlier in this call; without this reset,
+      // any code that captured a reference to the old backend (e.g. a concurrent
+      // recall() that read this.qmd before the reassignment) would observe
+      // isAvailable()===true against a backend with a missing collection.
+      if ("available" in this.qmd) {
+        (this.qmd as any).available = false;
+      }
       this.qmd = new NoopSearchBackend();
       log.warn("startupSearchSync: search collection missing; disabling search (fallback retrieval remains enabled)");
       return false;

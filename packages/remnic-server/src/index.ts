@@ -186,9 +186,13 @@ export async function startServer(options?: {
   };
 
   orchestrator.deferredReady.then(() => {
-    // Skip retries when search is intentionally disabled (noop backend).
-    if (orchestrator.qmd.debugStatus() === "backend=noop") {
-      log.debug("QMD startup-sync: search backend is noop, skipping retries");
+    // Skip retries when search is explicitly disabled via config or when the
+    // orchestrator already resolved to a noop backend (e.g. missing collection
+    // detected during deferredInitialize). Both cases mean no sync should ever
+    // run; scheduling retries would create misleading operational noise and
+    // unnecessary background work on every server start.
+    if (!config.qmdEnabled || orchestrator.qmd.debugStatus() === "backend=noop") {
+      log.debug("QMD startup-sync: search disabled or noop backend, skipping retries");
       return;
     }
 
