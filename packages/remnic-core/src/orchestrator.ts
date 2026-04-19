@@ -2023,7 +2023,6 @@ export class Orchestrator {
     cacheWarmups.push(this.storage.readAllMemories().then(() => {}).catch(() => {}));
     cacheWarmups.push(this.storage.readAllEntityFiles().then(() => {}).catch(() => {}));
     await Promise.all(cacheWarmups);
-
     if (signal.aborted) return;
 
     if (this.config.conversationIndexEnabled && this.conversationIndexBackend) {
@@ -2135,8 +2134,9 @@ export class Orchestrator {
           (this.qmd as any).resetUpdateThrottles();
         }
         log.info("startupSearchSync: updating index to match current disk state");
+        let namespacesUpdated = 0;
         if (this.config.namespacesEnabled) {
-          await this.namespaceSearchRouter.updateNamespaces(namespaces);
+          namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(namespaces);
         } else {
           await this.qmd.update();
         }
@@ -2150,7 +2150,13 @@ export class Orchestrator {
           log.warn("startupSearchSync: update silently failed (detected via fail timestamp)");
           return false;
         }
-        if (!this.config.namespacesEnabled && hasRunTs && runTsAfter === null) {
+        if (this.config.namespacesEnabled) {
+          if (namespacesUpdated === 0) {
+            log.warn("startupSearchSync: no namespace backends were eligible for update (all unavailable or collections missing)");
+            return false;
+          }
+          log.info(`startupSearchSync: namespace updates succeeded (${namespacesUpdated}/${namespaces.length} namespaces updated)`);
+        } else if (hasRunTs && runTsAfter === null) {
           log.warn("startupSearchSync: update was throttled/skipped (run timestamp is null after reset + update)");
           return false;
         }

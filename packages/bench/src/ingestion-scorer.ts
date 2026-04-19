@@ -12,8 +12,12 @@ import type {
 } from "./ingestion-types.js";
 
 function normalize(value: string): string {
+  // NFKC decomposition first so that composed/decomposed forms (e.g. accented
+  // letters, full-width characters, ligatures) compare equal.  Then lowercase,
+  // strip punctuation/symbols via Unicode property escapes (preserves all
+  // Unicode letters and digits, so multilingual names are not collapsed).
   return value
-    .trim()
+    .normalize("NFKC")
     .toLowerCase()
     .replace(/[\p{P}\p{S}]/gu, " ")
     .replace(/\s+/g, " ")
