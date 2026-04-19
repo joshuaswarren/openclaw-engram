@@ -714,7 +714,6 @@ export interface TrainingExportCliCommandOptions {
   minConfidence?: number;
   categories?: string[];
   includeEntities?: boolean;
-  includeTopics?: boolean;
   dryRun?: boolean;
   stdout: Writable;
   stderr: Writable;
@@ -831,13 +830,26 @@ function isWorkProjectStatus(value: string | undefined): value is "active" | "on
   return value === "active" || value === "on_hold" || value === "completed" || value === "archived";
 }
 
+/**
+ * Expand a leading `~` or `~/` in a user-supplied path to the real home
+ * directory. Node.js `fs` does NOT expand `~` (per CLAUDE.md #17), and this
+ * applies to every user-facing path input, not just `memoryDir`.
+ */
+function expandTildePath(p: string): string {
+  if (p === "~") return os.homedir();
+  if (p.startsWith("~/") || p.startsWith("~\\")) {
+    return path.join(os.homedir(), p.slice(2));
+  }
+  return p;
+}
+
 export async function runTrainingExportCliCommand(
   opts: TrainingExportCliCommandOptions,
 ): Promise<void> {
-  // Expand ~ in memoryDir (Node.js fs does NOT expand ~; CLAUDE.md #17)
-  const expandedMemoryDir = opts.memoryDir.startsWith("~")
-    ? opts.memoryDir.replace("~", os.homedir())
-    : opts.memoryDir;
+  // Expand ~ in user-facing paths (CLAUDE.md #17: applies to memoryDir AND
+  // output — Node.js fs does not expand ~ on any path).
+  const expandedMemoryDir = expandTildePath(opts.memoryDir);
+  const expandedOutput = expandTildePath(opts.output);
 
   // 1. Validate format is registered (reject invalid per CLAUDE.md #51)
   const adapter = getTrainingExportAdapter(opts.format);
@@ -851,7 +863,29 @@ export async function runTrainingExportCliCommand(
     );
   }
 
-  // 2. Parse date filters (strict: reject overflowed dates like Feb 31)
+  // 2. Validate memoryDir exists and is a directory (CLAUDE.md #24: existsSync
+  // returns true for files; must use statSync().isDirectory() when a directory
+  // is required, otherwise we silently generate an empty export).
+  const { statSync, existsSync } = await import("node:fs");
+  if (!existsSync(expandedMemoryDir)) {
+    throw new Error(
+      `--memory-dir "${opts.memoryDir}" does not exist. Provide the path to an existing memory directory.`,
+    );
+  }
+  try {
+    if (!statSync(expandedMemoryDir).isDirectory()) {
+      throw new Error(
+        `--memory-dir "${opts.memoryDir}" is not a directory. Provide the path to a memory directory, not a file.`,
+      );
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("--memory-dir ")) throw err;
+    throw new Error(
+      `Unable to stat --memory-dir "${opts.memoryDir}": ${(err as Error).message}`,
+    );
+  }
+
+  // 3. Parse date filters (strict: reject overflowed dates like Feb 31)
   let since: Date | undefined;
   if (opts.since !== undefined) {
     since = parseStrictCliDate(opts.since, "--since");
@@ -862,7 +896,7 @@ export async function runTrainingExportCliCommand(
     until = parseStrictCliDate(opts.until, "--until");
   }
 
-  // 3. Convert memories to records
+  // 4. Convert memories to records
   const records = await convertMemoriesToRecords({
     memoryDir: expandedMemoryDir,
     since,
@@ -870,10 +904,9 @@ export async function runTrainingExportCliCommand(
     minConfidence: opts.minConfidence,
     categories: opts.categories,
     includeEntities: opts.includeEntities,
-    includeTopics: opts.includeTopics,
   });
 
-  // 4. Dry run — print statistics and return
+  // 5. Dry run — print statistics and return
   if (opts.dryRun) {
     opts.stdout.write(`Training export dry run\n`);
     opts.stdout.write(`Format: ${adapter.name}\n`);
@@ -889,19 +922,21 @@ export async function runTrainingExportCliCommand(
     return;
   }
 
-  // 5. Format records using adapter
+  // 6. Format records using adapter
   const formatted = adapter.formatRecords(records);
 
-  // 6. Write to output file
+  // 7. Write to output file
   const { writeFile: fsWriteFile } = await import("node:fs/promises");
   const { dirname } = await import("node:path");
   const { mkdirSync } = await import("node:fs");
-  // recursive: true handles existing dirs natively (never throws EEXIST),
-  // so no try-catch needed — let real errors (EACCES, etc.) propagate
-  mkdirSync(dirname(opts.output), { recursive: true });
-  await fsWriteFile(opts.output, formatted, "utf-8");
+  try {
+    mkdirSync(dirname(expandedOutput), { recursive: true });
+  } catch {
+    // parent already exists
+  }
+  await fsWriteFile(expandedOutput, formatted, "utf-8");
   opts.stdout.write(
-    `Exported ${records.length} records to ${opts.output} (${adapter.name} format)\n`,
+    `Exported ${records.length} records to ${expandedOutput} (${adapter.name} format)\n`,
   );
 }
 
@@ -2101,56 +2136,91 @@ async function readRuntimePolicySnapshot(
 }
 
 /**
+ * Days in each month (1-indexed). February is 28; leap-year handling is
+ * applied by `isCalendarDateValid` below.
+ */
+const DAYS_IN_MONTH = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+/**
+ * True iff `year-month-day` is a valid Gregorian calendar date. Input
+ * numbers must be integer-valued; month is 1-12, day is 1-31 nominally.
+ */
+function isCalendarDateValid(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) {
+    return false;
+  }
+  if (month < 1 || month > 12) return false;
+  if (day < 1) return false;
+  const maxDay = month === 2 && isLeapYear(year) ? 29 : DAYS_IN_MONTH[month];
+  return day <= maxDay;
+}
+
+/**
  * Parse a date string strictly: rejects overflowed calendar values
- * like "2026-02-31" that JavaScript normalizes silently.
+ * like "2026-02-31" that JavaScript normalizes silently, and rejects
+ * non-ISO formats (e.g. "01/15/2026", "December 25, 2026").
  *
- * Accepts YYYY-MM-DD and full ISO 8601 datetime strings.
+ * Accepts:
+ *   YYYY-MM-DD
+ *   YYYY-MM-DDTHH:mm:ss                (naive / local time)
+ *   YYYY-MM-DDTHH:mm:ss.sssZ           (UTC)
+ *   YYYY-MM-DDTHH:mm:ss+HH:MM          (with timezone offset)
+ *   YYYY-MM-DDTHH:mm:ss.sss-HH:MM      (with timezone offset)
+ *
+ * Overflow validation is performed structurally on the parsed Y-M-D
+ * components, independent of how `Date` interprets the string. This makes
+ * the check correct regardless of whether the timestamp is UTC, offset, or
+ * naive (local) — i.e. it does not depend on the host timezone.
  */
 export function parseStrictCliDate(value: string, flagName: string): Date {
+  // 1. Shape check: must begin YYYY-MM-DD and use ISO 8601 structure.
+  //    This rejects "12/25/2026", "December 25, 2026", RFC 2822, etc.
+  const shape =
+    /^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,9}))?)?(Z|[+-]\d{2}:\d{2})?)?$/;
+  const match = value.match(shape);
+  if (!match) {
+    throw new Error(
+      `Invalid ${flagName} value "${value}": expected ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss[.sss][Z|±HH:MM]).`,
+    );
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+
+  // 2. Structural calendar validation. This rejects Feb 31, Feb 29 in
+  //    non-leap years, Apr 31, etc. regardless of the timezone suffix, so
+  //    "2026-02-31T00:00:00+05:30" is rejected the same way as "2026-02-31Z".
+  if (!isCalendarDateValid(year, month, day)) {
+    throw new Error(
+      `Invalid ${flagName} value "${value}": date components overflow (e.g. month has fewer days). Provide a valid calendar date.`,
+    );
+  }
+
+  // 3. Optional time-component validation.
+  if (match[4] !== undefined) {
+    const hour = Number(match[4]);
+    const minute = Number(match[5]);
+    const second = match[6] !== undefined ? Number(match[6]) : 0;
+    if (hour > 23 || minute > 59 || second > 60 /* leap second */) {
+      throw new Error(
+        `Invalid ${flagName} value "${value}": time components out of range.`,
+      );
+    }
+  }
+
+  // 4. Finally parse via Date for the actual timestamp value. At this point
+  //    we've already validated structure and calendar correctness, so any
+  //    remaining NaN (extremely unlikely) still fails closed.
   const d = new Date(value);
   if (!Number.isFinite(d.getTime())) {
     throw new Error(
       `Invalid ${flagName} value "${value}". Provide an ISO 8601 date string (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ss).`,
     );
-  }
-
-  // Reject non-ISO strings (e.g. "December 25, 2026") that Date() happily parses.
-  if (!/^\d{4}-\d{2}-\d{2}/.test(value)) {
-    throw new Error(
-      `Invalid ${flagName} value "${value}": expected ISO 8601 format (YYYY-MM-DD or YYYY-MM-DDTHH:mm:ssZ).`,
-    );
-  }
-
-  // Verify day/month round-trip to catch overflow (e.g. Feb 31 -> Mar 3).
-  // Only check when the input is UTC-form — bare date (YYYY-MM-DD) or ends
-  // with "Z".  When the input carries a timezone offset (contains "+" or "-"
-  // after the date portion), the UTC date can legitimately differ from the
-  // input date, so skip the overflow check.
-  const datePrefix = value.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (datePrefix) {
-    // Determine whether the input has an explicit non-UTC timezone offset.
-    // Look for "+" or "-" after the "T" time separator (but not the leading
-    // "-" in the year or month/day separators).
-    const timePart = value.indexOf("T") !== -1 ? value.slice(value.indexOf("T")) : "";
-    const hasTimezoneOffset = timePart.length > 0 && /[+-]\d{2}:\d{2}$/.test(timePart);
-
-    if (!hasTimezoneOffset) {
-      const inputYear = Number(datePrefix[1]);
-      const inputMonth = Number(datePrefix[2]);
-      const inputDay = Number(datePrefix[3]);
-
-      // getUTCMonth is 0-indexed; getUTCDate is 1-indexed.
-      // Use UTC methods because Date parses YYYY-MM-DD as UTC.
-      if (
-        d.getUTCFullYear() !== inputYear ||
-        d.getUTCMonth() + 1 !== inputMonth ||
-        d.getUTCDate() !== inputDay
-      ) {
-        throw new Error(
-          `Invalid ${flagName} value "${value}": date components overflow (e.g. month has fewer days). Provide a valid calendar date.`,
-        );
-      }
-    }
   }
 
   return d;

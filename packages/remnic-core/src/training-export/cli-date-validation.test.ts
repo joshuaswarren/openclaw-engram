@@ -178,4 +178,64 @@ describe("parseStrictCliDate", () => {
       /expected ISO 8601 format/,
     );
   });
+
+  // --- Issue 3: overflow must be rejected regardless of timezone ---
+
+  it("rejects overflow date even with positive timezone offset", () => {
+    // Previously skipped when a timezone offset was present.
+    assert.throws(
+      () => parseStrictCliDate("2026-02-31T00:00:00+05:30", "--since"),
+      /date components overflow/,
+    );
+  });
+
+  it("rejects overflow date with negative timezone offset", () => {
+    assert.throws(
+      () => parseStrictCliDate("2026-04-31T12:00:00-05:00", "--until"),
+      /date components overflow/,
+    );
+  });
+
+  it("rejects overflow date with naive (local) datetime form", () => {
+    assert.throws(
+      () => parseStrictCliDate("2025-02-29T10:00:00", "--since"),
+      /date components overflow/,
+    );
+  });
+
+  // --- Issue 4: naive datetime must not be rejected due to local-tz drift ---
+
+  it("accepts naive datetime near UTC day boundary regardless of host timezone", () => {
+    // "2026-01-15T23:30:00" (no Z, no offset) parses as local time. The
+    // overflow check must NOT compare against UTC components, which would
+    // misreport an overflow in non-UTC host timezones.
+    const d = parseStrictCliDate("2026-01-15T23:30:00", "--since");
+    assert.equal(Number.isFinite(d.getTime()), true);
+  });
+
+  it("accepts naive datetime at start of day", () => {
+    const d = parseStrictCliDate("2026-01-01T00:00:00", "--since");
+    assert.equal(Number.isFinite(d.getTime()), true);
+  });
+
+  it("accepts full-precision ISO 8601 with fractional seconds and offset", () => {
+    const d = parseStrictCliDate("2026-03-10T14:30:00.123+02:00", "--until");
+    assert.equal(Number.isFinite(d.getTime()), true);
+  });
+
+  // --- Time-component out-of-range ---
+
+  it("rejects hour 24", () => {
+    assert.throws(
+      () => parseStrictCliDate("2026-01-15T24:00:00", "--since"),
+      /time components out of range/,
+    );
+  });
+
+  it("rejects minute 60", () => {
+    assert.throws(
+      () => parseStrictCliDate("2026-01-15T12:60:00", "--since"),
+      /time components out of range/,
+    );
+  });
 });

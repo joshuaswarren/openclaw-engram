@@ -174,15 +174,43 @@ function detectLowercase(text: string): boolean {
   return lowercaseStarts / sentences.length > 0.5;
 }
 
+/**
+ * Check whether a character is alphanumeric (ASCII a-z, A-Z, 0-9) using
+ * code-point comparison. Pure function — no regex, no backtracking.
+ */
+function isAlnum(ch: string): boolean {
+  const c = ch.charCodeAt(0);
+  return (
+    (c >= 48 && c <= 57) || // 0-9
+    (c >= 65 && c <= 90) || // A-Z
+    (c >= 97 && c <= 122) // a-z
+  );
+}
+
+/**
+ * Strip leading and trailing non-alphanumeric characters from `word` using
+ * a single linear scan on each side. This replaces the previous
+ * `/^[^a-zA-Z0-9]+/` / `/[^a-zA-Z0-9]+$/` regexes, which CodeQL flagged as
+ * polynomial ReDoS on uncontrolled input (e.g. long `///...///` runs).
+ */
+function trimNonAlnum(word: string): string {
+  let start = 0;
+  let end = word.length;
+  while (start < end && !isAlnum(word.charAt(start))) start++;
+  while (end > start && !isAlnum(word.charAt(end - 1))) end--;
+  return start === 0 && end === word.length ? word : word.slice(start, end);
+}
+
 function findCommonPhrases(samples: string[]): string[] {
   const phraseCount = new Map<string, number>();
 
   for (const sample of samples) {
-    // Tokenize: split on whitespace, strip punctuation from edges.
-    // Two separate replaces avoid polynomial backtracking (CodeQL ReDoS).
+    // Tokenize: split on whitespace, strip edge punctuation with a linear
+    // scan (no regex) to eliminate the polynomial backtracking that the
+    // previous `replace(/^[^a-zA-Z0-9]+/, "")` chain exposed.
     const words = sample
       .split(/\s+/)
-      .map((w) => w.replace(/^[^a-zA-Z0-9]+/, "").replace(/[^a-zA-Z0-9]+$/, ""))
+      .map((w) => trimNonAlnum(w))
       .filter((w) => w.length > 0);
 
     // Build 2-gram and 3-gram phrases

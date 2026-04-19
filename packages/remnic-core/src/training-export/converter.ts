@@ -9,7 +9,7 @@
  * The `input` field is empty string (synthesis is left to adapters).
  */
 
-import { readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import type { TrainingExportOptions, TrainingExportRecord } from "./types.js";
@@ -73,28 +73,91 @@ function parseFrontmatter(raw: string): ParsedMemory | null {
 // Recursive directory scan
 // ---------------------------------------------------------------------------
 
-async function collectMarkdownFiles(dir: string): Promise<string[]> {
+/**
+ * Resolve the canonical real path of `dir`. Used as the containment root
+ * when rejecting symlinks that escape `memoryDir` (data-exfil protection).
+ */
+async function safeRealpath(p: string): Promise<string | null> {
+  try {
+    return await realpath(p);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Recursively collect `.md` files under `dir`, returning deterministic,
+ * lexicographically-sorted absolute paths.
+ *
+ * Security: rejects symlinks outright. A symlink named `facts/private.md`
+ * pointing to `~/.ssh/id_rsa` (or a symlinked `facts/` directory pointing
+ * outside `memoryDir`) must NOT be read/exported — that would be a data
+ * exfiltration path out of the memory store.
+ *
+ * `containmentRoot` is the canonical real path that every resolved file
+ * must sit under. Callers pass the real path of the memoryDir so symlinked
+ * subdirectories (e.g. `facts/` pointing at `/tmp/other/facts`) cannot
+ * leak files from outside the memory store.
+ */
+async function collectMarkdownFiles(
+  dir: string,
+  containmentRoot: string,
+): Promise<string[]> {
   const files: string[] = [];
 
   const walk = async (d: string): Promise<void> => {
+    // Refuse to descend into `d` at all if it is a symlink — regardless of
+    // whether the symlink happens to still point inside `containmentRoot`,
+    // traversing symlinked directories is easy to weaponise via TOCTOU.
+    let dStat: import("node:fs").Stats | null = null;
+    try {
+      dStat = await lstat(d);
+    } catch {
+      return;
+    }
+    if (dStat.isSymbolicLink()) return;
+
     let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(d, { withFileTypes: true });
     } catch {
       return; // directory does not exist or is unreadable
     }
-    for (const entry of entries) {
+
+    // Sort entries lexicographically for deterministic output ordering.
+    // `readdir` does not guarantee order across filesystems/platforms, which
+    // would otherwise make identical corpora produce different dataset files.
+    const sorted = [...entries].sort((a, b) => a.name.localeCompare(b.name));
+
+    for (const entry of sorted) {
       const full = path.join(d, entry.name);
+
+      // Skip symlinked entries entirely (security: prevents traversal out of
+      // memoryDir). withFileTypes=true gives us the entry kind from lstat-
+      // semantics, so we don't follow the link.
+      if (entry.isSymbolicLink()) continue;
+
       if (entry.isDirectory()) {
         await walk(full);
-      } else if (entry.name.endsWith(".md")) {
+      } else if (entry.isFile() && entry.name.endsWith(".md")) {
+        // Defense in depth: confirm the resolved real path still lives under
+        // the canonical containment root. This covers edge cases like a
+        // hard link placed inside memoryDir that targets data elsewhere.
+        const real = await safeRealpath(full);
+        if (!real) continue;
+        if (real !== containmentRoot && !real.startsWith(containmentRoot + path.sep)) {
+          continue;
+        }
         files.push(full);
       }
     }
   };
 
   await walk(dir);
-  return files;
+
+  // Final stable sort of the absolute paths guarantees order regardless of
+  // directory traversal quirks.
+  return files.sort((a, b) => a.localeCompare(b));
 }
 
 // ---------------------------------------------------------------------------
@@ -154,6 +217,11 @@ export async function convertMemoriesToRecords(
 ): Promise<TrainingExportRecord[]> {
   const { memoryDir } = options;
 
+  // Canonicalise the memoryDir once — this is the containment root every
+  // resolved `.md` file must sit under (symlink/hard-link escape defense).
+  const containmentRoot = await safeRealpath(memoryDir);
+  if (!containmentRoot) return [];
+
   // Collect from facts/ and corrections/ subdirectories (mirrors storage.ts)
   const factsDir = path.join(memoryDir, "facts");
   const correctionsDir = path.join(memoryDir, "corrections");
@@ -165,7 +233,7 @@ export async function convertMemoriesToRecords(
 
   const allFiles: string[] = [];
   for (const dir of dirs) {
-    const files = await collectMarkdownFiles(dir);
+    const files = await collectMarkdownFiles(dir, containmentRoot);
     allFiles.push(...files);
   }
 
