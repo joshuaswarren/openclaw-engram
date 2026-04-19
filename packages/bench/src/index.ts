@@ -65,7 +65,7 @@ export type {
   IngestionBenchAdapter,
 } from "./ingestion-types.js";
 
-export { REQUIRED_FRONTMATTER_FIELDS, CONDITIONAL_FRONTMATTER } from "./ingestion-types.js";
+export { REQUIRED_FRONTMATTER_FIELDS } from "./ingestion-types.js";
 
 export type {
   GeneratedFile,
@@ -172,5 +172,12 @@ export {
 export {
   matchEntity,
   entityRecall,
+  linkMatches,
+  backlinkF1,
   schemaCompleteness,
 } from "./ingestion-scorer.js";
+
+export { emailFixture } from "./fixtures/inbox/email.js";
+export { projectFolderFixture } from "./fixtures/inbox/project-folder.js";
+export { calendarFixture } from "./fixtures/inbox/calendar.js";
+export { chatFixture } from "./fixtures/inbox/chat.js";

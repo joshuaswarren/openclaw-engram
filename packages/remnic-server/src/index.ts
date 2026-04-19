@@ -175,6 +175,16 @@ export async function startServer(options?: {
   // An AbortController allows the shutdown handler to cancel pending retries.
   const startupSyncAbort = new AbortController();
 
+  // Wrap httpServer.stop() so that stopping the HTTP server also cancels any
+  // in-flight startup-sync retry timers.  This ensures callers that only have
+  // a reference to httpServer (e.g. test harnesses) don't leave dangling timers
+  // even if they never call cancelStartupSync() directly.
+  const originalStop = httpServer.stop.bind(httpServer);
+  httpServer.stop = async (): Promise<void> => {
+    startupSyncAbort.abort();
+    return originalStop();
+  };
+
   orchestrator.deferredReady.then(() => {
     // Skip retries when search is intentionally disabled (noop backend).
     if (orchestrator.qmd.debugStatus() === "backend=noop") {

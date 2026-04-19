@@ -12,7 +12,16 @@ import type {
 } from "./ingestion-types.js";
 
 function normalize(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9\s]/g, "");
+  // NFKC decomposition first so that composed/decomposed forms (e.g. accented
+  // letters, full-width characters, ligatures) compare equal.  Then lowercase,
+  // strip punctuation/symbols via Unicode property escapes (preserves all
+  // Unicode letters and digits, so multilingual names are not collapsed).
+  return value
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function entityNameMatches(extracted: string, gold: GoldEntity): boolean {
@@ -39,7 +48,24 @@ export function entityRecall(
 
   const matched = new Set<string>();
   const consumedExtracted = new Set<number>();
+
+  // Pass 1: exact-name matches first to avoid alias-order sensitivity.
   for (const ge of gold) {
+    const idx = extracted.findIndex(
+      (ee, i) =>
+        !consumedExtracted.has(i) &&
+        normalize(ee.type) === normalize(ge.type) &&
+        normalize(ee.name) === normalize(ge.name),
+    );
+    if (idx >= 0) {
+      matched.add(ge.id);
+      consumedExtracted.add(idx);
+    }
+  }
+
+  // Pass 2: alias fallback for unmatched gold entities.
+  for (const ge of gold) {
+    if (matched.has(ge.id)) continue;
     const idx = extracted.findIndex((ee, i) => !consumedExtracted.has(i) && matchEntity(ee, ge));
     if (idx >= 0) {
       matched.add(ge.id);
@@ -91,7 +117,7 @@ export function backlinkF1(
     return { precision: 1, recall: 1, f1: 1 };
   }
   if (extracted.length === 0) return { precision: 0, recall: 0, f1: 0 };
-  if (gold.length === 0) return { precision: 0, recall: 0, f1: 0 };
+  if (gold.length === 0) return { precision: 0, recall: 1, f1: 0 };
 
   const matchedGold = new Set<number>();
   let correctExtracted = 0;
@@ -134,24 +160,19 @@ export function schemaCompleteness(
       totalApplicable++;
       const passes = matchedPage ? matchedPage.frontmatter[field] !== undefined : false;
       if (passes) totalPassing++;
-      if (!(field in fieldPasses)) fieldPasses[field] = [];
-      fieldPasses[field]!.push(passes ? 1 : 0);
+      fieldPasses[field]?.push(passes ? 1 : 0);
     }
 
     if (gp.expectExecSummary) {
       totalApplicable++;
       const passes = matchedPage?.hasExecSummary ?? false;
       if (passes) totalPassing++;
-      if (!("field_exec_summary" in fieldPasses)) fieldPasses["field_exec_summary"] = [];
-      fieldPasses["field_exec_summary"]!.push(passes ? 1 : 0);
     }
 
     if (gp.expectTimeline) {
       totalApplicable++;
       const passes = matchedPage?.hasTimeline ?? false;
       if (passes) totalPassing++;
-      if (!("field_timeline" in fieldPasses)) fieldPasses["field_timeline"] = [];
-      fieldPasses["field_timeline"]!.push(passes ? 1 : 0);
     }
 
     if (gp.expectSeeAlso && gp.expectSeeAlso.length > 0) {
