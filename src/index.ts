@@ -2191,6 +2191,192 @@ const pluginDefinition = {
           : undefined) ??
         orchestrator.config.workspaceDir ??
         defaultWorkspaceDir();
+      const remnicUsesQmd =
+        (orchestrator.config.searchBackend ?? "qmd") === "qmd" &&
+        orchestrator.config.qmdEnabled !== false;
+      const remnicQmdCommand =
+        typeof orchestrator.config.qmdPath === "string" && orchestrator.config.qmdPath.trim().length > 0
+          ? orchestrator.config.qmdPath.trim()
+          : "qmd";
+      const readAllowedRoots = [capabilityWorkspaceDir, orchestrator.config.memoryDir].filter(
+        (root): root is string => typeof root === "string" && root.length > 0,
+      );
+      const isWithinAllowedRoot = (candidatePath: string): boolean =>
+        readAllowedRoots.some((root) => {
+          const relative = path.relative(root, candidatePath);
+          return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+        });
+      const normalizeWorkspacePath = (rawPath: string | undefined): string => {
+        if (!rawPath || typeof rawPath !== "string") return "memory";
+        const resolved = path.isAbsolute(rawPath)
+          ? path.resolve(rawPath)
+          : path.resolve(capabilityWorkspaceDir, rawPath);
+        const relative = path.relative(capabilityWorkspaceDir, resolved);
+        return relative && !relative.startsWith("..") && !path.isAbsolute(relative)
+          ? relative
+          : rawPath;
+      };
+      const resolveReadablePath = (requestedPath: string): string => {
+        const absolutePath = path.isAbsolute(requestedPath)
+          ? path.resolve(requestedPath)
+          : path.resolve(capabilityWorkspaceDir, requestedPath);
+        if (!isWithinAllowedRoot(absolutePath)) {
+          throw new Error(`memory read outside allowed roots: ${requestedPath}`);
+        }
+        return absolutePath;
+      };
+      const remnicMemoryRuntime: import("openclaw/plugin-sdk").MemoryPluginRuntime = {
+        async getMemorySearchManager(_params) {
+          return {
+            manager: {
+              async search(query, opts) {
+                const namespace =
+                  typeof orchestrator.resolveSelfNamespace === "function"
+                    ? orchestrator.resolveSelfNamespace(opts?.sessionKey)
+                    : undefined;
+                const rawResults = await orchestrator.searchAcrossNamespaces({
+                  query,
+                  maxResults: opts?.maxResults,
+                  namespaces: namespace ? [namespace] : undefined,
+                  mode: opts?.qmdSearchModeOverride ?? "search",
+                });
+                return rawResults.map((result, index) => {
+                  const candidate = result as Record<string, unknown>;
+                  const rawPath =
+                    typeof candidate.path === "string"
+                      ? candidate.path
+                      : typeof candidate.id === "string"
+                        ? candidate.id
+                        : `memory-${index + 1}`;
+                  const normalizedPath = normalizeWorkspacePath(rawPath);
+                  const startLine =
+                    typeof candidate.startLine === "number" && Number.isFinite(candidate.startLine)
+                      ? Math.max(1, Math.floor(candidate.startLine))
+                      : 1;
+                  const endLine =
+                    typeof candidate.endLine === "number" && Number.isFinite(candidate.endLine)
+                      ? Math.max(startLine, Math.floor(candidate.endLine))
+                      : startLine;
+                  return {
+                    path: normalizedPath,
+                    startLine,
+                    endLine,
+                    score:
+                      typeof candidate.score === "number" && Number.isFinite(candidate.score)
+                        ? candidate.score
+                        : 0,
+                    snippet:
+                      typeof candidate.snippet === "string"
+                        ? candidate.snippet
+                        : typeof candidate.text === "string"
+                          ? candidate.text
+                          : "",
+                    source: normalizedPath.includes("sessions/") ? "sessions" : "memory",
+                    citation: normalizedPath,
+                  };
+                });
+              },
+              async readFile(params) {
+                const requestedPath = normalizeWorkspacePath(params.relPath);
+                const absolutePath = resolveReadablePath(params.relPath);
+                const text = await readFile(absolutePath, "utf-8");
+                const allLines = text.split(/\r?\n/);
+                const from = typeof params.from === "number" ? Math.max(1, Math.floor(params.from)) : 1;
+                const lines =
+                  typeof params.lines === "number" && Number.isFinite(params.lines)
+                    ? Math.max(1, Math.floor(params.lines))
+                    : undefined;
+                const startIndex = from - 1;
+                const endIndex = typeof lines === "number" ? startIndex + lines : allLines.length;
+                const slice = allLines.slice(startIndex, endIndex);
+                const truncated = endIndex < allLines.length;
+                return {
+                  text: slice.join("\n"),
+                  path: requestedPath,
+                  truncated: truncated || undefined,
+                  from,
+                  lines,
+                  nextFrom: truncated ? endIndex + 1 : undefined,
+                };
+              },
+              status() {
+                const qmdAvailable =
+                  remnicUsesQmd && typeof (orchestrator as any).qmd?.isAvailable === "function"
+                    ? Boolean((orchestrator as any).qmd.isAvailable())
+                    : !remnicUsesQmd;
+                const qmdDebug =
+                  typeof (orchestrator as any).qmd?.debugStatus === "function"
+                    ? (orchestrator as any).qmd.debugStatus()
+                    : undefined;
+                return {
+                  backend: remnicUsesQmd ? "qmd" : "builtin",
+                  provider: remnicUsesQmd ? "qmd" : "builtin",
+                  requestedProvider: remnicUsesQmd ? "qmd" : "builtin",
+                  model: remnicUsesQmd ? remnicQmdCommand : "builtin",
+                  dirty: false,
+                  workspaceDir: capabilityWorkspaceDir,
+                  dbPath: orchestrator.config.memoryDir,
+                  sources: ["memory"],
+                  sourceCounts: [],
+                  vector: remnicUsesQmd
+                    ? {
+                        enabled: true,
+                        available: qmdAvailable,
+                      }
+                    : {
+                        enabled: false,
+                      },
+                  fts: {
+                    enabled: true,
+                    available: qmdAvailable,
+                  },
+                  custom: {
+                    remnic: {
+                      qmdAvailable,
+                      qmdDebug,
+                      memoryDir: orchestrator.config.memoryDir,
+                    },
+                  },
+                };
+              },
+              async sync(_params) {
+                if (remnicUsesQmd && typeof (orchestrator as any).qmd?.update === "function") {
+                  await (orchestrator as any).qmd.update();
+                }
+              },
+              async probeEmbeddingAvailability() {
+                if (!remnicUsesQmd) return { ok: true };
+                const qmdAvailable =
+                  typeof (orchestrator as any).qmd?.isAvailable === "function"
+                    ? Boolean((orchestrator as any).qmd.isAvailable())
+                    : false;
+                if (qmdAvailable) return { ok: true };
+                const qmdDebug =
+                  typeof (orchestrator as any).qmd?.debugStatus === "function"
+                    ? (orchestrator as any).qmd.debugStatus()
+                    : undefined;
+                return {
+                  ok: false,
+                  error: qmdDebug ?? "Remnic QMD backend unavailable",
+                };
+              },
+              async probeVectorAvailability() {
+                if (!remnicUsesQmd) return false;
+                return typeof (orchestrator as any).qmd?.isAvailable === "function"
+                  ? Boolean((orchestrator as any).qmd.isAvailable())
+                  : false;
+              },
+              async close() {},
+            },
+          };
+        },
+        resolveMemoryBackendConfig() {
+          return remnicUsesQmd
+            ? { backend: "qmd", qmd: { command: remnicQmdCommand } }
+            : { backend: "builtin" };
+        },
+        async closeAllMemorySearchManagers() {},
+      };
 
       const memoryCapability: import("openclaw/plugin-sdk").MemoryPluginCapability = {
         // Include the promptBuilder so runtimes that treat unified capability
@@ -2199,6 +2385,7 @@ const pluginDefinition = {
         // Respect promptInjectionAllowed policy — omit promptBuilder if injection
         // is disabled, so the capability only provides publicArtifacts.
         ...(promptInjectionAllowed ? { promptBuilder: capabilityPromptBuilder } : {}),
+        runtime: remnicMemoryRuntime,
         publicArtifacts: {
           listArtifacts: async (_params: { cfg: unknown }) => {
             try {
@@ -2220,7 +2407,7 @@ const pluginDefinition = {
         : memoryPromptBuilder
           ? " and promptBuilder (from registerMemoryPromptSection)"
           : " and promptBuilder (capability-only fallback)";
-      log.info(`registered memory capability with publicArtifacts provider${builderDesc}`);
+      log.info(`registered memory capability with runtime and publicArtifacts provider${builderDesc}`);
     }
 
     // ========================================================================
