@@ -1278,6 +1278,156 @@ describe("WeCloneProxy", () => {
     );
   });
 
+  it("forwards query string on chat completions to upstream", async () => {
+    let receivedUrl = "";
+    const weclone = await createMockServer((req, res) => {
+      receivedUrl = req.url ?? "";
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "ok" } }],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions?api-version=2024-01-01&tenant=abc`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          messages: [{ role: "user", content: "hi" }],
+        }),
+      }
+    );
+
+    assert.equal(res.status, 200);
+    assert.ok(
+      receivedUrl.includes("api-version=2024-01-01"),
+      "Upstream URL must preserve api-version query param"
+    );
+    assert.ok(
+      receivedUrl.includes("tenant=abc"),
+      "Upstream URL must preserve additional query params"
+    );
+  });
+
+  it("preserves distinct system messages after memory injection", async () => {
+    let receivedBody: Record<string, unknown> | null = null;
+    const weclone = await createMockServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        receivedBody = JSON.parse(Buffer.concat(chunks).toString());
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "ok" } }],
+          })
+        );
+      });
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          results: [{ preview: "injected-memory", confidence: 0.9 }],
+        })
+      );
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    await fetch(`http://127.0.0.1:${proxy.port}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "weclone-avatar",
+        messages: [
+          { role: "system", content: "First instruction." },
+          { role: "system", content: "Second instruction." },
+          { role: "user", content: "Hi" },
+        ],
+      }),
+    });
+
+    assert.ok(receivedBody);
+    const messages = (receivedBody as Record<string, unknown>).messages as Array<{
+      role: string;
+      content: string;
+    }>;
+    const systemMsgs = messages.filter((m) => m.role === "system");
+    assert.equal(systemMsgs.length, 2, "Both system messages must survive");
+    assert.ok(
+      systemMsgs[0].content.includes("First instruction.") &&
+        systemMsgs[0].content.includes("injected-memory"),
+      "First system message must contain original + injected memory"
+    );
+    assert.equal(
+      systemMsgs[1].content,
+      "Second instruction.",
+      "Second system message must be preserved verbatim"
+    );
+  });
+
+  it("returns 400 when messages is not an array", async () => {
+    const weclone = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end("ok");
+    });
+    cleanups.push(weclone.close);
+
+    const remnic = await createMockServer((_req, res) => {
+      res.writeHead(200);
+      res.end(JSON.stringify({ results: [] }));
+    });
+    cleanups.push(remnic.close);
+
+    const proxy = createWeCloneProxy(testConfig(weclone.port, remnic.port));
+    await proxy.start();
+    cleanups.push(() => proxy.stop());
+
+    const res = await fetch(
+      `http://127.0.0.1:${proxy.port}/v1/chat/completions`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "weclone-avatar",
+          messages: "not-an-array",
+        }),
+      }
+    );
+    assert.equal(res.status, 400);
+    const body = JSON.parse(await readResponse(res));
+    assert.equal(body.error, "bad_request");
+    assert.ok(
+      typeof body.detail === "string" && body.detail.includes("array"),
+      "Detail must mention the expected array type"
+    );
+  });
+
   it("preserves configured base path when forwarding to WeClone", async () => {
     let receivedUrl = "";
     const weclone = await createMockServer((req, res) => {

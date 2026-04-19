@@ -21,11 +21,6 @@ export interface WeCloneProxy {
   port: number;
 }
 
-interface ChatMessage {
-  role: string;
-  content: string;
-}
-
 /**
  * Read the entire body of an IncomingMessage as a string (UTF-8).
  * Used for paths that need to parse JSON (e.g. chat completions).
@@ -186,33 +181,6 @@ function extractAssistantReply(responseBody: Record<string, unknown>): string {
     return choices[0]?.message?.content ?? "";
   }
   return "";
-}
-
-/**
- * Inject memories into the messages array by modifying the system message.
- */
-function injectMemories(
-  messages: ChatMessage[],
-  memoryBlock: string,
-  position: "system-append" | "system-prepend"
-): ChatMessage[] {
-  if (memoryBlock.length === 0) return messages;
-
-  const result = messages.map((m) => ({ ...m }));
-  const systemIdx = result.findIndex((m) => m.role === "system");
-
-  if (systemIdx >= 0) {
-    const existing = result[systemIdx].content;
-    result[systemIdx].content =
-      position === "system-prepend"
-        ? `${memoryBlock}\n\n${existing}`
-        : `${existing}\n\n${memoryBlock}`;
-  } else {
-    // No system message exists -- prepend one
-    result.unshift({ role: "system", content: memoryBlock });
-  }
-
-  return result;
 }
 
 /**
@@ -461,12 +429,31 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
 
       const headers = req.headers as Record<string, string | string[] | undefined>;
       const sessionKey = sessionMapper.resolve(headers, parsed);
+      // Validate `messages` is an array with object entries before use so
+      // malformed payloads (`messages: "..."`, `messages: {}`, etc.) return
+      // a structured 400 instead of surfacing as a 500 internal error.
+      if (parsed.messages !== undefined && !Array.isArray(parsed.messages)) {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(
+          JSON.stringify({
+            error: "bad_request",
+            detail: "messages must be an array",
+          })
+        );
+        return;
+      }
       // Messages may contain multimodal content-parts arrays; keep them
-      // untyped and validate strings at each use site.
-      const rawMessages = (parsed.messages ?? []) as Array<{
-        role: string;
-        content: unknown;
-      }>;
+      // untyped and validate strings at each use site. Drop entries that
+      // are not plain objects so downstream `.map()` cannot throw.
+      const rawMessages: Array<{ role: string; content: unknown }> = [];
+      for (const raw of parsed.messages ?? []) {
+        if (raw === null || typeof raw !== "object") continue;
+        const entry = raw as { role?: unknown; content?: unknown };
+        rawMessages.push({
+          role: typeof entry.role === "string" ? entry.role : "",
+          content: entry.content,
+        });
+      }
       const query = lastUserMessage(rawMessages);
 
       // Recall memories (graceful degradation on failure)
@@ -489,40 +476,37 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
         }
       }
 
-      // Build a string-content view for memory injection only. The
-      // forwarded payload preserves the original message shapes so
-      // multimodal parts are not flattened on the way to WeClone.
-      const stringMessages: ChatMessage[] = rawMessages.map((m) => ({
-        role: m.role,
-        content: extractTextContent(m.content),
-      }));
-      const modifiedStringMessages = injectMemories(
-        stringMessages,
-        memoryBlock,
-        config.memoryInjection.position
-      );
-
-      // Merge: keep original (possibly multimodal) messages, but use the
-      // modified system prompt text from the injection step.
+      // Build the forwarded messages array. Only the *first* system message
+      // is rewritten with injected memory (or, if no system exists, a
+      // synthetic system message is prepended). Subsequent system messages
+      // are forwarded verbatim so distinct system instructions are not
+      // silently overwritten.
       const outMessages: Array<{ role: string; content: unknown }> = [];
-      // If injection added a leading synthetic system message (no original
-      // system existed), surface it as a string-content message.
-      const hadSystem = rawMessages.some((m) => m.role === "system");
-      if (!hadSystem && modifiedStringMessages[0]?.role === "system") {
-        outMessages.push({
-          role: "system",
-          content: modifiedStringMessages[0].content,
-        });
-      }
-      for (const m of rawMessages) {
-        if (m.role === "system") {
-          const updated = modifiedStringMessages.find((s) => s.role === "system");
-          outMessages.push({
-            role: "system",
-            content: updated ? updated.content : extractTextContent(m.content),
-          });
-        } else {
-          outMessages.push(m);
+      const firstSystemIdx = rawMessages.findIndex((m) => m.role === "system");
+      const position = config.memoryInjection.position;
+
+      if (memoryBlock.length === 0) {
+        // No memory to inject — forward original messages unchanged.
+        for (const m of rawMessages) outMessages.push(m);
+      } else if (firstSystemIdx === -1) {
+        // No existing system message: prepend a synthetic one.
+        outMessages.push({ role: "system", content: memoryBlock });
+        for (const m of rawMessages) outMessages.push(m);
+      } else {
+        for (let i = 0; i < rawMessages.length; i++) {
+          const m = rawMessages[i];
+          if (i === firstSystemIdx) {
+            const existing = extractTextContent(m.content);
+            outMessages.push({
+              role: "system",
+              content:
+                position === "system-prepend"
+                  ? `${memoryBlock}\n\n${existing}`
+                  : `${existing}\n\n${memoryBlock}`,
+            });
+          } else {
+            outMessages.push(m);
+          }
         }
       }
 
@@ -535,10 +519,16 @@ export function createWeCloneProxy(config: WeCloneConnectorConfig): WeCloneProxy
       // common `/v1` or custom mounts like `/weclone/v1`), forward to
       // `${basePath}/chat/completions`. If the configured URL has no
       // base path at all, default to the standard OpenAI `/v1/chat/completions`.
+      // Preserve any query string on the incoming request (e.g. Azure's
+      // `?api-version=...`) so version selectors and tenant hints reach
+      // upstream unchanged.
       const chatBase = wecloneParts.basePath.length > 0
         ? wecloneParts.basePath
         : "/v1";
-      const targetUrl = `${wecloneParts.origin}${chatBase}/chat/completions`;
+      const qIdx = url.indexOf("?");
+      const querySuffix = qIdx === -1 ? "" : url.slice(qIdx);
+      const targetUrl =
+        `${wecloneParts.origin}${chatBase}/chat/completions${querySuffix}`;
       const forwardHeaders: Record<string, string> = {
         "Content-Type": "application/json",
       };
