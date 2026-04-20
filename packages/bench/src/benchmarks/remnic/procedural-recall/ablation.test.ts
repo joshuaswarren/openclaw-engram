@@ -100,6 +100,19 @@ test("runProceduralAblation: lift >= 0 on matching-positive fixture", async () =
   assert.equal(artifact.confidenceInterval.level, 0.95);
 });
 
+test("runProceduralAblation: deterministic CI by default (no random/seed supplied)", async () => {
+  const a = await runProceduralAblation({
+    scenarios: ABLATION_FIXTURE,
+    bootstrapIterations: 200,
+  });
+  const b = await runProceduralAblation({
+    scenarios: ABLATION_FIXTURE,
+    bootstrapIterations: 200,
+  });
+  assert.equal(a.confidenceInterval.lower, b.confidenceInterval.lower);
+  assert.equal(a.confidenceInterval.upper, b.confidenceInterval.upper);
+});
+
 test("runProceduralAblation: deterministic CI under seeded RNG", async () => {
   const a = await runProceduralAblation({
     scenarios: ABLATION_FIXTURE,
@@ -223,6 +236,82 @@ test("loadAblationFixture rejects invalid input", async () => {
       () => loadAblationFixture(p),
       /procedureTags\[1\] must be a string/,
     );
+
+    // Rejects non-integer step.order — Math.floor coercion silently mutates
+    // benchmark input. Strict rejection prevents hidden drift.
+    const withFractionalOrder = [
+      {
+        id: "x",
+        prompt: "p",
+        procedurePreamble: "pp",
+        procedureSteps: [{ order: 1.5, intent: "do" }],
+        procedureTags: [],
+        expectMatch: true,
+      },
+    ];
+    await writeFile(p, JSON.stringify(withFractionalOrder), "utf8");
+    await assert.rejects(
+      () => loadAblationFixture(p),
+      /order must be a positive integer/,
+    );
+
+    // Rejects non-number step.order (e.g. "1") — should not fall back to
+    // positional index.
+    const withStringOrder = [
+      {
+        id: "x",
+        prompt: "p",
+        procedurePreamble: "pp",
+        procedureSteps: [{ order: "1", intent: "do" }],
+        procedureTags: [],
+        expectMatch: true,
+      },
+    ];
+    await writeFile(p, JSON.stringify(withStringOrder), "utf8");
+    await assert.rejects(
+      () => loadAblationFixture(p),
+      /order must be a positive integer/,
+    );
+
+    // Rejects zero / negative step.order.
+    const withNegativeOrder = [
+      {
+        id: "x",
+        prompt: "p",
+        procedurePreamble: "pp",
+        procedureSteps: [{ order: 0, intent: "do" }],
+        procedureTags: [],
+        expectMatch: true,
+      },
+    ];
+    await writeFile(p, JSON.stringify(withNegativeOrder), "utf8");
+    await assert.rejects(
+      () => loadAblationFixture(p),
+      /order must be a positive integer/,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadAblationFixture accepts missing step.order (falls back to positional)", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "remnic-ablation-fixture-"));
+  try {
+    const p = path.join(dir, "fixture.json");
+    const withoutOrder = [
+      {
+        id: "x",
+        prompt: "deploy now",
+        procedurePreamble: "pp",
+        procedureSteps: [{ intent: "step1" }, { intent: "step2" }],
+        procedureTags: [],
+        expectMatch: true,
+      },
+    ];
+    await writeFile(p, JSON.stringify(withoutOrder), "utf8");
+    const loaded = await loadAblationFixture(p);
+    assert.equal(loaded[0]!.procedureSteps[0]!.order, 1);
+    assert.equal(loaded[0]!.procedureSteps[1]!.order, 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

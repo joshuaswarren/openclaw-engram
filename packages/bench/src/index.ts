@@ -309,6 +309,8 @@ export {
   runProceduralAblationCli,
   loadAblationFixture,
   fixtureToAblationScenarios,
+  createSeededRandom as createProceduralAblationSeededRandom,
+  DEFAULT_ABLATION_BOOTSTRAP_SEED,
 } from "./benchmarks/remnic/procedural-recall/ablation.js";
 export type {
   ProceduralAblationArtifact,

@@ -165,14 +165,46 @@ async function runSide(
   return observed;
 }
 
+/**
+ * Default bootstrap seed used when no `random` / `seed` override is supplied.
+ * Fixing this makes CI bounds reproducible across CLI invocations — flaky CI
+ * bounds would break artifact-based comparisons and saved baselines.
+ */
+export const DEFAULT_ABLATION_BOOTSTRAP_SEED = 0x72656d6e; // ASCII "remn"
+
+/**
+ * Mulberry32 seeded RNG. Inlined (and re-used from tests) so callers can get a
+ * deterministic default without needing an external dependency.
+ */
+export function createSeededRandom(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let t = state;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export interface RunProceduralAblationOptions {
   scenarios: ProceduralAblationScenario[];
   /** Path the ablation was loaded from (echoed back into the artifact). */
   fixturePath?: string | null;
   /** Bootstrap iterations for CI on the paired delta (default: 1_000). */
   bootstrapIterations?: number;
-  /** Seeded RNG for deterministic CI in tests / CI. */
+  /**
+   * Seeded RNG for the bootstrap. Defaults to
+   * `createSeededRandom(DEFAULT_ABLATION_BOOTSTRAP_SEED)` so CI bounds are
+   * deterministic across repeated CLI invocations. Pass `Math.random`
+   * explicitly to opt into non-deterministic sampling.
+   */
   random?: () => number;
+  /**
+   * Convenience alternative to `random`: if provided (and `random` is not),
+   * a seeded mulberry32 RNG is built from this integer.
+   */
+  seed?: number;
 }
 
 /**
@@ -204,9 +236,14 @@ export async function runProceduralAblation(
     offPer.reduce((sum, value) => sum + value, 0) / offPer.length;
   const lift = onScore - offScore;
 
+  const rng =
+    options.random ??
+    (typeof options.seed === "number"
+      ? createSeededRandom(options.seed)
+      : createSeededRandom(DEFAULT_ABLATION_BOOTSTRAP_SEED));
   const confidenceInterval = pairedDeltaConfidenceInterval(onPer, offPer, {
     iterations: options.bootstrapIterations ?? 1_000,
-    random: options.random ?? Math.random,
+    random: rng,
   });
 
   const perCase: ProceduralAblationPerCase[] = scenarios.map((s, i) => ({
@@ -314,10 +351,28 @@ export async function loadAblationFixture(
         );
       }
       const obj = s as Record<string, unknown>;
-      const order =
-        typeof obj.order === "number" && Number.isFinite(obj.order)
-          ? Math.floor(obj.order)
-          : j + 1;
+      // Reject non-integer / non-positive `order` values explicitly instead
+      // of coercing via Math.floor or defaulting to positional index. Step
+      // order is load-bearing for serialized procedure bodies; a silently
+      // rounded 1.7 → 1 changes both the written markdown and the recall
+      // scoring text.
+      let order: number;
+      if (obj.order === undefined) {
+        order = j + 1;
+      } else if (
+        typeof obj.order !== "number" ||
+        !Number.isFinite(obj.order) ||
+        !Number.isInteger(obj.order) ||
+        obj.order < 1
+      ) {
+        throw new Error(
+          `Fixture scenario ${id} step ${j}: order must be a positive integer (got ${JSON.stringify(
+            obj.order,
+          )})`,
+        );
+      } else {
+        order = obj.order;
+      }
       const intent = typeof obj.intent === "string" ? obj.intent : null;
       if (intent === null) {
         throw new Error(
@@ -348,6 +403,12 @@ export interface RunProceduralAblationCliArgs {
   outPath: string;
   bootstrapIterations?: number;
   random?: () => number;
+  /**
+   * Optional seed for the bootstrap RNG. When omitted the harness uses
+   * `DEFAULT_ABLATION_BOOTSTRAP_SEED` so CLI runs are reproducible by
+   * default.
+   */
+  seed?: number;
 }
 
 export async function runProceduralAblationCli(
@@ -363,6 +424,7 @@ export async function runProceduralAblationCli(
     fixturePath: args.fixturePath,
     bootstrapIterations: args.bootstrapIterations,
     random: args.random,
+    seed: args.seed,
   });
 
   await writeFile(args.outPath, JSON.stringify(artifact, null, 2) + "\n", "utf8");

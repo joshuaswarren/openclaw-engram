@@ -4173,7 +4173,7 @@ async function cmdBenchProceduralAblation(rest: string[]): Promise<void> {
     console.log(`remnic bench procedural-ablation — Procedural recall ablation harness (issue #567)
 
 Usage:
-  remnic bench procedural-ablation --out <path> [--fixture <path>]
+  remnic bench procedural-ablation --out <path> [--fixture <path>] [--seed <n>]
 
 Options:
   --fixture <path>   JSON fixture file; either a top-level array of scenarios
@@ -4182,17 +4182,21 @@ Options:
                      procedureTags, expectMatch. When omitted, the built-in
                      procedural-recall fixture is used.
   --out <path>       Path to write the ablation artifact JSON.
+  --seed <n>         Integer seed for the bootstrap RNG. Defaults to a fixed
+                     seed so CI bounds are reproducible across runs.
 `);
     return;
   }
 
   let fixturePathRaw: string | undefined;
   let outPathRaw: string | undefined;
+  let seedRaw: string | undefined;
   try {
     fixturePathRaw = resolveRequiredValueFlag(rest, "--fixture");
     outPathRaw =
       resolveRequiredValueFlag(rest, "--out") ??
       resolveRequiredValueFlag(rest, "--output");
+    seedRaw = resolveRequiredValueFlag(rest, "--seed");
   } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
@@ -4203,6 +4207,16 @@ Options:
       "--out <path> is required. Run `remnic bench procedural-ablation --help`.",
     );
     process.exit(1);
+  }
+
+  let seed: number | undefined;
+  if (seedRaw !== undefined) {
+    const parsedSeed = Number(seedRaw);
+    if (!Number.isFinite(parsedSeed) || !Number.isInteger(parsedSeed)) {
+      console.error(`--seed must be an integer (got "${seedRaw}").`);
+      process.exit(1);
+    }
+    seed = parsedSeed;
   }
 
   const fixturePath = fixturePathRaw
@@ -4216,6 +4230,7 @@ Options:
       runProceduralAblationCli?: (args: {
         fixturePath: string | null;
         outPath: string;
+        seed?: number;
       }) => Promise<{
         onScore: number;
         offScore: number;
@@ -4231,7 +4246,7 @@ Options:
     process.exit(1);
   }
 
-  const artifact = await runner({ fixturePath, outPath });
+  const artifact = await runner({ fixturePath, outPath, seed });
   console.log(
     `procedural-ablation complete: scenarios=${artifact.fixture.scenarioCount} onScore=${artifact.onScore.toFixed(
       4,
