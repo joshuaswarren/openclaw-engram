@@ -54,6 +54,25 @@ describe("parseGeminiExport", () => {
     });
     assert.equal(parsed.filePath, "/tmp/takeout/my-activity.json");
   });
+
+  // Cursor review on PR #600 — parseGeminiExport MUST reject undefined /
+  // null input (what runImportCommand passes when --file is omitted) with
+  // a user-facing error. Silently returning 0 memories masks bad CLI
+  // invocations.
+  it("rejects missing input with a user-facing error (CLAUDE.md rule 51)", () => {
+    assert.throws(() => parseGeminiExport(undefined), /requires a file/);
+    assert.throws(() => parseGeminiExport(null), /requires a file/);
+  });
+
+  // Cursor review on PR #600 — the strict-mode error used `typeof raw`
+  // which reports "object" for null (JS trap). The message must say
+  // "null" instead.
+  it("strict mode reports 'null' for JSON null input, not 'object'", () => {
+    assert.throws(
+      () => parseGeminiExport("null", { strict: true }),
+      /received null/,
+    );
+  });
 });
 
 describe("extractUserPrompt", () => {

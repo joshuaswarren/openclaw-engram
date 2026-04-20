@@ -17,6 +17,7 @@ const expectedPublishDirs = [
   "packages/import-claude",
   "packages/import-gemini",
   "packages/import-mem0",
+  "packages/import-gemini",
   "packages/connector-weclone",
   "packages/connector-replit",
   "packages/hermes-provider",

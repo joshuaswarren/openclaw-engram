@@ -76,6 +76,17 @@ export function parseGeminiExport(
   input: unknown,
   options: GeminiParseOptions = {},
 ): ParsedGeminiExport {
+  // File-backed adapter contract: `runImportCommand` passes `undefined` when
+  // `--file` is omitted. Gemini is a file-only importer (Takeout doesn't
+  // expose an API), so a missing payload MUST surface as a user-facing
+  // error rather than silently succeeding with 0 memories. Cursor review
+  // on PR #600 flagged the silent-success path.
+  if (input === undefined || input === null) {
+    throw new Error(
+      "The 'gemini' importer requires a file. Pass `--file <path>` pointing at " +
+        "your Google Takeout `My Activity.json` (Gemini Apps section).",
+    );
+  }
   const raw = coerceJson(input);
   const result: ParsedGeminiExport = {
     activities: [],
@@ -100,11 +111,19 @@ export function parseGeminiExport(
   }
 
   if (options.strict) {
+    // Report the actual received value — `typeof null === "object"` is the
+    // JS trap CLAUDE.md rule 18 calls out. Using describeType() sidesteps
+    // the "received object" message for null inputs.
     throw new Error(
-      "Gemini export must be a JSON array or object; received " + typeof raw,
+      `Gemini export must be a JSON array or object; received ${describeType(raw)}`,
     );
   }
   return result;
+}
+
+function describeType(value: unknown): string {
+  if (value === null) return "null";
+  return typeof value;
 }
 
 function appendActivities(
