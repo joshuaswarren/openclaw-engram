@@ -29,7 +29,12 @@ describe("optional-importer loader", () => {
     assert.equal(isSupportedImporterName("chatgpt "), false);
   });
 
-  it("loading a missing importer throws a user-facing install hint (slice 1: none installed)", async () => {
+  // Slices 2, 3, 4 (chatgpt, claude, gemini) are not yet installed so they
+  // make durable "missing package" fixtures that don't depend on which slice
+  // is currently being developed. The mem0 fixture intentionally is NOT used
+  // here because PR 5 installs @remnic/import-mem0 alongside, which would
+  // make the install-hint assertion race with that installation.
+  it("loading a missing importer throws a user-facing install hint", async () => {
     await assert.rejects(
       () => loadImporterModule("chatgpt"),
       (err: Error) => {

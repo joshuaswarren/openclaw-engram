@@ -200,6 +200,50 @@ export interface ProceduralConfig {
   recallMaxProcedures: number;
 }
 
+/**
+ * Coding-agent mode config (issue #569).
+ *
+ * When the connector provides a `CodingContext` (see below), Remnic overlays
+ * a project- and/or branch-scoped namespace on top of the principal's default
+ * namespace so that memories written while working on project A do not surface
+ * while working on project B.
+ *
+ * Both flags default off-for-branch / on-for-project. Per CLAUDE.md #30 every
+ * filter or transform needs an escape hatch: set `projectScope: false` to
+ * exactly restore pre-#569 behaviour.
+ */
+export interface CodingModeConfig {
+  /**
+   * When true (default), a session with a resolved `CodingContext` uses a
+   * project-scoped namespace. When false, the principal's default namespace
+   * is used unchanged (pre-#569 behaviour).
+   */
+  projectScope: boolean;
+  /**
+   * When true, recall/write also overlay the current branch on top of the
+   * project namespace. Default false — branch-scope is opt-in because active
+   * development typically wants recall across branches. (Wired by PR 3 of
+   * issue #569; declared here so the schema ships in one slice.)
+   */
+  branchScope: boolean;
+}
+
+/**
+ * Session-scoped coding context. Produced by `resolveGitContext()` in the
+ * connector layer and attached to a session so that recall + write paths can
+ * compute an overlay namespace.
+ *
+ * All fields mirror `GitContext` from `./coding/git-context.ts`; kept as a
+ * separate interface because `types.ts` must stay dependency-free (it is
+ * imported by every other module).
+ */
+export interface CodingContext {
+  projectId: string;
+  branch: string | null;
+  rootPath: string;
+  defaultBranch: string | null;
+}
+
 /** Configuration for the nightly contradiction-scan cron (issue #520). */
 export interface ContradictionScanConfig {
   /** Master switch for the contradiction scan cron. Default true. */
@@ -460,6 +504,8 @@ export interface PluginConfig {
   activeRecallAllowChainedActiveMemory: boolean;
   dreaming: DreamingConfig;
   procedural: ProceduralConfig;
+  // Coding-agent project/branch scoping (issue #569)
+  codingMode: CodingModeConfig;
   heartbeat: HeartbeatConfig;
   slotBehavior: SlotBehaviorConfig;
   codexCompat: CodexCompatConfig;

@@ -3108,7 +3108,7 @@ async function cmdBriefing(rest: string[]): Promise<void> {
   }
 }
 
-function cmdDoctor(): void {
+async function cmdDoctor(): Promise<void> {
   const checks: Array<{ name: string; ok: boolean; warn?: boolean; detail: string; remediation?: string }> = [];
 
   const nodeVersion = process.version;
@@ -3322,6 +3322,87 @@ function cmdDoctor(): void {
         });
       }
     }
+  }
+
+  // ── Coding-agent context (issue #569) ──────────────────────────────────
+  // Acceptance criterion: `remnic doctor` inside a git repo prints the
+  // detected projectId, branch, and effective namespace. We invoke the
+  // pure GitContextResolver against process.cwd(); when the cwd is not a
+  // git repo the check is informational only (no failure).
+  try {
+    const core = (await import("@remnic/core")) as unknown as {
+      resolveGitContext?: (cwd: string) => Promise<null | {
+        projectId: string;
+        branch: string | null;
+        rootPath: string;
+        defaultBranch: string | null;
+      }>;
+      describeCodingScope?: (
+        ctx: unknown,
+        config: { projectScope: boolean; branchScope: boolean },
+      ) => {
+        scope: "none" | "project" | "branch";
+        effectiveNamespace: string | null;
+        readFallbacks: string[];
+      };
+    };
+    if (typeof core.resolveGitContext === "function") {
+      const gitCtx = await core.resolveGitContext(process.cwd());
+      if (gitCtx) {
+        const parts = [
+          `project=${gitCtx.projectId}`,
+          `branch=${gitCtx.branch ?? "(detached)"}`,
+          `root=${gitCtx.rootPath}`,
+          `defaultBranch=${gitCtx.defaultBranch ?? "(unknown)"}`,
+        ];
+        // Compute effective namespace using the same resolver the orchestrator
+        // uses, with the operator's ACTUAL configured codingMode values so
+        // that the reported effectiveNamespace matches what recall + writes
+        // will use at runtime. Falls back to the ship defaults
+        // (projectScope on, branchScope off) only when no codingMode is
+        // configured in openclaw.plugin.json.
+        const pluginRemnic =
+          typeof openclawConfig.remnic === "object" && openclawConfig.remnic !== null
+            ? (openclawConfig.remnic as Record<string, unknown>)
+            : (openclawConfig as Record<string, unknown>);
+        const pluginCodingMode =
+          typeof pluginRemnic.codingMode === "object" && pluginRemnic.codingMode !== null
+            ? (pluginRemnic.codingMode as Record<string, unknown>)
+            : {};
+        const projectScopeCfg =
+          typeof pluginCodingMode.projectScope === "boolean"
+            ? pluginCodingMode.projectScope
+            : true;
+        const branchScopeCfg =
+          typeof pluginCodingMode.branchScope === "boolean"
+            ? pluginCodingMode.branchScope
+            : false;
+        let effective = `project-…`;
+        if (typeof core.describeCodingScope === "function") {
+          const desc = core.describeCodingScope(gitCtx, {
+            projectScope: projectScopeCfg,
+            branchScope: branchScopeCfg,
+          });
+          effective = desc.effectiveNamespace ?? "(no overlay)";
+        }
+        parts.push(`projectScope=${projectScopeCfg}`);
+        parts.push(`branchScope=${branchScopeCfg}`);
+        checks.push({
+          name: "Coding-agent context",
+          ok: true,
+          detail: `${parts.join(", ")}, effectiveNamespace=${effective}`,
+        });
+      } else {
+        checks.push({
+          name: "Coding-agent context",
+          ok: true,
+          warn: true,
+          detail: "cwd is not inside a git repo (project/branch scoping will not apply)",
+        });
+      }
+    }
+  } catch {
+    // Never fail doctor for detection errors.
   }
 
   for (const check of checks) {
@@ -5858,7 +5939,7 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }
 
     case "doctor":
-      cmdDoctor();
+      await cmdDoctor();
       break;
 
     case "config":

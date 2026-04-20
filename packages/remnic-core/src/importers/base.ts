@@ -201,6 +201,14 @@ export interface ImporterParseOptions {
   strict?: boolean;
   /** Source path passed through for provenance. */
   filePath?: string;
+  /**
+   * Requests-per-second throttle, forwarded from the top-level
+   * `RunImportOptions.rateLimit`. Only meaningful for API-backed importers
+   * (mem0) — file-based adapters ignore it. `runImporter` copies this
+   * through automatically so CLI users never have to stash it on
+   * `parseOptions` themselves. Cursor review on PR #602.
+   */
+  rateLimit?: number;
 }
 
 /** Options forwarded to `transform`. */
@@ -335,9 +343,15 @@ export async function runImporter<Parsed>(
   const dryRun = options.dryRun === true;
   const onProgress = options.onProgress;
 
-  // Phase 1 — parse
+  // Phase 1 — parse. Forward the validated rateLimit so API-backed adapters
+  // (mem0) can throttle their own fetches. Caller-supplied parseOptions
+  // takes precedence so tests can still override.
   onProgress?.({ processed: 0, total: 0, phase: "parse" });
-  const parsed = await adapter.parse(input, options.parseOptions);
+  const parseOptions: ImporterParseOptions = {
+    ...(options.rateLimit !== undefined ? { rateLimit: options.rateLimit } : {}),
+    ...(options.parseOptions ?? {}),
+  };
+  const parsed = await adapter.parse(input, parseOptions);
 
   // Phase 2 — transform
   onProgress?.({ processed: 0, total: 0, phase: "transform" });

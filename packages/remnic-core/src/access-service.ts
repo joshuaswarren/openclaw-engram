@@ -120,6 +120,35 @@ export interface EngramAccessRecallRequest {
   topK?: number;
   mode?: RecallPlanMode | "auto";
   includeDebug?: boolean;
+  /**
+   * Coding-agent context (issue #569). When a connector resolves a git
+   * context for the session's cwd, it passes it here and the access service
+   * attaches it to the orchestrator before recall so project- / branch-
+   * scoped namespace overlays apply.
+   *
+   * Keyed by `sessionKey`; ignored when `sessionKey` is absent.
+   */
+  codingContext?: {
+    projectId: string;
+    branch: string | null;
+    rootPath: string;
+    defaultBranch: string | null;
+  } | null;
+}
+
+/**
+ * Standalone request to attach / clear the coding context for a session
+ * without performing a recall. Used by the Claude Code / Codex connectors
+ * at session start, and by the `remnic.set_coding_context` MCP tool (PR 7).
+ */
+export interface EngramAccessSetCodingContextRequest {
+  sessionKey: string;
+  codingContext: {
+    projectId: string;
+    branch: string | null;
+    rootPath: string;
+    defaultBranch: string | null;
+  } | null;
 }
 
 export interface EngramAccessRecallResponse {
@@ -960,10 +989,64 @@ export class EngramAccessService {
     };
   }
 
+  /**
+   * Attach a coding context to a session (issue #569). Used by the Claude
+   * Code / Codex / generic-MCP connectors at session start so that recall +
+   * write paths can route to a project- / branch-scoped namespace.
+   *
+   * Validates the input shape and rejects malformed payloads rather than
+   * silently accepting them (CLAUDE.md #51). Pass `codingContext: null` to
+   * clear.
+   */
+  setCodingContext(request: EngramAccessSetCodingContextRequest): void {
+    const sessionKey = typeof request.sessionKey === "string" ? request.sessionKey.trim() : "";
+    if (!sessionKey) {
+      throw new EngramAccessInputError("sessionKey is required for setCodingContext");
+    }
+    if (request.codingContext === null) {
+      this.orchestrator.setCodingContextForSession(sessionKey, null);
+      return;
+    }
+    const ctx = request.codingContext;
+    if (!ctx || typeof ctx !== "object") {
+      throw new EngramAccessInputError("codingContext must be an object or null");
+    }
+    if (typeof ctx.projectId !== "string" || ctx.projectId.trim().length === 0) {
+      throw new EngramAccessInputError("codingContext.projectId must be a non-empty string");
+    }
+    // Whitespace-only rootPath must be rejected just like whitespace-only
+    // projectId — otherwise a payload like `{ rootPath: "   " }` slips past
+    // validation and produces a session whose rootPath is meaningless for
+    // `remnic doctor` output and for downstream namespace decisions.
+    if (typeof ctx.rootPath !== "string" || ctx.rootPath.trim().length === 0) {
+      throw new EngramAccessInputError("codingContext.rootPath must be a non-empty string");
+    }
+    if (ctx.branch !== null && typeof ctx.branch !== "string") {
+      throw new EngramAccessInputError("codingContext.branch must be a string or null");
+    }
+    if (ctx.defaultBranch !== null && typeof ctx.defaultBranch !== "string") {
+      throw new EngramAccessInputError("codingContext.defaultBranch must be a string or null");
+    }
+    this.orchestrator.setCodingContextForSession(sessionKey, {
+      projectId: ctx.projectId,
+      branch: ctx.branch,
+      rootPath: ctx.rootPath,
+      defaultBranch: ctx.defaultBranch,
+    });
+  }
+
   async recall(request: EngramAccessRecallRequest): Promise<EngramAccessRecallResponse> {
     const query = request.query.trim();
     if (query.length === 0) {
       throw new EngramAccessInputError("query is required");
+    }
+    // Attach any coding context shipped with the recall request BEFORE
+    // namespace resolution so the overlay applies to this recall (issue #569).
+    if (request.codingContext !== undefined && request.sessionKey) {
+      this.setCodingContext({
+        sessionKey: request.sessionKey,
+        codingContext: request.codingContext,
+      });
     }
     const namespaceOverride = this.resolveRecallNamespace(request.namespace, request.sessionKey);
     const namespace = namespaceOverride ?? this.orchestrator.config.defaultNamespace;

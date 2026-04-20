@@ -1,6 +1,7 @@
 import path from "node:path";
 import type {
   CodexCompactionFlushMode,
+  CodingModeConfig,
   ContradictionScanConfig,
   CodexCompatConfig,
   DreamingConfig,
@@ -510,6 +511,20 @@ export function parseConfig(raw: unknown): PluginConfig {
     lookbackDays,
     proceduralMiningCronAutoRegister: coerceBool(rawProcedural.proceduralMiningCronAutoRegister) === true,
     recallMaxProcedures,
+  };
+
+  // Coding-agent project/branch scoping (issue #569)
+  const rawCodingMode =
+    cfg.codingMode && typeof cfg.codingMode === "object" && !Array.isArray(cfg.codingMode)
+      ? (cfg.codingMode as Record<string, unknown>)
+      : {};
+  // Default: projectScope=true (enabled), branchScope=false (opt-in).
+  // `coerceBool` treats "false"/"0"/"no"/"off" as false (CLAUDE.md #36).
+  const codingProjectScopeRaw = coerceBool(rawCodingMode.projectScope);
+  const codingBranchScopeRaw = coerceBool(rawCodingMode.branchScope);
+  const codingMode: CodingModeConfig = {
+    projectScope: codingProjectScopeRaw === undefined ? true : codingProjectScopeRaw,
+    branchScope: codingBranchScopeRaw === true,
   };
 
   const memoryDir =
@@ -1152,6 +1167,7 @@ export function parseConfig(raw: unknown): PluginConfig {
       cfg.activeRecallAllowChainedActiveMemory === true,
     dreaming,
     procedural,
+    codingMode,
     heartbeat,
     slotBehavior,
     codexCompat,
