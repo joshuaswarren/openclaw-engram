@@ -4,23 +4,25 @@ Native [Claude Code](https://docs.claude.com/en/docs/claude-code) plugin for [Re
 
 ## Install
 
-Installation is a two-step flow — the Remnic CLI sets up the MCP connection side, and Claude Code's own plugin system deploys the hook/skill/agent tree.
+Three discrete steps. None is automated for you end-to-end today; each writes to a different place.
 
-1. **Wire up the MCP connection and mint a token.** This writes `~/.claude.json` (or the equivalent), rotates a bearer token for the daemon, and registers the Claude Code connector with Remnic:
+1. **Mint a Remnic-side bearer token and record the connector.**
 
     ```bash
     remnic connectors install claude-code
     ```
 
-    This step does NOT install the hook scripts, skills, or agents — Remnic's connector installer only manages the MCP config + token today. The Claude Code memory-extension publisher is a stub (`isHostAvailable()` → false) because Claude Code doesn't yet expose a file-based extension directory; that's why hook wiring lives in this package and is installed by Claude Code itself.
+    This writes `~/.remnic/connectors/claude-code.json` (Remnic's connector-state file) and stores a bearer token in Remnic's token store. It does NOT touch any Claude Code configuration — the Claude Code memory-extension publisher in `@remnic/core` is a stub (`isHostAvailable()` → false, `publish()` → no-op), so no hook/skill/agent files are written and no Claude MCP config is edited.
 
-2. **Install the plugin into Claude Code.** Use Claude Code's plugin system (or add this package to the plugin path manually):
+2. **Add Remnic as an MCP server in your Claude Code config.** Paste the `.mcp.json` block from the "MCP setup" section below into Claude Code's MCP config (commonly `~/.mcp.json` or `~/.claude.json`, per your Claude install), replacing `{{REMNIC_TOKEN}}` with the token minted in step 1. Without this step Claude Code has no way to talk to the Remnic daemon.
+
+3. **Install this package and load it through Claude Code's plugin system** so the hook scripts, skills, and `memory-review` agent are actually active:
 
     ```bash
     npm install -g @remnic/plugin-claude-code
     ```
 
-    Then load the plugin tree in Claude Code — consult Claude Code's plugin docs for the exact mechanism your install supports. Until this step runs, hooks and skills are not active and auto-recall / auto-observe won't fire.
+    Consult Claude Code's plugin docs for the exact load mechanism your install supports (plugin marketplace / symlink / etc.). Until this step runs, auto-recall and auto-observe don't fire even if step 2 is correct.
 
 ## What ships
 

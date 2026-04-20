@@ -4,23 +4,25 @@ Native [OpenAI Codex CLI](https://github.com/openai/codex) plugin for [Remnic](h
 
 ## Install
 
-Installation is a two-step flow — `remnic connectors install codex-cli` sets up the MCP connection and the phase-2 consolidation extension, and Codex's own plugin system is what loads the hook/skill tree.
+Three discrete steps. None is automated end-to-end today; each writes to a different place.
 
-1. **Wire up the MCP connection, token, and consolidation extension:**
+1. **Mint a Remnic-side bearer token, record the connector, and install the phase-2 consolidation guide.**
 
     ```bash
     remnic connectors install codex-cli
     ```
 
-    This writes `~/.codex/config.toml` entries for the Remnic MCP server, mints a bearer token, and calls `@remnic/core`'s `installCodexMemoryExtension`, which materializes `~/.codex/memories_extensions/remnic/instructions.md` — the phase-2 local-filesystem consolidation guide (see the file-table row below). It does NOT copy `.codex-plugin/`, `hooks/`, or `skills/` — those live in this package and are loaded through Codex's plugin discovery path, not through `remnic connectors`.
+    This writes `~/.remnic/connectors/codex-cli.json` (Remnic's connector-state file), stores a bearer token, and calls `@remnic/core`'s `installCodexMemoryExtension` which materializes `~/.codex/memories_extensions/remnic/instructions.md` (the local-only phase-2 consolidation guide; see the file-table row below). It does NOT write `~/.codex/config.toml` and it does NOT deploy `.codex-plugin/`, `hooks/`, or `skills/`.
 
-2. **Load the plugin tree in Codex.** Install the package and point Codex's plugin loader at it:
+2. **Add Remnic as an MCP server in `~/.codex/config.toml`.** Paste the TOML block from the "MCP setup" section below, replacing `{{REMNIC_TOKEN}}` with the token from step 1. Without this step Codex has no way to talk to the Remnic daemon.
+
+3. **Install this package and load it through Codex's plugin system** so the hooks, skills, and `.codex-plugin` manifest are actually active:
 
     ```bash
     npm install -g @remnic/plugin-codex
     ```
 
-    Consult Codex's plugin docs for the exact mechanism (symlink into `~/.codex/plugins/`, marketplace install, etc.) — until this step runs, the session hooks and skills aren't active and you won't get auto-recall / auto-observe.
+    Consult Codex's plugin docs for the exact load mechanism your install supports (symlink into `~/.codex/plugins/`, marketplace install, etc.). Until this step runs, the session hooks and skills aren't active and you won't get auto-recall / auto-observe.
 
 ## What ships
 
@@ -46,24 +48,22 @@ Once installed and a Remnic daemon is running (`remnic daemon start`):
 
 ## MCP setup
 
-The plugin expects a Remnic daemon reachable at `http://localhost:4318/mcp` with a bearer token. `remnic connectors install codex-cli` handles this automatically. The template is:
+The plugin expects a Remnic daemon reachable at `http://localhost:4318/mcp` with a bearer token. Codex reads MCP servers from `~/.codex/config.toml`; add the following block (this is step 2 of the Install flow above — `remnic connectors install codex-cli` does NOT write it for you):
 
-```json
-{
-  "mcpServers": {
-    "remnic": {
-      "type": "http",
-      "url": "http://localhost:4318/mcp",
-      "headers": {
-        "Authorization": "Bearer {{REMNIC_TOKEN}}",
-        "X-Engram-Client-Id": "codex"
-      }
-    }
-  }
-}
+```toml
+[mcp_servers.remnic]
+url = "http://127.0.0.1:4318/mcp"
+bearer_token_env_var = "REMNIC_AUTH_TOKEN"
+http_headers = { "X-Engram-Client-Id" = "codex" }
 ```
 
-Replace `{{REMNIC_TOKEN}}` with a token minted via `remnic token generate <connector-id>`.
+Then export the token into the env var Codex looks up:
+
+```bash
+export REMNIC_AUTH_TOKEN="$(remnic token generate codex-cli)"
+```
+
+(Or set `REMNIC_AUTH_TOKEN` in your shell profile to a token minted via `remnic token generate codex-cli`.) See `docs/integration/connector-setup.md` in the Remnic repo for the canonical snippet.
 
 ## Agent note
 
