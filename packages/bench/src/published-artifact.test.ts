@@ -366,6 +366,99 @@ test("loadBenchmarkArtifact reads, parses, and re-hashes", async () => {
   }
 });
 
+test("buildBenchmarkArtifact rejects invalid startedAt/finishedAt timestamps", () => {
+  assert.throws(
+    () =>
+      buildBenchmarkArtifact({
+        benchmarkId: "longmemeval",
+        datasetVersion: "v1",
+        model: "gpt-4o-mini",
+        seed: 1,
+        startedAt: "not-a-date",
+        finishedAt: "2026-04-20T12:00:00.000Z",
+        result: sampleResult(),
+      }),
+    /startedAt "not-a-date" is not a valid ISO-8601 timestamp/,
+  );
+  assert.throws(
+    () =>
+      buildBenchmarkArtifact({
+        benchmarkId: "longmemeval",
+        datasetVersion: "v1",
+        model: "gpt-4o-mini",
+        seed: 1,
+        startedAt: "2026-04-20T12:00:00.000Z",
+        finishedAt: "garbage",
+        result: sampleResult(),
+      }),
+    /finishedAt "garbage" is not a valid ISO-8601 timestamp/,
+  );
+});
+
+test("buildBenchmarkArtifactFilename sanitizes the git SHA segment", () => {
+  const filename = buildBenchmarkArtifactFilename({
+    schemaVersion: BENCHMARK_ARTIFACT_SCHEMA_VERSION,
+    benchmarkId: "longmemeval",
+    datasetVersion: "v1",
+    system: { name: "remnic", version: "9.3.90", gitSha: "../../evil" },
+    model: "gpt-4o-mini",
+    seed: 1,
+    metrics: {},
+    perTaskScores: [],
+    startedAt: "2026-04-20T12:00:00.000Z",
+    finishedAt: "2026-04-20T12:01:00.000Z",
+    durationMs: 0,
+    env: { node: "v22", os: "linux" },
+  });
+  // Slashes + `..` from `../../evil` must not appear in the sha segment
+  // (sanitizeSegment only allows [a-z0-9._-]).
+  assert.doesNotMatch(filename, /\//);
+  // `..` (without sanitization) would look like an upward path walk; the
+  // only dots allowed should be the `.json` suffix and any legitimate
+  // semver dots in the model segment.
+  const shaSegment = filename.slice(0, -".json".length).split("-").pop() ?? "";
+  assert.doesNotMatch(shaSegment, /\.\./);
+  assert.ok(filename.endsWith(".json"));
+});
+
+test("writeBenchmarkArtifact resolved path stays inside outputDir", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "remnic-artifact-guard-"));
+  try {
+    // Build an artifact whose model + system.gitSha contain
+    // path-traversal characters. `sanitizeSegment` strips them, so this
+    // write succeeds and stays inside `dir`. Test verifies the
+    // resolved path is a direct child of the output directory.
+    const artifact = buildBenchmarkArtifact({
+      benchmarkId: "longmemeval",
+      datasetVersion: "v1",
+      model: "../evil",
+      seed: 1,
+      startedAt: "2026-04-20T12:00:00.000Z",
+      finishedAt: "2026-04-20T12:01:00.000Z",
+      result: sampleResult({
+        meta: {
+          id: "run-evil",
+          benchmark: "longmemeval",
+          benchmarkTier: "published",
+          version: "2.0.0",
+          remnicVersion: "9.3.90",
+          gitSha: "../../pwn",
+          timestamp: "2026-04-20T12:00:00.000Z",
+          mode: "quick",
+          runCount: 1,
+          seeds: [1],
+        },
+      }),
+    });
+    const written = await writeBenchmarkArtifact(artifact, dir);
+    const rel = path.relative(path.resolve(dir), written.path);
+    assert.doesNotMatch(rel, /\.\./);
+    assert.equal(path.dirname(written.path), path.resolve(dir));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("schemaVersion bump guard: constant matches declared type", () => {
   // If this fails, someone bumped BENCHMARK_ARTIFACT_SCHEMA_VERSION without
   // updating the interface's literal type. Keep them in lock-step so

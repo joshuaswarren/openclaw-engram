@@ -139,10 +139,19 @@ export function buildBenchmarkArtifact(
       return entry;
     });
 
-  const durationMs = Math.max(
-    0,
-    Date.parse(input.finishedAt) - Date.parse(input.startedAt),
-  );
+  const startedMs = Date.parse(input.startedAt);
+  const finishedMs = Date.parse(input.finishedAt);
+  if (!Number.isFinite(startedMs)) {
+    throw new Error(
+      `BuildBenchmarkArtifact: startedAt "${input.startedAt}" is not a valid ISO-8601 timestamp.`,
+    );
+  }
+  if (!Number.isFinite(finishedMs)) {
+    throw new Error(
+      `BuildBenchmarkArtifact: finishedAt "${input.finishedAt}" is not a valid ISO-8601 timestamp.`,
+    );
+  }
+  const durationMs = Math.max(0, finishedMs - startedMs);
 
   return {
     schemaVersion: BENCHMARK_ARTIFACT_SCHEMA_VERSION,
@@ -176,12 +185,19 @@ export function buildBenchmarkArtifact(
  *   <iso-date>-<benchmark>-<model>-<gitShaShort>.json
  * where iso-date is the startedAt date (YYYY-MM-DD) and gitShaShort is
  * the first 7 chars of system.gitSha (or "unknown" if absent).
+ *
+ * Every segment that contributes to the filename is sanitized through
+ * `sanitizeSegment()` so it cannot contain `/`, `..`, NUL, or any other
+ * path-separator characters — preventing a malicious artifact input
+ * from directing `writeBenchmarkArtifact()` outside of `outputDir`.
  */
 export function buildBenchmarkArtifactFilename(
   artifact: BenchmarkArtifact,
 ): string {
-  const date = artifact.startedAt.slice(0, 10);
-  const sha = (artifact.system.gitSha || "unknown").slice(0, 7);
+  const date = sanitizeSegment(artifact.startedAt.slice(0, 10));
+  const sha = sanitizeSegment(
+    (artifact.system.gitSha || "unknown").slice(0, 7),
+  );
   const model = sanitizeSegment(artifact.model);
   const benchmark = sanitizeSegment(artifact.benchmarkId);
   return `${date}-${benchmark}-${model}-${sha}.json`;
@@ -213,6 +229,11 @@ export interface WriteBenchmarkArtifactResult {
  * Write the artifact to `<outputDir>/<filename>` and return the resulting
  * path, filename, SHA-256 of the canonical serialization, and byte count.
  * Creates `outputDir` recursively if needed.
+ *
+ * Belt-and-suspenders: even though `buildBenchmarkArtifactFilename()`
+ * sanitizes every segment, this function also verifies the resolved
+ * target stays inside `outputDir`. Any path-traversal attempt throws
+ * before the write occurs.
  */
 export async function writeBenchmarkArtifact(
   artifact: BenchmarkArtifact,
@@ -221,7 +242,21 @@ export async function writeBenchmarkArtifact(
   await mkdir(outputDir, { recursive: true });
   const filename = buildBenchmarkArtifactFilename(artifact);
   const body = serializeBenchmarkArtifact(artifact);
-  const abs = path.join(outputDir, filename);
+  const resolvedDir = path.resolve(outputDir);
+  const abs = path.resolve(resolvedDir, filename);
+  // `abs` must be a direct child of `resolvedDir`. Reject anything that
+  // resolves to a parent directory, sibling, or any other location.
+  const relative = path.relative(resolvedDir, abs);
+  if (
+    relative.length === 0 ||
+    relative.startsWith("..") ||
+    path.isAbsolute(relative) ||
+    relative.includes(path.sep)
+  ) {
+    throw new Error(
+      `writeBenchmarkArtifact: refusing to write outside outputDir (filename="${filename}", resolved="${abs}").`,
+    );
+  }
   await writeFile(abs, body);
   return {
     path: abs,
@@ -354,7 +389,15 @@ function sanitizeSegment(value: string): string {
   const cleaned = value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "_");
+    // Allow only [a-z0-9._-]; replace everything else with `_`.
+    .replace(/[^a-z0-9._-]+/g, "_")
+    // Collapse any consecutive dots to a single `_` so path-traversal
+    // tokens like `..` and `...` can never survive. A single dot is
+    // still allowed for semver (e.g. `llama-3.1`) and the `.json` suffix
+    // that callers append.
+    .replace(/\.{2,}/g, "_")
+    // Disallow leading/trailing dots (another path-traversal foothold).
+    .replace(/^\.+|\.+$/g, "_");
   return cleaned.length > 0 ? cleaned : "unknown";
 }
 
