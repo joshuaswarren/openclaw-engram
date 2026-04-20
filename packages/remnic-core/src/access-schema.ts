@@ -39,6 +39,21 @@ const schemaVersionSchema = z.number().int().optional();
 // Recall
 // ---------------------------------------------------------------------------
 
+/**
+ * Coding-agent context (issue #569). Optional payload that connectors may
+ * ship with a recall request so the project/branch namespace overlay
+ * applies to that recall. All fields are validated per CLAUDE.md #51 —
+ * empty-string projectId / rootPath is rejected, not silently accepted.
+ */
+export const codingContextSchema = z
+  .object({
+    projectId: z.string().trim().min(1, "codingContext.projectId is required").max(128),
+    branch: z.string().trim().max(256).nullable(),
+    rootPath: z.string().trim().min(1, "codingContext.rootPath is required").max(1024),
+    defaultBranch: z.string().trim().max(256).nullable(),
+  })
+  .nullable();
+
 export const recallRequestSchema = z.object({
   query: z.string().min(1, "query is required"),
   sessionKey: sessionKeySchema,
@@ -46,11 +61,22 @@ export const recallRequestSchema = z.object({
   topK: z.number().int().min(0).max(200).optional(),
   mode: z.enum(["auto", "no_recall", "minimal", "full", "graph_mode"]).optional(),
   includeDebug: z.boolean().optional(),
+  codingContext: codingContextSchema.optional(),
 });
 
 export const recallExplainRequestSchema = z.object({
   sessionKey: sessionKeySchema,
   namespace: namespaceSchema,
+});
+
+/**
+ * Standalone "set coding context" request. Used by the HTTP endpoint
+ * `POST /engram/v1/coding-context` and the MCP `remnic.set_coding_context`
+ * tool (PR 7). `codingContext: null` clears the attached context.
+ */
+export const setCodingContextRequestSchema = z.object({
+  sessionKey: z.string().trim().min(1, "sessionKey is required").max(512),
+  codingContext: codingContextSchema,
 });
 
 // ---------------------------------------------------------------------------
@@ -171,6 +197,7 @@ export const daySummaryRequestSchema = z.object({
 
 export type RecallRequest = z.infer<typeof recallRequestSchema>;
 export type RecallExplainRequest = z.infer<typeof recallExplainRequestSchema>;
+export type SetCodingContextRequest = z.infer<typeof setCodingContextRequestSchema>;
 export type ObserveRequest = z.infer<typeof observeRequestSchema>;
 export type MemoryStoreRequest = z.infer<typeof memoryStoreRequestSchema>;
 export type SuggestionSubmitRequest = z.infer<typeof suggestionSubmitRequestSchema>;
@@ -187,6 +214,7 @@ export type DaySummaryRequest = z.infer<typeof daySummaryRequestSchema>;
 export type SchemaName =
   | "recall"
   | "recallExplain"
+  | "setCodingContext"
   | "observe"
   | "memoryStore"
   | "suggestionSubmit"
@@ -199,6 +227,7 @@ export type SchemaName =
 export type SchemaTypeFor<N extends SchemaName> =
   N extends "recall" ? RecallRequest
   : N extends "recallExplain" ? RecallExplainRequest
+  : N extends "setCodingContext" ? SetCodingContextRequest
   : N extends "observe" ? ObserveRequest
   : N extends "memoryStore" ? MemoryStoreRequest
   : N extends "suggestionSubmit" ? SuggestionSubmitRequest
@@ -212,6 +241,7 @@ export type SchemaTypeFor<N extends SchemaName> =
 const schemas: Record<SchemaName, z.ZodTypeAny> = {
   recall: recallRequestSchema,
   recallExplain: recallExplainRequestSchema,
+  setCodingContext: setCodingContextRequestSchema,
   observe: observeRequestSchema,
   memoryStore: memoryStoreRequestSchema,
   suggestionSubmit: suggestionSubmitRequestSchema,

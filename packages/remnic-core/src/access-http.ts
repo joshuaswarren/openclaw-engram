@@ -337,8 +337,23 @@ export class EngramAccessHttpServer {
         topK: body.topK,
         mode: body.mode as RecallPlanMode | "auto" | undefined,
         includeDebug: body.includeDebug === true,
+        codingContext: body.codingContext ?? undefined,
       });
       this.respondJson(res, 200, response);
+      return;
+    }
+
+    // Attach / clear coding-agent context for a session (issue #569 PR 5).
+    // Mirrors `setCodingContext` on the access service. Connectors call this
+    // at session start after resolving a git context for the cwd; `remnic
+    // doctor` (PR 8) surfaces the attached context.
+    if (req.method === "POST" && pathname === "/engram/v1/coding-context") {
+      const body = await this.readValidatedBody(req, "setCodingContext");
+      this.service.setCodingContext({
+        sessionKey: body.sessionKey,
+        codingContext: body.codingContext,
+      });
+      this.respondJson(res, 200, { ok: true });
       return;
     }
 
