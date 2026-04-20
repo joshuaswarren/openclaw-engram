@@ -101,6 +101,52 @@ test("local-llm provider surfaces non-2xx errors with base-url + model in the me
   }
 });
 
+test("local-llm provider auto-appends /v1 when baseUrl omits it (Codex P1 on PR #613)", async () => {
+  const server = await startLocalLlmMockServer();
+  try {
+    // The mock server serves /v1/chat/completions; the real complaint
+    // was that a user passing the bare host (`http://host:port`) would
+    // hit /chat/completions which 404s on most OpenAI-compatible
+    // servers. Strip `/v1` from the mock's baseUrl and confirm the
+    // provider re-appends it before the request is dispatched.
+    const strippedBase = server.baseUrl.replace(/\/v1$/, "");
+    assert.ok(!strippedBase.endsWith("/v1"), "fixture must strip /v1");
+
+    const provider = createLocalLlmProvider({
+      provider: "local-llm",
+      model: "local-llm-fixture-small",
+      baseUrl: strippedBase,
+    });
+
+    const result = await provider.complete("hello");
+    assert.equal(result.text, "The canonical bench smoke response is: ok.");
+    assert.equal(server.requests.length, 1);
+    assert.equal(server.requests[0].pathname, "/v1/chat/completions");
+  } finally {
+    await server.close();
+  }
+});
+
+test("local-llm provider does not double-apply /v1 when baseUrl already ends with it", async () => {
+  const server = await startLocalLlmMockServer();
+  try {
+    const provider = createLocalLlmProvider({
+      provider: "local-llm",
+      model: "local-llm-fixture-small",
+      baseUrl: server.baseUrl, // already ends in /v1
+    });
+
+    await provider.complete("hello");
+    assert.equal(server.requests[0].pathname, "/v1/chat/completions");
+    assert.ok(
+      !server.requests[0].pathname.startsWith("/v1/v1/"),
+      "must not produce /v1/v1/",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 test("local-llm provider forwards Authorization header when apiKey is set", async () => {
   let seenAuth: string | null = null;
   const originalFetch = globalThis.fetch;
