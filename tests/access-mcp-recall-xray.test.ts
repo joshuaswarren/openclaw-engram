@@ -155,3 +155,38 @@ test("MCP engram.recall_xray rejects invalid budget with a listed-options error"
   );
   assert.equal(capture.calls.length, 0, "service must NOT be called when validation fails");
 });
+
+test("MCP engram.recall_xray rejects non-string non-number budgets (e.g., booleans, objects)", async () => {
+  // Codex P2 on #604: `Number(true)` coerces to 1, so accepting
+  // boolean values would silently force a tiny recall budget.  The
+  // MCP handler must reject typed-incorrectly inputs up front instead
+  // of coercing them.  This exercises the boolean and object cases.
+  const capture = { calls: [] as any[] };
+  const server = new EngramMcpServer(fakeService(capture));
+  await server.handleRequest({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  for (const badBudget of [true, false, { v: 1 }, [4096]]) {
+    const response = await server.handleRequest({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: {
+        name: "engram.recall_xray",
+        arguments: { query: "q", budget: badBudget as unknown },
+      },
+    });
+    const result = response?.result as {
+      isError?: boolean;
+      content?: Array<{ text?: string }>;
+    };
+    assert.equal(
+      result.isError,
+      true,
+      `expected an error response for budget=${JSON.stringify(badBudget)}`,
+    );
+    assert.match(
+      String(result.content?.[0]?.text ?? ""),
+      /budget expects a positive integer/,
+    );
+  }
+  assert.equal(capture.calls.length, 0, "service must NOT be called when validation fails");
+});

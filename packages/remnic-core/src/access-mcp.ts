@@ -1158,9 +1158,17 @@ export class EngramMcpServer {
             : undefined;
         // `budget` may arrive as a JSON number or a string ('4096')
         // from loosely-typed MCP clients; coerce + validate here so
-        // the service sees a number.
+        // the service sees a number.  Reject booleans, objects, and
+        // other non-string-non-number inputs explicitly — `Number()`
+        // otherwise coerces `true` to `1`, which would silently force
+        // an extremely small recall budget (CLAUDE.md rule 51).
         let budget: number | undefined;
         if (args.budget !== undefined && args.budget !== null) {
+          if (typeof args.budget !== "number" && typeof args.budget !== "string") {
+            throw new Error(
+              `engram.recall_xray: budget expects a positive integer; got ${JSON.stringify(args.budget)}`,
+            );
+          }
           const parsed =
             typeof args.budget === "number"
               ? args.budget
