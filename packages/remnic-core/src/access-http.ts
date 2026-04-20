@@ -352,6 +352,26 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // Tier-explain (issue #518): structured per-result annotation from
+    // the direct-answer retrieval tier.  Orthogonal to /recall/explain
+    // above, which returns a graph-path explanation document.
+    if (req.method === "GET" && pathname === "/engram/v1/recall/tier-explain") {
+      const sessionParam = parsed.searchParams.get("session");
+      const sessionKey = sessionParam && sessionParam.length > 0 ? sessionParam : undefined;
+      const namespaceParam = parsed.searchParams.get("namespace");
+      const namespace = this.resolveNamespace(
+        req,
+        namespaceParam && namespaceParam.length > 0 ? namespaceParam : undefined,
+      );
+      const payload = await this.service.recallTierExplain(
+        sessionKey,
+        namespace,
+        this.resolveRequestPrincipal(req),
+      );
+      this.respondJson(res, 200, payload);
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/engram/v1/observe") {
       const body = await this.readValidatedBody(req, "observe");
       this.ensureWriteRateLimitAvailable();
