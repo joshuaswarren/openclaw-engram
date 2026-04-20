@@ -376,26 +376,34 @@ export function parseImportBundleArgs(
   };
 }
 
+export interface BundleImportOutcome {
+  results: RunImporterResult[];
+  /** Number of detected entries that threw during their per-file run. */
+  failedCount: number;
+}
+
 /**
  * Execute a bundle import. For each detected file we run the single-adapter
  * pipeline via `runImportCommand`, accumulating the per-adapter results and
  * returning a summary. Failures on individual entries do NOT abort the
  * remaining imports — each is surfaced to stderr and the walk continues so
  * a bad chatgpt file doesn't block claude + gemini imports that would have
- * succeeded.
+ * succeeded. The return value reports how many entries failed so callers
+ * can signal a non-zero exit status to automation (Codex review on
+ * PR #610).
  */
 export async function runBundleImportCommand(
   args: ImportBundleArgs,
   io: ImportDispatchIO,
   detector: (dir: string) => DetectedBundleEntry[] = detectBundleEntries,
-): Promise<RunImporterResult[]> {
+): Promise<BundleImportOutcome> {
   const entries = detector(args.bundleDir);
   if (entries.length === 0) {
     io.stdout(
       `No known exports found in '${args.bundleDir}'. Supported filenames: ` +
         "memory.json, projects.json, conversations.json, My Activity.json, mem0.json.",
     );
-    return [];
+    return { results: [], failedCount: 0 };
   }
 
   io.stdout(
@@ -406,6 +414,7 @@ export async function runBundleImportCommand(
   }
 
   const results: RunImporterResult[] = [];
+  let failedCount = 0;
   for (const entry of entries) {
     io.stdout("");
     io.stdout(`Running '${entry.adapter}' adapter on ${entry.filePath} ...`);
@@ -424,6 +433,7 @@ export async function runBundleImportCommand(
       const result = await runImportCommand(perEntryArgs, io);
       results.push(result);
     } catch (err) {
+      failedCount += 1;
       io.stderr(
         `  adapter '${entry.adapter}' failed on ${entry.filePath}: ${
           err instanceof Error ? err.message : String(err)
@@ -431,7 +441,7 @@ export async function runBundleImportCommand(
       );
     }
   }
-  return results;
+  return { results, failedCount };
 }
 
 /**
@@ -518,7 +528,19 @@ export async function cmdImport(
 
   try {
     if (bundleArgs) {
-      return await runBundleImportCommand(bundleArgs, io);
+      const outcome = await runBundleImportCommand(bundleArgs, io);
+      // Signal partial failure to automation. The walk kept going on
+      // error (so the user sees every failure in one pass), but the
+      // process must exit non-zero when any entry failed so shell
+      // pipelines (`remnic import --all-from-bundle ... && ...`) don't
+      // falsely treat the run as success. Codex review on PR #610.
+      if (outcome.failedCount > 0) {
+        process.exitCode = 1;
+        process.stderr.write(
+          `Bundle import completed with ${outcome.failedCount} failed entr${outcome.failedCount === 1 ? "y" : "ies"} (see above).\n`,
+        );
+      }
+      return outcome.results;
     }
     return await runImportCommand(parsed!, io);
   } catch (err) {

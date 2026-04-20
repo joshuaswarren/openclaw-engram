@@ -478,7 +478,7 @@ describe("runBundleImportCommand", () => {
       { adapter: "chatgpt", filePath: "/bundle/conversations.json", includeConversations: true },
     ];
 
-    const results = await runBundleImportCommand(
+    const outcome = await runBundleImportCommand(
       {
         bundleDir: "/bundle",
         dryRun: false,
@@ -487,7 +487,8 @@ describe("runBundleImportCommand", () => {
       io,
       detector,
     );
-    assert.equal(results.length, 2);
+    assert.equal(outcome.results.length, 2);
+    assert.equal(outcome.failedCount, 0);
     // Every entry invoked runImportCommand → one getWriteTarget per entry.
     assert.equal(getWriteTargetCalls.count, 2);
     assert.ok(
@@ -502,12 +503,13 @@ describe("runBundleImportCommand", () => {
     const { target } = makeTarget();
     const { io, stdoutLines } = makeIo({ adapter, target });
 
-    const results = await runBundleImportCommand(
+    const outcome = await runBundleImportCommand(
       { bundleDir: "/empty", dryRun: false, includeConversations: false },
       io,
       () => [],
     );
-    assert.deepEqual(results, []);
+    assert.deepEqual(outcome.results, []);
+    assert.equal(outcome.failedCount, 0);
     assert.ok(
       stdoutLines.some((l) => l.includes("No known exports found")),
       `expected empty-bundle message, got: ${stdoutLines.join("\n")}`,
@@ -538,7 +540,7 @@ describe("runBundleImportCommand", () => {
       stderr: (l) => stderrLines.push(l),
     };
 
-    const results = await runBundleImportCommand(
+    const outcome = await runBundleImportCommand(
       { bundleDir: "/bundle", dryRun: false, includeConversations: false },
       io,
       () => [
@@ -547,7 +549,10 @@ describe("runBundleImportCommand", () => {
       ],
     );
     // Only the good adapter's result is collected.
-    assert.equal(results.length, 1);
+    assert.equal(outcome.results.length, 1);
+    // Failure count must reflect the one that threw — this is what
+    // cmdImport uses to set a non-zero exit code for automation.
+    assert.equal(outcome.failedCount, 1);
     assert.ok(
       stderrLines.some((l) => l.includes("adapter 'chatgpt' failed")),
       `expected failure surfaced to stderr, got: ${stderrLines.join("\n")}`,

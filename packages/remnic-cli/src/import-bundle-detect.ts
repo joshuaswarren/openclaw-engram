@@ -18,7 +18,7 @@
 // The scan walks one level deep (plus a single nested directory like
 // `Takeout/Gemini/`) so users don't have to flatten their unzipped bundles.
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 import type { SupportedImporterName } from "./optional-importer.js";
@@ -191,7 +191,13 @@ function defaultReadFile(p: string): string {
 
 function defaultIsDirectory(p: string): boolean {
   try {
-    return statSync(p).isDirectory();
+    // Use lstatSync so symlinks never report as directories — we refuse
+    // to recurse through them so a bundle can't contain a symlinked
+    // directory that escapes to arbitrary filesystem locations. Codex
+    // review on PR #610.
+    const s = lstatSync(p);
+    if (s.isSymbolicLink()) return false;
+    return s.isDirectory();
   } catch {
     return false;
   }
