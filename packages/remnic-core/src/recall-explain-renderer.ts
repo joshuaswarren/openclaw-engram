@@ -107,6 +107,45 @@ export function toRecallExplainJson(
   };
 }
 
+/**
+ * Render the shared "--- tier explain ---" text block used by both the
+ * recall-explain surface and the Recall X-ray surface.  Callers provide
+ * the normalized `RecallTierExplain` (or `null` for the
+ * not-populated/disabled case) so the block stays character-for-character
+ * identical across surfaces (CLAUDE.md rule 22).  The returned strings do
+ * NOT include leading blank lines or headers — callers own that framing.
+ */
+export function renderTierExplainTextLines(
+  tierExplain: RecallTierExplain | null,
+): string[] {
+  const lines: string[] = [];
+  if (!tierExplain) {
+    lines.push(
+      "(not populated — direct-answer tier disabled or did not fire)",
+    );
+    return lines;
+  }
+  lines.push(`tier: ${tierExplain.tier}`);
+  lines.push(`reason: ${tierExplain.tierReason}`);
+  lines.push(`candidates-considered: ${tierExplain.candidatesConsidered}`);
+  lines.push(`latency-ms: ${tierExplain.latencyMs}`);
+  if (tierExplain.filteredBy.length > 0) {
+    lines.push(`filtered-by: ${tierExplain.filteredBy.join(", ")}`);
+  } else {
+    lines.push("filtered-by: (none)");
+  }
+  if (tierExplain.sourceAnchors && tierExplain.sourceAnchors.length > 0) {
+    lines.push("source-anchors:");
+    for (const anchor of tierExplain.sourceAnchors) {
+      const range = anchor.lineRange
+        ? `:${anchor.lineRange[0]}-${anchor.lineRange[1]}`
+        : "";
+      lines.push(`  - ${anchor.path}${range}`);
+    }
+  }
+  return lines;
+}
+
 export function toRecallExplainText(
   snapshot: LastRecallSnapshot | null,
 ): string {
@@ -153,23 +192,8 @@ export function toRecallExplainText(
 
   lines.push("");
   lines.push("--- tier explain ---");
-  lines.push(`tier: ${ex.tier}`);
-  lines.push(`reason: ${ex.tierReason}`);
-  lines.push(`candidates-considered: ${ex.candidatesConsidered}`);
-  lines.push(`latency-ms: ${ex.latencyMs}`);
-  if (ex.filteredBy.length > 0) {
-    lines.push(`filtered-by: ${ex.filteredBy.join(", ")}`);
-  } else {
-    lines.push("filtered-by: (none)");
-  }
-  if (ex.sourceAnchors && ex.sourceAnchors.length > 0) {
-    lines.push("source-anchors:");
-    for (const anchor of ex.sourceAnchors) {
-      const range = anchor.lineRange
-        ? `:${anchor.lineRange[0]}-${anchor.lineRange[1]}`
-        : "";
-      lines.push(`  - ${anchor.path}${range}`);
-    }
+  for (const line of renderTierExplainTextLines(ex)) {
+    lines.push(line);
   }
   return lines.join("\n");
 }
