@@ -1410,6 +1410,26 @@ export interface MemoryFrontmatter {
    * [Source: ...] format and silently fails for custom citation templates.
    */
   contentHash?: string;
+  /**
+   * Consolidation provenance — pointers to the page-versioning snapshots
+   * that this memory was derived from (issue #561).  Each entry is a
+   * `"<memory-path>:<version-number>"` string (e.g.
+   * `"facts/preferences.md:3"`) referencing a snapshot recorded by
+   * `page-versioning.ts`.
+   *
+   * PR 1 introduces this field as read-through only — storage preserves
+   * it verbatim but no code produces it yet.  PR 2 populates it on
+   * consolidation writes; PR 4 adds a `remnic doctor` integrity check
+   * that validates each referent actually exists.
+   */
+  derived_from?: string[];
+  /**
+   * Which consolidation operator produced this memory (issue #561).  See
+   * `ConsolidationOperator` in `semantic-consolidation.ts` for the
+   * operator algebra.  Absent on memories that were not produced by a
+   * consolidation pass.
+   */
+  derived_via?: "split" | "merge" | "update";
 }
 
 /** Memory link relationship types */

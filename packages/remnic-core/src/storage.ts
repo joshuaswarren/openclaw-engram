@@ -8,6 +8,10 @@ import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { createVersion as createPageVersion, type VersioningConfig, type VersionTrigger } from "./page-versioning.js";
 import {
+  isConsolidationOperator,
+  isValidDerivedFromEntry,
+} from "./semantic-consolidation.js";
+import {
   matchEntitySchemaSection,
   normalizeEntityStructuredSection,
   sortStructuredSectionsBySchema,
@@ -223,6 +227,38 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   }
   // Raw-content dedup hash — format-agnostic archive/consolidation cleanup
   if (fm.contentHash) lines.push(`contentHash: ${fm.contentHash}`);
+  // Consolidation provenance (issue #561).  Validate on write so malformed
+  // entries cannot leak into the on-disk format.  Read-through parsing is
+  // permissive; only writes go through the validator.
+  if (fm.derived_from !== undefined) {
+    if (!Array.isArray(fm.derived_from)) {
+      throw new Error(
+        `serializeFrontmatter: derived_from must be an array of "<path>:<version>" strings`,
+      );
+    }
+    for (const entry of fm.derived_from) {
+      if (!isValidDerivedFromEntry(entry)) {
+        throw new Error(
+          `serializeFrontmatter: invalid derived_from entry ${JSON.stringify(entry)} — expected "<path>:<version>" with version >= 0`,
+        );
+      }
+    }
+    if (fm.derived_from.length > 0) {
+      lines.push(
+        `derived_from: [${fm.derived_from
+          .map((e) => `"${e.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(", ")}]`,
+      );
+    }
+  }
+  if (fm.derived_via !== undefined) {
+    if (!isConsolidationOperator(fm.derived_via)) {
+      throw new Error(
+        `serializeFrontmatter: invalid derived_via ${JSON.stringify(fm.derived_via)} — expected one of "split" | "merge" | "update"`,
+      );
+    }
+    lines.push(`derived_via: ${fm.derived_via}`);
+  }
   lines.push("---");
   return lines.join("\n");
 }
@@ -315,6 +351,25 @@ function parseFrontmatter(
       .filter(Boolean);
   }
 
+  // Parse consolidation provenance (issue #561).  `derived_from` is an
+  // array of `"<path>:<version>"` strings; parsing is permissive so legacy
+  // / malformed entries survive a read, but serialization validates on
+  // write (see serializeFrontmatter).  `derived_via` is a single operator
+  // string; unknown values become `undefined` on read rather than raising.
+  let derived_from: string[] | undefined;
+  const derivedFromStr = fm.derived_from ?? "";
+  const derivedFromMatch = derivedFromStr.match(/\[(.*)]/);
+  if (derivedFromMatch) {
+    derived_from = derivedFromMatch[1]
+      .split(",")
+      .map((e) => e.trim().replace(/^"|"$/g, ""))
+      .map((e) => e.replace(/\\"/g, '"').replace(/\\\\/g, "\\"))
+      .filter(Boolean);
+    if (derived_from.length === 0) derived_from = undefined;
+  }
+  const derivedViaRaw = fm.derived_via;
+  const derived_via = isConsolidationOperator(derivedViaRaw) ? derivedViaRaw : undefined;
+
   // Parse accessCount
   const accessCount = fm.accessCount ? parseInt(fm.accessCount, 10) : undefined;
   const decayScore = fm.decayScore !== undefined ? parseFloat(fm.decayScore) : undefined;
@@ -400,6 +455,10 @@ function parseFrontmatter(
       structuredAttributes: parseStructuredAttributes(fm.structuredAttributes),
       // Raw-content dedup hash (format-agnostic archive/consolidation cleanup)
       contentHash: fm.contentHash || undefined,
+      // Consolidation provenance (issue #561) — read-through only in this
+      // PR; no code produces these fields yet.
+      derived_from,
+      derived_via,
     },
     content,
   };
