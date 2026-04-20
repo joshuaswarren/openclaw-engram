@@ -5351,19 +5351,30 @@ export class Orchestrator {
     let recalledMemoryCount = 0;
     let recalledMemoryIds: string[] = [];
     let recalledMemoryPaths: string[] = [];
-    // Pre-limit candidate pool size for the X-ray filter trace
-    // (issue #570 PR 1).  `recalledMemoryCount` is assigned AFTER MMR +
-    // truncation so using it alone would make the
+    // Per-branch pre-limit candidate pool size for the X-ray filter
+    // trace (issue #570 PR 1).  `recalledMemoryCount` is assigned
+    // AFTER MMR + truncation so using it alone would make the
     // `recall-result-limit` trace report `considered == admitted`
-    // even when many candidates were dropped.  This counter captures
-    // the pool size BEFORE truncation at each branch that feeds it.
-    // Zero when no retrieval ran (initial state + `no_recall`).
-    let xrayCandidatePoolSize = 0;
+    // even when many candidates were dropped.  Each entry captures
+    // the pool size BEFORE truncation at that branch.  The X-ray
+    // capture block picks the pool that corresponds to the branch
+    // that actually produced the admitted results (via `recallSource`)
+    // so a pool from a branch whose candidates were killed by an
+    // earlier gate cannot leak into the `considered` count.
+    const xrayBranchPoolSize: Record<
+      "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan",
+      number
+    > = {
+      hot_qmd: 0,
+      hot_embedding: 0,
+      cold_fallback: 0,
+      recent_scan: 0,
+    };
     // Shared out-parameter sink the cold-fallback pipeline writes
     // its pre-truncation pool size into (issue #570 PR 1).  Declared
     // once so every call to `applyColdFallbackPipeline` (four call
-    // sites) updates the same counter; the X-ray capture block below
-    // folds this back into `xrayCandidatePoolSize`.
+    // sites) updates the same counter; the X-ray capture block
+    // reads this as the cold-fallback pool.
     const xrayColdPoolSink = { size: 0 };
     let identityInjectionModeUsed: IdentityInjectionMode | "none" = "none";
     let identityInjectedChars = 0;
@@ -7896,8 +7907,8 @@ export class Orchestrator {
       // gate can zero `memoryResults`.  Placing the capture after the
       // gate would record 0 instead of the true pre-gate pool size
       // (issue #570 PR 1 review follow-up).
-      xrayCandidatePoolSize = Math.max(
-        xrayCandidatePoolSize,
+      xrayBranchPoolSize.hot_qmd = Math.max(
+        xrayBranchPoolSize.hot_qmd,
         memoryResults.length,
       );
       let confidenceGateRejected = false;
@@ -8018,8 +8029,8 @@ export class Orchestrator {
         );
         // MMR runs on the pre-truncation pool so diverse candidates just
         // below the cutoff can be promoted into the injected set.
-        xrayCandidatePoolSize = Math.max(
-          xrayCandidatePoolSize,
+        xrayBranchPoolSize.hot_embedding = Math.max(
+          xrayBranchPoolSize.hot_embedding,
           boostedScoped.length,
         );
         const scoped = this.diversifyAndLimitRecallResults(
@@ -8156,8 +8167,8 @@ export class Orchestrator {
       );
       // MMR runs on the pre-truncation pool so diverse candidates just
       // below the cutoff can be promoted into the injected set.
-      xrayCandidatePoolSize = Math.max(
-        xrayCandidatePoolSize,
+      xrayBranchPoolSize.hot_embedding = Math.max(
+        xrayBranchPoolSize.hot_embedding,
         boostedScoped.length,
       );
       const scoped = this.diversifyAndLimitRecallResults(
@@ -8302,8 +8313,8 @@ export class Orchestrator {
             ).sort((a, b) => b.score - a.score);
             // MMR runs on the pre-truncation pool so diverse candidates just
             // below the cutoff can be promoted into the injected set.
-            xrayCandidatePoolSize = Math.max(
-              xrayCandidatePoolSize,
+            xrayBranchPoolSize.recent_scan = Math.max(
+              xrayBranchPoolSize.recent_scan,
               boostedRecent.length,
             );
             const recent = this.diversifyAndLimitRecallResults(
@@ -8635,19 +8646,46 @@ export class Orchestrator {
             admittedBy: [],
           });
         }
-        // Use `xrayCandidatePoolSize` (captured pre-MMR / pre-truncation
-        // at each retrieval branch) so `considered` reflects the true
-        // candidate pool and `considered - admitted` is a meaningful
-        // "dropped by the limit" signal.  Folds in the cold-fallback
-        // sink so cold-fallback recalls report their pre-truncation
-        // pool too.  Falls back to `recalledMemoryCount` when no
-        // branch ran (shouldn't happen on this non-no_recall path,
-        // but is a safe floor).
-        const xrayConsidered = Math.max(
-          xrayCandidatePoolSize,
-          xrayColdPoolSink.size,
-          recalledMemoryCount,
-        );
+        // `considered` must reflect the pool size of the branch that
+        // actually produced the admitted results, NOT the max across
+        // every branch that ran.  Otherwise a flow where hot_qmd
+        // assembled a large pool that was killed by the confidence
+        // gate and a different branch (or none) ultimately served
+        // the recall would report hot_qmd's pool as "considered" —
+        // incorrectly attributing those drops to the result limit.
+        // Pick the pool by `recallSource`; fall back to
+        // `recalledMemoryCount` when no branch ran (e.g. every branch
+        // returned zero).  This path never runs for `no_recall` —
+        // that branch captures its own snapshot earlier.
+        let xrayConsidered: number;
+        switch (recallSource) {
+          case "hot_qmd":
+            xrayConsidered = xrayBranchPoolSize.hot_qmd;
+            break;
+          case "hot_embedding":
+            xrayConsidered = xrayBranchPoolSize.hot_embedding;
+            break;
+          case "cold_fallback":
+            xrayConsidered = xrayColdPoolSink.size;
+            break;
+          case "recent_scan":
+            xrayConsidered = xrayBranchPoolSize.recent_scan;
+            break;
+          case "none":
+            xrayConsidered = recalledMemoryCount;
+            break;
+          default: {
+            // Compile-time guard: adding a new `recallSource` value
+            // must force this switch to be updated.
+            const _exhaustive: never = recallSource;
+            void _exhaustive;
+            xrayConsidered = recalledMemoryCount;
+          }
+        }
+        // `considered` must never be less than `admitted` — in degenerate
+        // flows where a branch's pool counter missed an assignment, prefer
+        // the admitted count as the floor so the trace stays self-consistent.
+        xrayConsidered = Math.max(xrayConsidered, recalledMemoryIds.length);
         const filters: RecallFilterTrace[] = [
           {
             name: "recall-result-limit",
@@ -13535,10 +13573,10 @@ export class Orchestrator {
     /**
      * Optional out-parameter that receives the pre-MMR / pre-truncation
      * pool size captured inside the pipeline (issue #570 PR 1).  The
-     * X-ray capture block in `recallInternal` passes a small sink
-     * here so `xrayCandidatePoolSize` can reflect what cold-fallback
-     * really saw before its own truncation step.  Unset by default so
-     * existing call sites are unaffected.
+     * X-ray capture block in `recallInternal` passes a small sink so
+     * the cold-fallback branch's pre-truncation pool size can be
+     * attributed back to the branch when `recallSource === "cold_fallback"`.
+     * Unset by default so existing call sites are unaffected.
      */
     xrayPoolSizeSink?: { size: number };
   }): Promise<QmdSearchResult[]> {
