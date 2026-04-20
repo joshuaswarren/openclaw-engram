@@ -668,7 +668,11 @@ async function resolveAllBenchmarks(): Promise<string[]> {
   const packageBenchmarks = await loadBenchDefinitionsFromPackage();
   if (packageBenchmarks) {
     return packageBenchmarks
-      .filter((entry) => entry.runnerAvailable)
+      .filter(
+        (entry) =>
+          entry.runnerAvailable
+          && entry.meta?.category !== "ingestion",
+      )
       .map((entry) => entry.id);
   }
 
@@ -676,7 +680,9 @@ async function resolveAllBenchmarks(): Promise<string[]> {
     return [];
   }
 
-  return BENCHMARK_CATALOG.map((entry) => entry.id);
+  return BENCHMARK_CATALOG
+    .filter((entry) => entry.category !== "ingestion")
+    .map((entry) => entry.id);
 }
 
 async function resolveKnownBenchmarkIds(): Promise<Set<string>> {
@@ -754,6 +760,10 @@ const DOWNLOADABLE_BENCHMARK_DATASETS = [
   "amemgym",
   "longmemeval",
   "locomo",
+  "beam",
+  "personamem",
+  "membench",
+  "memoryagentbench",
 ] as const;
 
 // Required content markers per benchmark. `anyOf` lists the filenames
@@ -773,6 +783,56 @@ const DOWNLOADED_DATASET_MARKERS: Record<string, { anyOf?: string[]; ext?: strin
   },
   locomo: { anyOf: ["locomo10.json", "locomo.json"] },
   "memory-arena": { ext: ".jsonl" },
+  beam: {
+    anyOf: [
+      "beam_100k.json",
+      "beam_500k.json",
+      "beam_1m.json",
+      "beam_10m.json",
+      "100k.json",
+      "500k.json",
+      "1m.json",
+      "10m.json",
+    ],
+  },
+  personamem: {
+    anyOf: [
+      "benchmark/text/benchmark.csv",
+      "benchmark/benchmark.csv",
+      "benchmark.csv",
+    ],
+  },
+  membench: {
+    anyOf: [
+      "membench.json",
+      "membench.jsonl",
+      "data.json",
+      "FirstAgentDataLowLevel.json",
+      "FirstAgentDataHighLevel.json",
+      "ThirdAgentDataLowLevel.json",
+      "ThirdAgentDataHighLevel.json",
+      "FirstAgentDataLowLevel.jsonl",
+      "FirstAgentDataHighLevel.jsonl",
+      "ThirdAgentDataLowLevel.jsonl",
+      "ThirdAgentDataHighLevel.jsonl",
+    ],
+  },
+  memoryagentbench: {
+    anyOf: [
+      "memoryagentbench.json",
+      "memoryagentbench.jsonl",
+      "MemoryAgentBench.json",
+      "MemoryAgentBench.jsonl",
+      "Accurate_Retrieval.json",
+      "Accurate_Retrieval.jsonl",
+      "Test_Time_Learning.json",
+      "Test_Time_Learning.jsonl",
+      "Long_Range_Understanding.json",
+      "Long_Range_Understanding.jsonl",
+      "Conflict_Resolution.json",
+      "Conflict_Resolution.jsonl",
+    ],
+  },
 };
 
 function isDatasetDownloaded(datasetPath: string, benchmarkId: string): boolean {
@@ -1577,11 +1637,6 @@ async function runBenchViaPackage(
     parsed.quick,
     parsed.datasetDir,
   );
-  if (!parsed.quick && !datasetDir) {
-    throw new Error(
-      `full benchmark runs for "${benchmarkId}" require dataset files. Run "remnic bench datasets download ${benchmarkId}" or pass --dataset-dir <path>.`,
-    );
-  }
 
   const system = await plan.createAdapter(plan.runtime.adapterOptions);
 

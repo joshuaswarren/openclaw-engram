@@ -85,9 +85,10 @@ full runs need a real benchmark dataset. In a repo checkout the CLI will use
 `evals/datasets/<benchmark>` automatically; in packaged installs pass
 `--dataset-dir <path>` explicitly.
 
-`remnic bench datasets download` currently manages the script-backed published
-datasets for `ama-bench`, `memory-arena`, `amemgym`, `longmemeval`, and `locomo`.
-Other benchmark fixtures remain repo-managed or need manual dataset wiring.
+`remnic bench datasets download` currently manages the published benchmark
+datasets for `ama-bench`, `memory-arena`, `amemgym`, `longmemeval`, `locomo`,
+`beam`, `personamem`, `membench`, and `memoryagentbench`. Internal Remnic
+benchmarks keep their bundled or repo-managed fixtures.
 
 ## Connecting agents
 

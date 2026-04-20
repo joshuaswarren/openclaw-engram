@@ -22,6 +22,19 @@ test("bench surface publishes the phase-1 benchmark catalog and quick-run fallba
   for (const benchmarkId of ["ama-bench", "memory-arena", "amemgym", "longmemeval", "locomo"]) {
     assert.match(source, new RegExp(`id: "${benchmarkId}"`));
   }
+  for (const datasetBenchmarkId of [
+    "ama-bench",
+    "memory-arena",
+    "amemgym",
+    "longmemeval",
+    "locomo",
+    "beam",
+    "personamem",
+    "membench",
+    "memoryagentbench",
+  ]) {
+    assert.match(source, new RegExp(`"${datasetBenchmarkId}"`));
+  }
   assert.match(source, /args\.push\("--lightweight", "--limit", "1"\)/);
   assert.match(source, /args\.push\("--dataset-dir", parsed\.datasetDir\)/);
   assert.match(source, /Use 'remnic bench list' to see available\./);
@@ -71,6 +84,8 @@ test("CLI README documents bench list and quick-run examples", async () => {
   assert.match(readme, /remnic benchmark run --quick longmemeval/);
   assert.match(readme, /bundled smoke fixture/i);
   assert.match(readme, /full runs need a real benchmark dataset/i);
+  assert.match(readme, /datasets for `ama-bench`, `memory-arena`, `amemgym`, `longmemeval`, `locomo`,/);
+  assert.match(readme, /`beam`, `personamem`, `membench`, and `memoryagentbench`/);
 });
 
 test("CLI uses package-owned adapters for migrated benchmark runs", async () => {
@@ -90,7 +105,10 @@ test("--all selection resolves to runnable package benchmarks when package metad
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
 
   assert.match(source, /async function resolveAllBenchmarks\(\)/);
-  assert.match(source, /packageBenchmarks\s*\n\s*\.filter\(\(entry\) => entry\.runnerAvailable\)/s);
+  assert.match(
+    source,
+    /packageBenchmarks\s*\n\s*\.filter\(\s*\(entry\) =>\s*entry\.runnerAvailable\s*&&\s*entry\.meta\?\.category !== "ingestion"/s,
+  );
   assert.match(source, /const selectedBenchmarks = parsed\.all\s+\? await resolveAllBenchmarks\(\)/s);
   assert.match(source, /async function resolveKnownBenchmarkIds\(\): Promise<Set<string>>/);
   assert.match(source, /const knownBenchmarkIds = await resolveKnownBenchmarkIds\(\);/);
@@ -121,8 +139,7 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /if \(parsed\.custom\) \{/);
   assert.match(source, /const outputDir = resolveBenchOutputDir\(\);/);
   assert.match(source, /const datasetDir = resolveBenchDatasetDir\(/);
-  assert.match(source, /if \(!parsed\.quick && !datasetDir\) \{\s*throw new Error\(/s);
-  assert.match(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
+  assert.doesNotMatch(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
   assert.match(source, /const runtime = await resolvePackageBenchRuntime\(/);
   assert.match(source, /const plans = await buildPackageBenchExecutionPlans\(/);
   assert.match(source, /const system = await plan\.createAdapter\(plan\.runtime\.adapterOptions\);/);

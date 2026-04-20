@@ -77,8 +77,9 @@ class OpenAiCompatibleProvider implements LlmProvider {
     });
 
     if (!response.ok) {
+      const errorBody = await readErrorBody(response);
       throw new Error(
-        `OpenAI-compatible completion failed: ${response.status} ${response.statusText}`,
+        `OpenAI-compatible completion failed: ${response.status} ${response.statusText}${errorBody ? ` — ${errorBody}` : ""}`,
       );
     }
 
@@ -168,6 +169,19 @@ class OpenAiCompatibleProvider implements LlmProvider {
       : pathname;
 
     return `${normalizedBase}/${normalizedPath}`;
+  }
+}
+
+async function readErrorBody(response: Response): Promise<string> {
+  try {
+    const text = (await response.text()).trim();
+    if (text.length === 0) {
+      return "";
+    }
+
+    return text.replace(/\s+/g, " ").slice(0, 400);
+  } catch {
+    return "";
   }
 }
 

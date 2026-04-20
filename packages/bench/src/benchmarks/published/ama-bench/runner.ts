@@ -261,12 +261,11 @@ function parseEpisode(line: string, lineNumber: number): AMABenchEpisode {
   if (!Number.isFinite(record.num_turns) || !Number.isFinite(record.total_tokens)) {
     throw new Error(`${location} must include numeric num_turns and total_tokens fields.`);
   }
-  if (!isValidTrajectory(record.trajectory)) {
-    throw new Error(`${location} must include a trajectory array with action/observation turns.`);
-  }
   if (!isValidQaPairs(record.qa_pairs)) {
     throw new Error(`${location} must include a qa_pairs array with question/answer/type/question_uuid strings.`);
   }
+
+  const trajectory = normalizeTrajectory(record.trajectory, location);
 
   return {
     episode_id: record.episode_id as number,
@@ -276,22 +275,48 @@ function parseEpisode(line: string, lineNumber: number): AMABenchEpisode {
     success: record.success as boolean,
     num_turns: record.num_turns as number,
     total_tokens: record.total_tokens as number,
-    trajectory: record.trajectory as AMABenchEpisode["trajectory"],
+    trajectory,
     qa_pairs: record.qa_pairs as AMABenchEpisode["qa_pairs"],
   };
 }
 
-function isValidTrajectory(value: unknown): value is AMABenchEpisode["trajectory"] {
-  return Array.isArray(value)
-    && value.every(
-      (turn) =>
-        !!turn
-        && typeof turn === "object"
-        && !Array.isArray(turn)
-        && Number.isInteger((turn as Record<string, unknown>).turn_idx)
-        && typeof (turn as Record<string, unknown>).action === "string"
-        && typeof (turn as Record<string, unknown>).observation === "string",
-    );
+function normalizeTrajectory(
+  value: unknown,
+  location: string,
+): AMABenchEpisode["trajectory"] {
+  if (!Array.isArray(value)) {
+    throw new Error(`${location} must include a trajectory array with action/observation turns.`);
+  }
+
+  return value.map((turn, index) => {
+    if (!turn || typeof turn !== "object" || Array.isArray(turn)) {
+      throw new Error(`${location} trajectory[${index}] must be an object.`);
+    }
+
+    const record = turn as Record<string, unknown>;
+    if (!Number.isInteger(record.turn_idx)) {
+      throw new Error(`${location} trajectory[${index}] must include an integer turn_idx.`);
+    }
+
+    return {
+      turn_idx: record.turn_idx as number,
+      action: normalizeTrajectoryText(record.action, `${location} trajectory[${index}].action`),
+      observation: normalizeTrajectoryText(
+        record.observation,
+        `${location} trajectory[${index}].observation`,
+      ),
+    };
+  });
+}
+
+function normalizeTrajectoryText(value: unknown, field: string): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value === null) {
+    return "";
+  }
+  throw new Error(`${field} must be a string or null.`);
 }
 
 function isValidQaPairs(value: unknown): value is AMABenchEpisode["qa_pairs"] {
