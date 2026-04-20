@@ -100,6 +100,13 @@ import {
   type TierMigrationStatusSnapshot,
 } from "./recall-state.js";
 import {
+  buildXraySnapshot,
+  type RecallFilterTrace,
+  type RecallXrayResult,
+  type RecallXraySnapshot,
+  type RecallXrayServedBy,
+} from "./recall-xray.js";
+import {
   recordEvalShadowRecall,
   type EvalShadowRecallRecord,
 } from "./evals.js";
@@ -461,11 +468,59 @@ export interface RecallModeDecision {
   graphReason?: string;
 }
 
+/**
+ * Map the orchestrator's internal `recallSource` strings to the
+ * X-ray `servedBy` vocabulary (issue #570 PR 1).  The X-ray tier
+ * ladder intentionally flattens QMD / embedding / cold-fallback to
+ * the `hybrid` tier because they all materialize through the same
+ * hybrid BM25+vector pipeline from the caller's perspective.  The
+ * `recent_scan` path gets its own dedicated tier because it bypasses
+ * the hybrid pipeline entirely.  `none` is treated as `hybrid` on the
+ * theory that a query that returned nothing still routed through the
+ * hybrid pipeline — but callers should normally gate capture on
+ * `recalledMemoryIds.length > 0`.
+ */
+function mapRecallSourceToXrayServedBy(
+  source:
+    | "none"
+    | "hot_qmd"
+    | "hot_embedding"
+    | "cold_fallback"
+    | "recent_scan",
+): RecallXrayServedBy {
+  // Exhaustive switch: every current union member is explicitly
+  // listed so TypeScript surfaces a compile error if a new source is
+  // added without a deliberate mapping.  The `never`-typed fallthrough
+  // keeps the function total at runtime — if the caller passes an
+  // unexpected value that slipped past the type system (e.g. a JSON
+  // deserialization), we still fall back to `hybrid`.
+  switch (source) {
+    case "recent_scan":
+      return "recent-scan";
+    case "hot_qmd":
+    case "hot_embedding":
+    case "cold_fallback":
+    case "none":
+      return "hybrid";
+  }
+  const _exhaustive: never = source;
+  void _exhaustive;
+  return "hybrid";
+}
+
 export interface RecallInvocationOptions {
   namespace?: string;
   topK?: number;
   mode?: RecallPlanMode;
   abortSignal?: AbortSignal;
+  /**
+   * Capture a `RecallXraySnapshot` for this recall (issue #570).  When
+   * `true`, the orchestrator builds a snapshot from the data it has
+   * already gathered and stashes it in memory, accessible via
+   * `getLastXraySnapshot()`.  When `false` or absent, nothing is
+   * captured and recall behavior is unchanged (schema-only slice).
+   */
+  xrayCapture?: boolean;
 }
 
 type QueryAwarePrefilter = {
@@ -1124,6 +1179,16 @@ export class Orchestrator {
   readonly negatives: NegativeExampleStore;
   readonly lastRecall: LastRecallStore;
   readonly tierMigrationStatus: TierMigrationStatusStore;
+  /**
+   * In-memory X-ray snapshot from the most recent `recall()` call that
+   * was invoked with `xrayCapture: true` (issue #570 PR 1).  Scope is
+   * per-process; later slices add CLI/HTTP/MCP surfaces that consume
+   * this via the shared renderer.  `null` until the first capture, and
+   * NEVER overwritten by a recall that did not request capture —
+   * requests without the flag leave prior captures intact so the
+   * capturing caller can still read their snapshot back.
+   */
+  private lastXraySnapshot: RecallXraySnapshot | null = null;
   readonly embeddingFallback: EmbeddingFallback;
   private readonly conversationIndexDir: string;
   private readonly extraction: ExtractionEngine;
@@ -3986,6 +4051,23 @@ export class Orchestrator {
   }
 
   /**
+   * Return the most recent X-ray snapshot captured during a
+   * `recall()` call that passed `xrayCapture: true` (issue #570 PR 1).
+   * Returns `null` when no such capture has occurred on this
+   * orchestrator instance.  Returned snapshot is a deep copy so
+   * caller mutation cannot tear the stored value.
+   */
+  getLastXraySnapshot(): RecallXraySnapshot | null {
+    if (!this.lastXraySnapshot) return null;
+    return structuredClone(this.lastXraySnapshot);
+  }
+
+  /** Clear the captured X-ray snapshot.  Exposed for tests / explicit reset. */
+  clearLastXraySnapshot(): void {
+    this.lastXraySnapshot = null;
+  }
+
+  /**
    * Await the in-flight observation-mode direct-answer annotation chain.
    * Resolves to true when settled, false on timeout.
    */
@@ -5279,6 +5361,31 @@ export class Orchestrator {
     let recalledMemoryCount = 0;
     let recalledMemoryIds: string[] = [];
     let recalledMemoryPaths: string[] = [];
+    // Per-branch pre-limit candidate pool size for the X-ray filter
+    // trace (issue #570 PR 1).  `recalledMemoryCount` is assigned
+    // AFTER MMR + truncation so using it alone would make the
+    // `recall-result-limit` trace report `considered == admitted`
+    // even when many candidates were dropped.  Each entry captures
+    // the pool size BEFORE truncation at that branch.  The X-ray
+    // capture block picks the pool that corresponds to the branch
+    // that actually produced the admitted results (via `recallSource`)
+    // so a pool from a branch whose candidates were killed by an
+    // earlier gate cannot leak into the `considered` count.
+    const xrayBranchPoolSize: Record<
+      "hot_qmd" | "hot_embedding" | "cold_fallback" | "recent_scan",
+      number
+    > = {
+      hot_qmd: 0,
+      hot_embedding: 0,
+      cold_fallback: 0,
+      recent_scan: 0,
+    };
+    // Shared out-parameter sink the cold-fallback pipeline writes
+    // its pre-truncation pool size into (issue #570 PR 1).  Declared
+    // once so every call to `applyColdFallbackPipeline` (four call
+    // sites) updates the same counter; the X-ray capture block
+    // reads this as the cold-fallback pool.
+    const xrayColdPoolSink = { size: 0 };
     let identityInjectionModeUsed: IdentityInjectionMode | "none" = "none";
     let identityInjectedChars = 0;
     let identityInjectionTruncated = false;
@@ -5441,6 +5548,44 @@ export class Orchestrator {
       const earlySessionKey = sessionKey ?? "default";
       this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
+      // X-ray capture for the `no_recall` early-return path
+      // (issue #570 PR 1).  `no_recall` skips retrieval entirely, so
+      // the snapshot carries zero results and an empty-budget accounting
+      // — but we STILL capture it when the caller opts in so
+      // `getLastXraySnapshot()` returns a useful debug document rather
+      // than silently `null` (or a stale prior capture).
+      //
+      // Skip capture when the caller has already aborted this recall —
+      // otherwise a canceled call could clobber a prior successful
+      // capture (issue #570 PR 1 review follow-up).
+      if (
+        options.xrayCapture === true &&
+        !options.abortSignal?.aborted
+      ) {
+        try {
+          this.lastXraySnapshot = buildXraySnapshot({
+            query: retrievalQuery,
+            tierExplain: null,
+            results: [],
+            filters: [
+              {
+                name: "planner-mode",
+                considered: 0,
+                admitted: 0,
+                reason: "no_recall",
+              },
+            ],
+            budget: { chars: this.getRecallBudgetChars(), used: 0 },
+            sessionKey,
+            namespace: selfNamespace,
+            traceId,
+          });
+        } catch (err) {
+          // Capture is a best-effort side channel: a capture failure
+          // must NEVER propagate into the primary recall path.
+          log.debug(`x-ray capture (no_recall) failed: ${err}`);
+        }
+      }
       if (sessionKey) {
         this.lastRecall
           .record({
@@ -7768,6 +7913,14 @@ export class Orchestrator {
         preAugmentTopScore > 0
           ? Math.max(preAugmentTopScore, maxSpecializedScore)
           : 0;
+      // Capture pre-gate pool size for X-ray before the confidence
+      // gate can zero `memoryResults`.  Placing the capture after the
+      // gate would record 0 instead of the true pre-gate pool size
+      // (issue #570 PR 1 review follow-up).
+      xrayBranchPoolSize.hot_qmd = Math.max(
+        xrayBranchPoolSize.hot_qmd,
+        memoryResults.length,
+      );
       let confidenceGateRejected = false;
       if (this.config.recallConfidenceGateEnabled && effectiveGateScore > 0) {
         if (effectiveGateScore < this.config.recallConfidenceGateThreshold) {
@@ -7886,6 +8039,10 @@ export class Orchestrator {
         );
         // MMR runs on the pre-truncation pool so diverse candidates just
         // below the cutoff can be promoted into the injected set.
+        xrayBranchPoolSize.hot_embedding = Math.max(
+          xrayBranchPoolSize.hot_embedding,
+          boostedScoped.length,
+        );
         const scoped = this.diversifyAndLimitRecallResults(
           "memories",
           boostedScoped,
@@ -7925,6 +8082,7 @@ export class Orchestrator {
             recallMode,
             queryAwarePrefilter,
             abortSignal: options.abortSignal,
+            xrayPoolSizeSink: xrayColdPoolSink,
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -8019,6 +8177,10 @@ export class Orchestrator {
       );
       // MMR runs on the pre-truncation pool so diverse candidates just
       // below the cutoff can be promoted into the injected set.
+      xrayBranchPoolSize.hot_embedding = Math.max(
+        xrayBranchPoolSize.hot_embedding,
+        boostedScoped.length,
+      );
       const scoped = this.diversifyAndLimitRecallResults(
         "memories",
         boostedScoped,
@@ -8109,6 +8271,7 @@ export class Orchestrator {
               recallMode,
               queryAwarePrefilter,
               abortSignal: options.abortSignal,
+              xrayPoolSizeSink: xrayColdPoolSink,
             });
             if (longTerm.length > 0) {
               recallSource = "cold_fallback";
@@ -8160,6 +8323,10 @@ export class Orchestrator {
             ).sort((a, b) => b.score - a.score);
             // MMR runs on the pre-truncation pool so diverse candidates just
             // below the cutoff can be promoted into the injected set.
+            xrayBranchPoolSize.recent_scan = Math.max(
+              xrayBranchPoolSize.recent_scan,
+              boostedRecent.length,
+            );
             const recent = this.diversifyAndLimitRecallResults(
               "memories",
               boostedRecent,
@@ -8200,6 +8367,7 @@ export class Orchestrator {
                 recallMode,
                 queryAwarePrefilter,
                 abortSignal: options.abortSignal,
+                xrayPoolSizeSink: xrayColdPoolSink,
               });
               if (longTerm.length > 0) {
                 if (shouldPersistGraphSnapshot) {
@@ -8239,6 +8407,7 @@ export class Orchestrator {
             recallMode,
             queryAwarePrefilter,
             abortSignal: options.abortSignal,
+            xrayPoolSizeSink: xrayColdPoolSink,
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -8444,6 +8613,116 @@ export class Orchestrator {
       includedSections: assembledRecall.includedIds,
       omittedSections: assembledRecall.omittedIds,
     });
+
+    // X-ray capture (issue #570 PR 1).  Only fires when the caller
+    // explicitly opts in via `xrayCapture: true`.  No behavior change
+    // when the flag is absent — this branch and the setter both
+    // short-circuit.  Captured data is composed from values we have
+    // already derived above, so capture cost is a single object
+    // allocation; no new recall work is performed.
+    //
+    // Skip capture when the caller has already aborted this recall —
+    // otherwise a canceled call could clobber a prior successful
+    // capture that the capturing caller has not yet read back
+    // (issue #570 PR 1 review follow-up).
+    if (
+      options.xrayCapture === true &&
+      !options.abortSignal?.aborted
+    ) {
+      try {
+        const servedBy = mapRecallSourceToXrayServedBy(recallSource);
+        // Derive xray results from `recalledMemoryPaths` as the single
+        // source of truth — `recalledMemoryIds` and `recalledMemoryPaths`
+        // are built with two independent filters upstream
+        // (`extractMemoryIdsFromResults` drops paths whose filename does
+        // not match `*.md`, while `.map(path).filter(Boolean)` drops
+        // empty paths only), so zipping them positionally would silently
+        // misalign when the two filters differ.  Re-deriving `memoryId`
+        // from the path here guarantees `memoryId` and `path` refer to
+        // the same underlying result.
+        const idFromPath = (p: string): string | null => {
+          const match = p.match(/([^/]+)\.md$/);
+          return match ? match[1] ?? null : null;
+        };
+        const results: RecallXrayResult[] = [];
+        for (const recalledPath of recalledMemoryPaths) {
+          const derivedId = idFromPath(recalledPath);
+          if (!derivedId) continue;
+          results.push({
+            memoryId: derivedId,
+            path: recalledPath,
+            servedBy,
+            scoreDecomposition: { final: 0 },
+            admittedBy: [],
+          });
+        }
+        // `considered` must reflect the pool size of the branch that
+        // actually produced the admitted results, NOT the max across
+        // every branch that ran.  Otherwise a flow where hot_qmd
+        // assembled a large pool that was killed by the confidence
+        // gate and a different branch (or none) ultimately served
+        // the recall would report hot_qmd's pool as "considered" —
+        // incorrectly attributing those drops to the result limit.
+        // Pick the pool by `recallSource`; fall back to
+        // `recalledMemoryCount` when no branch ran (e.g. every branch
+        // returned zero).  This path never runs for `no_recall` —
+        // that branch captures its own snapshot earlier.
+        let xrayConsidered: number;
+        switch (recallSource) {
+          case "hot_qmd":
+            xrayConsidered = xrayBranchPoolSize.hot_qmd;
+            break;
+          case "hot_embedding":
+            xrayConsidered = xrayBranchPoolSize.hot_embedding;
+            break;
+          case "cold_fallback":
+            xrayConsidered = xrayColdPoolSink.size;
+            break;
+          case "recent_scan":
+            xrayConsidered = xrayBranchPoolSize.recent_scan;
+            break;
+          case "none":
+            xrayConsidered = recalledMemoryCount;
+            break;
+          default: {
+            // Compile-time guard: adding a new `recallSource` value
+            // must force this switch to be updated.
+            const _exhaustive: never = recallSource;
+            void _exhaustive;
+            xrayConsidered = recalledMemoryCount;
+          }
+        }
+        // `considered` must never be less than `admitted` — in degenerate
+        // flows where a branch's pool counter missed an assignment, prefer
+        // the admitted count as the floor so the trace stays self-consistent.
+        xrayConsidered = Math.max(xrayConsidered, recalledMemoryIds.length);
+        const filters: RecallFilterTrace[] = [
+          {
+            name: "recall-result-limit",
+            considered: xrayConsidered,
+            admitted: recalledMemoryIds.length,
+          },
+        ];
+        this.lastXraySnapshot = buildXraySnapshot({
+          query: retrievalQuery,
+          tierExplain: null,
+          results,
+          filters,
+          budget: {
+            chars: this.getRecallBudgetChars(),
+            used: assembledRecall.finalChars,
+          },
+          sessionKey,
+          namespace: selfNamespace,
+          traceId,
+        });
+      } catch (err) {
+        // Capture is a best-effort side channel: a capture failure
+        // must NEVER propagate into the primary recall path.
+        log.debug(`x-ray capture failed: ${err}`);
+      }
+    }
+
     if (sessionKey) {
       throwIfRecallAborted(options.abortSignal);
       this.lastRecall
@@ -13301,6 +13580,15 @@ export class Orchestrator {
     recallMode: RecallPlanMode;
     queryAwarePrefilter?: QueryAwarePrefilter;
     abortSignal?: AbortSignal;
+    /**
+     * Optional out-parameter that receives the pre-MMR / pre-truncation
+     * pool size captured inside the pipeline (issue #570 PR 1).  The
+     * X-ray capture block in `recallInternal` passes a small sink so
+     * the cold-fallback branch's pre-truncation pool size can be
+     * attributed back to the branch when `recallSource === "cold_fallback"`.
+     * Unset by default so existing call sites are unaffected.
+     */
+    xrayPoolSizeSink?: { size: number };
   }): Promise<QmdSearchResult[]> {
     const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
     const coldCollection =
@@ -13433,6 +13721,12 @@ export class Orchestrator {
     // the diversification policy applied in the hot QMD/embedding/recent
     // paths. Running MMR post-slice would be unable to promote diverse
     // candidates sitting just below the cutoff.
+    if (options.xrayPoolSizeSink) {
+      options.xrayPoolSizeSink.size = Math.max(
+        options.xrayPoolSizeSink.size,
+        results.length,
+      );
+    }
     return this.diversifyAndLimitRecallResults(
       "memories",
       results,
