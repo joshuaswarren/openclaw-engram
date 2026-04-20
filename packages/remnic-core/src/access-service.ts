@@ -1248,12 +1248,13 @@ export class EngramAccessService {
     }
 
     // Serialize x-ray invocations behind a per-service mutex so the
-    // shared `orchestrator.config.recallBudgetChars` swap cannot
-    // interleave across concurrent callers.  Global mutation is
-    // unavoidable here because `orchestrator.recall()` does not
-    // accept a per-call budget — the mutex keeps request isolation
-    // intact until that signature widens.  `getLastXraySnapshot`
-    // is also per-process state this serialization protects.
+    // per-process `getLastXraySnapshot()` slot cannot be clobbered by
+    // a concurrent capturing call before this caller reads it back.
+    // Budget and principal are now threaded through
+    // `RecallInvocationOptions`, so global config mutation is gone
+    // (CLAUDE.md rule 47: no shared mutable state across async
+    // boundaries).  The mutex stays only for the snapshot-slot
+    // ordering guarantee.
     const previousQueue = this.xrayQueue;
     let release: () => void = () => {};
     this.xrayQueue = new Promise<void>((resolve) => {
@@ -1261,30 +1262,30 @@ export class EngramAccessService {
     });
     await previousQueue;
 
-    // When the caller supplies an authenticated principal but no
-    // sessionKey, thread the principal in as the sessionKey so the
-    // downstream `resolvePrincipal(sessionKey)` in the orchestrator
-    // evaluates ACLs against the SAME principal that the pre-check
-    // above authorized.  Otherwise the orchestrator would default to
-    // the unauthenticated principal and could reject or serve the
-    // wrong scope despite the pre-check passing.
-    const recallSessionKey =
-      request.sessionKey?.trim()
-      || authenticatedPrincipal
-      || undefined;
-
-    const originalBudget = this.orchestrator.config.recallBudgetChars;
-    if (budgetOverride !== undefined) {
-      this.orchestrator.config.recallBudgetChars = budgetOverride;
-    }
     try {
       // Clear any prior snapshot so a capture failure surfaces as
       // `{snapshotFound: false}` rather than returning stale data
       // from an earlier call on the same orchestrator.
       this.orchestrator.clearLastXraySnapshot();
-      await this.orchestrator.recall(query, recallSessionKey, {
+      await this.orchestrator.recall(query, request.sessionKey?.trim() || undefined, {
         xrayCapture: true,
         ...(requestedNamespace ? { namespace: requestedNamespace } : {}),
+        ...(budgetOverride !== undefined
+          ? { budgetCharsOverride: budgetOverride }
+          : {}),
+        // When the caller supplies an authenticated principal, forward
+        // it via the dedicated override channel so orchestrator-side
+        // ACL decisions use the SAME principal the access-surface
+        // pre-check above authorized.  Threading an
+        // `authenticatedPrincipal` through `sessionKey` would be wrong:
+        // `resolvePrincipal(sessionKey)` only maps configured raw
+        // session keys and otherwise collapses to `"default"`, which
+        // in namespace-enabled deployments produces false denials /
+        // wrong-scope serving despite the pre-check passing
+        // (CLAUDE.md rule 42).
+        ...(authenticatedPrincipal
+          ? { principalOverride: authenticatedPrincipal }
+          : {}),
       });
 
       const snapshot = this.orchestrator.getLastXraySnapshot();
@@ -1300,9 +1301,6 @@ export class EngramAccessService {
       }
       return { snapshotFound: true, snapshot };
     } finally {
-      if (budgetOverride !== undefined) {
-        this.orchestrator.config.recallBudgetChars = originalBudget;
-      }
       release();
     }
   }

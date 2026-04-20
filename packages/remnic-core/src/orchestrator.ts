@@ -526,6 +526,27 @@ export interface RecallInvocationOptions {
    * captured and recall behavior is unchanged (schema-only slice).
    */
   xrayCapture?: boolean;
+  /**
+   * Per-invocation override for `recallBudgetChars` (issue #570 PR 3/4).
+   * Flows through `getRecallBudgetChars()` for this recall only — no
+   * shared config mutation, so concurrent recalls on the same
+   * orchestrator are not affected (CLAUDE.md rule 47: no shared
+   * mutable state across async boundaries).  Must be a non-negative
+   * finite integer; non-conforming values are ignored and the
+   * configured budget is used.
+   */
+  budgetCharsOverride?: number;
+  /**
+   * Per-invocation principal override (issue #570 PR 4).  When set,
+   * the orchestrator uses this principal for ACL / namespace checks
+   * instead of `resolvePrincipal(sessionKey, config)`.  This is the
+   * escape hatch for access surfaces (HTTP / MCP) that have already
+   * authenticated the caller upstream — threading an unmapped
+   * principal through the session-key-based resolver would otherwise
+   * collapse it to `"default"` and produce false denials in
+   * namespace-enabled deployments (CLAUDE.md rule 42).
+   */
+  principalOverride?: string;
 }
 
 type QueryAwarePrefilter = {
@@ -5276,7 +5297,14 @@ export class Orchestrator {
     return reserved;
   }
 
-  private getRecallBudgetChars(): number {
+  private getRecallBudgetChars(override?: number): number {
+    if (
+      typeof override === "number" &&
+      Number.isFinite(override) &&
+      override >= 0
+    ) {
+      return Math.floor(override);
+    }
     const configuredBudget = this.config.recallBudgetChars;
     if (
       typeof configuredBudget === "number" &&
@@ -5296,7 +5324,10 @@ export class Orchestrator {
     return 0;
   }
 
-  private assembleRecallSections(sectionBuckets: Map<string, string[]>): {
+  private assembleRecallSections(
+    sectionBuckets: Map<string, string[]>,
+    budgetOverride?: number,
+  ): {
     sections: string[];
     includedIds: string[];
     omittedIds: string[];
@@ -5325,7 +5356,7 @@ export class Orchestrator {
       orderedEntries.push({ id, content: chunks.join("\n\n") });
     }
 
-    const budget = this.getRecallBudgetChars();
+    const budget = this.getRecallBudgetChars(budgetOverride);
     if (budget === 0) {
       return {
         sections: [],
@@ -5601,7 +5632,18 @@ export class Orchestrator {
       this.config.verbatimArtifactsMaxRecall,
     );
     const embeddingFetchLimit = computedFetchLimit;
-    const principal = resolvePrincipal(sessionKey, this.config);
+    // Principal resolution honours the access-surface override (issue
+    // #570 PR 4).  Access surfaces that have already authenticated the
+    // caller at the transport layer (HTTP / MCP) pass their resolved
+    // principal directly so namespace ACL decisions use the same
+    // identity the surface authorized, instead of re-running
+    // `resolvePrincipal(sessionKey)` which only maps raw session keys
+    // through configured rules and otherwise collapses to `"default"`.
+    const principal =
+      typeof options.principalOverride === "string"
+        && options.principalOverride.length > 0
+        ? options.principalOverride
+        : resolvePrincipal(sessionKey, this.config);
     const namespaceOverride = options.namespace?.trim() || undefined;
     const readableRecallNamespaces = recallNamespacesForPrincipal(
       principal,
@@ -5740,7 +5782,10 @@ export class Orchestrator {
                 reason: "no_recall",
               },
             ],
-            budget: { chars: this.getRecallBudgetChars(), used: 0 },
+            budget: {
+              chars: this.getRecallBudgetChars(options.budgetCharsOverride),
+              used: 0,
+            },
             sessionKey,
             namespace: selfNamespace,
             traceId,
@@ -8759,7 +8804,10 @@ export class Orchestrator {
       .join(", ");
     log.info(`recall timings: ${timingParts}`);
 
-    const assembledRecall = this.assembleRecallSections(sectionBuckets);
+    const assembledRecall = this.assembleRecallSections(
+      sectionBuckets,
+      options.budgetCharsOverride,
+    );
     const context =
       assembledRecall.sections.length === 0
         ? ""
@@ -8874,7 +8922,7 @@ export class Orchestrator {
           results,
           filters,
           budget: {
-            chars: this.getRecallBudgetChars(),
+            chars: this.getRecallBudgetChars(options.budgetCharsOverride),
             used: assembledRecall.finalChars,
           },
           sessionKey,

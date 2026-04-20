@@ -145,23 +145,35 @@ test("recallXray clears any prior snapshot before capturing", async () => {
   assert.equal(state.clearedSnapshot, 1);
 });
 
-test("recallXray threads budget override and restores config afterwards", async () => {
-  const { orchestrator } = stubOrchestrator({
+test("recallXray threads budget via RecallInvocationOptions, never mutates shared config", async () => {
+  const { orchestrator, state } = stubOrchestrator({
     recallBudgetChars: 1000,
     snapshot: null,
   });
-  let observedBudgetDuringRecall = 0;
-  orchestrator.recall = async () => {
-    observedBudgetDuringRecall = orchestrator.config.recallBudgetChars;
+  const observedConfigDuringRecall: number[] = [];
+  const observedOptions: Array<Record<string, unknown>> = [];
+  orchestrator.recall = async (
+    _prompt: string,
+    _sessionKey: string | undefined,
+    options: Record<string, unknown>,
+  ) => {
+    observedConfigDuringRecall.push(orchestrator.config.recallBudgetChars);
+    observedOptions.push(options);
+    state.lastOptions = options;
     return "ctx";
   };
   const service = new EngramAccessService(orchestrator as any);
   await service.recallXray({ query: "q", budget: 2048 });
-  assert.equal(observedBudgetDuringRecall, 2048);
+  // Codex P1 on #601: the shared config must NOT be mutated — both
+  // the observed value during the recall and the value after are the
+  // original config.  The override flows through the options bag only.
+  assert.deepEqual(observedConfigDuringRecall, [1000]);
   assert.equal(orchestrator.config.recallBudgetChars, 1000);
+  // Budget override is forwarded via RecallInvocationOptions.
+  assert.equal(observedOptions[0]?.budgetCharsOverride, 2048);
 });
 
-test("recallXray restores the budget even when recall throws", async () => {
+test("recallXray does not mutate shared config even when recall throws", async () => {
   const { orchestrator } = stubOrchestrator({ recallBudgetChars: 1000 });
   orchestrator.recall = async () => {
     throw new Error("boom");
@@ -262,8 +274,18 @@ test("recallXray requires an identity when namespaces are enabled and no namespa
   assert.equal(state.lastOptions, undefined, "no recall must fire without an identity");
 });
 
-test("recallXray threads authenticatedPrincipal as sessionKey when no sessionKey given", async () => {
+test("recallXray forwards authenticatedPrincipal via principalOverride, NOT as sessionKey", async () => {
+  // Codex P1 on #601: threading `authenticatedPrincipal` through
+  // `sessionKey` was wrong.  The orchestrator's
+  // `resolvePrincipal(sessionKey)` only maps configured raw session
+  // keys (via prefix/map/regex rules) and otherwise collapses to
+  // `"default"`.  In namespace-enabled deployments that produces
+  // false denials or wrong-scope serving for
+  // `recallXray` calls that omit `sessionKey`.  Pass the principal
+  // through `principalOverride` so the orchestrator evaluates ACLs
+  // against the SAME principal the access surface authorized.
   const capturedSessionKeys: Array<string | undefined> = [];
+  const capturedOptions: Array<Record<string, unknown>> = [];
   const { orchestrator } = stubOrchestrator({
     namespacesEnabled: true,
     namespacePolicies: [
@@ -274,8 +296,13 @@ test("recallXray threads authenticatedPrincipal as sessionKey when no sessionKey
       },
     ],
   });
-  orchestrator.recall = async (_prompt: string, sessionKey: string | undefined) => {
+  orchestrator.recall = async (
+    _prompt: string,
+    sessionKey: string | undefined,
+    options: Record<string, unknown>,
+  ) => {
     capturedSessionKeys.push(sessionKey);
+    capturedOptions.push(options);
     return "ctx";
   };
   const service = new EngramAccessService(orchestrator as any);
@@ -284,10 +311,10 @@ test("recallXray threads authenticatedPrincipal as sessionKey when no sessionKey
     namespace: "team-a",
     authenticatedPrincipal: "team-a",
   });
-  // Orchestrator must see the authenticated principal so its internal
-  // `resolvePrincipal(sessionKey)` evaluates ACLs against the same
-  // principal that the pre-check authorized.
-  assert.equal(capturedSessionKeys[0], "team-a");
+  // sessionKey must NOT be polluted with the principal.
+  assert.equal(capturedSessionKeys[0], undefined);
+  // principalOverride carries the identity to the orchestrator.
+  assert.equal(capturedOptions[0]?.principalOverride, "team-a");
 });
 
 test("recallXray drops a snapshot whose namespace is undefined when a namespace was requested", async () => {
@@ -314,36 +341,41 @@ test("recallXray drops a snapshot whose namespace is undefined when a namespace 
   assert.equal(response.snapshotFound, false);
 });
 
-test("recallXray serializes concurrent budget overrides so the config is never left in a stale state", async () => {
+test("concurrent recallXray calls each carry their own budget via options, never mutate shared config", async () => {
   const { orchestrator } = stubOrchestrator({ recallBudgetChars: 1000 });
-  const observed: number[] = [];
+  const observedBudgets: Array<number | undefined> = [];
+  const observedConfigs: number[] = [];
   let resolveFirst: () => void = () => {};
   const firstRunning = new Promise<void>((resolve) => {
     resolveFirst = resolve;
   });
   let firstCall = true;
-  orchestrator.recall = async () => {
-    observed.push(orchestrator.config.recallBudgetChars);
+  orchestrator.recall = async (
+    _prompt: string,
+    _sessionKey: string | undefined,
+    options: Record<string, unknown>,
+  ) => {
+    // Each invocation carries its own per-call budget override and
+    // sees the untouched shared config.  This is the core property
+    // the Codex P1 review required.
+    observedBudgets.push(options.budgetCharsOverride as number | undefined);
+    observedConfigs.push(orchestrator.config.recallBudgetChars);
     if (firstCall) {
       firstCall = false;
-      // Block the first recall until the second invocation has been
-      // queued.  If the second invocation raced and mutated the
-      // config, the first would observe the wrong "original" on
-      // restore.
       await firstRunning;
     }
     return "ctx";
   };
   const service = new EngramAccessService(orchestrator as any);
   const firstCallPromise = service.recallXray({ query: "a", budget: 2048 });
-  // Queue the second call while the first is mid-flight.
   const secondCallPromise = service.recallXray({ query: "b", budget: 4096 });
   resolveFirst();
   await firstCallPromise;
   await secondCallPromise;
-  // Both calls must observe THEIR budget, not whichever got
-  // clobbered by the interleaving.
-  assert.deepEqual(observed, [2048, 4096]);
-  // And the config must be fully restored afterwards.
+  // Per-call override is observed correctly for each caller.
+  assert.deepEqual(observedBudgets, [2048, 4096]);
+  // The shared config is never mutated — both recalls observe the
+  // same untouched 1000 value in `orchestrator.config.recallBudgetChars`.
+  assert.deepEqual(observedConfigs, [1000, 1000]);
   assert.equal(orchestrator.config.recallBudgetChars, 1000);
 });
