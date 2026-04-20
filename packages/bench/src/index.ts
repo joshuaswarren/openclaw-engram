@@ -302,3 +302,18 @@ export {
   assistantSynthesisDefinition,
   runAssistantSynthesisBenchmark,
 } from "./benchmarks/remnic/assistant-synthesis/runner.js";
+
+// Procedural recall ablation harness (issue #567 PR 1/5).
+export {
+  runProceduralAblation,
+  runProceduralAblationCli,
+  loadAblationFixture,
+  fixtureToAblationScenarios,
+} from "./benchmarks/remnic/procedural-recall/ablation.js";
+export type {
+  ProceduralAblationArtifact,
+  ProceduralAblationPerCase,
+  ProceduralAblationScenario,
+  RunProceduralAblationCliArgs,
+  RunProceduralAblationOptions,
+} from "./benchmarks/remnic/procedural-recall/ablation.js";

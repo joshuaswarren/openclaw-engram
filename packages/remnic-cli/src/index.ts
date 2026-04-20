@@ -510,6 +510,8 @@ Commands:
   providers discover       Auto-detect available local provider backends
   check                    Legacy latency regression gate (compatibility)
   report                   Legacy latency report generator (compatibility)
+  procedural-ablation --out <path> [--fixture <path>]
+                           Run the procedural recall ablation harness (issue #567)
 
 Options:
   --quick                  Run a lightweight quick pass (maps to --lightweight --limit 1)
@@ -568,6 +570,7 @@ Examples:
   remnic bench publish --target remnic-ai
   remnic bench providers discover
   remnic bench run --custom ./my-bench.yaml
+  remnic bench procedural-ablation --out ./artifacts/procedural-ablation.json
   remnic benchmark run --quick longmemeval`;
 }
 
@@ -4024,6 +4027,14 @@ async function cmdLegacyBenchmark(action: string, rest: string[], json: boolean)
 }
 
 async function cmdBench(rest: string[]): Promise<void> {
+  // Procedural ablation subcommand (issue #567 PR 1/5). Routed before the
+  // standard bench dispatcher because `procedural-ablation` is an ad-hoc
+  // harness, not a registered benchmark catalogue entry.
+  if (rest[0] === "procedural-ablation") {
+    await cmdBenchProceduralAblation(rest.slice(1));
+    return;
+  }
+
   const benchAction = parseBenchActionArgs(rest);
   let parsed: ParsedBenchArgs;
   try {
@@ -4150,6 +4161,85 @@ async function cmdBench(rest: string[]): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * `remnic bench procedural-ablation --fixture <path> --out <path>` (issue
+ * #567 PR 1/5). Runs the procedural recall ablation harness and writes a
+ * JSON artifact containing onScore / offScore / lift / CI.
+ */
+async function cmdBenchProceduralAblation(rest: string[]): Promise<void> {
+  if (rest.includes("--help") || rest.includes("-h")) {
+    console.log(`remnic bench procedural-ablation — Procedural recall ablation harness (issue #567)
+
+Usage:
+  remnic bench procedural-ablation --out <path> [--fixture <path>]
+
+Options:
+  --fixture <path>   JSON fixture file; either a top-level array of scenarios
+                     or { "scenarios": [...] }. Each scenario requires
+                     id, prompt, procedurePreamble, procedureSteps,
+                     procedureTags, expectMatch. When omitted, the built-in
+                     procedural-recall fixture is used.
+  --out <path>       Path to write the ablation artifact JSON.
+`);
+    return;
+  }
+
+  let fixturePathRaw: string | undefined;
+  let outPathRaw: string | undefined;
+  try {
+    fixturePathRaw = resolveRequiredValueFlag(rest, "--fixture");
+    outPathRaw =
+      resolveRequiredValueFlag(rest, "--out") ??
+      resolveRequiredValueFlag(rest, "--output");
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err));
+    process.exit(1);
+  }
+
+  if (!outPathRaw) {
+    console.error(
+      "--out <path> is required. Run `remnic bench procedural-ablation --help`.",
+    );
+    process.exit(1);
+  }
+
+  const fixturePath = fixturePathRaw
+    ? path.resolve(expandTilde(fixturePathRaw))
+    : null;
+  const outPath = path.resolve(expandTilde(outPathRaw));
+
+  const benchModule = await loadBenchModule();
+  const runner = (
+    benchModule as unknown as {
+      runProceduralAblationCli?: (args: {
+        fixturePath: string | null;
+        outPath: string;
+      }) => Promise<{
+        onScore: number;
+        offScore: number;
+        lift: number;
+        fixture: { scenarioCount: number };
+      }>;
+    }
+  ).runProceduralAblationCli;
+  if (typeof runner !== "function") {
+    console.error(
+      "The installed @remnic/bench build does not expose runProceduralAblationCli. Upgrade to a build that includes issue #567 PR 1.",
+    );
+    process.exit(1);
+  }
+
+  const artifact = await runner({ fixturePath, outPath });
+  console.log(
+    `procedural-ablation complete: scenarios=${artifact.fixture.scenarioCount} onScore=${artifact.onScore.toFixed(
+      4,
+    )} offScore=${artifact.offScore.toFixed(4)} lift=${artifact.lift.toFixed(
+      4,
+    )}`,
+  );
+  console.log(`wrote ${outPath}`);
 }
 
 // ── Daemon management ────────────────────────────────────────────────────────
