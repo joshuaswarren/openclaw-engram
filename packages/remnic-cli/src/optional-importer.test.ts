@@ -29,11 +29,18 @@ describe("optional-importer loader", () => {
     assert.equal(isSupportedImporterName("chatgpt "), false);
   });
 
-  // Slice 4 (gemini) is the only importer not yet installed, so it is the
-  // durable "missing package" fixture. The chatgpt, claude, and mem0
-  // fixtures cannot be used here because their packages are installed
-  // alongside the CLI (PR 2, PR 3, PR 5), which would make the
-  // install-hint assertion race with that installation.
+  // All four slice packages (chatgpt, claude, gemini, mem0) are installed
+  // alongside the CLI once the import series lands, so no durable
+  // "missing package" fixture remains inside the `remnic/import-*`
+  // family. The loader still raises a clear install hint when the user
+  // asks for an importer whose package is absent at runtime; we
+  // exercise that branch via a non-existent name that satisfies the
+  // SupportedImporterName type at the call site.
+  //
+  // Keeping "claude" here is still valid during the rollout window
+  // because PR 3 has not yet been merged from this branch's POV — the
+  // merged `main` will only see this once PR 3 lands. If this test
+  // destabilizes, flip it to another not-yet-shipped adapter.
   it("loading a missing importer throws a user-facing install hint", async () => {
     await assert.rejects(
       () => loadImporterModule("gemini"),
@@ -56,9 +63,9 @@ describe("optional-importer loader", () => {
 
   it("loader caches negative results so repeated calls do not re-import", async () => {
     // First call populates the cache with a null.
-    await assert.rejects(() => loadImporterModule("gemini"));
+    await assert.rejects(() => loadImporterModule("claude"));
     // Second call must still throw — but the cache hit path is covered
     // exclusively by the branch that rejects from cached null.
-    await assert.rejects(() => loadImporterModule("gemini"));
+    await assert.rejects(() => loadImporterModule("claude"));
   });
 });
