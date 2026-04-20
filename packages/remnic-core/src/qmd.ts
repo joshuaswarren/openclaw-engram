@@ -765,13 +765,18 @@ function parseQmdSearchStdout(
   );
 }
 
-let _sharedDaemonSession: QmdDaemonSession | null = null;
-let _sharedDaemonSessionPath: string | null = null;
+type SharedDaemonSessionEntry = {
+  refs: number;
+  session: QmdDaemonSession;
+};
+
+const SHARED_DAEMON_SESSIONS = new Map<string, SharedDaemonSessionEntry>();
 
 export function shutdownQmdResources(): void {
-  _sharedDaemonSession?.invalidate();
-  _sharedDaemonSession = null;
-  _sharedDaemonSessionPath = null;
+  for (const entry of SHARED_DAEMON_SESSIONS.values()) {
+    entry.session.invalidate();
+  }
+  SHARED_DAEMON_SESSIONS.clear();
 
   for (const child of [...ACTIVE_QMD_CHILDREN]) {
     ACTIVE_QMD_CHILDREN.delete(child);
@@ -781,18 +786,34 @@ export function shutdownQmdResources(): void {
   }
 }
 
-function getSharedDaemonSession(qmdPath: string): QmdDaemonSession {
+function retainSharedDaemonSession(qmdPath: string): QmdDaemonSession {
   const normalizedPath = qmdPath.trim() || "qmd";
-  if (_sharedDaemonSession && _sharedDaemonSessionPath !== normalizedPath) {
-    _sharedDaemonSession.invalidate();
-    _sharedDaemonSession = null;
-    _sharedDaemonSessionPath = null;
+  const existing = SHARED_DAEMON_SESSIONS.get(normalizedPath);
+  if (existing) {
+    existing.refs += 1;
+    return existing.session;
   }
-  if (!_sharedDaemonSession) {
-    _sharedDaemonSession = new QmdDaemonSession(normalizedPath);
-    _sharedDaemonSessionPath = normalizedPath;
+
+  const session = new QmdDaemonSession(normalizedPath);
+  SHARED_DAEMON_SESSIONS.set(normalizedPath, {
+    refs: 1,
+    session,
+  });
+  return session;
+}
+
+function releaseSharedDaemonSession(session: QmdDaemonSession | null): void {
+  if (!session) return;
+
+  for (const [qmdPath, entry] of SHARED_DAEMON_SESSIONS.entries()) {
+    if (entry.session !== session) continue;
+    entry.refs = Math.max(0, entry.refs - 1);
+    if (entry.refs === 0) {
+      entry.session.invalidate();
+      SHARED_DAEMON_SESSIONS.delete(qmdPath);
+    }
+    return;
   }
-  return _sharedDaemonSession;
 }
 
 // ---------------------------------------------------------------------------
@@ -832,6 +853,7 @@ export class QmdClient implements SearchBackend {
   // Daemon mode fields
   private daemonSession: QmdDaemonSession | null = null;
   private daemonAvailable = false;
+  private daemonSessionPath: string | null = null;
   private lastDaemonCheckAtMs = 0;
   private readonly daemonEnabled: boolean;
   private readonly daemonRecheckIntervalMs: number;
@@ -868,7 +890,12 @@ export class QmdClient implements SearchBackend {
 
   private async probeDaemon(): Promise<boolean> {
     this.lastDaemonCheckAtMs = Date.now();
-    this.daemonSession = getSharedDaemonSession(this.qmdPath);
+    const normalizedPath = this.qmdPath.trim() || "qmd";
+    if (!this.daemonSession || this.daemonSessionPath !== normalizedPath) {
+      releaseSharedDaemonSession(this.daemonSession);
+      this.daemonSession = retainSharedDaemonSession(normalizedPath);
+      this.daemonSessionPath = normalizedPath;
+    }
     try {
       // Race start() against a short window: if the session is already initialized
       // this returns instantly; if the process is still loading its index we fail
@@ -1010,6 +1037,14 @@ export class QmdClient implements SearchBackend {
 
   isDaemonMode(): boolean {
     return this.daemonAvailable;
+  }
+
+  dispose(): void {
+    releaseSharedDaemonSession(this.daemonSession);
+    this.daemonSession = null;
+    this.daemonSessionPath = null;
+    this.daemonAvailable = false;
+    this.daemonTransientFailures = 0;
   }
 
   /**

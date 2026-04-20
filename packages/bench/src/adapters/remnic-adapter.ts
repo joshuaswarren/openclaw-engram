@@ -5,7 +5,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Orchestrator, parseConfig, shutdownQmdResources } from "@remnic/core";
+import { Orchestrator, parseConfig } from "@remnic/core";
 import type {
   BenchJudge,
   BenchMemoryAdapter,
@@ -87,6 +87,7 @@ type OrchestratorTeardownView = {
   abortDeferredInit(): void;
   deferredReady: Promise<void>;
   lcmEngine: { close(): void } | null;
+  qmd: { dispose?(): void | Promise<void> };
   qmdMaintenanceTimer?: NodeJS.Timeout | null;
   qmdMaintenancePending?: boolean;
   qmdMaintenanceInFlight?: boolean;
@@ -223,12 +224,12 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       orchestrator.qmdMaintenanceTimer = null;
       orchestrator.qmdMaintenancePending = false;
       orchestrator.qmdMaintenanceInFlight = false;
-      shutdownQmdResources();
       try {
         await orchestrator.deferredReady;
       } catch {
         // deferredReady is expected to resolve, but adapter teardown should not fail closed.
       }
+      await orchestrator.qmd.dispose?.();
       orchestrator.lcmEngine?.close();
       await rm(state.tempDir, { recursive: true, force: true });
     };
