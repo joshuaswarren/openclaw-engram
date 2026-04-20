@@ -54,7 +54,7 @@ Listed in rough order of sensitivity.
 | Recall-audit trail | `<pluginStateDir>/transcripts/<YYYY-MM-DD>/<sessionKey>.jsonl` | Past queries, injected content sizes, candidate memory IDs. Disclosure reveals what else the user has been asked. |
 | Extraction-judge cache | in-memory in `extraction-judge.ts` | Borderline; leaks which candidate facts were judged un-worthy. |
 | Work-layer tasks/projects | `memoryDir/namespaces/<ns>/work/**` | User's task list, deadlines, collaborators. |
-| Bearer tokens | `~/.config/openclaw/engram-tokens.json` (host-owned) | A leaked token gives T2 capability to an attacker. |
+| Bearer tokens | `~/.remnic/tokens.json` (new) / `~/.engram/tokens.json` (legacy fallback) — see `defaultTokensPath` / `legacyTokensPath` in `packages/remnic-core/src/tokens.ts` | A leaked token gives T2 capability to an attacker. |
 | Shared context / feedback inbox | `memoryDir/shared-context/**` | Cross-agent coordination notes. |
 
 ## 3. Attacker capability tiers
@@ -144,8 +144,12 @@ transport at `POST /mcp`. Authentication is a bearer token checked with
 
 A global write rate-limit exists (`WRITE_RATE_LIMIT_WINDOW_MS = 60_000`,
 `WRITE_RATE_LIMIT_MAX_REQUESTS = 30` at `access-http.ts:59-60`). It applies
-only to write routes and is global (not per-principal). Read routes, including
-`/engram/v1/recall` and `/engram/v1/memory/search`, have no rate limit.
+only to write routes and is global (not per-principal). Read routes —
+including `/engram/v1/recall`, `GET /engram/v1/memories` (list/browse),
+`GET /engram/v1/entities`, `POST /engram/v1/lcm/search`, and
+`GET /engram/v1/review-queue` — have no rate limit. Note: there is no
+`/engram/v1/memory/search` HTTP route; the `memory_search` capability is only
+exposed via the MCP tool surface (`access-mcp.ts`).
 
 ### 4.3 CLI access
 `remnic recall`, `remnic memory search`, `remnic memory get`, and related
