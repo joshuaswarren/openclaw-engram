@@ -340,6 +340,35 @@ function createFakeService(): EngramAccessService {
       status,
       previousStatus: "pending_review",
     }),
+    procedureStats: async (request: { namespace?: string } = {}) => ({
+      namespace: request.namespace ?? "global",
+      schemaVersion: 1,
+      generatedAt: "2026-04-20T12:00:00.000Z",
+      counts: {
+        total: 4,
+        active: 2,
+        pending_review: 1,
+        rejected: 0,
+        quarantined: 0,
+        superseded: 1,
+        archived: 0,
+        other: 0,
+      },
+      recent: {
+        lastWriteAt: "2026-04-20T11:59:59.000Z",
+        writesLast7Days: 3,
+        minerSourced: 2,
+      },
+      config: {
+        enabled: true,
+        minOccurrences: 3,
+        successFloor: 0.75,
+        autoPromoteOccurrences: 8,
+        autoPromoteEnabled: false,
+        lookbackDays: 14,
+        recallMaxProcedures: 2,
+      },
+    }),
   } as unknown as EngramAccessService;
 }
 
@@ -470,6 +499,24 @@ test("access HTTP server enforces bearer auth and serves phase 1 routes", async 
     assert.equal(trustZoneStatusRes.status, 200);
     const trustZoneStatus = await trustZoneStatusRes.json() as { status: { records: { valid: number } } };
     assert.equal(trustZoneStatus.status.records.valid, 3);
+
+    // Procedural stats (issue #567 PR 5/5). Namespace is optional.
+    const proceduralStatsRes = await fetch(
+      `${base}/engram/v1/procedural/stats`,
+      { headers },
+    );
+    assert.equal(proceduralStatsRes.status, 200);
+    const proceduralStats = (await proceduralStatsRes.json()) as {
+      schemaVersion: number;
+      counts: { total: number; active: number; pending_review: number };
+      config: { enabled: boolean; recallMaxProcedures: number };
+    };
+    assert.equal(proceduralStats.schemaVersion, 1);
+    assert.equal(proceduralStats.counts.total, 4);
+    assert.equal(proceduralStats.counts.active, 2);
+    assert.equal(proceduralStats.counts.pending_review, 1);
+    assert.equal(proceduralStats.config.enabled, true);
+    assert.equal(proceduralStats.config.recallMaxProcedures, 2);
 
     const trustZoneBrowseRes = await fetch(`${base}/engram/v1/trust-zones/records?zone=working`, { headers });
     assert.equal(trustZoneBrowseRes.status, 200);

@@ -42,6 +42,22 @@ A dedicated miner clusters **causal trajectory** records (bounded lookback by `r
 
 Automation is **not** part of `runMemoryGovernance`. Use the MCP tool **`engram.procedure_mining_run`** (and optional cron registration mirroring other nightly jobs) so procedural mining stays isolated from shadow/apply governance.
 
+## Stats surface (issue #567 PR 5/5)
+
+Operators can inspect procedural memory health via three matched surfaces that all return the same `ProcedureStatsReport` JSON shape (schema v1):
+
+- **CLI:** `remnic procedural stats [--format json|text] [--memory-dir <path>]`
+- **HTTP:** `GET /engram/v1/procedural/stats?namespace=<optional>`
+- **MCP tool:** `remnic.procedural_stats` (with legacy alias `engram.procedural_stats`), argument `{ namespace?: string }`
+
+The report includes:
+
+- `counts` — procedure files by status: `total`, `active`, `pending_review`, `rejected`, `quarantined`, `superseded`, `archived`, `other`.
+- `recent` — `lastWriteAt` (ISO 8601 or `null`), `writesLast7Days` (exclusive upper bound per CLAUDE.md rule 35), and `minerSourced` count (procedures whose `source=procedure-miner`).
+- `config` — snapshot of the active `procedural.*` config so the caller can confirm the gate state and threshold floor in the same payload.
+
+All three surfaces are read-only and namespace-scoped (CLAUDE.md rule 42). The HTTP endpoint resolves the namespace through the same layer used by `/recall/explain` and `/trust-zones/status`; the MCP tool uses the authenticated principal. The CLI reads from whatever `memoryDir` the current config / active-space resolves to, or an explicit `--memory-dir` override.
+
 ## Benchmark
 
 The **`procedural-recall`** benchmark in `@remnic/bench` scores:

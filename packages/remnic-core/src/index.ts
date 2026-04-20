@@ -94,6 +94,18 @@ export {
   parseProcedureStepsFromBody,
 } from "./procedural/procedure-types.js";
 
+// Procedural stats surface (issue #567 PR 5/5).
+export {
+  computeProcedureStats,
+  formatProcedureStatsText,
+} from "./procedural/procedure-stats.js";
+export type {
+  ProcedureStatsReport,
+  ProcedureStatusCounts,
+  ProcedureStatsConfigSnapshot,
+  ProcedureStatsRecent,
+} from "./procedural/procedure-stats.js";
+
 // ---------------------------------------------------------------------------
 // Direct-answer retrieval tier (issue #518)
 // ---------------------------------------------------------------------------

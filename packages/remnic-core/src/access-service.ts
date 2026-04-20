@@ -25,6 +25,10 @@ import {
 } from "./maintenance/memory-governance.js";
 import { runProcedureMining } from "./procedural/procedure-miner.js";
 import {
+  computeProcedureStats,
+  type ProcedureStatsReport,
+} from "./procedural/procedure-stats.js";
+import {
   normalizeProjectionPreview,
   normalizeProjectionTags,
 } from "./memory-projection-format.js";
@@ -1694,6 +1698,27 @@ export class EngramAccessService {
       proceduresWritten: result.proceduresWritten,
       skippedReason: result.skippedReason,
     };
+  }
+
+  /**
+   * Procedural memory stats (issue #567 PR 5/5). Read-only — resolves the
+   * namespace via the same path used by `recallExplain` / `trustZoneStatus`
+   * so cross-tenant reads are impossible (CLAUDE.md rule 42).
+   */
+  async procedureStats(
+    request: { namespace?: string } = {},
+    principal?: string,
+  ): Promise<ProcedureStatsReport & { namespace: string }> {
+    const resolvedNamespace = this.resolveReadableNamespace(
+      request.namespace,
+      principal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNamespace);
+    const report = await computeProcedureStats({
+      storage,
+      config: this.orchestrator.config,
+    });
+    return { namespace: resolvedNamespace, ...report };
   }
 
   async trustZoneStatus(namespace?: string, principal?: string): Promise<EngramAccessTrustZoneStatusResponse> {
