@@ -52,6 +52,13 @@ export interface Mem0ClientOptions {
   apiKey: string;
   /** Default: `https://api.mem0.ai`. Trailing slash tolerated. */
   baseUrl?: string;
+  /**
+   * Path prefix for the list endpoint. Defaults to `/v1/memories/` for
+   * the hosted API. Self-hosted mem0-oss deployments typically expose
+   * `/memories/` without the `/v1` prefix — set `MEM0_LIST_PATH` /
+   * pass this explicitly in that case. Codex review on PR #602.
+   */
+  listPath?: string;
   /** Injected for tests. Falls back to `globalThis.fetch`. */
   fetchImpl?: typeof fetch;
   /** Requests per second limiter. Applied between pages. */
@@ -63,6 +70,7 @@ export interface Mem0ClientOptions {
 }
 
 const DEFAULT_BASE_URL = "https://api.mem0.ai";
+const DEFAULT_LIST_PATH = "/v1/memories/";
 
 /**
  * Fetch all mem0 memories across pagination. Returns a flat array; the
@@ -83,11 +91,18 @@ export async function fetchAllMem0Memories(
   }
   const sleep = options.sleep ?? defaultSleep;
   const base = (options.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
+  const listPath = normalizeListPath(options.listPath ?? DEFAULT_LIST_PATH);
   const intervalMs =
     options.rateLimit && options.rateLimit > 0 ? 1000 / options.rateLimit : 0;
 
   const all: Mem0Memory[] = [];
-  const firstUrl = `${base}/v1/memories/`;
+  const firstUrl = `${base}${listPath}`;
+  // Capture the allow-listed origin ONCE so cross-origin cursors can't
+  // tunnel the API key to an attacker-controlled host. Codex review on
+  // PR #602. We also validate that the configured base URL itself is a
+  // parseable absolute URL — mem0 servers that return relative cursors
+  // are then resolved against this origin.
+  const allowedOrigin = safeUrlOrigin(firstUrl);
   let nextUrl: string | null = firstUrl;
   let pageIndex = 0;
   while (nextUrl) {
@@ -116,30 +131,60 @@ export async function fetchAllMem0Memories(
         all.push(entry);
       }
     }
-    nextUrl = resolveNextUrl(json, firstUrl, pageIndex, page.length);
+    nextUrl = resolveNextUrl(json, firstUrl, pageIndex, page.length, allowedOrigin);
     pageIndex += 1;
   }
   return all;
 }
 
+function normalizeListPath(p: string): string {
+  const withLeadingSlash = p.startsWith("/") ? p : `/${p}`;
+  return withLeadingSlash.endsWith("/") ? withLeadingSlash : `${withLeadingSlash}/`;
+}
+
+function safeUrlOrigin(url: string): string | undefined {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Decide the next URL to request.
  *
- * Preferred: the `next` cursor the server returns (v1 shape).
+ * Preferred: the `next` cursor the server returns (v1 shape). When `next`
+ * is a **relative** path, it's resolved against the configured base URL.
+ * When absolute, it MUST match the allow-listed origin — cross-origin
+ * cursors are rejected so an upstream/proxy can't exfiltrate the API key
+ * by redirecting the pagination walk. Codex review on PR #602.
  *
- * Fallback: when `next` is absent but the response exposes numeric
- * pagination fields (`page` / `total` / `per_page`, the older v0 shape),
- * synthesize a `?page=<N>` request for the next page. Cursor review on
- * PR #602 flagged that mem0 servers returning only numeric pagination
- * were silently truncated after page 1 under the original code.
+ * Fallback: when `next` is explicitly `null` (server says "no more pages"),
+ * stop. When `next` is absent (field omitted) AND the response exposes
+ * numeric pagination fields (`page` / `total` / `per_page`, the older v0
+ * shape), synthesize a `?page=<N>` request for the next page. Cursor
+ * review on PR #602 flagged that servers returning only numeric
+ * pagination were silently truncated under the original code, AND that
+ * the implementation conflated `null` with `undefined`.
  */
 function resolveNextUrl(
   json: Mem0ListResponse,
   firstUrl: string,
   currentPageIndex: number,
   pageSize: number,
+  allowedOrigin: string | undefined,
 ): string | null {
-  if (typeof json.next === "string" && json.next.length > 0) return json.next;
+  // Has the server explicitly returned a next value?
+  if ("next" in json) {
+    if (json.next === null) return null; // authoritative stop
+    if (typeof json.next === "string" && json.next.length > 0) {
+      return resolveCursorOrThrow(json.next, firstUrl, allowedOrigin);
+    }
+    // `next` was present but not a non-empty string or null (e.g. number).
+    // Don't fall through to numeric pagination — the server sent a signal
+    // we can't interpret. Treat as end-of-stream.
+    return null;
+  }
 
   // Numeric-pagination fallback. `page` is 1-based in the real API.
   const responsePage = typeof json.page === "number" && Number.isFinite(json.page)
@@ -155,7 +200,6 @@ function resolveNextUrl(
   const fetchedSoFar = responsePage * perPage;
   if (fetchedSoFar >= total) return null;
   const nextPage = responsePage + 1;
-  // Preserve any existing query string on firstUrl by using URL.
   try {
     const u = new URL(firstUrl);
     u.searchParams.set("page", String(nextPage));
@@ -163,6 +207,43 @@ function resolveNextUrl(
   } catch {
     return null;
   }
+}
+
+/**
+ * Resolve a server-provided cursor against the base URL and enforce
+ * same-origin. Relative cursors are accepted (resolved against firstUrl);
+ * absolute cursors must match `allowedOrigin`. Throws on cross-origin to
+ * surface the security-relevant mismatch immediately instead of silently
+ * leaking the API key.
+ */
+function resolveCursorOrThrow(
+  cursor: string,
+  firstUrl: string,
+  allowedOrigin: string | undefined,
+): string {
+  if (!allowedOrigin) {
+    // Base URL wasn't parseable as an absolute URL; refuse to follow any
+    // cursor because we can't compare origins.
+    throw new Error(
+      `mem0 pagination cursor '${cursor}' cannot be followed: configured baseUrl is not an absolute URL.`,
+    );
+  }
+  let resolved: URL;
+  try {
+    resolved = new URL(cursor, firstUrl);
+  } catch {
+    throw new Error(
+      `mem0 pagination cursor '${cursor}' is not a valid URL.`,
+    );
+  }
+  if (resolved.origin !== allowedOrigin) {
+    throw new Error(
+      `mem0 pagination cursor '${cursor}' points to origin '${resolved.origin}', ` +
+        `but the configured mem0 origin is '${allowedOrigin}'. ` +
+        "Refusing to forward the API key to a cross-origin endpoint.",
+    );
+  }
+  return resolved.toString();
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

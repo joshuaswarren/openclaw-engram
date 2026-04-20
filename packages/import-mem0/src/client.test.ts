@@ -186,4 +186,117 @@ describe("fetchAllMem0Memories (record/replay)", () => {
     });
     assert.equal(memories.length, 1);
   });
+
+  // Cursor review on PR #602 — explicit `next: null` must stop pagination
+  // even when numeric pagination fields are present. The original code
+  // fell through to the numeric-fallback path because it only checked for
+  // `typeof next === "string"`, conflating null with undefined.
+  it("treats explicit next:null as authoritative stop even with numeric fields", async () => {
+    let called = 0;
+    const fetchImpl = (async (): Promise<Response> => {
+      called += 1;
+      return new Response(
+        JSON.stringify({
+          results: [{ id: "only", memory: "hello" }],
+          next: null,
+          // Numeric fields that would normally trigger the fallback:
+          page: 1,
+          per_page: 1,
+          total: 9999,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const memories = await fetchAllMem0Memories({
+      apiKey: "synthetic-key",
+      baseUrl: "https://api.mem0.test",
+      fetchImpl,
+    });
+    // Exactly one request — we must NOT follow numeric pagination when
+    // next is explicitly null.
+    assert.equal(called, 1);
+    assert.equal(memories.length, 1);
+  });
+
+  // Codex review on PR #602 — cross-origin cursors must not be followed
+  // because the loop would forward the mem0 API key to that host.
+  it("rejects cross-origin pagination cursors without leaking the API key", async () => {
+    const seenRequests: string[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === "string" ? input : input.toString();
+      seenRequests.push(url);
+      if (seenRequests.length === 1) {
+        return new Response(
+          JSON.stringify({
+            results: [{ id: "p1", memory: "page 1" }],
+            next: "https://attacker.example/steal?token=1",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      throw new Error("request after cross-origin cursor must not happen");
+    }) as typeof fetch;
+    await assert.rejects(
+      () =>
+        fetchAllMem0Memories({
+          apiKey: "synthetic-key",
+          baseUrl: "https://api.mem0.test",
+          fetchImpl,
+        }),
+      /cross-origin/,
+    );
+    assert.equal(seenRequests.length, 1, "must not fetch the cross-origin cursor");
+  });
+
+  it("follows relative pagination cursors by resolving them against the base URL", async () => {
+    let called = 0;
+    const fetchImpl = (async (input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === "string" ? input : input.toString();
+      called += 1;
+      if (called === 1) {
+        return new Response(
+          JSON.stringify({
+            results: [{ id: "p1", memory: "first" }],
+            next: "/v1/memories/?cursor=xyz", // relative!
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      assert.ok(
+        url.startsWith("https://api.mem0.test/v1/memories/?cursor=xyz"),
+        `expected resolved URL, got: ${url}`,
+      );
+      return new Response(
+        JSON.stringify({ results: [{ id: "p2", memory: "second" }], next: null }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+    const memories = await fetchAllMem0Memories({
+      apiKey: "synthetic-key",
+      baseUrl: "https://api.mem0.test",
+      fetchImpl,
+    });
+    assert.equal(memories.length, 2);
+  });
+
+  // Codex review on PR #602 — self-hosted mem0-oss exposes `/memories/`
+  // without the `/v1` prefix. Let operators override via listPath.
+  it("honors a custom listPath for self-hosted deployments", async () => {
+    let firstRequestUrl = "";
+    const fetchImpl = (async (input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (!firstRequestUrl) firstRequestUrl = url;
+      return new Response(JSON.stringify({ results: [], next: null }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    await fetchAllMem0Memories({
+      apiKey: "synthetic-key",
+      baseUrl: "https://self-hosted.mem0.test",
+      listPath: "/memories/",
+      fetchImpl,
+    });
+    assert.equal(firstRequestUrl, "https://self-hosted.mem0.test/memories/");
+  });
 });

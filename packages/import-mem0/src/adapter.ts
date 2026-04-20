@@ -77,6 +77,11 @@ export const adapter: ImporterAdapter<ParsedMem0Export> = {
     }
     const baseUrl =
       overrideClientOptionsForTesting?.baseUrl ?? process.env.MEM0_BASE_URL;
+    // Self-hosted mem0-oss exposes `/memories/` without the `/v1` prefix.
+    // Let operators override via MEM0_LIST_PATH so those deployments work
+    // without patching. Codex review on PR #602.
+    const listPath =
+      overrideClientOptionsForTesting?.listPath ?? process.env.MEM0_LIST_PATH;
     const importedFromPath = baseUrl ?? "https://api.mem0.ai";
     // Forward the validated CLI `--rate-limit` (now carried through
     // ImporterParseOptions.rateLimit by runImporter) into the fetch client
@@ -87,6 +92,7 @@ export const adapter: ImporterAdapter<ParsedMem0Export> = {
     const memories = await fetchAllMem0Memories({
       apiKey,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
+      ...(listPath !== undefined ? { listPath } : {}),
       ...(rateLimit !== undefined ? { rateLimit } : {}),
       ...(overrideClientOptionsForTesting?.fetchImpl
         ? { fetchImpl: overrideClientOptionsForTesting.fetchImpl }
