@@ -5527,7 +5527,14 @@ export class Orchestrator {
       // — but we STILL capture it when the caller opts in so
       // `getLastXraySnapshot()` returns a useful debug document rather
       // than silently `null` (or a stale prior capture).
-      if (options.xrayCapture === true) {
+      //
+      // Skip capture when the caller has already aborted this recall —
+      // otherwise a canceled call could clobber a prior successful
+      // capture (issue #570 PR 1 review follow-up).
+      if (
+        options.xrayCapture === true &&
+        !options.abortSignal?.aborted
+      ) {
         try {
           this.lastXraySnapshot = buildXraySnapshot({
             query: retrievalQuery,
@@ -7879,6 +7886,14 @@ export class Orchestrator {
         preAugmentTopScore > 0
           ? Math.max(preAugmentTopScore, maxSpecializedScore)
           : 0;
+      // Capture pre-gate pool size for X-ray before the confidence
+      // gate can zero `memoryResults`.  Placing the capture after the
+      // gate would record 0 instead of the true pre-gate pool size
+      // (issue #570 PR 1 review follow-up).
+      xrayCandidatePoolSize = Math.max(
+        xrayCandidatePoolSize,
+        memoryResults.length,
+      );
       let confidenceGateRejected = false;
       if (this.config.recallConfidenceGateEnabled && effectiveGateScore > 0) {
         if (effectiveGateScore < this.config.recallConfidenceGateThreshold) {
@@ -7893,10 +7908,6 @@ export class Orchestrator {
       // Diversify via MMR over the full candidate pool *before* truncating to
       // the final recall limit. Running MMR after the slice would be unable
       // to promote diverse candidates sitting just below the cutoff.
-      xrayCandidatePoolSize = Math.max(
-        xrayCandidatePoolSize,
-        memoryResults.length,
-      );
       memoryResults = this.diversifyAndLimitRecallResults(
         "memories",
         memoryResults,
@@ -8578,7 +8589,15 @@ export class Orchestrator {
     // short-circuit.  Captured data is composed from values we have
     // already derived above, so capture cost is a single object
     // allocation; no new recall work is performed.
-    if (options.xrayCapture === true) {
+    //
+    // Skip capture when the caller has already aborted this recall —
+    // otherwise a canceled call could clobber a prior successful
+    // capture that the capturing caller has not yet read back
+    // (issue #570 PR 1 review follow-up).
+    if (
+      options.xrayCapture === true &&
+      !options.abortSignal?.aborted
+    ) {
       try {
         const servedBy = mapRecallSourceToXrayServedBy(recallSource);
         // Derive xray results from `recalledMemoryPaths` as the single

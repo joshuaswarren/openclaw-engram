@@ -140,6 +140,39 @@ test("recall captures an X-ray snapshot even when mode is no_recall", async () =
   assert.equal(snapshot.filters[0]!.reason, "no_recall");
 });
 
+// An aborted recall with `xrayCapture: true` must NOT clobber a prior
+// captured snapshot.  Otherwise a timeout / cancellation racing past
+// the capture site would overwrite a successful prior capture with
+// partial data from the canceled call.
+test("aborted recall with xrayCapture does not clobber a prior captured snapshot", async () => {
+  const orchestrator = await makeOrchestrator("engram-xray-abort-");
+  (orchestrator as any).initPromise = null;
+
+  // Seed a successful capture.
+  await orchestrator.recall(
+    "first",
+    "agent:test:xray-abort",
+    { xrayCapture: true },
+  );
+  const captured = orchestrator.getLastXraySnapshot();
+  assert.ok(captured);
+  assert.equal(captured.query, "first");
+
+  // Second recall is aborted before the capture site fires — the
+  // prior snapshot must still be accessible.
+  const aborted = new AbortController();
+  aborted.abort();
+  await orchestrator.recall(
+    "aborted-second",
+    "agent:test:xray-abort",
+    { xrayCapture: true, abortSignal: aborted.signal },
+  );
+
+  const stillCaptured = orchestrator.getLastXraySnapshot();
+  assert.ok(stillCaptured);
+  assert.equal(stillCaptured.query, "first");
+});
+
 // A recall without the flag must NOT overwrite a previously captured
 // snapshot.  This keeps the capture surface useful when a capturing
 // caller is interleaved with non-capturing callers.
