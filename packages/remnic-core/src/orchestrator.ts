@@ -5359,6 +5359,12 @@ export class Orchestrator {
     // the pool size BEFORE truncation at each branch that feeds it.
     // Zero when no retrieval ran (initial state + `no_recall`).
     let xrayCandidatePoolSize = 0;
+    // Shared out-parameter sink the cold-fallback pipeline writes
+    // its pre-truncation pool size into (issue #570 PR 1).  Declared
+    // once so every call to `applyColdFallbackPipeline` (four call
+    // sites) updates the same counter; the X-ray capture block below
+    // folds this back into `xrayCandidatePoolSize`.
+    const xrayColdPoolSink = { size: 0 };
     let identityInjectionModeUsed: IdentityInjectionMode | "none" = "none";
     let identityInjectedChars = 0;
     let identityInjectionTruncated = false;
@@ -8055,6 +8061,7 @@ export class Orchestrator {
             recallMode,
             queryAwarePrefilter,
             abortSignal: options.abortSignal,
+            xrayPoolSizeSink: xrayColdPoolSink,
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -8243,6 +8250,7 @@ export class Orchestrator {
               recallMode,
               queryAwarePrefilter,
               abortSignal: options.abortSignal,
+              xrayPoolSizeSink: xrayColdPoolSink,
             });
             if (longTerm.length > 0) {
               recallSource = "cold_fallback";
@@ -8338,6 +8346,7 @@ export class Orchestrator {
                 recallMode,
                 queryAwarePrefilter,
                 abortSignal: options.abortSignal,
+                xrayPoolSizeSink: xrayColdPoolSink,
               });
               if (longTerm.length > 0) {
                 if (shouldPersistGraphSnapshot) {
@@ -8377,6 +8386,7 @@ export class Orchestrator {
             recallMode,
             queryAwarePrefilter,
             abortSignal: options.abortSignal,
+            xrayPoolSizeSink: xrayColdPoolSink,
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -8628,11 +8638,14 @@ export class Orchestrator {
         // Use `xrayCandidatePoolSize` (captured pre-MMR / pre-truncation
         // at each retrieval branch) so `considered` reflects the true
         // candidate pool and `considered - admitted` is a meaningful
-        // "dropped by the limit" signal.  Falls back to
-        // `recalledMemoryCount` when no branch ran (shouldn't happen
-        // on this non-no_recall path, but is a safe floor).
+        // "dropped by the limit" signal.  Folds in the cold-fallback
+        // sink so cold-fallback recalls report their pre-truncation
+        // pool too.  Falls back to `recalledMemoryCount` when no
+        // branch ran (shouldn't happen on this non-no_recall path,
+        // but is a safe floor).
         const xrayConsidered = Math.max(
           xrayCandidatePoolSize,
+          xrayColdPoolSink.size,
           recalledMemoryCount,
         );
         const filters: RecallFilterTrace[] = [
@@ -13519,6 +13532,15 @@ export class Orchestrator {
     recallMode: RecallPlanMode;
     queryAwarePrefilter?: QueryAwarePrefilter;
     abortSignal?: AbortSignal;
+    /**
+     * Optional out-parameter that receives the pre-MMR / pre-truncation
+     * pool size captured inside the pipeline (issue #570 PR 1).  The
+     * X-ray capture block in `recallInternal` passes a small sink
+     * here so `xrayCandidatePoolSize` can reflect what cold-fallback
+     * really saw before its own truncation step.  Unset by default so
+     * existing call sites are unaffected.
+     */
+    xrayPoolSizeSink?: { size: number };
   }): Promise<QmdSearchResult[]> {
     const coldQmdEnabled = this.config.qmdColdTierEnabled === true;
     const coldCollection =
@@ -13651,6 +13673,12 @@ export class Orchestrator {
     // the diversification policy applied in the hot QMD/embedding/recent
     // paths. Running MMR post-slice would be unable to promote diverse
     // candidates sitting just below the cutoff.
+    if (options.xrayPoolSizeSink) {
+      options.xrayPoolSizeSink.size = Math.max(
+        options.xrayPoolSizeSink.size,
+        results.length,
+      );
+    }
     return this.diversifyAndLimitRecallResults(
       "memories",
       results,
