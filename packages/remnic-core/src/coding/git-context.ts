@@ -171,7 +171,11 @@ export function normalizeOriginUrl(rawUrl: string): string {
   // digits (e.g. `git@host:123/repo.git`), so no numeric guard is needed:
   // port-bearing URLs have the `://` prefix and match the protocol branch
   // above before reaching here.
-  const scpMatch = /^(?:([^@\s/]+)@)?([^:@\s/]+):(.+)$/.exec(url);
+  //
+  // Requires the host to be at least two characters to avoid misreading
+  // Windows local paths like `C:/repos/app.git` (which `git remote get-url
+  // origin` can return verbatim) as an scp remote with host `C`.
+  const scpMatch = /^(?:([^@\s/]+)@)?([^:@\s/]{2,}):(.+)$/.exec(url);
   if (scpMatch) {
     const host = scpMatch[2] ?? "";
     const repoPath = scpMatch[3] ?? "";

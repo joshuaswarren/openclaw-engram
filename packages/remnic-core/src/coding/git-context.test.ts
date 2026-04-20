@@ -115,6 +115,16 @@ test("normalizeOriginUrl: scp paths may start with digits", () => {
   );
 });
 
+test("normalizeOriginUrl: Windows drive-letter path is not parsed as scp", () => {
+  // `git remote get-url origin` can return `C:/repos/app.git` for local
+  // Windows paths.  A single-letter host should not trigger scp parsing.
+  // Expected: raw-lowercase fallback (without `.git`).
+  assert.equal(
+    normalizeOriginUrl("C:/repos/app.git"),
+    "c:/repos/app",
+  );
+});
+
 test("normalizeOriginUrl: https:// with non-standard port — port stripped", () => {
   assert.equal(
     normalizeOriginUrl("https://github.com:8443/foo/bar.git"),
