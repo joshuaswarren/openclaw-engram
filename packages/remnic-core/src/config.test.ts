@@ -293,3 +293,16 @@ test("parseConfig procedural numeric fields coerce from CLI-style strings (issue
   assert.equal(result.procedural.lookbackDays, 14);
   assert.equal(result.procedural.recallMaxProcedures, 2);
 });
+
+test("parseConfig applies safer-by-default procedural thresholds (issue #567 PR 3/5)", () => {
+  // When the user does not override procedural thresholds, the defaults
+  // MUST match the safer floor committed in #567 PR 3. This test locks in
+  // the values so a future refactor cannot silently regress them.
+  const result = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(result.procedural.enabled, false, "default still OFF until PR 4");
+  assert.equal(result.procedural.minOccurrences, 3);
+  assert.equal(result.procedural.successFloor, 0.75);
+  assert.equal(result.procedural.autoPromoteOccurrences, 8);
+  assert.equal(result.procedural.lookbackDays, 14);
+  assert.equal(result.procedural.recallMaxProcedures, 2);
+});

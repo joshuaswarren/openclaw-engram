@@ -339,7 +339,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "default": 0.7,
+            "default": 0.75,
             "description": "Minimum success-rate floor (from trajectory outcomes) for miner promotion."
           },
           "autoPromoteOccurrences": {
@@ -358,14 +358,14 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 3650,
-            "default": 30,
+            "default": 14,
             "description": "Trajectory lookback window for procedural mining."
           },
           "recallMaxProcedures": {
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "default": 3,
+            "default": 2,
             "description": "Maximum procedure memories to inject on task-initiation recall."
           },
           "proceduralMiningCronAutoRegister": {

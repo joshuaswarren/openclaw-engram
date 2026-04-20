@@ -32,9 +32,23 @@ On prompts that look like **starting hands-on work** (deploy, ship, open a PR, r
 
 Relevant config keys include:
 
-- `procedural.recallMaxProcedures` — cap on injected procedure previews.
+- `procedural.recallMaxProcedures` — cap on injected procedure previews. **Default `2`** (raised from the earlier `3` in issue #567 PR 3/5 to keep procedural injection from crowding out other recall sections once the feature is enabled by default).
 
 See also: [Advanced retrieval](./advanced-retrieval.md) and [Retrieval pipeline](./architecture/retrieval-pipeline.md).
+
+## Safer-by-default thresholds (issue #567 PR 3/5)
+
+The procedural mining + recall defaults are tuned so the feature stays safe when it is enabled by default in the slice-4 config flip:
+
+| Key | Default | Notes |
+| --- | ------- | ----- |
+| `procedural.minOccurrences` | `3` | At least three clustered trajectories before a candidate procedure is emitted. Set to `0` to disable mining entirely. |
+| `procedural.successFloor` | `0.75` | Miner promotion requires ≥ 75% trajectory success. Raised from `0.7` in #567 PR 3 to reduce false positives. |
+| `procedural.autoPromoteOccurrences` | `8` | When auto-promote is on, pending_review procedures wait for eight occurrences before becoming active. |
+| `procedural.lookbackDays` | `14` | Trajectory miner window. Lowered from `30` in #567 PR 3 so mined procedures stay recent. |
+| `procedural.recallMaxProcedures` | `2` | Cap on injected procedure previews per recall. Lowered from `3` in #567 PR 3. |
+
+Operators who need to override any of these should do so explicitly; all fields accept CLI-style string inputs and JSON numbers.
 
 ## Mining (trajectories)
 

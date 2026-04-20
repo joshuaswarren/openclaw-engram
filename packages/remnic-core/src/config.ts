@@ -437,12 +437,16 @@ export function parseConfig(raw: unknown): PluginConfig {
       ? Math.floor(proceduralMinCoerced)
       : 3;
   const successFloorRaw = coerceNumber(rawProcedural.successFloor);
+  // Safer-by-default floor (issue #567 PR 3/5): raise from 0.7 to 0.75.
+  // Miner promotion now requires a stricter trajectory success rate before
+  // procedures become candidates, reducing false positives when procedural
+  // recall is enabled by default in slice 4.
   const successFloor =
     successFloorRaw !== undefined &&
     successFloorRaw >= 0 &&
     successFloorRaw <= 1
       ? successFloorRaw
-      : 0.7;
+      : 0.75;
   const autoPromoteOccRaw = coerceNumber(rawProcedural.autoPromoteOccurrences);
   const autoPromoteOccurrences =
     autoPromoteOccRaw !== undefined && Number.isFinite(autoPromoteOccRaw)
@@ -451,15 +455,21 @@ export function parseConfig(raw: unknown): PluginConfig {
         : Math.min(10_000, Math.max(1, Math.floor(autoPromoteOccRaw)))
       : 8;
   const lookbackCoerced = coerceNumber(rawProcedural.lookbackDays);
+  // Safer-by-default lookback (issue #567 PR 3/5): lower from 30 to 14 days.
+  // Shorter window keeps mined procedures more recent, which improves
+  // relevance once recall is on by default.
   const lookbackDays =
     lookbackCoerced !== undefined && Number.isFinite(lookbackCoerced)
       ? Math.min(3650, Math.max(1, Math.floor(lookbackCoerced)))
-      : 30;
+      : 14;
   const recallMaxCoerced = coerceNumber(rawProcedural.recallMaxProcedures);
+  // Safer-by-default recall cap (issue #567 PR 3/5): lower from 3 to 2.
+  // Cap the injected procedure block so enabling procedural recall by
+  // default does not crowd out other recall sections.
   const recallMaxProcedures =
     recallMaxCoerced !== undefined && Number.isFinite(recallMaxCoerced)
       ? Math.min(10, Math.max(1, Math.floor(recallMaxCoerced)))
-      : 3;
+      : 2;
   const procedural: ProceduralConfig = {
     enabled: coerceBool(rawProcedural.enabled) === true,
     /** `0` skips all mining (`minOccurrences_zero`); otherwise clusters need at least this many members. */
