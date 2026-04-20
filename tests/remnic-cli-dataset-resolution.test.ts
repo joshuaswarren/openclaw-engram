@@ -98,9 +98,13 @@ test("PersonaMem downloader accepts python3 when python is unavailable", async (
 
   const gitPath = resolveCommand("git");
   const curlPath = resolveCommand("curl");
+  const dirnamePath = resolveCommand("dirname");
+  const touchPath = resolveCommand("touch");
   for (const [name, target] of [
     ["git", gitPath],
     ["curl", curlPath],
+    ["dirname", dirnamePath],
+    ["touch", touchPath],
   ]) {
     const wrapperPath = path.join(stubBinDir, name);
     await writeFile(wrapperPath, `#!/bin/bash\nexec "${target}" "$@"\n`, "utf8");
@@ -112,7 +116,7 @@ test("PersonaMem downloader accepts python3 when python is unavailable", async (
     env: {
       ...process.env,
       DATASETS_DIR: datasetsDir,
-      PATH: `${stubBinDir}${path.delimiter}/bin${path.delimiter}/usr/bin`,
+      PATH: `${stubBinDir}${path.delimiter}/bin`,
     },
     encoding: "utf8",
   });
