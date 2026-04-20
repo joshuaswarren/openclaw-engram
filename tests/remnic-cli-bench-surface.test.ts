@@ -962,6 +962,106 @@ test("parseBenchArgs rejects unknown bench publish targets", async () => {
   );
 });
 
+// Issue #566 slice 5 — local-llm provider parity. `--provider`,
+// `--system-provider`, and `--judge-provider` must all accept
+// "local-llm" (CLAUDE.md rule 52: allow-lists in lockstep). When
+// the chosen provider is local-llm, a base URL is REQUIRED at the
+// boundary — silent OpenAI fallback violates rule 51.
+test("parseBenchArgs accepts --provider local-llm with --base-url", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  const parsed = parseBenchArgs([
+    "published",
+    "--name",
+    "longmemeval",
+    "--provider",
+    "local-llm",
+    "--base-url",
+    "http://127.0.0.1:8080/v1",
+    "--model",
+    "qwen3-8b",
+  ]);
+
+  assert.equal(parsed.systemProvider, "local-llm");
+  assert.equal(parsed.systemBaseUrl, "http://127.0.0.1:8080/v1");
+  assert.equal(parsed.systemModel, "qwen3-8b");
+});
+
+test("parseBenchArgs rejects --provider local-llm without --base-url", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        "published",
+        "--name",
+        "longmemeval",
+        "--provider",
+        "local-llm",
+        "--model",
+        "qwen3-8b",
+      ]),
+    /ERROR: --provider local-llm requires --base-url/,
+  );
+});
+
+test("parseBenchArgs rejects --system-provider local-llm without --system-base-url", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        "run",
+        "longmemeval",
+        "--system-provider",
+        "local-llm",
+        "--system-model",
+        "qwen3-8b",
+      ]),
+    /ERROR: --provider local-llm requires --base-url/,
+  );
+});
+
+test("parseBenchArgs rejects --judge-provider local-llm without --judge-base-url", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        "run",
+        "longmemeval",
+        "--judge-provider",
+        "local-llm",
+        "--judge-model",
+        "qwen3-8b",
+      ]),
+    /ERROR: --judge-provider local-llm requires --judge-base-url/,
+  );
+});
+
+test("parseBenchArgs rejects unknown providers across all three flags with listed options", async () => {
+  const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
+
+  for (const flag of [
+    "--system-provider",
+    "--judge-provider",
+    "--provider",
+  ]) {
+    assert.throws(
+      () => {
+        const args =
+          flag === "--provider"
+            ? ["published", "--name", "longmemeval", flag, "bogus", "--model", "m"]
+            : ["run", "longmemeval", flag, "bogus", flag.replace("provider", "model"), "m"];
+        parseBenchArgs(args);
+      },
+      new RegExp(
+        `ERROR: ${flag.replace(/-/g, "\\-")} must be one of "openai", "anthropic", "ollama", "litellm", or "local-llm"\\.`,
+      ),
+    );
+  }
+});
+
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
 

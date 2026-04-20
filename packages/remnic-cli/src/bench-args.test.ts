@@ -168,7 +168,7 @@ test("parseBenchArgs rejects unknown --provider", () => {
         "--provider",
         "not-a-provider",
       ]),
-    /--provider must be "openai", "anthropic", "ollama", or "litellm"/,
+    /--provider must be one of "openai", "anthropic", "ollama", "litellm", or "local-llm"/,
   );
 });
 

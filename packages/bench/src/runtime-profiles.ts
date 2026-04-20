@@ -326,6 +326,18 @@ function resolveProviderConfig(
     throw new Error(`${kind} provider requires both provider and model`);
   }
 
+  // Issue #566 slice 5 — defense in depth: the CLI rejects
+  // `--provider local-llm` without `--base-url`, but programmatic
+  // callers that bypass the CLI must also get a clear error rather
+  // than silently falling through to an OpenAI default URL in the
+  // provider factory.
+  if (provider === "local-llm" && !hasBaseUrl) {
+    throw new Error(
+      `${kind} provider "local-llm" requires a baseUrl ` +
+        "(e.g. http://localhost:8080/v1 for llama.cpp).",
+    );
+  }
+
   return {
     provider,
     model: model.trim(),
