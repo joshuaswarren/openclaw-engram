@@ -8,6 +8,10 @@ import { rotateMarkdownFileToArchive } from "./hygiene.js";
 import { sanitizeMemoryContent } from "./sanitize.js";
 import { createVersion as createPageVersion, type VersioningConfig, type VersionTrigger } from "./page-versioning.js";
 import {
+  isConsolidationOperator,
+  isValidDerivedFromEntry,
+} from "./consolidation-operator.js";
+import {
   matchEntitySchemaSection,
   normalizeEntityStructuredSection,
   sortStructuredSectionsBySchema,
@@ -254,6 +258,38 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   }
   // Raw-content dedup hash — format-agnostic archive/consolidation cleanup
   if (fm.contentHash) lines.push(`contentHash: ${fm.contentHash}`);
+  // Consolidation provenance (issue #561).  Validate on write so malformed
+  // entries cannot leak into the on-disk format.  Read-through parsing is
+  // permissive; only writes go through the validator.
+  if (fm.derived_from !== undefined) {
+    if (!Array.isArray(fm.derived_from)) {
+      throw new Error(
+        `serializeFrontmatter: derived_from must be an array of "<path>:<version>" strings`,
+      );
+    }
+    for (const entry of fm.derived_from) {
+      if (!isValidDerivedFromEntry(entry)) {
+        throw new Error(
+          `serializeFrontmatter: invalid derived_from entry ${JSON.stringify(entry)} — expected "<path>:<version>" with version >= 0`,
+        );
+      }
+    }
+    if (fm.derived_from.length > 0) {
+      lines.push(
+        `derived_from: [${fm.derived_from
+          .map((e) => `"${e.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(", ")}]`,
+      );
+    }
+  }
+  if (fm.derived_via !== undefined) {
+    if (!isConsolidationOperator(fm.derived_via)) {
+      throw new Error(
+        `serializeFrontmatter: invalid derived_via ${JSON.stringify(fm.derived_via)} — expected one of "split" | "merge" | "update"`,
+      );
+    }
+    lines.push(`derived_via: ${fm.derived_via}`);
+  }
   lines.push("---");
   return lines.join("\n");
 }
@@ -320,7 +356,61 @@ function parseFrontmatter(
   const content = match[2].trim();
   const fm: Record<string, string> = {};
 
-  for (const line of fmBlock.split("\n")) {
+  // Collapse YAML block-sequence style into inline flow style so the
+  // downstream per-key parsers (derived_from, tags, lineage, etc.) keep
+  // working.  A key like
+  //     derived_from:
+  //       - facts/a.md:2
+  //       - facts/b.md:5
+  // becomes
+  //     derived_from: ["facts/a.md:2", "facts/b.md:5"]
+  // before the line-split.  Only applies when the key's own line has an
+  // empty scalar — any inline value or explicit flow sequence short-circuits
+  // this and is parsed as-is.
+  const rawLines = fmBlock.split("\n");
+  const lines: string[] = [];
+  let i = 0;
+  while (i < rawLines.length) {
+    const line = rawLines[i];
+    const colonIdx = line.indexOf(":");
+    if (colonIdx !== -1 && line.slice(colonIdx + 1).trim() === "") {
+      const baseIndent = line.match(/^\s*/)![0].length;
+      const items: string[] = [];
+      let j = i + 1;
+      while (j < rawLines.length) {
+        const next = rawLines[j];
+        const m = next.match(/^(\s+)- (.*)$/);
+        if (!m || m[1].length <= baseIndent) break;
+        // Strip matching surrounding quotes and apply YAML unescape rules
+        // so block-style entries round-trip identically to flow-style ones.
+        //   double-quoted: `\"` → `"`, `\\` → `\`
+        //   single-quoted: `''` → `'` (YAML's native escape)
+        let item = m[2].trim();
+        if (item.startsWith('"') && item.endsWith('"') && item.length >= 2) {
+          item = item
+            .slice(1, -1)
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, "\\");
+        } else if (item.startsWith("'") && item.endsWith("'") && item.length >= 2) {
+          item = item.slice(1, -1).replace(/''/g, "'");
+        }
+        items.push(item);
+        j++;
+      }
+      if (items.length > 0) {
+        const inline = items
+          .map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(", ");
+        lines.push(`${line.slice(0, colonIdx + 1)} [${inline}]`);
+        i = j;
+        continue;
+      }
+    }
+    lines.push(line);
+    i++;
+  }
+
+  for (const line of lines) {
     const colonIdx = line.indexOf(":");
     if (colonIdx === -1) continue;
     const key = line.slice(0, colonIdx).trim();
@@ -360,6 +450,113 @@ function parseFrontmatter(
       .map((l) => l.trim().replace(/^"|"$/g, ""))
       .filter(Boolean);
   }
+
+  // Parse consolidation provenance (issue #561).  `derived_from` is an
+  // array of `"<path>:<version>"` strings; parsing is permissive so legacy
+  // / malformed entries survive a read, but serialization validates on
+  // write (see serializeFrontmatter).  `derived_via` is a single operator
+  // string; unknown values become `undefined` on read rather than raising.
+  //
+  // Tokenization handles every inline-YAML flavor we may encounter from
+  // external editors and older builds:
+  //   - our canonical escape:   ["facts/a.md:2", "facts/b.md:5"]
+  //   - single-quoted:          ['facts/a.md:2', 'facts/b.md:5']
+  //   - bare (no quotes):       [facts/a.md:2, facts/b.md:5]
+  // Quoted entries preserve embedded commas in the path; bare entries
+  // fall back to comma splitting but are still validated on write.
+  let derived_from: string[] | undefined;
+  const derivedFromStr = (fm.derived_from ?? "").trim();
+  if (derivedFromStr.startsWith("[") && derivedFromStr.endsWith("]")) {
+    const inner = derivedFromStr.slice(1, -1);
+    const entries: string[] = [];
+    // Hand-rolled tokenizer: walk the inner characters, honoring
+    // double-quote escapes (`\"`, `\\`) and YAML single-quote doubling
+    // (`''` in a `'...'` string means a literal `'`).  This avoids the
+    // `'...'` regex footgun where `''` is parsed as two empty strings.
+    // Bare tokens (not quoted) are read until the next comma/whitespace
+    // so flow sequences that mix quoted and bare scalars preserve every
+    // entry.
+    let i = 0;
+    while (i < inner.length) {
+      const ch = inner[i];
+      if (ch === '"') {
+        let buf = "";
+        i++;
+        while (i < inner.length) {
+          const c = inner[i];
+          if (c === "\\" && i + 1 < inner.length) {
+            const next = inner[i + 1];
+            if (next === '"') {
+              buf += '"';
+              i += 2;
+              continue;
+            }
+            if (next === "\\") {
+              buf += "\\";
+              i += 2;
+              continue;
+            }
+            buf += c;
+            i++;
+            continue;
+          }
+          if (c === '"') {
+            i++;
+            break;
+          }
+          buf += c;
+          i++;
+        }
+        if (buf.length > 0) entries.push(buf);
+      } else if (ch === "'") {
+        let buf = "";
+        i++;
+        while (i < inner.length) {
+          const c = inner[i];
+          if (c === "'") {
+            // YAML single-quote escape: `''` means a literal `'`.
+            if (i + 1 < inner.length && inner[i + 1] === "'") {
+              buf += "'";
+              i += 2;
+              continue;
+            }
+            i++;
+            break;
+          }
+          buf += c;
+          i++;
+        }
+        if (buf.length > 0) entries.push(buf);
+      } else if (ch === "," || /\s/.test(ch)) {
+        // Separator between entries — skip.
+        i++;
+      } else {
+        // Bare token — read until next comma or whitespace.  Supports
+        // mixed-style YAML sequences like `["facts/a.md:1", facts/b.md:2]`
+        // where some entries are quoted and others are bare.
+        let buf = "";
+        while (i < inner.length) {
+          const c = inner[i];
+          if (c === "," || /\s/.test(c)) break;
+          buf += c;
+          i++;
+        }
+        if (buf.length > 0) entries.push(buf);
+      }
+    }
+    if (entries.length > 0) derived_from = entries;
+  }
+  // `derived_via` may arrive quoted from external YAML emitters
+  // (`derived_via: "merge"` or `'merge'`).  Strip a single surrounding
+  // quote pair before operator validation so semantically valid entries
+  // aren't silently downgraded to `undefined`.
+  const derivedViaRaw = (fm.derived_via ?? "").trim();
+  const derivedViaUnquoted =
+    (derivedViaRaw.startsWith('"') && derivedViaRaw.endsWith('"')) ||
+    (derivedViaRaw.startsWith("'") && derivedViaRaw.endsWith("'"))
+      ? derivedViaRaw.slice(1, -1)
+      : derivedViaRaw;
+  const derived_via = isConsolidationOperator(derivedViaUnquoted) ? derivedViaUnquoted : undefined;
 
   // Parse accessCount
   const accessCount = fm.accessCount ? parseInt(fm.accessCount, 10) : undefined;
@@ -456,6 +653,10 @@ function parseFrontmatter(
       structuredAttributes: parseStructuredAttributes(fm.structuredAttributes),
       // Raw-content dedup hash (format-agnostic archive/consolidation cleanup)
       contentHash: fm.contentHash || undefined,
+      // Consolidation provenance (issue #561) — read-through only in this
+      // PR; no code produces these fields yet.
+      derived_from,
+      derived_via,
     },
     content,
   };
