@@ -105,24 +105,55 @@ export function isDurableVerdict(verdict: JudgeVerdict): boolean {
 /**
  * Validate a cache entry loaded from persistence / another process.
  *
- * Accepts legacy `{ durable, reason }` entries unchanged. Accepts new
- * `{ durable, reason, kind }` entries when `kind` is absent or a string
- * — including unknown string values, which future builds may introduce.
- * `getVerdictKind` already collapses unrecognised strings back to the
- * boolean `durable`, so accepting them here is safe and keeps the loader
- * forward-compatible.
+ * Strict: accepts legacy `{ durable, reason }` entries and new entries
+ * whose `kind` is one of the three known `JudgeVerdictKind` values.
+ * Rejects structurally wrong types and unknown `kind` strings so the
+ * type-guard narrowing is sound — callers that receive
+ * `value is JudgeVerdict` can safely treat `kind` as the declared
+ * union.
  *
- * Rejects entries with structurally wrong types (missing `durable`,
- * non-string `reason`, non-string `kind`) so stale or corrupt caches
- * cannot poison in-process state.
+ * Forward-compat is handled by {@link normalizeCachedVerdict}, which
+ * drops unknown `kind` strings before validation so a newer build's
+ * cache entry still loads instead of being rejected.
  */
 export function isValidCachedVerdict(value: unknown): value is JudgeVerdict {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   if (typeof v.durable !== "boolean") return false;
   if (typeof v.reason !== "string") return false;
-  if (v.kind !== undefined && typeof v.kind !== "string") return false;
+  if (v.kind !== undefined) {
+    if (v.kind !== "accept" && v.kind !== "reject" && v.kind !== "defer") {
+      return false;
+    }
+  }
   return true;
+}
+
+/**
+ * Forward-compatible cache-entry loader.
+ *
+ * Drops unknown `kind` strings to `undefined` (so `getVerdictKind` can
+ * fall back to `durable`), then validates structurally. Non-string
+ * `kind` values are still treated as structural violations and rejected.
+ * Returns the sanitised verdict, or `null` when the entry is structurally
+ * unusable.
+ */
+export function normalizeCachedVerdict(value: unknown): JudgeVerdict | null {
+  if (typeof value !== "object" || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v.durable !== "boolean") return null;
+  if (typeof v.reason !== "string") return null;
+  let kind: JudgeVerdictKind | undefined;
+  if (v.kind !== undefined) {
+    if (typeof v.kind !== "string") return null;
+    if (v.kind === "accept" || v.kind === "reject" || v.kind === "defer") {
+      kind = v.kind;
+    }
+    // Unknown string `kind`: dropped to undefined for forward-compat.
+  }
+  const out: JudgeVerdict = { durable: v.durable, reason: v.reason };
+  if (kind !== undefined) out.kind = kind;
+  return out;
 }
 
 export interface JudgeBatchResult {

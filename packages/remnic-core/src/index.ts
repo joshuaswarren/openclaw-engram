@@ -69,6 +69,7 @@ export {
   getVerdictKind,
   isDurableVerdict,
   isValidCachedVerdict,
+  normalizeCachedVerdict,
   type JudgeCandidate,
   type JudgeVerdict,
   type JudgeVerdictKind,

@@ -8,6 +8,7 @@ import {
   getVerdictKind,
   isDurableVerdict,
   isValidCachedVerdict,
+  normalizeCachedVerdict,
   type JudgeCandidate,
   type JudgeVerdict,
   type JudgeVerdictKind,
@@ -559,13 +560,13 @@ test("isValidCachedVerdict accepts new entries with known kind", () => {
   );
 });
 
-test("isValidCachedVerdict accepts unknown string kinds for forward-compat", () => {
-  // Loader should not crash when a future build adds a new kind value.
-  // getVerdictKind collapses unknown strings back to the boolean, so
-  // the cached entry is still safe to consume.
+test("isValidCachedVerdict rejects unknown kind values (strict type-guard)", () => {
+  // Strict: the type-guard predicate narrows to JudgeVerdict, so only
+  // known kinds pass. Forward-compat is the caller's responsibility via
+  // normalizeCachedVerdict.
   assert.equal(
     isValidCachedVerdict({ durable: true, reason: "x", kind: "bogus" }),
-    true,
+    false,
   );
 });
 
@@ -582,6 +583,35 @@ test("isValidCachedVerdict rejects structurally invalid entries", () => {
     isValidCachedVerdict({ durable: true, reason: "x", kind: 42 }),
     false,
   );
+});
+
+test("normalizeCachedVerdict drops unknown kind strings for forward-compat", () => {
+  const result = normalizeCachedVerdict({
+    durable: true,
+    reason: "x",
+    kind: "bogus",
+  });
+  assert.notEqual(result, null);
+  assert.equal(result!.durable, true);
+  assert.equal(result!.reason, "x");
+  assert.equal(result!.kind, undefined);
+  // Re-validating the sanitised result succeeds under the strict guard.
+  assert.equal(isValidCachedVerdict(result), true);
+});
+
+test("normalizeCachedVerdict preserves known kinds", () => {
+  const result = normalizeCachedVerdict({
+    durable: false,
+    reason: "ambiguous",
+    kind: "defer",
+  });
+  assert.deepEqual(result, { durable: false, reason: "ambiguous", kind: "defer" });
+});
+
+test("normalizeCachedVerdict rejects structural violations", () => {
+  assert.equal(normalizeCachedVerdict(null), null);
+  assert.equal(normalizeCachedVerdict({ durable: true }), null);
+  assert.equal(normalizeCachedVerdict({ durable: true, reason: "x", kind: 42 }), null);
 });
 
 test("verdict cache loads legacy entries correctly via judgeFactDurability", async () => {
