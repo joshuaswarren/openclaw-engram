@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { chmod, mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
 
@@ -124,6 +124,66 @@ test("PersonaMem downloader accepts python3 when python is unavailable", async (
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /\[personamem\] Downloading from Hugging Face/);
   assert.doesNotMatch(result.stdout, /\[personamem\] Already downloaded/);
+});
+
+test("PersonaMem downloader prefers python3 over a broken python shim", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-personamem-prefer-python3-"));
+  const datasetsDir = path.join(tmpDir, "datasets");
+  const datasetDir = path.join(datasetsDir, "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  const stubBinDir = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-stub-prefer-python3-"));
+  const markerPath = path.join(tmpDir, "python-invocations.log");
+
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+  await writeFile(path.join(benchmarkDir, "benchmark.csv"), "placeholder\n", "utf8");
+
+  for (const [name, script] of [
+    [
+      "python",
+      `#!/bin/bash\necho python >> "${markerPath}"\nexit 42\n`,
+    ],
+    [
+      "python3",
+      `#!/bin/bash\necho python3 >> "${markerPath}"\nexit 0\n`,
+    ],
+  ]) {
+    const stubPath = path.join(stubBinDir, name);
+    await writeFile(stubPath, script, "utf8");
+    await chmod(stubPath, 0o755);
+  }
+
+  const gitPath = resolveCommand("git");
+  const curlPath = resolveCommand("curl");
+  const dirnamePath = resolveCommand("dirname");
+  const touchPath = resolveCommand("touch");
+  for (const [name, target] of [
+    ["git", gitPath],
+    ["curl", curlPath],
+    ["dirname", dirnamePath],
+    ["touch", touchPath],
+  ]) {
+    const wrapperPath = path.join(stubBinDir, name);
+    await writeFile(wrapperPath, `#!/bin/bash\nexec "${target}" "$@"\n`, "utf8");
+    await chmod(wrapperPath, 0o755);
+  }
+
+  const result = spawnSync("bash", [scriptPath, "--benchmark", "personamem"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      DATASETS_DIR: datasetsDir,
+      PATH: `${stubBinDir}${path.delimiter}/bin`,
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /\[personamem\] Downloading from Hugging Face/);
+
+  const markerContents = await readFile(markerPath, "utf8");
+  assert.match(markerContents, /^python3(?:\npython3)?\n?$/);
 });
 
 test("PersonaMem downloader rejects chat history links that escape the dataset root", async (t) => {

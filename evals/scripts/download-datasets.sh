@@ -47,7 +47,7 @@ resolve_python_bin() {
   fi
 
   local candidate
-  for candidate in python python3; do
+  for candidate in python3 python; do
     if command -v "$candidate" &>/dev/null; then
       PYTHON_BIN="$candidate"
       printf '%s\n' "$PYTHON_BIN"
