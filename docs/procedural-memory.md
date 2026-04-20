@@ -36,7 +36,7 @@ On prompts that look like **starting hands-on work** (deploy, ship, open a PR, r
 
 Relevant config keys include:
 
-- `procedural.recallMaxProcedures` — cap on injected procedure previews. **Default `2`** (raised from the earlier `3` in issue #567 PR 3/5 to keep procedural injection from crowding out other recall sections once the feature is enabled by default).
+- `procedural.recallMaxProcedures` — cap on injected procedure previews. **Default `2`** (lowered from the earlier `3` in issue #567 PR 3/5 to keep procedural injection from crowding out other recall sections once the feature is enabled by default).
 
 See also: [Advanced retrieval](./advanced-retrieval.md) and [Retrieval pipeline](./architecture/retrieval-pipeline.md).
 
