@@ -160,10 +160,12 @@ export function parseChatGPTExport(
   // Shape 2: an object. We look for the known keys.
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
+    let sawKnownSection = false;
     // Saved memories — accept `memory`, `memories`, or nested `user.memory`.
     for (const key of ["memory", "memories"] as const) {
       const v = obj[key];
       if (Array.isArray(v)) {
+        sawKnownSection = true;
         for (const entry of v) {
           const mem = normalizeSavedMemory(entry, options.strict);
           if (mem) result.savedMemories.push(mem);
@@ -173,6 +175,7 @@ export function parseChatGPTExport(
     if (obj.user && typeof obj.user === "object") {
       const userMem = (obj.user as Record<string, unknown>).memory;
       if (Array.isArray(userMem)) {
+        sawKnownSection = true;
         for (const entry of userMem) {
           const mem = normalizeSavedMemory(entry, options.strict);
           if (mem) result.savedMemories.push(mem);
@@ -182,6 +185,7 @@ export function parseChatGPTExport(
     // Conversations — top-level `conversations` array is the canonical shape.
     const convs = obj.conversations;
     if (Array.isArray(convs)) {
+      sawKnownSection = true;
       for (const entry of convs) {
         if (looksLikeConversation(entry)) {
           result.conversations.push(entry as ChatGPTConversation);
@@ -189,6 +193,15 @@ export function parseChatGPTExport(
           throw new Error("Non-conversation entry in conversations array");
         }
       }
+    }
+    // Strict mode: if the object has none of the recognized sections, bail
+    // rather than silently returning an empty result. Non-strict mode keeps
+    // the lenient "returns empty struct" behavior for future-shape safety.
+    if (!sawKnownSection && options.strict) {
+      throw new Error(
+        "Unknown ChatGPT export object shape: expected one of 'memory', " +
+          "'memories', 'user.memory', or 'conversations' keys.",
+      );
     }
     return result;
   }
@@ -304,13 +317,29 @@ export function collectUserTurnsFromConversation(
   }
 
   if (conversation.mapping && typeof conversation.mapping === "object") {
-    // Build a parent → children map by traversing in any order then sorting.
-    const nodes = Object.values(conversation.mapping);
-    const ordered = [...nodes].sort((a, b) => {
-      const at = a.message?.create_time;
-      const bt = b.message?.create_time;
-      return toNumericTime(at) - toNumericTime(bt);
-    });
+    // Prefer walking the active chain from `current_node` up to the root via
+    // `parent` links, then reverse so we visit in chronological order. This
+    // mirrors how ChatGPT renders the conversation and excludes abandoned
+    // branches the user backed out of. If `current_node` is missing, fall
+    // back to a deterministic traversal of all nodes sorted by create_time
+    // with node id as the stable secondary key.
+    const mapping = conversation.mapping;
+    const chainNodes = followCurrentNodeChain(mapping, conversation.current_node);
+    const ordered =
+      chainNodes.length > 0
+        ? chainNodes
+        : [...Object.values(mapping)].sort((a, b) => {
+            const delta = toNumericTime(a.message?.create_time) -
+              toNumericTime(b.message?.create_time);
+            if (delta !== 0) return delta;
+            // Stable secondary key: node id. Without this, nodes with equal
+            // or missing timestamps order non-deterministically.
+            const aid = typeof a.id === "string" ? a.id : "";
+            const bid = typeof b.id === "string" ? b.id : "";
+            if (aid < bid) return -1;
+            if (aid > bid) return 1;
+            return 0;
+          });
     for (const node of ordered) {
       const msg = node.message;
       if (!msg) continue;
@@ -327,6 +356,30 @@ export function collectUserTurnsFromConversation(
     }
   }
   return collected;
+}
+
+/**
+ * Walk the mapping graph from `current_node` back to the root via each
+ * node's `parent` pointer, then reverse so the returned array is in
+ * chronological order. Returns empty when `current_node` is missing or the
+ * chain is broken so callers can fall back to timestamp sort.
+ */
+function followCurrentNodeChain(
+  mapping: Record<string, ChatGPTConversationNode>,
+  currentNode: string | null | undefined,
+): ChatGPTConversationNode[] {
+  if (typeof currentNode !== "string" || currentNode.length === 0) return [];
+  const visited = new Set<string>();
+  const chain: ChatGPTConversationNode[] = [];
+  let cursor: string | null | undefined = currentNode;
+  while (cursor && !visited.has(cursor)) {
+    visited.add(cursor);
+    const node = mapping[cursor];
+    if (!node) break;
+    chain.push(node);
+    cursor = node.parent ?? null;
+  }
+  return chain.reverse();
 }
 
 function extractMessageText(msg: ChatGPTConversationMessage): string | undefined {
@@ -361,13 +414,34 @@ function asIsoString(value: number | string | null | undefined): string | undefi
     // Already ISO? Accept.
     if (/\d{4}-\d{2}-\d{2}T/.test(value)) return value;
     const asNum = Number(value);
-    if (Number.isFinite(asNum)) return new Date(asNum * 1000).toISOString();
+    if (Number.isFinite(asNum)) return epochToIso(asNum);
     return undefined;
   }
   if (Number.isFinite(value)) {
-    // ChatGPT exports store epoch seconds. Detect ms by magnitude.
-    const ms = value > 1e12 ? value : value * 1000;
-    return new Date(ms).toISOString();
+    return epochToIso(value);
   }
   return undefined;
+}
+
+/**
+ * Convert an epoch value (seconds or ms) to an ISO string. Guards against
+ * corrupted inputs that would crash `new Date(x).toISOString()` — the
+ * `Date` constructor accepts arbitrarily large numbers but `toISOString`
+ * throws RangeError for values beyond the platform's representable range
+ * (±100,000,000 days from the epoch). Returns `undefined` for unusable
+ * timestamps rather than propagating a crash.
+ */
+function epochToIso(value: number): string | undefined {
+  // ChatGPT exports store epoch seconds. Detect ms by magnitude.
+  const ms = Math.abs(value) > 1e12 ? value : value * 1000;
+  // JS Date range: ±8,640,000,000,000,000 ms. Clamp well inside that.
+  const MAX_SAFE_MS = 8640000000000000;
+  if (!Number.isFinite(ms) || Math.abs(ms) > MAX_SAFE_MS) return undefined;
+  const d = new Date(ms);
+  if (Number.isNaN(d.getTime())) return undefined;
+  try {
+    return d.toISOString();
+  } catch {
+    return undefined;
+  }
 }

@@ -111,4 +111,158 @@ describe("parseChatGPTExport", () => {
     assert.equal(parsed.conversations.length, 1);
     assert.equal(parsed.savedMemories.length, 0);
   });
+
+  // Cursor review on PR #595 — strict mode should reject object payloads
+  // that have none of the recognized ChatGPT export sections rather than
+  // silently returning an empty struct.
+  it("strict mode rejects unknown object shapes", () => {
+    assert.throws(
+      () => parseChatGPTExport({ foo: "bar" }, { strict: true }),
+      /Unknown ChatGPT export object shape/,
+    );
+  });
+
+  it("non-strict mode returns an empty result for unknown object shapes", () => {
+    const parsed = parseChatGPTExport({ foo: "bar" });
+    assert.equal(parsed.savedMemories.length, 0);
+    assert.equal(parsed.conversations.length, 0);
+  });
+
+  // Cursor review on PR #595 — collectUserTurnsFromConversation should
+  // follow the current_node → parent chain rather than flattening every
+  // node in the mapping, which would include abandoned branches.
+  it("follows current_node chain and ignores abandoned mapping branches", () => {
+    const conv = {
+      current_node: "msg-3",
+      mapping: {
+        "msg-1": {
+          id: "msg-1",
+          parent: null,
+          message: {
+            id: "msg-1",
+            author: { role: "user" },
+            content: { parts: ["First user turn (active)"] },
+            create_time: 1000,
+          },
+        },
+        "msg-2": {
+          id: "msg-2",
+          parent: "msg-1",
+          message: {
+            id: "msg-2",
+            author: { role: "assistant" },
+            content: { parts: ["Reply"] },
+            create_time: 1100,
+          },
+        },
+        "msg-3": {
+          id: "msg-3",
+          parent: "msg-2",
+          message: {
+            id: "msg-3",
+            author: { role: "user" },
+            content: { parts: ["Second user turn (active)"] },
+            create_time: 1200,
+          },
+        },
+        "msg-abandoned": {
+          id: "msg-abandoned",
+          parent: "msg-1",
+          message: {
+            id: "msg-abandoned",
+            author: { role: "user" },
+            content: { parts: ["ABANDONED branch — must NOT appear"] },
+            create_time: 1050,
+          },
+        },
+      },
+    };
+    const turns = collectUserTurnsFromConversation(conv);
+    assert.equal(turns.length, 2);
+    assert.equal(turns[0]?.content, "First user turn (active)");
+    assert.equal(turns[1]?.content, "Second user turn (active)");
+  });
+
+  it("falls back to sorted traversal when current_node is missing", () => {
+    const conv = {
+      mapping: {
+        "msg-1": {
+          id: "msg-1",
+          parent: null,
+          message: {
+            id: "msg-1",
+            author: { role: "user" },
+            content: { parts: ["alpha"] },
+            create_time: 200,
+          },
+        },
+        "msg-2": {
+          id: "msg-2",
+          parent: "msg-1",
+          message: {
+            id: "msg-2",
+            author: { role: "user" },
+            content: { parts: ["beta"] },
+            create_time: 100,
+          },
+        },
+      },
+    };
+    const turns = collectUserTurnsFromConversation(conv);
+    // Sorted by create_time ascending.
+    assert.deepEqual(
+      turns.map((t) => t.content),
+      ["beta", "alpha"],
+    );
+  });
+
+  it("uses node id as a stable secondary sort key when timestamps tie", () => {
+    const mkNode = (id: string) => ({
+      id,
+      parent: null,
+      message: {
+        id,
+        author: { role: "user" },
+        content: { parts: [`turn-${id}`] },
+        create_time: 500, // all same timestamp
+      },
+    });
+    const conv = {
+      mapping: {
+        "msg-c": mkNode("msg-c"),
+        "msg-a": mkNode("msg-a"),
+        "msg-b": mkNode("msg-b"),
+      },
+    };
+    const turns = collectUserTurnsFromConversation(conv);
+    // Stable order: node id ascending.
+    assert.deepEqual(
+      turns.map((t) => t.content),
+      ["turn-msg-a", "turn-msg-b", "turn-msg-c"],
+    );
+  });
+
+  // Cursor review on PR #595 — asIsoString must not throw on corrupted
+  // timestamps that overflow Date.toISOString's valid range.
+  it("returns undefined for timestamps beyond Date's valid range", () => {
+    const conv = {
+      current_node: "m1",
+      mapping: {
+        m1: {
+          id: "m1",
+          parent: null,
+          message: {
+            id: "m1",
+            author: { role: "user" },
+            content: { parts: ["hello"] },
+            // 1e20 seconds → vastly beyond Date's safe range
+            create_time: 1e20,
+          },
+        },
+      },
+    };
+    const turns = collectUserTurnsFromConversation(conv);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]?.createdAt, undefined);
+  });
 });

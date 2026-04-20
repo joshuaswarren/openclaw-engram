@@ -114,9 +114,18 @@ function conversationToSummary(
   const body = userTurns.map((t) => `- ${t.content}`).join("\n");
   let content = titleLine + body;
   if (content.length > maxChars) {
-    const remaining = maxChars - titleLine.length - 3; // leave room for "..."
-    const bodyTruncated = body.slice(0, Math.max(0, remaining));
-    content = titleLine + bodyTruncated + "...";
+    // Reserve 3 chars for the "..." suffix. If the titleLine alone already
+    // exceeds maxChars (pathological — a very long title with a small cap),
+    // truncate the titleLine itself rather than letting content exceed
+    // maxChars.
+    const suffix = "...";
+    if (titleLine.length + suffix.length >= maxChars) {
+      content = titleLine.slice(0, Math.max(0, maxChars - suffix.length)) + suffix;
+    } else {
+      const remaining = maxChars - titleLine.length - suffix.length;
+      const bodyTruncated = body.slice(0, Math.max(0, remaining));
+      content = titleLine + bodyTruncated + suffix;
+    }
   }
 
   const sourceTimestamp = firstTimestamp(userTurns);

@@ -111,4 +111,38 @@ describe("transformChatGPTExport", () => {
     const memories = transformChatGPTExport(parsed, { maxMemories: 1 });
     assert.equal(memories.length, 1);
   });
+
+  // Cursor review on PR #595 — when the title alone is longer than maxChars,
+  // the previous truncation logic produced content that exceeded the cap.
+  it("truncation never exceeds maxConversationSummaryChars even with a long title", () => {
+    const longTitle = "T".repeat(500);
+    const parsed = parseChatGPTExport({
+      conversations: [
+        {
+          id: "long-title",
+          title: longTitle,
+          mapping: {
+            a: {
+              id: "a",
+              message: {
+                author: { role: "user" },
+                content: { parts: ["short body"] },
+                create_time: 1737763200,
+              },
+            },
+          },
+        },
+      ],
+    });
+    const memories = transformChatGPTExport(parsed, {
+      includeConversations: true,
+      maxConversationSummaryChars: 100,
+    });
+    assert.equal(memories.length, 1);
+    assert.ok(
+      memories[0].content.length <= 100,
+      `content length ${memories[0].content.length} must be <= 100, got: ${memories[0].content.slice(0, 50)}...`,
+    );
+    assert.ok(memories[0].content.endsWith("..."));
+  });
 });
