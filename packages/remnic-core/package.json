@@ -1,6 +1,6 @@
 {
   "name": "@remnic/core",
-  "version": "1.0.3",
+  "version": "1.1.0",
   "description": "Framework-agnostic Remnic memory engine — orchestrator, storage, extraction, search, trust zones",
   "type": "module",
   "main": "dist/index.js",
@@ -56,5 +56,11 @@
     "url": "https://github.com/joshuaswarren/remnic.git",
     "directory": "packages/remnic-core"
   },
-  "keywords": ["remnic", "memory", "ai", "agent", "core"]
+  "keywords": [
+    "remnic",
+    "memory",
+    "ai",
+    "agent",
+    "core"
+  ]
 }
