@@ -292,3 +292,96 @@ export function resolveCodingNamespaceOverlay(
     scope: "project",
   };
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// Diagnostics (issue #569 PR 3 + PR 8)
+// ──────────────────────────────────────────────────────────────────────────
+
+export interface CodingScopeDescription {
+  /** "none" when no overlay is active; otherwise the resolved scope level. */
+  scope: "none" | "project" | "branch";
+  /** Project id (raw, not sanitized) when a context is attached. */
+  projectId: string | null;
+  /** Branch name (raw, not sanitized) when available. */
+  branch: string | null;
+  /** Effective namespace writes route to. `null` when no overlay applies. */
+  effectiveNamespace: string | null;
+  /** Read fallbacks included in recall (non-empty only when branch-scope is on). */
+  readFallbacks: string[];
+  /**
+   * Why no overlay applies, when `scope === "none"`. One of:
+   *   - `"no-context"`  — connector didn't attach a CodingContext
+   *   - `"disabled"`   — codingMode.projectScope is false
+   *   - `"empty-project"` — codingContext.projectId was empty/whitespace
+   */
+  disabledReason: "no-context" | "disabled" | "empty-project" | null;
+}
+
+/**
+ * Human-readable description of the coding-agent scope that currently applies
+ * for a session. Consumed by `remnic doctor` (PR 8) and by logs to surface
+ * why recall routes where it does.
+ *
+ * Pure — callers pass the coding context + config they already have.
+ */
+export function describeCodingScope(
+  codingContext: CodingContext | null | undefined,
+  config: Pick<CodingModeConfig, "projectScope" | "branchScope">,
+): CodingScopeDescription {
+  const projectId = codingContext?.projectId ?? null;
+  const branch = codingContext?.branch ?? null;
+
+  if (!codingContext) {
+    return {
+      scope: "none",
+      projectId: null,
+      branch: null,
+      effectiveNamespace: null,
+      readFallbacks: [],
+      disabledReason: "no-context",
+    };
+  }
+  if (!config.projectScope) {
+    return {
+      scope: "none",
+      projectId,
+      branch,
+      effectiveNamespace: null,
+      readFallbacks: [],
+      disabledReason: "disabled",
+    };
+  }
+  const trimmedId = typeof projectId === "string" ? projectId.trim() : "";
+  if (!trimmedId) {
+    return {
+      scope: "none",
+      projectId,
+      branch,
+      effectiveNamespace: null,
+      readFallbacks: [],
+      disabledReason: "empty-project",
+    };
+  }
+
+  const overlay = resolveCodingNamespaceOverlay(codingContext, config);
+  // Unreachable in practice given the guards above, but keep the return
+  // shape consistent if the resolver grows new null branches later.
+  if (!overlay) {
+    return {
+      scope: "none",
+      projectId,
+      branch,
+      effectiveNamespace: null,
+      readFallbacks: [],
+      disabledReason: "disabled",
+    };
+  }
+  return {
+    scope: overlay.scope,
+    projectId,
+    branch,
+    effectiveNamespace: overlay.namespace,
+    readFallbacks: overlay.readFallbacks,
+    disabledReason: null,
+  };
+}
