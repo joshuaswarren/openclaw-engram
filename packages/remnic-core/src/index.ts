@@ -66,8 +66,13 @@ export {
   clearVerdictCache,
   verdictCacheSize,
   createVerdictCache,
+  getVerdictKind,
+  isDurableVerdict,
+  isValidCachedVerdict,
+  normalizeCachedVerdict,
   type JudgeCandidate,
   type JudgeVerdict,
+  type JudgeVerdictKind,
   type JudgeBatchResult,
 } from "./extraction-judge.js";
 
@@ -616,6 +621,24 @@ export {
 // ---------------------------------------------------------------------------
 
 export * from "./training-export/index.js";
+
+// ---------------------------------------------------------------------------
+// Graph retrieval types (issue #559, PR 1 of 5)
+// ---------------------------------------------------------------------------
+
+export {
+  queryGraph,
+  isNodeType,
+  isEdgeType,
+  type NodeType,
+  type EdgeType,
+  type RemnicGraphNode,
+  type RemnicGraphEdge,
+  type RemnicGraph,
+  type QueryGraphOptions,
+  type QueryGraphResult,
+  type RankedGraphNode,
+} from "./graph-retrieval.js";
 
 // ---------------------------------------------------------------------------
 // Public types

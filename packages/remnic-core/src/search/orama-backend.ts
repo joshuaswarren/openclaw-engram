@@ -107,11 +107,11 @@ export class OramaBackend implements SearchBackend {
     return this.searchDb(db, query, "hybrid", maxResults ?? 10);
   }
 
-  async update(): Promise<void> {
-    await this.updateCollection(this.collection);
+  async update(execution?: SearchExecutionOptions): Promise<void> {
+    await this.updateCollection(this.collection, execution);
   }
 
-  async updateCollection(collection: string): Promise<void> {
+  async updateCollection(collection: string, _execution?: SearchExecutionOptions): Promise<void> {
     const db = await this.ensureDbForCollection(collection);
     if (!db) return;
     const { search: oramaSearch, insert, remove, count } = this.oramaModule;

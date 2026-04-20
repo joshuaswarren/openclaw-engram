@@ -91,18 +91,19 @@ const TRIVIAL_PATTERNS = [
 // ---------------------------------------------------------------------------
 
 const CATEGORY_BOOSTS: Record<MemoryCategory, number> = {
-  correction: 0.15,    // Corrections are always important
-  principle: 0.12,     // Durable rules/values
-  rule: 0.11,          // Causal IF→THEN rules
-  procedure: 0.10,     // Repeatable workflows (issue #519)
-  preference: 0.10,    // User preferences matter
-  commitment: 0.10,    // Promises/obligations
-  decision: 0.08,      // Decisions with rationale
-  relationship: 0.05,  // Entity relationships
-  skill: 0.05,         // Capabilities
-  moment: 0.03,        // Emotional milestones
-  entity: 0.02,        // Entity facts
-  fact: 0.00,          // Base facts, no boost
+  correction: 0.15,        // Corrections are always important
+  principle: 0.12,         // Durable rules/values
+  rule: 0.11,              // Causal IF→THEN rules
+  procedure: 0.10,         // Repeatable workflows (issue #519)
+  preference: 0.10,        // User preferences matter
+  commitment: 0.10,        // Promises/obligations
+  reasoning_trace: 0.09,   // Stored reasoning chains (issue #564)
+  decision: 0.08,          // Decisions with rationale
+  relationship: 0.05,      // Entity relationships
+  skill: 0.05,             // Capabilities
+  moment: 0.03,            // Emotional milestones
+  entity: 0.02,            // Entity facts
+  fact: 0.00,              // Base facts, no boost
 };
 
 // ---------------------------------------------------------------------------

@@ -83,6 +83,18 @@ export const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, 
   },
 };
 
+type OrchestratorTeardownView = {
+  abortDeferredInit(): void;
+  deferredReady: Promise<void>;
+  lcmEngine: { close(): void } | null;
+  qmd: { dispose?(): void | Promise<void> };
+  qmdMaintenanceTimer?: NodeJS.Timeout | null;
+  qmdMaintenancePending?: boolean;
+  qmdMaintenanceInFlight?: boolean;
+};
+
+const BENCH_TEARDOWN_DEFERRED_READY_WAIT_MS = 500;
+
 function cloneBenchConfig(config: Record<string, unknown>): Record<string, unknown> {
   return cloneBenchConfigValue(config) as Record<string, unknown>;
 }
@@ -205,7 +217,23 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
     };
 
     const cleanup = async (): Promise<void> => {
-      state.orchestrator.lcmEngine?.close();
+      const orchestrator = state.orchestrator as unknown as OrchestratorTeardownView;
+
+      orchestrator.abortDeferredInit();
+      if (orchestrator.qmdMaintenanceTimer) {
+        clearTimeout(orchestrator.qmdMaintenanceTimer);
+      }
+      orchestrator.qmdMaintenanceTimer = null;
+      orchestrator.qmdMaintenancePending = false;
+      orchestrator.qmdMaintenanceInFlight = false;
+      await Promise.race([
+        orchestrator.deferredReady.catch(() => undefined),
+        new Promise((resolve) =>
+          setTimeout(resolve, BENCH_TEARDOWN_DEFERRED_READY_WAIT_MS),
+        ),
+      ]);
+      await orchestrator.qmd.dispose?.();
+      orchestrator.lcmEngine?.close();
       await rm(state.tempDir, { recursive: true, force: true });
     };
 
@@ -231,7 +259,7 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
       async recall(sessionId: string, query: string, budgetChars?: number): Promise<string> {
         const engine = getEngine();
-        const budget = budgetChars ?? 32000;
+        const budget = budgetChars ?? 32_000;
         const sections: string[] = [];
 
         if (query) {

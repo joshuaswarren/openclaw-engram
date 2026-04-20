@@ -225,6 +225,8 @@ const CLI_MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLI_REPO_ROOT = path.resolve(CLI_MODULE_DIR, "../../..");
 const EVAL_RUNNER_PATH = path.join(CLI_REPO_ROOT, "evals", "run.ts");
 const OPENCLAW_GATEWAY_LABEL = "ai.openclaw.gateway";
+const CLI_SUCCESS_EXIT_GRACE_MS = 2_000;
+const CLI_OUTPUT_FLUSH_GRACE_MS = 250;
 
 export const BENCHMARK_CATALOG: BenchCatalogEntry[] = [
   {
@@ -3450,7 +3452,7 @@ function cmdReview(action: string, rest: string[]): void {
   }
 }
 
-function cmdSync(action: string, rest: string[], json: boolean): void {
+async function cmdSync(action: string, rest: string[], json: boolean): Promise<void> {
   // Extract --source before positional args so that rest args can override it
   const sourceIdx = rest.indexOf("--source");
   const sourceDir = sourceIdx >= 0 && rest[sourceIdx + 1] ? rest[sourceIdx + 1] : ".";
@@ -3483,6 +3485,7 @@ function cmdSync(action: string, rest: string[], json: boolean): void {
       stop();
       console.log("Stopped watching.");
     });
+    await new Promise(() => {});
   } else {
     console.log("Usage: remnic sync <run|watch> [--source <dir>]");
     process.exit(1);
@@ -5928,7 +5931,7 @@ Options:
     case "sync": {
       const action = rest[0] ?? "run";
       const json = rest.includes("--json");
-      cmdSync(action, rest.slice(1), json);
+      await cmdSync(action, rest.slice(1), json);
       break;
     }
 
@@ -6157,6 +6160,40 @@ Options:
   }
 }
 
+function waitForStreamDrain(stream: NodeJS.WriteStream): Promise<void> {
+  if (!stream.writableNeedDrain) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    stream.once("drain", resolve);
+  });
+}
+
+async function armCliSuccessExitWatchdog(): Promise<void> {
+  const exitCode = process.exitCode ?? 0;
+  process.exitCode = exitCode;
+
+  await Promise.race([
+    Promise.allSettled([
+      waitForStreamDrain(process.stdout),
+      waitForStreamDrain(process.stderr),
+    ]),
+    new Promise((resolve) => setTimeout(resolve, CLI_OUTPUT_FLUSH_GRACE_MS)),
+  ]);
+
+  const watchdog = setTimeout(() => {
+    try {
+      process.stderr.write(
+        `Warning: remnic CLI forced a clean exit after ${CLI_SUCCESS_EXIT_GRACE_MS}ms because a handle remained open.\n`,
+      );
+    } catch {
+      // Ignore write failures during forced shutdown.
+    }
+    process.exit(exitCode);
+  }, CLI_SUCCESS_EXIT_GRACE_MS);
+  watchdog.unref?.();
+}
+
 // Auto-run when executed directly (covers: remnic and legacy engram entrypoints,
 // or invoked via wrappers that set REMNIC_CLI_BIN / ENGRAM_CLI_BIN)
 const argv1 = process.argv[1] ?? "";
@@ -6172,8 +6209,10 @@ if (
   process.env.REMNIC_CLI_BIN === "1" ||
   process.env.ENGRAM_CLI_BIN === "1"
 ) {
-  main().catch((err) => {
-    process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
-  });
+  main()
+    .then(() => armCliSuccessExitWatchdog())
+    .catch((err) => {
+      process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    });
 }

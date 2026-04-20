@@ -173,6 +173,7 @@ export const VALID_MEMORY_CATEGORIES = new Set([
   "skill",
   "rule",
   "procedure",
+  "reasoning_trace",
 ]);
 
 const DEFAULT_BEHAVIOR_LOOP_PROTECTED_PARAMS = [

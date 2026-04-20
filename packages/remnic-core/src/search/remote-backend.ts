@@ -77,8 +77,8 @@ export class RemoteSearchBackend implements SearchBackend {
     return this.post("/search/hybrid", { query, collection, maxResults }, execution);
   }
 
-  async update(): Promise<void> {}
-  async updateCollection(_collection: string): Promise<void> {}
+  async update(_execution?: SearchExecutionOptions): Promise<void> {}
+  async updateCollection(_collection: string, _execution?: SearchExecutionOptions): Promise<void> {}
   async embed(): Promise<void> {}
   async embedCollection(_collection: string): Promise<void> {}
 

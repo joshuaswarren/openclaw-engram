@@ -56,6 +56,7 @@ const ALL_MEMORY_CATEGORIES: MemoryCategory[] = [
   "skill",
   "rule",
   "procedure",
+  "reasoning_trace",
 ];
 
 // ── Default taxonomy structure ──────────────────────────────────────────────

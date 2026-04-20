@@ -60,8 +60,8 @@ export interface SearchBackend {
   ): Promise<SearchResult[]>;
 
   // ── Maintenance ──
-  update(): Promise<void>;
-  updateCollection(collection: string): Promise<void>;
+  update(execution?: SearchExecutionOptions): Promise<void>;
+  updateCollection(collection: string, execution?: SearchExecutionOptions): Promise<void>;
   embed(): Promise<void>;
   embedCollection(collection: string): Promise<void>;
 

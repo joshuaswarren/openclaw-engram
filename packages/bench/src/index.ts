@@ -97,6 +97,25 @@ export type {
 } from "./providers/types.js";
 
 export { BENCHMARK_RESULT_SCHEMA } from "./schema.js";
+export {
+  BENCHMARK_ARTIFACT_SCHEMA_VERSION,
+  buildBenchmarkArtifact,
+  buildBenchmarkArtifactFilename,
+  hashBenchmarkArtifact,
+  loadBenchmarkArtifact,
+  parseBenchmarkArtifact,
+  serializeBenchmarkArtifact,
+  writeBenchmarkArtifact,
+} from "./published-artifact.js";
+export type {
+  BenchmarkArtifact,
+  BenchmarkArtifactEnvironment,
+  BenchmarkArtifactPerTaskScore,
+  BenchmarkArtifactSystem,
+  BuildBenchmarkArtifactInput,
+  PublishedBenchmarkId,
+  WriteBenchmarkArtifactResult,
+} from "./published-artifact.js";
 export { createAnthropicProvider } from "./providers/anthropic.js";
 export {
   createProvider,
