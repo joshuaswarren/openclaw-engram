@@ -222,16 +222,16 @@ export function renderXrayMarkdown(
   lines.push("");
   lines.push("| Field | Value |");
   lines.push("| --- | --- |");
-  lines.push(`| Snapshot ID | \`${snapshot.snapshotId}\` |`);
+  lines.push(`| Snapshot ID | ${mdTableInlineCode(snapshot.snapshotId)} |`);
   lines.push(`| Captured at | ${formatCapturedAt(snapshot.capturedAt)} |`);
   if (snapshot.sessionKey) {
-    lines.push(`| Session | \`${snapshot.sessionKey}\` |`);
+    lines.push(`| Session | ${mdTableInlineCode(snapshot.sessionKey)} |`);
   }
   if (snapshot.namespace) {
-    lines.push(`| Namespace | \`${snapshot.namespace}\` |`);
+    lines.push(`| Namespace | ${mdTableInlineCode(snapshot.namespace)} |`);
   }
   if (snapshot.traceId) {
-    lines.push(`| Trace ID | \`${snapshot.traceId}\` |`);
+    lines.push(`| Trace ID | ${mdTableInlineCode(snapshot.traceId)} |`);
   }
   lines.push(
     `| Budget | ${snapshot.budget.used} / ${snapshot.budget.chars} chars |`,
@@ -277,14 +277,14 @@ export function renderXrayMarkdown(
     lines.push("");
     lines.push("| Field | Value |");
     lines.push("| --- | --- |");
-    lines.push(`| Tier | \`${te.tier}\` |`);
+    lines.push(`| Tier | ${mdTableInlineCode(te.tier)} |`);
     lines.push(`| Reason | ${mdEscape(te.tierReason)} |`);
     lines.push(`| Candidates considered | ${te.candidatesConsidered} |`);
     lines.push(`| Latency (ms) | ${te.latencyMs} |`);
     lines.push(
       `| Filtered by | ${
         te.filteredBy.length > 0
-          ? te.filteredBy.map(mdInlineCode).join(", ")
+          ? te.filteredBy.map(mdTableInlineCode).join(", ")
           : "_(none)_"
       } |`,
     );
@@ -402,4 +402,17 @@ function mdInlineCode(value: string): string {
   const fence = "`".repeat(maxLen + 1);
   const pad = value.startsWith("`") || value.endsWith("`") ? " " : "";
   return `${fence}${pad}${value}${pad}${fence}`;
+}
+
+/**
+ * Safe inline-code rendering for a GFM *table cell*.  Hosts may surface
+ * arbitrary strings (session keys, namespaces, trace ids) that could
+ * contain backticks or pipes, so we (1) pick a sufficiently long fence
+ * via `mdInlineCode` and (2) escape pipes so they do not break the
+ * surrounding table row.
+ */
+function mdTableInlineCode(value: string): string {
+  // Pipe-escape *after* fencing so the `\|` lives inside the code span
+  // and renders literally in the cell.
+  return mdInlineCode(value).replace(/\|/g, "\\|");
 }
