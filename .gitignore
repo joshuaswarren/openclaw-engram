@@ -36,6 +36,10 @@ evals/datasets/
 # `scripts/bench/fetch-datasets.sh --help` to set up.
 bench-datasets/
 
+# Published-benchmark artifacts (gitignored during development; promoted
+# per-release by the leaderboard pipeline — see issue #566 slice 6).
+docs/benchmarks/results/
+
 # Git worktrees
 .worktrees/
 PR_PREFLIGHT.md

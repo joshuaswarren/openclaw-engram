@@ -14,6 +14,7 @@ import {
   LOCOMO_DATASET_FILENAMES,
   formatMissingDatasetError,
   loadLoCoMo10,
+  normalizeLoCoMoQa,
 } from "../dataset-loader.js";
 import type {
   BenchmarkDefinition,
@@ -338,65 +339,7 @@ function normalizeQaArray(value: unknown, location: string): LoCoMoQA[] {
   }
 
   return value.map((entry, index) =>
-    normalizeQa(entry, `${location} qa[${index}]`),
+    normalizeLoCoMoQa(entry, `${location} qa[${index}]`),
   );
-}
-
-function normalizeQa(value: unknown, location: string): LoCoMoQA {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${location} must be an object.`);
-  }
-
-  const record = value as Record<string, unknown>;
-  if (typeof record.question !== "string" || record.question.trim().length === 0) {
-    throw new Error(`${location} must include a non-empty question string.`);
-  }
-  if (!Number.isInteger(record.category)) {
-    throw new Error(`${location} must include an integer category.`);
-  }
-  if (
-    !Array.isArray(record.evidence)
-    || record.evidence.some((item) => typeof item !== "string")
-  ) {
-    throw new Error(`${location} must include an evidence array of strings.`);
-  }
-
-  const answer = normalizeQaAnswer(record.answer, record.adversarial_answer, location);
-  return {
-    question: record.question,
-    answer,
-    evidence: record.evidence as string[],
-    category: record.category as number,
-  };
-}
-
-function normalizeQaAnswer(
-  answer: unknown,
-  adversarialAnswer: unknown,
-  location: string,
-): string {
-  const direct = normalizeScalarAnswer(answer);
-  if (direct !== undefined) {
-    return direct;
-  }
-
-  const adversarial = normalizeScalarAnswer(adversarialAnswer);
-  if (adversarial !== undefined) {
-    return adversarial;
-  }
-
-  throw new Error(
-    `${location} must include a string or numeric answer, or an adversarial_answer fallback.`,
-  );
-}
-
-function normalizeScalarAnswer(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  return undefined;
 }
 

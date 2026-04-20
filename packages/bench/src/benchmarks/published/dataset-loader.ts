@@ -30,6 +30,7 @@ import {
 import {
   LOCOMO_SMOKE_FIXTURE,
   type LoCoMoConversation,
+  type LoCoMoQA,
 } from "./locomo/fixture.js";
 
 /** Canonical LongMemEval-S filenames probed by the loader, in priority order. */
@@ -262,61 +263,115 @@ function parseLoCoMoFile(raw: string, filename: string): LoCoMoConversation[] {
       `${filename} must contain an array of LoCoMo conversations at top level.`,
     );
   }
-  for (let index = 0; index < parsed.length; index += 1) {
-    const entry = parsed[index];
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      throw new Error(
-        `${filename} conversation ${index} must be an object with sample_id and conversation fields.`,
-      );
-    }
-    const record = entry as Record<string, unknown>;
-    if (typeof record.sample_id !== "string") {
-      throw new Error(
-        `${filename} conversation ${index} is missing a string sample_id field.`,
-      );
-    }
-    if (
-      !record.conversation ||
-      typeof record.conversation !== "object" ||
-      Array.isArray(record.conversation)
-    ) {
-      throw new Error(
-        `${filename} conversation ${index} is missing a conversation object field.`,
-      );
-    }
-    if (!Array.isArray(record.qa)) {
-      throw new Error(
-        `${filename} conversation ${index} is missing a qa array.`,
-      );
-    }
-    // Walk each QA entry. The runner derefs qa[i].question (string),
-    // qa[i].category (integer), qa[i].evidence (string[]). The runner
-    // calls a fallback normalizer for adversarial answers, but a
-    // completely malformed QA entry should fail at parse time.
-    for (let qaIndex = 0; qaIndex < record.qa.length; qaIndex += 1) {
-      const qa = record.qa[qaIndex];
-      if (!qa || typeof qa !== "object" || Array.isArray(qa)) {
-        throw new Error(
-          `${filename} conversation ${index} qa[${qaIndex}] must be an object.`,
-        );
-      }
-      const qaRecord = qa as Record<string, unknown>;
-      if (
-        typeof qaRecord.question !== "string" ||
-        qaRecord.question.trim().length === 0
-      ) {
-        throw new Error(
-          `${filename} conversation ${index} qa[${qaIndex}].question must be a non-empty string.`,
-        );
-      }
-      if (!Number.isInteger(qaRecord.category)) {
-        throw new Error(
-          `${filename} conversation ${index} qa[${qaIndex}].category must be an integer.`,
-        );
-      }
-    }
+  return parsed.map((entry, index) =>
+    parseLoCoMoConversation(entry, filename, index),
+  );
+}
+
+function parseLoCoMoConversation(
+  entry: unknown,
+  filename: string,
+  index: number,
+): LoCoMoConversation {
+  const location = `${filename} conversation ${index}`;
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+    throw new Error(
+      `${location} must be an object with sample_id and conversation fields.`,
+    );
   }
-  return parsed as LoCoMoConversation[];
+  const record = entry as Record<string, unknown>;
+  if (typeof record.sample_id !== "string") {
+    throw new Error(`${location} is missing a string sample_id field.`);
+  }
+  if (
+    !record.conversation ||
+    typeof record.conversation !== "object" ||
+    Array.isArray(record.conversation)
+  ) {
+    throw new Error(`${location} is missing a conversation object field.`);
+  }
+  if (!Array.isArray(record.qa)) {
+    throw new Error(`${location} is missing a qa array.`);
+  }
+  const qa = record.qa.map((value, qaIndex) =>
+    normalizeLoCoMoQa(value, `${location} qa[${qaIndex}]`),
+  );
+  return {
+    sample_id: record.sample_id,
+    conversation: record.conversation as Record<string, unknown>,
+    qa,
+    event_summary: record.event_summary,
+    observation: record.observation,
+    session_summary: record.session_summary,
+  };
+}
+
+/**
+ * Normalize a single LoCoMo QA entry. Required fields are validated and
+ * `answer`/`adversarial_answer` are coerced to a canonical string so
+ * downstream consumers of `LoadedDataset<LoCoMoConversation>` can rely on
+ * `qa.answer` always being a string. Exported so the LoCoMo runner and
+ * other callers can share the same normalization.
+ */
+export function normalizeLoCoMoQa(value: unknown, location: string): LoCoMoQA {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`${location} must be an object.`);
+  }
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.question !== "string" ||
+    record.question.trim().length === 0
+  ) {
+    throw new Error(`${location}.question must be a non-empty string.`);
+  }
+  if (!Number.isInteger(record.category)) {
+    throw new Error(`${location}.category must be an integer.`);
+  }
+  if (
+    !Array.isArray(record.evidence) ||
+    record.evidence.some((item) => typeof item !== "string")
+  ) {
+    throw new Error(`${location}.evidence must be an array of strings.`);
+  }
+  const answer = normalizeLoCoMoAnswer(
+    record.answer,
+    record.adversarial_answer,
+    location,
+  );
+  return {
+    question: record.question,
+    answer,
+    evidence: record.evidence as string[],
+    category: record.category as number,
+  };
+}
+
+function normalizeLoCoMoAnswer(
+  answer: unknown,
+  adversarialAnswer: unknown,
+  location: string,
+): string {
+  const direct = coerceScalarAnswer(answer);
+  if (direct !== undefined) {
+    return direct;
+  }
+  const adversarial = coerceScalarAnswer(adversarialAnswer);
+  if (adversarial !== undefined) {
+    return adversarial;
+  }
+  throw new Error(
+    `${location} must include a string or numeric answer, or an adversarial_answer fallback.`,
+  );
+}
+
+function coerceScalarAnswer(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return String(value);
+  }
+  return undefined;
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {

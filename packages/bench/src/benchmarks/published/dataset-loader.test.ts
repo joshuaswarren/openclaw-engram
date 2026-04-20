@@ -435,6 +435,119 @@ test("loadLoCoMo10 default parser rejects entries missing qa array", async () =>
   });
 });
 
+test("loadLoCoMo10 default parser rejects qa entry with missing answer and adversarial_answer", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "qa-missing-answer",
+          conversation: { speaker_a: "A", speaker_b: "B" },
+          qa: [{ question: "q", category: 1, evidence: [] }],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) =>
+        /must include a string or numeric answer/.test(entry),
+      ),
+      `expected answer error; got ${JSON.stringify(result.errors)}`,
+    );
+  });
+});
+
+test("loadLoCoMo10 default parser rejects qa entry with non-string evidence", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "qa-bad-evidence",
+          conversation: { speaker_a: "A", speaker_b: "B" },
+          qa: [{ question: "q", answer: "a", category: 1, evidence: [1, 2] }],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) =>
+        /evidence must be an array of strings/.test(entry),
+      ),
+      `expected evidence error; got ${JSON.stringify(result.errors)}`,
+    );
+  });
+});
+
+test("loadLoCoMo10 default parser falls back to adversarial_answer when answer missing", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "qa-adversarial",
+          conversation: { speaker_a: "A", speaker_b: "B" },
+          qa: [
+            {
+              question: "q",
+              adversarial_answer: "fallback-answer",
+              category: 5,
+              evidence: ["D1:1"],
+            },
+          ],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "dataset");
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0]?.qa[0]?.answer, "fallback-answer");
+  });
+});
+
+test("loadLoCoMo10 default parser coerces numeric answer to string", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "qa-numeric",
+          conversation: { speaker_a: "A", speaker_b: "B" },
+          qa: [
+            {
+              question: "how many",
+              answer: 7,
+              category: 1,
+              evidence: [],
+            },
+          ],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "dataset");
+    assert.equal(result.items[0]?.qa[0]?.answer, "7");
+  });
+});
+
 test("loadLoCoMo10 returns smoke fixture when dataset missing in quick mode", async () => {
   const result = await loadLoCoMo10({ mode: "quick" });
   assert.equal(result.source, "smoke");
