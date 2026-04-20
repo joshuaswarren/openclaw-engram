@@ -83,6 +83,7 @@ Access-layer safety notes:
 | `extractionMaxEntitiesPerRun` | `6` | Cap on entities extracted per LLM call |
 | `extractionMaxQuestionsPerRun` | `3` | Cap on curiosity questions generated per LLM call |
 | `extractionMaxProfileUpdatesPerRun` | `4` | Cap on profile update statements per LLM call |
+| `beforeResetTimeoutMs` | `2000` | Max time (ms, clamped to `[100, 30000]`) to wait for a reset-triggered flush before returning control to the host. Operators running a local LLM for extraction often want this higher — a 7B model on CPU can take 2–5s per extraction, and the default can abort the queued follow-up flush before it completes. See issue #549 for the error-vs-debug log-level behavior around these aborts. |
 
 ## Search Backend (v9.0)
 
