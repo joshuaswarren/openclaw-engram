@@ -156,6 +156,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
   const legacyListed = [
     "engram.recall",
     "engram.recall_explain",
+    "engram.set_coding_context",
     "engram.recall_tier_explain",
     "engram.day_summary",
     "engram.memory_governance_run",

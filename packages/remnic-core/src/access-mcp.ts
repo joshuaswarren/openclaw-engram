@@ -1,7 +1,7 @@
 import type { Readable, Writable } from "node:stream";
 import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
-import type { EngramAccessService, EngramAccessRecallResponse } from "./access-service.js";
+import { EngramAccessInputError, type EngramAccessService, type EngramAccessRecallResponse } from "./access-service.js";
 import { readEnvVar } from "./runtime/env.js";
 import type { RecallPlanMode } from "./types.js";
 import { validateBriefingFormat } from "./briefing.js";
@@ -122,6 +122,39 @@ export class EngramMcpServer {
             sessionKey: { type: "string" },
             namespace: { type: "string" },
           },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.set_coding_context",
+        description:
+          "Attach a coding-agent context (project / branch) to a session so recall routes to a project- / branch-scoped namespace (issue #569). For MCP clients that do not ship cwd automatically (Cursor, generic agents, etc.). Also aliased as remnic.set_coding_context. Pass codingContext: null to clear.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionKey: {
+              type: "string",
+              description: "Session identifier the context should attach to.",
+            },
+            codingContext: {
+              anyOf: [
+                { type: "null" },
+                {
+                  type: "object",
+                  properties: {
+                    projectId: { type: "string", description: "Stable project id (origin:<hex> or root:<hex>)." },
+                    branch: { type: ["string", "null"], description: "Current branch, or null in detached HEAD." },
+                    rootPath: { type: "string", description: "Absolute path to the repo root." },
+                    defaultBranch: { type: ["string", "null"], description: "Default branch (usually main/master), or null when unknown." },
+                  },
+                  required: ["projectId", "branch", "rootPath", "defaultBranch"],
+                  additionalProperties: false,
+                },
+              ],
+              description: "The context to attach, or null to clear.",
+            },
+          },
+          required: ["sessionKey", "codingContext"],
           additionalProperties: false,
         },
       },
@@ -1097,6 +1130,42 @@ export class EngramMcpServer {
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
+      case "engram.set_coding_context": {
+        // Issue #569 PR 7 — MCP tool for clients that don't ship cwd.
+        // Validation lives in EngramAccessService.setCodingContext; any
+        // EngramAccessInputError surfaces as a structured tool-call error.
+        const sessionKey = typeof args.sessionKey === "string" ? args.sessionKey : "";
+        const rawCtx = args.codingContext;
+        let codingContext: {
+          projectId: string;
+          branch: string | null;
+          rootPath: string;
+          defaultBranch: string | null;
+        } | null = null;
+        if (rawCtx !== null) {
+          if (typeof rawCtx !== "object" || rawCtx === undefined) {
+            throw new EngramAccessInputError("codingContext must be an object or null");
+          }
+          const obj = rawCtx as Record<string, unknown>;
+          const projectId = typeof obj.projectId === "string" ? obj.projectId : "";
+          const rootPath = typeof obj.rootPath === "string" ? obj.rootPath : "";
+          const branch = obj.branch === null
+            ? null
+            : typeof obj.branch === "string" ? obj.branch : undefined;
+          const defaultBranch = obj.defaultBranch === null
+            ? null
+            : typeof obj.defaultBranch === "string" ? obj.defaultBranch : undefined;
+          if (branch === undefined) {
+            throw new EngramAccessInputError("codingContext.branch must be a string or null");
+          }
+          if (defaultBranch === undefined) {
+            throw new EngramAccessInputError("codingContext.defaultBranch must be a string or null");
+          }
+          codingContext = { projectId, branch, rootPath, defaultBranch };
+        }
+        this.service.setCodingContext({ sessionKey, codingContext });
+        return { ok: true };
+      }
       case "engram.recall_tier_explain":
         return this.service.recallTierExplain(
           typeof args.sessionKey === "string" && args.sessionKey.length > 0
