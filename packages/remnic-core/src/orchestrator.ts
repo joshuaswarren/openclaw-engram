@@ -4134,14 +4134,21 @@ export class Orchestrator {
             : 0,
       };
 
-      const result = await tryDirectAnswer({
-        query: prompt,
-        namespace: namespaces[0]!,
-        config: this.config,
-        sources,
-      });
+      let result: import("./direct-answer.js").DirectAnswerResult | undefined;
+      for (const ns of namespaces) {
+        const r = await tryDirectAnswer({
+          query: prompt,
+          namespace: ns,
+          config: this.config,
+          sources,
+        });
+        if (r.eligible && r.winner) {
+          result = r;
+          break;
+        }
+      }
 
-      if (!result.eligible || !result.winner) return;
+      if (!result?.eligible || !result?.winner) return;
 
       const explain: RecallTierExplain = {
         tier: "direct-answer",
