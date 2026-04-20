@@ -15,12 +15,17 @@ Four sources are supported today:
 
 Each importer is an **à-la-carte optional runtime companion** of the
 `@remnic/cli` package. They are never bundled into the base CLI install,
-and installing `@remnic/cli` alone will not pull any of them in. Each
-adapter package is registered as an optional peer dependency of the CLI
-(so workspace + pnpm installs keep them linked), but runtime loading
-goes through a computed-specifier dynamic import so npm users who never
-install an adapter package receive a friendly install hint rather than a
-`MODULE_NOT_FOUND`. Install only the adapter you actually need.
+and installing `@remnic/cli` alone will not pull any of them in. Runtime
+loading goes through a computed-specifier dynamic import so npm users
+who never install an adapter package receive a friendly install hint
+rather than a `MODULE_NOT_FOUND`. Install only the adapter you actually
+need.
+
+> Some adapter packages may be declared as optional peer dependencies of
+> `@remnic/cli` in specific release trains (so workspace + pnpm installs
+> stay linked), but that wiring is not guaranteed at the package-manager
+> level — always follow the `npm install @remnic/import-<source>` step
+> below rather than relying on peer resolution.
 
 ```bash
 # Install the CLI (core + base)
@@ -131,6 +136,25 @@ orchestrator deduplicates by content hash during ingestion.
 ## Privacy
 
 Imported memories live in your Remnic memory directory alongside memories
-captured from live sessions. No content leaves your machine during
-import (except for the mem0 API case, which only round-trips to your
-configured mem0 endpoint).
+captured from live sessions.
+
+**Important caveat (Codex review on PR #608):** after an importer writes
+records to the orchestrator, Remnic's normal extraction pipeline runs on
+them. If your orchestrator is configured to use a **remote** model
+provider (OpenAI, Anthropic, or any other hosted LLM) for extraction,
+imported content **will be transmitted** to that provider as part of
+extraction — the same way live-session content is. Importing from local
+files (ChatGPT / Claude / Gemini exports) is therefore NOT an
+absolute-local operation when a remote extraction model is configured.
+
+Per-path behavior:
+
+- **Parsing + transform + storage** is always local to your machine.
+- **Extraction** (the model call that decides what to keep) follows
+  whatever provider your orchestrator is configured with. To keep
+  imports fully local, configure a local extraction model or disable
+  extraction on the imported batch.
+- **mem0 API** additionally round-trips to your configured mem0
+  endpoint (which may be self-hosted or hosted).
+- **Dry-run** (`--dry-run`) never writes or extracts, so it is the
+  safest way to preview what an importer would pick up.

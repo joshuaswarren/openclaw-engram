@@ -298,12 +298,21 @@ export MEM0_API_KEY=...
 remnic import --adapter mem0 --rate-limit 2
 ```
 
-Each importer is an **optional peer dependency** — the base CLI install
-never pulls them in. If you run `remnic import --adapter <name>` without
-the matching package installed, the CLI prints a clean install hint.
-Every run supports `--dry-run` for a zero-write preview. See
-[docs/importers.md](docs/importers.md) for per-source details, input
-formats, and provenance metadata.
+Each importer is an **optional runtime companion** — the base CLI
+install never pulls them in. If you run `remnic import --adapter <name>`
+without the matching package installed, the CLI prints a clean install
+hint. Every run supports `--dry-run` for a zero-write preview.
+
+> **Privacy note:** import parsing and storage run locally, but after
+> the orchestrator accepts a record it enters the normal extraction
+> pipeline — which calls whatever model provider you have configured.
+> If extraction is routed to a remote provider, imported content is
+> transmitted to that provider during extraction. To keep imports fully
+> local, configure a local extraction model or use `--dry-run` to
+> preview without writing.
+
+See [docs/importers.md](docs/importers.md) for per-source details, input
+formats, provenance metadata, and the full privacy breakdown.
 
 ## Troubleshooting: hooks aren't firing
 
