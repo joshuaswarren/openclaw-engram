@@ -23,8 +23,14 @@
  */
 import path from "node:path";
 
-import { resolveHomeDir } from "../runtime/env.js";
+import { expandTildePath } from "../utils/path.js";
 import { launchProcessSync } from "../runtime/child-process.js";
+
+// Re-export so existing callers / tests that imported `expandTildePath` from
+// this module keep working. CLAUDE.md #17 requires consistent `~` expansion
+// across every user-facing path input; the canonical implementation now
+// lives in `utils/path.ts`.
+export { expandTildePath };
 
 // ──────────────────────────────────────────────────────────────────────────
 // Public types
@@ -71,22 +77,6 @@ export interface GitInvoker {
    * return the exit code so the resolver can decide how to recover.
    */
   (cwd: string, args: string[]): { stdout: string; exitCode: number };
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Tilde expansion (CLAUDE.md #17)
-// ──────────────────────────────────────────────────────────────────────────
-
-/**
- * Expand a leading `~` to the home directory. Matches the CLI helper pattern
- * so behavior is consistent across user-facing path inputs.
- */
-export function expandTildePath(p: string): string {
-  if (p === "~") return resolveHomeDir();
-  if (p.startsWith("~/") || p.startsWith("~\\")) {
-    return path.join(resolveHomeDir(), p.slice(2));
-  }
-  return p;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -147,6 +137,7 @@ export function stableHash(input: string): string {
  *   - `https://github.com/foo/bar`  → `github.com/foo/bar`
  *   - `https://github.com/foo/bar.git` → `github.com/foo/bar`
  *   - `ssh://git@github.com/foo/bar` → `github.com/foo/bar`
+ *   - `ssh://git@github.com:2222/foo/bar` → `github.com/foo/bar` (port stripped)
  *
  * Case-insensitive (remote hostnames and most repo paths on major forges are
  * case-insensitive in practice).
@@ -158,20 +149,31 @@ export function normalizeOriginUrl(rawUrl: string): string {
   // Strip trailing `.git`
   if (url.endsWith(".git")) url = url.slice(0, -4);
 
-  // scp-like syntax: user@host:path
-  const scpMatch = /^([^@\s]+)@([^:\s]+):(.+)$/.exec(url);
-  if (scpMatch) {
-    const host = scpMatch[2] ?? "";
-    const repoPath = scpMatch[3] ?? "";
-    return `${host}/${repoPath.replace(/^\/+/, "")}`.toLowerCase();
-  }
-
   // Protocol-prefixed: ssh://, https://, http://, git://, file://
-  const protoMatch = /^[a-z]+:\/\/(?:[^@/]+@)?([^/]+)(\/.+)?$/i.exec(url);
+  // Must be tried FIRST so that scp-style detection below doesn't
+  // incorrectly swallow an ssh:// URL that happens to contain `:port/`.
+  //
+  // Matching groups:
+  //   1: host (userinfo stripped)
+  //   2: port (optional, discarded — same repo on :22 vs :2222 is the
+  //      same repo for memory-routing purposes)
+  //   3: path (optional)
+  const protoMatch = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?(\/.*)?$/i.exec(url);
   if (protoMatch) {
     const host = protoMatch[1] ?? "";
     const repoPath = (protoMatch[2] ?? "").replace(/^\/+/, "");
     return `${host}/${repoPath}`.toLowerCase();
+  }
+
+  // scp-like syntax: user@host:path. Deliberately rejects anything that
+  // contains `://` (handled above), and uses `[^:@/\s]+` for the host so that
+  // `git@host:port/repo` is only treated as scp when the part after `:` is
+  // non-numeric — scp paths start with a path component, not a port number.
+  const scpMatch = /^([^@\s/]+)@([^:@\s/]+):(.+)$/.exec(url);
+  if (scpMatch) {
+    const host = scpMatch[2] ?? "";
+    const repoPath = scpMatch[3] ?? "";
+    return `${host}/${repoPath.replace(/^\/+/, "")}`.toLowerCase();
   }
 
   // Fallback: use raw lowercased

@@ -82,6 +82,37 @@ test("normalizeOriginUrl: ssh:// protocol form normalizes", () => {
   assert.equal(sshProto, "github.com/foo/bar");
 });
 
+test("normalizeOriginUrl: ssh:// with non-standard port — port stripped, host preserved", () => {
+  // Regression: earlier scp-style regex greedily matched the whole URL
+  // because the proto branch ran second. Ordering fix routes ssh:// through
+  // the protocol branch first.
+  assert.equal(
+    normalizeOriginUrl("ssh://git@github.com:2222/foo/bar.git"),
+    "github.com/foo/bar",
+  );
+});
+
+test("normalizeOriginUrl: ssh:// and ssh://...:port normalize to the same string (port ignored)", () => {
+  assert.equal(
+    normalizeOriginUrl("ssh://git@github.com/foo/bar.git"),
+    normalizeOriginUrl("ssh://git@github.com:2222/foo/bar.git"),
+  );
+});
+
+test("normalizeOriginUrl: https:// with non-standard port — port stripped", () => {
+  assert.equal(
+    normalizeOriginUrl("https://github.com:8443/foo/bar.git"),
+    "github.com/foo/bar",
+  );
+});
+
+test("normalizeOriginUrl: git:// protocol form", () => {
+  assert.equal(
+    normalizeOriginUrl("git://github.com/foo/bar.git"),
+    "github.com/foo/bar",
+  );
+});
+
 test("normalizeOriginUrl: case-insensitive", () => {
   assert.equal(
     normalizeOriginUrl("https://GitHub.com/Foo/Bar.git"),
