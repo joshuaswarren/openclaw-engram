@@ -627,12 +627,12 @@ export {
   isEdgeType,
   type NodeType,
   type EdgeType,
-  type GraphNode,
-  type GraphEdge,
+  type RemnicGraphNode,
+  type RemnicGraphEdge,
   type RemnicGraph,
   type QueryGraphOptions,
   type QueryGraphResult,
-  type RankedNode,
+  type RankedGraphNode,
 } from "./graph-retrieval.js";
 
 // ---------------------------------------------------------------------------

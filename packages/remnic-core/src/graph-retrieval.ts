@@ -80,8 +80,12 @@ export type EdgeType =
  * importance score used as a starting bias during Personalized PageRank;
  * it is intentionally optional because most nodes default to uniform
  * priors.
+ *
+ * Named `RemnicGraphNode` (not `GraphNode`) to avoid colliding with the
+ * unrelated `GraphEdge` in `graph.ts`, which models Multi-Graph Memory
+ * (MAGMA/SYNAPSE) edges and is an incompatible shape.
  */
-export interface GraphNode {
+export interface RemnicGraphNode {
   id: string;
   type: NodeType;
   weight?: number;
@@ -93,8 +97,11 @@ export interface GraphNode {
  * `weight` is optional; when absent PPR implementations should treat
  * the edge as weight `1`. We keep weight optional rather than defaulting
  * at construction so producers can serialize a minimal edge shape.
+ *
+ * Named `RemnicGraphEdge` (not `GraphEdge`) to avoid colliding with the
+ * unrelated `GraphEdge` in `graph.ts` (Multi-Graph Memory).
  */
-export interface GraphEdge {
+export interface RemnicGraphEdge {
   from: string;
   to: string;
   type: EdgeType;
@@ -104,14 +111,14 @@ export interface GraphEdge {
 /**
  * The retrieval graph itself.
  *
- * Nodes are held in a `Map<string, GraphNode>` keyed by `id` so PPR
- * lookups are O(1). Edges are kept as a flat array; adjacency indexing
- * is a PR-3 concern (PPR will likely build a transient
+ * Nodes are held in a `Map<string, RemnicGraphNode>` keyed by `id` so
+ * PPR lookups are O(1). Edges are kept as a flat array; adjacency
+ * indexing is a PR-3 concern (PPR will likely build a transient
  * outgoing-adjacency map on demand).
  */
 export interface RemnicGraph {
-  nodes: Map<string, GraphNode>;
-  edges: GraphEdge[];
+  nodes: Map<string, RemnicGraphNode>;
+  edges: RemnicGraphEdge[];
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +144,7 @@ export interface QueryGraphOptions {
 /**
  * A scored node returned by `queryGraph()`.
  */
-export interface RankedNode {
+export interface RankedGraphNode {
   id: string;
   score: number;
 }
@@ -146,7 +153,7 @@ export interface RankedNode {
  * The shape returned by `queryGraph()`.
  */
 export interface QueryGraphResult {
-  rankedNodes: RankedNode[];
+  rankedNodes: RankedGraphNode[];
 }
 
 /**

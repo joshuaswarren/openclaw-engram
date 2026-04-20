@@ -3,22 +3,22 @@ import test from "node:test";
 
 import {
   type EdgeType,
-  type GraphEdge,
-  type GraphNode,
   type NodeType,
   type QueryGraphResult,
   type RemnicGraph,
+  type RemnicGraphEdge,
+  type RemnicGraphNode,
   isEdgeType,
   isNodeType,
   queryGraph,
 } from "./graph-retrieval.js";
 
 test("RemnicGraph can be constructed with nodes and edges", () => {
-  const nodes = new Map<string, GraphNode>();
+  const nodes = new Map<string, RemnicGraphNode>();
   nodes.set("m1", { id: "m1", type: "memory" });
   nodes.set("e1", { id: "e1", type: "entity", weight: 0.8 });
 
-  const edges: GraphEdge[] = [
+  const edges: RemnicGraphEdge[] = [
     { from: "m1", to: "e1", type: "mentions" },
     { from: "m1", to: "e1", type: "authored-by", weight: 0.5 },
   ];
@@ -33,13 +33,13 @@ test("RemnicGraph can be constructed with nodes and edges", () => {
   assert.equal(graph.edges[1]?.weight, 0.5);
 });
 
-test("GraphNode weight is optional (undefined is valid)", () => {
-  const node: GraphNode = { id: "m1", type: "memory" };
+test("RemnicGraphNode weight is optional (undefined is valid)", () => {
+  const node: RemnicGraphNode = { id: "m1", type: "memory" };
   assert.equal(node.weight, undefined);
 });
 
-test("GraphEdge weight is optional (undefined is valid)", () => {
-  const edge: GraphEdge = { from: "a", to: "b", type: "related-to" };
+test("RemnicGraphEdge weight is optional (undefined is valid)", () => {
+  const edge: RemnicGraphEdge = { from: "a", to: "b", type: "related-to" };
   assert.equal(edge.weight, undefined);
 });
 
@@ -60,7 +60,7 @@ test("queryGraph stub returns an empty ranked list for an empty graph", () => {
 });
 
 test("queryGraph stub returns an empty ranked list for a populated graph", () => {
-  const nodes = new Map<string, GraphNode>();
+  const nodes = new Map<string, RemnicGraphNode>();
   nodes.set("m1", { id: "m1", type: "memory" });
   nodes.set("m2", { id: "m2", type: "memory" });
   const graph: RemnicGraph = {
