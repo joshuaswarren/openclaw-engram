@@ -137,43 +137,6 @@ export function projectNamespaceName(projectId: string): string {
 }
 
 /**
- * Preserve case when sanitizing a principal-derived base namespace. The
- * router's `isSafeRouteNamespace` check accepts `[A-Za-z0-9._-]{1,64}`, so
- * upper-case characters in the principal name are safe and MUST be kept to
- * avoid colliding two otherwise-distinct principals (e.g. `Alice` vs
- * `alice`) into the same combined namespace.
- *
- * Otherwise identical to `sanitizeFragment`: single-pass, linear, no
- * polynomial-backtracking quantifiers, unsafe chars collapse to `-` with
- * leading/trailing dashes suppressed.
- */
-function sanitizeBaseFragment(input: string): string {
-  if (typeof input !== "string") return "";
-  const trimmed = input.trim();
-  let out = "";
-  let prevIsDash = true;
-  for (let i = 0; i < trimmed.length; i += 1) {
-    const c = trimmed[i]!;
-    const cc = trimmed.charCodeAt(i);
-    const isSafe =
-      (cc >= 48 && cc <= 57) /* 0-9 */ ||
-      (cc >= 65 && cc <= 90) /* A-Z */ ||
-      (cc >= 97 && cc <= 122) /* a-z */ ||
-      cc === 46 /* . */ ||
-      cc === 95 /* _ */;
-    if (isSafe) {
-      out += c;
-      prevIsDash = false;
-    } else if (!prevIsDash) {
-      out += "-";
-      prevIsDash = true;
-    }
-  }
-  if (out.endsWith("-")) out = out.slice(0, -1);
-  return out;
-}
-
-/**
  * Combine a principal-derived base namespace (e.g. `default`, `alice`) with a
  * coding-agent overlay namespace (e.g. `project-origin-abcd1234`). The result
  * is a single safe-route token that preserves principal isolation (CLAUDE.md
@@ -185,18 +148,22 @@ function sanitizeBaseFragment(input: string): string {
  *
  *   alice + project-origin-ab12  →  alice-project-origin-ab12
  *   bob   + project-origin-ab12  →  bob-project-origin-ab12
- *   Alice + project-origin-ab12  →  Alice-project-origin-ab12 (distinct)
  *
- * The base fragment preserves case so `Alice` and `alice` remain distinct;
- * the overlay fragment is still lowercase-sanitized because it derives from
- * deterministic, pre-lowercased git hashes.
+ * BOTH fragments are lowercase-sanitized even though `isSafeRouteNamespace`
+ * accepts upper-case: the namespace is ultimately used as a filesystem
+ * directory name, and case-insensitive filesystems (common on Windows and
+ * default macOS) would collapse `Alice-project-...` and `alice-project-...`
+ * to the same directory — producing cross-principal leakage specifically in
+ * the case where the in-memory router thinks they are distinct. Principal
+ * resolution upstream should normalize case itself; this is a defensive
+ * second layer so the storage boundary matches the routing boundary.
  *
  * Output is re-capped through `capLength` so a very long base + overlay
  * combination still fits inside `isSafeRouteNamespace` (≤ 64 chars). The
  * deterministic hash suffix on truncation keeps distinct inputs distinct.
  */
 export function combineNamespaces(base: string, overlay: string): string {
-  const baseFrag = sanitizeBaseFragment(base);
+  const baseFrag = sanitizeFragment(base);
   const overlayFrag = sanitizeFragment(overlay);
   if (!baseFrag) return capLength(overlayFrag || "unknown");
   if (!overlayFrag) return capLength(baseFrag);

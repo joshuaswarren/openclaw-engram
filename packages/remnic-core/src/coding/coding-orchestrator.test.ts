@@ -137,24 +137,27 @@ test("applyCodingNamespaceOverlay: different principals on same repo get isolate
   );
 });
 
-test("applyCodingNamespaceOverlay: principal base namespace preserves case", () => {
-  // Regression: sanitizeFragment() was lowercasing the base, so two valid
-  // but case-differing principal identifiers (`Alice` vs `alice`) would
-  // collapse to the same combined namespace. The router accepts
-  // [A-Za-z0-9._-]{1,64}, so case is a legal discriminator and must not
-  // be dropped on the write / read paths.
+test("applyCodingNamespaceOverlay: principal base namespace is canonicalized to lowercase", () => {
+  // Design note: the combined namespace is ultimately used as a
+  // filesystem directory. On case-insensitive filesystems (common on
+  // Windows and default macOS), `Alice-project-…` and `alice-project-…`
+  // would resolve to the same directory — producing silent
+  // cross-principal leakage specifically in the case where the in-memory
+  // router thinks two sessions are isolated. We therefore lowercase the
+  // base fragment at the boundary; upstream principal resolution is
+  // expected to canonicalize case itself, and this is a defensive
+  // second layer so the storage boundary matches the routing boundary.
   const orch = makeOrchestrator();
   orch.setCodingContextForSession("A-sess", contextFor("origin:deadbeef"));
   orch.setCodingContextForSession("a-sess", contextFor("origin:deadbeef"));
   const upperNs = orch.applyCodingNamespaceOverlay("A-sess", "Alice");
   const lowerNs = orch.applyCodingNamespaceOverlay("a-sess", "alice");
-  assert.notEqual(
+  assert.equal(
     upperNs,
     lowerNs,
-    "case-only principal variants must not collapse to the same namespace",
+    "case-only principal variants must resolve to the same namespace (filesystem safety)",
   );
-  assert.equal(upperNs, "Alice-project-origin-deadbeef");
-  assert.equal(lowerNs, "alice-project-origin-deadbeef");
+  assert.equal(upperNs, "alice-project-origin-deadbeef");
 });
 
 test("applyCodingNamespaceOverlay: projectScope=false returns base unchanged (escape hatch)", () => {
