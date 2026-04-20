@@ -62,26 +62,39 @@ bench-datasets/
 OPENAI_API_KEY=... \
 pnpm exec remnic bench run longmemeval \
   --dataset-dir ./bench-datasets/longmemeval \
-  --results-dir docs/benchmarks/results/
+  --system-provider openai \
+  --system-model gpt-4o-mini \
+  --judge-provider openai \
+  --judge-model gpt-4o-mini
 ```
+
+`--system-provider` + `--system-model` pin the responder to
+gpt-4o-mini; `--judge-provider` + `--judge-model` pin the LLM judge.
+Without these flags, `remnic bench run` falls back to whatever
+default provider the local config/env point at — your published
+numbers would not be reproducibly "on gpt-4o-mini", so set these
+every time.
 
 The runner:
 
 1. Loads LongMemEval-S via `loadLongMemEvalS()` (slice 1 of #566).
 2. Resets the Remnic orchestrator for each item.
 3. Ingests every haystack session.
-4. Recalls + answers each question via the configured responder.
-5. Scores via `f1`, `contains_answer`, and the LLM judge (configurable).
-6. Writes a `BenchmarkResult` JSON under `--results-dir`. Slice 6 (this
-   PR) + slice 3 wire the `BenchmarkArtifact v1` export as an
-   additional, flatter payload for public leaderboard consumption —
-   run `scripts/bench/verify-artifact.ts` (step 5) over the produced
-   artifact before publishing.
+4. Recalls + answers each question via gpt-4o-mini.
+5. Scores via `f1`, `contains_answer`, and the gpt-4o-mini judge.
+6. Writes a `BenchmarkResult` JSON under the default results store
+   (`~/.remnic/bench/results/` — override via environment or config;
+   the `--results-dir` flag is planned but not wired on the current
+   `bench run` subcommand). Slice 6 (this PR) + slice 3 wire the
+   `BenchmarkArtifact v1` export as an additional, flatter payload
+   for public leaderboard consumption — copy the internal run JSON
+   into `docs/benchmarks/results/` through
+   `buildBenchmarkArtifact()` before publishing, then run
+   `scripts/bench/verify-artifact.ts` (step 5).
 
-> Model / seed / sample limit are set via provider / runtime options in
-> the CLI today. The planned `remnic bench published` subcommand
-> (issue #566 slice 4) will surface them as top-level `--model`,
-> `--seed`, and `--limit` flags.
+> Sample limit + seed are set via runtime options in the CLI today.
+> The planned `remnic bench published` subcommand (issue #566 slice 4)
+> will surface them as top-level `--limit` / `--seed` flags.
 
 ## 4. Run LoCoMo-10 on gpt-4o-mini
 
@@ -89,7 +102,10 @@ The runner:
 OPENAI_API_KEY=... \
 pnpm exec remnic bench run locomo \
   --dataset-dir ./bench-datasets/locomo \
-  --results-dir docs/benchmarks/results/
+  --system-provider openai \
+  --system-model gpt-4o-mini \
+  --judge-provider openai \
+  --judge-model gpt-4o-mini
 ```
 
 Metrics emitted: `f1`, `contains_answer`, `rouge_l`, optional `llm_judge`.
@@ -128,11 +144,13 @@ pnpm exec remnic bench run longmemeval \
   --system-provider local-llm \
   --system-base-url http://127.0.0.1:8080 \
   --system-model llama-3.1-8b-instruct-q4_k_m \
-  --results-dir docs/benchmarks/results/
+  --judge-provider local-llm \
+  --judge-base-url http://127.0.0.1:8080 \
+  --judge-model llama-3.1-8b-instruct-q4_k_m
 ```
 
-The same runner + artifact schema as the cloud run. Only the responder /
-extraction provider differ. The `remnic bench published` subcommand
+The same runner + artifact schema as the cloud run. Only the responder
+/ judge provider differ. The `remnic bench published` subcommand
 planned in PR 4 will expose a cleaner `--provider local-llm --base-url
 ... --model ...` shape.
 
