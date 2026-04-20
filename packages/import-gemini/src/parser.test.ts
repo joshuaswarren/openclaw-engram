@@ -88,6 +88,25 @@ describe("parseGeminiExport", () => {
       /no recognized activity key/,
     );
   });
+
+  // Codex review on PR #600 — a JSON primitive payload (number, boolean,
+  // quoted string) must always throw regardless of strict mode. Silently
+  // returning 0 memories on `true`, `123`, or `"text"` would let an
+  // automation pipeline treat an obviously broken invocation as healthy.
+  it("rejects primitive JSON payloads in every mode", () => {
+    assert.throws(
+      () => parseGeminiExport("true"),
+      /must be a JSON array or object/,
+    );
+    assert.throws(
+      () => parseGeminiExport("123"),
+      /must be a JSON array or object/,
+    );
+    assert.throws(
+      () => parseGeminiExport('"some text"'),
+      /must be a JSON array or object/,
+    );
+  });
 });
 
 describe("extractUserPrompt", () => {

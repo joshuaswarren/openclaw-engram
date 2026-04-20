@@ -125,15 +125,17 @@ export function parseGeminiExport(
     return result;
   }
 
-  if (options.strict) {
-    // Report the actual received value — `typeof null === "object"` is the
-    // JS trap CLAUDE.md rule 18 calls out. Using describeType() sidesteps
-    // the "received object" message for null inputs.
-    throw new Error(
-      `Gemini export must be a JSON array or object; received ${describeType(raw)}`,
-    );
-  }
-  return result;
+  // Codex review on PR #600 — primitive payloads (numbers, booleans,
+  // strings, etc.) must always throw, regardless of strict mode. Silently
+  // returning a 0-memory success on a JSON primitive (e.g. `true`,
+  // `"text"`, `123`) hides operator input mistakes and makes automation
+  // treat a broken import as healthy. Report the actual received value —
+  // `typeof null === "object"` is the JS trap CLAUDE.md rule 18 calls
+  // out. Using describeType() sidesteps the "received object" message
+  // for null inputs.
+  throw new Error(
+    `Gemini export must be a JSON array or object; received ${describeType(raw)}`,
+  );
 }
 
 function describeType(value: unknown): string {
