@@ -318,6 +318,24 @@
           }
         }
       },
+      "codingMode": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "description": "Coding-agent project/branch scoping (issue #569).",
+        "properties": {
+          "projectScope": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true and the session has a resolved git context, memory routes to a project-scoped namespace (project:<id>). Set to false to restore pre-#569 behaviour exactly."
+          },
+          "branchScope": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, memory also overlays the current branch (project:<id>/branch:<name>). Opt-in — most development wants cross-branch recall. Wired in PR 3 of #569."
+          }
+        }
+      },
       "procedural": {
         "type": "object",
         "additionalProperties": false,
