@@ -3443,7 +3443,7 @@ function cmdReview(action: string, rest: string[]): void {
   }
 }
 
-function cmdSync(action: string, rest: string[], json: boolean): void {
+async function cmdSync(action: string, rest: string[], json: boolean): Promise<void> {
   // Extract --source before positional args so that rest args can override it
   const sourceIdx = rest.indexOf("--source");
   const sourceDir = sourceIdx >= 0 && rest[sourceIdx + 1] ? rest[sourceIdx + 1] : ".";
@@ -3476,6 +3476,7 @@ function cmdSync(action: string, rest: string[], json: boolean): void {
       stop();
       console.log("Stopped watching.");
     });
+    await new Promise(() => {});
   } else {
     console.log("Usage: remnic sync <run|watch> [--source <dir>]");
     process.exit(1);
@@ -5921,7 +5922,7 @@ Options:
     case "sync": {
       const action = rest[0] ?? "run";
       const json = rest.includes("--json");
-      cmdSync(action, rest.slice(1), json);
+      await cmdSync(action, rest.slice(1), json);
       break;
     }
 
