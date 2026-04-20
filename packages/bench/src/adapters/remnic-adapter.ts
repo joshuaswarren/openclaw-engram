@@ -93,6 +93,8 @@ type OrchestratorTeardownView = {
   qmdMaintenanceInFlight?: boolean;
 };
 
+const BENCH_TEARDOWN_DEFERRED_READY_WAIT_MS = 500;
+
 function cloneBenchConfig(config: Record<string, unknown>): Record<string, unknown> {
   return cloneBenchConfigValue(config) as Record<string, unknown>;
 }
@@ -224,11 +226,12 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       orchestrator.qmdMaintenanceTimer = null;
       orchestrator.qmdMaintenancePending = false;
       orchestrator.qmdMaintenanceInFlight = false;
-      try {
-        await orchestrator.deferredReady;
-      } catch {
-        // deferredReady is expected to resolve, but adapter teardown should not fail closed.
-      }
+      await Promise.race([
+        orchestrator.deferredReady.catch(() => undefined),
+        new Promise((resolve) =>
+          setTimeout(resolve, BENCH_TEARDOWN_DEFERRED_READY_WAIT_MS),
+        ),
+      ]);
       await orchestrator.qmd.dispose?.();
       orchestrator.lcmEngine?.close();
       await rm(state.tempDir, { recursive: true, force: true });
