@@ -113,17 +113,32 @@ export function parseTouchedFiles(diff: string | null | undefined): string[] {
 
   for (const line of lines) {
     // `diff --git a/foo/bar.ts b/foo/bar.ts`
-    const gitMatch = /^diff --git\s+(\S+)\s+(\S+)/.exec(line);
-    if (gitMatch) {
-      for (const raw of [gitMatch[1], gitMatch[2]]) {
-        if (!raw) continue;
-        const stripped = stripDiffPathPrefix(raw);
-        if (stripped && stripped !== "/dev/null") touched.add(stripped);
+    //
+    // Paths may be quoted by git when they contain spaces or non-ASCII
+    // characters, e.g. `diff --git "a/src/my file.ts" "b/src/my file.ts"`.
+    // The two paths are always separated by whitespace at the top level, but
+    // whitespace INSIDE quoted paths must NOT split the tokens. Parse the
+    // two paths with an explicit tokenizer instead of a `\S+`-based regex
+    // (which would shatter `"a/my file.ts"` into `"a/my` / `file.ts"`).
+    const gitPrefix = line.match(/^diff --git\s+/);
+    if (gitPrefix) {
+      const rest = line.slice(gitPrefix[0].length);
+      const paths = splitDiffGitPaths(rest);
+      if (paths) {
+        for (const raw of paths) {
+          const stripped = stripDiffPathPrefix(raw);
+          if (stripped && stripped !== "/dev/null") touched.add(stripped);
+        }
       }
       continue;
     }
-    // `--- a/foo/bar.ts` or `+++ b/foo/bar.ts`
-    const headerMatch = /^(?:---|\+\+\+)\s+(\S.*?)\s*$/.exec(line);
+    // `--- a/foo/bar.ts` or `+++ b/foo/bar.ts`.
+    //
+    // Intentionally anchored, non-backtracking: the path token is captured
+    // with a single greedy run of non-whitespace followed by an optional
+    // trailing whitespace span, rather than `(\S.*?)\s*$` which can
+    // polynomial-backtrack on pathological inputs like `--- !   ... `.
+    const headerMatch = /^(?:---|\+\+\+)[ \t]+(\S+)[ \t]*$/.exec(line);
     if (headerMatch) {
       const raw = headerMatch[1] ?? "";
       const stripped = stripDiffPathPrefix(raw);
@@ -134,15 +149,66 @@ export function parseTouchedFiles(diff: string | null | undefined): string[] {
   return Array.from(touched).sort();
 }
 
+/**
+ * Split the `a-path b-path` portion of a `diff --git` line into exactly two
+ * path tokens, respecting git's quoting convention. Returns `null` when the
+ * input cannot be parsed into exactly two tokens.
+ */
+function splitDiffGitPaths(rest: string): [string, string] | null {
+  const tokens: string[] = [];
+  let i = 0;
+  while (i < rest.length && tokens.length < 2) {
+    // Skip leading whitespace between tokens.
+    while (i < rest.length && (rest[i] === " " || rest[i] === "\t")) i += 1;
+    if (i >= rest.length) break;
+    if (rest[i] === '"') {
+      // Quoted path: consume up to the matching unescaped `"`. Git escapes
+      // inner quotes as `\"`, so we respect backslash escaping.
+      let j = i + 1;
+      while (j < rest.length) {
+        if (rest[j] === "\\" && j + 1 < rest.length) {
+          j += 2;
+          continue;
+        }
+        if (rest[j] === '"') break;
+        j += 1;
+      }
+      if (j >= rest.length) return null; // unterminated quoted path
+      tokens.push(rest.slice(i, j + 1));
+      i = j + 1;
+    } else {
+      // Unquoted path: run of non-whitespace.
+      let j = i;
+      while (j < rest.length && rest[j] !== " " && rest[j] !== "\t") j += 1;
+      tokens.push(rest.slice(i, j));
+      i = j;
+    }
+  }
+  if (tokens.length !== 2) return null;
+  return [tokens[0]!, tokens[1]!];
+}
+
 function stripDiffPathPrefix(raw: string): string {
-  // Git conventionally prefixes paths with `a/` or `b/` in diffs. Strip it
-  // once. Also normalize any Windows-style backslashes.
-  let s = raw.replace(/\\/g, "/");
-  if (s.startsWith("a/") || s.startsWith("b/")) s = s.slice(2);
-  // Trim quotes git uses for paths containing whitespace.
+  // Git conventionally prefixes paths with `a/` or `b/` in diffs, and
+  // quotes the whole path (including the prefix) when it contains spaces or
+  // non-ASCII bytes. Quote-stripping must therefore happen BEFORE the
+  // prefix check — otherwise `"a/path with spaces.ts"` still starts with
+  // `"a` and the prefix is never recognized.
+  let s = raw;
   if (s.length >= 2 && s[0] === '"' && s[s.length - 1] === '"') {
     s = s.slice(1, -1);
+    // Git octal-escapes non-ASCII and escapes inner backslashes/quotes via
+    // the C-quoted path form. We handle the common cases (`\"`, `\\`) so
+    // the rest of the pipeline gets the raw filename. Octal escapes for
+    // non-ASCII are left as-is here — they are extremely rare and the
+    // touched-file set is only used for lexical matches against
+    // entityRefs, where matching either form produces the same hit.
+    s = s.replace(/\\(["\\])/g, "$1");
   }
+  // Normalize Windows-style backslashes. Must happen AFTER quote stripping
+  // so that the `\"` and `\\` escape pairs above aren't corrupted.
+  s = s.replace(/\\/g, "/");
+  if (s.startsWith("a/") || s.startsWith("b/")) s = s.slice(2);
   return s;
 }
 

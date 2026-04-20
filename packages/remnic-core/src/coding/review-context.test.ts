@@ -133,6 +133,53 @@ test("parseTouchedFiles: rename handles both sides of the diff --git line", () =
   assert.deepEqual(parseTouchedFiles(diff), ["new/name.ts", "old/name.ts"]);
 });
 
+test("parseTouchedFiles: quoted `diff --git` paths with spaces are kept intact", () => {
+  // Regression: the previous `\\S+` tokenizer shattered
+  // `"a/src/my file.ts" "b/src/my file.ts"` into four half-paths. Quoted
+  // diff-git paths must be parsed as single tokens.
+  const diff = [
+    'diff --git "a/src/my file.ts" "b/src/my file.ts"',
+    "--- a/src/my file.ts",
+    "+++ b/src/my file.ts",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+  const out = parseTouchedFiles(diff);
+  assert.deepEqual(out, ["src/my file.ts"]);
+});
+
+test("parseTouchedFiles: quoted paths in --- / +++ headers (stripDiffPathPrefix order)", () => {
+  // Regression: `stripDiffPathPrefix` checked `a/` / `b/` BEFORE stripping
+  // quotes, so `"a/path with spaces.ts"` never matched the prefix, leaving
+  // a bogus `"a/path` entry. Quote-stripping must happen first so the
+  // prefix check sees the unquoted `a/path with spaces.ts`.
+  const diff = [
+    'diff --git "a/path with spaces.ts" "b/path with spaces.ts"',
+    '--- "a/path with spaces.ts"',
+    '+++ "b/path with spaces.ts"',
+  ].join("\n");
+  const out = parseTouchedFiles(diff);
+  assert.deepEqual(out, ["path with spaces.ts"]);
+});
+
+test("parseTouchedFiles: unterminated quoted path does not crash or produce fragments", () => {
+  // Defensive: a malformed diff with an unclosed quote must not throw and
+  // must not emit garbage touched-file entries.
+  const diff = 'diff --git "a/broken src/foo.ts\n';
+  const out = parseTouchedFiles(diff);
+  assert.deepEqual(out, []);
+});
+
+test("parseTouchedFiles: escaped quote inside quoted path is preserved", () => {
+  // Git uses backslash escapes inside C-quoted paths. The parser must
+  // handle `\"` without terminating the token early, and must leave the
+  // unescaped literal quote in the final path.
+  const diff = 'diff --git "a/has\\"quote.ts" "b/has\\"quote.ts"\n';
+  const out = parseTouchedFiles(diff);
+  assert.deepEqual(out, ['has"quote.ts']);
+});
+
 // ──────────────────────────────────────────────────────────────────────────
 // rankReviewCandidates
 // ──────────────────────────────────────────────────────────────────────────
