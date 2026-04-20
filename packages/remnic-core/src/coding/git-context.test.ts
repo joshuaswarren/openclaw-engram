@@ -124,6 +124,25 @@ test("normalizeOriginUrl: Windows drive-letter path is not parsed as scp", () =>
   );
 });
 
+test("normalizeOriginUrl: IPv6 host in protocol URL", () => {
+  // Valid git remotes may use bracketed IPv6 addresses. The brackets are
+  // stripped in the normalised form since they were only for
+  // URL-level port disambiguation.
+  assert.equal(
+    normalizeOriginUrl("ssh://git@[2001:db8::1]/org/repo.git"),
+    "2001:db8::1/org/repo",
+  );
+  assert.equal(
+    normalizeOriginUrl("https://[2001:db8::1]/org/repo.git"),
+    "2001:db8::1/org/repo",
+  );
+  // Port is discarded, same host + path as the non-port form.
+  assert.equal(
+    normalizeOriginUrl("ssh://[2001:db8::1]:2222/org/repo.git"),
+    normalizeOriginUrl("ssh://[2001:db8::1]/org/repo.git"),
+  );
+});
+
 test("normalizeOriginUrl: single-character scp host alias is accepted", () => {
   // `.ssh/config` host aliases may be a single character (`h:foo/bar`),
   // and git treats those as scp remotes. The Windows drive-letter check

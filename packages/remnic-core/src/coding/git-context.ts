@@ -165,14 +165,18 @@ export function normalizeOriginUrl(rawUrl: string): string {
   // Must be tried FIRST so that scp-style detection below doesn't
   // incorrectly swallow an ssh:// URL that happens to contain `:port/`.
   //
-  // Matching groups:
-  //   1: host (userinfo stripped)
-  //   2: port (optional, discarded — same repo on :22 vs :2222 is the
-  //      same repo for memory-routing purposes)
-  //   3: path (optional)
-  const protoMatch = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?(\/.*)?$/i.exec(url);
+  // Matches either:
+  //   - bracketed IPv6 host: `[2001:db8::1]` (captures `2001:db8::1`)
+  //   - plain host without `:` or `/` chars
+  // Followed by optional port and optional path.
+  const protoMatch =
+    /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?(\[[^\]]+\]|[^/:]+)(?::\d+)?(\/.*)?$/i.exec(url);
   if (protoMatch) {
-    const host = protoMatch[1] ?? "";
+    let host = protoMatch[1] ?? "";
+    // Strip surrounding `[]` on IPv6 hosts so the normalised form doesn't
+    // bring the brackets along (they were only for URL-level disambiguation
+    // of the port).
+    if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
     const repoPath = (protoMatch[2] ?? "").replace(/^\/+/, "");
     return `${host}/${repoPath}`.toLowerCase();
   }
