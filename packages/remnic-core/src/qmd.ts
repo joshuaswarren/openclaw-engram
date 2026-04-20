@@ -772,20 +772,6 @@ type SharedDaemonSessionEntry = {
 
 const SHARED_DAEMON_SESSIONS = new Map<string, SharedDaemonSessionEntry>();
 
-export function shutdownQmdResources(): void {
-  for (const entry of SHARED_DAEMON_SESSIONS.values()) {
-    entry.session.invalidate();
-  }
-  SHARED_DAEMON_SESSIONS.clear();
-
-  for (const child of [...ACTIVE_QMD_CHILDREN]) {
-    ACTIVE_QMD_CHILDREN.delete(child);
-    if (!child.killed) {
-      child.kill("SIGKILL");
-    }
-  }
-}
-
 function retainSharedDaemonSession(qmdPath: string): QmdDaemonSession {
   const normalizedPath = qmdPath.trim() || "qmd";
   const existing = SHARED_DAEMON_SESSIONS.get(normalizedPath);

@@ -125,7 +125,7 @@ export {
 // Search backends
 // ---------------------------------------------------------------------------
 
-export { QmdClient, shutdownQmdResources } from "./qmd.js";
+export { QmdClient } from "./qmd.js";
 export { LanceDbBackend } from "./search/lancedb-backend.js";
 export { OramaBackend } from "./search/orama-backend.js";
 export { MeilisearchBackend } from "./search/meilisearch-backend.js";
