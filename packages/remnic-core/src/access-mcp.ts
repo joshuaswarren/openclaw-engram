@@ -145,6 +145,40 @@ export class EngramMcpServer {
         },
       },
       {
+        // Registered as `engram.recall_xray`; `withToolAliases` below
+        // emits the canonical `remnic.recall_xray` alias automatically
+        // (dual-naming invariant for every new MCP tool).
+        name: "engram.recall_xray",
+        description:
+          "Run a recall with X-ray capture enabled and return the unified per-result attribution snapshot (tier + audit + MMR + filters in one view). Issue #570.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Query to recall against. Required; non-empty.",
+            },
+            sessionKey: {
+              type: "string",
+              description: "Optional session key to scope the recall.",
+            },
+            namespace: {
+              type: "string",
+              description:
+                "Optional namespace. Enforced against the caller's principal; a mismatch yields snapshotFound:false.",
+            },
+            budget: {
+              type: "integer",
+              minimum: 1,
+              description:
+                "Optional positive-integer override for the recall character budget.",
+            },
+          },
+          required: ["query"],
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.day_summary",
         description:
           "Generate a structured end-of-day summary. When memories is omitted or empty, auto-gathers today's facts and hourly summaries from storage.",
@@ -1107,6 +1141,49 @@ export class EngramMcpServer {
             : undefined,
           effectivePrincipal,
         );
+      case "engram.recall_xray": {
+        // `recallXray` throws on empty query / invalid budget; surface
+        // those as MCP errors with a listed-options message rather
+        // than silently returning `snapshotFound: false` (CLAUDE.md
+        // rule 51).  Namespace scope is enforced inside the service
+        // via `canReadNamespace`.
+        const query = typeof args.query === "string" ? args.query : "";
+        const sessionKey =
+          typeof args.sessionKey === "string" && args.sessionKey.length > 0
+            ? args.sessionKey
+            : undefined;
+        const namespace =
+          typeof args.namespace === "string" && args.namespace.length > 0
+            ? args.namespace
+            : undefined;
+        // `budget` may arrive as a JSON number or a string ('4096')
+        // from loosely-typed MCP clients; coerce + validate here so
+        // the service sees a number.
+        let budget: number | undefined;
+        if (args.budget !== undefined && args.budget !== null) {
+          const parsed =
+            typeof args.budget === "number"
+              ? args.budget
+              : Number(args.budget);
+          if (
+            !Number.isFinite(parsed)
+            || parsed <= 0
+            || !Number.isInteger(parsed)
+          ) {
+            throw new Error(
+              `engram.recall_xray: budget expects a positive integer; got ${JSON.stringify(args.budget)}`,
+            );
+          }
+          budget = parsed;
+        }
+        return this.service.recallXray({
+          query,
+          sessionKey,
+          namespace,
+          budget,
+          authenticatedPrincipal: effectivePrincipal,
+        });
+      }
       case "engram.day_summary":
         return this.service.daySummary({
           memories: typeof args.memories === "string" ? args.memories : "",
