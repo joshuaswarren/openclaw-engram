@@ -5,7 +5,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Orchestrator, parseConfig } from "@remnic/core";
+import { Orchestrator, parseConfig, shutdownQmdResources } from "@remnic/core";
 import type {
   BenchJudge,
   BenchMemoryAdapter,
@@ -81,6 +81,15 @@ export const BENCH_ADAPTER_MODE_CONFIG: Record<BenchAdapterMode, Record<string, 
     extractionMinUserTurns: 1000000,
     recallPlannerEnabled: false,
   },
+};
+
+type OrchestratorTeardownView = {
+  abortDeferredInit(): void;
+  deferredReady: Promise<void>;
+  lcmEngine: { close(): void } | null;
+  qmdMaintenanceTimer?: NodeJS.Timeout | null;
+  qmdMaintenancePending?: boolean;
+  qmdMaintenanceInFlight?: boolean;
 };
 
 function cloneBenchConfig(config: Record<string, unknown>): Record<string, unknown> {
@@ -205,7 +214,22 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
     };
 
     const cleanup = async (): Promise<void> => {
-      state.orchestrator.lcmEngine?.close();
+      const orchestrator = state.orchestrator as unknown as OrchestratorTeardownView;
+
+      orchestrator.abortDeferredInit();
+      if (orchestrator.qmdMaintenanceTimer) {
+        clearTimeout(orchestrator.qmdMaintenanceTimer);
+      }
+      orchestrator.qmdMaintenanceTimer = null;
+      orchestrator.qmdMaintenancePending = false;
+      orchestrator.qmdMaintenanceInFlight = false;
+      shutdownQmdResources();
+      try {
+        await orchestrator.deferredReady;
+      } catch {
+        // deferredReady is expected to resolve, but adapter teardown should not fail closed.
+      }
+      orchestrator.lcmEngine?.close();
       await rm(state.tempDir, { recursive: true, force: true });
     };
 
@@ -231,7 +255,7 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
       async recall(sessionId: string, query: string, budgetChars?: number): Promise<string> {
         const engine = getEngine();
-        const budget = budgetChars ?? 32000;
+        const budget = budgetChars ?? 32_000;
         const sections: string[] = [];
 
         if (query) {

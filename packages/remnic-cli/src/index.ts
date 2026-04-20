@@ -6163,8 +6163,12 @@ if (
   process.env.REMNIC_CLI_BIN === "1" ||
   process.env.ENGRAM_CLI_BIN === "1"
 ) {
-  main().catch((err) => {
-    process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
-    process.exit(1);
-  });
+  main()
+    .then(() => {
+      process.exit(process.exitCode ?? 0);
+    })
+    .catch((err) => {
+      process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    });
 }
