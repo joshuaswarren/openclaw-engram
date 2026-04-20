@@ -61,6 +61,67 @@ remnic bench publish --target remnic-ai
 
 Dataset markers match the runner's accepted filenames, so `datasets status` reports "downloaded" exactly when the runner will load successfully.
 
+## Running on real datasets
+
+The `longmemeval` and `locomo` runners ship with a bundled smoke fixture so
+`remnic bench run --quick` and CI stay green without downloading anything.
+To produce public-quality numbers you need the real datasets. Both live on
+HuggingFace.
+
+```bash
+# Print the exact download commands (no auto-fetch):
+scripts/bench/fetch-datasets.sh --help
+scripts/bench/fetch-datasets.sh --target ./bench-datasets
+```
+
+Expected layout (the `bench-datasets/` directory is gitignored):
+
+```
+bench-datasets/
+  longmemeval/
+    longmemeval_oracle.json          # preferred filename
+    longmemeval_s_cleaned.json       # optional alternate
+    longmemeval_s.json               # optional alternate
+  locomo/
+    locomo10.json                    # preferred filename
+    locomo.json                      # optional alternate
+```
+
+Point the runners at the directory. Use the current `remnic bench run`
+CLI surface with `--dataset-dir` (a dedicated `remnic bench published`
+subcommand with user-configurable `--limit`, `--model`, and `--seed` is
+planned for a later slice of
+[#566](https://github.com/joshuaswarren/remnic/issues/566)):
+
+```bash
+pnpm exec remnic bench run longmemeval \
+  --dataset-dir ./bench-datasets/longmemeval
+
+pnpm exec remnic bench run locomo \
+  --dataset-dir ./bench-datasets/locomo
+```
+
+Programmatic loaders are exported from `@remnic/bench`:
+
+```ts
+import { loadLongMemEvalS, loadLoCoMo10 } from "@remnic/bench";
+
+const longmemeval = await loadLongMemEvalS({
+  mode: "full",
+  datasetDir: "./bench-datasets/longmemeval",
+  limit: 100,
+});
+// longmemeval.source === "dataset" when the real file was found,
+// "smoke" when quick-mode fallback was used, "missing" when full-mode
+// could not find any of the canonical filenames.
+```
+
+When `mode: "full"` and no dataset is found, the loaders return
+`{ source: "missing", errors }` and the runner throws a
+`formatMissingDatasetError()` message pointing operators at
+`scripts/bench/fetch-datasets.sh`. Quick mode silently falls back to the
+bundled smoke fixture and logs the probe errors so you can tell why.
+
 ## CI regression gate (smoke fixtures)
 
 `.github/workflows/bench-smoke.yml` runs `scripts/bench/bench-smoke.ts`

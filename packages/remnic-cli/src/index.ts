@@ -778,7 +778,16 @@ const DOWNLOADABLE_BENCHMARK_DATASETS = [
 const DOWNLOADED_DATASET_MARKERS: Record<string, { anyOf?: string[]; ext?: string }> = {
   "ama-bench": { anyOf: ["open_end_qa_set.jsonl"] },
   longmemeval: {
-    anyOf: ["longmemeval_oracle.json", "longmemeval_s_cleaned.json", "longmemeval.json"],
+    // Keep this list in lock-step with `LONG_MEM_EVAL_DATASET_FILENAMES`
+    // in packages/bench/src/benchmarks/published/dataset-loader.ts so
+    // `datasets status` never disagrees with the runner about what
+    // counts as "downloaded".
+    anyOf: [
+      "longmemeval_oracle.json",
+      "longmemeval_s_cleaned.json",
+      "longmemeval_s.json",
+      "longmemeval.json",
+    ],
   },
   amemgym: {
     anyOf: ["amemgym-v1-base.json", "amemgym-tasks.json", "data.json"],

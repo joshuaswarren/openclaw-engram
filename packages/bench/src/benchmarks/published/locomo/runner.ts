@@ -3,16 +3,19 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
 import {
-  LOCOMO_SMOKE_FIXTURE,
   type LoCoMoConversation,
   type LoCoMoQA,
   type LoCoMoTurn,
 } from "./fixture.js";
+import {
+  LOCOMO_DATASET_FILENAMES,
+  formatMissingDatasetError,
+  loadLoCoMo10,
+  normalizeLoCoMoQa,
+} from "../dataset-loader.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -233,48 +236,52 @@ async function loadDataset(
   datasetDir: string | undefined,
   limit?: number,
 ): Promise<LoCoMoConversation[]> {
-  const normalizedLimit = normalizeLimit(limit);
-  const ensureDatasetConversations = (
-    conversations: LoCoMoConversation[],
-  ): LoCoMoConversation[] => {
-    if (conversations.length === 0) {
+  // Limit normalization happens inside `loadLoCoMo10`; do not re-validate
+  // here (the shared loader's `normalizeLimit` is the single source of
+  // truth).
+  const loaded = await loadLoCoMo10({
+    mode,
+    datasetDir,
+    limit,
+    parseFile: parseDataset,
+  });
+
+  if (loaded.source === "missing") {
+    // `loaded.source === "missing"` implies `mode === "full"` — the
+    // shared loader only returns `missing` in that branch. Keep the
+    // inner check + the historical "no datasetDir" message for clarity
+    // and backward-compat with regression tests; if the loader contract
+    // ever changes, this branch still fails safely.
+    if (!datasetDir) {
       throw new Error(
-        "LoCoMo dataset is empty after applying the requested limit.",
+        "LoCoMo full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
       );
     }
-    return conversations;
-  };
-
-  if (datasetDir) {
-    const datasetErrors: string[] = [];
-    for (const filename of ["locomo10.json", "locomo.json"]) {
-      try {
-        const raw = await readFile(path.join(datasetDir, filename), "utf8");
-        const parsed = parseDataset(raw, filename);
-        return ensureDatasetConversations(
-          applyLimit(parsed, normalizedLimit),
-        );
-      } catch (error) {
-        datasetErrors.push(
-          `${filename}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
     throw new Error(
-      `LoCoMo dataset not found under ${datasetDir}. Tried locomo10.json and locomo.json. Errors: ${datasetErrors.join(" | ")}`,
+      formatMissingDatasetError(
+        "locomo",
+        datasetDir,
+        LOCOMO_DATASET_FILENAMES,
+        loaded.errors,
+      ),
     );
   }
 
-  if (mode === "full") {
+  if (loaded.items.length === 0) {
     throw new Error(
-      "LoCoMo full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
+      "LoCoMo dataset is empty after applying the requested limit.",
     );
   }
 
-  return ensureDatasetConversations(
-    applyLimit(LOCOMO_SMOKE_FIXTURE, normalizedLimit),
-  );
+  if (loaded.source === "smoke" && loaded.errors.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[remnic-bench] LoCoMo falling back to smoke fixture: " +
+        loaded.errors.join(" | "),
+    );
+  }
+
+  return loaded.items;
 }
 
 function parseDataset(
@@ -332,83 +339,7 @@ function normalizeQaArray(value: unknown, location: string): LoCoMoQA[] {
   }
 
   return value.map((entry, index) =>
-    normalizeQa(entry, `${location} qa[${index}]`),
+    normalizeLoCoMoQa(entry, `${location} qa[${index}]`),
   );
 }
 
-function normalizeQa(value: unknown, location: string): LoCoMoQA {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(`${location} must be an object.`);
-  }
-
-  const record = value as Record<string, unknown>;
-  if (typeof record.question !== "string" || record.question.trim().length === 0) {
-    throw new Error(`${location} must include a non-empty question string.`);
-  }
-  if (!Number.isInteger(record.category)) {
-    throw new Error(`${location} must include an integer category.`);
-  }
-  if (
-    !Array.isArray(record.evidence)
-    || record.evidence.some((item) => typeof item !== "string")
-  ) {
-    throw new Error(`${location} must include an evidence array of strings.`);
-  }
-
-  const answer = normalizeQaAnswer(record.answer, record.adversarial_answer, location);
-  return {
-    question: record.question,
-    answer,
-    evidence: record.evidence as string[],
-    category: record.category as number,
-  };
-}
-
-function normalizeQaAnswer(
-  answer: unknown,
-  adversarialAnswer: unknown,
-  location: string,
-): string {
-  const direct = normalizeScalarAnswer(answer);
-  if (direct !== undefined) {
-    return direct;
-  }
-
-  const adversarial = normalizeScalarAnswer(adversarialAnswer);
-  if (adversarial !== undefined) {
-    return adversarial;
-  }
-
-  throw new Error(
-    `${location} must include a string or numeric answer, or an adversarial_answer fallback.`,
-  );
-}
-
-function normalizeScalarAnswer(value: unknown): string | undefined {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value;
-  }
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return String(value);
-  }
-  return undefined;
-}
-
-function normalizeLimit(limit: number | undefined): number | undefined {
-  if (limit === undefined) {
-    return undefined;
-  }
-  if (!Number.isInteger(limit) || limit < 0) {
-    throw new Error(
-      "LoCoMo limit must be a non-negative integer when provided.",
-    );
-  }
-  return limit;
-}
-
-function applyLimit<T>(items: T[], limit: number | undefined): T[] {
-  if (limit === undefined) {
-    return [...items];
-  }
-  return items.slice(0, limit);
-}

@@ -197,6 +197,20 @@ export type {
   PublishedBenchmarkFeedEntry,
 } from "./results-store.js";
 
+// Published-benchmark dataset loaders (LongMemEval-S + LoCoMo-10).
+export {
+  LONG_MEM_EVAL_DATASET_FILENAMES,
+  LOCOMO_DATASET_FILENAMES,
+  formatMissingDatasetError,
+  loadLoCoMo10,
+  loadLongMemEvalS,
+} from "./benchmarks/published/dataset-loader.js";
+export type {
+  DatasetSource,
+  LoadedDataset,
+  LoadDatasetOptions,
+} from "./benchmarks/published/dataset-loader.js";
+
 // Integrity pipeline (sealed qrels, canary adapter, contamination, randomize).
 export * from "./integrity/index.js";
 export {
