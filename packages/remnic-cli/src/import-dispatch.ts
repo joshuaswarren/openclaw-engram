@@ -126,12 +126,17 @@ export function parseImportArgs(rest: readonly string[]): ImportDispatchArgs {
     );
   }
 
+  // CRITICAL: Extract value-bearing flags FIRST, before consuming boolean
+  // flags. If we consumed boolean flags first via splice, then an argv like
+  // `--batch-size --dry-run 10` would first collapse to `--batch-size 10`,
+  // silently accepting `10` as the batch-size value — violating rule 14's
+  // "bare value flag must be rejected" contract. By taking value flags
+  // first, `takeValue` sees the adjacent `--dry-run` token and correctly
+  // rejects it as a missing value. Cursor bugbot flagged this on PR #583.
   const fileRaw = takeOptionalValue(args, "--file");
   // Expand leading `~` so paths like `~/export.json` resolve. Node's fs
   // does not expand the tilde — CLAUDE.md rule 17.
   const file = fileRaw !== undefined ? expandTilde(fileRaw) : undefined;
-  const dryRun = consumeFlag(args, "--dry-run");
-  const includeConversations = consumeFlag(args, "--include-conversations");
 
   const batchSizeRaw = takeOptionalValue(args, "--batch-size");
   let batchSize: number | undefined;
@@ -156,6 +161,12 @@ export function parseImportArgs(rest: readonly string[]): ImportDispatchArgs {
     }
     rateLimit = validateImportRateLimit(parsed);
   }
+
+  // Boolean flags last: after all value-bearing flags have claimed their
+  // adjacent value tokens, any remaining standalone flags are genuine
+  // booleans.
+  const dryRun = consumeFlag(args, "--dry-run");
+  const includeConversations = consumeFlag(args, "--include-conversations");
 
   // Any remaining unknown --flag tokens should be rejected rather than
   // silently ignored (CLAUDE.md rule 51). We allow positional leftovers to

@@ -167,6 +167,50 @@ describe("parseImportArgs", () => {
       /Unknown flag/,
     );
   });
+
+  // Cursor bugbot on PR #583: boolean flags must not be consumed before
+  // value flags, otherwise `--batch-size --dry-run 10` silently collapses
+  // into `--batch-size 10` + `--dry-run`, violating rule 14.
+  it("rejects --batch-size when the following token is another --flag", () => {
+    assert.throws(
+      () =>
+        parseImportArgs([
+          "--adapter",
+          "chatgpt",
+          "--batch-size",
+          "--dry-run",
+          "10",
+        ]),
+      /--batch-size/,
+    );
+  });
+
+  it("rejects --rate-limit when the following token is another --flag", () => {
+    assert.throws(
+      () =>
+        parseImportArgs([
+          "--adapter",
+          "chatgpt",
+          "--rate-limit",
+          "--include-conversations",
+          "5",
+        ]),
+      /--rate-limit/,
+    );
+  });
+
+  it("rejects --file when the following token is another --flag", () => {
+    assert.throws(
+      () =>
+        parseImportArgs([
+          "--adapter",
+          "chatgpt",
+          "--file",
+          "--dry-run",
+        ]),
+      /--file/,
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
