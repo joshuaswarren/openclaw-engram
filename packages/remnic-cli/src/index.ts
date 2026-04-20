@@ -32,6 +32,7 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import * as childProcess from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -116,14 +117,6 @@ import {
   resolveExtensionsRoot,
   coerceInstallExtension,
 } from "@remnic/core";
-import {
-  convertMemoriesToRecords,
-  getTrainingExportAdapter,
-  listTrainingExportAdapters,
-  parseStrictCliDate,
-  type TrainingExportOptions,
-  type TrainingExportRecord,
-} from "@remnic/core";
 // @remnic/export-weclone is an optional install surface (training:export
 // only uses it). Load lazily so the CLI works without it — see
 // optional-weclone-export.ts for the install-hint behaviour.
@@ -142,9 +135,6 @@ import type {
   BenchmarkDefinition,
   BenchmarkResult,
   ComparisonResult,
-  BenchRuntimeProfile,
-  ResolveBenchRuntimeProfileOptions,
-  ResolvedBenchRuntimeProfile,
 } from "@remnic/bench";
 import { firstSuccessfulCandidate, firstSuccessfulResult } from "./service-candidates.js";
 import {
@@ -153,6 +143,13 @@ import {
   parseBenchActionArgs,
   parseBenchArgs,
 } from "./bench-args.js";
+import {
+  cleanupRollbackDirectoryBestEffort,
+  createOpenclawUpgradeRollbackFailure,
+  runBestEffortGatewayRestart,
+  rollbackOpenclawUpgrade,
+  swapDirectoryWithRollback,
+} from "./openclaw-upgrade-swap.js";
 import { expandTilde, resolveHomeDir } from "./path-utils.js";
 export { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
@@ -227,6 +224,7 @@ const LEGACY_LOG_FILE = path.join(LEGACY_PID_DIR, "server.log");
 const CLI_MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLI_REPO_ROOT = path.resolve(CLI_MODULE_DIR, "../../..");
 const EVAL_RUNNER_PATH = path.join(CLI_REPO_ROOT, "evals", "run.ts");
+const OPENCLAW_GATEWAY_LABEL = "ai.openclaw.gateway";
 
 export const BENCHMARK_CATALOG: BenchCatalogEntry[] = [
   {
@@ -266,9 +264,7 @@ const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
 type PackageBenchModule = {
   getBenchmark?: (id: string) => {
     runnerAvailable?: boolean;
-    meta?: {
-      category?: string;
-    };
+    meta?: { category?: string };
   } | undefined;
   resolveBenchRuntimeProfile?: (
     options: ResolveBenchRuntimeProfileOptions,
@@ -387,6 +383,94 @@ type PackageBenchModule = {
     judge?: unknown;
   }) => Promise<{ destroy(): Promise<void> }>;
 };
+
+interface TrainingExportOptions {
+  memoryDir: string;
+  since?: Date;
+  until?: Date;
+  minConfidence?: number;
+  categories?: string[];
+  includeEntities?: boolean;
+}
+
+interface TrainingExportRecord {
+  instruction: string;
+  input: string;
+  output: string;
+  category?: string;
+  confidence?: number;
+  sourceIds?: string[];
+}
+
+interface TrainingExportAdapter {
+  name: string;
+  formatRecords(records: TrainingExportRecord[]): string;
+  fileExtension: string;
+}
+
+interface CoreTrainingExportRuntime {
+  convertMemoriesToRecords(
+    options: TrainingExportOptions,
+  ): Promise<TrainingExportRecord[]>;
+  getTrainingExportAdapter(name: string): TrainingExportAdapter | undefined;
+  listTrainingExportAdapters(): string[];
+  parseStrictCliDate(value: string, flag: string): Date;
+}
+
+async function loadTrainingExportCoreRuntime(): Promise<CoreTrainingExportRuntime> {
+  return (await import("@remnic/core")) as unknown as CoreTrainingExportRuntime;
+}
+
+type BenchRuntimeProfile = "baseline" | "real" | "openclaw-chain";
+
+interface BenchProviderConfig {
+  provider: string;
+  model: string;
+  baseUrl?: string;
+}
+
+interface ResolveBenchRuntimeProfileOptions {
+  runtimeProfile?: BenchRuntimeProfile;
+  remnicConfigPath?: string;
+  openclawConfigPath?: string;
+  modelSource?: "plugin" | "gateway";
+  gatewayAgentId?: string;
+  fastGatewayAgentId?: string;
+  systemProvider?: string;
+  systemModel?: string;
+  systemBaseUrl?: string;
+  judgeProvider?: string;
+  judgeModel?: string;
+  judgeBaseUrl?: string;
+}
+
+interface ResolvedBenchRuntimeProfile {
+  profile: BenchRuntimeProfile;
+  remnicConfig: Record<string, unknown>;
+  effectiveRemnicConfig: Record<string, unknown>;
+  adapterOptions: {
+    configOverrides: Record<string, unknown>;
+    preserveRuntimeDefaults?: boolean;
+    responder?: unknown;
+    judge?: unknown;
+  };
+  systemProvider: BenchProviderConfig | null;
+  judgeProvider: BenchProviderConfig | null;
+}
+
+interface BenchSummaryResult {
+  meta: { benchmark: string; mode: string };
+  config: {
+    runtimeProfile?: BenchRuntimeProfile | null;
+    adapterMode?: string;
+    remnicConfig?: Record<string, unknown>;
+  };
+  results: {
+    tasks: Array<unknown>;
+    aggregates: Record<string, { mean: number }>;
+  };
+  cost: { meanQueryLatencyMs: number };
+}
 
 type PackageBenchAdapterFactory = NonNullable<
   PackageBenchModule["createLightweightAdapter"] | PackageBenchModule["createRemnicAdapter"]
@@ -897,14 +981,7 @@ function resolveBenchDatasetDir(
 }
 
 function printBenchPackageSummary(
-  result: {
-    meta: { benchmark: string; mode: string };
-    config: {
-      runtimeProfile?: BenchRuntimeProfile | null;
-    };
-    results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
-    cost: { meanQueryLatencyMs: number };
-  },
+  result: BenchSummaryResult,
   outputPath: string,
   outputLabel = "Results saved",
 ): void {
@@ -1817,6 +1894,250 @@ function readOpenclawConfig(configPath: string): Record<string, unknown> {
     );
   }
   return parsed as Record<string, unknown>;
+}
+
+function parseOpenclawPluginState(
+  existingConfig: Record<string, unknown>,
+  configPath: string,
+): {
+  plugins: Record<string, unknown>;
+  entries: Record<string, unknown>;
+  slots: Record<string, unknown>;
+} {
+  const rawPlugins = existingConfig.plugins;
+  if (rawPlugins !== undefined && (typeof rawPlugins !== "object" || rawPlugins === null || Array.isArray(rawPlugins))) {
+    throw new Error(
+      `OpenClaw config at ${configPath} has an invalid plugins field (expected an object, got ${Array.isArray(rawPlugins) ? "array" : typeof rawPlugins}). ` +
+      `Fix the file manually and re-run.`,
+    );
+  }
+  const plugins = (rawPlugins ?? {}) as Record<string, unknown>;
+
+  const rawEntries = plugins.entries;
+  if (rawEntries !== undefined && (typeof rawEntries !== "object" || rawEntries === null || Array.isArray(rawEntries))) {
+    throw new Error(
+      `OpenClaw config at ${configPath} has an invalid plugins.entries field (expected an object, got ${Array.isArray(rawEntries) ? "array" : typeof rawEntries}). ` +
+      `Fix the file manually and re-run.`,
+    );
+  }
+  const entries = (rawEntries ?? {}) as Record<string, unknown>;
+
+  const rawSlots = plugins.slots;
+  if (rawSlots !== undefined && (typeof rawSlots !== "object" || rawSlots === null || Array.isArray(rawSlots))) {
+    throw new Error(
+      `OpenClaw config at ${configPath} has an invalid plugins.slots field (expected an object, got ${Array.isArray(rawSlots) ? "array" : typeof rawSlots}). ` +
+      `Fix the file manually and re-run.`,
+    );
+  }
+  const slots = (rawSlots ?? {}) as Record<string, unknown>;
+
+  return { plugins, entries, slots };
+}
+
+function resolveOpenclawInstallMemoryDir(args: {
+  requestedMemoryDir?: string;
+  existingNewEntryConfig: Record<string, unknown>;
+  legacyConfigToMerge: Record<string, unknown>;
+  migrateLegacy: boolean;
+  fallbackMemoryDir: string;
+}): string {
+  const existingMemoryDir: string | undefined =
+    (typeof args.existingNewEntryConfig.memoryDir === "string" ? args.existingNewEntryConfig.memoryDir : undefined) ||
+    (args.migrateLegacy && typeof args.legacyConfigToMerge.memoryDir === "string"
+      ? args.legacyConfigToMerge.memoryDir
+      : undefined);
+
+  if (args.requestedMemoryDir) {
+    return path.resolve(expandTilde(args.requestedMemoryDir));
+  }
+  if (existingMemoryDir) {
+    return path.resolve(expandTilde(existingMemoryDir));
+  }
+  return args.fallbackMemoryDir;
+}
+
+function resolveCurrentOpenclawMemoryDir(
+  entries: Record<string, unknown>,
+  slots: Record<string, unknown>,
+  fallbackMemoryDir: string,
+): string {
+  const slotValue =
+    slots.memory === REMNIC_OPENCLAW_PLUGIN_ID ||
+    slots.memory === REMNIC_OPENCLAW_LEGACY_PLUGIN_ID
+      ? slots.memory
+      : undefined;
+  const candidateIds = [
+    slotValue,
+    REMNIC_OPENCLAW_PLUGIN_ID,
+    REMNIC_OPENCLAW_LEGACY_PLUGIN_ID,
+  ].filter((value, index, all): value is string => !!value && all.indexOf(value) === index);
+
+  for (const candidateId of candidateIds) {
+    const entry = entries[candidateId];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const config = (entry as Record<string, unknown>).config;
+    if (!config || typeof config !== "object" || Array.isArray(config)) continue;
+    const memoryDir = (config as Record<string, unknown>).memoryDir;
+    if (typeof memoryDir === "string" && memoryDir.trim().length > 0) {
+      return path.resolve(expandTilde(memoryDir));
+    }
+  }
+
+  return fallbackMemoryDir;
+}
+
+function resolveOpenclawPluginDir(cliPath?: string): string {
+  if (cliPath) return path.resolve(expandTilde(cliPath));
+  return path.join(resolveHomeDir(), ".openclaw", "extensions", REMNIC_OPENCLAW_PLUGIN_ID);
+}
+
+function formatOpenclawUpgradeStamp(now = new Date()): string {
+  const yyyy = now.getFullYear().toString();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  const hh = String(now.getHours()).padStart(2, "0");
+  const min = String(now.getMinutes()).padStart(2, "0");
+  const ss = String(now.getSeconds()).padStart(2, "0");
+  return `${yyyy}${mm}${dd}-${hh}${min}${ss}`;
+}
+
+function backupPathIfPresent(sourcePath: string, backupPath: string): boolean {
+  if (!fs.existsSync(sourcePath)) return false;
+  fs.mkdirSync(path.dirname(backupPath), { recursive: true });
+  fs.cpSync(sourcePath, backupPath, { recursive: true });
+  return true;
+}
+
+function assertDirectoryPathOrMissing(targetPath: string, label: string): void {
+  if (!fs.existsSync(targetPath)) return;
+  const stat = fs.statSync(targetPath);
+  if (!stat.isDirectory()) {
+    throw new Error(`${label} must be a directory when it already exists: ${targetPath}`);
+  }
+}
+
+function describeErrorWithCause(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!(error instanceof Error) || !("cause" in error)) return message;
+
+  const cause = error.cause;
+  if (cause === undefined || cause === null) return message;
+
+  const causeText = cause instanceof Error ? cause.message : String(cause);
+  if (!causeText || causeText === message) return message;
+  return `${message} Cause: ${causeText}`;
+}
+
+class PublishedOpenclawPluginInstallError extends Error {
+  readonly rollbackDir?: string;
+  readonly shouldRestoreBackup: boolean;
+
+  constructor(
+    message: string,
+    options: ErrorOptions & {
+      rollbackDir?: string;
+      shouldRestoreBackup?: boolean;
+    } = {},
+  ) {
+    super(message, options);
+    this.name = "PublishedOpenclawPluginInstallError";
+    this.rollbackDir = options.rollbackDir;
+    this.shouldRestoreBackup = options.shouldRestoreBackup ?? false;
+  }
+}
+
+function installPublishedOpenclawPlugin(
+  spec: string,
+  pluginDir: string,
+): { rollbackDir?: string; version?: string } {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "remnic-openclaw-upgrade-"));
+  const stagedDir = `${pluginDir}.next-${process.pid}-${Date.now()}`;
+  const rollbackDir = `${pluginDir}.rollback-${process.pid}-${Date.now()}`;
+  let swapRollbackDir: string | undefined;
+  let shouldRestoreBackup = false;
+
+  try {
+    const packOutput = childProcess.execFileSync("npm", ["pack", spec], {
+      cwd: tempRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const tarballName = packOutput
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .at(-1);
+    if (!tarballName) {
+      throw new Error(`npm pack ${spec} did not return a tarball name`);
+    }
+
+    const unpackDir = path.join(tempRoot, "unpacked");
+    fs.mkdirSync(unpackDir, { recursive: true });
+    childProcess.execFileSync("tar", ["-xzf", path.join(tempRoot, tarballName), "-C", unpackDir], {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    const packagedDir = path.join(unpackDir, "package");
+    if (!fs.existsSync(packagedDir)) {
+      throw new Error(`npm pack ${spec} did not contain a package/ directory`);
+    }
+
+    fs.rmSync(stagedDir, { recursive: true, force: true });
+    fs.cpSync(packagedDir, stagedDir, { recursive: true });
+    childProcess.execFileSync("npm", ["install", "--omit=dev"], {
+      cwd: stagedDir,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");
+    const swapResult = (() => {
+      try {
+        return swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);
+      } catch (swapError) {
+        shouldRestoreBackup = swapError instanceof AggregateError;
+        throw swapError;
+      }
+    })();
+    swapRollbackDir = swapResult.rollbackDir;
+
+    const installedPackageJsonPath = path.join(pluginDir, "package.json");
+    const installedPackage = fs.existsSync(installedPackageJsonPath)
+      ? JSON.parse(fs.readFileSync(installedPackageJsonPath, "utf8")) as Record<string, unknown>
+      : {};
+    return {
+      rollbackDir: swapRollbackDir,
+      version: typeof installedPackage.version === "string" ? installedPackage.version : undefined,
+    };
+  } catch (error) {
+    throw new PublishedOpenclawPluginInstallError(
+      `Failed to install published OpenClaw plugin from ${spec}.`,
+      {
+        cause: error,
+        rollbackDir: swapRollbackDir,
+        shouldRestoreBackup,
+      },
+    );
+  } finally {
+    fs.rmSync(stagedDir, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+}
+
+function restartOpenclawGateway(): void {
+  if (process.platform !== "darwin") {
+    throw new Error(
+      `Automatic gateway restart is only implemented for macOS launchctl. ` +
+      `Restart OpenClaw manually for platform ${process.platform}.`,
+    );
+  }
+  const uid = typeof process.getuid === "function" ? process.getuid() : undefined;
+  if (uid === undefined) {
+    throw new Error("Cannot determine the current macOS user id for launchctl restart.");
+  }
+  childProcess.execFileSync("launchctl", ["kickstart", "-k", `gui/${uid}/${OPENCLAW_GATEWAY_LABEL}`], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
 }
 // ── Commands ─────────────────────────────────────────────────────────────────
 
@@ -4071,6 +4392,12 @@ interface OpenclawInstallOptions {
   configPath?: string;
 }
 
+interface OpenclawUpgradeOptions extends OpenclawInstallOptions {
+  pluginDir?: string;
+  version?: string;
+  restartGateway: boolean;
+}
+
 async function promptYesNo(question: string, defaultYes = true): Promise<boolean> {
   // In non-interactive environments, default to yes
   if (!process.stdin.isTTY) return defaultYes;
@@ -4253,40 +4580,7 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   console.log(`OpenClaw config: ${configPath}`);
 
   const existingConfig = readOpenclawConfig(configPath);
-
-  // Validate that plugins (if present) is a plain object, not a string, array,
-  // or other non-object. This prevents the install from silently corrupting a
-  // config where plugins has been set to a scalar or array value.
-  const rawPlugins = existingConfig.plugins;
-  if (rawPlugins !== undefined && (typeof rawPlugins !== "object" || rawPlugins === null || Array.isArray(rawPlugins))) {
-    throw new Error(
-      `OpenClaw config at ${configPath} has an invalid plugins field (expected an object, got ${Array.isArray(rawPlugins) ? "array" : typeof rawPlugins}). ` +
-      `Fix the file manually and re-run.`,
-    );
-  }
-  const plugins = (rawPlugins ?? {}) as Record<string, unknown>;
-
-  // Validate plugins.entries before using the `in` operator — a malformed but
-  // parse-valid config (e.g. "entries": 1) must produce a clear error rather
-  // than a cryptic TypeError.
-  const rawEntries = plugins.entries;
-  if (rawEntries !== undefined && (typeof rawEntries !== "object" || rawEntries === null || Array.isArray(rawEntries))) {
-    throw new Error(
-      `OpenClaw config at ${configPath} has an invalid plugins.entries field (expected an object, got ${Array.isArray(rawEntries) ? "array" : typeof rawEntries}). ` +
-      `Fix the file manually and re-run.`,
-    );
-  }
-  const entries = (rawEntries ?? {}) as Record<string, unknown>;
-
-  // Validate plugins.slots shape for the same reason as entries.
-  const rawSlots = plugins.slots;
-  if (rawSlots !== undefined && (typeof rawSlots !== "object" || rawSlots === null || Array.isArray(rawSlots))) {
-    throw new Error(
-      `OpenClaw config at ${configPath} has an invalid plugins.slots field (expected an object, got ${Array.isArray(rawSlots) ? "array" : typeof rawSlots}). ` +
-      `Fix the file manually and re-run.`,
-    );
-  }
-  const slots = (rawSlots ?? {}) as Record<string, unknown>;
+  const { plugins, entries, slots } = parseOpenclawPluginState(existingConfig, configPath);
 
   // Check for legacy entry. REMNIC_OPENCLAW_PLUGIN_ID is the canonical (post-#405) id.
   // REMNIC_OPENCLAW_LEGACY_PLUGIN_ID is the pre-#405 id retained for rollback/migration.
@@ -4326,14 +4620,13 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   // On reinstall (no --memory-dir flag), preserve the currently configured value
   // so running `remnic openclaw install` as a repair doesn't silently relocate
   // the memory namespace. Fall back to the default only when no prior value exists.
-  const existingMemoryDir: string | undefined =
-    (typeof existingNewEntryConfig.memoryDir === "string" ? existingNewEntryConfig.memoryDir : undefined) ||
-    (migrateLegacy && typeof legacyConfigToMerge.memoryDir === "string" ? legacyConfigToMerge.memoryDir : undefined);
-  const memoryDir = opts.memoryDir
-    ? path.resolve(expandTilde(opts.memoryDir))
-    : existingMemoryDir
-      ? path.resolve(expandTilde(existingMemoryDir))
-      : fallbackMemoryDir;
+  const memoryDir = resolveOpenclawInstallMemoryDir({
+    requestedMemoryDir: opts.memoryDir,
+    existingNewEntryConfig,
+    legacyConfigToMerge,
+    migrateLegacy,
+    fallbackMemoryDir,
+  });
 
   console.log(`Memory dir:      ${memoryDir}`);
 
@@ -4469,6 +4762,154 @@ async function cmdOpenclawInstall(opts: OpenclawInstallOptions): Promise<void> {
   console.log("  2. Start a conversation — check your gateway log for:");
   console.log("       [remnic] gateway_start fired — Remnic memory plugin is active");
   console.log("  3. Run `remnic doctor` to verify the full configuration.");
+}
+
+async function cmdOpenclawUpgrade(opts: OpenclawUpgradeOptions): Promise<void> {
+  const configPath = resolveOpenclawConfigPath(opts.configPath);
+  const pluginDir = resolveOpenclawPluginDir(opts.pluginDir);
+  const fallbackMemoryDir = path.join(resolveHomeDir(), ".openclaw", "workspace", "memory", "local");
+  const packageSpec = `@remnic/plugin-openclaw@${opts.version ?? "latest"}`;
+
+  const existingConfig = readOpenclawConfig(configPath);
+  const { entries, slots } = parseOpenclawPluginState(existingConfig, configPath);
+  const preservedMemoryDir = opts.memoryDir
+    ? path.resolve(expandTilde(opts.memoryDir))
+    : resolveCurrentOpenclawMemoryDir(entries, slots, fallbackMemoryDir);
+  const backupDir = path.join(
+    resolveHomeDir(),
+    ".openclaw",
+    "backups",
+    `remnic-openclaw-upgrade-${formatOpenclawUpgradeStamp()}`,
+  );
+  const configBackupPath = path.join(backupDir, "openclaw.json");
+  const pluginBackupDir = path.join(backupDir, "extensions", REMNIC_OPENCLAW_PLUGIN_ID);
+
+  assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");
+
+  console.log(`OpenClaw config: ${configPath}`);
+  console.log(`Plugin dir:      ${pluginDir}`);
+  console.log(`Memory dir:      ${preservedMemoryDir}`);
+  console.log(`Package spec:    ${packageSpec}`);
+  console.log(`Backup dir:      ${backupDir}`);
+
+  const plannedActions = [
+    `backup openclaw.json and the existing ${REMNIC_OPENCLAW_PLUGIN_ID} extension`,
+    `npm pack ${packageSpec} and stage a clean plugin copy before swap`,
+    `re-run remnic openclaw install with the preserved memory dir`,
+    opts.restartGateway
+      ? "restart the OpenClaw gateway with launchctl kickstart"
+      : "leave gateway restart to the operator (--no-restart)",
+  ];
+
+  if (opts.dryRun) {
+    console.log("\n--- DRY RUN — no changes written ---");
+    for (const action of plannedActions) {
+      console.log(`  - ${action}`);
+    }
+    return;
+  }
+
+  if (!opts.yes) {
+    const shouldContinue = await promptYesNo(
+      `Proceed with published npm upgrade from ${packageSpec}? This will create backups first. [Y/n]`,
+      true,
+    );
+    if (!shouldContinue) {
+      console.log("Upgrade cancelled.");
+      return;
+    }
+  }
+
+  const backupNotes: string[] = [];
+  if (backupPathIfPresent(configPath, configBackupPath)) {
+    backupNotes.push(`+ Backed up config to ${configBackupPath}`);
+  } else {
+    backupNotes.push(`  No existing OpenClaw config found at ${configPath}; install step will create it`);
+  }
+  if (backupPathIfPresent(pluginDir, pluginBackupDir)) {
+    backupNotes.push(`+ Backed up plugin dir to ${pluginBackupDir}`);
+  } else {
+    backupNotes.push(`  No existing plugin dir found at ${pluginDir}; a fresh install will be staged`);
+  }
+
+  let installResult: { rollbackDir?: string; version?: string } | undefined;
+  try {
+    installResult = installPublishedOpenclawPlugin(packageSpec, pluginDir);
+    await cmdOpenclawInstall({
+      yes: true,
+      dryRun: false,
+      memoryDir: preservedMemoryDir,
+      configPath,
+    });
+  } catch (installError) {
+    const failurePhase = installResult
+      ? "reconfiguring the installed plugin"
+      : "installing the published plugin";
+    const installErrorText = describeErrorWithCause(installError);
+    const publishedInstallError = installError instanceof PublishedOpenclawPluginInstallError
+      ? installError
+      : undefined;
+    const rollbackDir = publishedInstallError
+      ? publishedInstallError.rollbackDir
+      : installResult?.rollbackDir;
+    const shouldRestorePlugin =
+      Boolean(installResult || rollbackDir || publishedInstallError?.shouldRestoreBackup);
+    const shouldRestoreConfig = Boolean(installResult);
+    const shouldRollback = shouldRestorePlugin || shouldRestoreConfig;
+
+    if (!shouldRollback) {
+      throw new Error(
+        `OpenClaw upgrade failed while ${failurePhase}. ` +
+        `Original failure: ${installErrorText}.`,
+        { cause: installError },
+      );
+    }
+
+    let rollbackNotes: string[];
+    try {
+      rollbackNotes = rollbackOpenclawUpgrade({
+        configBackupPath: shouldRestoreConfig ? configBackupPath : undefined,
+        configPath,
+        pluginBackupDir: shouldRestorePlugin ? pluginBackupDir : undefined,
+        pluginDir,
+        rollbackDir,
+      });
+    } catch (rollbackError) {
+      throw createOpenclawUpgradeRollbackFailure({
+        failurePhase,
+        installError,
+        rollbackError,
+      });
+    }
+    throw new Error(
+      `OpenClaw upgrade failed while ${failurePhase}. ` +
+      `Original failure: ${installErrorText}. ` +
+      `${rollbackNotes.join("; ")}.`,
+      { cause: installError },
+    );
+  }
+  const rollbackCleanupWarning = cleanupRollbackDirectoryBestEffort(
+    installResult?.rollbackDir,
+  );
+
+  console.log("\nUpgrade backups:");
+  for (const note of backupNotes) console.log(`  ${note}`);
+  console.log(
+    `\nInstalled published plugin from npm pack ${packageSpec}` +
+    `${installResult.version ? ` (version ${installResult.version})` : ""}.`,
+  );
+  if (rollbackCleanupWarning) {
+    console.warn(rollbackCleanupWarning);
+  }
+
+  if (opts.restartGateway) {
+    const restartResult = runBestEffortGatewayRestart(restartOpenclawGateway, OPENCLAW_GATEWAY_LABEL);
+    console.log(restartResult.message);
+  } else {
+    console.log("\nGateway restart skipped (--no-restart).");
+    console.log("Run this manually when you're ready:");
+    console.log(`  launchctl kickstart -k gui/$(id -u)/${OPENCLAW_GATEWAY_LABEL}`);
+  }
 }
 
 // ── Taxonomy commands (#366) ─────────────────────────────────────────────────
@@ -4863,6 +5304,13 @@ export async function runTrainingExport(
   redactedCount: number;
   outputPath: string | null;
 }> {
+  const {
+    convertMemoriesToRecords,
+    getTrainingExportAdapter,
+    listTrainingExportAdapters,
+    parseStrictCliDate,
+  } = await loadTrainingExportCoreRuntime();
+
   // Resolve the adapter from the registry first. If the user picks a
   // non-weclone format (registered elsewhere), we never touch the
   // optional @remnic/export-weclone package. If the format isn't
@@ -4948,17 +5396,17 @@ export async function runTrainingExport(
       );
     }
     const mod = await ensureWeclone();
-    records = mod.synthesizeTrainingPairs(records, {
+    records = mod.synthesizeTrainingPairs(records as unknown as Record<string, unknown>[], {
       maxPairsPerRecord: args.maxPairsPerRecord,
-    });
+    }) as unknown as TrainingExportRecord[];
   }
 
   let redactedCount = 0;
   if (args.privacySweep) {
     if (adapterIsWeclone) {
       const mod = await ensureWeclone();
-      const swept = mod.sweepPii(records);
-      records = swept.cleanRecords;
+      const swept = mod.sweepPii(records as unknown as Record<string, unknown>[]);
+      records = swept.cleanRecords as unknown as TrainingExportRecord[];
       redactedCount = swept.redactedCount;
     } else {
       // privacy-sweep defaults ON because training-export data is
@@ -5383,16 +5831,35 @@ Other:
 
     case "openclaw": {
       const subAction = rest[0] ?? "help";
+      const args = rest.slice(1);
       if (subAction === "install") {
-        const yes = rest.includes("--yes") || rest.includes("-y") || rest.includes("--force");
-        const dryRun = rest.includes("--dry-run");
-        const memoryDir = resolveFlagStrict(rest, "--memory-dir");
-        const configOverride = resolveFlagStrict(rest, "--config");
+        const yes = args.includes("--yes") || args.includes("-y") || args.includes("--force");
+        const dryRun = args.includes("--dry-run");
+        const memoryDir = resolveRequiredValueFlag(args, "--memory-dir");
+        const configOverride = resolveRequiredValueFlag(args, "--config");
         await cmdOpenclawInstall({ yes, dryRun, memoryDir, configPath: configOverride });
+      } else if (subAction === "upgrade") {
+        const yes = args.includes("--yes") || args.includes("-y") || args.includes("--force");
+        const dryRun = args.includes("--dry-run");
+        const memoryDir = resolveRequiredValueFlag(args, "--memory-dir");
+        const configOverride = resolveRequiredValueFlag(args, "--config");
+        const version = resolveRequiredValueFlag(args, "--version");
+        const pluginDir = resolveRequiredValueFlag(args, "--plugin-dir");
+        const restartGateway = !args.includes("--no-restart");
+        await cmdOpenclawUpgrade({
+          yes,
+          dryRun,
+          memoryDir,
+          configPath: configOverride,
+          pluginDir,
+          version,
+          restartGateway,
+        });
       } else {
-        console.log(`Usage: remnic openclaw <install>
+        console.log(`Usage: remnic openclaw <install|upgrade>
 
   install    Configure OpenClaw to use Remnic as the memory plugin.
+  upgrade    Backup the current setup, refresh the published npm package, and re-apply the config.
 
              Sets plugins.entries["${REMNIC_OPENCLAW_PLUGIN_ID}"] and plugins.slots.memory
              in ~/.openclaw/openclaw.json (or $OPENCLAW_CONFIG_PATH).
@@ -5401,7 +5868,10 @@ Options:
   --yes / -y / --force    Skip interactive prompts, assume Y
   --dry-run               Print resulting config diff without writing
   --memory-dir <path>     Override default memory dir (~/.openclaw/workspace/memory/local)
-  --config <path>         Override OpenClaw config path`);
+  --config <path>         Override OpenClaw config path
+  --version <tag>         Upgrade @remnic/plugin-openclaw from a specific npm tag/version
+  --plugin-dir <path>     Override OpenClaw extension dir (~/.openclaw/extensions/openclaw-remnic)
+  --no-restart            Skip the final launchctl kickstart after upgrade`);
       }
       break;
     }
@@ -5419,10 +5889,14 @@ Usage:
   remnic doctor                Run diagnostics
   remnic config                Show current config
   remnic openclaw install      Configure OpenClaw to use Remnic memory (sets slot + entry)
+  remnic openclaw upgrade      Safe OpenClaw npm upgrade with backups and gateway restart
     --yes / -y / --force       Skip prompts
     --dry-run                  Preview changes without writing
     --memory-dir <path>        Custom memory directory
     --config <path>            Custom OpenClaw config path
+    --version <tag>            Upgrade @remnic/plugin-openclaw from a specific npm tag/version
+    --plugin-dir <path>        Custom OpenClaw extension directory
+    --no-restart               Skip the final launchctl kickstart after upgrade
   remnic daemon <start|stop|restart|install|uninstall|status>  Manage background server
   remnic token <generate|list|revoke> [connector-id]  Manage auth tokens
   remnic tree <generate|watch|validate>  Generate context tree

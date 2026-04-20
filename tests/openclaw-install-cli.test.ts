@@ -23,9 +23,31 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const CLI_SRC = path.join(ROOT, "packages", "remnic-cli", "src", "index.ts");
+const OPTIONAL_BENCH_SRC = path.join(
+  ROOT,
+  "packages",
+  "remnic-cli",
+  "src",
+  "optional-bench.ts",
+);
+const OPTIONAL_WECLONE_SRC = path.join(
+  ROOT,
+  "packages",
+  "remnic-cli",
+  "src",
+  "optional-weclone-export.ts",
+);
 
 async function readCli(): Promise<string> {
   return readFile(CLI_SRC, "utf-8");
+}
+
+async function readOptionalBench(): Promise<string> {
+  return readFile(OPTIONAL_BENCH_SRC, "utf-8");
+}
+
+async function readOptionalWeclone(): Promise<string> {
+  return readFile(OPTIONAL_WECLONE_SRC, "utf-8");
 }
 
 test("CLI CommandName type includes 'openclaw'", async () => {
@@ -41,6 +63,14 @@ test("CLI has cmdOpenclawInstall function", async () => {
   assert.ok(
     src.includes("cmdOpenclawInstall"),
     "CLI must define cmdOpenclawInstall function",
+  );
+});
+
+test("CLI has cmdOpenclawUpgrade function", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("cmdOpenclawUpgrade"),
+    "CLI must define cmdOpenclawUpgrade function",
   );
 });
 
@@ -97,6 +127,138 @@ test("CLI openclaw subcommand is in the main switch statement", async () => {
   );
 });
 
+test("CLI wires openclaw upgrade subcommand", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes('subcommand === "upgrade"') ||
+    src.includes("case \"upgrade\"") ||
+    src.includes("cmdOpenclawUpgrade"),
+    "CLI must handle `remnic openclaw upgrade`",
+  );
+});
+
+test("CLI openclaw upgrade supports release and restart flags", async () => {
+  const src = await readCli();
+  assert.ok(src.includes("--version"), "CLI upgrade must handle --version");
+  assert.ok(
+    src.includes("--no-restart") || src.includes("restartGateway"),
+    "CLI upgrade must handle restart control",
+  );
+});
+
+test("CLI openclaw upgrade rejects missing values for value-bearing flags", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes('resolveRequiredValueFlag(args, "--version")'),
+    "CLI upgrade must reject bare --version flags instead of defaulting",
+  );
+  assert.ok(
+    src.includes('resolveRequiredValueFlag(args, "--plugin-dir")'),
+    "CLI upgrade must reject bare --plugin-dir flags",
+  );
+});
+
+test("CLI openclaw upgrade mentions backups and npm package refresh", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("backup") || src.includes("backups"),
+    "CLI upgrade must mention backups",
+  );
+  assert.ok(
+    src.includes("npm pack") || src.includes("@remnic/plugin-openclaw"),
+    "CLI upgrade must mention the published npm package",
+  );
+});
+
+test("CLI openclaw upgrade rolls back if the published plugin install fails after swap", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("PublishedOpenclawPluginInstallError"),
+    "CLI upgrade must track plugin install failures that happen after the staged swap",
+  );
+  assert.ok(
+    src.includes("let installResult") &&
+      src.includes("installResult = installPublishedOpenclawPlugin(packageSpec, pluginDir)"),
+    "CLI upgrade must assign the published plugin install inside the rollback try/catch",
+  );
+  assert.ok(
+    src.includes("const publishedInstallError = installError instanceof PublishedOpenclawPluginInstallError") &&
+      src.includes("const rollbackDir = publishedInstallError") &&
+      src.includes("? publishedInstallError.rollbackDir"),
+    "CLI upgrade must reuse rollbackDir from install failures that occur before installResult is assigned",
+  );
+});
+
+test("CLI openclaw upgrade preserves the original install error if rollback also fails", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("createOpenclawUpgradeRollbackFailure"),
+    "CLI upgrade must construct a combined failure when rollback throws",
+  );
+  assert.ok(
+    /try\s*\{\s*rollbackNotes = rollbackOpenclawUpgrade\(\{[\s\S]*?\}\);\s*\}\s*catch \(rollbackError\)\s*\{\s*throw createOpenclawUpgradeRollbackFailure\(\{[\s\S]*?installError,[\s\S]*?rollbackError,[\s\S]*?\}\);\s*\}/s.test(src),
+    "CLI upgrade must catch rollback failures separately so the original install error is still surfaced",
+  );
+  assert.ok(
+    src.includes("Original failure: ${installErrorText}."),
+    "CLI upgrade must include the original install error text in the post-rollback failure message",
+  );
+  assert.ok(
+    src.includes("const installErrorText = describeErrorWithCause(installError);"),
+    "CLI upgrade must include wrapped install causes in the surfaced failure text",
+  );
+});
+
+test("CLI openclaw upgrade skips rollback work when install fails before any swap or reconfigure", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("const shouldRestorePlugin =") &&
+      src.includes("const shouldRestoreConfig = Boolean(installResult);") &&
+      src.includes("const shouldRollback = shouldRestorePlugin || shouldRestoreConfig;"),
+    "CLI upgrade must distinguish plugin rollback from config rollback before deciding to restore",
+  );
+  assert.ok(
+    /if \(!shouldRollback\)\s*\{\s*throw new Error\(\s*`OpenClaw upgrade failed while \$\{failurePhase\}\. ` \+\s*`Original failure: \$\{installErrorText\}\.`/s.test(src),
+    "CLI upgrade must surface the install failure directly when rollback is unnecessary",
+  );
+});
+
+test("CLI openclaw upgrade preserves backup rollback for swap failures that lose rollbackDir", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("readonly shouldRestoreBackup: boolean;") &&
+      src.includes("this.shouldRestoreBackup = options.shouldRestoreBackup ?? false;"),
+    "published plugin install errors must carry whether durable backup rollback is still required",
+  );
+  assert.ok(
+    src.includes("shouldRestoreBackup = swapError instanceof AggregateError;"),
+    "published plugin install must remember swap+restore double failures that still need backup rollback",
+  );
+  assert.ok(
+    src.includes("publishedInstallError?.shouldRestoreBackup"),
+    "CLI upgrade rollback gating must honor the durable-backup restore signal from install failures",
+  );
+});
+
+test("CLI openclaw upgrade rejects file-backed pluginDir paths before backup and swap", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("function assertDirectoryPathOrMissing"),
+    "CLI upgrade must define a shared directory guard for pluginDir",
+  );
+  assert.ok(
+    src.includes('assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");'),
+    "CLI upgrade must validate pluginDir before backup/install work begins",
+  );
+  assert.ok(
+    src.includes('childProcess.execFileSync("npm", ["install", "--omit=dev"]') &&
+      src.includes('assertDirectoryPathOrMissing(pluginDir, "OpenClaw plugin dir");') &&
+      src.includes("const swapResult = (() => {") &&
+      src.includes("return swapDirectoryWithRollback(stagedDir, pluginDir, rollbackDir);"),
+    "published plugin installs must validate pluginDir immediately before the staged swap",
+  );
+});
+
 test("CLI next-step instructions mention gateway restart", async () => {
   const src = await readCli();
   assert.ok(
@@ -138,6 +300,15 @@ test("CLI preserves existing memoryDir on reinstall when --memory-dir not provid
   );
 });
 
+test("CLI ignores foreign slots.memory values when preserving the current OpenClaw memoryDir", async () => {
+  const src = await readCli();
+  assert.ok(
+    src.includes("slots.memory === REMNIC_OPENCLAW_PLUGIN_ID") &&
+      src.includes("slots.memory === REMNIC_OPENCLAW_LEGACY_PLUGIN_ID"),
+    "CLI must only trust recognized OpenClaw plugin ids when reading slots.memory",
+  );
+});
+
 test("CLI validates plugins.entries shape before using in operator", async () => {
   const src = await readCli();
   assert.ok(
@@ -167,5 +338,33 @@ test("CLI uses resolveFlagStrict for --memory-dir and --config to reject flag-li
   assert.ok(
     src.includes("resolveFlagStrict"),
     "CLI must use resolveFlagStrict for value-bearing flags in openclaw install",
+  );
+});
+
+test("CLI lazy-loads bench and training-export runtime packages", async () => {
+  const [cliSrc, optionalBenchSrc, optionalWecloneSrc] = await Promise.all([
+    readCli(),
+    readOptionalBench(),
+    readOptionalWeclone(),
+  ]);
+  assert.ok(
+    cliSrc.includes("loadTrainingExportCoreRuntime") &&
+      cliSrc.includes("loadWecloneExportModule"),
+    "CLI must lazy-load training export runtime dependencies",
+  );
+  assert.ok(
+    cliSrc.includes("loadBenchModule") &&
+      cliSrc.includes("tryLoadBenchModule"),
+    "CLI must lazy-load bench runtime dependencies",
+  );
+  assert.ok(
+    optionalWecloneSrc.includes('const SPECIFIER = "@remnic/" + "export-weclone"') &&
+      optionalWecloneSrc.includes("await import(SPECIFIER)"),
+    "training export lazy loading must happen in the optional weclone loader via computed dynamic import",
+  );
+  assert.ok(
+    optionalBenchSrc.includes('const SPECIFIER = "@remnic/" + "bench"') &&
+      optionalBenchSrc.includes("await import(SPECIFIER)"),
+    "bench lazy loading must happen in the optional bench loader via computed dynamic import",
   );
 });
