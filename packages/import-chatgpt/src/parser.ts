@@ -137,12 +137,24 @@ export function parseChatGPTExport(
 
   // Shape 1: a top-level array. ChatGPT's `conversations.json` is literally
   // an array of conversations. Older memory exports are also arrays (each
-  // entry a ChatGPTSavedMemory). We differentiate by inspecting the first
-  // element shape.
+  // entry a ChatGPTSavedMemory). A leading tombstone / malformed element
+  // (null, {}, etc.) would defeat a `raw[0]`-only classifier and cause us
+  // to silently drop every later valid entry. Scan the full array for the
+  // first recognized shape instead. Codex review on PR #595.
   if (Array.isArray(raw)) {
     if (raw.length === 0) return result;
-    const first = raw[0];
-    if (looksLikeConversation(first)) {
+    let classification: "conversation" | "memory" | undefined;
+    for (const entry of raw) {
+      if (looksLikeConversation(entry)) {
+        classification = "conversation";
+        break;
+      }
+      if (looksLikeSavedMemory(entry)) {
+        classification = "memory";
+        break;
+      }
+    }
+    if (classification === "conversation") {
       for (const entry of raw) {
         if (looksLikeConversation(entry)) {
           result.conversations.push(entry as ChatGPTConversation);
@@ -152,7 +164,7 @@ export function parseChatGPTExport(
       }
       return result;
     }
-    if (looksLikeSavedMemory(first)) {
+    if (classification === "memory") {
       for (const entry of raw) {
         const mem = normalizeSavedMemory(entry, options.strict);
         if (mem) result.savedMemories.push(mem);
@@ -216,12 +228,13 @@ export function parseChatGPTExport(
     return result;
   }
 
-  if (options.strict) {
-    throw new Error(
-      "ChatGPT export must be a JSON array or object; received " + typeof raw,
-    );
-  }
-  return result;
+  // Primitive / unparseable payloads must NEVER return an empty success —
+  // that would mask operator mistakes and allow automation to treat a
+  // broken import as a clean "0 memories" import. Throw regardless of
+  // strict mode. Codex review on PR #595.
+  throw new Error(
+    "ChatGPT export must be a JSON array or object; received " + typeof raw,
+  );
 }
 
 // ---------------------------------------------------------------------------
