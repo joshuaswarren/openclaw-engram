@@ -1202,9 +1202,16 @@ export class EngramAccessService {
       ? this.resolveNamespace(request.namespace)
       : undefined;
     const authenticatedPrincipal = request.authenticatedPrincipal?.trim();
+    // Trim the sessionKey ONCE here so the pre-check and the
+    // downstream `orchestrator.recall` call resolve the principal
+    // from the same string (Cursor Low on #601).  Previously the
+    // pre-check used the raw sessionKey while the recall call trimmed
+    // it, so whitespace-padded keys could resolve to different
+    // principals between the two ACL evaluations.
+    const trimmedSessionKey = request.sessionKey?.trim() || undefined;
     const principal =
       authenticatedPrincipal
-      || resolvePrincipal(request.sessionKey, this.orchestrator.config);
+      || resolvePrincipal(trimmedSessionKey, this.orchestrator.config);
 
     if (requestedNamespace) {
       if (
@@ -1219,7 +1226,7 @@ export class EngramAccessService {
     } else if (
       namespacesEnabled
       && !authenticatedPrincipal
-      && !request.sessionKey?.trim()
+      && !trimmedSessionKey
     ) {
       // Namespaces enabled but no identity supplied — reject rather
       // than scanning the global namespace (CLAUDE.md rule 48:
@@ -1267,7 +1274,7 @@ export class EngramAccessService {
       // `{snapshotFound: false}` rather than returning stale data
       // from an earlier call on the same orchestrator.
       this.orchestrator.clearLastXraySnapshot();
-      await this.orchestrator.recall(query, request.sessionKey?.trim() || undefined, {
+      await this.orchestrator.recall(query, trimmedSessionKey, {
         xrayCapture: true,
         ...(requestedNamespace ? { namespace: requestedNamespace } : {}),
         ...(budgetOverride !== undefined
