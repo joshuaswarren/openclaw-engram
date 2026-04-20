@@ -8,7 +8,7 @@
  *
  *   1. A session without a coding context gets the default namespace.
  *   2. A session with a coding context + `codingMode.projectScope: true`
- *      gets a `project:<id>` overlay on both read and write paths.
+ *      gets a `project-<id>` overlay on both read and write paths.
  *   3. Disabling `codingMode.projectScope: false` exactly restores the
  *      default namespace (CLAUDE.md #30 escape hatch).
  *   4. Rule 42 invariant: read-path overlay and write-path overlay return
@@ -113,7 +113,7 @@ test("applyCodingNamespaceOverlay: returns project overlay when context is set a
   orch.setCodingContextForSession("session-A", contextFor("origin:abcdef12"));
   assert.equal(
     orch.applyCodingNamespaceOverlay("session-A", "default"),
-    "project:origin:abcdef12",
+    "project-origin-abcdef12",
   );
 });
 
@@ -140,7 +140,7 @@ test("applyCodingRecallOverlay: project context → overlay with empty fallbacks
   const orch = makeOrchestrator();
   orch.setCodingContextForSession("session-A", contextFor("origin:aaaaaaaa"));
   const overlay = orch.applyCodingRecallOverlay("session-A");
-  assert.deepEqual(overlay, { namespace: "project:origin:aaaaaaaa", readFallbacks: [] });
+  assert.deepEqual(overlay, { namespace: "project-origin-aaaaaaaa", readFallbacks: [] });
 });
 
 test("applyCodingRecallOverlay: projectScope=false → null (escape hatch)", () => {
@@ -175,6 +175,6 @@ test("two sessions on different projects resolve to different namespaces (no cro
   const nsA = orch.applyCodingNamespaceOverlay("session-A", "default");
   const nsB = orch.applyCodingNamespaceOverlay("session-B", "default");
   assert.notEqual(nsA, nsB);
-  assert.equal(nsA, "project:origin:11111111");
-  assert.equal(nsB, "project:origin:22222222");
+  assert.equal(nsA, "project-origin-11111111");
+  assert.equal(nsB, "project-origin-22222222");
 });

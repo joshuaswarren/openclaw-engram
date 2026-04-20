@@ -14,6 +14,7 @@ import {
   projectNamespaceName,
   resolveCodingNamespaceOverlay,
 } from "./coding-namespace.js";
+import { isSafeRouteNamespace } from "../routing/engine.js";
 import type { CodingContext, CodingModeConfig } from "../types.js";
 
 function ctx(overrides: Partial<CodingContext> = {}): CodingContext {
@@ -38,34 +39,73 @@ function mode(overrides: Partial<CodingModeConfig> = {}): CodingModeConfig {
 // Name helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-test("projectNamespaceName: stable form for origin-derived id", () => {
-  assert.equal(projectNamespaceName("origin:abcd1234"), "project:origin:abcd1234");
+test("projectNamespaceName: stable form for origin-derived id (safe-route compatible)", () => {
+  // `:` is not in the router's safe-namespace alphabet, so it collapses to
+  // `-`. Resulting name must pass `isSafeRouteNamespace`.
+  assert.equal(projectNamespaceName("origin:abcd1234"), "project-origin-abcd1234");
 });
 
 test("projectNamespaceName: lowercases and strips unsafe characters", () => {
-  assert.equal(projectNamespaceName("ORIGIN:ABCD!!"), "project:origin:abcd");
+  assert.equal(projectNamespaceName("ORIGIN:ABCD!!"), "project-origin-abcd");
 });
 
 test("projectNamespaceName: empty input falls back to 'unknown'", () => {
-  assert.equal(projectNamespaceName(""), "project:unknown");
-  assert.equal(projectNamespaceName("   "), "project:unknown");
+  assert.equal(projectNamespaceName(""), "project-unknown");
+  assert.equal(projectNamespaceName("   "), "project-unknown");
 });
 
-test("branchNamespaceName: layers branch on project (branch slashes collapsed to dashes)", () => {
-  // `/` is not in the safe alphabet — it collapses to `-` so the resulting
-  // name round-trips safely through the collection-name mapper in
-  // namespaces/search.ts. The `project:<id>/branch:<name>` structural
-  // separators remain.
+test("projectNamespaceName: length-capped to 64 chars, no trailing dash", () => {
+  const huge = "a".repeat(200);
+  const out = projectNamespaceName(huge);
+  assert.ok(out.length <= 64, `expected length ≤ 64, got ${out.length}`);
+  assert.ok(!out.endsWith("-"), "truncation must not leave a trailing dash");
+});
+
+test("projectNamespaceName: output satisfies isSafeRouteNamespace for typical projectIds", () => {
+  const cases = [
+    "origin:abcd1234",
+    "origin:deadbeef",
+    "root:12345678",
+    "ORIGIN:ABCD!!",
+    "",
+  ];
+  for (const input of cases) {
+    const ns = projectNamespaceName(input);
+    assert.ok(
+      isSafeRouteNamespace(ns),
+      `projectNamespaceName(${JSON.stringify(input)}) = ${JSON.stringify(ns)} must be a safe route namespace`,
+    );
+  }
+});
+
+test("branchNamespaceName: output satisfies isSafeRouteNamespace for typical branches", () => {
+  const cases: Array<[string, string]> = [
+    ["origin:abcd", "main"],
+    ["origin:abcd", "feat/x"],
+    ["origin:abcd", "hotfix/JIRA-1234"],
+    ["origin:abcd", "release-v2.0"],
+    ["origin:abcd", "user_branch.test"],
+  ];
+  for (const [projectId, branch] of cases) {
+    const ns = branchNamespaceName(projectId, branch);
+    assert.ok(
+      isSafeRouteNamespace(ns),
+      `branchNamespaceName(${JSON.stringify(projectId)}, ${JSON.stringify(branch)}) = ${JSON.stringify(ns)} must be a safe route namespace`,
+    );
+  }
+});
+
+test("branchNamespaceName: layers branch on project (uses `-` separators, no `/`)", () => {
   assert.equal(
     branchNamespaceName("origin:abcd1234", "feat/ui"),
-    "project:origin:abcd1234/branch:feat-ui",
+    "project-origin-abcd1234-branch-feat-ui",
   );
 });
 
 test("branchNamespaceName: sanitizes branch name (lowercase + unsafe → dash)", () => {
   assert.equal(
     branchNamespaceName("origin:abcd", "FEAT/UI (wip)"),
-    "project:origin:abcd/branch:feat-ui-wip",
+    "project-origin-abcd-branch-feat-ui-wip",
   );
 });
 
@@ -103,7 +143,7 @@ test("resolveCodingNamespaceOverlay: empty projectId → null (defensive)", () =
 test("resolveCodingNamespaceOverlay: projectScope=true → project overlay, no fallbacks", () => {
   const overlay = resolveCodingNamespaceOverlay(ctx({ projectId: "origin:deadbeef" }), mode());
   assert.deepEqual(overlay, {
-    namespace: "project:origin:deadbeef",
+    namespace: "project-origin-deadbeef",
     readFallbacks: [],
     scope: "project",
   });
@@ -116,7 +156,7 @@ test("resolveCodingNamespaceOverlay: branchScope=true with branch=null → still
   );
   assert.ok(overlay);
   assert.equal(overlay!.scope, "project");
-  assert.equal(overlay!.namespace, "project:origin:aaaa0000");
+  assert.equal(overlay!.namespace, "project-origin-aaaa0000");
   assert.deepEqual(overlay!.readFallbacks, []);
 });
 
@@ -131,8 +171,8 @@ test("resolveCodingNamespaceOverlay: branchScope=true + branch set → branch ov
   );
   assert.ok(overlay);
   assert.equal(overlay!.scope, "branch");
-  assert.equal(overlay!.namespace, "project:origin:aaaa0000/branch:feat-x");
-  assert.deepEqual(overlay!.readFallbacks, ["project:origin:aaaa0000"]);
+  assert.equal(overlay!.namespace, "project-origin-aaaa0000-branch-feat-x");
+  assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa0000"]);
 });
 
 test("resolveCodingNamespaceOverlay: branchScope=false → no branch layering even with branch set", () => {

@@ -47,41 +47,59 @@ export interface CodingNamespaceOverlay {
 // ──────────────────────────────────────────────────────────────────────────
 
 /**
- * Normalize a projectId / branch fragment so the resulting namespace is safe
- * to use as a collection-name token. The collection-name mapper in
- * `namespaces/search.ts` performs its own lowercase + `[^a-z0-9._-]→-`
- * normalization; we pre-sanitize here so the human-readable `<project:…>`
- * form stored in configs / logs / audits is stable.
+ * Normalize a projectId / branch fragment so the resulting namespace passes
+ * the router's `isSafeRouteNamespace` check (`[A-Za-z0-9._-]{1,64}`).
  *
- * NOT a security boundary — projectIds produced by `resolveGitContext` are
- * already controlled hex (`origin:<8hex>` or `root:<8hex>`), and branch names
- * come from local git. This defends against corrupt input only.
+ * Namespaces are used as filesystem directory names and must not contain
+ * path separators (`/`, `\`) or colons — so both `:` and `/` collapse to `-`.
+ * The project-id format `origin:<8hex>` and branch names like `feat/x` both
+ * flow through this helper before hitting the storage layer.
+ *
+ * NOT a security boundary — projectIds come from `resolveGitContext` (known
+ * hex), and branch names come from local git. This defends against corrupt
+ * input only.
  */
 function sanitizeFragment(input: string): string {
   return input
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9._:-]+/g, "-")
+    .replace(/[^a-z0-9._-]+/g, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
 
 /**
- * Produce the project-scope namespace name. Exported for tests and for
- * `remnic doctor` to render.
+ * Cap to the router's per-namespace upper bound. Trim trailing `-` introduced
+ * by truncation so the final character is always alphanumeric or `.`, `_`.
  */
-export function projectNamespaceName(projectId: string): string {
-  const frag = sanitizeFragment(projectId);
-  return `project:${frag || "unknown"}`;
+const MAX_NAMESPACE_LEN = 64;
+function capLength(value: string): string {
+  if (value.length <= MAX_NAMESPACE_LEN) return value;
+  return value.slice(0, MAX_NAMESPACE_LEN).replace(/-+$/g, "");
 }
 
 /**
- * Produce the branch-scope namespace name. Exported for tests and doctor.
+ * Produce the project-scope namespace name. Exported for tests and for
+ * `remnic doctor` to render. Guaranteed to satisfy `isSafeRouteNamespace`:
+ * no `/`, no `:`, lowercase only, length-capped to 64 chars.
+ */
+export function projectNamespaceName(projectId: string): string {
+  const frag = sanitizeFragment(projectId);
+  return capLength(`project-${frag || "unknown"}`);
+}
+
+/**
+ * Produce the branch-scope namespace name. Format:
+ * `project-<id>-branch-<name>`. Uses `-` as the structural separator rather
+ * than `/` or `:` so the result is a single safe route-namespace token that
+ * can be used directly as a filesystem directory.
  */
 export function branchNamespaceName(projectId: string, branch: string): string {
   const projectFrag = sanitizeFragment(projectId);
   const branchFrag = sanitizeFragment(branch);
-  return `project:${projectFrag || "unknown"}/branch:${branchFrag || "unknown"}`;
+  return capLength(
+    `project-${projectFrag || "unknown"}-branch-${branchFrag || "unknown"}`,
+  );
 }
 
 // ──────────────────────────────────────────────────────────────────────────
