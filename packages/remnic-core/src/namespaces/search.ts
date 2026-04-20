@@ -105,13 +105,16 @@ export class NamespaceSearchRouter {
    * signal that no backend was eligible — useful for success-verification in
    * startup-sync when namespacesEnabled is true.
    */
-  async updateNamespaces(namespaces: string[]): Promise<number> {
+  async updateNamespaces(
+    namespaces: string[],
+    execution?: SearchExecutionOptions,
+  ): Promise<number> {
     const unique = Array.from(new Set(namespaces.map((value) => value.trim()).filter(Boolean)));
     const results = await Promise.all(
       unique.map(async (namespace) => {
         const record = await this.backendRecordFor(namespace);
         if (!record.available || record.collectionState === "missing") return 0;
-        await record.backend.update();
+        await record.backend.update(execution);
         return 1;
       }),
     );

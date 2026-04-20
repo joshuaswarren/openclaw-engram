@@ -1242,15 +1242,7 @@ export class Orchestrator {
   }
 
   private async disposeSearchBackendIfNeeded(): Promise<void> {
-    const backends = [this.qmd, this.conversationQmd];
-    const disposed = new Set<object>();
-
-    for (const backend of backends) {
-      if (!backend || typeof backend !== "object") continue;
-      if (disposed.has(backend)) continue;
-      disposed.add(backend);
-      await (backend as { dispose?: () => void | Promise<void> }).dispose?.();
-    }
+    await (this.qmd as { dispose?: () => void | Promise<void> }).dispose?.();
   }
 
   /** Set per-session workspace for the next recall() call (compaction reset). @internal */
@@ -2003,9 +1995,10 @@ export class Orchestrator {
         if (this.config.namespacesEnabled) {
           await this.namespaceSearchRouter.updateNamespaces(
             this.configuredNamespaces(),
+            { signal },
           );
         } else {
-          await this.qmd.update(signal);
+          await this.qmd.update({ signal });
         }
         log.info("QMD startup sync: complete");
         this.deferredSyncSucceeded = true;
@@ -2232,9 +2225,12 @@ export class Orchestrator {
         log.info("startupSearchSync: updating index to match current disk state");
         let namespacesUpdated = 0;
         if (this.config.namespacesEnabled) {
-          namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(namespaces);
+          namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(
+            namespaces,
+            { signal },
+          );
         } else {
-          await (this.qmd as any).update(signal);
+          await this.qmd.update({ signal });
         }
         if (signal?.aborted) {
           log.debug("startupSearchSync: aborted after update");

@@ -1,4 +1,4 @@
-import type { SearchBackend } from "../search/port.js";
+import type { SearchBackend, SearchExecutionOptions } from "../search/port.js";
 import type { ConversationChunk } from "./chunker.js";
 import { failOpenFaissHealth, type FaissConversationIndexAdapter } from "./faiss-adapter.js";
 import {
@@ -13,7 +13,8 @@ export interface ConversationQmdRuntime extends SearchBackend {
   isAvailable(): boolean;
   probe(): Promise<boolean>;
   ensureCollection(baseDir: string): Promise<CollectionState>;
-  update(): Promise<void>;
+  update(execution?: SearchExecutionOptions): Promise<void>;
+  updateCollection(collection: string, execution?: SearchExecutionOptions): Promise<void>;
   embed(): Promise<void>;
   debugStatus(): string;
 }

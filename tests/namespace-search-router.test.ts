@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import type { PluginConfig } from "../src/types.js";
 import { NamespaceSearchRouter, namespaceCollectionName } from "../src/namespaces/search.js";
-import type { SearchBackend, SearchQueryOptions } from "../src/search/port.js";
+import type { SearchBackend, SearchExecutionOptions, SearchQueryOptions } from "../src/search/port.js";
 
 function tmpDir(prefix: string): string {
   return path.join(os.tmpdir(), `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -239,6 +239,7 @@ function baseConfig(memoryDir: string): PluginConfig {
 type FakeSearchBackend = SearchBackend & {
   calls: string[];
   lastSearchOptions?: SearchQueryOptions;
+  lastUpdateExecution?: SearchExecutionOptions;
 };
 
 function backendForResultSet(resultSet: Array<{ docid: string; path: string; score: number; snippet: string }>): FakeSearchBackend {
@@ -267,8 +268,9 @@ function backendForResultSet(resultSet: Array<{ docid: string; path: string; sco
       calls.push("hybrid");
       return resultSet;
     },
-    update: async () => {
+    update: async (execution) => {
       calls.push("update");
+      backend.lastUpdateExecution = execution;
     },
     updateCollection: async () => {
       calls.push("updateCollection");
@@ -507,6 +509,27 @@ test("NamespaceSearchRouter runs maintenance only for present namespace collecti
 
   assert.deepEqual(backends.get("openclaw-engram")?.calls, ["update", "embed"]);
   assert.deepEqual(backends.get("openclaw-engram--ns--shared")?.calls ?? [], []);
+});
+
+test("NamespaceSearchRouter forwards execution options to namespace updates", async () => {
+  const memoryDir = tmpDir("engram-ns-search-update-execution");
+  const cfg = baseConfig(memoryDir);
+  const backend = backendForResultSet([]);
+  const signal = new AbortController().signal;
+  const router = new NamespaceSearchRouter(
+    cfg,
+    {
+      async storageFor() {
+        return { dir: memoryDir };
+      },
+    } as any,
+    () => backend,
+  );
+
+  await router.updateNamespaces(["default"], { signal });
+
+  assert.deepEqual(backend.calls, ["update"]);
+  assert.equal(backend.lastUpdateExecution?.signal, signal);
 });
 
 test("NamespaceSearchRouter ensureNamespaceCollection returns cached availability without re-ensuring", async () => {

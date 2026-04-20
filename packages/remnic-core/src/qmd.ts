@@ -1653,12 +1653,23 @@ export class QmdClient implements SearchBackend {
     }
   }
 
-  async update(signal?: AbortSignal): Promise<void> {
-    await this.runUpdateForCollection(this.collection, { perCollectionThrottle: false }, signal);
+  async update(execution?: SearchExecutionOptions): Promise<void> {
+    await this.runUpdateForCollection(
+      this.collection,
+      { perCollectionThrottle: false },
+      execution?.signal,
+    );
   }
 
-  async updateCollection(collection: string): Promise<void> {
-    await this.runUpdateForCollection(collection, { perCollectionThrottle: true });
+  async updateCollection(
+    collection: string,
+    execution?: SearchExecutionOptions,
+  ): Promise<void> {
+    await this.runUpdateForCollection(
+      collection,
+      { perCollectionThrottle: true },
+      execution?.signal,
+    );
   }
 
   private async runUpdateForCollection(
