@@ -1,10 +1,13 @@
 /**
  * LoCoMo runner migrated into @remnic/bench for phase 1.
+ *
+ * As of issue #566 PR 2/7, the per-item lifecycle (reset → ingest →
+ * recall → answer → judge → score) lives in `../harness.ts`. This
+ * module only knows about dataset loading, session extraction, and
+ * how to translate a `LoCoMoConversation` into a `HarnessPlan`.
  */
 
-import { randomUUID } from "node:crypto";
 import type { Message } from "../../../adapters/types.js";
-import { answerBenchmarkQuestion } from "../../../answering.js";
 import {
   type LoCoMoConversation,
   type LoCoMoQA,
@@ -16,21 +19,16 @@ import {
   loadLoCoMo10,
   normalizeLoCoMoQa,
 } from "../dataset-loader.js";
+import {
+  runPublishedHarness,
+  type HarnessPlan,
+  type HarnessTrial,
+} from "../harness.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
   ResolvedRunBenchmarkOptions,
-  TaskResult,
 } from "../../../types.js";
-import {
-  aggregateTaskScores,
-  containsAnswer,
-  f1Score,
-  llmJudgeScoreDetailed,
-  rougeL,
-  timed,
-} from "../../../scorer.js";
-import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 
 const CATEGORY_NAMES: Record<number, string> = {
   1: "single_hop",
@@ -100,133 +98,60 @@ export async function runLoCoMoBenchmark(
     options.datasetDir,
     options.limit,
   );
-  const tasks: TaskResult[] = [];
 
-  for (const conversation of conversations) {
-    await options.system.reset();
+  const plans: HarnessPlan[] = conversations.map(buildPlan);
 
-    const sessions = extractSessions(conversation.conversation);
-    const speakerA =
-      typeof conversation.conversation.speaker_a === "string"
-        ? conversation.conversation.speaker_a
-        : "Speaker A";
-    const sessionIds: string[] = [];
+  return runPublishedHarness({
+    options,
+    metricsSpec: {
+      metrics: ["f1", "contains_answer", "rouge_l", "llm_judge"],
+    },
+    plans,
+  });
+}
 
-    for (const session of sessions) {
-      const sessionId = `${conversation.sample_id}-${session.sessionId}`;
-      const messages = buildMessages(session.turns, speakerA);
-      sessionIds.push(sessionId);
-      if (messages.length > 0) {
-        await options.system.store(sessionId, messages);
-      }
-    }
+function buildPlan(conversation: LoCoMoConversation): HarnessPlan {
+  const sessions = extractSessions(conversation.conversation);
+  const speakerA =
+    typeof conversation.conversation.speaker_a === "string"
+      ? conversation.conversation.speaker_a
+      : "Speaker A";
 
-    for (
-      let questionIndex = 0;
-      questionIndex < conversation.qa.length;
-      questionIndex += 1
-    ) {
-      const qa = conversation.qa[questionIndex]!;
-      const categoryName =
-        CATEGORY_NAMES[qa.category] ?? `category_${qa.category}`;
-      const { result: recalledText, durationMs } = await timed(async () => {
-        const recalledSessions = await Promise.all(
-          sessionIds.map((sessionId) =>
-            options.system.recall(sessionId, qa.question),
-          ),
-        );
-        return recalledSessions.filter(Boolean).join("\n\n");
-      });
-      const answered = await answerBenchmarkQuestion({
-        question: qa.question,
-        recalledText,
-        responder: options.system.responder,
-      });
-      const judgeResult = await llmJudgeScoreDetailed(
-        options.system.judge,
-        qa.question,
-        answered.finalAnswer,
-        qa.answer,
-      );
-
-      const scores: Record<string, number> = {
-        f1: f1Score(answered.finalAnswer, qa.answer),
-        contains_answer: containsAnswer(answered.finalAnswer, qa.answer),
-        rouge_l: rougeL(answered.finalAnswer, qa.answer),
-      };
-      if (judgeResult.score >= 0) {
-        scores.llm_judge = judgeResult.score;
-      }
-
-      tasks.push({
-        taskId: `${conversation.sample_id}-q${questionIndex}-${categoryName}`,
-        question: qa.question,
-        expected: qa.answer,
-        actual: answered.finalAnswer,
-        scores,
-        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
-        tokens: {
-          input: answered.tokens.input + judgeResult.tokens.input,
-          output: answered.tokens.output + judgeResult.tokens.output,
-        },
-        details: {
-          category: qa.category,
-          categoryName,
-          evidence: qa.evidence,
-          conversationId: conversation.sample_id,
-          sessionIds,
-          recalledLength: recalledText.length,
-          answeredLength: answered.finalAnswer.length,
-          recalledText,
-          answeredText: answered.finalAnswer,
-          responderModel: answered.model,
-          judgeModel: judgeResult.model,
-        },
-      });
-    }
+  const ingestSessions: HarnessPlan["ingestSessions"] = [];
+  const sessionIds: string[] = [];
+  for (const session of sessions) {
+    const sessionId = `${conversation.sample_id}-${session.sessionId}`;
+    const messages = buildMessages(session.turns, speakerA);
+    sessionIds.push(sessionId);
+    ingestSessions.push({ sessionId, messages });
   }
 
-  const remnicVersion = await getRemnicVersion();
-  const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
-  const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
-  const totalOutputTokens = tasks.reduce((sum, task) => sum + task.tokens.output, 0);
+  const trials: HarnessTrial[] = conversation.qa.map((qa, questionIndex) =>
+    buildTrial(conversation.sample_id, qa, questionIndex, sessionIds),
+  );
 
+  return { ingestSessions, trials };
+}
+
+function buildTrial(
+  conversationId: string,
+  qa: LoCoMoQA,
+  questionIndex: number,
+  sessionIds: string[],
+): HarnessTrial {
+  const categoryName =
+    CATEGORY_NAMES[qa.category] ?? `category_${qa.category}`;
   return {
-    meta: {
-      id: randomUUID(),
-      benchmark: options.benchmark.id,
-      benchmarkTier: options.benchmark.tier,
-      version: options.benchmark.meta.version,
-      remnicVersion,
-      gitSha: getGitSha(),
-      timestamp: new Date().toISOString(),
-      mode: options.mode,
-      runCount: 1,
-      seeds: [options.seed ?? 0],
-    },
-    config: {
-      systemProvider: options.systemProvider ?? null,
-      judgeProvider: options.judgeProvider ?? null,
-      adapterMode: options.adapterMode ?? "direct",
-      remnicConfig: options.remnicConfig ?? {},
-    },
-    cost: {
-      totalTokens: totalInputTokens + totalOutputTokens,
-      inputTokens: totalInputTokens,
-      outputTokens: totalOutputTokens,
-      estimatedCostUsd: 0,
-      totalLatencyMs,
-      meanQueryLatencyMs:
-        tasks.length > 0 ? totalLatencyMs / tasks.length : 0,
-    },
-    results: {
-      tasks,
-      aggregates: aggregateTaskScores(tasks.map((task) => task.scores)),
-    },
-    environment: {
-      os: process.platform,
-      nodeVersion: process.version,
-      hardware: process.arch,
+    taskId: `${conversationId}-q${questionIndex}-${categoryName}`,
+    question: qa.question,
+    expected: qa.answer,
+    recallSessionIds: sessionIds,
+    extraDetails: {
+      category: qa.category,
+      categoryName,
+      evidence: qa.evidence,
+      conversationId,
+      sessionIds,
     },
   };
 }
@@ -247,11 +172,6 @@ async function loadDataset(
   });
 
   if (loaded.source === "missing") {
-    // `loaded.source === "missing"` implies `mode === "full"` — the
-    // shared loader only returns `missing` in that branch. Keep the
-    // inner check + the historical "no datasetDir" message for clarity
-    // and backward-compat with regression tests; if the loader contract
-    // ever changes, this branch still fails safely.
     if (!datasetDir) {
       throw new Error(
         "LoCoMo full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
@@ -342,4 +262,3 @@ function normalizeQaArray(value: unknown, location: string): LoCoMoQA[] {
     normalizeLoCoMoQa(entry, `${location} qa[${index}]`),
   );
 }
-
