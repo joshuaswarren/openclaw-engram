@@ -310,9 +310,7 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
   if (!Number.isInteger(record.id)) {
     throw new Error(`${location} must include an integer id.`);
   }
-  if (typeof record.category !== "string") {
-    throw new Error(`${location} must include a string category.`);
-  }
+  const category = normalizeCategory(record.category, filename);
   if (
     !Array.isArray(record.questions)
     || record.questions.some((question) => typeof question !== "string")
@@ -333,10 +331,25 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
 
   return {
     id: record.id as number,
-    category: record.category as string,
+    category,
     questions: record.questions as string[],
     answers: record.answers as ArenaExpectedAnswer[],
   };
+}
+
+function normalizeCategory(value: unknown, filename: string): string {
+  if (typeof value === "string" && value.trim().length > 0) {
+    return value;
+  }
+
+  const inferred = filename.replace(/\.jsonl$/i, "").trim();
+  if (inferred.length > 0) {
+    return inferred;
+  }
+
+  throw new Error(
+    `MemoryArena dataset file ${filename} must include a string category or use a filename that can be inferred as the category.`,
+  );
 }
 
 function answerToString(answer: ArenaExpectedAnswer): string {
