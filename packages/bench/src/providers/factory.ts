@@ -5,6 +5,7 @@ import type {
 } from "./types.js";
 import { createAnthropicProvider } from "./anthropic.js";
 import { createLiteLlmProvider } from "./litellm.js";
+import { createLocalLlmProvider } from "./local-llm.js";
 import { createOllamaProvider } from "./ollama.js";
 import { createOpenAiCompatibleProvider } from "./openai-compatible.js";
 
@@ -18,6 +19,8 @@ export function createProvider(config: ProviderFactoryConfig): LlmProvider {
       return createOllamaProvider(config);
     case "litellm":
       return createLiteLlmProvider(config);
+    case "local-llm":
+      return createLocalLlmProvider(config);
     default: {
       const exhaustive: never = config;
       throw new Error(`Unknown provider: ${JSON.stringify(exhaustive)}`);

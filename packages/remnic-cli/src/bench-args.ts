@@ -103,6 +103,34 @@ function parseBenchRuntimeProfile(
   );
 }
 
+/**
+ * Shared allow-list for `--provider`, `--system-provider`, and
+ * `--judge-provider`. Keeping these in lockstep is a CLAUDE.md rule 52
+ * concern: if one flag accepts "local-llm" but another rejects it,
+ * behavior becomes path-dependent. Issue #566 slice 5 added
+ * "local-llm"; the single source of truth is here.
+ */
+const BENCH_PROVIDER_ALLOWED: readonly BuiltInProvider[] = Object.freeze([
+  "openai",
+  "anthropic",
+  "ollama",
+  "litellm",
+  "local-llm",
+]);
+
+function isBuiltInProvider(value: string): value is BuiltInProvider {
+  return (BENCH_PROVIDER_ALLOWED as readonly string[]).includes(value);
+}
+
+function parseBenchProvider(raw: string, flag: string): BuiltInProvider {
+  if (!isBuiltInProvider(raw)) {
+    throw new Error(
+      `ERROR: ${flag} must be one of "openai", "anthropic", "ollama", "litellm", or "local-llm".`,
+    );
+  }
+  return raw;
+}
+
 export function readBenchOptionValue(argv: string[], flag: string): string | undefined {
   const index = argv.indexOf(flag);
   if (index === -1) {
@@ -299,32 +327,12 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
 
   let systemProvider: BuiltInProvider | undefined;
   if (systemProviderRaw !== undefined) {
-    if (
-      systemProviderRaw !== "openai" &&
-      systemProviderRaw !== "anthropic" &&
-      systemProviderRaw !== "ollama" &&
-      systemProviderRaw !== "litellm"
-    ) {
-      throw new Error(
-        'ERROR: --system-provider must be "openai", "anthropic", "ollama", or "litellm".',
-      );
-    }
-    systemProvider = systemProviderRaw;
+    systemProvider = parseBenchProvider(systemProviderRaw, "--system-provider");
   }
 
   let judgeProvider: BuiltInProvider | undefined;
   if (judgeProviderRaw !== undefined) {
-    if (
-      judgeProviderRaw !== "openai" &&
-      judgeProviderRaw !== "anthropic" &&
-      judgeProviderRaw !== "ollama" &&
-      judgeProviderRaw !== "litellm"
-    ) {
-      throw new Error(
-        'ERROR: --judge-provider must be "openai", "anthropic", "ollama", or "litellm".',
-      );
-    }
-    judgeProvider = judgeProviderRaw;
+    judgeProvider = parseBenchProvider(judgeProviderRaw, "--judge-provider");
   }
 
   let threshold: number | undefined;
@@ -404,23 +412,13 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   }
 
   // `--provider` is validated against the same allow-list as
-  // `--system-provider` so the two surfaces stay in lockstep.
-  // `bench published` callers that prefer the legacy flags can keep
-  // using `--system-provider`; `--provider` is a shorthand specific to
-  // the published action.
+  // `--system-provider` so the two surfaces stay in lockstep
+  // (CLAUDE.md rule 52). `bench published` callers that prefer the
+  // legacy flags can keep using `--system-provider`; `--provider`
+  // is a shorthand specific to the published action.
   let publishedProvider: BuiltInProvider | undefined;
   if (publishedProviderRaw !== undefined) {
-    if (
-      publishedProviderRaw !== "openai" &&
-      publishedProviderRaw !== "anthropic" &&
-      publishedProviderRaw !== "ollama" &&
-      publishedProviderRaw !== "litellm"
-    ) {
-      throw new Error(
-        'ERROR: --provider must be "openai", "anthropic", "ollama", or "litellm".',
-      );
-    }
-    publishedProvider = publishedProviderRaw;
+    publishedProvider = parseBenchProvider(publishedProviderRaw, "--provider");
   }
 
   // Published action aliases: `--system-*` takes precedence; the
@@ -430,6 +428,26 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const effectiveSystemProvider = systemProvider ?? publishedProvider;
   const effectiveSystemModel = systemModel ?? publishedModelRaw;
   const effectiveSystemBaseUrl = systemBaseUrl ?? publishedBaseUrlRaw;
+
+  // Issue #566 slice 5 — when the effective provider is `local-llm`,
+  // a base URL is REQUIRED at the boundary. Silently defaulting to
+  // an OpenAI URL violates CLAUDE.md rule 51 (reject invalid user
+  // input with a listed option) and makes the `--provider local-llm`
+  // contract untrustworthy. The same rule applies to `--judge-provider`.
+  if (effectiveSystemProvider === "local-llm" && !effectiveSystemBaseUrl) {
+    throw new Error(
+      "ERROR: --provider local-llm requires --base-url (or --system-base-url). " +
+        "Examples: llama.cpp (http://localhost:8080/v1), " +
+        "vLLM (http://localhost:8000/v1), LM Studio (http://localhost:1234/v1).",
+    );
+  }
+  if (judgeProvider === "local-llm" && !judgeBaseUrl) {
+    throw new Error(
+      "ERROR: --judge-provider local-llm requires --judge-base-url. " +
+        "Examples: llama.cpp (http://localhost:8080/v1), " +
+        "vLLM (http://localhost:8000/v1), LM Studio (http://localhost:1234/v1).",
+    );
+  }
   return {
     action,
     benchmarks,

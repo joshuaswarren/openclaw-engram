@@ -89,6 +89,7 @@ export type {
   DiscoveredModel,
   TokenUsage,
   LlmProvider,
+  LocalLlmProviderConfig,
   OllamaProviderConfig,
   OpenAiCompatibleProviderConfig,
   ProviderBaseConfig,
@@ -133,6 +134,7 @@ export {
   createStructuredJudgeFromProvider,
 } from "./responders.js";
 export { createLiteLlmProvider } from "./providers/litellm.js";
+export { createLocalLlmProvider } from "./providers/local-llm.js";
 export { createOllamaProvider } from "./providers/ollama.js";
 export { createOpenAiCompatibleProvider } from "./providers/openai-compatible.js";
 export type {

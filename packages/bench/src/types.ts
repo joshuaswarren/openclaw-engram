@@ -12,7 +12,21 @@ export type BenchmarkTier = "published" | "remnic" | "custom";
 export type BenchmarkStatus = "ready" | "planned";
 export type BenchmarkCategory = "agentic" | "retrieval" | "conversational" | "ingestion";
 export type BenchRuntimeProfile = "baseline" | "real" | "openclaw-chain";
-export type BuiltInProvider = "openai" | "anthropic" | "ollama" | "litellm";
+/**
+ * Built-in LLM providers supported by the bench harness.
+ *
+ * `local-llm` targets a user-hosted OpenAI-compatible endpoint
+ * (llama.cpp, vLLM, LM Studio, etc.) via `--base-url`. It mirrors
+ * the `localLlm*` plugin config on the Remnic core side so that
+ * `remnic bench published --provider local-llm` actually exercises
+ * the same transport path as the running plugin. Issue #566 slice 5.
+ */
+export type BuiltInProvider =
+  | "openai"
+  | "anthropic"
+  | "ollama"
+  | "litellm"
+  | "local-llm";
 
 export interface ProviderConfig {
   provider: BuiltInProvider;
