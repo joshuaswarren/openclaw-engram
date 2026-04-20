@@ -6160,7 +6160,8 @@ function waitForStreamDrain(stream: NodeJS.WriteStream): Promise<void> {
 }
 
 async function armCliSuccessExitWatchdog(): Promise<void> {
-  process.exitCode = 0;
+  const exitCode = process.exitCode ?? 0;
+  process.exitCode = exitCode;
 
   await Promise.race([
     Promise.allSettled([
@@ -6178,7 +6179,7 @@ async function armCliSuccessExitWatchdog(): Promise<void> {
     } catch {
       // Ignore write failures during forced shutdown.
     }
-    process.exit(0);
+    process.exit(exitCode);
   }, CLI_SUCCESS_EXIT_GRACE_MS);
   watchdog.unref?.();
 }
