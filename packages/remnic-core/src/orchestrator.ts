@@ -1995,9 +1995,10 @@ export class Orchestrator {
         if (this.config.namespacesEnabled) {
           await this.namespaceSearchRouter.updateNamespaces(
             this.configuredNamespaces(),
+            { signal },
           );
         } else {
-          await this.qmd.update();
+          await this.qmd.update({ signal });
         }
         log.info("QMD startup sync: complete");
         this.deferredSyncSucceeded = true;
@@ -2022,7 +2023,7 @@ export class Orchestrator {
       log.info("QMD warmup: pre-loading models with a test search");
       warmupPromises.push(
         this.qmd
-          .search("warmup", warmupNs, 1)
+          .search("warmup", warmupNs, 1, undefined, { signal })
           .then(() => {
             log.info("QMD warmup: complete");
           })
@@ -2224,9 +2225,12 @@ export class Orchestrator {
         log.info("startupSearchSync: updating index to match current disk state");
         let namespacesUpdated = 0;
         if (this.config.namespacesEnabled) {
-          namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(namespaces);
+          namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(
+            namespaces,
+            { signal },
+          );
         } else {
-          await (this.qmd as any).update(signal);
+          await this.qmd.update({ signal });
         }
         if (signal?.aborted) {
           log.debug("startupSearchSync: aborted after update");
