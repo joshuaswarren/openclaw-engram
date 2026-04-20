@@ -413,9 +413,17 @@ export function formatMissingDatasetError(
   const location = datasetDir ?? "<no dataset directory configured>";
   const tried = filenames.join(", ");
   const suffix = errors.length > 0 ? ` Errors: ${errors.join(" | ")}` : "";
+  // The `scripts/bench/fetch-datasets.sh` helper ships inside the
+  // Remnic source checkout. Operators running the benchmark from an
+  // npm-installed `@remnic/bench` don't have that script on disk — so
+  // the message lists both routes and links to the README section.
   return (
     `${label} dataset not found under ${location}. ` +
     `Tried ${tried}. ` +
-    `Run scripts/bench/fetch-datasets.sh for download instructions.${suffix}`
+    "Download the datasets with one of: " +
+    "(a) repo checkout → run `scripts/bench/fetch-datasets.sh --help`; " +
+    "(b) npm-installed env → follow `packages/bench/README.md` " +
+    "\"Running on real datasets\" section for the equivalent " +
+    `huggingface-cli commands.${suffix}`
   );
 }
