@@ -70,6 +70,20 @@ test("buildXraySnapshot trims whitespace-only session/namespace/traceId to undef
   assert.equal(snapshot.traceId, undefined);
 });
 
+test("buildXraySnapshot strips surrounding whitespace from session/namespace/traceId", () => {
+  const snapshot = buildXraySnapshot({
+    query: "x",
+    sessionKey: "  sess-1  ",
+    namespace: "\tns\n",
+    traceId: " trace-xyz ",
+    now: fixedNow,
+    snapshotIdGenerator: idGen(),
+  });
+  assert.equal(snapshot.sessionKey, "sess-1");
+  assert.equal(snapshot.namespace, "ns");
+  assert.equal(snapshot.traceId, "trace-xyz");
+});
+
 // ─── buildXraySnapshot: each decomposition field ──────────────────────────
 
 test("buildXraySnapshot preserves every score-decomposition field", () => {
