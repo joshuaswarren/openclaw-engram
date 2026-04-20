@@ -307,6 +307,56 @@ test("parseConfig applies safer-by-default procedural thresholds (issue #567 PR 
   assert.equal(result.procedural.recallMaxProcedures, 2);
 });
 
+test("buildDefaultRecallPipeline enables procedure-recall when procedural default-on (issue #567 PR 4/5)", () => {
+  // Codex P2 on #609: the master gate defaulting to `true` must also flip
+  // the default recall pipeline to include the `procedure-recall` section.
+  // Previously the pipeline check required `cfg.procedural?.enabled === true`
+  // on raw config, so an omitted key left the section disabled even
+  // though `parseConfig` reported enabled:true.
+  const cfg = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(cfg.procedural.enabled, true);
+  const procSection = cfg.recallPipeline.find(
+    (s) => s.id === "procedure-recall",
+  );
+  assert.ok(procSection, "procedure-recall section must exist by default");
+  assert.equal(
+    procSection.enabled,
+    true,
+    "procedure-recall must be enabled when procedural default-on",
+  );
+
+  // Explicit opt-out disables both the master gate and the recall section.
+  const optOut = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: { enabled: false },
+  });
+  assert.equal(optOut.procedural.enabled, false);
+  const optOutSection = optOut.recallPipeline.find(
+    (s) => s.id === "procedure-recall",
+  );
+  assert.equal(optOutSection?.enabled, false);
+});
+
+test("conservative memoryOsPreset keeps procedural.enabled off after default flip (issue #567 PR 4/5)", () => {
+  // Cursor Medium on #609: the `conservative` preset disables many
+  // features; the default flip must not silently opt it into procedural
+  // memory.
+  const cfg = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryOsPreset: "conservative",
+  });
+  assert.equal(cfg.procedural.enabled, false);
+
+  // A user can still opt back in by setting the key explicitly — the
+  // preset is a default, not a ceiling.
+  const optedIn = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryOsPreset: "conservative",
+    procedural: { enabled: true },
+  });
+  assert.equal(optedIn.procedural.enabled, true);
+});
+
 test("parseConfig defaults procedural.enabled to true when omitted (issue #567 PR 4/5)", () => {
   // Omitting `procedural.enabled` ships the feature ON. Users who were
   // previously on the default-off branch get the new default automatically.

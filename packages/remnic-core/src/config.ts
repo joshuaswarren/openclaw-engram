@@ -209,6 +209,13 @@ const MEMORY_OS_PRESETS: Record<MemoryOsPresetName, Record<string, unknown>> = {
     maxProactiveQuestionsPerExtraction: 0,
     maxCompressionTokensPerHour: 0,
     behaviorLoopAutoTuneEnabled: false,
+    // Issue #567 PR 4/5 flipped `procedural.enabled` default to `true`.
+    // The conservative preset intentionally keeps the feature OFF to
+    // match its restrictive intent (no proactive extraction, no
+    // compression guideline learning, etc.). Users who want procedural
+    // memory on a conservative preset must set `procedural.enabled: true`
+    // explicitly.
+    procedural: { enabled: false },
   },
   balanced: {
     maxMemoryTokens: 2000,
@@ -2287,11 +2294,26 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     { id: "verbatim-artifacts", enabled: cfg.verbatimArtifactsEnabled === true },
     {
       id: "procedure-recall",
-      enabled:
-        typeof cfg.procedural === "object" &&
-        cfg.procedural !== null &&
-        !Array.isArray(cfg.procedural) &&
-        (cfg.procedural as { enabled?: unknown }).enabled === true,
+      // Default-on since issue #567 PR 4/5: the master `procedural.enabled`
+      // gate now defaults to `true` when the key is omitted, so the recall
+      // pipeline must stay in sync. Explicit `false` (or any coerceBool
+      // falsy variant) still disables recall injection. Unrecognized
+      // values fall through to the default-on path — `parseConfig` itself
+      // rejects invalid values loudly, so this branch only sees values
+      // that already passed parsing.
+      enabled: (() => {
+        const proceduralRaw =
+          typeof cfg.procedural === "object" &&
+          cfg.procedural !== null &&
+          !Array.isArray(cfg.procedural)
+            ? (cfg.procedural as { enabled?: unknown })
+            : undefined;
+        if (proceduralRaw === undefined) return true;
+        const rawEnabled = proceduralRaw.enabled;
+        if (rawEnabled === undefined) return true;
+        const coerced = coerceBool(rawEnabled);
+        return coerced !== false;
+      })(),
       maxChars: 2400,
     },
     { id: "memory-boxes", enabled: cfg.memoryBoxesEnabled === true },
