@@ -162,6 +162,32 @@ export { EngramAccessService, EngramAccessInputError } from "./access-service.js
 export { EngramAccessHttpServer } from "./access-http.js";
 export { EngramMcpServer } from "./access-mcp.js";
 
+// Coding-agent subsystem (issue #569)
+export {
+  resolveGitContext,
+  normalizeOriginUrl,
+  stableHash,
+  expandTildePath,
+  type GitContext,
+  type GitInvoker,
+} from "./coding/git-context.js";
+export {
+  resolveCodingNamespaceOverlay,
+  projectNamespaceName,
+  branchNamespaceName,
+  describeCodingScope,
+  type CodingNamespaceOverlay,
+  type CodingScopeDescription,
+} from "./coding/coding-namespace.js";
+export {
+  isReviewPrompt,
+  parseTouchedFiles,
+  rankReviewCandidates,
+  packReviewContext,
+  type ReviewContext,
+  type ReviewCandidate,
+} from "./coding/review-context.js";
+
 export {
   validateRequest,
   formatZodError,
