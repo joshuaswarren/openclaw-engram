@@ -254,12 +254,26 @@ async function executeTrial(
       })
     : { extraScores: undefined, extraDetails: undefined };
 
-  const judgeResult = await llmJudgeScoreDetailed(
-    ctx.options.system.judge,
-    trial.question,
-    answered.finalAnswer,
-    trial.expected,
-  );
+  // Only invoke the LLM judge when `llm_judge` is in the metrics spec.
+  // Cursor review feedback on PR 596: unconditionally calling the judge
+  // billed non-judge runs for an API call per trial and inflated the
+  // `TaskResult` latency/token totals. The zero-valued placeholder
+  // below keeps the downstream arithmetic unchanged for runs that
+  // don't opt into the judge.
+  const judgeRequested = ctx.metricsSpec.metrics.includes("llm_judge");
+  const judgeResult = judgeRequested
+    ? await llmJudgeScoreDetailed(
+        ctx.options.system.judge,
+        trial.question,
+        answered.finalAnswer,
+        trial.expected,
+      )
+    : {
+        score: -1,
+        tokens: { input: 0, output: 0 },
+        latencyMs: 0,
+        model: undefined as string | undefined,
+      };
 
   const scores: Record<string, number> = {};
   for (const metric of ctx.metricsSpec.metrics) {

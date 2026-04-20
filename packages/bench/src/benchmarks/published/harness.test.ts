@@ -366,6 +366,46 @@ test("runPublishedHarness rejects negative or non-integer seed", async () => {
   );
 });
 
+test("runPublishedHarness skips LLM judge when llm_judge is not in metrics spec", async () => {
+  const { system, calls } = makeFakeSystem();
+  let judgeInvocations = 0;
+  const originalJudge = system.judge.scoreWithMetrics.bind(system.judge);
+  system.judge.scoreWithMetrics = async (...args) => {
+    judgeInvocations += 1;
+    return originalJudge(...args);
+  };
+
+  const result = await runPublishedHarness({
+    options: makeOptions(system),
+    metricsSpec: { metrics: ["f1", "contains_answer"] }, // no llm_judge
+    plans: [
+      {
+        ingestSessions: [
+          { sessionId: "s", messages: [{ role: "user", content: "hi" }] },
+        ],
+        trials: [
+          {
+            taskId: "no-judge-billing",
+            question: "q",
+            expected: "a",
+            recallSessionIds: ["s"],
+          },
+        ],
+      },
+    ],
+  });
+  assert.equal(judgeInvocations, 0, "judge should not be invoked");
+  const task = result.results.tasks[0]!;
+  assert.ok(!("llm_judge" in task.scores));
+  // Judge latency/tokens should NOT be folded into cost totals.
+  assert.equal(result.cost.inputTokens, 1); // responder only
+  assert.equal(result.cost.outputTokens, 2); // responder only
+  assert.ok(
+    !calls.some((call) => call.kind === "judge"),
+    "no judge call should have been made",
+  );
+});
+
 test("runPublishedHarness produces empty result for empty plans", async () => {
   const { system } = makeFakeSystem();
   const result = await runPublishedHarness({
