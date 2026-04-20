@@ -23,12 +23,3 @@ export const RETRIEVAL_TIERS: readonly RetrievalTier[] = [
 export function isRetrievalTier(value: unknown): value is RetrievalTier {
   return typeof value === "string" && (RETRIEVAL_TIERS as readonly string[]).includes(value);
 }
-
-/**
- * Return the tier that should be reported for a recall that was served
- * from cache (exact or fuzzy).  Used by recallInternal to annotate
- * `RecallTierExplain` when the cache path fires.
- */
-export function cacheTier(isExact: boolean): RetrievalTier {
-  return isExact ? "exact-cache" : "fuzzy-cache";
-}

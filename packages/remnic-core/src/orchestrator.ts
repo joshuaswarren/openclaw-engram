@@ -4032,17 +4032,21 @@ export class Orchestrator {
       recordedAt: expectedSnapshot.recordedAt,
     };
     const previous = this.directAnswerObservationChain;
-    this.directAnswerObservationChain = previous.then(() =>
-      this.annotateDirectAnswerTier(
-        observationQuery,
-        sessionKey,
-        observationNamespaces,
-        expectedIdentity,
-        undefined,
-      ).catch((err) => {
-        log.debug(`direct-answer observation chain error: ${err}`);
-      }),
-    );
+    this.directAnswerObservationChain = previous
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await this.annotateDirectAnswerTier(
+            observationQuery,
+            sessionKey,
+            observationNamespaces,
+            expectedIdentity,
+            undefined,
+          );
+        } catch (err) {
+          log.debug(`direct-answer observation chain error: ${err}`);
+        }
+      });
   }
 
   private async annotateDirectAnswerTier(
