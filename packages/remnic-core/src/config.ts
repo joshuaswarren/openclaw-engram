@@ -470,8 +470,17 @@ export function parseConfig(raw: unknown): PluginConfig {
     recallMaxCoerced !== undefined && Number.isFinite(recallMaxCoerced)
       ? Math.min(10, Math.max(1, Math.floor(recallMaxCoerced)))
       : 2;
+  // Default-on procedural memory (issue #567 PR 4/5): if the user has NOT
+  // explicitly set `procedural.enabled`, enable it. Explicit `false` (or any
+  // value coerceBool reads as false: `"0"`, `"no"`, `"off"`, `false`) keeps
+  // the feature off. CLAUDE.md rule 36: "false"-ish strings coerce via
+  // coerceBool. CLAUDE.md rule 30: escape hatch remains for operators who
+  // want to stay opt-out.
+  const enabledCoerced = coerceBool(rawProcedural.enabled);
+  const proceduralEnabled =
+    enabledCoerced === undefined ? true : enabledCoerced === true;
   const procedural: ProceduralConfig = {
-    enabled: coerceBool(rawProcedural.enabled) === true,
+    enabled: proceduralEnabled,
     /** `0` skips all mining (`minOccurrences_zero`); otherwise clusters need at least this many members. */
     minOccurrences: Math.min(1000, Math.max(0, proceduralMinRaw)),
     successFloor,

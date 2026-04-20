@@ -26,7 +26,7 @@
 
 ### Procedural memory (issue #519)
 
-Ships **disabled** until plugin config sets **`procedural.enabled`: `true`** (nested `procedural` object). Operators and agents should read `docs/procedural-memory.md` and the README **Configuration** table before enabling.
+Ships **enabled by default** since issue #567 PR 4/5 (previously default-off). Operators who want to opt out must set **`procedural.enabled`: `false`** (nested `procedural` object). Agents should read `docs/procedural-memory.md` and the README **Configuration** table for the full threshold defaults and the opt-out path.
 
 ### Before every commit, verify:
 - `git diff --cached` contains NO personal information

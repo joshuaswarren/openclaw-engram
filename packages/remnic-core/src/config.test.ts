@@ -298,11 +298,64 @@ test("parseConfig applies safer-by-default procedural thresholds (issue #567 PR 
   // When the user does not override procedural thresholds, the defaults
   // MUST match the safer floor committed in #567 PR 3. This test locks in
   // the values so a future refactor cannot silently regress them.
+  // Slice 4 flips `enabled` to true — asserted in the next test.
   const result = parseConfig({ openaiApiKey: "sk-test" });
-  assert.equal(result.procedural.enabled, false, "default still OFF until PR 4");
   assert.equal(result.procedural.minOccurrences, 3);
   assert.equal(result.procedural.successFloor, 0.75);
   assert.equal(result.procedural.autoPromoteOccurrences, 8);
   assert.equal(result.procedural.lookbackDays, 14);
   assert.equal(result.procedural.recallMaxProcedures, 2);
+});
+
+test("parseConfig defaults procedural.enabled to true when omitted (issue #567 PR 4/5)", () => {
+  // Omitting `procedural.enabled` ships the feature ON. Users who were
+  // previously on the default-off branch get the new default automatically.
+  const omitted = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(omitted.procedural.enabled, true);
+
+  // Omitting the `procedural` object entirely is equivalent.
+  const bareConfig = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(bareConfig.procedural.enabled, true);
+
+  // Explicit `false` (boolean) still honors opt-out.
+  const optOutBool = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: { enabled: false },
+  });
+  assert.equal(optOutBool.procedural.enabled, false);
+
+  // CLI-style `"false"` string must also coerce to off (CLAUDE.md rule 36).
+  const optOutFalseStr = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: { enabled: "false" },
+  });
+  assert.equal(optOutFalseStr.procedural.enabled, false);
+
+  // Other falsy-ish strings also opt out.
+  for (const v of ["0", "no", "off"]) {
+    const cfg = parseConfig({
+      openaiApiKey: "sk-test",
+      procedural: { enabled: v },
+    });
+    assert.equal(
+      cfg.procedural.enabled,
+      false,
+      `procedural.enabled="${v}" should opt out`,
+    );
+  }
+
+  // Explicit `true` keeps the feature on (idempotent with the new default).
+  const explicitOn = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: { enabled: true },
+  });
+  assert.equal(explicitOn.procedural.enabled, true);
+
+  // Unrecognized string values (not a boolean-like string) should NOT flip
+  // the default; they're coerced to undefined and fall back to the default.
+  const garbage = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: { enabled: "maybe" },
+  });
+  assert.equal(garbage.procedural.enabled, true);
 });

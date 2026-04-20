@@ -325,8 +325,8 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false,
-            "description": "Master gate for procedural memory: extraction, recall boost, and mining (issue #519)."
+            "default": true,
+            "description": "Master gate for procedural memory: extraction, recall boost, and mining (issue #519). Default-on since issue #567 PR 4/5; set to `false` to opt out."
           },
           "minOccurrences": {
             "type": "integer",

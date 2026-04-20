@@ -8,13 +8,17 @@ Also indexed from the repo [README](../README.md) (Features + Configuration), [G
 
 ## Enablement
 
-Everything behavioral is gated by plugin config **`procedural.enabled`** (default **`false`**). When disabled:
+Everything behavioral is gated by plugin config **`procedural.enabled`** (default **`true`** since issue #567 PR 4/5; previously `false`). When explicitly disabled (`false`, `"0"`, `"no"`, or `"off"`):
 
 - Direct extraction does not emit new procedure memories.
 - Intent-gated recall does not inject a procedure section.
 - The nightly miner MCP entry returns without writing files.
 
-Mirror the same keys under `openclaw.plugin.json` / host config as for other Engram-style toggles.
+Operators who want to stay opt-out must set `procedural.enabled: false` explicitly. Mirror the same keys under `openclaw.plugin.json` / host config as for other Engram-style toggles.
+
+### Migration from default-off
+
+If you are upgrading from a Remnic build where procedural memory shipped disabled (pre-#567), no action is required — existing memories and trajectory records continue to work. Fresh installs and any config that omits `procedural.enabled` now enable the feature using the safer-by-default thresholds from slice 3 (`successFloor=0.75`, `lookbackDays=14`, `recallMaxProcedures=2`). The lift number justifying the flip is documented in [`docs/benchmarks/procedural-recall.md`](./benchmarks/procedural-recall.md) and captured in the committed `packages/bench/baselines/procedural-recall-baseline.json` artifact.
 
 ## Taxonomy and filing
 

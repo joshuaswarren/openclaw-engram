@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Procedural memory is now enabled by default** (issue #567 PR 4/5;
+  previously shipped disabled). Fresh installs and any config that omits
+  `procedural.enabled` now get procedure extraction, task-initiation
+  recall injection, and trajectory mining using the safer-by-default
+  thresholds from #567 PR 3 (`successFloor=0.75`, `lookbackDays=14`,
+  `recallMaxProcedures=2`). Operators who want to stay opt-out should
+  set `procedural.enabled: false` explicitly. See
+  [`docs/procedural-memory.md`](docs/procedural-memory.md) and the
+  baseline lift artifact in
+  [`packages/bench/baselines/procedural-recall-baseline.json`](packages/bench/baselines/procedural-recall-baseline.json).
+
 ## [v9.3.103] — 2026-04-20
 
 ### Added
