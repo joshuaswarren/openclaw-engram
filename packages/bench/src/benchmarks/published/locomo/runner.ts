@@ -245,6 +245,14 @@ async function loadDataset(
 
   if (loaded.source === "missing") {
     if (mode === "full") {
+      if (!datasetDir) {
+        // Preserve the historical error message so CLI tooling and
+        // regression tests can continue to detect the "no dataset
+        // path configured" case specifically.
+        throw new Error(
+          "LoCoMo full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
+        );
+      }
       throw new Error(
         formatMissingDatasetError(
           "locomo",
