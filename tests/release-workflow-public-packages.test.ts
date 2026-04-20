@@ -16,7 +16,6 @@ const expectedPublishDirs = [
   "packages/import-chatgpt",
   "packages/import-claude",
   "packages/import-mem0",
-  "packages/import-claude",
   "packages/connector-weclone",
   "packages/connector-replit",
   "packages/hermes-provider",

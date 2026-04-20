@@ -106,6 +106,17 @@ export function parseClaudeExport(
   input: unknown,
   options: ClaudeParseOptions = {},
 ): ParsedClaudeExport {
+  // Codex review on PR #598 — missing input (undefined / null) must NEVER
+  // succeed as an empty import. The CLI passes `undefined` when `--file`
+  // is omitted; silently returning a zero-memory success would make
+  // `remnic import --adapter claude` without --file look healthy in
+  // automation logs while the user's export was never read.
+  if (input === undefined || input === null) {
+    throw new Error(
+      "Claude import requires a --file argument pointing at conversations.json, " +
+        "projects.json, or the exported bundle.",
+    );
+  }
   const raw = coerceJson(input);
   const result: ParsedClaudeExport = {
     conversations: [],
@@ -130,9 +141,9 @@ export function parseClaudeExport(
       }
       return result;
     }
-    if (looksLikeProject(first)) {
+    if (looksLikeProject(first, { strict: options.strict })) {
       for (const entry of raw) {
-        if (looksLikeProject(entry)) {
+        if (looksLikeProject(entry, { strict: options.strict })) {
           result.projects.push(entry as ClaudeProject);
         } else if (options.strict) {
           throw new Error("Non-project entry in projects array");
@@ -167,7 +178,7 @@ export function parseClaudeExport(
     if (Array.isArray(projects)) {
       sawKnownSection = true;
       for (const entry of projects) {
-        if (looksLikeProject(entry)) {
+        if (looksLikeProject(entry, { strict: options.strict })) {
           result.projects.push(entry as ClaudeProject);
         } else if (options.strict) {
           throw new Error("Non-project entry in projects array");
@@ -185,12 +196,13 @@ export function parseClaudeExport(
     return result;
   }
 
-  if (options.strict) {
-    throw new Error(
-      "Claude export must be a JSON array or object; received " + typeof raw,
-    );
-  }
-  return result;
+  // Codex review on PR #598 — primitive payloads (numbers, booleans,
+  // strings, etc.) must always throw regardless of strict mode. A silent
+  // empty result on garbage input would let automation mistake a broken
+  // import for a healthy zero-memory run.
+  throw new Error(
+    "Claude export must be a JSON array or object; received " + typeof raw,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -221,14 +233,23 @@ function looksLikeConversation(value: unknown): value is ClaudeConversation {
   return false;
 }
 
-function looksLikeProject(value: unknown): value is ClaudeProject {
+function looksLikeProject(
+  value: unknown,
+  opts: { strict?: boolean } = {},
+): value is ClaudeProject {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
   // Projects are recognised by the presence of `prompt_template` OR `docs`
-  // (or `name` + absence of chat_messages). We prefer the structural signals.
+  // — unambiguous structural signals unique to project exports.
   if (typeof v.prompt_template === "string") return true;
   if (Array.isArray(v.docs)) return true;
-  // Guard against a conversation being misclassified: require NO message array.
+  // Codex review on PR #598 — the `name`-only fallback is too loose for
+  // strict mode. An arbitrary array like `[{"name": "foo"}]` would slip
+  // past strict validation and produce empty imports. In strict mode we
+  // require an unambiguous project signal (prompt_template or docs) and
+  // reject name-only entries. Non-strict mode keeps the lenient fallback
+  // for future-shape safety.
+  if (opts.strict) return false;
   if (
     typeof v.name === "string" &&
     !Array.isArray(v.chat_messages) &&
