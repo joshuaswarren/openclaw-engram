@@ -358,6 +358,7 @@ jobs:
             packages/bench
             packages/export-weclone
             packages/import-weclone
+            packages/import-mem0
             packages/connector-weclone
             packages/connector-replit
             packages/hermes-provider
