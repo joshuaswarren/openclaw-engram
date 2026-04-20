@@ -286,6 +286,7 @@ type PackageBenchModule = {
     datasetDir?: string;
     outputDir?: string;
     limit?: number;
+    seed?: number;
     adapterMode?: string;
     runtimeProfile?: BenchRuntimeProfile | null;
     systemProvider?: {
@@ -1845,29 +1846,49 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
     const benchmarkId = parsed.publishedName;
     const mode = parsed.quick ? "quick" : "full";
     let itemCount: number | undefined;
+    // Codex P2 review on PR #603: when the loader returns
+    // `source: "missing"` (full mode and the dataset file is absent or
+    // unreadable), dry-run must fail loudly. Previously the script
+    // logged the line and exited 0, so CI/users could not trust
+    // `--dry-run` as a preflight gate — the real run would later crash
+    // with the same missing dataset.
+    let loadResult:
+      | {
+          source: string;
+          filename?: string;
+          items: unknown[];
+          errors: unknown[];
+        }
+      | undefined;
     if (benchmarkId === "longmemeval" && benchModule.loadLongMemEvalS) {
-      const result = await benchModule.loadLongMemEvalS({
+      loadResult = await benchModule.loadLongMemEvalS({
         mode,
         datasetDir: parsed.datasetDir,
         limit: parsed.publishedLimit,
       });
-      itemCount = result.items.length;
+      itemCount = loadResult.items.length;
       console.log(
-        `[dry-run] longmemeval: source=${result.source} filename=${result.filename ?? "<smoke>"} items=${itemCount} errors=${result.errors.length}`,
+        `[dry-run] longmemeval: source=${loadResult.source} filename=${loadResult.filename ?? "<smoke>"} items=${itemCount} errors=${loadResult.errors.length}`,
       );
     } else if (benchmarkId === "locomo" && benchModule.loadLoCoMo10) {
-      const result = await benchModule.loadLoCoMo10({
+      loadResult = await benchModule.loadLoCoMo10({
         mode,
         datasetDir: parsed.datasetDir,
         limit: parsed.publishedLimit,
       });
-      itemCount = result.items.length;
+      itemCount = loadResult.items.length;
       console.log(
-        `[dry-run] locomo: source=${result.source} filename=${result.filename ?? "<smoke>"} items=${itemCount} errors=${result.errors.length}`,
+        `[dry-run] locomo: source=${loadResult.source} filename=${loadResult.filename ?? "<smoke>"} items=${itemCount} errors=${loadResult.errors.length}`,
       );
     } else {
       console.error(
         `ERROR: installed @remnic/bench version does not export a loader for "${benchmarkId}".`,
+      );
+      process.exit(1);
+    }
+    if (loadResult && loadResult.source === "missing") {
+      console.error(
+        `ERROR: [dry-run] ${benchmarkId}: dataset missing or unreadable under ${parsed.datasetDir}. Provide a valid --dataset path before running without --dry-run.`,
       );
       process.exit(1);
     }
@@ -2007,11 +2028,18 @@ async function runBenchViaPackage(
     // precedence over the implicit quick-mode limit of 1.
     const effectiveLimit =
       parsed.publishedLimit ?? (parsed.quick ? 1 : undefined);
+    // Forward `--seed` through to the runner so the determinism contract
+    // advertised by `bench published --seed N` is actually honored.
+    // Cursor + Codex review on PR #603: without this, `publishedSeed` was
+    // parsed but dropped, and the harness recorded `ctx.options.seed ?? 0`
+    // instead of the user-specified seed, breaking reproducibility.
+    const effectiveSeed = parsed.publishedSeed;
     const result = await benchModule.runBenchmark(benchmarkId, {
       mode: parsed.quick ? "quick" : "full",
       datasetDir,
       outputDir,
       limit: effectiveLimit,
+      seed: effectiveSeed,
       adapterMode: plan.adapterMode,
       runtimeProfile: plan.runtime.profile,
       systemProvider: plan.runtime.systemProvider,
