@@ -83,8 +83,15 @@ export function detectBundleEntries(
   // this check — only the default `lstatSync`-backed walker needs to
   // enforce it.
   if (options.readdirImpl === undefined && options.isDirectoryImpl === undefined) {
+    // Codex review on PR #610 — strip trailing slashes before lstat.
+    // On POSIX, lstat("link/") dereferences the symlink and
+    // isSymbolicLink() returns false, so a user running
+    // `remnic import --all-from-bundle /tmp/link/` would bypass the
+    // symlink-root check and the walker would recurse into the target.
+    // Normalize to the unslashed form before the check.
+    const normalizedRoot = bundleDir.replace(/\/+$/, "") || bundleDir;
     try {
-      const rootStat = lstatSync(bundleDir);
+      const rootStat = lstatSync(normalizedRoot);
       if (rootStat.isSymbolicLink()) {
         throw new Error(
           `Bundle directory '${bundleDir}' is a symbolic link. Pass the resolved directory path instead.`,
