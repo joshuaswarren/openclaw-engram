@@ -303,13 +303,41 @@ export function parseConfig(raw: unknown): PluginConfig {
       ? (raw as Record<string, unknown>)
       : {};
   const memoryOsPreset = resolveMemoryOsPreset(baseCfg.memoryOsPreset);
-  const cfg = memoryOsPreset
-    ? {
-        ...MEMORY_OS_PRESETS[memoryOsPreset],
-        ...baseCfg,
-        memoryOsPreset,
-      }
-    : baseCfg;
+  let cfg: Record<string, unknown>;
+  if (memoryOsPreset) {
+    const preset = MEMORY_OS_PRESETS[memoryOsPreset];
+    // Deep-merge the `procedural` block specifically: the preset may pin a
+    // subset of keys (e.g. `conservative` pins `procedural: { enabled: false }`),
+    // and a user-provided `procedural` block with just `minOccurrences` or
+    // `lookbackDays` must NOT silently discard the preset's `enabled: false`.
+    // CLAUDE.md rule 22 (dedup config resolution) + Codex P1 on #609.
+    const presetProcedural =
+      preset.procedural &&
+      typeof preset.procedural === "object" &&
+      !Array.isArray(preset.procedural)
+        ? (preset.procedural as Record<string, unknown>)
+        : undefined;
+    const baseProcedural =
+      baseCfg.procedural &&
+      typeof baseCfg.procedural === "object" &&
+      !Array.isArray(baseCfg.procedural)
+        ? (baseCfg.procedural as Record<string, unknown>)
+        : undefined;
+    const mergedProcedural =
+      presetProcedural && baseProcedural
+        ? { ...presetProcedural, ...baseProcedural }
+        : (baseProcedural ?? presetProcedural);
+    cfg = {
+      ...preset,
+      ...baseCfg,
+      memoryOsPreset,
+    };
+    if (mergedProcedural !== undefined) {
+      cfg.procedural = mergedProcedural;
+    }
+  } else {
+    cfg = baseCfg;
+  }
 
   let apiKey: string | undefined;
   if (typeof cfg.openaiApiKey === "string" && cfg.openaiApiKey.length > 0) {

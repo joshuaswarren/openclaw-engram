@@ -355,6 +355,23 @@ test("conservative memoryOsPreset keeps procedural.enabled off after default fli
     procedural: { enabled: true },
   });
   assert.equal(optedIn.procedural.enabled, true);
+
+  // Codex P1 on #609: a user-provided `procedural` block that does NOT
+  // set `enabled` must not clobber the preset's `enabled: false`. The
+  // preset's procedural object is deep-merged with the baseCfg's
+  // procedural object so partial overrides (minOccurrences, lookbackDays)
+  // preserve the opt-out.
+  const nestedOverride = parseConfig({
+    openaiApiKey: "sk-test",
+    memoryOsPreset: "conservative",
+    procedural: { minOccurrences: 5 },
+  });
+  assert.equal(
+    nestedOverride.procedural.enabled,
+    false,
+    "conservative opt-out must survive an unrelated procedural override",
+  );
+  assert.equal(nestedOverride.procedural.minOccurrences, 5);
 });
 
 test("parseConfig defaults procedural.enabled to true when omitted (issue #567 PR 4/5)", () => {
