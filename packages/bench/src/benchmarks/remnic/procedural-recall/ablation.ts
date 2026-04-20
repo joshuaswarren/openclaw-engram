@@ -84,25 +84,38 @@ function scoreCase(expectMatch: boolean, observedMatch: boolean): number {
 
 /**
  * Convert the existing `ProceduralRecallE2eCase` fixture into
- * ablation-scenario shape. A case `expects` a match iff its gold label was
- * `expectNonNullSection=true` AND the original fixture intended procedural to
- * be on for that row (we normalize the ablation to always sweep both sides).
+ * ablation-scenario shape. The ablation ALWAYS sweeps procedural on and off,
+ * so `expectMatch` must reflect what the prompt + procedure pair should do
+ * WHEN PROCEDURAL IS ON — not what the original row's `proceduralEnabled`
+ * flag produced.
+ *
+ * Gate-control rows in the e2e fixture (where `proceduralEnabled=false`
+ * produces `expectNonNullSection=false` only because of the gate, not the
+ * content) are excluded here: their ON-side outcome is content-dependent and
+ * not something this mapper can label correctly without re-running
+ * `buildProcedureRecallSection`. Callers that need those rows should write
+ * the scenario directly with an explicit `expectMatch`.
  */
 export function fixtureToAblationScenarios(
   fixture: ProceduralRecallE2eCase[],
 ): ProceduralAblationScenario[] {
-  return fixture.map((c) => ({
-    id: c.id,
-    prompt: c.prompt,
-    procedurePreamble: c.procedurePreamble,
-    procedureSteps: c.procedureSteps,
-    procedureTags: c.procedureTags,
-    // When the original fixture row had proceduralEnabled=false it was
-    // testing the "gate rejects when disabled" invariant; for the ablation we
-    // always want to know if a task-initiation prompt *should* recall given
-    // procedural is on, so we fall back to the non-null expectation directly.
-    expectMatch: c.expectNonNullSection === true,
-  }));
+  const scenarios: ProceduralAblationScenario[] = [];
+  for (const c of fixture) {
+    // Skip rows whose `expectNonNullSection` only expresses gate-off
+    // behavior — we cannot derive ON-side ground truth from them.
+    if (c.proceduralEnabled === false) continue;
+    scenarios.push({
+      id: c.id,
+      prompt: c.prompt,
+      procedurePreamble: c.procedurePreamble,
+      procedureSteps: c.procedureSteps,
+      procedureTags: c.procedureTags,
+      // `proceduralEnabled` was true (or undefined), so
+      // `expectNonNullSection` reflects the ON-side ground truth.
+      expectMatch: c.expectNonNullSection === true,
+    });
+  }
+  return scenarios;
 }
 
 /**
@@ -267,11 +280,18 @@ export async function loadAblationFixture(
     const preamble =
       typeof r.procedurePreamble === "string" ? r.procedurePreamble : null;
     const steps = Array.isArray(r.procedureSteps) ? r.procedureSteps : null;
-    const tags = Array.isArray(r.procedureTags)
-      ? (r.procedureTags as unknown[]).filter(
-          (t): t is string => typeof t === "string",
-        )
-      : null;
+    let tags: string[] | null = null;
+    if (Array.isArray(r.procedureTags)) {
+      const raw = r.procedureTags as unknown[];
+      for (let k = 0; k < raw.length; k++) {
+        if (typeof raw[k] !== "string") {
+          throw new Error(
+            `Fixture scenario at index ${i}: procedureTags[${k}] must be a string (got ${typeof raw[k]})`,
+          );
+        }
+      }
+      tags = raw as string[];
+    }
     const expect = typeof r.expectMatch === "boolean" ? r.expectMatch : null;
     if (
       id === null ||

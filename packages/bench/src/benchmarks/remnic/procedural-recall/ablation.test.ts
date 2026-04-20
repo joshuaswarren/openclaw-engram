@@ -130,9 +130,29 @@ test("runProceduralAblation: rejects empty scenarios", async () => {
   );
 });
 
-test("fixtureToAblationScenarios maps from the existing e2e fixture", () => {
+test("fixtureToAblationScenarios skips gate-control rows and preserves on-side rows", () => {
   const mapped = fixtureToAblationScenarios(PROCEDURAL_RECALL_E2E_FIXTURE);
-  assert.equal(mapped.length, PROCEDURAL_RECALL_E2E_FIXTURE.length);
+  const eligible = PROCEDURAL_RECALL_E2E_FIXTURE.filter(
+    (c) => c.proceduralEnabled !== false,
+  );
+  assert.equal(mapped.length, eligible.length);
+  // Every mapped row must derive from a row where procedural was ON (or
+  // unset), so `expectMatch` reflects ON-side ground truth.
+  const mappedIds = new Set(mapped.map((m) => m.id));
+  for (const c of eligible) {
+    assert.ok(
+      mappedIds.has(c.id),
+      `eligible row ${c.id} should map through`,
+    );
+  }
+  for (const c of PROCEDURAL_RECALL_E2E_FIXTURE) {
+    if (c.proceduralEnabled === false) {
+      assert.ok(
+        !mappedIds.has(c.id),
+        `gate-control row ${c.id} must NOT appear in mapped scenarios`,
+      );
+    }
+  }
   for (const row of mapped) {
     assert.equal(typeof row.expectMatch, "boolean");
     assert.equal(typeof row.prompt, "string");
@@ -184,6 +204,25 @@ test("loadAblationFixture rejects invalid input", async () => {
 
     await writeFile(p, "not-json", "utf8");
     await assert.rejects(() => loadAblationFixture(p), /parse fixture JSON/);
+
+    // Rejects non-string tags instead of silently filtering them. Dropping a
+    // malformed tag changes recall scoring (tags are used in overlap text),
+    // so strict rejection prevents silently corrupted benchmark scores.
+    const withBadTag = [
+      {
+        id: "x",
+        prompt: "p",
+        procedurePreamble: "pp",
+        procedureSteps: [{ order: 1, intent: "do" }],
+        procedureTags: ["deploy", 42],
+        expectMatch: true,
+      },
+    ];
+    await writeFile(p, JSON.stringify(withBadTag), "utf8");
+    await assert.rejects(
+      () => loadAblationFixture(p),
+      /procedureTags\[1\] must be a string/,
+    );
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -231,10 +270,10 @@ test("runProceduralAblationCli falls back to built-in fixture when --fixture omi
       bootstrapIterations: 100,
     });
     assert.equal(artifact.fixture.path, null);
-    assert.equal(
-      artifact.fixture.scenarioCount,
-      PROCEDURAL_RECALL_E2E_FIXTURE.length,
-    );
+    const expected = PROCEDURAL_RECALL_E2E_FIXTURE.filter(
+      (c) => c.proceduralEnabled !== false,
+    ).length;
+    assert.equal(artifact.fixture.scenarioCount, expected);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
