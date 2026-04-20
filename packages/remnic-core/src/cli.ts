@@ -200,6 +200,8 @@ import { convertMemoriesToRecords } from "./training-export/converter.js";
 import { parseStrictCliDate as parseStrictCliDateShared } from "./training-export/date-parse.js";
 import { getTrainingExportAdapter, listTrainingExportAdapters } from "./training-export/registry.js";
 import { renderRecallExplain, parseRecallExplainFormat } from "./recall-explain-renderer.js";
+import { renderXray } from "./recall-xray-renderer.js";
+import { parseXrayCliOptions } from "./recall-xray-cli.js";
 
 interface CliApi {
   registerCli(
@@ -4008,6 +4010,76 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             snapshot = null;
           }
           console.log(renderRecallExplain(snapshot, format));
+        });
+
+      cmd
+        .command("xray")
+        .description(
+          "Run a recall with X-ray capture and print the unified snapshot (tier + audit + MMR + filters).  Part of #570.",
+        )
+        .argument("<query>", "Query to recall against")
+        .option(
+          "--format <fmt>",
+          "Output format: text (default), markdown, or json",
+          "text",
+        )
+        .option(
+          "--budget <chars>",
+          "Override recall character budget for this call (positive integer)",
+        )
+        .option(
+          "--namespace <ns>",
+          "Namespace to scope the recall to (defaults to configured namespace)",
+        )
+        .option(
+          "--out <path>",
+          "Write the rendered snapshot to a file instead of stdout",
+        )
+        .action(async (...args: unknown[]) => {
+          // Commander passes positional args first, then the options
+          // object as the last argument.  `parseXrayCliOptions` is a
+          // pure helper that throws listed-options errors for invalid
+          // --format / --budget / --namespace / --out values — it's
+          // imported from `recall-xray-cli.ts` so the validation path
+          // can be unit-tested without booting an orchestrator
+          // (CLAUDE.md rules 14 + 51).
+          const parsed = parseXrayCliOptions(
+            args[0],
+            (args[1] ?? {}) as Record<string, unknown>,
+          );
+          // Budget override is applied by temporarily swapping the
+          // config entry around the recall call.  The orchestrator
+          // reads `config.recallBudgetChars` each time
+          // `getRecallBudgetChars` runs, so a brief swap is enough to
+          // thread the override through without widening the public
+          // recall signature.  Restored in a finally block so a
+          // thrown recall cannot leave the config mutated.
+          const originalBudget = orchestrator.config.recallBudgetChars;
+          if (parsed.budget !== undefined) {
+            orchestrator.config.recallBudgetChars = parsed.budget;
+          }
+          try {
+            // Clear any prior snapshot so a capture failure surfaces
+            // as `null` rather than returning stale data from an
+            // earlier call in the same process.
+            orchestrator.clearLastXraySnapshot();
+            await orchestrator.recall(parsed.query, undefined, {
+              xrayCapture: true,
+              ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+            });
+          } finally {
+            if (parsed.budget !== undefined) {
+              orchestrator.config.recallBudgetChars = originalBudget;
+            }
+          }
+          const snapshot = orchestrator.getLastXraySnapshot();
+          const rendered = renderXray(snapshot, parsed.format);
+          if (parsed.outPath) {
+            const { writeFile: fsWriteFile } = await import("node:fs/promises");
+            await fsWriteFile(expandTildePath(parsed.outPath), rendered, "utf8");
+          } else {
+            console.log(rendered);
+          }
         });
 
       cmd
