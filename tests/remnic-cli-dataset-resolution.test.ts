@@ -2,9 +2,40 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { chmod, mkdtemp, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, stat, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { pathToFileURL } from "node:url";
+
+const scriptPath = path.join(process.cwd(), "evals", "scripts", "download-datasets.sh");
+
+function resolveCommand(command: string): string {
+  const result = spawnSync("bash", ["-lc", `command -v ${command}`], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, `Expected ${command} to be available for test setup.`);
+  return result.stdout.trim();
+}
+
+function findPythonInterpreter(): string | undefined {
+  for (const candidate of ["python", "python3"]) {
+    const result = spawnSync(candidate, ["-c", "import sys; print(sys.executable)"], {
+      encoding: "utf8",
+    });
+    if (result.status === 0) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await stat(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 test("PersonaMem downloaded markers require both benchmark csv and mirrored chat histories", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-personamem-status-"));
@@ -50,7 +81,7 @@ test("PersonaMem downloaded markers require both benchmark csv and mirrored chat
   assert.equal(hooks.isDatasetDownloaded(datasetDir, "personamem"), true);
 });
 
-test("PersonaMem downloader does not skip an empty chat history directory", async () => {
+test("PersonaMem downloader accepts python3 when python is unavailable", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-personamem-download-"));
   const datasetsDir = path.join(tmpDir, "datasets");
   const datasetDir = path.join(datasetsDir, "personamem");
@@ -61,17 +92,27 @@ test("PersonaMem downloader does not skip an empty chat history directory", asyn
   await writeFile(path.join(benchmarkDir, "benchmark.csv"), "placeholder\n", "utf8");
 
   const stubBinDir = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-stub-python-"));
-  const pythonStubPath = path.join(stubBinDir, "python");
-  await writeFile(pythonStubPath, "#!/usr/bin/env bash\nexit 0\n", "utf8");
+  const pythonStubPath = path.join(stubBinDir, "python3");
+  await writeFile(pythonStubPath, "#!/bin/bash\nexit 0\n", "utf8");
   await chmod(pythonStubPath, 0o755);
 
-  const scriptPath = path.join(process.cwd(), "evals", "scripts", "download-datasets.sh");
+  const gitPath = resolveCommand("git");
+  const curlPath = resolveCommand("curl");
+  for (const [name, target] of [
+    ["git", gitPath],
+    ["curl", curlPath],
+  ]) {
+    const wrapperPath = path.join(stubBinDir, name);
+    await writeFile(wrapperPath, `#!/bin/bash\nexec "${target}" "$@"\n`, "utf8");
+    await chmod(wrapperPath, 0o755);
+  }
+
   const result = spawnSync("bash", [scriptPath, "--benchmark", "personamem"], {
     cwd: process.cwd(),
     env: {
       ...process.env,
       DATASETS_DIR: datasetsDir,
-      PATH: `${stubBinDir}${path.delimiter}${process.env.PATH ?? ""}`,
+      PATH: `${stubBinDir}${path.delimiter}/bin${path.delimiter}/usr/bin`,
     },
     encoding: "utf8",
   });
@@ -79,4 +120,65 @@ test("PersonaMem downloader does not skip an empty chat history directory", asyn
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.match(result.stdout, /\[personamem\] Downloading from Hugging Face/);
   assert.doesNotMatch(result.stdout, /\[personamem\] Already downloaded/);
+});
+
+test("PersonaMem downloader rejects chat history links that escape the dataset root", async (t) => {
+  if (!findPythonInterpreter()) {
+    t.skip("python or python3 is required for the embedded downloader regression test");
+    return;
+  }
+
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-personamem-escape-"));
+  const datasetsDir = path.join(tmpDir, "datasets");
+  const fixtureRoot = path.join(tmpDir, "hf", "source", "repo");
+  const benchmarkDir = path.join(fixtureRoot, "benchmark", "text");
+  const pythonModuleDir = path.join(tmpDir, "python-modules");
+  const escapedSourcePath = path.join(tmpDir, "hf", "escape.json");
+  const escapedDestinationPath = path.join(tmpDir, "escape.json");
+
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(path.dirname(escapedSourcePath), { recursive: true });
+  await mkdir(pythonModuleDir, { recursive: true });
+
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    [
+      "persona_id,chat_history_32k_link,user_query,correct_answer",
+      "persona-1,../../escape.json,What tea do I order?,Earl Grey tea",
+    ].join("\n"),
+    "utf8",
+  );
+  await writeFile(
+    escapedSourcePath,
+    JSON.stringify({ chat_history: [{ role: "user", content: "outside" }] }),
+    "utf8",
+  );
+  await writeFile(
+    path.join(pythonModuleDir, "huggingface_hub.py"),
+    [
+      "import os",
+      "from pathlib import Path",
+      "",
+      "def hf_hub_download(*, repo_id, repo_type, filename, token=None):",
+      '    fixture_root = Path(os.environ["PERSONAMEM_FIXTURE_ROOT"])',
+      "    return str((fixture_root / filename).resolve())",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+
+  const result = spawnSync("bash", [scriptPath, "--benchmark", "personamem"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      DATASETS_DIR: datasetsDir,
+      PERSONAMEM_FIXTURE_ROOT: fixtureRoot,
+      PYTHONPATH: `${pythonModuleDir}${path.delimiter}${process.env.PYTHONPATH ?? ""}`,
+    },
+    encoding: "utf8",
+  });
+
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.match(`${result.stdout}\n${result.stderr}`, /must stay within dataset root/);
+  assert.equal(await pathExists(escapedDestinationPath), false);
 });

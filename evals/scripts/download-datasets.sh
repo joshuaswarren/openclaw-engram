@@ -38,12 +38,31 @@ check_deps() {
   done
 }
 
-require_python_modules() {
-  if ! command -v python &>/dev/null; then
-    echo "ERROR: python is required but not found"
-    exit 1
+PYTHON_BIN=""
+
+resolve_python_bin() {
+  if [[ -n "$PYTHON_BIN" ]]; then
+    printf '%s\n' "$PYTHON_BIN"
+    return 0
   fi
-  python - "$@" <<'PY'
+
+  local candidate
+  for candidate in python python3; do
+    if command -v "$candidate" &>/dev/null; then
+      PYTHON_BIN="$candidate"
+      printf '%s\n' "$PYTHON_BIN"
+      return 0
+    fi
+  done
+
+  echo "ERROR: python or python3 is required but not found"
+  exit 1
+}
+
+require_python_modules() {
+  local python_bin
+  python_bin="$(resolve_python_bin)"
+  "$python_bin" - "$@" <<'PY'
 import importlib.util
 import sys
 
@@ -181,7 +200,9 @@ download_beam() {
   echo "[beam] Downloading from Hugging Face parquet sources (Mohammadta/BEAM, Mohammadta/BEAM-10M)..."
   mkdir -p "$dir"
   require_python_modules huggingface_hub pyarrow
-  python - "$dir" <<'PY'
+  local python_bin
+  python_bin="$(resolve_python_bin)"
+  "$python_bin" - "$dir" <<'PY'
 from __future__ import annotations
 
 import json
@@ -237,7 +258,9 @@ download_personamem() {
   echo "[personamem] Downloading from Hugging Face (bowen-upenn/PersonaMem-v2)..."
   mkdir -p "$dir"
   require_python_modules huggingface_hub
-  python - "$dir" <<'PY'
+  local python_bin
+  python_bin="$(resolve_python_bin)"
+  "$python_bin" - "$dir" <<'PY'
 from __future__ import annotations
 
 import csv
@@ -245,7 +268,7 @@ import os
 import shutil
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from huggingface_hub import hf_hub_download
 
@@ -254,19 +277,55 @@ BENCHMARK_PATH = "benchmark/text/benchmark.csv"
 
 out_dir = Path(sys.argv[1])
 out_dir.mkdir(parents=True, exist_ok=True)
+out_dir_root = out_dir.resolve()
 token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGINGFACE_HUB_TOKEN")
 
 
+def resolve_dataset_destination(relative_path: str) -> tuple[str, Path]:
+    normalized = relative_path.strip().replace("\\", "/")
+    if not normalized:
+        raise ValueError("dataset path cannot be empty")
+
+    posix_path = PurePosixPath(normalized)
+    if posix_path.is_absolute():
+        raise ValueError(
+            f'PersonaMem dataset file reference "{relative_path}" must stay within dataset root.'
+        )
+
+    safe_parts = []
+    for part in posix_path.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            raise ValueError(
+                f'PersonaMem dataset file reference "{relative_path}" must stay within dataset root.'
+            )
+        safe_parts.append(part)
+
+    if not safe_parts:
+        raise ValueError("dataset path cannot resolve to the dataset root")
+
+    destination = (out_dir / Path(*safe_parts)).resolve()
+    try:
+        destination.relative_to(out_dir_root)
+    except ValueError as exc:
+        raise ValueError(
+            f'PersonaMem dataset file reference "{relative_path}" must stay within dataset root.'
+        ) from exc
+
+    return PurePosixPath(*safe_parts).as_posix(), destination
+
+
 def copy_dataset_file(relative_path: str) -> Path:
+    safe_relative_path, destination = resolve_dataset_destination(relative_path)
     source = Path(
         hf_hub_download(
             repo_id=REPO_ID,
             repo_type="dataset",
-            filename=relative_path,
+            filename=safe_relative_path,
             token=token,
         )
     )
-    destination = out_dir / relative_path
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
     return destination
@@ -289,7 +348,7 @@ if not history_paths:
 
 completed = 0
 for index, relative_path in enumerate(history_paths, start=1):
-    destination = out_dir / relative_path
+    _, destination = resolve_dataset_destination(relative_path)
     if destination.is_file():
         completed += 1
         continue
@@ -338,7 +397,9 @@ download_membench() {
     rm -rf "$tmpdir"
     return 1
   }
-  python - "$tmpdir/repo" "$dir/membench.json" <<'PY'
+  local python_bin
+  python_bin="$(resolve_python_bin)"
+  "$python_bin" - "$tmpdir/repo" "$dir/membench.json" <<'PY'
 from __future__ import annotations
 
 import json
@@ -473,7 +534,9 @@ download_memoryagentbench() {
   echo "[memoryagentbench] Downloading from Hugging Face parquet sources (ai-hyz/MemoryAgentBench)..."
   mkdir -p "$dir"
   require_python_modules huggingface_hub pyarrow
-  python - "$dir" <<'PY'
+  local python_bin
+  python_bin="$(resolve_python_bin)"
+  "$python_bin" - "$dir" <<'PY'
 from __future__ import annotations
 
 import json
