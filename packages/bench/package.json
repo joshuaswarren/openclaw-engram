@@ -9,7 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./baselines/*": "./baselines/*",
+    "./baselines/*.json": "./baselines/*.json",
+    "./package.json": "./package.json"
   },
   "license": "MIT",
   "repository": {
