@@ -442,23 +442,37 @@ export class EngramAccessHttpServer {
         }
         budget = parsedBudget;
       }
+      // Only translate validation errors (empty query, bad budget)
+      // into 400s.  Backend faults (timeouts, storage errors,
+      // unexpected orchestrator failures) must bubble to the global
+      // `handle()` error handler so they return 500 and get logged
+      // properly.  `service.recallXray` prefixes its validation
+      // errors with "recallXray:" so we key off that prefix rather
+      // than catching everything.
+      let payload: Awaited<ReturnType<typeof this.service.recallXray>>;
       try {
-        const payload = await this.service.recallXray({
+        payload = await this.service.recallXray({
           query: queryParam,
           sessionKey,
           namespace,
           budget,
           authenticatedPrincipal: this.resolveRequestPrincipal(req),
         });
-        this.respondJson(res, 200, payload);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.respondJson(res, 400, {
-          error: "invalid_request",
-          code: "invalid_request",
-          message,
-        });
+        if (message.startsWith("recallXray:")) {
+          this.respondJson(res, 400, {
+            error: "invalid_request",
+            code: "invalid_request",
+            message,
+          });
+          return;
+        }
+        // Anything else is a server-side fault; rethrow so the
+        // outer `handle()` catch returns 500 + logs the error.
+        throw err;
       }
+      this.respondJson(res, 200, payload);
       return;
     }
 

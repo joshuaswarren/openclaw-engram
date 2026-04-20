@@ -1201,8 +1201,9 @@ export class EngramAccessService {
     const requestedNamespace = request.namespace?.trim()
       ? this.resolveNamespace(request.namespace)
       : undefined;
+    const authenticatedPrincipal = request.authenticatedPrincipal?.trim();
     const principal =
-      request.authenticatedPrincipal?.trim()
+      authenticatedPrincipal
       || resolvePrincipal(request.sessionKey, this.orchestrator.config);
 
     if (requestedNamespace) {
@@ -1217,7 +1218,7 @@ export class EngramAccessService {
       }
     } else if (
       namespacesEnabled
-      && !request.authenticatedPrincipal?.trim()
+      && !authenticatedPrincipal
       && !request.sessionKey?.trim()
     ) {
       // Namespaces enabled but no identity supplied — reject rather
@@ -1246,6 +1247,32 @@ export class EngramAccessService {
       budgetOverride = parsed;
     }
 
+    // Serialize x-ray invocations behind a per-service mutex so the
+    // shared `orchestrator.config.recallBudgetChars` swap cannot
+    // interleave across concurrent callers.  Global mutation is
+    // unavoidable here because `orchestrator.recall()` does not
+    // accept a per-call budget — the mutex keeps request isolation
+    // intact until that signature widens.  `getLastXraySnapshot`
+    // is also per-process state this serialization protects.
+    const previousQueue = this.xrayQueue;
+    let release: () => void = () => {};
+    this.xrayQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previousQueue;
+
+    // When the caller supplies an authenticated principal but no
+    // sessionKey, thread the principal in as the sessionKey so the
+    // downstream `resolvePrincipal(sessionKey)` in the orchestrator
+    // evaluates ACLs against the SAME principal that the pre-check
+    // above authorized.  Otherwise the orchestrator would default to
+    // the unauthenticated principal and could reject or serve the
+    // wrong scope despite the pre-check passing.
+    const recallSessionKey =
+      request.sessionKey?.trim()
+      || authenticatedPrincipal
+      || undefined;
+
     const originalBudget = this.orchestrator.config.recallBudgetChars;
     if (budgetOverride !== undefined) {
       this.orchestrator.config.recallBudgetChars = budgetOverride;
@@ -1255,28 +1282,35 @@ export class EngramAccessService {
       // `{snapshotFound: false}` rather than returning stale data
       // from an earlier call on the same orchestrator.
       this.orchestrator.clearLastXraySnapshot();
-      await this.orchestrator.recall(query, request.sessionKey, {
+      await this.orchestrator.recall(query, recallSessionKey, {
         xrayCapture: true,
         ...(requestedNamespace ? { namespace: requestedNamespace } : {}),
       });
+
+      const snapshot = this.orchestrator.getLastXraySnapshot();
+      if (!snapshot) return { snapshotFound: false };
+      // Re-check namespace after capture: the recall may have served
+      // from a different namespace than the caller requested.  Drop
+      // the snapshot rather than leak cross-tenant data (CLAUDE.md
+      // rules 42 + 47).  The comparison is strict so a snapshot whose
+      // namespace is `undefined` cannot bypass the scope the caller
+      // asked for.
+      if (requestedNamespace && snapshot.namespace !== requestedNamespace) {
+        return { snapshotFound: false };
+      }
+      return { snapshotFound: true, snapshot };
     } finally {
       if (budgetOverride !== undefined) {
         this.orchestrator.config.recallBudgetChars = originalBudget;
       }
+      release();
     }
-
-    const snapshot = this.orchestrator.getLastXraySnapshot();
-    if (!snapshot) return { snapshotFound: false };
-    // Re-check namespace after capture: the recall may have served
-    // from a different namespace (default/global) than the caller
-    // requested.  Drop the snapshot rather than leak cross-tenant
-    // data (CLAUDE.md rule 42 + 47).
-    if (requestedNamespace && snapshot.namespace
-        && snapshot.namespace !== requestedNamespace) {
-      return { snapshotFound: false };
-    }
-    return { snapshotFound: true, snapshot };
   }
+  // Sequence lock for `recallXray` — see comment inside the method.
+  // Lives on the instance so every x-ray call on the same service
+  // shares it, and so separate services in the same process (e.g.
+  // per-tenant) do not block each other.
+  private xrayQueue: Promise<void> = Promise.resolve();
 
   async memoryStore(request: EngramAccessMemoryStoreRequest): Promise<EngramAccessWriteResponse> {
     const namespace = this.resolveWritableNamespace(

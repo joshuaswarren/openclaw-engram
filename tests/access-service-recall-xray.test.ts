@@ -261,3 +261,89 @@ test("recallXray requires an identity when namespaces are enabled and no namespa
   assert.equal(response.snapshotFound, false);
   assert.equal(state.lastOptions, undefined, "no recall must fire without an identity");
 });
+
+test("recallXray threads authenticatedPrincipal as sessionKey when no sessionKey given", async () => {
+  const capturedSessionKeys: Array<string | undefined> = [];
+  const { orchestrator } = stubOrchestrator({
+    namespacesEnabled: true,
+    namespacePolicies: [
+      {
+        name: "team-a",
+        readPrincipals: ["team-a"],
+        writePrincipals: ["team-a"],
+      },
+    ],
+  });
+  orchestrator.recall = async (_prompt: string, sessionKey: string | undefined) => {
+    capturedSessionKeys.push(sessionKey);
+    return "ctx";
+  };
+  const service = new EngramAccessService(orchestrator as any);
+  await service.recallXray({
+    query: "q",
+    namespace: "team-a",
+    authenticatedPrincipal: "team-a",
+  });
+  // Orchestrator must see the authenticated principal so its internal
+  // `resolvePrincipal(sessionKey)` evaluates ACLs against the same
+  // principal that the pre-check authorized.
+  assert.equal(capturedSessionKeys[0], "team-a");
+});
+
+test("recallXray drops a snapshot whose namespace is undefined when a namespace was requested", async () => {
+  const { orchestrator, state } = stubOrchestrator({
+    namespacesEnabled: true,
+    namespacePolicies: [
+      {
+        name: "team-a",
+        readPrincipals: ["team-a"],
+        writePrincipals: ["team-a"],
+      },
+    ],
+  });
+  orchestrator.recall = async () => {
+    state.snapshot = fakeSnapshot(); // no namespace set
+    return "ctx";
+  };
+  const service = new EngramAccessService(orchestrator as any);
+  const response = await service.recallXray({
+    query: "q",
+    namespace: "team-a",
+    authenticatedPrincipal: "team-a",
+  });
+  assert.equal(response.snapshotFound, false);
+});
+
+test("recallXray serializes concurrent budget overrides so the config is never left in a stale state", async () => {
+  const { orchestrator } = stubOrchestrator({ recallBudgetChars: 1000 });
+  const observed: number[] = [];
+  let resolveFirst: () => void = () => {};
+  const firstRunning = new Promise<void>((resolve) => {
+    resolveFirst = resolve;
+  });
+  let firstCall = true;
+  orchestrator.recall = async () => {
+    observed.push(orchestrator.config.recallBudgetChars);
+    if (firstCall) {
+      firstCall = false;
+      // Block the first recall until the second invocation has been
+      // queued.  If the second invocation raced and mutated the
+      // config, the first would observe the wrong "original" on
+      // restore.
+      await firstRunning;
+    }
+    return "ctx";
+  };
+  const service = new EngramAccessService(orchestrator as any);
+  const firstCallPromise = service.recallXray({ query: "a", budget: 2048 });
+  // Queue the second call while the first is mid-flight.
+  const secondCallPromise = service.recallXray({ query: "b", budget: 4096 });
+  resolveFirst();
+  await firstCallPromise;
+  await secondCallPromise;
+  // Both calls must observe THEIR budget, not whichever got
+  // clobbered by the interleaving.
+  assert.deepEqual(observed, [2048, 4096]);
+  // And the config must be fully restored afterwards.
+  assert.equal(orchestrator.config.recallBudgetChars, 1000);
+});
