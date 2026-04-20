@@ -136,10 +136,17 @@ test("normalizeOriginUrl: IPv6 host in protocol URL", () => {
     normalizeOriginUrl("https://[2001:db8::1]/org/repo.git"),
     "2001:db8::1/org/repo",
   );
-  // Port is preserved on the host part of the output.
+  // Port is preserved. IPv6 brackets stay when a port is attached so the
+  // `host:port` boundary can't collide with a longer bare IPv6 literal.
   assert.equal(
     normalizeOriginUrl("ssh://[2001:db8::1]:2222/org/repo.git"),
-    "2001:db8::1:2222/org/repo",
+    "[2001:db8::1]:2222/org/repo",
+  );
+  // Regression: `[2001:db8::1]:2222` (IPv6 + port) must not normalize
+  // to the same string as the longer bare address `2001:db8::1:2222`.
+  assert.notEqual(
+    normalizeOriginUrl("ssh://[2001:db8::1]:2222/org/repo.git"),
+    normalizeOriginUrl("ssh://[2001:db8::1:2222]/org/repo.git"),
   );
 });
 

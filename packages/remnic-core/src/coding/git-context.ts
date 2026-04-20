@@ -177,10 +177,20 @@ export function normalizeOriginUrl(rawUrl: string): string {
     /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?(\[[^\]]+\]|[^/:]*)(?::(\d+))?(\/.*)?$/i.exec(url);
   if (protoMatch) {
     let host = protoMatch[1] ?? "";
-    if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
+    // Detect IPv6 via the bracketed input form BEFORE stripping brackets,
+    // so that when we later re-attach a port we can preserve the
+    // `[host]:port` boundary. Without the brackets, `host:2222` is
+    // ambiguous with a longer bare IPv6 address like `2001:db8::1:2222`.
+    const wasBracketed =
+      host.startsWith("[") && host.endsWith("]");
+    if (wasBracketed) host = host.slice(1, -1);
     const port = protoMatch[2];
     const repoPath = (protoMatch[3] ?? "").replace(/^\/+/, "");
-    const hostPort = port ? `${host}:${port}` : host;
+    const hostPort = port
+      ? wasBracketed
+        ? `[${host}]:${port}`
+        : `${host}:${port}`
+      : host;
     // For protocols without a host component (file:///path), fall back to
     // a stable prefix so distinct local paths don't collapse to "/path".
     const prefix = hostPort.length > 0 ? hostPort : "localhost";
