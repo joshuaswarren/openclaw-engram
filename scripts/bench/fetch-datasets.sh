@@ -14,9 +14,11 @@
 # Default target:
 #   ./bench-datasets/       (gitignored — see .gitignore)
 #
-# After downloading, point the runners at the directory:
-#   pnpm exec remnic bench published --name longmemeval --dataset ./bench-datasets/longmemeval
-#   pnpm exec remnic bench published --name locomo      --dataset ./bench-datasets/locomo
+# After downloading, point the runners at the directory with the current
+# `remnic bench run` CLI surface (a dedicated `remnic bench published`
+# subcommand is planned for a later slice of issue #566):
+#   pnpm exec remnic bench run longmemeval --dataset-dir ./bench-datasets/longmemeval
+#   pnpm exec remnic bench run locomo      --dataset-dir ./bench-datasets/locomo
 #
 # Expected layout:
 #   bench-datasets/
@@ -96,9 +98,12 @@ huggingface-cli download snap-research/locomo10 \\
 # wget -P "${LOCOMO_DIR}" \\
 #   "https://huggingface.co/datasets/snap-research/locomo10/resolve/main/locomo10.json"
 
-# 4. Verify the loader sees your files (no model calls):
-#    pnpm exec remnic bench published --name longmemeval --dataset "${LONG_MEM_EVAL_DIR}" --dry-run
-#    pnpm exec remnic bench published --name locomo      --dataset "${LOCOMO_DIR}"      --dry-run
+# 4. Smoke-check that the runner sees your files (quick-mode, no model calls):
+#    pnpm exec remnic bench run --quick longmemeval --dataset-dir "${LONG_MEM_EVAL_DIR}"
+#    pnpm exec remnic bench run --quick locomo      --dataset-dir "${LOCOMO_DIR}"
+#
+# (A dedicated `remnic bench published --dry-run` subcommand is planned
+#  for issue #566 slice 4 and is not shipped yet.)
 
 EOF
 

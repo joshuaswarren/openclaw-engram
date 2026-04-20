@@ -87,14 +87,17 @@ bench-datasets/
     locomo.json                      # optional alternate
 ```
 
-Point the runners at the directory:
+Point the runners at the directory. Use the current `remnic bench run`
+CLI surface with `--dataset-dir` (a dedicated `remnic bench published`
+subcommand is planned for a later slice of
+[#566](https://github.com/joshuaswarren/remnic/issues/566)):
 
 ```bash
-pnpm exec remnic bench published --name longmemeval \
-  --dataset ./bench-datasets/longmemeval --model gpt-4o-mini --limit 100
+pnpm exec remnic bench run longmemeval \
+  --dataset-dir ./bench-datasets/longmemeval --limit 100
 
-pnpm exec remnic bench published --name locomo \
-  --dataset ./bench-datasets/locomo --model gpt-4o-mini
+pnpm exec remnic bench run locomo \
+  --dataset-dir ./bench-datasets/locomo
 ```
 
 Programmatic loaders are exported from `@remnic/bench`:
