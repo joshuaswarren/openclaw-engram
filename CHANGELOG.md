@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.3.103] — 2026-04-20
+
 ### Added
 
 - Published LongMemEval-S + LoCoMo-10 runbook at
