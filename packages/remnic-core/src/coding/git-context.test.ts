@@ -82,18 +82,18 @@ test("normalizeOriginUrl: ssh:// protocol form normalizes", () => {
   assert.equal(sshProto, "github.com/foo/bar");
 });
 
-test("normalizeOriginUrl: ssh:// with non-standard port — port stripped, host preserved", () => {
-  // Regression: earlier scp-style regex greedily matched the whole URL
-  // because the proto branch ran second. Ordering fix routes ssh:// through
-  // the protocol branch first.
+test("normalizeOriginUrl: ssh:// with non-standard port — port preserved on host", () => {
+  // Port is preserved so `host:2222/foo/bar` and `host/foo/bar` route to
+  // different project namespaces. Losing the port would false-coalesce
+  // separate repos on custom SSH mesh setups.
   assert.equal(
     normalizeOriginUrl("ssh://git@github.com:2222/foo/bar.git"),
-    "github.com/foo/bar",
+    "github.com:2222/foo/bar",
   );
 });
 
-test("normalizeOriginUrl: ssh:// and ssh://...:port normalize to the same string (port ignored)", () => {
-  assert.equal(
+test("normalizeOriginUrl: ssh://host:port and ssh://host normalize to distinct strings", () => {
+  assert.notEqual(
     normalizeOriginUrl("ssh://git@github.com/foo/bar.git"),
     normalizeOriginUrl("ssh://git@github.com:2222/foo/bar.git"),
   );
@@ -136,10 +136,10 @@ test("normalizeOriginUrl: IPv6 host in protocol URL", () => {
     normalizeOriginUrl("https://[2001:db8::1]/org/repo.git"),
     "2001:db8::1/org/repo",
   );
-  // Port is discarded, same host + path as the non-port form.
+  // Port is preserved on the host part of the output.
   assert.equal(
     normalizeOriginUrl("ssh://[2001:db8::1]:2222/org/repo.git"),
-    normalizeOriginUrl("ssh://[2001:db8::1]/org/repo.git"),
+    "2001:db8::1:2222/org/repo",
   );
 });
 
@@ -155,10 +155,10 @@ test("normalizeOriginUrl: single-character scp host alias is accepted", () => {
   );
 });
 
-test("normalizeOriginUrl: https:// with non-standard port — port stripped", () => {
+test("normalizeOriginUrl: https:// with non-standard port — port preserved on host", () => {
   assert.equal(
     normalizeOriginUrl("https://github.com:8443/foo/bar.git"),
-    "github.com/foo/bar",
+    "github.com:8443/foo/bar",
   );
 });
 
