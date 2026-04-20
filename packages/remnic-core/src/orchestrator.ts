@@ -1114,7 +1114,11 @@ export class Orchestrator {
   readonly localLlm: LocalLlmClient;
   readonly fastLlm: LocalLlmClient;
   private readonly judgeVerdictCache: Map<string, JudgeVerdict>;
-  private readonly fastGatewayLlm: FallbackLlmClient | null;
+  private readonly _fastGatewayLlm: FallbackLlmClient | null;
+
+  get fastGatewayLlm(): FallbackLlmClient | null {
+    return this._fastGatewayLlm;
+  }
   readonly modelRegistry: ModelRegistry;
   readonly relevance: RelevanceStore;
   readonly negatives: NegativeExampleStore;
@@ -1457,7 +1461,7 @@ export class Orchestrator {
         })()
       : this.localLlm;
     // Initialize gateway fast LLM for fast-tier ops when modelSource is "gateway"
-    this.fastGatewayLlm = config.modelSource === "gateway"
+    this._fastGatewayLlm = config.modelSource === "gateway"
       ? new FallbackLlmClient(config.gatewayConfig)
       : null;
     if (config.modelSource === "gateway") {
@@ -1741,10 +1745,10 @@ export class Orchestrator {
     messages: Array<{ role: string; content: string }>,
     options: { temperature?: number; maxTokens?: number; timeoutMs?: number; operation?: string; priority?: "background" | "recall-critical" },
   ): Promise<{ content: string } | null> {
-    if (this.fastGatewayLlm && this.config.modelSource === "gateway") {
+    if (this._fastGatewayLlm && this.config.modelSource === "gateway") {
       const agentId =
         this.config.fastGatewayAgentId || this.config.gatewayAgentId || undefined;
-      const result = await this.fastGatewayLlm.chatCompletion(
+      const result = await this._fastGatewayLlm.chatCompletion(
         messages as Array<{ role: "system" | "user" | "assistant"; content: string }>,
         { temperature: options.temperature, maxTokens: options.maxTokens, timeoutMs: options.timeoutMs, agentId },
       );
@@ -1765,7 +1769,7 @@ export class Orchestrator {
       options?: { maxTokens?: number; temperature?: number; timeoutMs?: number; operation?: string; priority?: "recall-critical" | "background" },
     ) => Promise<{ content: string } | null>;
   } {
-    if (this.fastGatewayLlm && this.config.modelSource === "gateway") {
+    if (this._fastGatewayLlm && this.config.modelSource === "gateway") {
       return {
         chatCompletion: (messages, options) =>
           this.fastChatCompletion(messages, options ?? {}),
