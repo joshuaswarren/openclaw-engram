@@ -149,6 +149,26 @@ test("setCodingContext: empty rootPath → throws", () => {
   );
 });
 
+test("setCodingContext: whitespace-only rootPath → throws (parity with projectId)", () => {
+  // Regression: previous check used `ctx.rootPath.length === 0` (no trim),
+  // so a payload like `{ rootPath: "   " }` slipped through validation.
+  // Must reject whitespace-only just like the projectId check does.
+  const { service } = makeService();
+  assert.throws(
+    () =>
+      service.setCodingContext({
+        sessionKey: "s",
+        codingContext: {
+          projectId: "origin:abcd",
+          branch: "main",
+          rootPath: "   ",
+          defaultBranch: "main",
+        },
+      }),
+    (err: unknown) => err instanceof EngramAccessInputError && /rootPath/i.test((err as Error).message),
+  );
+});
+
 test("setCodingContext: non-string branch (not null) → throws", () => {
   const { service } = makeService();
   // Use `as any` to deliberately pass a wrong-shape payload as a connector

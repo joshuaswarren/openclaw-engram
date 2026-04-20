@@ -1014,7 +1014,11 @@ export class EngramAccessService {
     if (typeof ctx.projectId !== "string" || ctx.projectId.trim().length === 0) {
       throw new EngramAccessInputError("codingContext.projectId must be a non-empty string");
     }
-    if (typeof ctx.rootPath !== "string" || ctx.rootPath.length === 0) {
+    // Whitespace-only rootPath must be rejected just like whitespace-only
+    // projectId — otherwise a payload like `{ rootPath: "   " }` slips past
+    // validation and produces a session whose rootPath is meaningless for
+    // `remnic doctor` output and for downstream namespace decisions.
+    if (typeof ctx.rootPath !== "string" || ctx.rootPath.trim().length === 0) {
       throw new EngramAccessInputError("codingContext.rootPath must be a non-empty string");
     }
     if (ctx.branch !== null && typeof ctx.branch !== "string") {

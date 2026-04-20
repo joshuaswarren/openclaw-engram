@@ -330,6 +330,13 @@ export class EngramAccessHttpServer {
 
     if (req.method === "POST" && pathname === "/engram/v1/recall") {
       const body = await this.readValidatedBody(req, "recall");
+      // Preserve the distinction between `codingContext: null` (explicit
+      // clear) and `codingContext` missing from the JSON payload
+      // (untouched). The previous `?? undefined` collapsed both into
+      // undefined, so callers lost the ability to clear the session's
+      // attached context through the recall endpoint.
+      const codingContext =
+        "codingContext" in body ? body.codingContext : undefined;
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
@@ -337,7 +344,7 @@ export class EngramAccessHttpServer {
         topK: body.topK,
         mode: body.mode as RecallPlanMode | "auto" | undefined,
         includeDebug: body.includeDebug === true,
-        codingContext: body.codingContext ?? undefined,
+        codingContext,
       });
       this.respondJson(res, 200, response);
       return;

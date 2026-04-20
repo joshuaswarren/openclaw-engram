@@ -85,21 +85,42 @@ if [ -n "$CWD" ] && [ -d "$CWD" ] && command -v git >/dev/null 2>&1; then
         }
         return hash.toString(16).padStart(8, '0');
       }
+      // Mirrors packages/remnic-core/src/coding/git-context.ts
+      // normalizeOriginUrl. Keep the two in sync so the hook-computed
+      // projectId matches what the daemon computes on the same origin.
       function normalizeOriginUrl(raw) {
         let u = (raw || '').trim();
         if (!u) return '';
-        if (u.endsWith('.git')) u = u.slice(0, -4);
-        const proto = /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?([^/:]+)(?::\\d+)?(\\/.*)?\$/i.exec(u);
+        // Case-insensitive .git strip — matches the TS canonical form.
+        if (/\\.git\$/i.test(u)) u = u.slice(0, -4);
+        // Windows drive-letter: short-circuit scp parsing.
+        if (/^[A-Za-z]:[\\\\/]/.test(u)) return u.toLowerCase();
+        // Protocol form: handles ssh://, https://, file:///, bracketed
+        // IPv6 hosts, optional user, optional port, and empty host
+        // (file:///path).
+        const proto = /^[a-z][a-z0-9+.-]*:\\/\\/(?:[^@/]+@)?(\\[[^\\]]+\\]|[^/:]*)(?::(\\d+))?(\\/.*)?\$/i.exec(u);
         if (proto) {
-          const host = proto[1] || '';
-          const p = (proto[2] || '').replace(/^\\/+/, '');
-          return (host + '/' + p).toLowerCase();
+          let host = proto[1] || '';
+          const wasBracketed = host.startsWith('[') && host.endsWith(']');
+          if (wasBracketed) host = host.slice(1, -1);
+          const port = proto[2];
+          const p = (proto[3] || '').replace(/^\\/+/, '');
+          const hostPort = port
+            ? (wasBracketed ? '[' + host + ']:' + port : host + ':' + port)
+            : host;
+          const prefix = hostPort.length > 0 ? hostPort : 'localhost';
+          return (prefix + '/' + p).toLowerCase();
         }
-        const scp = /^([^@\\s\\/]+)@([^:@\\s\\/]+):(.+)\$/.exec(u);
+        // scp form: [user@]host:path — user@ optional, bracketed IPv6 host
+        // supported. A matched path starting with // is a protocol-URL
+        // leftover and is rejected.
+        const scp = /^(?:([^@\\s\\/]+)@)?(\\[[^\\]]+\\]|[^:@\\s\\/]+):(.+)\$/.exec(u);
         if (scp) {
-          const host = scp[2] || '';
-          const p = (scp[3] || '').replace(/^\\/+/, '');
-          return (host + '/' + p).toLowerCase();
+          let host = scp[2] || '';
+          if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+          const p = scp[3] || '';
+          if (p.startsWith('//')) return u.toLowerCase();
+          return (host + '/' + p.replace(/^\\/+/, '')).toLowerCase();
         }
         return u.toLowerCase();
       }
