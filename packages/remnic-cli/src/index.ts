@@ -835,6 +835,16 @@ const DOWNLOADED_DATASET_MARKERS: Record<string, { anyOf?: string[]; ext?: strin
   },
 };
 
+function hasAnyDirectFiles(directoryPath: string): boolean {
+  try {
+    return fs.readdirSync(directoryPath).some((name) =>
+      fs.statSync(path.join(directoryPath, name)).isFile(),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isDatasetDownloaded(datasetPath: string, benchmarkId: string): boolean {
   let stats: fs.Stats;
   try {
@@ -855,13 +865,20 @@ function isDatasetDownloaded(datasetPath: string, benchmarkId: string): boolean 
     }
   }
   if (marker.anyOf) {
-    return marker.anyOf.some((name) => {
+    const hasMarkerFile = marker.anyOf.some((name) => {
       try {
         return fs.statSync(path.join(datasetPath, name)).isFile();
       } catch {
         return false;
       }
     });
+    if (!hasMarkerFile) {
+      return false;
+    }
+    if (benchmarkId === "personamem") {
+      return hasAnyDirectFiles(path.join(datasetPath, "data", "chat_history_32k"));
+    }
+    return true;
   }
   if (marker.ext) {
     try {
@@ -872,6 +889,11 @@ function isDatasetDownloaded(datasetPath: string, benchmarkId: string): boolean 
   }
   return false;
 }
+
+export const __benchDatasetTestHooks = {
+  isDatasetDownloaded,
+  resolveBenchDatasetDir,
+};
 
 async function launchBenchUi(resultsDir: string): Promise<void> {
   const benchUiDir = path.join(CLI_REPO_ROOT, "packages", "bench-ui");
