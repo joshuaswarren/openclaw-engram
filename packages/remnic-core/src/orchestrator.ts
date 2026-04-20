@@ -4116,7 +4116,7 @@ export class Orchestrator {
               }
             }
           }
-          candidatesConsidered = active.length;
+          candidatesConsidered += active.length;
           return active;
         },
         trustZoneFor: async (memoryId: string) => {

@@ -202,6 +202,7 @@ async function generatePairs(
   embeddingLookup?: SemanticDedupLookup,
 ): Promise<PairGenResult> {
   const pairs: CandidatePair[] = [];
+  const embeddingPairs: CandidatePair[] = [];
   let skipped = 0;
   const seen = new Set<string>();
 
@@ -304,7 +305,7 @@ async function generatePairs(
             continue;
           }
 
-          pairs.push({
+          embeddingPairs.push({
             idA: id,
             idB: hit.id,
             textA: mem.content,
@@ -318,6 +319,10 @@ async function generatePairs(
       }
     }
   }
+
+  // Append embedding pairs after high-precision entity/topic pairs so the
+  // downstream sort+slice(maxPairsPerRun) keeps precision-first ordering.
+  pairs.push(...embeddingPairs);
 
   return { pairs, skipped };
 }
