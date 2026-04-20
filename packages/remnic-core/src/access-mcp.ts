@@ -126,6 +126,25 @@ export class EngramMcpServer {
         },
       },
       {
+        name: "engram.recall_tier_explain",
+        description:
+          "Return a structured tier-explain payload for the last direct-answer-eligible recall (issue #518). Orthogonal to engram.recall_explain, which returns a graph-path explanation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            sessionKey: {
+              type: "string",
+              description: "Optional session key. Omit to read the most recent snapshot.",
+            },
+            namespace: {
+              type: "string",
+              description: "Optional namespace to scope the returned snapshot.",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.day_summary",
         description:
           "Generate a structured end-of-day summary. When memories is omitted or empty, auto-gathers today's facts and hourly summaries from storage.",
@@ -1078,6 +1097,16 @@ export class EngramMcpServer {
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
+      case "engram.recall_tier_explain":
+        return this.service.recallTierExplain(
+          typeof args.sessionKey === "string" && args.sessionKey.length > 0
+            ? args.sessionKey
+            : undefined,
+          typeof args.namespace === "string" && args.namespace.length > 0
+            ? args.namespace
+            : undefined,
+          effectivePrincipal,
+        );
       case "engram.day_summary":
         return this.service.daySummary({
           memories: typeof args.memories === "string" ? args.memories : "",
@@ -1418,7 +1447,12 @@ export class EngramMcpServer {
       case "engram.review_list":
       case "remnic.review_list": {
         const { listPairs } = await import("./contradiction/contradiction-review.js");
-        const filter = typeof args.filter === "string" ? args.filter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user" : "unresolved";
+        const VALID_REVIEW_FILTERS = new Set(["all", "unresolved", "contradicts", "independent", "duplicates", "needs-user"]);
+        const rawFilter = typeof args.filter === "string" ? args.filter : "unresolved";
+        if (!VALID_REVIEW_FILTERS.has(rawFilter)) {
+          throw new Error(`Invalid filter '${rawFilter}'. Valid: ${[...VALID_REVIEW_FILTERS].join(", ")}`);
+        }
+        const filter = rawFilter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user";
         const ns = typeof args.namespace === "string" ? args.namespace : undefined;
         const limit = typeof args.limit === "number" ? args.limit : 50;
         return listPairs(this.service.memoryDir, { filter, namespace: ns, limit });
@@ -1441,7 +1475,7 @@ export class EngramMcpServer {
           storage: this.service.storageRef,
           config: this.service.configRef,
           memoryDir: this.service.memoryDir,
-          embeddingLookup: this.service.embeddingLookupRef,
+          embeddingLookupFactory: this.service.embeddingLookupFactoryRef,
           localLlm: this.service.localLlmRef,
           fallbackLlm: this.service.fallbackLlmRef,
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,

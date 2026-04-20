@@ -76,6 +76,7 @@ import type {
 import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
 import type { SemanticDedupLookup } from "./dedup/semantic.js";
+import { toRecallExplainJson } from "./recall-explain-renderer.js";
 
 export class EngramAccessInputError extends Error {}
 
@@ -1040,6 +1041,46 @@ export class EngramAccessService {
     ]);
     if (!snapshot && !intent && !graph) return { found: false };
     return { found: true, snapshot: snapshot ?? undefined, intent, graph };
+  }
+
+  async recallTierExplain(
+    sessionKey?: string,
+    namespace?: string,
+    authenticatedPrincipal?: string,
+  ) {
+    const namespacesEnabled = this.orchestrator.config.namespacesEnabled;
+    const requestedNamespace = namespace?.trim()
+      ? this.resolveNamespace(namespace)
+      : undefined;
+    const principal = authenticatedPrincipal?.trim()
+      || resolvePrincipal(sessionKey, this.orchestrator.config);
+
+    if (requestedNamespace) {
+      if (!canReadNamespace(principal, requestedNamespace, this.orchestrator.config)) {
+        return toRecallExplainJson(null);
+      }
+    } else if (namespacesEnabled && !authenticatedPrincipal?.trim() && !sessionKey?.trim()) {
+      return toRecallExplainJson(null);
+    }
+
+    const candidate = sessionKey
+      ? this.orchestrator.lastRecall.get(sessionKey)
+      : this.orchestrator.lastRecall.getMostRecent();
+
+    const snapshot = (() => {
+      if (!candidate) return null;
+      if (requestedNamespace) {
+        return candidate.namespace === requestedNamespace ? candidate : null;
+      }
+      if (!namespacesEnabled) return candidate;
+      const snapshotNs = candidate.namespace
+        ?? this.orchestrator.config.defaultNamespace;
+      return canReadNamespace(principal, snapshotNs, this.orchestrator.config)
+        ? candidate
+        : null;
+    })();
+
+    return toRecallExplainJson(snapshot);
   }
 
   async memoryStore(request: EngramAccessMemoryStoreRequest): Promise<EngramAccessWriteResponse> {
@@ -2813,10 +2854,19 @@ export class EngramAccessService {
   }
 
   get fallbackLlmRef(): FallbackLlmClient | null {
-    return null;
+    return this.orchestrator.fastGatewayLlm ?? null;
   }
 
-  get embeddingLookupRef(): SemanticDedupLookup | undefined {
-    return undefined;
+  get embeddingLookupFactoryRef(): (storage: import("./storage.js").StorageManager) => SemanticDedupLookup | undefined {
+    return (storage) => {
+      if (!this.orchestrator.config.embeddingFallbackEnabled) return undefined;
+      return async (content: string, limit: number) => {
+        try {
+          return await this.orchestrator.semanticDedupLookup(content, limit, storage);
+        } catch {
+          return [];
+        }
+      };
+    };
   }
 }

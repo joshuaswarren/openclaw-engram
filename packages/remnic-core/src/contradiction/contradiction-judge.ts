@@ -88,7 +88,8 @@ IMPORTANT:
 
 // ── Cache ──────────────────────────────────────────────────────────────────────
 
-let verdictCache: Map<string, ContradictionJudgeResult> = new Map();
+/** Module-level fallback cache — only used when caller does not supply one. */
+let defaultVerdictCache: Map<string, ContradictionJudgeResult> = new Map();
 const CACHE_MAX = 10_000;
 
 function pairKey(idA: string, idB: string): string {
@@ -111,11 +112,11 @@ export function createVerdictCache(): Map<string, ContradictionJudgeResult> {
 }
 
 export function clearVerdictCache(): void {
-  verdictCache.clear();
+  defaultVerdictCache.clear();
 }
 
 export function verdictCacheSize(): number {
-  return verdictCache.size;
+  return defaultVerdictCache.size;
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────────
@@ -135,7 +136,7 @@ export async function judgeContradictionPairs(
 ): Promise<ContradictionJudgeBatchResult> {
   const startTime = Date.now();
   const results = new Map<string, ContradictionJudgeResult>();
-  const activeCache = cache ?? verdictCache;
+  const activeCache = cache ?? defaultVerdictCache;
   let cached = 0;
   let judged = 0;
 

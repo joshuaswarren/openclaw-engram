@@ -63,7 +63,14 @@ export interface ScanDependencies {
   storage: StorageManager;
   config: PluginConfig;
   memoryDir: string;
+  /** Pre-built embedding lookup. When provided, used as-is for Strategy 3. */
   embeddingLookup?: SemanticDedupLookup;
+  /**
+   * Factory to build a namespace-scoped embedding lookup.
+   * When provided, takes precedence over `embeddingLookup`.
+   * The scan driver passes its own `storage` so the lookup queries the correct index.
+   */
+  embeddingLookupFactory?: (storage: StorageManager) => SemanticDedupLookup | undefined;
   localLlm: LocalLlmClient | null;
   fallbackLlm: FallbackLlmClient | null;
   namespace?: string;
@@ -78,8 +85,14 @@ export interface ScanDependencies {
  */
 export async function runContradictionScan(deps: ScanDependencies): Promise<ScanResult> {
   const startTime = Date.now();
-  const { storage, config, memoryDir, embeddingLookup, localLlm, fallbackLlm, namespace } = deps;
+  const { storage, config, memoryDir, embeddingLookup, embeddingLookupFactory, localLlm, fallbackLlm, namespace } = deps;
   const scanConfig = config.contradictionScan;
+
+  // Prefer the factory (which uses the scan's own storage for correct namespace scoping)
+  // over a pre-built lookup (which may use default-namespace storage).
+  const scopedEmbeddingLookup = embeddingLookupFactory
+    ? embeddingLookupFactory(storage)
+    : embeddingLookup;
 
   if (!scanConfig.enabled) {
     log.info("[contradiction-scan] disabled by config");
@@ -102,7 +115,7 @@ export async function runContradictionScan(deps: ScanDependencies): Promise<Scan
   }
 
   // 3. Generate candidate pairs
-  const candidates = generatePairs(memories, existingMap, scanConfig, embeddingLookup);
+  const candidates = await generatePairs(memories, existingMap, scanConfig, scopedEmbeddingLookup);
   const cooledDown = candidates.skipped;
   log.info("[contradiction-scan] generated %d candidates (%d cooled down)", candidates.pairs.length, cooledDown);
 
@@ -132,8 +145,9 @@ export async function runContradictionScan(deps: ScanDependencies): Promise<Scan
     categoryB: pair.categoryB,
   }));
 
-  // 6. Send to judge
-  const judgeResult = await judgeContradictionPairs(judgeInputs, config, localLlm, fallbackLlm);
+  // 6. Send to judge (per-scan cache avoids module-level singleton leak)
+  const scanCache = new Map<string, import("./contradiction-judge.js").ContradictionJudgeResult>();
+  const judgeResult = await judgeContradictionPairs(judgeInputs, config, localLlm, fallbackLlm, scanCache);
   log.info("[contradiction-scan] judge completed: %d judged, %d cached in %dms", judgeResult.judged, judgeResult.cached, judgeResult.elapsed);
 
   // 7. Write to review queue
@@ -181,13 +195,14 @@ interface PairGenResult {
   skipped: number;
 }
 
-function generatePairs(
+async function generatePairs(
   memories: MemoryFile[],
   existingPairs: Map<string, ContradictionPair>,
   scanConfig: PluginConfig["contradictionScan"],
   embeddingLookup?: SemanticDedupLookup,
-): PairGenResult {
+): Promise<PairGenResult> {
   const pairs: CandidatePair[] = [];
+  const embeddingPairs: CandidatePair[] = [];
   let skipped = 0;
   const seen = new Set<string>();
 
@@ -266,6 +281,48 @@ function generatePairs(
       });
     }
   }
+
+  // Strategy 3: Embedding cosine similarity (enforces similarityFloor config)
+  if (embeddingLookup) {
+    const memoryById = new Map(memories.map((m) => [m.frontmatter.id!, m]));
+    for (const mem of memories) {
+      const id = mem.frontmatter.id!;
+      try {
+        const hits = await embeddingLookup(mem.content, 20);
+        for (const hit of hits) {
+          if (hit.score < scanConfig.similarityFloor) continue;
+          if (hit.id === id) continue;
+          const peer = memoryById.get(hit.id);
+          if (!peer) continue;
+
+          const pairId = computePairId(id, hit.id);
+          if (seen.has(pairId)) continue;
+          seen.add(pairId);
+
+          const existing = existingPairs.get(pairId);
+          if (existing && isCoolingDown(existing, scanConfig.cooldownDays)) {
+            skipped++;
+            continue;
+          }
+
+          embeddingPairs.push({
+            idA: id,
+            idB: hit.id,
+            textA: mem.content,
+            textB: peer.content,
+            categoryA: mem.frontmatter.category as string | undefined,
+            categoryB: peer.frontmatter.category as string | undefined,
+          });
+        }
+      } catch {
+        // Embedding backend unavailable — skip, entity-ref/tag strategies already covered
+      }
+    }
+  }
+
+  // Append embedding pairs after high-precision entity/topic pairs so the
+  // downstream sort+slice(maxPairsPerRun) keeps precision-first ordering.
+  pairs.push(...embeddingPairs);
 
   return { pairs, skipped };
 }

@@ -176,9 +176,12 @@ import {
   type ObjectiveStateSearchResult,
 } from "./objective-state.js";
 import {
+  listTrustZoneRecords,
   searchTrustZoneRecords,
   type TrustZoneSearchResult,
 } from "./trust-zones.js";
+import { tryDirectAnswer, type DirectAnswerSources } from "./direct-answer-wiring.js";
+import { DEFAULT_TAXONOMY } from "./taxonomy/index.js";
 import {
   searchHarmonicRetrieval,
   type HarmonicRetrievalResult,
@@ -288,6 +291,7 @@ import type {
   QmdSearchResult,
   RecallPlanMode,
   RecallSectionConfig,
+  RecallTierExplain,
   EntityStructuredSection,
   EntityTimelineEntry,
 } from "./types.js";
@@ -1110,7 +1114,11 @@ export class Orchestrator {
   readonly localLlm: LocalLlmClient;
   readonly fastLlm: LocalLlmClient;
   private readonly judgeVerdictCache: Map<string, JudgeVerdict>;
-  private readonly fastGatewayLlm: FallbackLlmClient | null;
+  private readonly _fastGatewayLlm: FallbackLlmClient | null;
+
+  get fastGatewayLlm(): FallbackLlmClient | null {
+    return this._fastGatewayLlm;
+  }
   readonly modelRegistry: ModelRegistry;
   readonly relevance: RelevanceStore;
   readonly negatives: NegativeExampleStore;
@@ -1185,6 +1193,11 @@ export class Orchestrator {
   private runtimePolicyValues: RuntimePolicyValues | null = null;
   private utilityRuntimeValues: UtilityRuntimeValues | null = null;
   private evalShadowWriteChain: Promise<void> = Promise.resolve();
+
+  // Pending background observation-mode direct-answer annotations (#518).
+  // Tracks fire-and-forget `annotateDirectAnswerTier` calls so callers (tests,
+  // waitForDirectAnswerObservationIdle) can await settlement.
+  private directAnswerObservationChain: Promise<void> = Promise.resolve();
 
   // Initialization gate: recall() awaits this before proceeding
   private initPromise: Promise<void> | null = null;
@@ -1448,7 +1461,7 @@ export class Orchestrator {
         })()
       : this.localLlm;
     // Initialize gateway fast LLM for fast-tier ops when modelSource is "gateway"
-    this.fastGatewayLlm = config.modelSource === "gateway"
+    this._fastGatewayLlm = config.modelSource === "gateway"
       ? new FallbackLlmClient(config.gatewayConfig)
       : null;
     if (config.modelSource === "gateway") {
@@ -1732,10 +1745,10 @@ export class Orchestrator {
     messages: Array<{ role: string; content: string }>,
     options: { temperature?: number; maxTokens?: number; timeoutMs?: number; operation?: string; priority?: "background" | "recall-critical" },
   ): Promise<{ content: string } | null> {
-    if (this.fastGatewayLlm && this.config.modelSource === "gateway") {
+    if (this._fastGatewayLlm && this.config.modelSource === "gateway") {
       const agentId =
         this.config.fastGatewayAgentId || this.config.gatewayAgentId || undefined;
-      const result = await this.fastGatewayLlm.chatCompletion(
+      const result = await this._fastGatewayLlm.chatCompletion(
         messages as Array<{ role: "system" | "user" | "assistant"; content: string }>,
         { temperature: options.temperature, maxTokens: options.maxTokens, timeoutMs: options.timeoutMs, agentId },
       );
@@ -1756,7 +1769,7 @@ export class Orchestrator {
       options?: { maxTokens?: number; temperature?: number; timeoutMs?: number; operation?: string; priority?: "recall-critical" | "background" },
     ) => Promise<{ content: string } | null>;
   } {
-    if (this.fastGatewayLlm && this.config.modelSource === "gateway") {
+    if (this._fastGatewayLlm && this.config.modelSource === "gateway") {
       return {
         chatCompletion: (messages, options) =>
           this.fastChatCompletion(messages, options ?? {}),
@@ -3928,11 +3941,29 @@ export class Orchestrator {
         }, RECALL_TIMEOUT_MS);
       });
 
+      let recallResult: string;
       try {
-        return await Promise.race([recallPromise, timeoutPromise]);
+        recallResult = await Promise.race([recallPromise, timeoutPromise]);
       } finally {
         if (timeoutHandle) clearTimeout(timeoutHandle);
       }
+
+      // Observation-mode direct-answer tier (issue #518 slice 3c).
+      // Runs after the user's recall already succeeded, fire-and-forget,
+      // so annotation latency can never delay the caller's response.
+      if (this.config.recallDirectAnswerEnabled && sessionKey) {
+        try {
+          this.enqueueDirectAnswerObservation(
+            prompt,
+            sessionKey,
+            options.namespace?.trim() || undefined,
+          );
+        } catch (err) {
+          log.debug(`direct-answer observation setup failed: ${err}`);
+        }
+      }
+
+      return recallResult;
     } catch (err) {
       this.logRecallFailure(err);
       // endTrace() is safe here: if no trace is active (disabled or already
@@ -3941,6 +3972,201 @@ export class Orchestrator {
       return ""; // Return empty context on timeout/error
     } finally {
       options.abortSignal?.removeEventListener("abort", onAbort);
+    }
+  }
+
+  /**
+   * Await the in-flight observation-mode direct-answer annotation chain.
+   * Resolves to true when settled, false on timeout.
+   */
+  async waitForDirectAnswerObservationIdle(
+    timeoutMs: number = 60_000,
+  ): Promise<boolean> {
+    let timeoutHandle: NodeJS.Timeout | null = null;
+    try {
+      const timeoutPromise = new Promise<"timeout">((resolve) => {
+        timeoutHandle = setTimeout(() => resolve("timeout"), timeoutMs);
+      });
+      const result = await Promise.race([
+        this.directAnswerObservationChain.then(() => "ok" as const),
+        timeoutPromise,
+      ]);
+      if (result === "timeout") {
+        log.warn(
+          `waitForDirectAnswerObservationIdle timed out after ${timeoutMs}ms`,
+        );
+        return false;
+      }
+      return true;
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+  }
+
+  private enqueueDirectAnswerObservation(
+    prompt: string,
+    sessionKey: string,
+    namespaceOverride: string | undefined,
+  ): void {
+    const expectedSnapshot = this.lastRecall.get(sessionKey);
+    if (expectedSnapshot === null) return;
+    if (expectedSnapshot.plannerMode === "no_recall") return;
+
+    const principal = resolvePrincipal(sessionKey, this.config);
+    const observationNamespaces: string[] =
+      namespaceOverride && canReadNamespace(principal, namespaceOverride, this.config)
+        ? [namespaceOverride]
+        : recallNamespacesForPrincipal(principal, this.config);
+    const observationQueryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
+      cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
+      cronRecallNormalizedQueryMaxChars:
+        this.config.cronRecallNormalizedQueryMaxChars,
+      cronRecallInstructionHeavyTokenCap:
+        this.effectiveCronRecallInstructionHeavyTokenCap(),
+      cronConversationRecallMode: this.config.cronConversationRecallMode,
+    });
+    const observationQuery = observationQueryPolicy.retrievalQuery || prompt;
+    const expectedIdentity = {
+      writeNonce: expectedSnapshot.writeNonce,
+      traceId: expectedSnapshot.traceId,
+      recordedAt: expectedSnapshot.recordedAt,
+    };
+    const previous = this.directAnswerObservationChain;
+    this.directAnswerObservationChain = previous
+      .catch(() => undefined)
+      .then(async () => {
+        try {
+          await this.annotateDirectAnswerTier(
+            observationQuery,
+            sessionKey,
+            observationNamespaces,
+            expectedIdentity,
+            undefined,
+          );
+        } catch (err) {
+          log.debug(`direct-answer observation chain error: ${err}`);
+        }
+      });
+  }
+
+  private async annotateDirectAnswerTier(
+    prompt: string,
+    sessionKey: string,
+    namespaces: string[],
+    expectedIdentity:
+      | { writeNonce?: string; traceId?: string; recordedAt?: string }
+      | undefined,
+    _parentAbortSignal?: AbortSignal,
+  ): Promise<void> {
+    const tierStart = Date.now();
+    try {
+      if (namespaces.length === 0) return;
+
+      const trustZoneByNsAndRecordId = new Map<
+        string,
+        "quarantine" | "working" | "trusted"
+      >();
+      const trustZoneKey = (ns: string, recordId: string) =>
+        `${ns}\u0000${recordId}`;
+      const scopedStorages = new Map<
+        string,
+        Awaited<ReturnType<typeof this.storageRouter.storageFor>>
+      >();
+
+      for (const ns of namespaces) {
+        const storage = await this.storageRouter.storageFor(ns);
+        scopedStorages.set(ns, storage);
+        const trustZones = await listTrustZoneRecords({
+          memoryDir: storage.dir,
+          trustZoneStoreDir: this.config.trustZoneStoreDir,
+          limit: 200,
+        }).catch(() => ({
+          allRecords: [] as Array<{
+            recordId: string;
+            zone: "quarantine" | "working" | "trusted";
+          }>,
+        }));
+        for (const record of trustZones.allRecords ?? []) {
+          trustZoneByNsAndRecordId.set(
+            trustZoneKey(ns, record.recordId),
+            record.zone,
+          );
+        }
+      }
+
+      const memoryNamespaceByPath = new Map<string, string>();
+      const memoryNamespaceById = new Map<string, string>();
+      let candidatesConsidered = 0;
+
+      const sources: DirectAnswerSources = {
+        taxonomy: DEFAULT_TAXONOMY,
+        listCandidateMemories: async (options: { namespace: string; abortSignal?: AbortSignal }) => {
+          const targetNs = options.namespace;
+          const storage =
+            scopedStorages.get(targetNs) ??
+            (await this.storageRouter.storageFor(targetNs));
+          const all = await storage.readAllMemories();
+          const active: MemoryFile[] = [];
+          for (const m of all) {
+            if ((m.frontmatter.status ?? "active") === "active") {
+              active.push(m);
+              memoryNamespaceByPath.set(m.path, targetNs);
+              if (m.frontmatter.id) {
+                memoryNamespaceById.set(m.frontmatter.id, targetNs);
+              }
+            }
+          }
+          candidatesConsidered += active.length;
+          return active;
+        },
+        trustZoneFor: async (memoryId: string) => {
+          const ns = memoryNamespaceById.get(memoryId);
+          if (!ns) return null;
+          return (
+            trustZoneByNsAndRecordId.get(
+              trustZoneKey(ns, memoryId),
+            ) ?? null
+          );
+        },
+        importanceFor: (memory) =>
+          typeof memory.frontmatter.importance?.score === "number"
+            ? memory.frontmatter.importance.score
+            : 0,
+      };
+
+      let result: import("./direct-answer.js").DirectAnswerResult | undefined;
+      for (const ns of namespaces) {
+        const r = await tryDirectAnswer({
+          query: prompt,
+          namespace: ns,
+          config: this.config,
+          sources,
+        });
+        if (r.eligible && r.winner) {
+          result = r;
+          break;
+        }
+      }
+
+      if (!result?.eligible || !result?.winner) return;
+
+      const explain: RecallTierExplain = {
+        tier: "direct-answer",
+        tierReason: result.narrative,
+        filteredBy: result.filteredBy,
+        candidatesConsidered,
+        latencyMs: Date.now() - tierStart,
+        sourceAnchors: [{ path: result.winner.memory.path }],
+      };
+
+      await this.lastRecall.annotateTierExplain(
+        sessionKey,
+        explain,
+        expectedIdentity,
+      );
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+      log.debug(`direct-answer observation failed: ${err}`);
     }
   }
 
@@ -12864,7 +13090,7 @@ export class Orchestrator {
    * path prefix (and, for the legacy default-namespace layout at
    * `memoryDir` root, an exclusion list for `namespaces/*`).
    */
-  private async semanticDedupLookup(
+  async semanticDedupLookup(
     content: string,
     limit: number,
     targetStorage: StorageManager,

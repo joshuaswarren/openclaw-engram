@@ -198,6 +198,7 @@ import { resolveHomeDir } from "./runtime/env.js";
 import { convertMemoriesToRecords } from "./training-export/converter.js";
 import { parseStrictCliDate as parseStrictCliDateShared } from "./training-export/date-parse.js";
 import { getTrainingExportAdapter, listTrainingExportAdapters } from "./training-export/registry.js";
+import { renderRecallExplain, parseRecallExplainFormat } from "./recall-explain-renderer.js";
 
 interface CliApi {
   registerCli(
@@ -3995,6 +3996,35 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("recall-explain")
+        .description(
+          "Show tier explain for the most recent recall (or a specific session)",
+        )
+        .option(
+          "--session <key>",
+          "Session key to look up; omit to use the most recent snapshot",
+        )
+        .option("--format <fmt>", "Output format: text (default) or json", "text")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const format = parseRecallExplainFormat(options.format);
+          await orchestrator.lastRecall.load();
+          const sessionKey =
+            typeof options.session === "string" && options.session.length > 0
+              ? options.session
+              : undefined;
+          let snapshot: ReturnType<typeof orchestrator.lastRecall.get> = null;
+          try {
+            snapshot = sessionKey
+              ? orchestrator.lastRecall.get(sessionKey)
+              : orchestrator.lastRecall.getMostRecent();
+          } catch {
+            snapshot = null;
+          }
+          console.log(renderRecallExplain(snapshot, format));
+        });
+
+      cmd
         .command("benchmark-validate")
         .description("Validate a benchmark manifest file or pack directory without importing it")
         .argument("<path>", "Path to a benchmark manifest JSON file or a directory with manifest.json")
@@ -6729,9 +6759,18 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             storage: orchestrator.storage,
             config: orchestrator.config,
             memoryDir: orchestrator.config.memoryDir,
-            embeddingLookup: undefined,
+            embeddingLookupFactory: (storage) => {
+              if (!orchestrator.config.embeddingFallbackEnabled) return undefined;
+              return async (content: string, limit: number) => {
+                try {
+                  return await orchestrator.semanticDedupLookup(content, limit, storage);
+                } catch {
+                  return [];
+                }
+              };
+            },
             localLlm: orchestrator.localLlm ?? null,
-            fallbackLlm: null,
+            fallbackLlm: orchestrator.fastGatewayLlm ?? null,
             namespace: options.namespace,
           });
           console.log(`Scan complete in ${result.elapsedMs}ms:`);

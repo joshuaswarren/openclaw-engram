@@ -1,6 +1,6 @@
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { log } from "./logger.js";
 import type {
   IdentityInjectionMode,
@@ -41,6 +41,13 @@ export interface LastRecallSnapshot {
   identityInjectionMode?: IdentityInjectionMode | "none";
   identityInjectedChars?: number;
   identityInjectionTruncated?: boolean;
+  /**
+   * Collision-safe write nonce.  Random UUID set on every `record()`
+   * call so the observation-mode direct-answer hook can detect stale
+   * snapshots and avoid annotating a snapshot that a subsequent recall
+   * already replaced (issue #518).
+   */
+  writeNonce?: string;
   /**
    * Optional tier-level explanation of how recall was served
    * (issue #518).  Populated by orchestrator call sites that can
@@ -248,6 +255,7 @@ export class LastRecallStore {
       sessionKey: opts.sessionKey,
       recordedAt: now,
       queryHash,
+      writeNonce: randomUUID(),
       queryLen: opts.query.length,
       memoryIds: opts.memoryIds,
       namespace: opts.namespace,
@@ -315,9 +323,31 @@ export class LastRecallStore {
   async annotateTierExplain(
     sessionKey: string,
     tierExplain: RecallTierExplain,
+    expected?: { writeNonce?: string; traceId?: string; recordedAt?: string },
   ): Promise<void> {
     const current = this.state[sessionKey];
     if (!current) return;
+    if (expected) {
+      if (
+        typeof expected.writeNonce === "string" &&
+        expected.writeNonce.length > 0
+      ) {
+        if (current.writeNonce !== expected.writeNonce) return;
+      } else {
+        const hasExpectedTraceId =
+          typeof expected.traceId === "string" && expected.traceId.length > 0;
+        const traceIdMatches =
+          hasExpectedTraceId && current.traceId === expected.traceId;
+        const recordedAtMatches =
+          expected.recordedAt !== undefined &&
+          current.recordedAt === expected.recordedAt;
+        if (hasExpectedTraceId) {
+          if (!traceIdMatches) return;
+        } else if (expected.recordedAt !== undefined && !recordedAtMatches) {
+          return;
+        }
+      }
+    }
     this.state[sessionKey] = {
       ...current,
       tierExplain: cloneTierExplain(tierExplain),
