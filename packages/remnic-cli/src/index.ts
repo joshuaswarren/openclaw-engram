@@ -835,11 +835,135 @@ const DOWNLOADED_DATASET_MARKERS: Record<string, { anyOf?: string[]; ext?: strin
   },
 };
 
-function hasAnyDirectFiles(directoryPath: string): boolean {
+const PERSONAMEM_DATASET_FILE_CANDIDATES = [
+  "benchmark/text/benchmark.csv",
+  "benchmark/benchmark.csv",
+  "benchmark.csv",
+] as const;
+
+const PERSONAMEM_COMPLETION_MARKER = path.join(
+  "data",
+  "chat_history_32k",
+  ".download-complete",
+);
+
+function resolveRealpathWithinDataset(
+  datasetPath: string,
+  relativePath: string,
+): string | null {
   try {
-    return fs.readdirSync(directoryPath).some((name) =>
-      fs.statSync(path.join(directoryPath, name)).isFile(),
-    );
+    const datasetRoot = fs.realpathSync(datasetPath);
+    const candidatePath = path.resolve(datasetRoot, relativePath);
+    const candidateRealPath = fs.realpathSync(candidatePath);
+    const relativeToRoot = path.relative(datasetRoot, candidateRealPath);
+    if (
+      relativeToRoot.startsWith("..")
+      || path.isAbsolute(relativeToRoot)
+    ) {
+      return null;
+    }
+    return candidateRealPath;
+  } catch {
+    return null;
+  }
+}
+
+function parseCsvRows(raw: string): string[][] {
+  const rows: string[][] = [];
+  let currentRow: string[] = [];
+  let currentField = "";
+  let inQuotes = false;
+
+  const pushRow = () => {
+    const values = [...currentRow, currentField];
+    const isHeader = rows.length === 0;
+    const isBlank = values.every((value) => value.trim().length === 0);
+    if (isHeader || !isBlank) {
+      rows.push(values);
+    }
+    currentRow = [];
+    currentField = "";
+  };
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]!;
+    const next = raw[index + 1];
+
+    if (char === "\"") {
+      if (inQuotes && next === "\"") {
+        currentField += "\"";
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (!inQuotes && char === ",") {
+      currentRow.push(currentField);
+      currentField = "";
+      continue;
+    }
+
+    if (!inQuotes && (char === "\n" || char === "\r")) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      pushRow();
+      continue;
+    }
+
+    currentField += char;
+  }
+
+  if (currentField.length > 0 || currentRow.length > 0) {
+    pushRow();
+  }
+
+  return rows;
+}
+
+function isPersonaMemDatasetComplete(datasetPath: string): boolean {
+  try {
+    const completionMarkerPath = path.join(datasetPath, PERSONAMEM_COMPLETION_MARKER);
+    if (fs.statSync(completionMarkerPath).isFile()) {
+      return true;
+    }
+  } catch {
+    // Fall back to verifying every CSV-linked history file for pre-marker mirrors.
+  }
+
+  const datasetFile = PERSONAMEM_DATASET_FILE_CANDIDATES.find((candidate) => {
+    try {
+      return fs.statSync(path.join(datasetPath, candidate)).isFile();
+    } catch {
+      return false;
+    }
+  });
+  if (!datasetFile) {
+    return false;
+  }
+
+  try {
+    const rows = parseCsvRows(fs.readFileSync(path.join(datasetPath, datasetFile), "utf8"));
+    if (rows.length < 2) {
+      return false;
+    }
+    const [header, ...dataRows] = rows;
+    const chatHistoryIndex = header.indexOf("chat_history_32k_link");
+    if (chatHistoryIndex < 0) {
+      return false;
+    }
+    const historyPaths = dataRows
+      .map((row) => row[chatHistoryIndex]?.trim() ?? "")
+      .filter((value) => value.length > 0);
+    if (historyPaths.length === 0) {
+      return false;
+    }
+    return historyPaths.every((relativePath) => {
+      const resolvedPath = resolveRealpathWithinDataset(datasetPath, relativePath);
+      return resolvedPath !== null && fs.statSync(resolvedPath).isFile();
+    });
   } catch {
     return false;
   }
@@ -876,7 +1000,7 @@ function isDatasetDownloaded(datasetPath: string, benchmarkId: string): boolean 
       return false;
     }
     if (benchmarkId === "personamem") {
-      return hasAnyDirectFiles(path.join(datasetPath, "data", "chat_history_32k"));
+      return isPersonaMemDatasetComplete(datasetPath);
     }
     return true;
   }

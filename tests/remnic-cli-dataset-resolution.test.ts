@@ -16,6 +16,7 @@ test("PersonaMem downloaded markers require both benchmark csv and mirrored chat
     [
       "persona_id,chat_history_32k_link,user_query,correct_answer",
       "persona-1,data/chat_history_32k/persona-1.json,What tea do I order?,Earl Grey tea",
+      "persona-2,data/chat_history_32k/persona-2.json,What coffee do I avoid?,Dark roast coffee",
     ].join("\n"),
     "utf8",
   );
@@ -34,6 +35,14 @@ test("PersonaMem downloaded markers require both benchmark csv and mirrored chat
   await mkdir(chatHistoryDir, { recursive: true });
   await writeFile(
     path.join(chatHistoryDir, "persona-1.json"),
+    JSON.stringify({ chat_history: [] }),
+    "utf8",
+  );
+
+  assert.equal(hooks.isDatasetDownloaded(datasetDir, "personamem"), false);
+
+  await writeFile(
+    path.join(chatHistoryDir, "persona-2.json"),
     JSON.stringify({ chat_history: [] }),
     "utf8",
   );

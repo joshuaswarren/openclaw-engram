@@ -38,12 +38,6 @@ check_deps() {
   done
 }
 
-directory_has_direct_files() {
-  local dir="$1"
-  [[ -d "$dir" ]] || return 1
-  find "$dir" -mindepth 1 -maxdepth 1 -type f -print -quit | grep -q .
-}
-
 require_python_modules() {
   if ! command -v python &>/dev/null; then
     echo "ERROR: python is required but not found"
@@ -236,7 +230,7 @@ PY
 download_personamem() {
   local dir="$DATASETS_DIR/personamem"
   if [[ -f "$dir/benchmark/text/benchmark.csv" ]] \
-    && directory_has_direct_files "$dir/data/chat_history_32k"; then
+    && [[ -f "$dir/data/chat_history_32k/.download-complete" ]]; then
     echo "[personamem] Already downloaded at $dir"
     return
   fi
@@ -324,6 +318,7 @@ print(
     f"[personamem] Mirrored benchmark.csv and {completed} chat histories into {out_dir}"
 )
 PY
+  touch "$dir/data/chat_history_32k/.download-complete"
   echo "[personamem] Downloaded to $dir"
 }
 
