@@ -13,10 +13,13 @@ import {
 import {
   cmdImport,
   parseImportArgs,
+  parseImportBundleArgs,
+  runBundleImportCommand,
   runImportCommand,
   type ImportDispatchArgs,
   type ImportDispatchIO,
 } from "./import-dispatch.js";
+import type { DetectedBundleEntry } from "./import-bundle-detect.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -391,5 +394,163 @@ describe("cmdImport dispose contract", () => {
     } finally {
       process.exitCode = savedExitCode;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Slice 7: --all-from-bundle <dir> auto-detect
+// ---------------------------------------------------------------------------
+
+describe("parseImportBundleArgs", () => {
+  it("returns undefined when --all-from-bundle is absent", () => {
+    assert.equal(parseImportBundleArgs(["--adapter", "chatgpt"]), undefined);
+  });
+
+  it("parses --all-from-bundle with a directory argument", () => {
+    const args = parseImportBundleArgs([
+      "--all-from-bundle",
+      "/tmp/bundle",
+      "--dry-run",
+    ]);
+    assert.ok(args);
+    assert.equal(args.bundleDir, "/tmp/bundle");
+    assert.equal(args.dryRun, true);
+  });
+
+  it("rejects --all-from-bundle without a directory argument", () => {
+    // `takeValue` throws the generic "--all-from-bundle requires a value"
+    // before parseImportBundleArgs can produce the more specific message.
+    // Either form satisfies CLAUDE.md rule 14 (no silent defaults).
+    assert.throws(
+      () => parseImportBundleArgs(["--all-from-bundle"]),
+      /--all-from-bundle.*requires (?:a value|a directory)/,
+    );
+  });
+
+  it("rejects --adapter combined with --all-from-bundle", () => {
+    assert.throws(
+      () =>
+        parseImportBundleArgs([
+          "--all-from-bundle",
+          "/tmp/bundle",
+          "--adapter",
+          "chatgpt",
+        ]),
+      /not valid with --all-from-bundle/,
+    );
+  });
+
+  it("rejects --file combined with --all-from-bundle", () => {
+    assert.throws(
+      () =>
+        parseImportBundleArgs([
+          "--all-from-bundle",
+          "/tmp/bundle",
+          "--file",
+          "/tmp/x.json",
+        ]),
+      /not valid with --all-from-bundle/,
+    );
+  });
+
+  it("rejects unknown flags even in bundle mode", () => {
+    assert.throws(
+      () =>
+        parseImportBundleArgs([
+          "--all-from-bundle",
+          "/tmp/bundle",
+          "--bogus",
+        ]),
+      /Unknown flag/,
+    );
+  });
+});
+
+describe("runBundleImportCommand", () => {
+  it("runs one adapter per detected entry and accumulates results", async () => {
+    const memories = [{ content: "bundle memory", sourceLabel: "chatgpt" }];
+    const adapter = makeFakeAdapter(memories);
+    const { target, received } = makeTarget();
+    const { io, stdoutLines, getWriteTargetCalls } = makeIo({ adapter, target });
+
+    const detector = (): DetectedBundleEntry[] => [
+      { adapter: "chatgpt", filePath: "/bundle/memory.json" },
+      { adapter: "chatgpt", filePath: "/bundle/conversations.json", includeConversations: true },
+    ];
+
+    const results = await runBundleImportCommand(
+      {
+        bundleDir: "/bundle",
+        dryRun: false,
+        includeConversations: false,
+      },
+      io,
+      detector,
+    );
+    assert.equal(results.length, 2);
+    // Every entry invoked runImportCommand → one getWriteTarget per entry.
+    assert.equal(getWriteTargetCalls.count, 2);
+    assert.ok(
+      stdoutLines.some((l) => l.includes("Detected 2 imports")),
+      `expected detection summary, got: ${stdoutLines.join("\n")}`,
+    );
+    assert.ok(received.length > 0);
+  });
+
+  it("reports an empty bundle gracefully", async () => {
+    const adapter = makeFakeAdapter([]);
+    const { target } = makeTarget();
+    const { io, stdoutLines } = makeIo({ adapter, target });
+
+    const results = await runBundleImportCommand(
+      { bundleDir: "/empty", dryRun: false, includeConversations: false },
+      io,
+      () => [],
+    );
+    assert.deepEqual(results, []);
+    assert.ok(
+      stdoutLines.some((l) => l.includes("No known exports found")),
+      `expected empty-bundle message, got: ${stdoutLines.join("\n")}`,
+    );
+  });
+
+  it("surfaces per-entry errors to stderr without aborting remaining entries", async () => {
+    // First entry will fail (adapter loader throws), second one succeeds.
+    let callCount = 0;
+    const goodAdapter = makeFakeAdapter([
+      { content: "ok", sourceLabel: "claude" },
+    ]);
+    const { target } = makeTarget();
+    const stdoutLines: string[] = [];
+    const stderrLines: string[] = [];
+    const io: ImportDispatchIO = {
+      readFile: async () => "{}",
+      loadAdapter: async () => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error("boom: chatgpt adapter missing");
+        }
+        return goodAdapter;
+      },
+      runImporter,
+      getWriteTarget: async () => target,
+      stdout: (l) => stdoutLines.push(l),
+      stderr: (l) => stderrLines.push(l),
+    };
+
+    const results = await runBundleImportCommand(
+      { bundleDir: "/bundle", dryRun: false, includeConversations: false },
+      io,
+      () => [
+        { adapter: "chatgpt", filePath: "/bundle/memory.json" },
+        { adapter: "claude", filePath: "/bundle/projects.json" },
+      ],
+    );
+    // Only the good adapter's result is collected.
+    assert.equal(results.length, 1);
+    assert.ok(
+      stderrLines.some((l) => l.includes("adapter 'chatgpt' failed")),
+      `expected failure surfaced to stderr, got: ${stderrLines.join("\n")}`,
+    );
   });
 });
