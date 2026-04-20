@@ -618,6 +618,24 @@ export {
 export * from "./training-export/index.js";
 
 // ---------------------------------------------------------------------------
+// Graph retrieval types (issue #559, PR 1 of 5)
+// ---------------------------------------------------------------------------
+
+export {
+  queryGraph,
+  isNodeType,
+  isEdgeType,
+  type NodeType,
+  type EdgeType,
+  type GraphNode,
+  type GraphEdge,
+  type RemnicGraph,
+  type QueryGraphOptions,
+  type QueryGraphResult,
+  type RankedNode,
+} from "./graph-retrieval.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
