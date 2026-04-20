@@ -143,6 +143,25 @@ function tokenizeArtifactSearchText(input: string): string[] {
     .filter((t) => !ARTIFACT_SEARCH_STOPWORDS.has(t));
 }
 
+/**
+ * Validate a Memory Worth counter (`mw_success` / `mw_fail`) before we persist
+ * it. Rejects non-finite, non-integer, and negative values rather than silently
+ * clamping — a silent clamp would mask miscounts in the feedback pipeline
+ * (issue #560 PR 3). Callers should pass only explicit user/pipeline values;
+ * `undefined` is checked at the callsite and skipped entirely.
+ */
+function assertMemoryWorthCounter(field: "mw_success" | "mw_fail", value: number): void {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${field} must be a finite number, got ${String(value)}`);
+  }
+  if (!Number.isInteger(value)) {
+    throw new Error(`${field} must be an integer, got ${value}`);
+  }
+  if (value < 0) {
+    throw new Error(`${field} must be >= 0, got ${value}`);
+  }
+}
+
 function serializeFrontmatter(fm: MemoryFrontmatter): string {
   const lines = [
     "---",
@@ -178,6 +197,18 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
     lines.push(`accessCount: ${fm.accessCount}`);
   }
   if (fm.lastAccessed) lines.push(`lastAccessed: ${fm.lastAccessed}`);
+  // Memory Worth counters (issue #560). Emit verbatim when present — including
+  // explicit zeros — so consumers can distinguish "never observed" (absent)
+  // from "observed with zero successes" (present, value 0). Validation below
+  // rejects negatives and non-integers so we never persist a corrupt counter.
+  if (fm.mw_success !== undefined) {
+    assertMemoryWorthCounter("mw_success", fm.mw_success);
+    lines.push(`mw_success: ${fm.mw_success}`);
+  }
+  if (fm.mw_fail !== undefined) {
+    assertMemoryWorthCounter("mw_fail", fm.mw_fail);
+    lines.push(`mw_fail: ${fm.mw_fail}`);
+  }
   // Importance scoring
   if (fm.importance) {
     lines.push(`importanceScore: ${fm.importance.score}`);
@@ -264,6 +295,21 @@ function parseLinkReasonValue(rawValue: string): string {
   }
 }
 
+/**
+ * Parse a Memory Worth counter from its raw YAML string form. Returns
+ * `undefined` for missing, blank, negative, or non-integer values so a
+ * corrupt stored counter fails safely rather than poisoning downstream
+ * scoring. Pair with `assertMemoryWorthCounter` on the write path.
+ */
+function parseMemoryWorthCounterField(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) return undefined;
+  return n;
+}
+
 function parseFrontmatter(
   raw: string,
 ): { frontmatter: MemoryFrontmatter; content: string } | null {
@@ -319,6 +365,13 @@ function parseFrontmatter(
   const accessCount = fm.accessCount ? parseInt(fm.accessCount, 10) : undefined;
   const decayScore = fm.decayScore !== undefined ? parseFloat(fm.decayScore) : undefined;
   const heatScore = fm.heatScore !== undefined ? parseFloat(fm.heatScore) : undefined;
+
+  // Parse Memory Worth counters (issue #560). We preserve explicit zeros so
+  // callers can distinguish "observed with zero successes" from "never
+  // observed". Invalid (non-integer / negative) stored values round-trip to
+  // `undefined` — better to drop corrupt counters than to poison scoring.
+  const mw_success = parseMemoryWorthCounterField(fm.mw_success);
+  const mw_fail = parseMemoryWorthCounterField(fm.mw_fail);
 
   // Parse importance
   let importance: ImportanceScore | undefined;
@@ -381,6 +434,9 @@ function parseFrontmatter(
       // Access tracking
       accessCount: accessCount && accessCount > 0 ? accessCount : undefined,
       lastAccessed: fm.lastAccessed || undefined,
+      // Memory Worth counters (issue #560)
+      mw_success,
+      mw_fail,
       // Importance scoring
       importance,
       // Chunking
