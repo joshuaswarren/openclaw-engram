@@ -149,6 +149,13 @@ test("StorageManager accepts single-quoted and bare YAML derived_from entries fr
         line: "derived_from: ['facts/it''s.md:2', 'facts/b.md:5']",
         expected: ["facts/it's.md:2", "facts/b.md:5"],
       },
+      {
+        // YAML flow sequences may mix quoted + bare scalars.  Every entry
+        // must survive, regardless of whether its neighbor was quoted.
+        id: "fact-derived-mixed-quoted-bare",
+        line: 'derived_from: ["facts/a.md:1", facts/b.md:2, \'facts/c.md:3\']',
+        expected: ["facts/a.md:1", "facts/b.md:2", "facts/c.md:3"],
+      },
     ];
 
     for (const flavor of flavors) {

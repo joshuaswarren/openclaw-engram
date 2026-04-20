@@ -427,17 +427,21 @@ function parseFrontmatter(
           i++;
         }
         if (buf.length > 0) entries.push(buf);
-      } else {
+      } else if (ch === "," || /\s/.test(ch)) {
+        // Separator between entries — skip.
         i++;
-      }
-    }
-    if (!sawQuoted && inner.trim().length > 0) {
-      // Bare YAML — split on commas.  Entries with commas in the path
-      // cannot be round-tripped bare; our serializer always quotes so
-      // this path only matters for externally authored frontmatter.
-      for (const chunk of inner.split(",")) {
-        const trimmed = chunk.trim();
-        if (trimmed.length > 0) entries.push(trimmed);
+      } else {
+        // Bare token — read until next comma or whitespace.  Supports
+        // mixed-style YAML sequences like `["facts/a.md:1", facts/b.md:2]`
+        // where some entries are quoted and others are bare.
+        let buf = "";
+        while (i < inner.length) {
+          const c = inner[i];
+          if (c === "," || /\s/.test(c)) break;
+          buf += c;
+          i++;
+        }
+        if (buf.length > 0) entries.push(buf);
       }
     }
     if (entries.length > 0) derived_from = entries;
