@@ -303,6 +303,114 @@ test("loadLoCoMo10 default parser rejects entries missing conversation object", 
   });
 });
 
+test("loadLongMemEvalS default parser rejects invalid session turn role", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      JSON.stringify([
+        {
+          question_id: 1,
+          question_type: "x",
+          question: "q",
+          answer: "a",
+          question_date: "2025-01-01",
+          haystack_sessions: [[{ role: "other", content: "hi" }]],
+          haystack_session_ids: ["s1"],
+          haystack_dates: ["2025-01-01"],
+          answer_session_ids: ["s1"],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) => /role must be "user" or "assistant"/.test(entry)),
+    );
+  });
+});
+
+test("loadLongMemEvalS default parser rejects non-string turn content", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      JSON.stringify([
+        {
+          question_id: 1,
+          question_type: "x",
+          question: "q",
+          answer: "a",
+          question_date: "2025-01-01",
+          haystack_sessions: [[{ role: "user", content: 42 }]],
+          haystack_session_ids: ["s1"],
+          haystack_dates: ["2025-01-01"],
+          answer_session_ids: ["s1"],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) => /content must be a string/.test(entry)),
+    );
+  });
+});
+
+test("loadLoCoMo10 default parser rejects qa entry missing question string", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "qa-bad-1",
+          conversation: { speaker_a: "A", speaker_b: "B" },
+          qa: [{ category: 1, evidence: [] }],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) => /qa\[0\]\.question must be a non-empty string/.test(entry)),
+    );
+  });
+});
+
+test("loadLoCoMo10 default parser rejects qa entry with non-integer category", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "qa-bad-2",
+          conversation: { speaker_a: "A", speaker_b: "B" },
+          qa: [{ question: "q", category: "one", evidence: [] }],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) => /qa\[0\]\.category must be an integer/.test(entry)),
+    );
+  });
+});
+
 test("loadLoCoMo10 default parser rejects entries missing qa array", async () => {
   await withTempDir(async (dir) => {
     await writeFile(

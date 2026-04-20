@@ -199,6 +199,58 @@ function parseLongMemEvalFile(raw: string, filename: string): LongMemEvalItem[] 
         `${filename} entry ${index} is missing an answer_session_ids array.`,
       );
     }
+    // Walk each haystack session to validate its turn shape. The
+    // runner maps over `turn.role` + `turn.content` — catch missing
+    // fields at parse time so runtime failures surface at the dataset
+    // boundary.
+    for (
+      let sessionIndex = 0;
+      sessionIndex < record.haystack_sessions.length;
+      sessionIndex += 1
+    ) {
+      const session = record.haystack_sessions[sessionIndex];
+      if (!Array.isArray(session)) {
+        throw new Error(
+          `${filename} entry ${index} haystack_sessions[${sessionIndex}] must be an array of turns.`,
+        );
+      }
+      for (
+        let turnIndex = 0;
+        turnIndex < session.length;
+        turnIndex += 1
+      ) {
+        const turn = session[turnIndex];
+        if (!turn || typeof turn !== "object" || Array.isArray(turn)) {
+          throw new Error(
+            `${filename} entry ${index} haystack_sessions[${sessionIndex}][${turnIndex}] must be a turn object.`,
+          );
+        }
+        const turnRecord = turn as Record<string, unknown>;
+        if (turnRecord.role !== "user" && turnRecord.role !== "assistant") {
+          throw new Error(
+            `${filename} entry ${index} haystack_sessions[${sessionIndex}][${turnIndex}].role must be "user" or "assistant".`,
+          );
+        }
+        if (typeof turnRecord.content !== "string") {
+          throw new Error(
+            `${filename} entry ${index} haystack_sessions[${sessionIndex}][${turnIndex}].content must be a string.`,
+          );
+        }
+      }
+    }
+    // Haystack session IDs and dates must be strings; `filter(Boolean)`
+    // in the runner would otherwise silently drop non-string entries.
+    for (
+      let stringIndex = 0;
+      stringIndex < record.haystack_session_ids.length;
+      stringIndex += 1
+    ) {
+      if (typeof record.haystack_session_ids[stringIndex] !== "string") {
+        throw new Error(
+          `${filename} entry ${index} haystack_session_ids[${stringIndex}] must be a string.`,
+        );
+      }
+    }
   }
   return parsed as LongMemEvalItem[];
 }
@@ -236,6 +288,32 @@ function parseLoCoMoFile(raw: string, filename: string): LoCoMoConversation[] {
       throw new Error(
         `${filename} conversation ${index} is missing a qa array.`,
       );
+    }
+    // Walk each QA entry. The runner derefs qa[i].question (string),
+    // qa[i].category (integer), qa[i].evidence (string[]). The runner
+    // calls a fallback normalizer for adversarial answers, but a
+    // completely malformed QA entry should fail at parse time.
+    for (let qaIndex = 0; qaIndex < record.qa.length; qaIndex += 1) {
+      const qa = record.qa[qaIndex];
+      if (!qa || typeof qa !== "object" || Array.isArray(qa)) {
+        throw new Error(
+          `${filename} conversation ${index} qa[${qaIndex}] must be an object.`,
+        );
+      }
+      const qaRecord = qa as Record<string, unknown>;
+      if (
+        typeof qaRecord.question !== "string" ||
+        qaRecord.question.trim().length === 0
+      ) {
+        throw new Error(
+          `${filename} conversation ${index} qa[${qaIndex}].question must be a non-empty string.`,
+        );
+      }
+      if (!Number.isInteger(qaRecord.category)) {
+        throw new Error(
+          `${filename} conversation ${index} qa[${qaIndex}].category must be an integer.`,
+        );
+      }
     }
   }
   return parsed as LoCoMoConversation[];
