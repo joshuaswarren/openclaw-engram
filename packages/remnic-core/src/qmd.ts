@@ -40,7 +40,6 @@ const QMD_FALLBACK_PATHS = [
   "/opt/homebrew/bin/qmd",
 ];
 const QMD_GLOBAL_STATE_KEY = "__openclawEngramQmdGlobalState";
-const ACTIVE_QMD_CHILDREN = new Set<CommandChildProcess>();
 
 type QmdGlobalState = {
   warnedGlobalUpdateBehavior: boolean;
@@ -317,9 +316,7 @@ function runQmdOnce(
       env: mergeEnv({ NO_COLOR: "1" }),
       stdio: ["ignore", "pipe", "pipe"],
     });
-    ACTIVE_QMD_CHILDREN.add(child);
     if (!child.stdout || !child.stderr) {
-      ACTIVE_QMD_CHILDREN.delete(child);
       reject(new Error(`qmd ${args.join(" ")} failed to open stdio pipes`));
       return;
     }
@@ -344,7 +341,6 @@ function runQmdOnce(
     };
     const cleanup = () => {
       signal?.removeEventListener("abort", onAbort);
-      ACTIVE_QMD_CHILDREN.delete(child);
     };
     signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -430,7 +426,6 @@ class QmdDaemonSession {
             env: mergeEnv({ NO_COLOR: "1" }),
             stdio: ["pipe", "pipe", "pipe"],
           });
-          ACTIVE_QMD_CHILDREN.add(child);
           this.child = child;
           this.buffer = "";
 
@@ -638,7 +633,6 @@ class QmdDaemonSession {
     if (opts?.killChild && !target.killed) {
       target.kill("SIGTERM");
     }
-    ACTIVE_QMD_CHILDREN.delete(target);
     this.initialized = false;
     for (const [, pending] of this.pendingRequests) {
       clearTimeout(pending.timer);

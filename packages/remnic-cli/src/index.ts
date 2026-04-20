@@ -225,6 +225,8 @@ const CLI_MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const CLI_REPO_ROOT = path.resolve(CLI_MODULE_DIR, "../../..");
 const EVAL_RUNNER_PATH = path.join(CLI_REPO_ROOT, "evals", "run.ts");
 const OPENCLAW_GATEWAY_LABEL = "ai.openclaw.gateway";
+const CLI_SUCCESS_EXIT_GRACE_MS = 2_000;
+const CLI_OUTPUT_FLUSH_GRACE_MS = 250;
 
 export const BENCHMARK_CATALOG: BenchCatalogEntry[] = [
   {
@@ -6148,6 +6150,39 @@ Options:
   }
 }
 
+function waitForStreamDrain(stream: NodeJS.WriteStream): Promise<void> {
+  if (!stream.writableNeedDrain) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    stream.once("drain", resolve);
+  });
+}
+
+async function armCliSuccessExitWatchdog(): Promise<void> {
+  process.exitCode = 0;
+
+  await Promise.race([
+    Promise.allSettled([
+      waitForStreamDrain(process.stdout),
+      waitForStreamDrain(process.stderr),
+    ]),
+    new Promise((resolve) => setTimeout(resolve, CLI_OUTPUT_FLUSH_GRACE_MS)),
+  ]);
+
+  const watchdog = setTimeout(() => {
+    try {
+      process.stderr.write(
+        `Warning: remnic CLI forced a clean exit after ${CLI_SUCCESS_EXIT_GRACE_MS}ms because a handle remained open.\n`,
+      );
+    } catch {
+      // Ignore write failures during forced shutdown.
+    }
+    process.exit(0);
+  }, CLI_SUCCESS_EXIT_GRACE_MS);
+  watchdog.unref?.();
+}
+
 // Auto-run when executed directly (covers: remnic and legacy engram entrypoints,
 // or invoked via wrappers that set REMNIC_CLI_BIN / ENGRAM_CLI_BIN)
 const argv1 = process.argv[1] ?? "";
@@ -6164,6 +6199,7 @@ if (
   process.env.ENGRAM_CLI_BIN === "1"
 ) {
   main()
+    .then(() => armCliSuccessExitWatchdog())
     .catch((err) => {
       process.stderr.write(`Fatal: ${err instanceof Error ? err.message : String(err)}\n`);
       process.exit(1);
