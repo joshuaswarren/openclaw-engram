@@ -321,6 +321,94 @@ test("parseBenchmarkArtifact rejects non-object top-level payload", () => {
   assert.throws(() => parseBenchmarkArtifact("[]"), /must be an object/);
 });
 
+test("parseBenchmarkArtifact rejects non-ISO startedAt", () => {
+  const raw = JSON.stringify({
+    schemaVersion: BENCHMARK_ARTIFACT_SCHEMA_VERSION,
+    benchmarkId: "longmemeval",
+    datasetVersion: "v1",
+    system: { name: "remnic", version: "1.0.0", gitSha: "abc" },
+    model: "m",
+    seed: 0,
+    metrics: {},
+    perTaskScores: [],
+    startedAt: "not-a-date",
+    finishedAt: "2026-04-20T12:00:00Z",
+    durationMs: 0,
+    env: { node: "v22", os: "linux" },
+  });
+  assert.throws(
+    () => parseBenchmarkArtifact(raw),
+    /"startedAt" "not-a-date" is not a parseable ISO-8601/,
+  );
+});
+
+test("parseBenchmarkArtifact rejects non-ISO finishedAt", () => {
+  const raw = JSON.stringify({
+    schemaVersion: BENCHMARK_ARTIFACT_SCHEMA_VERSION,
+    benchmarkId: "locomo",
+    datasetVersion: "v1",
+    system: { name: "remnic", version: "1.0.0", gitSha: "abc" },
+    model: "m",
+    seed: 0,
+    metrics: {},
+    perTaskScores: [],
+    startedAt: "2026-04-20T12:00:00Z",
+    finishedAt: "nope",
+    durationMs: 0,
+    env: { node: "v22", os: "linux" },
+  });
+  assert.throws(
+    () => parseBenchmarkArtifact(raw),
+    /"finishedAt" "nope" is not a parseable ISO-8601/,
+  );
+});
+
+test("parseBenchmarkArtifact rejects non-finite metric value", () => {
+  // `JSON.parse('{"f1":1e309}')` surfaces `Infinity`, which is what
+  // we want to reject alongside non-number types.
+  const rawBase = JSON.stringify({
+    schemaVersion: BENCHMARK_ARTIFACT_SCHEMA_VERSION,
+    benchmarkId: "longmemeval",
+    datasetVersion: "v1",
+    system: { name: "remnic", version: "1.0.0", gitSha: "abc" },
+    model: "m",
+    seed: 0,
+    metrics: {},
+    perTaskScores: [],
+    startedAt: "2026-04-20T12:00:00Z",
+    finishedAt: "2026-04-20T12:00:00Z",
+    durationMs: 0,
+    env: { node: "v22", os: "linux" },
+  });
+  const raw = rawBase.replace('"metrics":{}', '"metrics":{"f1":1e309}');
+  assert.throws(
+    () => parseBenchmarkArtifact(raw),
+    /metrics\.f1 must be a finite number/,
+  );
+});
+
+test("parseBenchmarkArtifact rejects non-finite per-task score", () => {
+  const rawBase = JSON.stringify({
+    schemaVersion: BENCHMARK_ARTIFACT_SCHEMA_VERSION,
+    benchmarkId: "longmemeval",
+    datasetVersion: "v1",
+    system: { name: "remnic", version: "1.0.0", gitSha: "abc" },
+    model: "m",
+    seed: 0,
+    metrics: {},
+    perTaskScores: [{ taskId: "t1", scores: { f1: 1 } }],
+    startedAt: "2026-04-20T12:00:00Z",
+    finishedAt: "2026-04-20T12:00:00Z",
+    durationMs: 0,
+    env: { node: "v22", os: "linux" },
+  });
+  const raw = rawBase.replace('"f1":1', '"f1":1e309');
+  assert.throws(
+    () => parseBenchmarkArtifact(raw),
+    /perTaskScores\[0\]\.scores\.f1 must be a finite number/,
+  );
+});
+
 test("writeBenchmarkArtifact writes canonical JSON to disk with stable sha", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "remnic-artifact-"));
   try {
