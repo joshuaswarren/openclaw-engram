@@ -58,7 +58,11 @@ export async function buildProcedureRecallSection(
       typeof config.procedural.recallMaxProcedures === "number" &&
         Number.isFinite(config.procedural.recallMaxProcedures)
         ? Math.floor(config.procedural.recallMaxProcedures)
-        : 3,
+        // Safer-by-default fallback (issue #567 PR 3/5): must match
+        // config.ts's canonical default (2). Cursor review on PR #607:
+        // divergent fallbacks silently regressed the safer cap whenever
+        // the config value was missing or non-finite at this call site.
+        : 2,
     ),
   );
 
