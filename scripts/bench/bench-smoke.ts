@@ -44,9 +44,15 @@ import type {
   SearchResult,
 } from "../../packages/bench/src/adapters/types.js";
 
-// Tolerance for each metric. Issue #566 spec: fail if score drops > 5% vs
-// committed baseline. We compare per-metric means; higher-is-better
-// metrics regress when current < baseline - 0.05.
+// Tolerance for each metric. Issue #566 spec: fail if score drops > 5%
+// vs committed baseline. This is a RELATIVE drop: a metric regresses
+// when `(baseline - current) / |baseline| > tolerance`. Using a
+// relative tolerance means the same 5% threshold is meaningful for
+// both small-scale metrics (`f1` in [0, 1]) and larger unbounded
+// metrics (`search_hits`, token counts) — an absolute 0.05 drop would
+// be a silent no-op for a metric whose baseline is 100.
+// When the baseline value is exactly 0 we fall back to an absolute
+// delta threshold of `tolerance` to avoid divide-by-zero.
 const REGRESSION_TOLERANCE = 0.05;
 
 interface SmokeBaseline {
@@ -163,7 +169,7 @@ function printUsage(): void {
       "Flags:",
       "  --seed N             RNG seed (default 1)",
       "  --baseline PATH      Baseline JSON path (default tests/fixtures/bench-smoke/baseline.json)",
-      "  --tolerance N        Max allowed metric drop (default 0.05)",
+      "  --tolerance N        Max allowed RELATIVE metric drop (default 0.05 = 5%)",
       "  --update-baseline    Overwrite the baseline JSON with current run",
       "",
     ].join("\n"),
@@ -313,9 +319,51 @@ async function main(argv: readonly string[]): Promise<number> {
 
   let baseline: SmokeBaseline;
   try {
-    baseline = JSON.parse(
-      await readFile(args.baselinePath, "utf8"),
-    ) as SmokeBaseline;
+    const raw = await readFile(args.baselinePath, "utf8");
+    const parsed: unknown = JSON.parse(raw);
+    // CLAUDE.md rule 18: JSON.parse("null") succeeds but is not a
+    // valid config. Validate shape before trusting it.
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("baseline JSON must be a non-null object");
+    }
+    const record = parsed as Record<string, unknown>;
+    if (record.schemaVersion !== 1) {
+      throw new Error(
+        `baseline schemaVersion must be 1; got ${String(record.schemaVersion)}`,
+      );
+    }
+    if (
+      !record.benchmarks ||
+      typeof record.benchmarks !== "object" ||
+      Array.isArray(record.benchmarks)
+    ) {
+      throw new Error("baseline.benchmarks must be an object");
+    }
+    for (const [benchmarkId, bench] of Object.entries(
+      record.benchmarks as Record<string, unknown>,
+    )) {
+      if (!bench || typeof bench !== "object" || Array.isArray(bench)) {
+        throw new Error(
+          `baseline.benchmarks.${benchmarkId} must be an object`,
+        );
+      }
+      const metrics = (bench as { metrics?: unknown }).metrics;
+      if (!metrics || typeof metrics !== "object" || Array.isArray(metrics)) {
+        throw new Error(
+          `baseline.benchmarks.${benchmarkId}.metrics must be an object`,
+        );
+      }
+      for (const [metric, value] of Object.entries(
+        metrics as Record<string, unknown>,
+      )) {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          throw new Error(
+            `baseline.benchmarks.${benchmarkId}.metrics.${metric} must be a finite number`,
+          );
+        }
+      }
+    }
+    baseline = parsed as SmokeBaseline;
   } catch (error) {
     process.stderr.write(
       `bench-smoke: failed to read baseline from ${args.baselinePath}: ${error instanceof Error ? error.message : String(error)}\n`,
@@ -341,16 +389,25 @@ async function main(argv: readonly string[]): Promise<number> {
         continue;
       }
       const delta = value - baselineValue;
-      const verdict =
-        delta < -args.tolerance
-          ? `REGRESSION (tol=${args.tolerance})`
-          : "ok";
+      // Relative drop: `(baseline - current) / |baseline|`. Fall back
+      // to an absolute threshold when baseline === 0 to avoid
+      // divide-by-zero; a 0-baseline metric regresses only if it
+      // goes negative by more than `tolerance` in absolute terms.
+      const denom = Math.abs(baselineValue);
+      const relativeDrop = denom === 0 ? -delta : (baselineValue - value) / denom;
+      const regressed = relativeDrop > args.tolerance;
+      const verdict = regressed
+        ? `REGRESSION (tol=${args.tolerance} relative)`
+        : "ok";
+      const relDisplay = denom === 0
+        ? `abs-delta=${delta.toFixed(4)}`
+        : `rel-drop=${(relativeDrop * 100).toFixed(2)}%`;
       process.stdout.write(
-        `bench-smoke: [${benchmarkId}] ${metric} baseline=${baselineValue.toFixed(4)} current=${value.toFixed(4)} delta=${delta >= 0 ? "+" : ""}${delta.toFixed(4)} ${verdict}\n`,
+        `bench-smoke: [${benchmarkId}] ${metric} baseline=${baselineValue.toFixed(4)} current=${value.toFixed(4)} delta=${delta >= 0 ? "+" : ""}${delta.toFixed(4)} ${relDisplay} ${verdict}\n`,
       );
-      if (delta < -args.tolerance) {
+      if (regressed) {
         regressions.push(
-          `${benchmarkId}.${metric} dropped ${Math.abs(delta).toFixed(4)} (baseline=${baselineValue.toFixed(4)}, current=${value.toFixed(4)}, tolerance=${args.tolerance})`,
+          `${benchmarkId}.${metric} dropped ${Math.abs(delta).toFixed(4)} (baseline=${baselineValue.toFixed(4)}, current=${value.toFixed(4)}, relative=${(relativeDrop * 100).toFixed(2)}%, tolerance=${(args.tolerance * 100).toFixed(2)}%)`,
         );
       }
     }

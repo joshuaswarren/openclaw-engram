@@ -146,6 +146,93 @@ test("bench-smoke rejects option-like tokens as flag values", () => {
   assert.match(stderr, /option-like token "--update-baseline"/);
 });
 
+test("bench-smoke uses relative tolerance (5% default)", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "bench-smoke-relative-"));
+  try {
+    // Baseline: raise every metric to 10.0. Current run produces <=1.0,
+    // so every metric drops >90% relative — well over the 5% default.
+    // An absolute-delta gate of 0.05 would silently pass a small
+    // metric whose delta sits under 0.05; the relative gate correctly
+    // fires here.
+    const baseline = {
+      schemaVersion: 1,
+      benchmarks: {
+        longmemeval: {
+          metrics: {
+            contains_answer: 10,
+            f1: 10,
+            llm_judge: 10,
+            search_hits: 10,
+          },
+        },
+        locomo: {
+          metrics: {
+            contains_answer: 10,
+            f1: 10,
+            llm_judge: 10,
+            rouge_l: 10,
+          },
+        },
+      },
+    };
+    const tamperedPath = path.join(dir, "baseline.json");
+    await writeFile(tamperedPath, JSON.stringify(baseline, null, 2), "utf8");
+    const { code, stdout, stderr } = runSmoke(["--baseline", tamperedPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /REGRESSION/);
+    assert.match(stdout, /rel-drop=/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("bench-smoke rejects null baseline JSON (CLAUDE.md rule 18)", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "bench-smoke-null-"));
+  try {
+    const tamperedPath = path.join(dir, "baseline.json");
+    await writeFile(tamperedPath, "null", "utf8");
+    const { code, stderr } = runSmoke(["--baseline", tamperedPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /non-null object/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("bench-smoke rejects baseline with bad schemaVersion", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "bench-smoke-shape-"));
+  try {
+    const tamperedPath = path.join(dir, "baseline.json");
+    await writeFile(
+      tamperedPath,
+      JSON.stringify({ schemaVersion: 99, benchmarks: {} }),
+      "utf8",
+    );
+    const { code, stderr } = runSmoke(["--baseline", tamperedPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /schemaVersion must be 1/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("bench-smoke rejects baseline with non-finite metric", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "bench-smoke-infinite-"));
+  try {
+    const tamperedPath = path.join(dir, "baseline.json");
+    await writeFile(
+      tamperedPath,
+      '{"schemaVersion":1,"benchmarks":{"longmemeval":{"metrics":{"f1":1e309}}}}',
+      "utf8",
+    );
+    const { code, stderr } = runSmoke(["--baseline", tamperedPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /must be a finite number/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("bench-smoke --update-baseline writes a stable file (no timestamp)", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "bench-smoke-update-"));
   try {
