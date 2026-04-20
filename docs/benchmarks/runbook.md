@@ -9,6 +9,18 @@ clone on a machine with appropriate API keys; nothing auto-runs on CI.
 > runner aggregates + per-task scores land in `docs/benchmarks/results/`.
 > Never commit raw dataset files, API keys, or intermediate LLM traces.
 
+> **Dependencies on sibling slices of #566.** The helper scripts
+> referenced below
+> (`scripts/bench/fetch-datasets.sh`,
+> `scripts/bench/verify-artifact.ts`) land in
+> [PR 1 (#580)](https://github.com/joshuaswarren/remnic/pull/580) and
+> [PR 3 (#581)](https://github.com/joshuaswarren/remnic/pull/581)
+> respectively. A dedicated `remnic bench published` subcommand with
+> `--name` / `--dataset` / `--model` / `--seed` / `--limit` is planned
+> for PR 4 (#566 slice 4) and is not shipped yet. Until then, drive
+> the runners via the current `remnic bench run <id>` + `--dataset-dir`
+> CLI surface as shown below.
+
 ## 1. Prerequisites
 
 - Node.js ≥ 22.12.0 and `pnpm` 10+.
@@ -48,35 +60,36 @@ bench-datasets/
 
 ```bash
 OPENAI_API_KEY=... \
-pnpm exec remnic bench published \
-  --name longmemeval \
-  --dataset ./bench-datasets/longmemeval \
-  --model gpt-4o-mini \
-  --limit 100 \
-  --seed 42 \
-  --out docs/benchmarks/results/
+pnpm exec remnic bench run longmemeval \
+  --dataset-dir ./bench-datasets/longmemeval \
+  --results-dir docs/benchmarks/results/
 ```
 
 The runner:
 
-1. Loads LongMemEval-S via `loadLongMemEvalS()` (slice 1).
+1. Loads LongMemEval-S via `loadLongMemEvalS()` (slice 1 of #566).
 2. Resets the Remnic orchestrator for each item.
 3. Ingests every haystack session.
 4. Recalls + answers each question via the configured responder.
 5. Scores via `f1`, `contains_answer`, and the LLM judge (configurable).
-6. Emits a `BenchmarkArtifact` JSON (slice 3) under
-   `docs/benchmarks/results/<iso-date>-longmemeval-<model>-<sha>.json`.
+6. Writes a `BenchmarkResult` JSON under `--results-dir`. Slice 6 (this
+   PR) + slice 3 wire the `BenchmarkArtifact v1` export as an
+   additional, flatter payload for public leaderboard consumption —
+   run `scripts/bench/verify-artifact.ts` (step 5) over the produced
+   artifact before publishing.
+
+> Model / seed / sample limit are set via provider / runtime options in
+> the CLI today. The planned `remnic bench published` subcommand
+> (issue #566 slice 4) will surface them as top-level `--model`,
+> `--seed`, and `--limit` flags.
 
 ## 4. Run LoCoMo-10 on gpt-4o-mini
 
 ```bash
 OPENAI_API_KEY=... \
-pnpm exec remnic bench published \
-  --name locomo \
-  --dataset ./bench-datasets/locomo \
-  --model gpt-4o-mini \
-  --seed 42 \
-  --out docs/benchmarks/results/
+pnpm exec remnic bench run locomo \
+  --dataset-dir ./bench-datasets/locomo \
+  --results-dir docs/benchmarks/results/
 ```
 
 Metrics emitted: `f1`, `contains_answer`, `rouge_l`, optional `llm_judge`.
@@ -110,18 +123,18 @@ for public display.
 ## 7. Local-LLM parity run (slice 5, when shipped)
 
 ```bash
-pnpm exec remnic bench published \
-  --name longmemeval \
-  --dataset ./bench-datasets/longmemeval \
-  --provider local-llm \
-  --base-url http://127.0.0.1:8080 \
-  --model llama-3.1-8b-instruct-q4_k_m \
-  --seed 42 \
-  --out docs/benchmarks/results/
+pnpm exec remnic bench run longmemeval \
+  --dataset-dir ./bench-datasets/longmemeval \
+  --system-provider local-llm \
+  --system-base-url http://127.0.0.1:8080 \
+  --system-model llama-3.1-8b-instruct-q4_k_m \
+  --results-dir docs/benchmarks/results/
 ```
 
 The same runner + artifact schema as the cloud run. Only the responder /
-extraction provider differ.
+extraction provider differ. The `remnic bench published` subcommand
+planned in PR 4 will expose a cleaner `--provider local-llm --base-url
+... --model ...` shape.
 
 ## 8. Troubleshooting
 
