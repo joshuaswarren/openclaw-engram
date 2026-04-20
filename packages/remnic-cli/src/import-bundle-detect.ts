@@ -61,7 +61,43 @@ export function detectBundleEntries(
   const readdir = options.readdirImpl ?? defaultReaddir;
   const readFileImpl = options.readFileImpl ?? defaultReadFile;
   const isDirectory = options.isDirectoryImpl ?? defaultIsDirectory;
-  const isRegularFile = options.isRegularFileImpl ?? defaultIsRegularFile;
+  // Codex review on PR #610 — when callers inject readdir/isDirectory
+  // (the testing seam), we must NOT fall back to `lstatSync`-on-disk for
+  // isRegularFile. That probes the real filesystem and filters out the
+  // virtual paths produced by the injected walker, breaking the seam.
+  // Derive a consistent regular-file probe from the injected traversal
+  // layer: any entry that is not a directory (per `isDirectory`) and
+  // appears in its parent's readdir listing is treated as a regular
+  // file. Only fall back to `defaultIsRegularFile` (which probes disk)
+  // when neither `readdir` nor `isDirectory` is injected.
+  const isRegularFile =
+    options.isRegularFileImpl ??
+    (options.readdirImpl !== undefined || options.isDirectoryImpl !== undefined
+      ? (p: string) => !isDirectory(p)
+      : defaultIsRegularFile);
+
+  // Codex review on PR #610 — reject a bundle root that is itself a
+  // symlink. Otherwise a user-supplied `--all-from-bundle <symlink>`
+  // would silently traverse into the symlink target, picking up files
+  // outside the intended bundle tree. Tests inject walkers and skip
+  // this check — only the default `lstatSync`-backed walker needs to
+  // enforce it.
+  if (options.readdirImpl === undefined && options.isDirectoryImpl === undefined) {
+    try {
+      const rootStat = lstatSync(bundleDir);
+      if (rootStat.isSymbolicLink()) {
+        throw new Error(
+          `Bundle directory '${bundleDir}' is a symbolic link. Pass the resolved directory path instead.`,
+        );
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith("Bundle directory")) {
+        throw err;
+      }
+      // `lstatSync` throwing for a missing path is handled by the
+      // readdir error path below.
+    }
+  }
 
   const roots = collectCandidatePaths(
     bundleDir,
