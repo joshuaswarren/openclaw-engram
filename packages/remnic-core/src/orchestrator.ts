@@ -69,6 +69,7 @@ import {
   ensureDaySummaryCron,
   ensureNightlyGovernanceCron,
   ensureProceduralMiningCron,
+  ensureContradictionScanCron,
 } from "./maintenance/memory-governance-cron.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
@@ -2103,6 +2104,15 @@ export class Orchestrator {
       }
     }
 
+    // Auto-register contradiction scan cron (gated by config)
+    if (this.config.contradictionScan?.enabled) {
+      try {
+        await this.autoRegisterContradictionScanCron();
+      } catch (err) {
+        log.debug(`contradiction scan cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
+
     log.info("orchestrator initialized (full — deferred steps complete)");
   }
 
@@ -2311,6 +2321,27 @@ export class Orchestrator {
       }
     } catch (err) {
       log.debug(`procedural mining cron auto-register error: ${err}`);
+    }
+  }
+
+  private async autoRegisterContradictionScanCron(): Promise<void> {
+    const home = resolveHomeDir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("contradiction scan cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+      const created = await ensureContradictionScanCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (created.created) {
+        log.info(`contradiction scan cron auto-registered (${created.jobId})`);
+      } else {
+        log.debug("contradiction scan cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`contradiction scan cron auto-register error: ${err}`);
     }
   }
 

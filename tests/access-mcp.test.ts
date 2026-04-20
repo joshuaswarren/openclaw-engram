@@ -200,6 +200,9 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.memory_promote",
     "engram.context_checkpoint",
     "engram.briefing",
+    "engram.review_list",
+    "engram.review_resolve",
+    "engram.contradiction_scan_run",
   ];
   const canonicalListed = legacyListed.map((name) => name.replace(/^engram\./, "remnic."));
   assert.deepEqual(listed, legacyListed.flatMap((name, index) => [canonicalListed[index], name]));

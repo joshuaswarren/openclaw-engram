@@ -52,26 +52,33 @@ export async function executeResolution(
   const [idA, idB] = pair.memoryIds;
   const affectedIds: string[] = [];
   let message = "";
+  let supersedeFailed = false;
 
   switch (verb) {
     case "keep-a": {
-      await supersedeSafe(storage, idB, idA, "contradiction-resolution:keep-a");
-      affectedIds.push(idB);
-      message = `Kept ${idA}, superseded ${idB}`;
+      const ok = await supersedeSafe(storage, idB, idA, "contradiction-resolution:keep-a");
+      if (ok) { affectedIds.push(idB); message = `Kept ${idA}, superseded ${idB}`; }
+      else { supersedeFailed = true; message = `Supersede failed for ${idB}; not resolving`; }
       break;
     }
     case "keep-b": {
-      await supersedeSafe(storage, idA, idB, "contradiction-resolution:keep-b");
-      affectedIds.push(idA);
-      message = `Kept ${idB}, superseded ${idA}`;
+      const ok = await supersedeSafe(storage, idA, idB, "contradiction-resolution:keep-b");
+      if (ok) { affectedIds.push(idA); message = `Kept ${idB}, superseded ${idA}`; }
+      else { supersedeFailed = true; message = `Supersede failed for ${idA}; not resolving`; }
       break;
     }
     case "merge": {
       const mergedId = `merged-${pairId}`;
-      await supersedeSafe(storage, idA, mergedId, "contradiction-resolution:merge");
-      await supersedeSafe(storage, idB, mergedId, "contradiction-resolution:merge");
-      affectedIds.push(idA, idB);
-      message = `Both memories superseded by merged ${mergedId}`;
+      const okA = await supersedeSafe(storage, idA, mergedId, "contradiction-resolution:merge");
+      const okB = await supersedeSafe(storage, idB, mergedId, "contradiction-resolution:merge");
+      if (okA) affectedIds.push(idA);
+      if (okB) affectedIds.push(idB);
+      if (!okA || !okB) {
+        supersedeFailed = true;
+        message = `Merge incomplete: ${affectedIds.length}/2 superseded; not resolving to allow retry`;
+      } else {
+        message = `Both memories superseded by merged ${mergedId}`;
+      }
       break;
     }
     case "both-valid": {
@@ -84,7 +91,9 @@ export async function executeResolution(
     }
   }
 
-  resolvePair(memoryDir, pairId, verb);
+  if (!supersedeFailed) {
+    resolvePair(memoryDir, pairId, verb);
+  }
   log.info("[contradiction-resolution] pair=%s verb=%s affected=%d", pairId, verb, affectedIds.length);
   return { pairId, verb, affectedIds, message };
 }
@@ -94,9 +103,14 @@ async function supersedeSafe(
   oldId: string,
   newId: string,
   reason: string,
-): Promise<void> {
+): Promise<boolean> {
   try {
-    await storage.supersedeMemory(oldId, newId, reason);
+    const result = await storage.supersedeMemory(oldId, newId, reason);
+    if (result === false) {
+      log.warn("[contradiction-resolution] supersede returned false for %s → %s", oldId, newId);
+      return false;
+    }
+    return true;
   } catch (err) {
     log.warn(
       "[contradiction-resolution] supersede failed %s → %s: %s",
@@ -104,5 +118,6 @@ async function supersedeSafe(
       newId,
       err instanceof Error ? err.message : err,
     );
+    return false;
   }
 }

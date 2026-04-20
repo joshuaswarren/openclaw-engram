@@ -36,12 +36,12 @@ export const ACTIVE_STATUSES: Set<MemoryStatus> = new Set(["active"]);
 
 /** High-value taxonomy buckets to scan. */
 const SCAN_CATEGORIES = new Set([
-  "decisions",
-  "principles",
-  "conventions",
-  "entities",
-  "facts",
-  "preferences",
+  "decision",
+  "principle",
+  "rule",
+  "entity",
+  "fact",
+  "preference",
 ]);
 
 export interface ScanResult {
@@ -145,6 +145,8 @@ export async function runContradictionScan(deps: ScanDependencies): Promise<Scan
       rationale: result.rationale,
       confidence: result.confidence,
       detectedAt: new Date().toISOString(),
+      // Set lastReviewedAt for non-actionable verdicts so cooldown prevents re-judging
+      lastReviewedAt: result.verdict === "independent" ? new Date().toISOString() : undefined,
       namespace,
     });
   }
@@ -293,6 +295,10 @@ async function loadEligibleMemories(storage: StorageManager, namespace?: string)
 
     // Must have an ID
     if (!fm.id) return false;
+
+    // Namespace scoping is handled at the storage layer — memoryDir is
+    // already namespace-scoped, so readAllMemories() returns only memories
+    // within the requested namespace.
 
     return true;
   });

@@ -61,6 +61,9 @@ function reviewDir(memoryDir: string): string {
 }
 
 function pairPath(memoryDir: string, pairId: string): string {
+  if (pairId.includes("/") || pairId.includes("\\") || pairId.includes("..")) {
+    throw new Error(`Invalid pairId: ${pairId}`);
+  }
   return path.join(reviewDir(memoryDir), `${pairId}.json`);
 }
 
@@ -161,6 +164,7 @@ export function listPairs(
   const dir = reviewDir(memoryDir);
   const { filter = "all", namespace, limit = 50 } = options ?? {};
   const pairs: ContradictionPair[] = [];
+  let total = 0;
 
   if (!fs.existsSync(dir)) {
     return { pairs: [], total: 0, durationMs: Date.now() - startTime };
@@ -168,7 +172,6 @@ export function listPairs(
 
   for (const entry of fs.readdirSync(dir)) {
     if (!entry.endsWith(".json")) continue;
-    if (pairs.length >= limit) break;
 
     try {
       const raw = fs.readFileSync(path.join(dir, entry), "utf-8");
@@ -188,13 +191,14 @@ export function listPairs(
         continue;
       }
 
-      pairs.push(pair);
+      total++;
+      if (pairs.length < limit) pairs.push(pair);
     } catch {
       continue;
     }
   }
 
-  return { pairs, total: pairs.length, durationMs: Date.now() - startTime };
+  return { pairs, total, durationMs: Date.now() - startTime };
 }
 
 // ── Cooldown ───────────────────────────────────────────────────────────────────

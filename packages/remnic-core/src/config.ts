@@ -108,7 +108,7 @@ function normalizeMemoryRelativeDir(raw: unknown, fallback: string): string {
 function parseContradictionScanConfig(raw: unknown): ContradictionScanConfig {
   if (!raw || typeof raw !== "object") {
     return {
-      enabled: true,
+      enabled: false,
       similarityFloor: 0.82,
       topicOverlapFloor: 0.4,
       maxPairsPerRun: 500,
@@ -117,17 +117,17 @@ function parseContradictionScanConfig(raw: unknown): ContradictionScanConfig {
     };
   }
   const src = raw as Record<string, unknown>;
-  const simFloor = typeof src.similarityFloor === "number" ? src.similarityFloor : 0.82;
-  const topicFloor = typeof src.topicOverlapFloor === "number" ? src.topicOverlapFloor : 0.4;
-  const maxPairs = typeof src.maxPairsPerRun === "number" ? src.maxPairsPerRun : 500;
-  const cooldown = typeof src.cooldownDays === "number" ? src.cooldownDays : 14;
+  const simFloor = coerceNumber(src.similarityFloor) ?? 0.82;
+  const topicFloor = coerceNumber(src.topicOverlapFloor) ?? 0.4;
+  const maxPairs = coerceNumber(src.maxPairsPerRun) ?? 500;
+  const cooldown = coerceNumber(src.cooldownDays) ?? 14;
   return {
-    enabled: src.enabled !== false,
+    enabled: coerceBool(src.enabled) === true,
     similarityFloor: Math.min(1, Math.max(0, simFloor)),
     topicOverlapFloor: Math.min(1, Math.max(0, topicFloor)),
     maxPairsPerRun: Math.max(1, maxPairs),
     cooldownDays: Math.max(0, cooldown),
-    autoMergeDuplicates: src.autoMergeDuplicates === true,
+    autoMergeDuplicates: coerceBool(src.autoMergeDuplicates) === true,
   };
 }
 

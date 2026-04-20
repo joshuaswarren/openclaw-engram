@@ -97,12 +97,12 @@ function pairKey(idA: string, idB: string): string {
 }
 
 function contentHash(a: ContradictionJudgeInput): string {
-  const normalized = [
-    a.textA.trim(),
-    a.textB.trim(),
-    (a.categoryA ?? "").trim(),
-    (a.categoryB ?? "").trim(),
-  ].join("|||");
+  // Sort each side pair to be order-independent (matching pairKey behavior)
+  const sides = [
+    [a.textA.trim(), (a.categoryA ?? "").trim()].join("|"),
+    [a.textB.trim(), (a.categoryB ?? "").trim()].join("|"),
+  ].sort();
+  const normalized = sides.join("|||");
   return createHash("sha256").update(normalized).digest("hex").slice(0, 16);
 }
 
@@ -265,6 +265,7 @@ function parseJudgeResponse(
       const parsed = JSON.parse(candidate);
       const items = Array.isArray(parsed) ? parsed : [parsed];
       const results: ContradictionJudgeResult[] = [];
+      const matchedKeys = new Set<string>();
 
       for (const item of items) {
         if (!item || typeof item !== "object") continue;
@@ -282,6 +283,8 @@ function parseJudgeResponse(
         const fallbackInput = input ?? inputs[results.length] ?? inputs[0];
         if (!fallbackInput) continue;
 
+        matchedKeys.add(pairKey(fallbackInput.memoryIdA, fallbackInput.memoryIdB));
+
         const confidence = typeof item.confidence === "number"
           ? Math.min(1, Math.max(0, item.confidence))
           : 0.5;
@@ -293,6 +296,20 @@ function parseJudgeResponse(
           rationale: typeof item.rationale === "string" ? item.rationale : "No rationale provided",
           confidence,
         });
+      }
+
+      // Backfill any inputs the LLM omitted with needs-user
+      for (const inp of inputs) {
+        const key = pairKey(inp.memoryIdA, inp.memoryIdB);
+        if (!matchedKeys.has(key)) {
+          results.push({
+            memoryIdA: inp.memoryIdA,
+            memoryIdB: inp.memoryIdB,
+            verdict: "needs-user",
+            rationale: "LLM response omitted this pair",
+            confidence: 0,
+          });
+        }
       }
 
       if (results.length > 0) return results;

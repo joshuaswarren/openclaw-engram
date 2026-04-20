@@ -686,12 +686,17 @@ export class EngramAccessHttpServer {
 
     // ── Contradiction Review (issue #520) ─────────────────────────────────────
     if (req.method === "GET" && pathname === "/engram/v1/review/contradictions") {
-      const filter = parsed.searchParams.get("filter") ?? "unresolved";
+      const VALID_FILTERS = new Set(["all", "unresolved", "contradicts", "independent", "duplicates", "needs-user"]);
+      const rawFilter = parsed.searchParams.get("filter") ?? "unresolved";
+      if (!VALID_FILTERS.has(rawFilter)) {
+        this.respondJson(res, 400, { error: `Invalid filter '${rawFilter}'. Valid: ${[...VALID_FILTERS].join(", ")}` });
+        return;
+      }
       const namespace = parsed.searchParams.get("namespace") ?? undefined;
       const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "50", 10);
       const { listPairs } = await import("./contradiction/contradiction-review.js");
       const result = listPairs(this.service.memoryDir, {
-        filter: filter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user",
+        filter: rawFilter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user",
         namespace,
         limit: Number.isFinite(limitRaw) ? limitRaw : 50,
       });

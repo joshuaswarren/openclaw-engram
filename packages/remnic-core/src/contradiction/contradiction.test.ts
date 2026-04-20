@@ -140,7 +140,7 @@ test("listPairs respects limit", async () => {
     }
     const result = listPairs(dir, { filter: "all", limit: 2 });
     assert.equal(result.pairs.length, 2);
-    assert.equal(result.total, 2);
+    assert.equal(result.total, 5, "total should reflect all matching pairs, not just returned");
   } finally {
     await cleanup();
   }

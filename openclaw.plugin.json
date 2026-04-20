@@ -739,11 +739,7 @@
       },
       "binaryLifecycleBackendType": {
         "type": "string",
-        "enum": [
-          "none",
-          "filesystem",
-          "s3"
-        ],
+        "enum": ["none", "filesystem", "s3"],
         "default": "none",
         "description": "Storage backend for binary lifecycle mirror stage."
       },
@@ -1926,7 +1922,7 @@
         "type": "object",
         "description": "Configuration for the nightly contradiction-scan cron (issue #520)",
         "properties": {
-          "enabled": { "type": "boolean", "default": true, "description": "Enable the nightly contradiction scan cron" },
+          "enabled": { "type": "boolean", "default": false, "description": "Enable the nightly contradiction scan cron (disabled by default per rule 48)" },
           "similarityFloor": { "type": "number", "default": 0.82, "minimum": 0, "maximum": 1, "description": "Embedding cosine similarity floor for candidate pair generation" },
           "topicOverlapFloor": { "type": "number", "default": 0.4, "minimum": 0, "maximum": 1, "description": "Minimum topic-token Jaccard overlap for unstructured pairs" },
           "maxPairsPerRun": { "type": "integer", "default": 500, "minimum": 1, "description": "Cap on candidate pairs evaluated per cron run" },
@@ -1972,16 +1968,8 @@
       },
       "recallDirectAnswerEligibleTaxonomyBuckets": {
         "type": "array",
-        "items": {
-          "type": "string"
-        },
-        "default": [
-          "decisions",
-          "principles",
-          "conventions",
-          "runbooks",
-          "entities"
-        ],
+        "items": { "type": "string" },
+        "default": ["decisions", "principles", "conventions", "runbooks", "entities"],
         "description": "Taxonomy category IDs eligible for direct-answer routing."
       },
       "memoryLinkingEnabled": {
@@ -4068,7 +4056,7 @@
     },
     "contradictionScan": {
       "label": "Contradiction Scan",
-      "help": "Nightly cron that detects semantically contradictory memory pairs for user review (issue #520)"
+      "help": "Nightly cron that pairs similar memories and flags contradictions for review (issue #520)"
     },
     "temporalSupersessionEnabled": {
       "label": "Temporal Supersession",
