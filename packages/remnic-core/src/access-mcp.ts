@@ -220,6 +220,21 @@ export class EngramMcpServer {
         },
       },
       {
+        // The canonical `remnic.procedural_stats` alias is added automatically
+        // by `withToolAliases` — the dual-naming invariant keeps both names
+        // alive for the legacy surface.
+        name: "engram.procedural_stats",
+        description:
+          "Procedural memory stats (issue #567): counts by status, recent write activity, and the active procedural.* config. Read-only, namespace-scoped.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.memory_get",
         description: "Fetch one Remnic memory by id.",
         inputSchema: {
@@ -1196,6 +1211,15 @@ export class EngramMcpServer {
           {
             namespace: typeof args.namespace === "string" ? args.namespace : undefined,
             authenticatedPrincipal: effectivePrincipal,
+          },
+          effectivePrincipal,
+        );
+      case "remnic.procedural_stats":
+      case "engram.procedural_stats":
+        return this.service.procedureStats(
+          {
+            namespace:
+              typeof args.namespace === "string" ? args.namespace : undefined,
           },
           effectivePrincipal,
         );
