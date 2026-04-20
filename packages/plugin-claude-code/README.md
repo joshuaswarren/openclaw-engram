@@ -49,7 +49,7 @@ Once installed and a Remnic daemon is running (`remnic daemon start`):
 
 ## MCP setup
 
-The plugin expects a Remnic daemon reachable at `http://localhost:4318/mcp` with a bearer token. `remnic connectors install claude-code` handles this automatically. If you're wiring it up by hand, the `.mcp.json` template is:
+The plugin expects a Remnic daemon reachable at `http://localhost:4318/mcp` with a bearer token. `remnic connectors install claude-code` does NOT write this for you — the Claude Code publisher in `@remnic/core` is a stub, so no Claude MCP config is touched. You must paste the following `.mcp.json` block into Claude Code's MCP config by hand (step 2 of the Install flow above):
 
 ```json
 {
