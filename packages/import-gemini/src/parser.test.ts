@@ -73,6 +73,21 @@ describe("parseGeminiExport", () => {
       /received null/,
     );
   });
+
+  // Codex review on PR #600 — pointing --file at a random JSON object
+  // (e.g. a config file) was reported as "0 memories imported" instead
+  // of surfacing an error. Now throws for objects that lack any of the
+  // recognized activity keys.
+  it("rejects object payloads without a recognized activity key", () => {
+    assert.throws(
+      () => parseGeminiExport({ foo: "bar" }),
+      /no recognized activity key/,
+    );
+    assert.throws(
+      () => parseGeminiExport(JSON.stringify({ random: [1, 2] })),
+      /no recognized activity key/,
+    );
+  });
 });
 
 describe("extractUserPrompt", () => {

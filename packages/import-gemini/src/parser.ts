@@ -101,11 +101,26 @@ export function parseGeminiExport(
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
     // Common wrapper shapes: { activities: [...] } or { MyActivity: [...] }.
+    let sawKnownKey = false;
     for (const key of ["activities", "MyActivity", "activity"] as const) {
       const v = obj[key];
       if (Array.isArray(v)) {
+        sawKnownKey = true;
         appendActivities(result.activities, v, options);
       }
+    }
+    // Codex review on PR #600: pointing --file at a random JSON object
+    // (e.g. a config file) used to report a successful 0-memory import.
+    // We now throw a user-facing error when no known wrapper key was
+    // present. This differs from strict mode because the "array or
+    // object" shape check already passed — we just didn't find anything
+    // that looked like a Gemini export inside the object.
+    if (!sawKnownKey) {
+      throw new Error(
+        "Gemini export object has no recognized activity key. Expected one of " +
+          "'activities', 'MyActivity', or 'activity'. Point --file at your " +
+          "Google Takeout `My Activity.json` (Gemini Apps section).",
+      );
     }
     return result;
   }
