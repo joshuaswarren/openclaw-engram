@@ -28,6 +28,19 @@ function createFakeService(): EngramAccessService {
       intent: null,
       graph: null,
     }),
+    recallXray: async ({ query }) => ({
+      snapshotFound: true,
+      snapshot: {
+        schemaVersion: "1" as const,
+        query,
+        snapshotId: "snap-1",
+        capturedAt: 1_700_000_000_000,
+        tierExplain: null,
+        results: [],
+        filters: [],
+        budget: { chars: 4096, used: 0 },
+      },
+    }),
     memoryGet: async (memoryId) => ({
       found: true,
       namespace: "global",
@@ -158,6 +171,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.recall_explain",
     "engram.set_coding_context",
     "engram.recall_tier_explain",
+    "engram.recall_xray",
     "engram.day_summary",
     "engram.memory_governance_run",
     "engram.procedure_mining_run",
