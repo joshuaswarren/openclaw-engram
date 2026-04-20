@@ -19,14 +19,14 @@
 import path from "node:path";
 import process from "node:process";
 
-// Relative import into the workspace package is intentional: this is a
-// monorepo developer script, not a consumer-surface module. The root
-// `package.json` intentionally does NOT list `@remnic/bench` as a
-// dependency (CLAUDE.md à-la-carte rule 57), so importing by name would
-// fail in fresh checkouts. Keep this in sync with
-// `scripts/bench-exploit-audit.ts` — they both reach across the
-// workspace boundary for the same reason.
-import { loadBenchmarkArtifact } from "../../packages/bench/src/published-artifact.js";
+// Consume `@remnic/bench` through its published package boundary
+// (CLAUDE.md rule 26). The root package.json lists it under
+// `devDependencies` with the `workspace:*` protocol so the script
+// resolves against the workspace symlink at dev time; the published
+// `remnic` npm package does NOT ship `@remnic/bench` as a runtime
+// dependency (CLAUDE.md à-la-carte rule 57: optional packages stay
+// off the base install surface).
+import { loadBenchmarkArtifact } from "@remnic/bench";
 
 async function main(args: string[]): Promise<number> {
   if (args.length === 0) {

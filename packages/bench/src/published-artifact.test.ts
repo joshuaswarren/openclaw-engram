@@ -454,6 +454,37 @@ test("loadBenchmarkArtifact reads, parses, and re-hashes", async () => {
   }
 });
 
+test("buildBenchmarkArtifact rejects non-finite per-task scores", () => {
+  assert.throws(
+    () =>
+      buildBenchmarkArtifact({
+        benchmarkId: "longmemeval",
+        datasetVersion: "v1",
+        model: "gpt-4o-mini",
+        seed: 1,
+        startedAt: "2026-04-20T12:00:00.000Z",
+        finishedAt: "2026-04-20T12:01:00.000Z",
+        result: sampleResult({
+          results: {
+            tasks: [
+              {
+                taskId: "t1",
+                question: "q",
+                expected: "a",
+                actual: "a",
+                scores: { f1: Number.NaN },
+                latencyMs: 0,
+                tokens: { input: 0, output: 0 },
+              },
+            ],
+            aggregates: {},
+          },
+        }),
+      }),
+    /perTaskScores\[0\] "t1" scores\.f1 must be a finite number/,
+  );
+});
+
 test("buildBenchmarkArtifact rejects invalid startedAt/finishedAt timestamps", () => {
   assert.throws(
     () =>

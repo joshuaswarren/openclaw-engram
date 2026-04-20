@@ -120,6 +120,12 @@ export function buildBenchmarkArtifact(
 ): BenchmarkArtifact {
   const { result } = input;
   const metrics: Record<string, number> = {};
+  // Only finite means are exported — a non-finite mean is almost
+  // always a scoring bug that should fail the run instead of silently
+  // serializing to JSON `null`. `buildBenchmarkArtifact` does NOT
+  // throw here because skipping a single NaN-valued metric is strictly
+  // better than failing the whole artifact; `parseBenchmarkArtifact`
+  // catches any surviving non-finite value downstream.
   for (const key of Object.keys(result.results.aggregates).sort()) {
     const aggregate = result.results.aggregates[key];
     if (aggregate && Number.isFinite(aggregate.mean)) {
@@ -128,14 +134,29 @@ export function buildBenchmarkArtifact(
   }
 
   const perTaskScores: BenchmarkArtifactPerTaskScore[] =
-    result.results.tasks.map((task) => {
+    result.results.tasks.map((task, index) => {
       const category = input.categoryFor?.(task);
+      // Validate up-front so a non-finite score (e.g. NaN from a
+      // rejected extraction, Infinity from a broken divisor) fails
+      // at build time with a clear per-task pointer — instead of
+      // silently serializing to JSON `null` (which
+      // `parseBenchmarkArtifact()` would then reject) or flowing
+      // into leaderboard aggregates downstream.
+      const cleanedScores: Record<string, number> = {};
+      for (const [key, value] of Object.entries(task.scores)) {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          throw new Error(
+            `BuildBenchmarkArtifact: perTaskScores[${index}] "${task.taskId}" scores.${key} must be a finite number; got ${String(value)}.`,
+          );
+        }
+        cleanedScores[key] = value;
+      }
       const entry: BenchmarkArtifactPerTaskScore = {
         taskId: task.taskId,
         // In-memory scores preserve whatever order the runner emitted;
         // `serializeBenchmarkArtifact()` sorts keys at write time via
         // the shared `canonicalJsonStringify` helper.
-        scores: { ...task.scores },
+        scores: cleanedScores,
       };
       if (category !== undefined) {
         entry.category = category;
