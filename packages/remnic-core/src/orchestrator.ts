@@ -5505,6 +5505,37 @@ export class Orchestrator {
       const earlySessionKey = sessionKey ?? "default";
       this._recallWorkspaceOverrides.delete(earlySessionKey);
       timings.total = `${Date.now() - recallStart}ms`;
+      // X-ray capture for the `no_recall` early-return path
+      // (issue #570 PR 1).  `no_recall` skips retrieval entirely, so
+      // the snapshot carries zero results and an empty-budget accounting
+      // — but we STILL capture it when the caller opts in so
+      // `getLastXraySnapshot()` returns a useful debug document rather
+      // than silently `null` (or a stale prior capture).
+      if (options.xrayCapture === true) {
+        try {
+          this.lastXraySnapshot = buildXraySnapshot({
+            query: retrievalQuery,
+            tierExplain: null,
+            results: [],
+            filters: [
+              {
+                name: "planner-mode",
+                considered: 0,
+                admitted: 0,
+                reason: "no_recall",
+              },
+            ],
+            budget: { chars: this.getRecallBudgetChars(), used: 0 },
+            sessionKey,
+            namespace: selfNamespace,
+            traceId,
+          });
+        } catch (err) {
+          // Capture is a best-effort side channel: a capture failure
+          // must NEVER propagate into the primary recall path.
+          log.debug(`x-ray capture (no_recall) failed: ${err}`);
+        }
+      }
       if (sessionKey) {
         this.lastRecall
           .record({
@@ -8518,15 +8549,31 @@ export class Orchestrator {
     if (options.xrayCapture === true) {
       try {
         const servedBy = mapRecallSourceToXrayServedBy(recallSource);
-        const results: RecallXrayResult[] = recalledMemoryIds.map(
-          (memoryId, index) => ({
-            memoryId,
-            path: recalledMemoryPaths[index] ?? "",
+        // Derive xray results from `recalledMemoryPaths` as the single
+        // source of truth — `recalledMemoryIds` and `recalledMemoryPaths`
+        // are built with two independent filters upstream
+        // (`extractMemoryIdsFromResults` drops paths whose filename does
+        // not match `*.md`, while `.map(path).filter(Boolean)` drops
+        // empty paths only), so zipping them positionally would silently
+        // misalign when the two filters differ.  Re-deriving `memoryId`
+        // from the path here guarantees `memoryId` and `path` refer to
+        // the same underlying result.
+        const idFromPath = (p: string): string | null => {
+          const match = p.match(/([^/]+)\.md$/);
+          return match ? match[1] ?? null : null;
+        };
+        const results: RecallXrayResult[] = [];
+        for (const recalledPath of recalledMemoryPaths) {
+          const derivedId = idFromPath(recalledPath);
+          if (!derivedId) continue;
+          results.push({
+            memoryId: derivedId,
+            path: recalledPath,
             servedBy,
             scoreDecomposition: { final: 0 },
             admittedBy: [],
-          }),
-        );
+          });
+        }
         const filters: RecallFilterTrace[] = [
           {
             name: "recall-result-limit",

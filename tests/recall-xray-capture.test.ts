@@ -114,6 +114,32 @@ test("clearLastXraySnapshot resets the captured snapshot", async () => {
   assert.equal(orchestrator.getLastXraySnapshot(), null);
 });
 
+// `no_recall` planner mode returns early from recallInternal, but
+// capture must still fire on that branch when the caller opted in —
+// otherwise `getLastXraySnapshot()` returns a stale prior capture
+// (or null) and debug surfaces silently report the wrong recall.
+test("recall captures an X-ray snapshot even when mode is no_recall", async () => {
+  const orchestrator = await makeOrchestrator("engram-xray-no-recall-");
+  (orchestrator as any).initPromise = null;
+
+  await orchestrator.recall(
+    "no recall please",
+    "agent:test:xray-no-recall",
+    { xrayCapture: true, mode: "no_recall" },
+  );
+
+  const snapshot = orchestrator.getLastXraySnapshot();
+  assert.ok(snapshot, "snapshot should be captured on the no_recall branch");
+  assert.equal(snapshot.query, "no recall please");
+  assert.equal(snapshot.sessionKey, "agent:test:xray-no-recall");
+  assert.deepEqual(snapshot.results, []);
+  // The no_recall branch records a single `planner-mode` filter trace
+  // so downstream surfaces can render why zero results surfaced.
+  assert.equal(snapshot.filters.length, 1);
+  assert.equal(snapshot.filters[0]!.name, "planner-mode");
+  assert.equal(snapshot.filters[0]!.reason, "no_recall");
+});
+
 // A recall without the flag must NOT overwrite a previously captured
 // snapshot.  This keeps the capture surface useful when a capturing
 // caller is interleaved with non-capturing callers.
