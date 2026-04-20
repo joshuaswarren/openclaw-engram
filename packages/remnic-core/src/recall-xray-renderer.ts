@@ -22,6 +22,7 @@ import type {
   RecallXraySnapshot,
   RecallXrayServedBy,
 } from "./recall-xray.js";
+import type { RecallTierExplain } from "./types.js";
 
 export type RecallXrayFormat = "json" | "text" | "markdown";
 
@@ -133,28 +134,47 @@ export function renderXrayText(snapshot: RecallXraySnapshot | null): string {
   if (!snapshot.tierExplain) {
     lines.push("(not populated — direct-answer tier disabled or did not fire)");
   } else {
-    const te = snapshot.tierExplain;
-    lines.push(`tier: ${te.tier}`);
-    lines.push(`reason: ${te.tierReason}`);
-    lines.push(`candidates-considered: ${te.candidatesConsidered}`);
-    lines.push(`latency-ms: ${te.latencyMs}`);
-    if (te.filteredBy.length > 0) {
-      lines.push(`filtered-by: ${te.filteredBy.join(", ")}`);
-    } else {
-      lines.push("filtered-by: (none)");
-    }
-    if (te.sourceAnchors && te.sourceAnchors.length > 0) {
-      lines.push("source-anchors:");
-      for (const anchor of te.sourceAnchors) {
-        const range = anchor.lineRange
-          ? `:${anchor.lineRange[0]}-${anchor.lineRange[1]}`
-          : "";
-        lines.push(`  - ${anchor.path}${range}`);
-      }
+    for (const line of renderTierExplainTextLines(snapshot.tierExplain)) {
+      lines.push(line);
     }
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Shared tier-explain text block used by both the Recall X-ray renderer
+ * (this module) and `recall-explain-renderer.ts`.  Emits the
+ * tier/reason/candidates/latency/filteredBy/sourceAnchors sequence only —
+ * callers are responsible for any surrounding header or null-case copy.
+ *
+ * CLAUDE.md rule 22: hash / format / dedup operations must have a single
+ * source of truth. Keep every surface that prints a tier-explain block
+ * routing through this helper.
+ */
+export function renderTierExplainTextLines(
+  te: RecallTierExplain,
+): string[] {
+  const lines: string[] = [];
+  lines.push(`tier: ${te.tier}`);
+  lines.push(`reason: ${te.tierReason}`);
+  lines.push(`candidates-considered: ${te.candidatesConsidered}`);
+  lines.push(`latency-ms: ${te.latencyMs}`);
+  if (te.filteredBy.length > 0) {
+    lines.push(`filtered-by: ${te.filteredBy.join(", ")}`);
+  } else {
+    lines.push("filtered-by: (none)");
+  }
+  if (te.sourceAnchors && te.sourceAnchors.length > 0) {
+    lines.push("source-anchors:");
+    for (const anchor of te.sourceAnchors) {
+      const range = anchor.lineRange
+        ? `:${anchor.lineRange[0]}-${anchor.lineRange[1]}`
+        : "";
+      lines.push(`  - ${anchor.path}${range}`);
+    }
+  }
+  return lines;
 }
 
 function renderFilterTextLine(f: RecallFilterTrace): string {

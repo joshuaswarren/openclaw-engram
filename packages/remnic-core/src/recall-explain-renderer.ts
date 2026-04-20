@@ -11,6 +11,7 @@
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type { RecallTierExplain } from "./types.js";
 import { isRetrievalTier } from "./retrieval-tiers.js";
+import { renderTierExplainTextLines } from "./recall-xray-renderer.js";
 
 function sanitizeString(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
@@ -153,23 +154,11 @@ export function toRecallExplainText(
 
   lines.push("");
   lines.push("--- tier explain ---");
-  lines.push(`tier: ${ex.tier}`);
-  lines.push(`reason: ${ex.tierReason}`);
-  lines.push(`candidates-considered: ${ex.candidatesConsidered}`);
-  lines.push(`latency-ms: ${ex.latencyMs}`);
-  if (ex.filteredBy.length > 0) {
-    lines.push(`filtered-by: ${ex.filteredBy.join(", ")}`);
-  } else {
-    lines.push("filtered-by: (none)");
-  }
-  if (ex.sourceAnchors && ex.sourceAnchors.length > 0) {
-    lines.push("source-anchors:");
-    for (const anchor of ex.sourceAnchors) {
-      const range = anchor.lineRange
-        ? `:${anchor.lineRange[0]}-${anchor.lineRange[1]}`
-        : "";
-      lines.push(`  - ${anchor.path}${range}`);
-    }
+  // Shared tier-explain formatting (CLAUDE.md rule 22 — single source of
+  // truth for formatting).  Defined in recall-xray-renderer.ts so the
+  // /recall/explain and /recall/xray surfaces stay in lock-step.
+  for (const line of renderTierExplainTextLines(ex)) {
+    lines.push(line);
   }
   return lines.join("\n");
 }
