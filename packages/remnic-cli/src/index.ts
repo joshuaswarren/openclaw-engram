@@ -4188,6 +4188,39 @@ Options:
     return;
   }
 
+  // Reject unexpected positional args or unknown flags up front so typos like
+  // `--fixtur` or a bare path `./fixture.json` fail fast instead of silently
+  // falling back to the built-in fixture (Codex review on #586).
+  const KNOWN_FLAGS = new Set([
+    "--fixture",
+    "--out",
+    "--output",
+    "--seed",
+    "--help",
+    "-h",
+  ]);
+  for (let i = 0; i < rest.length; i++) {
+    const token = rest[i];
+    if (token === undefined) continue;
+    if (token.startsWith("--") || token === "-h") {
+      if (!KNOWN_FLAGS.has(token)) {
+        console.error(
+          `Unknown flag "${token}" for \`remnic bench procedural-ablation\`. Run with --help for usage.`,
+        );
+        process.exit(1);
+      }
+      // Skip the flag's value so it isn't mistaken for a positional.
+      if (token !== "--help" && token !== "-h") {
+        i++;
+      }
+      continue;
+    }
+    console.error(
+      `Unexpected positional argument "${token}" for \`remnic bench procedural-ablation\`. Pass fixture paths via --fixture <path>.`,
+    );
+    process.exit(1);
+  }
+
   let fixturePathRaw: string | undefined;
   let outPathRaw: string | undefined;
   let seedRaw: string | undefined;
