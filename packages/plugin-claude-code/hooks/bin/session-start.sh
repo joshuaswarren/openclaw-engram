@@ -56,7 +56,87 @@ SESSION_ID="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write
 CWD="$(node -e "const d=JSON.parse(process.argv[1]); process.stdout.write(d.cwd||'')" "$INPUT" 2>/dev/null || echo "")"
 PROJECT_NAME="$(basename "$CWD" 2>/dev/null || echo "unknown")"
 
-log "session=$SESSION_ID project=$PROJECT_NAME"
+# Resolve git context for the session's cwd (issue #569 PR 5). Produces
+# either a JSON object for the `codingContext` field, or an empty string
+# when the cwd is not inside a git repo. All git calls are wrapped in &&
+# so any failure silently drops back to no-context.
+CODING_CONTEXT_JSON=""
+if [ -n "$CWD" ] && [ -d "$CWD" ] && command -v git >/dev/null 2>&1; then
+  # `git` calls are short-timeout and local. Any failure → empty.
+  REMNIC_GIT_TOP="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || echo "")"
+  if [ -n "$REMNIC_GIT_TOP" ]; then
+    REMNIC_GIT_BRANCH="$(git -C "$REMNIC_GIT_TOP" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
+    [ "$REMNIC_GIT_BRANCH" = "HEAD" ] && REMNIC_GIT_BRANCH=""
+    REMNIC_GIT_ORIGIN="$(git -C "$REMNIC_GIT_TOP" remote get-url origin 2>/dev/null || echo "")"
+    REMNIC_GIT_DEFAULT_BRANCH="$(git -C "$REMNIC_GIT_TOP" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||' || echo "")"
+    CODING_CONTEXT_JSON="$(REMNIC_GIT_TOP="$REMNIC_GIT_TOP" REMNIC_GIT_BRANCH="$REMNIC_GIT_BRANCH" REMNIC_GIT_ORIGIN="$REMNIC_GIT_ORIGIN" REMNIC_GIT_DEFAULT_BRANCH="$REMNIC_GIT_DEFAULT_BRANCH" node -e "
+      // Mirror the pure logic from @remnic/core's resolveGitContext so the
+      // hook produces the same projectId without calling into the daemon
+      // first. FNV-1a 32-bit stable hash.
+      const rootPath = process.env.REMNIC_GIT_TOP || '';
+      const branch = process.env.REMNIC_GIT_BRANCH || null;
+      const origin = process.env.REMNIC_GIT_ORIGIN || '';
+      const defaultBranch = process.env.REMNIC_GIT_DEFAULT_BRANCH || null;
+      function stableHash(input) {
+        let hash = 0x811c9dc5;
+        for (let i = 0; i < input.length; i++) {
+          hash ^= input.charCodeAt(i);
+          hash = Math.imul(hash, 0x01000193) >>> 0;
+        }
+        return hash.toString(16).padStart(8, '0');
+      }
+      // Mirrors packages/remnic-core/src/coding/git-context.ts
+      // normalizeOriginUrl. Keep the two in sync so the hook-computed
+      // projectId matches what the daemon computes on the same origin.
+      function normalizeOriginUrl(raw) {
+        let u = (raw || '').trim();
+        if (!u) return '';
+        // Case-insensitive .git strip — matches the TS canonical form.
+        if (/\\.git\$/i.test(u)) u = u.slice(0, -4);
+        // Windows drive-letter: short-circuit scp parsing.
+        if (/^[A-Za-z]:[\\\\/]/.test(u)) return u.toLowerCase();
+        // Protocol form: handles ssh://, https://, file:///, bracketed
+        // IPv6 hosts, optional user, optional port, and empty host
+        // (file:///path).
+        const proto = /^[a-z][a-z0-9+.-]*:\\/\\/(?:[^@/]+@)?(\\[[^\\]]+\\]|[^/:]*)(?::(\\d+))?(\\/.*)?\$/i.exec(u);
+        if (proto) {
+          let host = proto[1] || '';
+          const wasBracketed = host.startsWith('[') && host.endsWith(']');
+          if (wasBracketed) host = host.slice(1, -1);
+          const port = proto[2];
+          const p = (proto[3] || '').replace(/^\\/+/, '');
+          const hostPort = port
+            ? (wasBracketed ? '[' + host + ']:' + port : host + ':' + port)
+            : host;
+          const prefix = hostPort.length > 0 ? hostPort : 'localhost';
+          return (prefix + '/' + p).toLowerCase();
+        }
+        // scp form: [user@]host:path — user@ optional, bracketed IPv6 host
+        // supported. A matched path starting with // is a protocol-URL
+        // leftover and is rejected.
+        const scp = /^(?:([^@\\s\\/]+)@)?(\\[[^\\]]+\\]|[^:@\\s\\/]+):(.+)\$/.exec(u);
+        if (scp) {
+          let host = scp[2] || '';
+          if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
+          const p = scp[3] || '';
+          if (p.startsWith('//')) return u.toLowerCase();
+          return (host + '/' + p.replace(/^\\/+/, '')).toLowerCase();
+        }
+        return u.toLowerCase();
+      }
+      const normalized = normalizeOriginUrl(origin);
+      const projectId = normalized ? 'origin:' + stableHash(normalized) : 'root:' + stableHash(rootPath);
+      process.stdout.write(JSON.stringify({
+        projectId,
+        branch: branch || null,
+        rootPath,
+        defaultBranch: defaultBranch || null,
+      }));
+    " 2>/dev/null || echo "")"
+  fi
+fi
+
+log "session=$SESSION_ID project=$PROJECT_NAME coding-context=${CODING_CONTEXT_JSON:+yes}"
 
 # Health check — start daemon if not running
 if ! curl -sf --max-time 2 "$REMNIC_HEALTH_URL" >/dev/null 2>&1; then
@@ -82,12 +162,19 @@ fi
 
 QUERY="Starting a new coding session in project: ${PROJECT_NAME}. Recall relevant memories, preferences, decisions, patterns, and context about this project and the user."
 
-REQUEST_BODY="$(node -e "process.stdout.write(JSON.stringify({
-  query: process.argv[1],
-  sessionKey: process.argv[2],
-  topK: 12,
-  mode: 'auto'
-}))" "$QUERY" "$SESSION_ID" 2>/dev/null)"
+REQUEST_BODY="$(REMNIC_CODING_CONTEXT_JSON="$CODING_CONTEXT_JSON" node -e "
+  const body = {
+    query: process.argv[1],
+    sessionKey: process.argv[2],
+    topK: 12,
+    mode: 'auto',
+  };
+  const raw = process.env.REMNIC_CODING_CONTEXT_JSON || '';
+  if (raw) {
+    try { body.codingContext = JSON.parse(raw); } catch (_) { /* ignore */ }
+  }
+  process.stdout.write(JSON.stringify(body));
+" "$QUERY" "$SESSION_ID" 2>/dev/null)"
 
 [ -z "$REQUEST_BODY" ] && echo '{"continue":true}' && exit 0
 
@@ -104,12 +191,19 @@ RESPONSE="$(echo "$RAW" | sed '$d')"
 
 if [ $CURL_EXIT -ne 0 ] || ! [[ "$HTTP_STATUS" =~ ^2 ]] || [ -z "$RESPONSE" ]; then
   log "full recall failed (curl=$CURL_EXIT http=$HTTP_STATUS) — falling back to minimal"
-  MINIMAL_BODY="$(node -e "process.stdout.write(JSON.stringify({
-    query: process.argv[1],
-    sessionKey: process.argv[2],
-    topK: 8,
-    mode: 'minimal'
-  }))" "$QUERY" "$SESSION_ID" 2>/dev/null)"
+  MINIMAL_BODY="$(REMNIC_CODING_CONTEXT_JSON="$CODING_CONTEXT_JSON" node -e "
+    const body = {
+      query: process.argv[1],
+      sessionKey: process.argv[2],
+      topK: 8,
+      mode: 'minimal',
+    };
+    const raw = process.env.REMNIC_CODING_CONTEXT_JSON || '';
+    if (raw) {
+      try { body.codingContext = JSON.parse(raw); } catch (_) { /* ignore */ }
+    }
+    process.stdout.write(JSON.stringify(body));
+  " "$QUERY" "$SESSION_ID" 2>/dev/null)"
   RAW="$(curl -s -w "\n%{http_code}" --max-time 20 \
     -X POST "$REMNIC_URL" \
     -H "Authorization: Bearer ${REMNIC_TOKEN}" \

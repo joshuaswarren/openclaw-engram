@@ -330,6 +330,13 @@ export class EngramAccessHttpServer {
 
     if (req.method === "POST" && pathname === "/engram/v1/recall") {
       const body = await this.readValidatedBody(req, "recall");
+      // Preserve the distinction between `codingContext: null` (explicit
+      // clear) and `codingContext` missing from the JSON payload
+      // (untouched). The previous `?? undefined` collapsed both into
+      // undefined, so callers lost the ability to clear the session's
+      // attached context through the recall endpoint.
+      const codingContext =
+        "codingContext" in body ? body.codingContext : undefined;
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
@@ -337,8 +344,23 @@ export class EngramAccessHttpServer {
         topK: body.topK,
         mode: body.mode as RecallPlanMode | "auto" | undefined,
         includeDebug: body.includeDebug === true,
+        codingContext,
       });
       this.respondJson(res, 200, response);
+      return;
+    }
+
+    // Attach / clear coding-agent context for a session (issue #569 PR 5).
+    // Mirrors `setCodingContext` on the access service. Connectors call this
+    // at session start after resolving a git context for the cwd; `remnic
+    // doctor` (PR 8) surfaces the attached context.
+    if (req.method === "POST" && pathname === "/engram/v1/coding-context") {
+      const body = await this.readValidatedBody(req, "setCodingContext");
+      this.service.setCodingContext({
+        sessionKey: body.sessionKey,
+        codingContext: body.codingContext,
+      });
+      this.respondJson(res, 200, { ok: true });
       return;
     }
 
