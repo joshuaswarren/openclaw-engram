@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Published LongMemEval-S + LoCoMo-10 runbook at
+  `docs/benchmarks/runbook.md`, summary at `docs/benchmarks.md`, and
+  the `/benchmarks` page on <https://remnic.ai/benchmarks>.
+- Placeholder artifacts in `docs/benchmarks/results/` prove the
+  `BenchmarkArtifact v1` pipeline end-to-end on a fresh clone; real
+  numbers land in a tagged release per issue #566.
+
 ## [v9.3.6] — 2026-04-14
 
 ### Added

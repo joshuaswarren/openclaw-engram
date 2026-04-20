@@ -40,6 +40,10 @@ bench-datasets/
 # per-release by the leaderboard pipeline — see issue #566 slice 6).
 docs/benchmarks/results/
 
+# Published-benchmark datasets (LongMemEval, LoCoMo). Download via
+# `scripts/bench/fetch-datasets.sh --help`. Never commit raw dataset files.
+bench-datasets/
+
 # Git worktrees
 .worktrees/
 PR_PREFLIGHT.md
