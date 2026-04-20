@@ -1948,7 +1948,10 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
 }
 
 async function loadPublishedPromotionHelpers() {
-  const benchModule = (await loadBenchModule()) as unknown as PackageBenchModule;
+  // Cursor Low on PR #603: the promotion helper only needs node:fs
+  // and node:path. The bench module was loaded here for speculative
+  // future use, but it's unused, and the à-la-carte loader fee is
+  // non-trivial — keep promotion strictly filesystem-only.
   return {
     async promoteArtifactsToPublished(args: {
       benchmarkId: string;
@@ -2006,9 +2009,6 @@ async function loadPublishedPromotionHelpers() {
           `[bench published] Promoted ${path.basename(artifactPath)} → ${target}`,
         );
       }
-      // Reference the bench module so the import isn't tree-shaken if
-      // a future refactor wants to call into it from here.
-      void benchModule;
     },
   };
 }
