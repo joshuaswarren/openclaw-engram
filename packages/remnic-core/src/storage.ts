@@ -310,7 +310,56 @@ function parseFrontmatter(
   const content = match[2].trim();
   const fm: Record<string, string> = {};
 
-  for (const line of fmBlock.split("\n")) {
+  // Collapse YAML block-sequence style into inline flow style so the
+  // downstream per-key parsers (derived_from, tags, lineage, etc.) keep
+  // working.  A key like
+  //     derived_from:
+  //       - facts/a.md:2
+  //       - facts/b.md:5
+  // becomes
+  //     derived_from: ["facts/a.md:2", "facts/b.md:5"]
+  // before the line-split.  Only applies when the key's own line has an
+  // empty scalar — any inline value or explicit flow sequence short-circuits
+  // this and is parsed as-is.
+  const rawLines = fmBlock.split("\n");
+  const lines: string[] = [];
+  let i = 0;
+  while (i < rawLines.length) {
+    const line = rawLines[i];
+    const colonIdx = line.indexOf(":");
+    if (colonIdx !== -1 && line.slice(colonIdx + 1).trim() === "") {
+      const baseIndent = line.match(/^\s*/)![0].length;
+      const items: string[] = [];
+      let j = i + 1;
+      while (j < rawLines.length) {
+        const next = rawLines[j];
+        const m = next.match(/^(\s+)- (.*)$/);
+        if (!m || m[1].length <= baseIndent) break;
+        // Strip optional matching surrounding quotes; preserve inner chars.
+        let item = m[2].trim();
+        if (
+          (item.startsWith('"') && item.endsWith('"')) ||
+          (item.startsWith("'") && item.endsWith("'"))
+        ) {
+          item = item.slice(1, -1);
+        }
+        items.push(item);
+        j++;
+      }
+      if (items.length > 0) {
+        const inline = items
+          .map((v) => `"${v.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+          .join(", ");
+        lines.push(`${line.slice(0, colonIdx + 1)} [${inline}]`);
+        i = j;
+        continue;
+      }
+    }
+    lines.push(line);
+    i++;
+  }
+
+  for (const line of lines) {
     const colonIdx = line.indexOf(":");
     if (colonIdx === -1) continue;
     const key = line.slice(0, colonIdx).trim();

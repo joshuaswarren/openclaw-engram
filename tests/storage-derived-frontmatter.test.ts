@@ -156,6 +156,15 @@ test("StorageManager accepts single-quoted and bare YAML derived_from entries fr
         line: 'derived_from: ["facts/a.md:1", facts/b.md:2, \'facts/c.md:3\']',
         expected: ["facts/a.md:1", "facts/b.md:2", "facts/c.md:3"],
       },
+      {
+        // YAML block sequence: `key:` with an empty scalar followed by
+        // indented `- item` lines.  Many external YAML emitters prefer
+        // this style; the reader collapses it back to flow form before
+        // tokenization.
+        id: "fact-derived-block-sequence",
+        line: "derived_from:\n  - facts/a.md:2\n  - facts/b.md:5",
+        expected: ["facts/a.md:2", "facts/b.md:5"],
+      },
     ];
 
     for (const flavor of flavors) {
