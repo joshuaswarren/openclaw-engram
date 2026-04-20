@@ -118,9 +118,18 @@ test("normalizeOriginUrl: scp paths may start with digits", () => {
 test("normalizeOriginUrl: Windows drive-letter path is not parsed as scp", () => {
   // `git remote get-url origin` can return `C:/repos/app.git` for local
   // Windows paths. The drive-letter branch short-circuits scp parsing.
+  //
+  // Only the drive letter is case-folded (NTFS is case-insensitive for
+  // the drive letter). The rest of the path is preserved verbatim because
+  // on case-sensitive filesystems reachable via network shares, paths can
+  // still be case-sensitive.
   assert.equal(
     normalizeOriginUrl("C:/repos/app.git"),
     "c:/repos/app",
+  );
+  assert.equal(
+    normalizeOriginUrl("C:/Repos/App.git"),
+    "c:/Repos/App",
   );
 });
 
@@ -194,10 +203,34 @@ test("normalizeOriginUrl: uppercase .GIT suffix stripped (case-insensitive)", ()
   );
 });
 
-test("normalizeOriginUrl: case-insensitive", () => {
+test("normalizeOriginUrl: hostname is case-folded, repo path case is preserved", () => {
+  // Hostnames are case-insensitive per DNS, so `GitHub.com` and `github.com`
+  // must normalize to the same host. Repository paths, however, can be
+  // case-sensitive on Git backends (notably self-hosted servers on
+  // case-sensitive filesystems) — preserving case is required for
+  // cross-tenant isolation there.
   assert.equal(
     normalizeOriginUrl("https://GitHub.com/Foo/Bar.git"),
-    "github.com/foo/bar",
+    "github.com/Foo/Bar",
+  );
+});
+
+test("normalizeOriginUrl: repo paths differing only in case stay distinct (case-sensitive backends)", () => {
+  // Regression for the P1 review finding: case-sensitive backends treat
+  // `Team/Repo` and `team/repo` as different repositories. Normalization
+  // must NOT collapse them — doing so would give both the same projectId
+  // and merge recall/write data across unrelated projects.
+  assert.notEqual(
+    normalizeOriginUrl("git@host.example:Team/Repo.git"),
+    normalizeOriginUrl("git@host.example:team/repo.git"),
+  );
+  assert.notEqual(
+    normalizeOriginUrl("https://host.example/Team/Repo.git"),
+    normalizeOriginUrl("https://host.example/team/repo.git"),
+  );
+  assert.notEqual(
+    normalizeOriginUrl("ssh://git@host.example/Team/Repo.git"),
+    normalizeOriginUrl("ssh://git@host.example/team/repo.git"),
   );
 });
 

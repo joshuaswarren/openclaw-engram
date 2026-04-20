@@ -139,8 +139,13 @@ export function stableHash(input: string): string {
  *   - `ssh://git@github.com/foo/bar` → `github.com/foo/bar`
  *   - `ssh://git@github.com:2222/foo/bar` → `github.com/foo/bar` (port stripped)
  *
- * Case-insensitive (remote hostnames and most repo paths on major forges are
- * case-insensitive in practice).
+ * Case handling: the HOST segment (and port) is folded to lowercase (DNS
+ * hostnames are case-insensitive by spec). The REPO PATH segment is
+ * preserved verbatim — Git backends on case-sensitive filesystems (most
+ * self-hosted servers, Gitea, GitLab EE on Linux, etc.) treat `Team/Repo`
+ * and `team/repo` as distinct repositories, so folding the path would
+ * collapse them onto the same `projectId` and merge recall/write data
+ * across unrelated projects.
  */
 export function normalizeOriginUrl(rawUrl: string): string {
   let url = rawUrl.trim();
@@ -157,8 +162,14 @@ export function normalizeOriginUrl(rawUrl: string): string {
   // (`h:foo/bar` from `.ssh/config`). A drive letter is exactly one ASCII
   // letter followed by `:/` or `:\`; SSH aliases never have a slash
   // immediately after the colon.
+  //
+  // Case handling: lowercase ONLY the drive letter (NTFS is case-insensitive
+  // for the drive letter itself), but preserve the REST of the path. Git
+  // backends on case-sensitive filesystems treat `C:/Repos/App` and
+  // `C:/repos/app` as distinct repositories; folding the whole string
+  // would collapse them onto the same projectId.
   if (/^[A-Za-z]:[\\/]/.test(url)) {
-    return url.toLowerCase();
+    return `${url[0]!.toLowerCase()}${url.slice(1)}`;
   }
 
   // Protocol-prefixed: ssh://, https://, http://, git://, file://
@@ -194,7 +205,14 @@ export function normalizeOriginUrl(rawUrl: string): string {
     // For protocols without a host component (file:///path), fall back to
     // a stable prefix so distinct local paths don't collapse to "/path".
     const prefix = hostPort.length > 0 ? hostPort : "localhost";
-    return `${prefix}/${repoPath}`.toLowerCase();
+    // Case handling: fold ONLY the host:port prefix (DNS hostnames and
+    // numeric ports are case-insensitive). Preserve the repository path
+    // verbatim — Git backends on case-sensitive filesystems (most
+    // self-hosted servers, Gitea, GitLab EE on Linux, etc.) treat
+    // `Team/Repo` and `team/repo` as distinct repositories. Folding the
+    // path would collapse them onto the same projectId and merge
+    // recall/write data across unrelated projects.
+    return `${prefix.toLowerCase()}/${repoPath}`;
   }
 
   // scp-like syntax: [user@]host:path. Protocol-prefixed URLs (`scheme://`)
@@ -223,13 +241,20 @@ export function normalizeOriginUrl(rawUrl: string): string {
     // Reject protocol-like leftovers (e.g. `file:///path` where the scp
     // regex greedily matched `file` as host and `///path` as path).
     if (repoPath.startsWith("//")) {
-      return url.toLowerCase();
+      // Preserve case on the fallback path (see below for rationale).
+      return url;
     }
-    return `${host}/${repoPath.replace(/^\/+/, "")}`.toLowerCase();
+    // Fold ONLY the host; preserve the repo path verbatim for
+    // case-sensitive Git backends. See the protocol branch above for
+    // rationale.
+    return `${host.toLowerCase()}/${repoPath.replace(/^\/+/, "")}`;
   }
 
-  // Fallback: use raw lowercased
-  return url.toLowerCase();
+  // Fallback: preserve the raw input. Opaque strings could include
+  // case-sensitive repo paths; preserving case means distinct inputs stay
+  // distinct. `projectId` hashing still differentiates case-different
+  // strings into distinct namespaces.
+  return url;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
