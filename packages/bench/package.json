@@ -42,6 +42,7 @@
     "tsup": "^8.5.1"
   },
   "files": [
-    "dist"
+    "dist",
+    "baselines"
   ]
 }

@@ -352,3 +352,13 @@ export type {
   RunProceduralAblationCliArgs,
   RunProceduralAblationOptions,
 } from "./benchmarks/remnic/procedural-recall/ablation.js";
+
+// Real-fixture procedural-recall scenarios + baseline (issue #567 PR 2/5).
+export {
+  PROCEDURAL_REAL_SCENARIOS,
+  PROCEDURAL_REAL_SCENARIOS_SMOKE,
+} from "./benchmarks/remnic/procedural-recall/real-scenarios.js";
+export type {
+  ProceduralRealScenario,
+  ProceduralRealScenarioCategory,
+} from "./benchmarks/remnic/procedural-recall/real-scenarios.js";
