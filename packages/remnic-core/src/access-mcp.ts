@@ -1445,7 +1445,12 @@ export class EngramMcpServer {
       case "engram.review_list":
       case "remnic.review_list": {
         const { listPairs } = await import("./contradiction/contradiction-review.js");
-        const filter = typeof args.filter === "string" ? args.filter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user" : "unresolved";
+        const VALID_REVIEW_FILTERS = new Set(["all", "unresolved", "contradicts", "independent", "duplicates", "needs-user"]);
+        const rawFilter = typeof args.filter === "string" ? args.filter : "unresolved";
+        if (!VALID_REVIEW_FILTERS.has(rawFilter)) {
+          throw new Error(`Invalid filter '${rawFilter}'. Valid: ${[...VALID_REVIEW_FILTERS].join(", ")}`);
+        }
+        const filter = rawFilter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user";
         const ns = typeof args.namespace === "string" ? args.namespace : undefined;
         const limit = typeof args.limit === "number" ? args.limit : 50;
         return listPairs(this.service.memoryDir, { filter, namespace: ns, limit });
