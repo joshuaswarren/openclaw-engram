@@ -13,9 +13,14 @@ Four sources are supported today:
 | Gemini  | `@remnic/import-gemini`   | `gemini`     | Google Takeout `My Activity.json`            |
 | mem0    | `@remnic/import-mem0`     | `mem0`       | REST API (paginated) or offline JSON dump    |
 
-Each importer is an **à-la-carte optional peer dependency** of the
-`@remnic/cli` package. They are never bundled into the base CLI install —
-users who only need one source install only that one package.
+Each importer is an **à-la-carte optional runtime companion** of the
+`@remnic/cli` package. They are never bundled into the base CLI install,
+and installing `@remnic/cli` alone will not pull any of them in. Each
+adapter package is registered as an optional peer dependency of the CLI
+(so workspace + pnpm installs keep them linked), but runtime loading
+goes through a computed-specifier dynamic import so npm users who never
+install an adapter package receive a friendly install hint rather than a
+`MODULE_NOT_FOUND`. Install only the adapter you actually need.
 
 ```bash
 # Install the CLI (core + base)
@@ -100,7 +105,7 @@ silently defaulting (CLAUDE.md rule 51).
 Every importer supports `--dry-run` for a zero-write preview:
 
 ```bash
-remnic import --adapter chatgpt --file ~/chatgpt-export.zip/memory.json --dry-run
+remnic import --adapter chatgpt --file ~/chatgpt-export/memory.json --dry-run
 # Dry-run: would import 147 memories from 'chatgpt'.
 # (no memories were written; re-run without --dry-run to commit)
 ```

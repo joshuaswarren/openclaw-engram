@@ -282,7 +282,7 @@ ones you need:
 ```bash
 # ChatGPT (OpenAI data export: saved memories + optional conversation summaries)
 npm install -g @remnic/import-chatgpt
-remnic import --adapter chatgpt --file ~/chatgpt-export.zip/memory.json --dry-run
+remnic import --adapter chatgpt --file ~/chatgpt-export/memory.json --dry-run
 
 # Claude (Anthropic data export: project docs + prompt templates)
 npm install -g @remnic/import-claude
