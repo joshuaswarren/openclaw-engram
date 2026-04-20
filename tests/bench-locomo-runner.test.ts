@@ -230,3 +230,35 @@ test("runBenchmark treats locomo limit zero as an empty run instead of falling b
     /LoCoMo dataset is empty after applying the requested limit/,
   );
 });
+
+test("runBenchmark reports locomo qa validation errors with zero-based indices", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-locomo-qa-index-"));
+  const datasetDir = path.join(tmpDir, "datasets", "locomo");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "locomo10.json"),
+    JSON.stringify([
+      {
+        sample_id: "locomo-dataset-1",
+        conversation: {
+          speaker_a: "Jordan",
+          speaker_b: "Assistant",
+          session_1: [],
+        },
+        qa: [null],
+      },
+    ]),
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runBenchmark("locomo", {
+        mode: "full",
+        datasetDir,
+        system: adapter,
+      }),
+    /qa\[0\] must be an object/,
+  );
+});

@@ -332,7 +332,7 @@ function normalizeQaArray(value: unknown, location: string): LoCoMoQA[] {
   }
 
   return value.map((entry, index) =>
-    normalizeQa(entry, `${location} qa[${index + 1}]`),
+    normalizeQa(entry, `${location} qa[${index}]`),
   );
 }
 
