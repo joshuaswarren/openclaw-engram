@@ -15,6 +15,7 @@ const expectedPublishDirs = [
   "packages/import-weclone",
   "packages/import-chatgpt",
   "packages/import-claude",
+  "packages/import-gemini",
   "packages/import-mem0",
   "packages/connector-weclone",
   "packages/connector-replit",
