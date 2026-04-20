@@ -394,6 +394,88 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // Recall X-ray (issue #570 PR 4): unified per-result attribution
+    // snapshot.  Requires bearer auth (same as every other endpoint
+    // here) and enforces namespace scope before the recall fires
+    // (CLAUDE.md rule 42).  Query comes from the `q` search param so
+    // GET stays cacheable; `namespace` / `session` / `budget` are
+    // optional.
+    if (req.method === "GET" && pathname === "/engram/v1/recall/xray") {
+      const queryParam = parsed.searchParams.get("q");
+      if (!queryParam || queryParam.trim().length === 0) {
+        this.respondJson(res, 400, {
+          error: "missing_query",
+          code: "missing_query",
+          message: "q search parameter is required and must be non-empty",
+        });
+        return;
+      }
+      const sessionParam = parsed.searchParams.get("session");
+      const sessionKey = sessionParam && sessionParam.length > 0
+        ? sessionParam
+        : undefined;
+      const namespaceParam = parsed.searchParams.get("namespace");
+      const namespace = this.resolveNamespace(
+        req,
+        namespaceParam && namespaceParam.length > 0
+          ? namespaceParam
+          : undefined,
+      );
+      const budgetParam = parsed.searchParams.get("budget");
+      // Reject invalid `budget` with 400 rather than silently
+      // defaulting (CLAUDE.md rules 14 + 51).
+      let budget: number | undefined;
+      if (budgetParam !== null && budgetParam !== "") {
+        const parsedBudget = Number(budgetParam);
+        if (
+          !Number.isFinite(parsedBudget)
+          || parsedBudget <= 0
+          || !Number.isInteger(parsedBudget)
+        ) {
+          this.respondJson(res, 400, {
+            error: "invalid_budget",
+            code: "invalid_budget",
+            message:
+              "budget expects a positive integer",
+          });
+          return;
+        }
+        budget = parsedBudget;
+      }
+      // Only translate validation errors (empty query, bad budget)
+      // into 400s.  Backend faults (timeouts, storage errors,
+      // unexpected orchestrator failures) must bubble to the global
+      // `handle()` error handler so they return 500 and get logged
+      // properly.  `service.recallXray` prefixes its validation
+      // errors with "recallXray:" so we key off that prefix rather
+      // than catching everything.
+      let payload: Awaited<ReturnType<typeof this.service.recallXray>>;
+      try {
+        payload = await this.service.recallXray({
+          query: queryParam,
+          sessionKey,
+          namespace,
+          budget,
+          authenticatedPrincipal: this.resolveRequestPrincipal(req),
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        if (message.startsWith("recallXray:")) {
+          this.respondJson(res, 400, {
+            error: "invalid_request",
+            code: "invalid_request",
+            message,
+          });
+          return;
+        }
+        // Anything else is a server-side fault; rethrow so the
+        // outer `handle()` catch returns 500 + logs the error.
+        throw err;
+      }
+      this.respondJson(res, 200, payload);
+      return;
+    }
+
     if (req.method === "POST" && pathname === "/engram/v1/observe") {
       const body = await this.readValidatedBody(req, "observe");
       this.ensureWriteRateLimitAvailable();

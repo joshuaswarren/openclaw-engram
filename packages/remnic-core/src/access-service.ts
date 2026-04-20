@@ -1170,6 +1170,146 @@ export class EngramAccessService {
     return toRecallExplainJson(snapshot);
   }
 
+  /**
+   * Recall X-ray (issue #570).  Runs a recall with `xrayCapture: true`
+   * and returns the resulting snapshot as structured JSON so every
+   * surface (CLI / HTTP / MCP) gets the same payload.  Namespace scope
+   * is enforced before the recall fires (CLAUDE.md rule 42 — read and
+   * write paths must resolve through the same namespace layer) so an
+   * unauthorized principal cannot capture an x-ray for a namespace it
+   * cannot read.
+   */
+  async recallXray(request: {
+    query: string;
+    sessionKey?: string;
+    namespace?: string;
+    budget?: number;
+    authenticatedPrincipal?: string;
+  }): Promise<{
+    snapshotFound: boolean;
+    snapshot?: import("./recall-xray.js").RecallXraySnapshot;
+  }> {
+    const query = typeof request.query === "string" ? request.query : "";
+    if (query.trim().length === 0) {
+      // Match the CLI contract (CLAUDE.md rule 51): reject empty
+      // input with an explicit error rather than silently producing
+      // an empty snapshot.
+      throw new Error("recallXray: query is required and must be non-empty");
+    }
+
+    const namespacesEnabled = this.orchestrator.config.namespacesEnabled;
+    const requestedNamespace = request.namespace?.trim()
+      ? this.resolveNamespace(request.namespace)
+      : undefined;
+    const authenticatedPrincipal = request.authenticatedPrincipal?.trim();
+    const principal =
+      authenticatedPrincipal
+      || resolvePrincipal(request.sessionKey, this.orchestrator.config);
+
+    if (requestedNamespace) {
+      if (
+        !canReadNamespace(
+          principal,
+          requestedNamespace,
+          this.orchestrator.config,
+        )
+      ) {
+        return { snapshotFound: false };
+      }
+    } else if (
+      namespacesEnabled
+      && !authenticatedPrincipal
+      && !request.sessionKey?.trim()
+    ) {
+      // Namespaces enabled but no identity supplied — reject rather
+      // than scanning the global namespace (CLAUDE.md rule 48:
+      // least-privileged default).
+      return { snapshotFound: false };
+    }
+
+    // Optional `--budget` override must be a positive integer.  Invalid
+    // values throw rather than silently defaulting (CLAUDE.md rule 51).
+    let budgetOverride: number | undefined;
+    if (request.budget !== undefined && request.budget !== null) {
+      const parsed =
+        typeof request.budget === "number"
+          ? request.budget
+          : Number(request.budget);
+      if (
+        !Number.isFinite(parsed)
+        || parsed <= 0
+        || !Number.isInteger(parsed)
+      ) {
+        throw new Error(
+          `recallXray: budget expects a positive integer; got ${JSON.stringify(request.budget)}`,
+        );
+      }
+      budgetOverride = parsed;
+    }
+
+    // Serialize x-ray invocations behind a per-service mutex so the
+    // per-process `getLastXraySnapshot()` slot cannot be clobbered by
+    // a concurrent capturing call before this caller reads it back.
+    // Budget and principal are now threaded through
+    // `RecallInvocationOptions`, so global config mutation is gone
+    // (CLAUDE.md rule 47: no shared mutable state across async
+    // boundaries).  The mutex stays only for the snapshot-slot
+    // ordering guarantee.
+    const previousQueue = this.xrayQueue;
+    let release: () => void = () => {};
+    this.xrayQueue = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previousQueue;
+
+    try {
+      // Clear any prior snapshot so a capture failure surfaces as
+      // `{snapshotFound: false}` rather than returning stale data
+      // from an earlier call on the same orchestrator.
+      this.orchestrator.clearLastXraySnapshot();
+      await this.orchestrator.recall(query, request.sessionKey?.trim() || undefined, {
+        xrayCapture: true,
+        ...(requestedNamespace ? { namespace: requestedNamespace } : {}),
+        ...(budgetOverride !== undefined
+          ? { budgetCharsOverride: budgetOverride }
+          : {}),
+        // When the caller supplies an authenticated principal, forward
+        // it via the dedicated override channel so orchestrator-side
+        // ACL decisions use the SAME principal the access-surface
+        // pre-check above authorized.  Threading an
+        // `authenticatedPrincipal` through `sessionKey` would be wrong:
+        // `resolvePrincipal(sessionKey)` only maps configured raw
+        // session keys and otherwise collapses to `"default"`, which
+        // in namespace-enabled deployments produces false denials /
+        // wrong-scope serving despite the pre-check passing
+        // (CLAUDE.md rule 42).
+        ...(authenticatedPrincipal
+          ? { principalOverride: authenticatedPrincipal }
+          : {}),
+      });
+
+      const snapshot = this.orchestrator.getLastXraySnapshot();
+      if (!snapshot) return { snapshotFound: false };
+      // Re-check namespace after capture: the recall may have served
+      // from a different namespace than the caller requested.  Drop
+      // the snapshot rather than leak cross-tenant data (CLAUDE.md
+      // rules 42 + 47).  The comparison is strict so a snapshot whose
+      // namespace is `undefined` cannot bypass the scope the caller
+      // asked for.
+      if (requestedNamespace && snapshot.namespace !== requestedNamespace) {
+        return { snapshotFound: false };
+      }
+      return { snapshotFound: true, snapshot };
+    } finally {
+      release();
+    }
+  }
+  // Sequence lock for `recallXray` — see comment inside the method.
+  // Lives on the instance so every x-ray call on the same service
+  // shares it, and so separate services in the same process (e.g.
+  // per-tenant) do not block each other.
+  private xrayQueue: Promise<void> = Promise.resolve();
+
   async memoryStore(request: EngramAccessMemoryStoreRequest): Promise<EngramAccessWriteResponse> {
     const namespace = this.resolveWritableNamespace(
       request.namespace,
