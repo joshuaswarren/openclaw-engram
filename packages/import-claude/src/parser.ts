@@ -151,8 +151,10 @@ export function parseClaudeExport(
   // Shape 2: an object. Look for the known keys.
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
+    let sawKnownSection = false;
     const convs = obj.conversations;
     if (Array.isArray(convs)) {
+      sawKnownSection = true;
       for (const entry of convs) {
         if (looksLikeConversation(entry)) {
           result.conversations.push(entry as ClaudeConversation);
@@ -163,6 +165,7 @@ export function parseClaudeExport(
     }
     const projects = obj.projects;
     if (Array.isArray(projects)) {
+      sawKnownSection = true;
       for (const entry of projects) {
         if (looksLikeProject(entry)) {
           result.projects.push(entry as ClaudeProject);
@@ -170,6 +173,14 @@ export function parseClaudeExport(
           throw new Error("Non-project entry in projects array");
         }
       }
+    }
+    // Strict mode: if the object has neither `conversations` nor `projects`,
+    // bail rather than silently returning an empty struct. Non-strict mode
+    // keeps the lenient behavior to survive future-shape changes.
+    if (!sawKnownSection && options.strict) {
+      throw new Error(
+        "Unknown Claude export object shape: expected 'conversations' or 'projects' keys.",
+      );
     }
     return result;
   }
@@ -237,7 +248,17 @@ export function collectHumanTurnsFromConversation(
   conversation: ClaudeConversation,
 ): Array<{ content: string; createdAt?: string }> {
   const collected: Array<{ content: string; createdAt?: string }> = [];
-  const messages = conversation.chat_messages ?? conversation.messages ?? [];
+  // Prefer chat_messages when it has entries; fall back to the legacy
+  // `messages` field. `??` alone is insufficient because an empty
+  // `chat_messages` array is non-null but has no content — without the
+  // length check, we would miss turns that only live in the legacy
+  // `messages` array. Cursor review on PR #598.
+  let messages: ClaudeConversationMessage[] = [];
+  if (Array.isArray(conversation.chat_messages) && conversation.chat_messages.length > 0) {
+    messages = conversation.chat_messages;
+  } else if (Array.isArray(conversation.messages) && conversation.messages.length > 0) {
+    messages = conversation.messages;
+  }
   for (const msg of messages) {
     if (!isHumanSender(msg)) continue;
     const text = extractMessageText(msg);

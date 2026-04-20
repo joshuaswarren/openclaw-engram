@@ -77,4 +77,40 @@ describe("parseClaudeExport", () => {
     assert.equal(turns.length, 1);
     assert.ok(turns[0]?.content.includes("bundle-world"));
   });
+
+  // Cursor review on PR #598 — strict mode should reject object payloads
+  // that have none of the recognized Claude export sections rather than
+  // silently returning an empty struct.
+  it("strict mode rejects unknown object shapes", () => {
+    assert.throws(
+      () => parseClaudeExport({ foo: "bar" }, { strict: true }),
+      /Unknown Claude export object shape/,
+    );
+  });
+
+  it("non-strict mode returns an empty result for unknown object shapes", () => {
+    const parsed = parseClaudeExport({ foo: "bar" });
+    assert.equal(parsed.conversations.length, 0);
+    assert.equal(parsed.projects.length, 0);
+  });
+
+  // Cursor review on PR #598 — collectHumanTurnsFromConversation must fall
+  // back to `messages` when `chat_messages` is an empty array (not just
+  // when it's undefined).
+  it("falls back to `messages` when `chat_messages` is an empty array", () => {
+    const conv = {
+      uuid: "legacy",
+      name: "Legacy-shape conversation",
+      chat_messages: [],
+      messages: [
+        {
+          role: "human",
+          text: "I only live in the messages array.",
+        },
+      ],
+    };
+    const turns = collectHumanTurnsFromConversation(conv);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]?.content, "I only live in the messages array.");
+  });
 });

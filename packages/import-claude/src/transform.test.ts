@@ -100,4 +100,36 @@ describe("transformClaudeExport", () => {
     assert.ok(tpl);
     assert.equal(tpl.metadata?.projectName, "Synthetic weekend CLI");
   });
+
+  // Cursor review on PR #598 — when the title alone is longer than
+  // maxChars, the previous truncation logic produced content that
+  // exceeded the cap.
+  it("truncation never exceeds maxConversationSummaryChars with a long title", () => {
+    const longTitle = "T".repeat(500);
+    const parsed = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "long-title",
+          name: longTitle,
+          chat_messages: [
+            {
+              uuid: "m1",
+              sender: "human",
+              text: "short body",
+            },
+          ],
+        },
+      ]),
+    );
+    const [memory] = transformClaudeExport(parsed, {
+      includeConversations: true,
+      maxConversationSummaryChars: 100,
+    });
+    assert.ok(memory);
+    assert.ok(
+      memory.content.length <= 100,
+      `content length ${memory.content.length} must be <= 100`,
+    );
+    assert.ok(memory.content.endsWith("..."));
+  });
 });
