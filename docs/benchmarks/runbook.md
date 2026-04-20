@@ -163,9 +163,14 @@ planned in PR 4 will expose a cleaner `--provider local-llm --base-url
   The artifact was written by a newer version of `@remnic/bench`.
   Either update the local checkout or inspect the newer schema.
 - **LLM judge returns 0 on everything**
-  Set `BENCH_JUDGE_MODEL` + `BENCH_JUDGE_PROVIDER` explicitly. The
-  default judge hits whatever the adapter's evaluator LLM is — ensure
-  it has access to the expected question/predicted/expected fields.
+  Pass `--judge-provider <openai|anthropic|ollama|litellm>` and
+  `--judge-model <id>` on the `remnic bench run` command. The CLI
+  surface in `packages/remnic-cli/src/bench-args.ts` is the only
+  sanctioned configuration path for the judge today; environment
+  variables are not consumed. Without these flags the runner falls
+  back to whatever the adapter's evaluator LLM is, which can legally
+  score 0 if it lacks access to the `(question, predicted, expected)`
+  tuple format the scorer expects.
 
 ## 9. Mocked example
 
