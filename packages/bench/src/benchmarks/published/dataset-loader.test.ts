@@ -216,6 +216,117 @@ test("loadLongMemEvalS rejects non-array payload", async () => {
   });
 });
 
+test("loadLongMemEvalS rejects entries missing haystack_sessions array", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      JSON.stringify([
+        {
+          question_id: 1,
+          question_type: "x",
+          question: "q",
+          answer: "a",
+          question_date: "2025-01-01",
+          // haystack_sessions missing — runner would later crash on
+          // `item.haystack_sessions.length`.
+          haystack_session_ids: [],
+          haystack_dates: [],
+          answer_session_ids: [],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) => /haystack_sessions array/.test(entry)),
+      `expected haystack_sessions error; got ${JSON.stringify(result.errors)}`,
+    );
+  });
+});
+
+test("loadLongMemEvalS rejects entries missing a string answer", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      JSON.stringify([
+        {
+          question_id: 1,
+          question_type: "x",
+          question: "q",
+          // no answer
+          question_date: "2025-01-01",
+          haystack_sessions: [],
+          haystack_session_ids: [],
+          haystack_dates: [],
+          answer_session_ids: [],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) => /string answer field/.test(entry)),
+    );
+  });
+});
+
+test("loadLoCoMo10 default parser rejects entries missing conversation object", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "bad-1",
+          // conversation missing — runner iterates conversation.session_*
+          qa: [],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) => /conversation object field/.test(entry)),
+      `expected conversation error; got ${JSON.stringify(result.errors)}`,
+    );
+  });
+});
+
+test("loadLoCoMo10 default parser rejects entries missing qa array", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "bad-2",
+          conversation: { speaker_a: "A", speaker_b: "B" },
+          // qa missing
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.ok(
+      result.errors.some((entry) => /qa array/.test(entry)),
+    );
+  });
+});
+
 test("loadLoCoMo10 returns smoke fixture when dataset missing in quick mode", async () => {
   const result = await loadLoCoMo10({ mode: "quick" });
   assert.equal(result.source, "smoke");

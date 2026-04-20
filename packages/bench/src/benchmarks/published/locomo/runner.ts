@@ -235,35 +235,34 @@ async function loadDataset(
   datasetDir: string | undefined,
   limit?: number,
 ): Promise<LoCoMoConversation[]> {
-  const normalizedLimit = normalizeLimit(limit);
+  // Limit normalization happens inside `loadLoCoMo10`; do not re-validate
+  // here (the shared loader's `normalizeLimit` is the single source of
+  // truth).
   const loaded = await loadLoCoMo10({
     mode,
     datasetDir,
-    limit: normalizedLimit,
+    limit,
     parseFile: parseDataset,
   });
 
   if (loaded.source === "missing") {
-    if (mode === "full") {
-      if (!datasetDir) {
-        // Preserve the historical error message so CLI tooling and
-        // regression tests can continue to detect the "no dataset
-        // path configured" case specifically.
-        throw new Error(
-          "LoCoMo full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
-        );
-      }
+    // `loaded.source === "missing"` implies `mode === "full"` — the
+    // shared loader only returns `missing` in that branch. Keep the
+    // inner check + the historical "no datasetDir" message for clarity
+    // and backward-compat with regression tests; if the loader contract
+    // ever changes, this branch still fails safely.
+    if (!datasetDir) {
       throw new Error(
-        formatMissingDatasetError(
-          "locomo",
-          datasetDir,
-          LOCOMO_DATASET_FILENAMES,
-          loaded.errors,
-        ),
+        "LoCoMo full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
       );
     }
     throw new Error(
-      "LoCoMo dataset not found and bundled smoke fixture is empty.",
+      formatMissingDatasetError(
+        "locomo",
+        datasetDir,
+        LOCOMO_DATASET_FILENAMES,
+        loaded.errors,
+      ),
     );
   }
 
@@ -401,14 +400,3 @@ function normalizeScalarAnswer(value: unknown): string | undefined {
   return undefined;
 }
 
-function normalizeLimit(limit: number | undefined): number | undefined {
-  if (limit === undefined) {
-    return undefined;
-  }
-  if (!Number.isInteger(limit) || limit < 0) {
-    throw new Error(
-      "LoCoMo limit must be a non-negative integer when provided.",
-    );
-  }
-  return limit;
-}

@@ -190,26 +190,23 @@ async function loadDataset(
   const loaded = await loadLongMemEvalS({ mode, datasetDir, limit });
 
   if (loaded.source === "missing") {
-    if (mode === "full") {
-      if (!datasetDir) {
-        // Preserve the historical error message so CLI tooling and
-        // regression tests can continue to detect the "no dataset
-        // path configured" case specifically.
-        throw new Error(
-          "LongMemEval full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
-        );
-      }
+    // `loaded.source === "missing"` implies `mode === "full"` — the
+    // shared loader only returns `missing` in that branch. Keep the
+    // inner `datasetDir` check for backward-compat with regression
+    // tests that match the historical "full mode requires datasetDir"
+    // message.
+    if (!datasetDir) {
       throw new Error(
-        formatMissingDatasetError(
-          "longmemeval",
-          datasetDir,
-          LONG_MEM_EVAL_DATASET_FILENAMES,
-          loaded.errors,
-        ),
+        "LongMemEval full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
       );
     }
     throw new Error(
-      "LongMemEval dataset not found and bundled smoke fixture is empty.",
+      formatMissingDatasetError(
+        "longmemeval",
+        datasetDir,
+        LONG_MEM_EVAL_DATASET_FILENAMES,
+        loaded.errors,
+      ),
     );
   }
 

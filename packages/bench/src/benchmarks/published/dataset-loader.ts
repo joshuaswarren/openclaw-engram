@@ -157,7 +157,6 @@ function parseLongMemEvalFile(raw: string, filename: string): LongMemEvalItem[] 
       `${filename} must contain an array of LongMemEval items at top level.`,
     );
   }
-  // Minimal structural validation — full typing happens in the runner.
   for (let index = 0; index < parsed.length; index += 1) {
     const entry = parsed[index];
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
@@ -169,6 +168,35 @@ function parseLongMemEvalFile(raw: string, filename: string): LongMemEvalItem[] 
     if (typeof record.question !== "string") {
       throw new Error(
         `${filename} entry ${index} is missing a string question field.`,
+      );
+    }
+    if (typeof record.answer !== "string") {
+      throw new Error(
+        `${filename} entry ${index} is missing a string answer field.`,
+      );
+    }
+    // Required arrays that the runner dereferences directly. Missing any
+    // of these silently would surface as a runtime error deep inside
+    // `runLongMemEvalBenchmark`; catch them here so the probe error
+    // message points at the dataset file.
+    if (!Array.isArray(record.haystack_sessions)) {
+      throw new Error(
+        `${filename} entry ${index} is missing a haystack_sessions array.`,
+      );
+    }
+    if (!Array.isArray(record.haystack_session_ids)) {
+      throw new Error(
+        `${filename} entry ${index} is missing a haystack_session_ids array.`,
+      );
+    }
+    if (!Array.isArray(record.haystack_dates)) {
+      throw new Error(
+        `${filename} entry ${index} is missing a haystack_dates array.`,
+      );
+    }
+    if (!Array.isArray(record.answer_session_ids)) {
+      throw new Error(
+        `${filename} entry ${index} is missing an answer_session_ids array.`,
       );
     }
   }
@@ -193,6 +221,20 @@ function parseLoCoMoFile(raw: string, filename: string): LoCoMoConversation[] {
     if (typeof record.sample_id !== "string") {
       throw new Error(
         `${filename} conversation ${index} is missing a string sample_id field.`,
+      );
+    }
+    if (
+      !record.conversation ||
+      typeof record.conversation !== "object" ||
+      Array.isArray(record.conversation)
+    ) {
+      throw new Error(
+        `${filename} conversation ${index} is missing a conversation object field.`,
+      );
+    }
+    if (!Array.isArray(record.qa)) {
+      throw new Error(
+        `${filename} conversation ${index} is missing a qa array.`,
       );
     }
   }
