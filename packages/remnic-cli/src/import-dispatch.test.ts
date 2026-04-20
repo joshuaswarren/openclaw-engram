@@ -11,6 +11,7 @@ import {
 } from "@remnic/core";
 
 import {
+  cmdImport,
   parseImportArgs,
   runImportCommand,
   type ImportDispatchArgs,
@@ -300,5 +301,51 @@ describe("parseImportArgs tilde expansion", () => {
       "/tmp/export.json",
     ]);
     assert.equal(parsed.file, "/tmp/export.json");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cmdImport dispose contract (Cursor review fix on PR #583)
+// ---------------------------------------------------------------------------
+
+describe("cmdImport dispose contract", () => {
+  it("install-hint miss does NOT invoke dispose (no target was materialized)", async () => {
+    // `cmdImport` sets process.exitCode when the adapter load fails (install
+    // hint path). Snapshot and restore around the test so tsx's
+    // exit-code reporting is not polluted.
+    const savedExitCode = process.exitCode;
+    process.exitCode = 0;
+    try {
+      let factoryCalls = 0;
+      let disposeCalls = 0;
+      const factory = async () => {
+        factoryCalls += 1;
+        return {
+          async ingestBulkImportBatch() {},
+          bulkImportWriteNamespace() {
+            return "default";
+          },
+        } as ImporterWriteTarget;
+      };
+      const dispose = async () => {
+        disposeCalls += 1;
+      };
+      // Use `claude` because its package is known NOT to be installed in
+      // this test environment — the loader will throw an install hint and
+      // `cmdImport` must short-circuit before materializing the target.
+      await cmdImport(
+        ["--adapter", "claude", "--file", "/dev/null", "--dry-run"],
+        factory,
+        dispose,
+      );
+      assert.equal(factoryCalls, 0, "factory must not run when adapter is missing");
+      assert.equal(
+        disposeCalls,
+        0,
+        "dispose must not run when write target was never materialized",
+      );
+    } finally {
+      process.exitCode = savedExitCode;
+    }
   });
 });

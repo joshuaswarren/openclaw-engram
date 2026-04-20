@@ -62,16 +62,15 @@ export interface ImportDispatchIO {
    * Lazy factory for the write target. Called only when the run requires
    * writes (dryRun === false). Keeping it lazy means `--dry-run` and
    * `--help` invocations can complete without booting a full orchestrator
-   * — critical for CLI responsiveness and for Cursor-flagged I/O minimisation.
+   * — critical for CLI responsiveness and for I/O minimisation.
+   *
+   * Disposal is the caller's responsibility (see `cmdImport`'s `dispose`
+   * parameter). We deliberately do NOT expose `disposeWriteTarget` on the
+   * IO interface because `runImportCommand` has no hook to call it — all
+   * IO cleanup is owned by `cmdImport`, which tracks whether the target
+   * was actually constructed before invoking dispose.
    */
   getWriteTarget: () => Promise<ImporterWriteTarget>;
-  /**
-   * Optional cleanup hook paired with `getWriteTarget`. Called after
-   * `runImporter` completes so hosts can shut down an orchestrator they
-   * constructed on demand. Skipping this on dry-run avoids the shutdown
-   * overhead entirely.
-   */
-  disposeWriteTarget?: () => Promise<void>;
   stdout: (line: string) => void;
   stderr: (line: string) => void;
 }
@@ -311,12 +310,19 @@ export async function cmdImport(
     return undefined;
   }
 
+  // Track whether `getWriteTarget` was actually called so dispose only runs
+  // when a target was materialized. An install-hint miss (loadAdapter throws)
+  // must NOT trigger dispose — there's nothing to dispose and disposing may
+  // itself throw, masking the original error.
+  let targetMaterialized = false;
   const io: ImportDispatchIO = {
     readFile: async (p) => fs.promises.readFile(p, "utf-8"),
     loadAdapter: async (name) => (await loadImporterModule(name)).adapter,
     runImporter,
-    getWriteTarget: targetFactory,
-    ...(disposeTarget !== undefined ? { disposeWriteTarget: disposeTarget } : {}),
+    getWriteTarget: async () => {
+      targetMaterialized = true;
+      return targetFactory();
+    },
     stdout: (line) => process.stdout.write(line + "\n"),
     stderr: (line) => process.stderr.write(line + "\n"),
   };
@@ -330,12 +336,10 @@ export async function cmdImport(
     process.exitCode = 1;
     return undefined;
   } finally {
-    // Only run the disposer when writes actually happened — dry-run and
-    // install-hint misses never instantiate the target, so there is nothing
-    // to dispose. `runImportCommand` uses `dryRunWriteTarget()` on dry-run
-    // and does not call `getWriteTarget`, so the flag mirrors whether
-    // writes were intended.
-    if (!parsed.dryRun && disposeTarget !== undefined) {
+    // Only dispose when the write target was actually constructed. Checking
+    // `parsed.dryRun` alone would incorrectly dispose after install-hint
+    // misses or parse errors that happen BEFORE `getWriteTarget` is called.
+    if (targetMaterialized && disposeTarget !== undefined) {
       try {
         await disposeTarget();
       } catch {
