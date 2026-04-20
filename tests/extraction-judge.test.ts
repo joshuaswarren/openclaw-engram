@@ -559,10 +559,13 @@ test("isValidCachedVerdict accepts new entries with known kind", () => {
   );
 });
 
-test("isValidCachedVerdict rejects entries with unknown kind", () => {
+test("isValidCachedVerdict accepts unknown string kinds for forward-compat", () => {
+  // Loader should not crash when a future build adds a new kind value.
+  // getVerdictKind collapses unknown strings back to the boolean, so
+  // the cached entry is still safe to consume.
   assert.equal(
     isValidCachedVerdict({ durable: true, reason: "x", kind: "bogus" }),
-    false,
+    true,
   );
 });
 
@@ -574,6 +577,11 @@ test("isValidCachedVerdict rejects structurally invalid entries", () => {
   assert.equal(isValidCachedVerdict({ durable: "yes", reason: "x" }), false);
   assert.equal(isValidCachedVerdict({ durable: true }), false);
   assert.equal(isValidCachedVerdict({ reason: "x" }), false);
+  // kind present but wrong type — structural violation, reject.
+  assert.equal(
+    isValidCachedVerdict({ durable: true, reason: "x", kind: 42 }),
+    false,
+  );
 });
 
 test("verdict cache loads legacy entries correctly via judgeFactDurability", async () => {

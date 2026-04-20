@@ -106,23 +106,22 @@ export function isDurableVerdict(verdict: JudgeVerdict): boolean {
  * Validate a cache entry loaded from persistence / another process.
  *
  * Accepts legacy `{ durable, reason }` entries unchanged. Accepts new
- * `{ durable, reason, kind }` entries when `kind` is one of the known
- * values. Rejects entries with structurally wrong types or unknown
- * `kind` values so stale caches cannot poison in-process state.
+ * `{ durable, reason, kind }` entries when `kind` is absent or a string
+ * — including unknown string values, which future builds may introduce.
+ * `getVerdictKind` already collapses unrecognised strings back to the
+ * boolean `durable`, so accepting them here is safe and keeps the loader
+ * forward-compatible.
  *
- * Used by the in-memory cache loaders to stay forward- and backward-
- * compatible without catastrophically failing on an unexpected shape.
+ * Rejects entries with structurally wrong types (missing `durable`,
+ * non-string `reason`, non-string `kind`) so stale or corrupt caches
+ * cannot poison in-process state.
  */
 export function isValidCachedVerdict(value: unknown): value is JudgeVerdict {
   if (typeof value !== "object" || value === null) return false;
   const v = value as Record<string, unknown>;
   if (typeof v.durable !== "boolean") return false;
   if (typeof v.reason !== "string") return false;
-  if (v.kind !== undefined) {
-    if (v.kind !== "accept" && v.kind !== "reject" && v.kind !== "defer") {
-      return false;
-    }
-  }
+  if (v.kind !== undefined && typeof v.kind !== "string") return false;
   return true;
 }
 
