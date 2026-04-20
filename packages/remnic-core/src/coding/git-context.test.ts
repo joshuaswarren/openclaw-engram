@@ -199,6 +199,22 @@ test("normalizeOriginUrl: empty input yields empty string", () => {
   assert.equal(normalizeOriginUrl("   "), "");
 });
 
+test("normalizeOriginUrl: scp-style IPv6 host matches ssh:// IPv6 host", () => {
+  // Regression: git accepts `git@[2001:db8::1]:org/repo.git` as an scp
+  // remote. Without bracket-aware parsing the regex split on the first
+  // internal `:` of the IPv6 literal, producing a malformed host and a
+  // different projectId from the equivalent ssh://[...]/ form.
+  assert.equal(
+    normalizeOriginUrl("git@[2001:db8::1]:org/repo.git"),
+    "2001:db8::1/org/repo",
+  );
+  assert.equal(
+    normalizeOriginUrl("git@[2001:db8::1]:org/repo.git"),
+    normalizeOriginUrl("ssh://git@[2001:db8::1]/org/repo.git"),
+    "scp and ssh:// IPv6 forms must normalize identically",
+  );
+});
+
 test("normalizeOriginUrl: file:/// URLs do not fall through to scp parser", () => {
   // Regression: `file:///path/to/repo` has an empty host component. Before the
   // fix, the protocol regex required a non-empty host and so fell through to

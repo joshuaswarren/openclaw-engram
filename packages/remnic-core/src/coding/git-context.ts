@@ -199,9 +199,16 @@ export function normalizeOriginUrl(rawUrl: string): string {
   //
   // Windows drive letters were filtered above, so single-character SSH
   // host aliases (`h:foo/bar`) are accepted here.
-  const scpMatch = /^(?:([^@\s/]+)@)?([^:@\s/]+):(.+)$/.exec(url);
+  //
+  // Bracketed IPv6 (`[2001:db8::1]`) is supported: the host alternative
+  // matches the bracketed literal up to `]` without splitting on internal
+  // `:`. Brackets are stripped in the normalised form so the scp and
+  // `ssh://` forms of the same IPv6 remote produce identical projectIds.
+  const scpMatch =
+    /^(?:([^@\s/]+)@)?(\[[^\]]+\]|[^:@\s/]+):(.+)$/.exec(url);
   if (scpMatch) {
-    const host = scpMatch[2] ?? "";
+    let host = scpMatch[2] ?? "";
+    if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
     const repoPath = scpMatch[3] ?? "";
     // Reject protocol-like leftovers (e.g. `file:///path` where the scp
     // regex greedily matched `file` as host and `///path` as path).
