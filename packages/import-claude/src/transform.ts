@@ -147,17 +147,20 @@ function conversationToSummary(
   const body = turns.map((t) => `- ${t.content}`).join("\n");
   let content = titleLine + body;
   if (content.length > maxChars) {
-    // Reserve 3 chars for the "..." suffix. When the titleLine alone
-    // already exceeds maxChars (pathological — a very long title with a
-    // small cap), truncate the titleLine itself rather than letting
-    // content exceed maxChars. Cursor review on PR #598.
-    const suffix = "...";
-    if (titleLine.length + suffix.length >= maxChars) {
-      content = titleLine.slice(0, Math.max(0, maxChars - suffix.length)) + suffix;
+    // Reserve up to 3 chars for the "..." suffix, but truncate the suffix
+    // itself when `maxChars` is below 3 so the final content.length is
+    // strictly ≤ maxChars. Cursor reviews on PR #598 flagged both the
+    // long-title case (titleLine alone exceeds maxChars) and the
+    // pathologically small cap (maxChars < suffix.length).
+    const effectiveSuffix = maxChars >= 3 ? "..." : "";
+    if (titleLine.length + effectiveSuffix.length >= maxChars) {
+      content =
+        titleLine.slice(0, Math.max(0, maxChars - effectiveSuffix.length)) +
+        effectiveSuffix;
     } else {
-      const remaining = maxChars - titleLine.length - suffix.length;
+      const remaining = maxChars - titleLine.length - effectiveSuffix.length;
       const bodyTruncated = body.slice(0, Math.max(0, remaining));
-      content = titleLine + bodyTruncated + suffix;
+      content = titleLine + bodyTruncated + effectiveSuffix;
     }
   }
   const sourceTimestamp = firstTimestamp(turns);

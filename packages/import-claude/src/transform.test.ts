@@ -132,4 +132,34 @@ describe("transformClaudeExport", () => {
     );
     assert.ok(memory.content.endsWith("..."));
   });
+
+  // Cursor review on PR #598 — even when maxChars is below the suffix
+  // length (3), content.length must never exceed maxChars. The earlier
+  // fix unconditionally appended "..." which produced 3-char output for
+  // maxChars=2.
+  it("honors maxChars below the suffix length", () => {
+    const longTitle = "T".repeat(500);
+    const parsed = parseClaudeExport(
+      JSON.stringify([
+        {
+          uuid: "tiny-cap",
+          name: longTitle,
+          chat_messages: [
+            { uuid: "m1", sender: "human", text: "body" },
+          ],
+        },
+      ]),
+    );
+    for (const cap of [0, 1, 2]) {
+      const [memory] = transformClaudeExport(parsed, {
+        includeConversations: true,
+        maxConversationSummaryChars: cap,
+      });
+      assert.ok(memory);
+      assert.ok(
+        memory.content.length <= cap,
+        `content.length ${memory.content.length} must be <= ${cap}`,
+      );
+    }
+  });
 });
