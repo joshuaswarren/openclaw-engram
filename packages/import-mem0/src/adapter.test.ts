@@ -121,4 +121,44 @@ describe("mem0 adapter shape", () => {
     assert.equal(result.dryRun, true);
     assert.equal(received.length, 0);
   });
+
+  // Cursor review on PR #602 — `--rate-limit` must reach fetchAllMem0Memories,
+  // not be silently dropped after parse validation.
+  it("forwards --rate-limit through runImporter to the fetch client", async () => {
+    const raw = JSON.parse(loadFixture("two-page-recording.json")) as {
+      pages: Array<{
+        request: { url: string };
+        results?: unknown[];
+        next?: string | null;
+      }>;
+    };
+    const byUrl = new Map(raw.pages.map((p) => [p.request.url, p]));
+    const replayFetch = (async (input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === "string" ? input : input.toString();
+      const match = byUrl.get(url);
+      if (!match) return new Response("not found", { status: 404 });
+      return new Response(
+        JSON.stringify({ results: match.results ?? [], next: match.next ?? null }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const sleeps: number[] = [];
+    setMem0ClientOptionsForTesting({
+      apiKey: "synthetic-key",
+      baseUrl: "https://api.mem0.test",
+      fetchImpl: replayFetch,
+      sleep: async (ms: number) => {
+        sleeps.push(ms);
+      },
+    });
+
+    const { target } = makeTarget();
+    await runImporter(adapter, undefined, target, { rateLimit: 2 });
+    // With rateLimit=2 (500ms interval) across a 2-page walk → exactly
+    // one sleep between page 1 and page 2. If the CLI flag were dropped
+    // (the bug), no sleeps would occur.
+    assert.equal(sleeps.length, 1);
+    assert.equal(sleeps[0], 500);
+  });
 });

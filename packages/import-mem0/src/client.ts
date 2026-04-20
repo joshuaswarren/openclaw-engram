@@ -87,7 +87,8 @@ export async function fetchAllMem0Memories(
     options.rateLimit && options.rateLimit > 0 ? 1000 / options.rateLimit : 0;
 
   const all: Mem0Memory[] = [];
-  let nextUrl: string | null = `${base}/v1/memories/`;
+  const firstUrl = `${base}/v1/memories/`;
+  let nextUrl: string | null = firstUrl;
   let pageIndex = 0;
   while (nextUrl) {
     throwIfAborted(options.signal);
@@ -115,10 +116,53 @@ export async function fetchAllMem0Memories(
         all.push(entry);
       }
     }
-    nextUrl = typeof json.next === "string" && json.next.length > 0 ? json.next : null;
+    nextUrl = resolveNextUrl(json, firstUrl, pageIndex, page.length);
     pageIndex += 1;
   }
   return all;
+}
+
+/**
+ * Decide the next URL to request.
+ *
+ * Preferred: the `next` cursor the server returns (v1 shape).
+ *
+ * Fallback: when `next` is absent but the response exposes numeric
+ * pagination fields (`page` / `total` / `per_page`, the older v0 shape),
+ * synthesize a `?page=<N>` request for the next page. Cursor review on
+ * PR #602 flagged that mem0 servers returning only numeric pagination
+ * were silently truncated after page 1 under the original code.
+ */
+function resolveNextUrl(
+  json: Mem0ListResponse,
+  firstUrl: string,
+  currentPageIndex: number,
+  pageSize: number,
+): string | null {
+  if (typeof json.next === "string" && json.next.length > 0) return json.next;
+
+  // Numeric-pagination fallback. `page` is 1-based in the real API.
+  const responsePage = typeof json.page === "number" && Number.isFinite(json.page)
+    ? json.page
+    : currentPageIndex + 1;
+  const perPage = typeof json.per_page === "number" && Number.isFinite(json.per_page)
+    ? json.per_page
+    : pageSize;
+  const total = typeof json.total === "number" && Number.isFinite(json.total)
+    ? json.total
+    : undefined;
+  if (total === undefined || perPage <= 0) return null;
+  const fetchedSoFar = responsePage * perPage;
+  if (fetchedSoFar >= total) return null;
+  const nextPage = responsePage + 1;
+  // Preserve any existing query string on firstUrl by using URL.
+  try {
+    const u = new URL(firstUrl);
+    u.searchParams.set("page", String(nextPage));
+    return u.toString();
+  } catch {
+    return null;
+  }
 }
 
 function throwIfAborted(signal: AbortSignal | undefined): void {

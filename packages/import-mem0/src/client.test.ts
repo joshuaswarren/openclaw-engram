@@ -124,4 +124,66 @@ describe("fetchAllMem0Memories (record/replay)", () => {
       /aborted/,
     );
   });
+
+  // Cursor review on PR #602 — pagination must keep walking when the
+  // server returns numeric page metadata without a `next` cursor.
+  it("falls back to page-number pagination when next cursor is absent", async () => {
+    let called = 0;
+    const fetchImpl = (async (input: RequestInfo | URL): Promise<Response> => {
+      const url = typeof input === "string" ? input : input.toString();
+      called += 1;
+      if (!url.includes("page=")) {
+        // Page 1: returns `page`+`total`+`per_page`, no `next`.
+        return new Response(
+          JSON.stringify({
+            results: [
+              { id: "p1-a", memory: "page 1 item a" },
+              { id: "p1-b", memory: "page 1 item b" },
+            ],
+            page: 1,
+            per_page: 2,
+            total: 3,
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      // Page 2: reaches the end.
+      return new Response(
+        JSON.stringify({
+          results: [{ id: "p2-a", memory: "page 2 item" }],
+          page: 2,
+          per_page: 2,
+          total: 3,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof fetch;
+
+    const memories = await fetchAllMem0Memories({
+      apiKey: "synthetic-key",
+      baseUrl: "https://api.mem0.test",
+      fetchImpl,
+    });
+    assert.equal(called, 2);
+    assert.equal(memories.length, 3);
+    assert.deepEqual(
+      memories.map((m) => m.id),
+      ["p1-a", "p1-b", "p2-a"],
+    );
+  });
+
+  it("does not infinite-loop when page metadata is missing entirely", async () => {
+    // No `next`, no `total` → must stop after the first page.
+    const fetchImpl = (async (): Promise<Response> =>
+      new Response(JSON.stringify({ results: [{ id: "only", memory: "x" }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as typeof fetch;
+    const memories = await fetchAllMem0Memories({
+      apiKey: "synthetic-key",
+      baseUrl: "https://api.mem0.test",
+      fetchImpl,
+    });
+    assert.equal(memories.length, 1);
+  });
 });

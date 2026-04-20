@@ -78,9 +78,16 @@ export const adapter: ImporterAdapter<ParsedMem0Export> = {
     const baseUrl =
       overrideClientOptionsForTesting?.baseUrl ?? process.env.MEM0_BASE_URL;
     const importedFromPath = baseUrl ?? "https://api.mem0.ai";
+    // Forward the validated CLI `--rate-limit` (now carried through
+    // ImporterParseOptions.rateLimit by runImporter) into the fetch client
+    // so `remnic import --adapter mem0 --rate-limit 2` actually throttles.
+    // Cursor review on PR #602 — the original wiring silently ignored it.
+    const rateLimit =
+      typeof options?.rateLimit === "number" ? options.rateLimit : undefined;
     const memories = await fetchAllMem0Memories({
       apiKey,
       ...(baseUrl !== undefined ? { baseUrl } : {}),
+      ...(rateLimit !== undefined ? { rateLimit } : {}),
       ...(overrideClientOptionsForTesting?.fetchImpl
         ? { fetchImpl: overrideClientOptionsForTesting.fetchImpl }
         : {}),
