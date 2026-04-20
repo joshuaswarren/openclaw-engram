@@ -78,8 +78,9 @@ class OpenAiCompatibleProvider implements LlmProvider {
 
     if (!response.ok) {
       const errorBody = await readErrorBody(response);
+      const contextHint = buildContextHint(errorBody, this.config.baseUrl);
       throw new Error(
-        `OpenAI-compatible completion failed: ${response.status} ${response.statusText}${errorBody ? ` — ${errorBody}` : ""}`,
+        `OpenAI-compatible completion failed: ${response.status} ${response.statusText}${errorBody ? ` — ${errorBody}` : ""}${contextHint}`,
       );
     }
 
@@ -182,6 +183,43 @@ async function readErrorBody(response: Response): Promise<string> {
     return text.replace(/\s+/g, " ").slice(0, 400);
   } catch {
     return "";
+  }
+}
+
+function buildContextHint(errorBody: string, baseUrl?: string): string {
+  if (!isContextWindowError(errorBody)) {
+    return "";
+  }
+
+  if (isLmStudioBaseUrl(baseUrl)) {
+    return " — LM Studio is running this model with a context window that is too small for this benchmark. Increase the model context length in LM Studio and rerun.";
+  }
+
+  return " — The OpenAI-compatible model server is running this model with a context window that is too small for this benchmark. Increase the loaded model context length and rerun.";
+}
+
+function isContextWindowError(errorBody: string): boolean {
+  const normalized = errorBody.toLowerCase();
+  return (
+    normalized.includes("context length") ||
+    normalized.includes("n_keep") ||
+    normalized.includes("n_ctx")
+  );
+}
+
+function isLmStudioBaseUrl(baseUrl?: string): boolean {
+  if (!baseUrl) {
+    return false;
+  }
+
+  try {
+    const url = new URL(baseUrl);
+    return (
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost") &&
+      url.port === "1234"
+    );
+  } catch {
+    return false;
   }
 }
 

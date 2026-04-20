@@ -1241,6 +1241,10 @@ export class Orchestrator {
     }
   }
 
+  private async disposeSearchBackendIfNeeded(): Promise<void> {
+    await (this.qmd as { dispose?: () => void | Promise<void> }).dispose?.();
+  }
+
   /** Set per-session workspace for the next recall() call (compaction reset). @internal */
   setRecallWorkspaceOverride(sessionKey: string, dir: string): void {
     this._recallWorkspaceOverrides.set(sessionKey, dir);
@@ -1893,6 +1897,7 @@ export class Orchestrator {
               (entry) => entry.namespace === this.config.defaultNamespace,
             )?.state ?? "unknown";
           if (defaultState === "missing") {
+            await this.disposeSearchBackendIfNeeded();
             this.qmd = new NoopSearchBackend();
             log.warn(
               "Search collection missing for Remnic memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
@@ -2194,6 +2199,7 @@ export class Orchestrator {
       if ("available" in this.qmd) {
         (this.qmd as any).available = false;
       }
+      await this.disposeSearchBackendIfNeeded();
       this.qmd = new NoopSearchBackend();
       log.warn("startupSearchSync: search collection missing; disabling search (fallback retrieval remains enabled)");
       return false;
