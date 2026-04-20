@@ -186,6 +186,64 @@ test("PersonaMem downloader prefers python3 over a broken python shim", async ()
   assert.match(markerContents, /^python3(?:\npython3)?\n?$/);
 });
 
+test("PersonaMem downloader falls back to python when python3 lacks required modules", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-personamem-python-fallback-"));
+  const datasetsDir = path.join(tmpDir, "datasets");
+  const datasetDir = path.join(datasetsDir, "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  const stubBinDir = await mkdtemp(path.join(os.tmpdir(), "remnic-cli-stub-python-fallback-"));
+  const markerPath = path.join(tmpDir, "python-invocations.log");
+
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+  await writeFile(path.join(benchmarkDir, "benchmark.csv"), "placeholder\n", "utf8");
+
+  for (const [name, script] of [
+    [
+      "python3",
+      `#!/bin/bash\necho python3 >> "${markerPath}"\nexit 1\n`,
+    ],
+    [
+      "python",
+      `#!/bin/bash\necho python >> "${markerPath}"\nexit 0\n`,
+    ],
+  ]) {
+    const stubPath = path.join(stubBinDir, name);
+    await writeFile(stubPath, script, "utf8");
+    await chmod(stubPath, 0o755);
+  }
+
+  const gitPath = resolveCommand("git");
+  const curlPath = resolveCommand("curl");
+  const dirnamePath = resolveCommand("dirname");
+  const touchPath = resolveCommand("touch");
+  for (const [name, target] of [
+    ["git", gitPath],
+    ["curl", curlPath],
+    ["dirname", dirnamePath],
+    ["touch", touchPath],
+  ]) {
+    const wrapperPath = path.join(stubBinDir, name);
+    await writeFile(wrapperPath, `#!/bin/bash\nexec "${target}" "$@"\n`, "utf8");
+    await chmod(wrapperPath, 0o755);
+  }
+
+  const result = spawnSync("bash", [scriptPath, "--benchmark", "personamem"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      DATASETS_DIR: datasetsDir,
+      PATH: `${stubBinDir}${path.delimiter}/bin`,
+    },
+    encoding: "utf8",
+  });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const markerContents = await readFile(markerPath, "utf8");
+  assert.match(markerContents, /^python3\npython\npython\n?$/);
+});
+
 test("PersonaMem downloader rejects chat history links that escape the dataset root", async (t) => {
   if (!findPythonInterpreter()) {
     t.skip("python or python3 is required for the embedded downloader regression test");

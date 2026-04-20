@@ -40,40 +40,75 @@ check_deps() {
 
 PYTHON_BIN=""
 
+python_has_modules() {
+  local python_bin="$1"
+  shift
+
+  "$python_bin" - "$@" <<'PY'
+import sys
+
+try:
+    import importlib.util as importlib_util
+except Exception:  # pragma: no cover - Python 2 fallback
+    importlib_util = None
+    import pkgutil
+
+
+def has_module(name):
+    if importlib_util is not None:
+        return importlib_util.find_spec(name) is not None
+    return pkgutil.find_loader(name) is not None
+
+
+missing = [name for name in sys.argv[1:] if not has_module(name)]
+if missing:
+    names = ", ".join(missing)
+    sys.stderr.write(
+        "ERROR: missing required Python module(s): {}. Install them before downloading this dataset.\n".format(
+            names
+        )
+    )
+    sys.exit(1)
+PY
+}
+
 resolve_python_bin() {
   if [[ -n "$PYTHON_BIN" ]]; then
-    printf '%s\n' "$PYTHON_BIN"
-    return 0
-  fi
-
-  local candidate
-  for candidate in python3 python; do
-    if command -v "$candidate" &>/dev/null; then
-      PYTHON_BIN="$candidate"
+    if [[ $# -eq 0 ]] || python_has_modules "$PYTHON_BIN" "$@" >/dev/null 2>&1; then
       printf '%s\n' "$PYTHON_BIN"
       return 0
     fi
+  fi
+
+  local candidate
+  local found_any=0
+  for candidate in python3 python; do
+    if ! command -v "$candidate" &>/dev/null; then
+      continue
+    fi
+    found_any=1
+    if [[ $# -gt 0 ]] && ! python_has_modules "$candidate" "$@" >/dev/null 2>&1; then
+      continue
+    fi
+    PYTHON_BIN="$candidate"
+    printf '%s\n' "$PYTHON_BIN"
+    return 0
   done
+
+  if [[ $found_any -eq 1 && $# -gt 0 ]]; then
+    local names
+    names=$(printf '%s, ' "$@")
+    names=${names%, }
+    echo "ERROR: missing required Python module(s): $names. Install them before downloading this dataset."
+    exit 1
+  fi
 
   echo "ERROR: python or python3 is required but not found"
   exit 1
 }
 
 require_python_modules() {
-  local python_bin
-  python_bin="$(resolve_python_bin)"
-  "$python_bin" - "$@" <<'PY'
-import importlib.util
-import sys
-
-missing = [name for name in sys.argv[1:] if importlib.util.find_spec(name) is None]
-if missing:
-    names = ", ".join(missing)
-    sys.stderr.write(
-        f"ERROR: missing required Python module(s): {names}. Install them before downloading this dataset.\n"
-    )
-    sys.exit(1)
-PY
+  resolve_python_bin "$@" >/dev/null
 }
 
 download_ama_bench() {
