@@ -1102,7 +1102,9 @@ export class EngramMcpServer {
           typeof args.sessionKey === "string" && args.sessionKey.length > 0
             ? args.sessionKey
             : undefined,
-          typeof args.namespace === "string" ? args.namespace : undefined,
+          typeof args.namespace === "string" && args.namespace.length > 0
+            ? args.namespace
+            : undefined,
           effectivePrincipal,
         );
       case "engram.day_summary":
