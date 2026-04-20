@@ -1194,8 +1194,31 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
 }
 
 /**
+ * Categories whose memories are eligible for Memory Worth instrumentation.
+ *
+ * Memory Worth is a per-fact utility signal: the counters ride on extracted
+ * facts whose retrieval outcome can be judged (success/fail) by the feedback
+ * pipeline landing in issue #560 PR 3. Procedures, corrections, and other
+ * non-fact memory kinds are out of scope — they are not expected to be
+ * instrumented, and counting them as "legacy" would permanently inflate the
+ * legacy bucket and make rollout progress misleading even when every fact
+ * memory is instrumented.
+ *
+ * If a later PR widens Memory Worth to additional categories, extend this set
+ * alongside the scoring/increment logic so the doctor audit stays in sync.
+ */
+const MEMORY_WORTH_ELIGIBLE_CATEGORIES: ReadonlySet<MemoryFile["frontmatter"]["category"]> =
+  new Set(["fact"]);
+
+/**
  * Count memories that pre-date the Memory Worth counters introduced in issue
  * #560 — i.e., neither `mw_success` nor `mw_fail` is set on the frontmatter.
+ *
+ * Only memories whose category is eligible for Memory Worth (see
+ * `MEMORY_WORTH_ELIGIBLE_CATEGORIES`) are considered. Procedures, corrections,
+ * and other kinds that are not instrumented are excluded entirely — they're
+ * neither "legacy" nor "instrumented" for the purposes of this audit. The
+ * total in the returned details reflects only eligible memories.
  *
  * Returned as an `ok` check regardless of count, since legacy memories are
  * fully functional (readers treat missing counters as zero observations). The
@@ -1209,9 +1232,14 @@ export async function summarizeMemoryWorthLegacyCounters(
 ): Promise<OperatorDoctorCheck> {
   let legacy = 0;
   let instrumented = 0;
+  let ineligible = 0;
   try {
     const memories = await storage.readAllMemories();
     for (const memory of memories) {
+      if (!MEMORY_WORTH_ELIGIBLE_CATEGORIES.has(memory.frontmatter.category)) {
+        ineligible += 1;
+        continue;
+      }
       const { mw_success, mw_fail } = memory.frontmatter;
       if (mw_success === undefined && mw_fail === undefined) {
         legacy += 1;
@@ -1235,9 +1263,9 @@ export async function summarizeMemoryWorthLegacyCounters(
     status: "ok",
     summary:
       total === 0
-        ? "No memories on disk yet — Memory Worth counters will populate as extractions run."
-        : `${legacy} of ${total} memories have no Memory Worth counters yet (${instrumented} instrumented).`,
-    details: { legacy, instrumented, total },
+        ? "No Memory Worth–eligible memories on disk yet — counters will populate as facts are extracted."
+        : `${legacy} of ${total} eligible memories have no Memory Worth counters yet (${instrumented} instrumented).`,
+    details: { legacy, instrumented, total, ineligible },
   };
 }
 

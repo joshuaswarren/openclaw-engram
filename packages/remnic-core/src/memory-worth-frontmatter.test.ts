@@ -63,6 +63,34 @@ async function writeFactFile(
   return id;
 }
 
+/**
+ * Write a bare-bones correction file. Corrections are NOT eligible for Memory
+ * Worth instrumentation, so the doctor audit must exclude them from both the
+ * legacy and instrumented tallies.
+ */
+async function writeCorrectionFile(storage: StorageManager, body: string): Promise<string> {
+  const id = `correction-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const lines = [
+    "---",
+    `id: ${id}`,
+    "category: correction",
+    `created: ${new Date().toISOString()}`,
+    `updated: ${new Date().toISOString()}`,
+    "source: extraction",
+    "confidence: 0.8",
+    "confidenceTier: high",
+    "tags: []",
+    "---",
+  ];
+  const correctionsDir = path.join(
+    (storage as unknown as { baseDir: string }).baseDir,
+    "corrections",
+  );
+  await mkdir(correctionsDir, { recursive: true });
+  await writeFile(path.join(correctionsDir, `${id}.md`), `${lines.join("\n")}\n\n${body}\n`, "utf-8");
+  return id;
+}
+
 test("round-trip: mw_success / mw_fail survive write → readAllMemories", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-mw-roundtrip-"));
   try {
@@ -152,18 +180,56 @@ test("doctor legacy-count: mixed corpus partitions correctly", async () => {
     const storage = new StorageManager(dir);
     await storage.ensureDirectories();
 
-    // Two legacy, one instrumented. Write three distinct facts.
+    // Two legacy facts, one instrumented fact, one correction. The correction
+    // must be excluded from both legacy and instrumented tallies because
+    // Memory Worth is a per-fact signal (see MEMORY_WORTH_ELIGIBLE_CATEGORIES).
     await writeFactFile(storage, "Legacy fact A.");
     await writeFactFile(storage, "Legacy fact B.");
     await writeFactFile(storage, "Instrumented fact.", ["mw_success: 2", "mw_fail: 0"]);
+    await writeCorrectionFile(storage, "Out-of-scope correction — must not count.");
 
     const check = await summarizeMemoryWorthLegacyCounters(storage);
     assert.equal(check.key, "memory_worth_legacy");
     assert.equal(check.status, "ok", "legacy memories must never fail the doctor check");
-    const details = check.details as { legacy: number; instrumented: number; total: number };
+    const details = check.details as {
+      legacy: number;
+      instrumented: number;
+      total: number;
+      ineligible: number;
+    };
     assert.equal(details.legacy, 2);
     assert.equal(details.instrumented, 1);
-    assert.equal(details.total, 3);
+    assert.equal(details.total, 3, "total reflects only eligible (fact) memories");
+    assert.equal(details.ineligible, 1, "correction is counted as ineligible, not legacy");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("doctor legacy-count: non-fact memories never count as legacy", async () => {
+  // Regression guard: a pure-correction corpus must report zero legacy and
+  // zero instrumented, not N legacy. Without the category filter, operators
+  // would see the legacy bucket permanently inflated even when every fact is
+  // fully instrumented.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-mw-doctor-corrections-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    await writeCorrectionFile(storage, "Correction 1.");
+    await writeCorrectionFile(storage, "Correction 2.");
+
+    const check = await summarizeMemoryWorthLegacyCounters(storage);
+    const details = check.details as {
+      legacy: number;
+      instrumented: number;
+      total: number;
+      ineligible: number;
+    };
+    assert.equal(details.legacy, 0, "corrections must not inflate the legacy bucket");
+    assert.equal(details.instrumented, 0);
+    assert.equal(details.total, 0);
+    assert.equal(details.ineligible, 2);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -177,10 +243,16 @@ test("doctor legacy-count: empty memory dir reports zero without warning", async
 
     const check = await summarizeMemoryWorthLegacyCounters(storage);
     assert.equal(check.status, "ok");
-    const details = check.details as { legacy: number; instrumented: number; total: number };
+    const details = check.details as {
+      legacy: number;
+      instrumented: number;
+      total: number;
+      ineligible: number;
+    };
     assert.equal(details.total, 0);
     assert.equal(details.legacy, 0);
     assert.equal(details.instrumented, 0);
+    assert.equal(details.ineligible, 0);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
