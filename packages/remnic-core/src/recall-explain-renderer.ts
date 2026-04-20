@@ -11,6 +11,12 @@
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type { RecallTierExplain } from "./types.js";
 import { isRetrievalTier } from "./retrieval-tiers.js";
+import type {
+  RecallXraySnapshot,
+  RecallFilterTrace,
+  RecallXrayResult,
+} from "./recall-xray.js";
+import { renderXrayMarkdown } from "./recall-xray-renderer.js";
 
 function sanitizeString(v: unknown): string | null {
   return typeof v === "string" && v.length > 0 ? v : null;
@@ -20,7 +26,13 @@ function sanitizeFiniteNumber(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-export type RecallExplainFormat = "text" | "json";
+/**
+ * `text` and `json` are the original formats (backwards-compatible
+ * since issue #518).  `markdown` was added in issue #570 PR 7 and
+ * delegates to the shared X-ray renderer so the three observability
+ * surfaces stay in lock-step (CLAUDE.md rule 22).
+ */
+export type RecallExplainFormat = "text" | "json" | "markdown";
 
 export interface RecallExplainJsonPayload {
   hasExplain: boolean;
@@ -198,12 +210,70 @@ export function toRecallExplainText(
   return lines.join("\n");
 }
 
+/**
+ * Adapter: convert a `LastRecallSnapshot` into a best-effort
+ * `RecallXraySnapshot` so the markdown renderer can produce a
+ * consistent, richly-formatted document for callers that have asked
+ * for `markdown` format.  The LastRecallSnapshot and the X-ray
+ * snapshot share session/namespace/memoryIds; additional X-ray-only
+ * fields (filters, score decomposition, graph path, audit id) are
+ * left empty because the legacy snapshot doesn't carry them.  The
+ * renderer handles missing fields gracefully.
+ */
+export function toRecallXraySnapshotFromLegacy(
+  snapshot: LastRecallSnapshot | null,
+): RecallXraySnapshot | null {
+  if (!snapshot) return null;
+  const capturedAt = (() => {
+    if (typeof snapshot.recordedAt !== "string") return 0;
+    const ms = Date.parse(snapshot.recordedAt);
+    return Number.isFinite(ms) && ms >= 0 ? ms : 0;
+  })();
+  const memoryIds = Array.isArray(snapshot.memoryIds)
+    ? snapshot.memoryIds.filter((x): x is string => typeof x === "string")
+    : [];
+  const results: RecallXrayResult[] = memoryIds.map((memoryId) => ({
+    memoryId,
+    path: "",
+    servedBy: "hybrid",
+    scoreDecomposition: { final: 0 },
+    admittedBy: [],
+  }));
+  const filters: RecallFilterTrace[] = [];
+  return {
+    schemaVersion: "1",
+    // `LastRecallSnapshot` does not preserve the original query text;
+    // synthesize a placeholder so the renderer has a non-empty
+    // string to print.  `queryHash` + `queryLen` stay in the JSON
+    // payload via `toRecallExplainJson` for callers that need them.
+    query:
+      snapshot.queryHash
+        ? `(legacy explain; queryHash=${snapshot.queryHash})`
+        : "(legacy explain)",
+    snapshotId: `legacy-${snapshot.sessionKey ?? "unknown"}-${capturedAt}`,
+    capturedAt,
+    tierExplain: snapshot.tierExplain ?? null,
+    results,
+    filters,
+    budget: { chars: 0, used: 0 },
+    ...(snapshot.sessionKey ? { sessionKey: snapshot.sessionKey } : {}),
+    ...(snapshot.namespace ? { namespace: snapshot.namespace } : {}),
+  };
+}
+
 export function renderRecallExplain(
   snapshot: LastRecallSnapshot | null,
   format: RecallExplainFormat,
 ): string {
   if (format === "json") {
     return JSON.stringify(toRecallExplainJson(snapshot), null, 2);
+  }
+  if (format === "markdown") {
+    // Delegate to the shared X-ray renderer so CLI / HTTP / MCP
+    // markdown output all share one implementation (CLAUDE.md rule
+    // 22).  The JSON and text paths remain byte-for-byte
+    // backwards-compatible with pre-#570 behavior.
+    return renderXrayMarkdown(toRecallXraySnapshotFromLegacy(snapshot));
   }
   return toRecallExplainText(snapshot);
 }
@@ -212,12 +282,12 @@ export function parseRecallExplainFormat(value: unknown): RecallExplainFormat {
   if (value === undefined || value === null) return "text";
   if (typeof value !== "string") {
     throw new Error(
-      `--format expects "text" or "json", got ${typeof value}`,
+      `--format expects "text", "json", or "markdown", got ${typeof value}`,
     );
   }
   const v = value.trim().toLowerCase();
-  if (v === "text" || v === "json") return v;
+  if (v === "text" || v === "json" || v === "markdown") return v;
   throw new Error(
-    `--format expects "text" or "json", got ${JSON.stringify(value)}`,
+    `--format expects "text", "json", or "markdown", got ${JSON.stringify(value)}`,
   );
 }
