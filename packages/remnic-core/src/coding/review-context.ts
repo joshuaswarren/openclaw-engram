@@ -132,21 +132,56 @@ export function parseTouchedFiles(diff: string | null | undefined): string[] {
       }
       continue;
     }
-    // `--- a/foo/bar.ts` or `+++ b/foo/bar.ts`.
+    // `--- a/foo/bar.ts` or `+++ b/foo/bar.ts` — or quoted:
+    // `--- "a/foo bar.ts"` / `+++ "b/foo bar.ts"` when git emits C-quoted
+    // paths for whitespace or non-ASCII filenames.
     //
-    // Intentionally anchored, non-backtracking: the path token is captured
-    // with a single greedy run of non-whitespace followed by an optional
-    // trailing whitespace span, rather than `(\S.*?)\s*$` which can
-    // polynomial-backtrack on pathological inputs like `--- !   ... `.
-    const headerMatch = /^(?:---|\+\+\+)[ \t]+(\S+)[ \t]*$/.exec(line);
-    if (headerMatch) {
-      const raw = headerMatch[1] ?? "";
-      const stripped = stripDiffPathPrefix(raw);
-      if (stripped && stripped !== "/dev/null") touched.add(stripped);
+    // Matched with an anchored prefix and an explicit tokenizer for the
+    // tail so quoted paths containing whitespace are not split on the
+    // first internal space. The previous `\S+` form silently dropped
+    // everything after the first whitespace in a quoted path.
+    const headerPrefix = line.match(/^(?:---|\+\+\+)[ \t]+/);
+    if (headerPrefix) {
+      const tail = line.slice(headerPrefix[0].length).replace(/[ \t]+$/, "");
+      const raw = extractSingleDiffPathToken(tail);
+      if (raw) {
+        const stripped = stripDiffPathPrefix(raw);
+        if (stripped && stripped !== "/dev/null") touched.add(stripped);
+      }
     }
   }
 
   return Array.from(touched).sort();
+}
+
+/**
+ * Extract the single path token from the tail of a `---` / `+++` header
+ * line. Returns `null` when the tail is empty or malformed (e.g. an
+ * unterminated quoted path). The whole tail is consumed — trailing
+ * timestamps from non-git diff frontends (`--- a/foo	2023-01-01`) fall
+ * into a leading-token extraction like the quoted-form case.
+ */
+function extractSingleDiffPathToken(tail: string): string | null {
+  if (tail.length === 0) return null;
+  if (tail[0] === '"') {
+    let j = 1;
+    while (j < tail.length) {
+      if (tail[j] === "\\" && j + 1 < tail.length) {
+        j += 2;
+        continue;
+      }
+      if (tail[j] === '"') break;
+      j += 1;
+    }
+    if (j >= tail.length) return null; // unterminated quoted path
+    return tail.slice(0, j + 1);
+  }
+  // Unquoted: consume up to the first tab or whitespace-run, so standard
+  // `--- a/foo	<timestamp>` lines surface just `a/foo`. For ordinary
+  // git-style output the tail has no whitespace at all.
+  let j = 0;
+  while (j < tail.length && tail[j] !== " " && tail[j] !== "\t") j += 1;
+  return tail.slice(0, j);
 }
 
 /**

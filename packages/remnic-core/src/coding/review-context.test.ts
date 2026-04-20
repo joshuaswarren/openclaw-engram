@@ -137,16 +137,35 @@ test("parseTouchedFiles: quoted `diff --git` paths with spaces are kept intact",
   // Regression: the previous `\\S+` tokenizer shattered
   // `"a/src/my file.ts" "b/src/my file.ts"` into four half-paths. Quoted
   // diff-git paths must be parsed as single tokens.
+  //
+  // Real git emits quoted `---` / `+++` headers whenever the filename
+  // contains whitespace, matching the `diff --git` line — so both places
+  // we parse must respect quoting.
   const diff = [
     'diff --git "a/src/my file.ts" "b/src/my file.ts"',
-    "--- a/src/my file.ts",
-    "+++ b/src/my file.ts",
+    '--- "a/src/my file.ts"',
+    '+++ "b/src/my file.ts"',
     "@@ -1 +1 @@",
     "-old",
     "+new",
   ].join("\n");
   const out = parseTouchedFiles(diff);
   assert.deepEqual(out, ["src/my file.ts"]);
+});
+
+test("parseTouchedFiles: --- / +++ header alone (no diff --git prefix) handles quoted path", () => {
+  // Regression: the `--- / +++` header regex used `\S+`, which stops at the
+  // first internal whitespace. For quoted paths like `--- "a/foo bar.ts"`
+  // the path was silently truncated after `"a/foo`. Now the header path is
+  // extracted with an explicit tokenizer that respects quotes.
+  const diff = [
+    '--- "a/path with spaces.ts"',
+    '+++ "b/path with spaces.ts"',
+    "@@ -1 +1 @@",
+    "-old",
+    "+new",
+  ].join("\n");
+  assert.deepEqual(parseTouchedFiles(diff), ["path with spaces.ts"]);
 });
 
 test("parseTouchedFiles: quoted paths in --- / +++ headers (stripDiffPathPrefix order)", () => {
