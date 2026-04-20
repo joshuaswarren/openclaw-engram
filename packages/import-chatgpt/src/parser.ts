@@ -1,0 +1,373 @@
+// ---------------------------------------------------------------------------
+// ChatGPT data-export parser (issue #568 slice 2)
+// ---------------------------------------------------------------------------
+//
+// OpenAI publishes each account's export as a ZIP. Inside are several JSON
+// files; this parser understands the two that carry durable user-level
+// content:
+//
+//   1. Saved memories ("memories" in OpenAI parlance). Location varies by
+//      export vintage — we accept any of:
+//         - a top-level `memory` array (current 2026 shape)
+//         - a top-level `memories` array (earlier 2024/2025 shapes)
+//         - a `"memory"` section inside `user.json` (some exports embed it)
+//      Each record is a single first-person fact the user confirmed.
+//   2. `conversations.json` — array of `Conversation` objects, each holding
+//      a graph of messages keyed by id with parent links. Bulk messages are
+//      NOT imported by default; a `--include-conversations` opt-in produces
+//      one memory per conversation summarizing the user-side turns.
+//
+// The parser accepts either the raw JSON text of a specific file OR a bundle
+// object (already-parsed envelope) that contains the known keys. This lets
+// the CLI pass either the plain `conversations.json` contents or a combined
+// manifest when a future bundle-auto-detect (PR 7) lands.
+//
+// We do not read ZIP archives directly here — the CLI parses the JSON
+// contents of whichever file the user points at with `--file`. A follow-up
+// may add a ZIP-aware reader; until then, users unzip manually.
+
+// ---------------------------------------------------------------------------
+// Raw export shapes (subset we care about)
+// ---------------------------------------------------------------------------
+
+/**
+ * A single saved memory entry. OpenAI has changed the shape several times;
+ * we accept the union of fields observed across 2024-2026 exports.
+ */
+export interface ChatGPTSavedMemory {
+  /** Stable identifier — uuid in recent exports, numeric string in older ones. */
+  id?: string;
+  /** The memory body. Required. */
+  content: string;
+  /** ISO 8601 create timestamp. */
+  created_at?: string;
+  /** ISO 8601 last-update timestamp, if different from created_at. */
+  updated_at?: string;
+  /** Soft-delete flag seen in 2025+ exports. When true, we skip the record. */
+  deleted?: boolean;
+  /** Whether the memory is pinned / manually curated. */
+  pinned?: boolean;
+  /** Tags the user applied to the memory. */
+  tags?: string[];
+}
+
+export interface ChatGPTConversationMessage {
+  /** Message id. */
+  id?: string;
+  /** Author role: user / assistant / system / tool. */
+  author?: { role?: string; name?: string | null };
+  /** Content envelope — we read `parts[]` for text content. */
+  content?: { parts?: unknown[]; content_type?: string } | null;
+  create_time?: number | string | null;
+  update_time?: number | string | null;
+  parent?: string | null;
+}
+
+export interface ChatGPTConversationNode {
+  id: string;
+  message?: ChatGPTConversationMessage | null;
+  parent?: string | null;
+  children?: string[];
+}
+
+export interface ChatGPTConversation {
+  id?: string;
+  title?: string;
+  create_time?: number | string | null;
+  update_time?: number | string | null;
+  /** Messages by id. Present in 2023+ conversation exports. */
+  mapping?: Record<string, ChatGPTConversationNode> | null;
+  /** Some older exports inline messages as an array instead. */
+  messages?: ChatGPTConversationMessage[];
+  /** Root message id (for graph traversal). */
+  current_node?: string | null;
+}
+
+/**
+ * Unified parsed shape we pass into `transform()`. Holds both saved memories
+ * and (optionally) conversations; either may be empty.
+ */
+export interface ParsedChatGPTExport {
+  savedMemories: ChatGPTSavedMemory[];
+  conversations: ChatGPTConversation[];
+  /** Source path the export came from (for provenance). */
+  filePath?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Public parse API
+// ---------------------------------------------------------------------------
+
+export interface ChatGPTParseOptions {
+  /** When true, throw on any validation failure instead of skipping. */
+  strict?: boolean;
+  /** File path of the source — preserved for provenance in transformed memories. */
+  filePath?: string;
+}
+
+/**
+ * Parse a raw export payload. Accepts either:
+ *   - A JSON string (common CLI path — the CLI reads the file contents).
+ *   - An already-parsed object or array (`JSON.parse` result).
+ *
+ * Returns the unified `ParsedChatGPTExport`. Non-export payloads throw a
+ * descriptive error; silently ignoring them would mask user errors
+ * (CLAUDE.md rule 51).
+ */
+export function parseChatGPTExport(
+  input: unknown,
+  options: ChatGPTParseOptions = {},
+): ParsedChatGPTExport {
+  const raw = coerceJson(input);
+  const result: ParsedChatGPTExport = {
+    savedMemories: [],
+    conversations: [],
+    ...(options.filePath !== undefined ? { filePath: options.filePath } : {}),
+  };
+
+  // Shape 1: a top-level array. ChatGPT's `conversations.json` is literally
+  // an array of conversations. Older memory exports are also arrays (each
+  // entry a ChatGPTSavedMemory). We differentiate by inspecting the first
+  // element shape.
+  if (Array.isArray(raw)) {
+    if (raw.length === 0) return result;
+    const first = raw[0];
+    if (looksLikeConversation(first)) {
+      for (const entry of raw) {
+        if (looksLikeConversation(entry)) {
+          result.conversations.push(entry as ChatGPTConversation);
+        } else if (options.strict) {
+          throw new Error("Non-conversation entry in conversations array");
+        }
+      }
+      return result;
+    }
+    if (looksLikeSavedMemory(first)) {
+      for (const entry of raw) {
+        const mem = normalizeSavedMemory(entry, options.strict);
+        if (mem) result.savedMemories.push(mem);
+      }
+      return result;
+    }
+    if (options.strict) {
+      throw new Error(
+        "Unknown ChatGPT export array shape (neither memories nor conversations).",
+      );
+    }
+    return result;
+  }
+
+  // Shape 2: an object. We look for the known keys.
+  if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    // Saved memories — accept `memory`, `memories`, or nested `user.memory`.
+    for (const key of ["memory", "memories"] as const) {
+      const v = obj[key];
+      if (Array.isArray(v)) {
+        for (const entry of v) {
+          const mem = normalizeSavedMemory(entry, options.strict);
+          if (mem) result.savedMemories.push(mem);
+        }
+      }
+    }
+    if (obj.user && typeof obj.user === "object") {
+      const userMem = (obj.user as Record<string, unknown>).memory;
+      if (Array.isArray(userMem)) {
+        for (const entry of userMem) {
+          const mem = normalizeSavedMemory(entry, options.strict);
+          if (mem) result.savedMemories.push(mem);
+        }
+      }
+    }
+    // Conversations — top-level `conversations` array is the canonical shape.
+    const convs = obj.conversations;
+    if (Array.isArray(convs)) {
+      for (const entry of convs) {
+        if (looksLikeConversation(entry)) {
+          result.conversations.push(entry as ChatGPTConversation);
+        } else if (options.strict) {
+          throw new Error("Non-conversation entry in conversations array");
+        }
+      }
+    }
+    return result;
+  }
+
+  if (options.strict) {
+    throw new Error(
+      "ChatGPT export must be a JSON array or object; received " + typeof raw,
+    );
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function coerceJson(input: unknown): unknown {
+  if (typeof input === "string") {
+    try {
+      return JSON.parse(input);
+    } catch (err) {
+      throw new Error(
+        `ChatGPT export is not valid JSON: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+  return input;
+}
+
+function looksLikeSavedMemory(value: unknown): value is ChatGPTSavedMemory {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  // At minimum a memory has a content string. Some exports use `text`
+  // instead — we normalize in `normalizeSavedMemory`.
+  if (typeof v.content === "string" && v.content.length > 0) return true;
+  if (typeof v.text === "string" && v.text.length > 0) return true;
+  return false;
+}
+
+function looksLikeConversation(value: unknown): value is ChatGPTConversation {
+  if (!value || typeof value !== "object") return false;
+  const v = value as Record<string, unknown>;
+  // A conversation always has either `mapping` (new shape) or `messages`
+  // (legacy shape). Title alone is insufficient because saved-memory
+  // exports may also carry a `title` field in some vintages.
+  if (v.mapping && typeof v.mapping === "object") return true;
+  if (Array.isArray(v.messages)) return true;
+  return false;
+}
+
+function normalizeSavedMemory(
+  value: unknown,
+  strict: boolean | undefined,
+): ChatGPTSavedMemory | undefined {
+  if (!value || typeof value !== "object") {
+    if (strict) throw new Error("Saved memory entry must be an object");
+    return undefined;
+  }
+  const v = value as Record<string, unknown>;
+  const content =
+    typeof v.content === "string"
+      ? v.content
+      : typeof v.text === "string"
+        ? v.text
+        : undefined;
+  if (!content || content.trim().length === 0) {
+    if (strict) throw new Error("Saved memory entry missing content");
+    return undefined;
+  }
+  if (v.deleted === true) {
+    // Soft-deleted; skip even in strict mode (it's a valid shape, just not a
+    // memory the user wants imported).
+    return undefined;
+  }
+  const normalized: ChatGPTSavedMemory = {
+    content: content.trim(),
+    ...(typeof v.id === "string" ? { id: v.id } : {}),
+    ...(typeof v.created_at === "string" ? { created_at: v.created_at } : {}),
+    ...(typeof v.updated_at === "string" ? { updated_at: v.updated_at } : {}),
+    ...(v.pinned === true ? { pinned: true } : {}),
+    ...(Array.isArray(v.tags)
+      ? { tags: v.tags.filter((t): t is string => typeof t === "string") }
+      : {}),
+  };
+  return normalized;
+}
+
+/**
+ * Walk a conversation's message graph and return only the user-authored text
+ * turns in chronological order. Exported so the transform layer can build
+ * conversation summaries from the same graph.
+ */
+export function collectUserTurnsFromConversation(
+  conversation: ChatGPTConversation,
+): Array<{ content: string; createdAt?: string }> {
+  const collected: Array<{ content: string; createdAt?: string }> = [];
+
+  if (Array.isArray(conversation.messages) && conversation.messages.length > 0) {
+    for (const msg of conversation.messages) {
+      const text = extractMessageText(msg);
+      if (text) {
+        collected.push({
+          content: text,
+          ...(asIsoString(msg.create_time ?? msg.update_time) !== undefined
+            ? { createdAt: asIsoString(msg.create_time ?? msg.update_time) as string }
+            : {}),
+        });
+      }
+    }
+    return collected;
+  }
+
+  if (conversation.mapping && typeof conversation.mapping === "object") {
+    // Build a parent → children map by traversing in any order then sorting.
+    const nodes = Object.values(conversation.mapping);
+    const ordered = [...nodes].sort((a, b) => {
+      const at = a.message?.create_time;
+      const bt = b.message?.create_time;
+      return toNumericTime(at) - toNumericTime(bt);
+    });
+    for (const node of ordered) {
+      const msg = node.message;
+      if (!msg) continue;
+      if (msg.author?.role !== "user") continue;
+      const text = extractMessageText(msg);
+      if (text) {
+        collected.push({
+          content: text,
+          ...(asIsoString(msg.create_time ?? msg.update_time) !== undefined
+            ? { createdAt: asIsoString(msg.create_time ?? msg.update_time) as string }
+            : {}),
+        });
+      }
+    }
+  }
+  return collected;
+}
+
+function extractMessageText(msg: ChatGPTConversationMessage): string | undefined {
+  if (!msg) return undefined;
+  if (msg.author?.role !== "user") {
+    // Even in inline-messages shape, only return user-authored text.
+    return undefined;
+  }
+  const parts = msg.content?.parts;
+  if (!Array.isArray(parts)) return undefined;
+  const text = parts
+    .filter((p): p is string => typeof p === "string" && p.length > 0)
+    .join("\n")
+    .trim();
+  return text.length > 0 ? text : undefined;
+}
+
+function toNumericTime(value: number | string | null | undefined): number {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+    const parsed = Date.parse(value);
+    if (!Number.isNaN(parsed)) return parsed / 1000;
+  }
+  return 0;
+}
+
+function asIsoString(value: number | string | null | undefined): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === "string") {
+    // Already ISO? Accept.
+    if (/\d{4}-\d{2}-\d{2}T/.test(value)) return value;
+    const asNum = Number(value);
+    if (Number.isFinite(asNum)) return new Date(asNum * 1000).toISOString();
+    return undefined;
+  }
+  if (Number.isFinite(value)) {
+    // ChatGPT exports store epoch seconds. Detect ms by magnitude.
+    const ms = value > 1e12 ? value : value * 1000;
+    return new Date(ms).toISOString();
+  }
+  return undefined;
+}
