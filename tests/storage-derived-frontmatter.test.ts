@@ -165,6 +165,14 @@ test("StorageManager accepts single-quoted and bare YAML derived_from entries fr
         line: "derived_from:\n  - facts/a.md:2\n  - facts/b.md:5",
         expected: ["facts/a.md:2", "facts/b.md:5"],
       },
+      {
+        // Block-sequence items may be quoted with YAML escape rules.
+        // Single-quoted `'it''s'` decodes to `it's`; double-quoted
+        // `"he said \"hi\""` decodes to `he said "hi"`.
+        id: "fact-derived-block-escaped",
+        line: "derived_from:\n  - 'facts/it''s.md:2'\n  - \"facts/b.md:5\"",
+        expected: ["facts/it's.md:2", "facts/b.md:5"],
+      },
     ];
 
     for (const flavor of flavors) {

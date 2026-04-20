@@ -335,13 +335,18 @@ function parseFrontmatter(
         const next = rawLines[j];
         const m = next.match(/^(\s+)- (.*)$/);
         if (!m || m[1].length <= baseIndent) break;
-        // Strip optional matching surrounding quotes; preserve inner chars.
+        // Strip matching surrounding quotes and apply YAML unescape rules
+        // so block-style entries round-trip identically to flow-style ones.
+        //   double-quoted: `\"` → `"`, `\\` → `\`
+        //   single-quoted: `''` → `'` (YAML's native escape)
         let item = m[2].trim();
-        if (
-          (item.startsWith('"') && item.endsWith('"')) ||
-          (item.startsWith("'") && item.endsWith("'"))
-        ) {
-          item = item.slice(1, -1);
+        if (item.startsWith('"') && item.endsWith('"') && item.length >= 2) {
+          item = item
+            .slice(1, -1)
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, "\\");
+        } else if (item.startsWith("'") && item.endsWith("'") && item.length >= 2) {
+          item = item.slice(1, -1).replace(/''/g, "'");
         }
         items.push(item);
         j++;
@@ -418,16 +423,17 @@ function parseFrontmatter(
   if (derivedFromStr.startsWith("[") && derivedFromStr.endsWith("]")) {
     const inner = derivedFromStr.slice(1, -1);
     const entries: string[] = [];
-    let sawQuoted = false;
     // Hand-rolled tokenizer: walk the inner characters, honoring
     // double-quote escapes (`\"`, `\\`) and YAML single-quote doubling
     // (`''` in a `'...'` string means a literal `'`).  This avoids the
     // `'...'` regex footgun where `''` is parsed as two empty strings.
+    // Bare tokens (not quoted) are read until the next comma/whitespace
+    // so flow sequences that mix quoted and bare scalars preserve every
+    // entry.
     let i = 0;
     while (i < inner.length) {
       const ch = inner[i];
       if (ch === '"') {
-        sawQuoted = true;
         let buf = "";
         i++;
         while (i < inner.length) {
@@ -457,7 +463,6 @@ function parseFrontmatter(
         }
         if (buf.length > 0) entries.push(buf);
       } else if (ch === "'") {
-        sawQuoted = true;
         let buf = "";
         i++;
         while (i < inner.length) {
