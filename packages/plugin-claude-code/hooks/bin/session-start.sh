@@ -60,15 +60,28 @@ PROJECT_NAME="$(basename "$CWD" 2>/dev/null || echo "unknown")"
 # either a JSON object for the `codingContext` field, or an empty string
 # when the cwd is not inside a git repo. All git calls are wrapped in &&
 # so any failure silently drops back to no-context.
+#
+# Each `git` call is wrapped in a 2s timeout so a wedged or slow filesystem
+# (network mounts, FUSE, unreachable submodule stores) cannot stall the
+# SessionStart hook indefinitely — the hook would otherwise block the
+# Claude Code launch. Falls back to plain `git` if `timeout` is not on
+# PATH (rare on modern distros, but e.g. old BSDs).
+GIT_PROBE() {
+  if command -v timeout >/dev/null 2>&1; then
+    timeout 2 git "$@"
+  else
+    git "$@"
+  fi
+}
 CODING_CONTEXT_JSON=""
 if [ -n "$CWD" ] && [ -d "$CWD" ] && command -v git >/dev/null 2>&1; then
   # `git` calls are short-timeout and local. Any failure → empty.
-  REMNIC_GIT_TOP="$(git -C "$CWD" rev-parse --show-toplevel 2>/dev/null || echo "")"
+  REMNIC_GIT_TOP="$(GIT_PROBE -C "$CWD" rev-parse --show-toplevel 2>/dev/null || echo "")"
   if [ -n "$REMNIC_GIT_TOP" ]; then
-    REMNIC_GIT_BRANCH="$(git -C "$REMNIC_GIT_TOP" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
+    REMNIC_GIT_BRANCH="$(GIT_PROBE -C "$REMNIC_GIT_TOP" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "HEAD")"
     [ "$REMNIC_GIT_BRANCH" = "HEAD" ] && REMNIC_GIT_BRANCH=""
-    REMNIC_GIT_ORIGIN="$(git -C "$REMNIC_GIT_TOP" remote get-url origin 2>/dev/null || echo "")"
-    REMNIC_GIT_DEFAULT_BRANCH="$(git -C "$REMNIC_GIT_TOP" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||' || echo "")"
+    REMNIC_GIT_ORIGIN="$(GIT_PROBE -C "$REMNIC_GIT_TOP" remote get-url origin 2>/dev/null || echo "")"
+    REMNIC_GIT_DEFAULT_BRANCH="$(GIT_PROBE -C "$REMNIC_GIT_TOP" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||' || echo "")"
     CODING_CONTEXT_JSON="$(REMNIC_GIT_TOP="$REMNIC_GIT_TOP" REMNIC_GIT_BRANCH="$REMNIC_GIT_BRANCH" REMNIC_GIT_ORIGIN="$REMNIC_GIT_ORIGIN" REMNIC_GIT_DEFAULT_BRANCH="$REMNIC_GIT_DEFAULT_BRANCH" node -e "
       // Mirror the pure logic from @remnic/core's resolveGitContext so the
       // hook produces the same projectId without calling into the daemon
