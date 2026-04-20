@@ -306,6 +306,7 @@ test("parseConfig applies safer-by-default procedural thresholds (issue #567 PR 
   assert.equal(result.procedural.lookbackDays, 14);
   assert.equal(result.procedural.recallMaxProcedures, 2);
 });
+<<<<<<< HEAD
 
 test("buildDefaultRecallPipeline enables procedure-recall when procedural default-on (issue #567 PR 4/5)", () => {
   // Codex P2 on #609: the master gate defaulting to `true` must also flip
