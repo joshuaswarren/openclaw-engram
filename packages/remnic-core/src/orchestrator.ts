@@ -243,6 +243,11 @@ import {
   recallNamespacesForPrincipal,
   resolvePrincipal,
 } from "./namespaces/principal.js";
+import {
+  combineNamespaces,
+  resolveCodingNamespaceOverlay,
+} from "./coding/coding-namespace.js";
+import type { CodingContext } from "./types.js";
 import { NamespaceSearchRouter } from "./namespaces/search.js";
 import { SharedContextManager } from "./shared-context/manager.js";
 import {
@@ -1211,6 +1216,14 @@ export class Orchestrator {
    * Using a Map prevents concurrent sessions from overwriting each other.
    */
   private _recallWorkspaceOverrides = new Map<string, string>();
+  /**
+   * Per-session coding-agent context (issue #569). Populated by connectors at
+   * session-start (PRs 5/6/7) via `setCodingContextForSession`. Used by both
+   * the recall path and the write path so that memory routing respects the
+   * project/branch scope a session is operating in (rule 42 — read + write
+   * through the same namespace layer).
+   */
+  private readonly _codingContextBySession = new Map<string, CodingContext>();
   private routingRulesStore: RoutingRulesStore | null = null;
   private contentHashIndex: ContentHashIndex | null = null;
   private readonly artifactSourceStatusCache = new WeakMap<
@@ -1325,10 +1338,104 @@ export class Orchestrator {
   }
 
   resolveSelfNamespace(sessionKey?: string): string {
-    return defaultNamespaceForPrincipal(
+    const base = defaultNamespaceForPrincipal(
       this.resolvePrincipal(sessionKey),
       this.config,
     );
+    return this.applyCodingNamespaceOverlay(sessionKey, base);
+  }
+
+  /**
+   * Attach a coding-agent context to a session (issue #569). Called by the
+   * Claude Code / Codex / Cursor connectors at session start after
+   * `resolveGitContext(cwd)`. The context is consulted by the recall path
+   * and the write path so that memories route to a project- (and optionally
+   * branch-) scoped namespace.
+   *
+   * Pass `null` to clear.
+   */
+  setCodingContextForSession(sessionKey: string, codingContext: CodingContext | null): void {
+    if (typeof sessionKey !== "string" || sessionKey.length === 0) return;
+    // Defensive init — `Object.create(Orchestrator.prototype)` stubs in
+    // legacy tests skip class-field initializers (rule 16 applies to test
+    // teardown; we apply the same defensiveness on construction here so
+    // PR 2 doesn't break those tests).
+    if (!this._codingContextBySession) {
+      (this as unknown as { _codingContextBySession: Map<string, CodingContext> })._codingContextBySession = new Map();
+    }
+    if (codingContext === null) {
+      this._codingContextBySession.delete(sessionKey);
+      return;
+    }
+    this._codingContextBySession.set(sessionKey, codingContext);
+  }
+
+  /**
+   * Read-only accessor for the coding context attached to a session. Returns
+   * `null` when none is set. Used by `remnic doctor` and by tests.
+   *
+   * Defensive `_codingContextBySession` lookup — legacy orchestrator-flush
+   * tests use `Object.create(Orchestrator.prototype)` which does not run
+   * class-field initializers, so the Map may be undefined on stubs.
+   */
+  getCodingContextForSession(sessionKey: string | undefined): CodingContext | null {
+    if (typeof sessionKey !== "string" || sessionKey.length === 0) return null;
+    return this._codingContextBySession?.get(sessionKey) ?? null;
+  }
+
+  /**
+   * Shared helper used by both the recall path and the write path (rule 42).
+   *
+   * Given a base namespace computed from the principal, returns the overlaid
+   * coding namespace when the session has a coding context AND
+   * `codingMode.projectScope` is true AND `namespacesEnabled` is true.
+   * Otherwise returns `baseNamespace` unchanged — CLAUDE.md #30 escape hatch.
+   *
+   * Principal isolation (CLAUDE.md rule 42): the overlay is COMBINED with
+   * the principal-derived `baseNamespace` rather than replacing it, so two
+   * principals working in the same repository do not share memories through
+   * a common `project-*` namespace.
+   *
+   * Namespaces-disabled gate: when `namespacesEnabled` is false, the
+   * storage router maps every namespace to the same `memoryDir`. Returning
+   * `project-*` in that mode would create apparent route separation with
+   * no actual storage isolation — a false-isolation trap. In that mode we
+   * return `baseNamespace` unchanged so coding mode degrades to the existing
+   * unscoped behavior.
+   *
+   * @internal
+   */
+  applyCodingNamespaceOverlay(sessionKey: string | undefined, baseNamespace: string): string {
+    if (!this.config.namespacesEnabled) return baseNamespace;
+    const codingContext = this.getCodingContextForSession(sessionKey);
+    const overlay = resolveCodingNamespaceOverlay(codingContext, this.config.codingMode);
+    if (!overlay) return baseNamespace;
+    return combineNamespaces(baseNamespace, overlay.namespace);
+  }
+
+  /**
+   * Read-side overlay: returns the list of namespaces a session should read
+   * from, including any read fallbacks (branch → project asymmetry lands in
+   * PR 3; PR 2 returns an empty fallbacks list).
+   *
+   * Returns `null` when:
+   *   - `namespacesEnabled` is false (overlay would create false isolation)
+   *   - no context attached to the session
+   *   - `codingMode.projectScope` is false (CLAUDE.md #30 escape hatch)
+   *
+   * The returned `namespace` / `readFallbacks` are RAW overlay fragments
+   * (e.g. `project-origin-ab12`). Callers MUST combine them with the
+   * principal-derived base through `combineNamespaces()` before passing to
+   * storage, so principal isolation is preserved (rule 42).
+   *
+   * @internal
+   */
+  applyCodingRecallOverlay(sessionKey: string | undefined): { namespace: string; readFallbacks: string[] } | null {
+    if (!this.config.namespacesEnabled) return null;
+    const codingContext = this.getCodingContextForSession(sessionKey);
+    const overlay = resolveCodingNamespaceOverlay(codingContext, this.config.codingMode);
+    if (!overlay) return null;
+    return { namespace: overlay.namespace, readFallbacks: overlay.readFallbacks };
   }
 
   async getStorageForNamespace(namespace?: string): Promise<StorageManager> {
@@ -4105,10 +4212,36 @@ export class Orchestrator {
     if (expectedSnapshot.plannerMode === "no_recall") return;
 
     const principal = resolvePrincipal(sessionKey, this.config);
-    const observationNamespaces: string[] =
+    // Coding-agent overlay (issue #569) is applied when the session has a
+    // coding context and there is no explicit namespaceOverride — mirrors
+    // the main recall path above.
+    const observationCodingOverlay =
       namespaceOverride && canReadNamespace(principal, namespaceOverride, this.config)
-        ? [namespaceOverride]
-        : recallNamespacesForPrincipal(principal, this.config);
+        ? null
+        : this.applyCodingRecallOverlay(sessionKey);
+    const observationPrincipalSelf = defaultNamespaceForPrincipal(principal, this.config);
+    const observationCodingSelf = observationCodingOverlay
+      ? combineNamespaces(observationPrincipalSelf, observationCodingOverlay.namespace)
+      : null;
+    let observationNamespaces: string[];
+    if (namespaceOverride && canReadNamespace(principal, namespaceOverride, this.config)) {
+      observationNamespaces = [namespaceOverride];
+    } else if (observationCodingOverlay && observationCodingSelf) {
+      // Rule 42 / parity with the main recall path: substitute the self
+      // namespace within the principal's recall list rather than
+      // replacing the full list. Preserves shared and policy-include
+      // namespaces for direct-answer observation queries.
+      const base = recallNamespacesForPrincipal(principal, this.config);
+      const mapped = base.map((ns) =>
+        ns === observationPrincipalSelf ? observationCodingSelf : ns,
+      );
+      const fallbackNs = observationCodingOverlay.readFallbacks.map((fallback) =>
+        combineNamespaces(observationPrincipalSelf, fallback),
+      );
+      observationNamespaces = Array.from(new Set<string>([...mapped, ...fallbackNs]));
+    } else {
+      observationNamespaces = recallNamespacesForPrincipal(principal, this.config);
+    }
     const observationQueryPolicy = buildRecallQueryPolicy(prompt, sessionKey, {
       cronRecallPolicyEnabled: this.config.cronRecallPolicyEnabled,
       cronRecallNormalizedQueryMaxChars:
@@ -5482,11 +5615,43 @@ export class Orchestrator {
         `namespace override is not readable: ${namespaceOverride}`,
       );
     }
+    // Recall path — overlay the coding-agent namespace (issue #569) when
+    // the session has a codingContext and `codingMode.projectScope` is true.
+    // Explicit `namespace` option still wins, preserving pre-#569 semantics.
+    //
+    // Rule 42: the overlay substitutes the SELF namespace within the
+    // principal's recall list — it does NOT replace the full list. Shared
+    // and `includeInRecallByDefault` policy namespaces stay in the recall
+    // set so coding sessions continue to see team/shared memories. The
+    // overlay is combined with the principal base through `combineNamespaces`
+    // to preserve principal isolation (cross-tenant leakage guard).
+    const codingOverlay = namespaceOverride ? null : this.applyCodingRecallOverlay(sessionKey);
+    const principalSelfNamespace = defaultNamespaceForPrincipal(principal, this.config);
+    const codingSelfNamespace = codingOverlay
+      ? combineNamespaces(principalSelfNamespace, codingOverlay.namespace)
+      : null;
     const selfNamespace =
-      namespaceOverride ?? defaultNamespaceForPrincipal(principal, this.config);
-    const recallNamespaces = namespaceOverride
-      ? [namespaceOverride]
-      : readableRecallNamespaces;
+      namespaceOverride ??
+      codingSelfNamespace ??
+      principalSelfNamespace;
+    let recallNamespaces: string[];
+    if (namespaceOverride) {
+      recallNamespaces = [namespaceOverride];
+    } else if (codingOverlay && codingSelfNamespace) {
+      // Substitute the principal's self namespace with the coding-scoped
+      // one, and append any read fallbacks (branch→project, PR 3) combined
+      // with the principal base so principal isolation is preserved on
+      // fallback entries as well.
+      const mapped = readableRecallNamespaces.map((ns) =>
+        ns === principalSelfNamespace ? codingSelfNamespace : ns,
+      );
+      const fallbackNs = codingOverlay.readFallbacks.map((fallback) =>
+        combineNamespaces(principalSelfNamespace, fallback),
+      );
+      recallNamespaces = Array.from(new Set<string>([...mapped, ...fallbackNs]));
+    } else {
+      recallNamespaces = readableRecallNamespaces;
+    }
     const qmdAvailable = this.qmd.isAvailable();
     let graphDecisionStatus: IntentDebugSnapshot["graphDecision"]["status"] =
       recallDecision.plannedMode === "graph_mode" ? "skipped" : "not_requested";
@@ -9393,11 +9558,18 @@ export class Orchestrator {
     }
 
     const principal = resolvePrincipal(sessionKey, this.config);
+    // Write path — overlay the coding-agent namespace (issue #569) when the
+    // session has a codingContext and `codingMode.projectScope` is true.
+    // Explicit `writeNamespaceOverride` from callers still wins, matching
+    // pre-#569 semantics.
     const selfNamespace =
       typeof options.writeNamespaceOverride === "string" &&
       options.writeNamespaceOverride.length > 0
         ? options.writeNamespaceOverride
-        : defaultNamespaceForPrincipal(principal, this.config);
+        : this.applyCodingNamespaceOverlay(
+            sessionKey,
+            defaultNamespaceForPrincipal(principal, this.config),
+          );
     const storage = await this.storageRouter.storageFor(selfNamespace);
     const shouldPersistProcessedFingerprint = normalizedTurns.some(
       (turn) => turn.persistProcessedFingerprint === true,

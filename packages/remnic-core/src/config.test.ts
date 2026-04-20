@@ -293,3 +293,25 @@ test("parseConfig procedural numeric fields coerce from CLI-style strings (issue
   assert.equal(result.procedural.lookbackDays, 14);
   assert.equal(result.procedural.recallMaxProcedures, 2);
 });
+
+test("parseConfig codingMode: defaults projectScope=true, branchScope=false (issue #569)", () => {
+  const result = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(result.codingMode.projectScope, true, "projectScope defaults to true");
+  assert.equal(result.codingMode.branchScope, false, "branchScope defaults to false (opt-in)");
+});
+
+test("parseConfig codingMode: accepts explicit booleans and CLI-style strings (issue #569)", () => {
+  // CLAUDE.md #36: string "false" must coerce to boolean false.
+  const result = parseConfig({
+    openaiApiKey: "sk-test",
+    codingMode: { projectScope: "false", branchScope: "true" },
+  });
+  assert.equal(result.codingMode.projectScope, false);
+  assert.equal(result.codingMode.branchScope, true);
+});
+
+test("parseConfig codingMode: unknown object shape falls back to defaults", () => {
+  const result = parseConfig({ openaiApiKey: "sk-test", codingMode: null });
+  assert.equal(result.codingMode.projectScope, true);
+  assert.equal(result.codingMode.branchScope, false);
+});
