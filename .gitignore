@@ -32,6 +32,10 @@ scripts/CLAUDE.md
 # Eval datasets (downloaded via script, not committed)
 evals/datasets/
 
+# Published-benchmark artifacts (gitignored during development; promoted
+# per-release by the leaderboard pipeline — see issue #566 slice 6).
+docs/benchmarks/results/
+
 # Git worktrees
 .worktrees/
 PR_PREFLIGHT.md
