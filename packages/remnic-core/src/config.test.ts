@@ -313,8 +313,13 @@ test("parseConfig defaults procedural.enabled to true when omitted (issue #567 P
   const omitted = parseConfig({ openaiApiKey: "sk-test" });
   assert.equal(omitted.procedural.enabled, true);
 
-  // Omitting the `procedural` object entirely is equivalent.
-  const bareConfig = parseConfig({ openaiApiKey: "sk-test" });
+  // Omitting the `procedural` object entirely is equivalent — covers the
+  // "no procedural key at all" path which is distinct from
+  // `procedural: {}` as a runtime shape.
+  const bareConfig = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: {},
+  });
   assert.equal(bareConfig.procedural.enabled, true);
 
   // Explicit `false` (boolean) still honors opt-out.
@@ -351,11 +356,31 @@ test("parseConfig defaults procedural.enabled to true when omitted (issue #567 P
   });
   assert.equal(explicitOn.procedural.enabled, true);
 
-  // Unrecognized string values (not a boolean-like string) should NOT flip
-  // the default; they're coerced to undefined and fall back to the default.
-  const garbage = parseConfig({
-    openaiApiKey: "sk-test",
-    procedural: { enabled: "maybe" },
-  });
-  assert.equal(garbage.procedural.enabled, true);
+  // CLAUDE.md rule 51: when the key IS present but the value can't be
+  // understood, reject loudly instead of silently flipping the default.
+  // (Codex P1 review on #609.)
+  for (const v of ["maybe", "fales", "TRUE-ish", "", " "]) {
+    assert.throws(
+      () =>
+        parseConfig({
+          openaiApiKey: "sk-test",
+          procedural: { enabled: v },
+        }),
+      /procedural\.enabled must be a boolean/,
+      `invalid string ${JSON.stringify(v)} should throw`,
+    );
+  }
+  // Numeric 0/1 are not valid either — they silently became false/true via
+  // a truthiness check in earlier drafts. Reject with the same message.
+  for (const v of [0, 1, 2, null]) {
+    assert.throws(
+      () =>
+        parseConfig({
+          openaiApiKey: "sk-test",
+          procedural: { enabled: v },
+        }),
+      /procedural\.enabled must be a boolean/,
+      `invalid non-boolean ${JSON.stringify(v)} should throw`,
+    );
+  }
 });

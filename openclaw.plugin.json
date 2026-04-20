@@ -325,8 +325,8 @@
         "properties": {
           "enabled": {
             "type": "boolean",
-            "default": false,
-            "description": "Master gate for procedural memory: extraction, recall boost, and mining (issue #519)."
+            "default": true,
+            "description": "Master gate for procedural memory: extraction, recall boost, and mining (issue #519). Default-on since issue #567 PR 4/5; set to `false` to opt out."
           },
           "minOccurrences": {
             "type": "integer",
@@ -339,7 +339,7 @@
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "default": 0.7,
+            "default": 0.75,
             "description": "Minimum success-rate floor (from trajectory outcomes) for miner promotion."
           },
           "autoPromoteOccurrences": {
@@ -358,14 +358,14 @@
             "type": "integer",
             "minimum": 1,
             "maximum": 3650,
-            "default": 30,
+            "default": 14,
             "description": "Trajectory lookback window for procedural mining."
           },
           "recallMaxProcedures": {
             "type": "integer",
             "minimum": 1,
             "maximum": 10,
-            "default": 3,
+            "default": 2,
             "description": "Maximum procedure memories to inject on task-initiation recall."
           },
           "proceduralMiningCronAutoRegister": {
@@ -739,7 +739,11 @@
       },
       "binaryLifecycleBackendType": {
         "type": "string",
-        "enum": ["none", "filesystem", "s3"],
+        "enum": [
+          "none",
+          "filesystem",
+          "s3"
+        ],
         "default": "none",
         "description": "Storage backend for binary lifecycle mirror stage."
       },
@@ -1922,12 +1926,42 @@
         "type": "object",
         "description": "Configuration for the nightly contradiction-scan cron (issue #520)",
         "properties": {
-          "enabled": { "type": "boolean", "default": false, "description": "Enable the nightly contradiction scan cron (disabled by default per rule 48)" },
-          "similarityFloor": { "type": "number", "default": 0.82, "minimum": 0, "maximum": 1, "description": "Embedding cosine similarity floor for candidate pair generation" },
-          "topicOverlapFloor": { "type": "number", "default": 0.4, "minimum": 0, "maximum": 1, "description": "Minimum topic-token Jaccard overlap for unstructured pairs" },
-          "maxPairsPerRun": { "type": "integer", "default": 500, "minimum": 1, "description": "Cap on candidate pairs evaluated per cron run" },
-          "cooldownDays": { "type": "integer", "default": 14, "minimum": 0, "description": "Cooldown in days. 0 = always re-evaluate." },
-          "autoMergeDuplicates": { "type": "boolean", "default": false, "description": "Auto-flag pairs judged duplicates for dedup (still requires user approval)" }
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable the nightly contradiction scan cron (disabled by default per rule 48)"
+          },
+          "similarityFloor": {
+            "type": "number",
+            "default": 0.82,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Embedding cosine similarity floor for candidate pair generation"
+          },
+          "topicOverlapFloor": {
+            "type": "number",
+            "default": 0.4,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum topic-token Jaccard overlap for unstructured pairs"
+          },
+          "maxPairsPerRun": {
+            "type": "integer",
+            "default": 500,
+            "minimum": 1,
+            "description": "Cap on candidate pairs evaluated per cron run"
+          },
+          "cooldownDays": {
+            "type": "integer",
+            "default": 14,
+            "minimum": 0,
+            "description": "Cooldown in days. 0 = always re-evaluate."
+          },
+          "autoMergeDuplicates": {
+            "type": "boolean",
+            "default": false,
+            "description": "Auto-flag pairs judged duplicates for dedup (still requires user approval)"
+          }
         }
       },
       "temporalSupersessionEnabled": {
@@ -1968,8 +2002,16 @@
       },
       "recallDirectAnswerEligibleTaxonomyBuckets": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["decisions", "principles", "conventions", "runbooks", "entities"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "decisions",
+          "principles",
+          "conventions",
+          "runbooks",
+          "entities"
+        ],
         "description": "Taxonomy category IDs eligible for direct-answer routing."
       },
       "memoryLinkingEnabled": {

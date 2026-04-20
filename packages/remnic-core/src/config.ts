@@ -473,12 +473,26 @@ export function parseConfig(raw: unknown): PluginConfig {
   // Default-on procedural memory (issue #567 PR 4/5): if the user has NOT
   // explicitly set `procedural.enabled`, enable it. Explicit `false` (or any
   // value coerceBool reads as false: `"0"`, `"no"`, `"off"`, `false`) keeps
-  // the feature off. CLAUDE.md rule 36: "false"-ish strings coerce via
-  // coerceBool. CLAUDE.md rule 30: escape hatch remains for operators who
-  // want to stay opt-out.
-  const enabledCoerced = coerceBool(rawProcedural.enabled);
-  const proceduralEnabled =
-    enabledCoerced === undefined ? true : enabledCoerced === true;
+  // the feature off. CLAUDE.md rules:
+  //   - #30 — escape hatch remains for operators who want to stay opt-out.
+  //   - #36 — "false"-ish strings coerce to false via coerceBool.
+  //   - #51 — when the key IS present but the value can't be understood
+  //     (typo like `"fales"` or a number like `0`), reject loudly instead
+  //     of silently flipping the default. Silent fallback on bad input is
+  //     how procedural memory would end up "fail-open" for typos.
+  const rawEnabledValue = rawProcedural.enabled;
+  let proceduralEnabled: boolean;
+  if (rawEnabledValue === undefined) {
+    proceduralEnabled = true;
+  } else {
+    const enabledCoerced = coerceBool(rawEnabledValue);
+    if (enabledCoerced === undefined) {
+      throw new Error(
+        `procedural.enabled must be a boolean or one of "true"/"false"/"1"/"0"/"yes"/"no"/"on"/"off" (got ${JSON.stringify(rawEnabledValue)}). Omit the key to use the default-on behavior (issue #567 PR 4).`,
+      );
+    }
+    proceduralEnabled = enabledCoerced;
+  }
   const procedural: ProceduralConfig = {
     enabled: proceduralEnabled,
     /** `0` skips all mining (`minOccurrences_zero`); otherwise clusters need at least this many members. */
