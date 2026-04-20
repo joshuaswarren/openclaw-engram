@@ -1845,6 +1845,13 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
     const benchModule = loaded as unknown as PackageBenchModule;
     const benchmarkId = parsed.publishedName;
     const mode = parsed.quick ? "quick" : "full";
+    // Codex P2 review on PR #603: keep dry-run's effective limit in
+    // sync with the real run so preflight item counts match what will
+    // actually execute. Previously `limit: parsed.publishedLimit`
+    // alone meant `--quick` without `--limit` dry-ran the full smoke
+    // sample while the real run loaded only one item.
+    const effectiveLimit =
+      parsed.publishedLimit ?? (parsed.quick ? 1 : undefined);
     let itemCount: number | undefined;
     // Codex P2 review on PR #603: when the loader returns
     // `source: "missing"` (full mode and the dataset file is absent or
@@ -1864,7 +1871,7 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
       loadResult = await benchModule.loadLongMemEvalS({
         mode,
         datasetDir: parsed.datasetDir,
-        limit: parsed.publishedLimit,
+        limit: effectiveLimit,
       });
       itemCount = loadResult.items.length;
       console.log(
@@ -1874,7 +1881,7 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
       loadResult = await benchModule.loadLoCoMo10({
         mode,
         datasetDir: parsed.datasetDir,
-        limit: parsed.publishedLimit,
+        limit: effectiveLimit,
       });
       itemCount = loadResult.items.length;
       console.log(
@@ -1972,14 +1979,27 @@ async function loadPublishedPromotionHelpers() {
           parsedUnknown !== null &&
           typeof parsedUnknown === "object" &&
           !Array.isArray(parsedUnknown)
-            ? (parsedUnknown as { meta?: { gitSha?: string } })
+            ? (parsedUnknown as {
+                meta?: { gitSha?: string };
+                config?: { runtimeProfile?: string | null };
+              })
             : {};
         const gitShaShort = (parsedObj.meta?.gitSha ?? "unknown").slice(0, 7);
         const today = new Date().toISOString().slice(0, 10);
         const modelSlug = args.model.replace(/[^a-zA-Z0-9_.-]/g, "-");
+        // Codex P2 on PR #603: include the runtime profile in the
+        // published filename so multi-profile (e.g. --matrix) runs do
+        // not silently overwrite one another. The profile lives in
+        // `result.config.runtimeProfile` and is "baseline", "real",
+        // or "openclaw-chain" in practice.
+        const rawProfile = parsedObj.config?.runtimeProfile;
+        const profileSlug =
+          typeof rawProfile === "string" && rawProfile.length > 0
+            ? `-${rawProfile.replace(/[^a-zA-Z0-9_.-]/g, "-")}`
+            : "";
         const target = path.join(
           args.publishedOutDir,
-          `${today}-${args.benchmarkId}-${modelSlug}-${gitShaShort}.json`,
+          `${today}-${args.benchmarkId}-${modelSlug}${profileSlug}-${gitShaShort}.json`,
         );
         writeFileSync(target, raw, "utf8");
         console.log(
