@@ -71,6 +71,29 @@ interface CliArgs {
   tolerance: number;
 }
 
+/**
+ * Consume the argument that follows a flag, rejecting option-looking
+ * tokens (`--foo`, `-x`). This prevents `--baseline --update-baseline`
+ * from silently swallowing the next flag as a path (CLAUDE.md rule 14).
+ */
+function requireFlagValue(
+  argv: readonly string[],
+  index: number,
+  flag: string,
+  kind: string,
+): string {
+  const value = argv[index + 1];
+  if (value === undefined || value.length === 0) {
+    throw new Error(`${flag} requires ${kind}`);
+  }
+  if (value.startsWith("-")) {
+    throw new Error(
+      `${flag} requires ${kind}; got option-like token "${value}"`,
+    );
+  }
+  return value;
+}
+
 function parseArgs(argv: readonly string[]): CliArgs {
   let seed = 1;
   let baselinePath = path.resolve(
@@ -84,10 +107,7 @@ function parseArgs(argv: readonly string[]): CliArgs {
     const arg = argv[index];
     switch (arg) {
       case "--seed": {
-        const value = argv[index + 1];
-        if (!value) {
-          throw new Error("--seed requires an integer argument");
-        }
+        const value = requireFlagValue(argv, index, "--seed", "an integer argument");
         const parsed = Number(value);
         if (!Number.isInteger(parsed) || parsed < 0) {
           throw new Error(`--seed must be a non-negative integer; got ${value}`);
@@ -97,19 +117,13 @@ function parseArgs(argv: readonly string[]): CliArgs {
         break;
       }
       case "--baseline": {
-        const value = argv[index + 1];
-        if (!value) {
-          throw new Error("--baseline requires a file path");
-        }
+        const value = requireFlagValue(argv, index, "--baseline", "a file path");
         baselinePath = path.resolve(process.cwd(), value);
         index += 1;
         break;
       }
       case "--tolerance": {
-        const value = argv[index + 1];
-        if (!value) {
-          throw new Error("--tolerance requires a number");
-        }
+        const value = requireFlagValue(argv, index, "--tolerance", "a number");
         const parsed = Number(value);
         if (!Number.isFinite(parsed) || parsed < 0) {
           throw new Error(
@@ -313,6 +327,9 @@ async function main(argv: readonly string[]): Promise<number> {
   }
 
   const regressions: string[] = [];
+  const missing: string[] = [];
+
+  // 1) Compare every current metric against the baseline. Log deltas.
   for (const [benchmarkId, bench] of Object.entries(current.benchmarks)) {
     const baselineMetrics = baseline.benchmarks[benchmarkId]?.metrics ?? {};
     for (const [metric, value] of Object.entries(bench.metrics)) {
@@ -339,15 +356,53 @@ async function main(argv: readonly string[]): Promise<number> {
     }
   }
 
-  if (regressions.length > 0) {
-    process.stderr.write(
-      `\nbench-smoke: REGRESSION detected (${regressions.length} metric${regressions.length === 1 ? "" : "s"}):\n`,
-    );
-    for (const regression of regressions) {
-      process.stderr.write(`  - ${regression}\n`);
+  // 2) Verify every baseline benchmark + metric still exists in the
+  // current run. A silently vanished metric (e.g. scorer bug drops
+  // `f1`) must fail the gate instead of passing quietly.
+  for (const [benchmarkId, benchBaseline] of Object.entries(
+    baseline.benchmarks,
+  )) {
+    const currentBench = current.benchmarks[benchmarkId];
+    if (!currentBench) {
+      missing.push(
+        `${benchmarkId}: entire benchmark missing from current run`,
+      );
+      process.stdout.write(
+        `bench-smoke: [${benchmarkId}] MISSING (benchmark absent from current run)\n`,
+      );
+      continue;
+    }
+    for (const metric of Object.keys(benchBaseline.metrics)) {
+      if (currentBench.metrics[metric] === undefined) {
+        missing.push(
+          `${benchmarkId}.${metric}: present in baseline, absent in current run`,
+        );
+        process.stdout.write(
+          `bench-smoke: [${benchmarkId}] ${metric} MISSING (metric absent from current run)\n`,
+        );
+      }
+    }
+  }
+
+  if (regressions.length > 0 || missing.length > 0) {
+    if (regressions.length > 0) {
+      process.stderr.write(
+        `\nbench-smoke: REGRESSION detected (${regressions.length} metric${regressions.length === 1 ? "" : "s"}):\n`,
+      );
+      for (const regression of regressions) {
+        process.stderr.write(`  - ${regression}\n`);
+      }
+    }
+    if (missing.length > 0) {
+      process.stderr.write(
+        `\nbench-smoke: MISSING metric(s) present in baseline but absent in current run (${missing.length}):\n`,
+      );
+      for (const entry of missing) {
+        process.stderr.write(`  - ${entry}\n`);
+      }
     }
     process.stderr.write(
-      "\nIf this drop is intentional, re-run with --update-baseline.\n",
+      "\nIf this change is intentional, re-run with --update-baseline.\n",
     );
     return 1;
   }

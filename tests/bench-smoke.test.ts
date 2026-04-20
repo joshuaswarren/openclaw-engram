@@ -95,6 +95,57 @@ test("bench-smoke regression detection fires when baseline metrics are raised", 
   }
 });
 
+test("bench-smoke fails when a baseline metric disappears from the current run", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "bench-smoke-missing-metric-"));
+  try {
+    const raw = await readFile(committedBaseline, "utf8");
+    const baseline = JSON.parse(raw) as {
+      benchmarks: Record<string, { metrics: Record<string, number> }>;
+    };
+    // Inject a phantom metric into the baseline that the current run
+    // will never produce. This simulates a runner-side regression that
+    // stops emitting a metric.
+    for (const benchmarkId of Object.keys(baseline.benchmarks)) {
+      baseline.benchmarks[benchmarkId]!.metrics["phantom_metric"] = 0.5;
+    }
+    const tamperedPath = path.join(dir, "baseline.json");
+    await writeFile(tamperedPath, JSON.stringify(baseline, null, 2), "utf8");
+    const { code, stderr, stdout } = runSmoke(["--baseline", tamperedPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /MISSING metric/);
+    assert.match(stderr, /phantom_metric/);
+    assert.match(stdout, /MISSING \(metric absent from current run\)/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("bench-smoke fails when an entire baseline benchmark disappears", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "bench-smoke-missing-bench-"));
+  try {
+    const raw = await readFile(committedBaseline, "utf8");
+    const baseline = JSON.parse(raw) as {
+      benchmarks: Record<string, { metrics: Record<string, number> }>;
+    };
+    // Inject a phantom benchmark entirely.
+    baseline.benchmarks["phantom_bench"] = { metrics: { score: 0.5 } };
+    const tamperedPath = path.join(dir, "baseline.json");
+    await writeFile(tamperedPath, JSON.stringify(baseline, null, 2), "utf8");
+    const { code, stderr } = runSmoke(["--baseline", tamperedPath]);
+    assert.equal(code, 1);
+    assert.match(stderr, /phantom_bench/);
+    assert.match(stderr, /entire benchmark missing from current run/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("bench-smoke rejects option-like tokens as flag values", () => {
+  const { code, stderr } = runSmoke(["--baseline", "--update-baseline"]);
+  assert.equal(code, 1);
+  assert.match(stderr, /option-like token "--update-baseline"/);
+});
+
 test("bench-smoke --update-baseline writes a stable file (no timestamp)", async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "bench-smoke-update-"));
   try {
