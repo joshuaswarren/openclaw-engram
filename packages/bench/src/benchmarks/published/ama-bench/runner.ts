@@ -297,6 +297,11 @@ function normalizeTrajectory(
     if (!Number.isInteger(record.turn_idx)) {
       throw new Error(`${location} trajectory[${index}] must include an integer turn_idx.`);
     }
+    if (!("action" in record) || !("observation" in record)) {
+      throw new Error(
+        `${location} must include a trajectory array with action/observation turns.`,
+      );
+    }
 
     return {
       turn_idx: record.turn_idx as number,

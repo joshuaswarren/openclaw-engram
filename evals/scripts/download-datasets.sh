@@ -30,7 +30,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 check_deps() {
-  for cmd in git curl python; do
+  for cmd in git curl; do
     if ! command -v "$cmd" &>/dev/null; then
       echo "ERROR: $cmd is required but not found"
       exit 1
@@ -39,6 +39,10 @@ check_deps() {
 }
 
 require_python_modules() {
+  if ! command -v python &>/dev/null; then
+    echo "ERROR: python is required but not found"
+    exit 1
+  fi
   python - "$@" <<'PY'
 import importlib.util
 import sys
