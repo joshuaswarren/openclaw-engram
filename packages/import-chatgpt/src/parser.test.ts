@@ -290,6 +290,34 @@ describe("parseChatGPTExport", () => {
     assert.throws(() => parseChatGPTExport(null), /requires a file/);
   });
 
+  // Codex review on PR #595 — when the input is a non-empty array but
+  // no entries match a recognized ChatGPT shape, we must throw in every
+  // mode (not just strict). Silently returning 0 memories masks the
+  // common mistake of pointing --file at the wrong JSON array.
+  it("rejects unrecognized top-level array exports in every mode", () => {
+    assert.throws(
+      () => parseChatGPTExport([{ hello: "world" }]),
+      /Unknown ChatGPT export array shape/,
+    );
+    // Tombstone-only arrays also throw — they contain nothing
+    // classifiable, so importing them as a zero-memory success would
+    // hide the shape mismatch.
+    assert.throws(
+      () => parseChatGPTExport([null, {}, { foo: "bar" }]),
+      /Unknown ChatGPT export array shape/,
+    );
+  });
+
+  // Cursor review on PR #595 — `typeof null` is the string "object", so
+  // JSON.parse("null") falling through to the final error message would
+  // report "received object" which is misleading.
+  it("reports 'null' (not 'object') in the error for literal JSON null", () => {
+    assert.throws(
+      () => parseChatGPTExport("null"),
+      /received null/,
+    );
+  });
+
   // Cursor review on PR #595 — asIsoString must not throw on corrupted
   // timestamps that overflow Date.toISOString's valid range.
   it("returns undefined for timestamps beyond Date's valid range", () => {

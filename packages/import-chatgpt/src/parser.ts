@@ -171,12 +171,15 @@ export function parseChatGPTExport(
       }
       return result;
     }
-    if (options.strict) {
-      throw new Error(
-        "Unknown ChatGPT export array shape (neither memories nor conversations).",
-      );
-    }
-    return result;
+    // Codex review on PR #595 — when the array has entries but none
+    // match a recognized shape, throw in every mode, not just strict.
+    // The CLI path does not enable `strict`, so pointing `--file` at
+    // the wrong JSON array (e.g. an unrelated top-level array from
+    // another export) would otherwise silently report "0 memories"
+    // instead of surfacing the shape mismatch.
+    throw new Error(
+      "Unknown ChatGPT export array shape (neither memories nor conversations).",
+    );
   }
 
   // Shape 2: an object. We look for the known keys.
@@ -232,8 +235,13 @@ export function parseChatGPTExport(
   // that would mask operator mistakes and allow automation to treat a
   // broken import as a clean "0 memories" import. Throw regardless of
   // strict mode. Codex review on PR #595.
+  //
+  // Cursor review on PR #595 — `typeof null` is the string "object", so
+  // reporting `received ${typeof raw}` for literal JSON `null` says
+  // "received object" which is misleading. Distinguish null explicitly.
+  const received = raw === null ? "null" : typeof raw;
   throw new Error(
-    "ChatGPT export must be a JSON array or object; received " + typeof raw,
+    "ChatGPT export must be a JSON array or object; received " + received,
   );
 }
 
