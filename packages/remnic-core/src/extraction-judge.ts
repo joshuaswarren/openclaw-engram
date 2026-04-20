@@ -34,9 +34,96 @@ export interface JudgeCandidate {
   importanceLevel?: ImportanceLevel;
 }
 
+/**
+ * Verdict kinds (issue #562, PR 1).
+ *
+ * - `"accept"`: fact is durable, persist it.
+ * - `"reject"`: fact is not durable, drop it.
+ * - `"defer"`: fact is ambiguous; push it back into the buffer for another
+ *   pass with fresh context. Inspired by MemReader (arxiv 2604.07877).
+ *
+ * PR 1 only introduces the type. No emit path produces `"defer"` yet — the
+ * defer-capable prompt, buffer re-routing, telemetry, and GRPO data
+ * collection are landing in PRs 2, 3, and 4 respectively.
+ */
+export type JudgeVerdictKind = "accept" | "reject" | "defer";
+
+/**
+ * Judge verdict shape.
+ *
+ * Back-compat note: `kind` is optional. Verdicts serialized before PR 1
+ * (both in-memory cache entries and any persisted caches) only carry
+ * `{ durable, reason }`. Downstream consumers must either read `durable`
+ * directly, or use {@link getVerdictKind} / {@link isDurableVerdict} which
+ * gracefully fall back to the boolean when `kind` is missing, and ignore
+ * unknown future `kind` values rather than crashing.
+ */
 export interface JudgeVerdict {
+  /**
+   * True iff the fact should be persisted. For `"defer"` verdicts this is
+   * `false` — a deferred fact is not (yet) persisted, so callers that only
+   * look at `durable` will treat defer as "skip this turn", which matches
+   * the pre-PR-1 fail-closed behavior for non-accepted verdicts.
+   */
   durable: boolean;
   reason: string;
+  /**
+   * Optional explicit verdict kind. Added in PR 1 of issue #562. Legacy
+   * verdicts (including cache entries produced before this field existed)
+   * do not set `kind`; use {@link getVerdictKind} to read this safely.
+   */
+  kind?: JudgeVerdictKind;
+}
+
+/**
+ * Resolve a verdict's effective kind.
+ *
+ * - If `kind` is explicitly set to one of the known values, return it.
+ * - If `kind` is absent, infer from `durable` (back-compat with pre-PR-1
+ *   cache entries and emit paths that have not been updated yet).
+ * - If `kind` is set to an unrecognised value (forward-compat, e.g. a
+ *   future cache entry loaded by an older build), fall back to `durable`
+ *   so we never crash on unknown strings.
+ */
+export function getVerdictKind(verdict: JudgeVerdict): JudgeVerdictKind {
+  const raw = verdict.kind;
+  if (raw === "accept" || raw === "reject" || raw === "defer") {
+    return raw;
+  }
+  return verdict.durable ? "accept" : "reject";
+}
+
+/**
+ * Type guard: returns `true` only for verdicts that should be persisted.
+ * Treats both `"reject"` and `"defer"` as "not durable" — defer means the
+ * caller should re-evaluate later, not write now.
+ */
+export function isDurableVerdict(verdict: JudgeVerdict): boolean {
+  return getVerdictKind(verdict) === "accept";
+}
+
+/**
+ * Validate a cache entry loaded from persistence / another process.
+ *
+ * Accepts legacy `{ durable, reason }` entries unchanged. Accepts new
+ * `{ durable, reason, kind }` entries when `kind` is one of the known
+ * values. Rejects entries with structurally wrong types or unknown
+ * `kind` values so stale caches cannot poison in-process state.
+ *
+ * Used by the in-memory cache loaders to stay forward- and backward-
+ * compatible without catastrophically failing on an unexpected shape.
+ */
+export function isValidCachedVerdict(value: unknown): value is JudgeVerdict {
+  if (typeof value !== "object" || value === null) return false;
+  const v = value as Record<string, unknown>;
+  if (typeof v.durable !== "boolean") return false;
+  if (typeof v.reason !== "string") return false;
+  if (v.kind !== undefined) {
+    if (v.kind !== "accept" && v.kind !== "reject" && v.kind !== "defer") {
+      return false;
+    }
+  }
+  return true;
 }
 
 export interface JudgeBatchResult {

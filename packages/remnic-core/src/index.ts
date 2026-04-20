@@ -66,8 +66,12 @@ export {
   clearVerdictCache,
   verdictCacheSize,
   createVerdictCache,
+  getVerdictKind,
+  isDurableVerdict,
+  isValidCachedVerdict,
   type JudgeCandidate,
   type JudgeVerdict,
+  type JudgeVerdictKind,
   type JudgeBatchResult,
 } from "./extraction-judge.js";
 
