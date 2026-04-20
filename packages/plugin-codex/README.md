@@ -57,13 +57,30 @@ bearer_token_env_var = "REMNIC_AUTH_TOKEN"
 http_headers = { "X-Engram-Client-Id" = "codex" }
 ```
 
-Then export the token into the env var Codex looks up:
+Then export the token Codex looks up. `remnic token generate` prints a multi-line status block (not just the raw token), so either:
+
+Copy the `Token:` value from:
 
 ```bash
-export REMNIC_AUTH_TOKEN="$(remnic token generate codex-cli)"
+remnic token generate codex-cli
+# → Generated token for codex-cli:
+#     Token:   <paste this into REMNIC_AUTH_TOKEN>
+#     Created: ...
 ```
 
-(Or set `REMNIC_AUTH_TOKEN` in your shell profile to a token minted via `remnic token generate codex-cli`.) See `docs/integration/connector-setup.md` in the Remnic repo for the canonical snippet.
+and set it in your shell profile:
+
+```bash
+export REMNIC_AUTH_TOKEN="<paste the token value here>"
+```
+
+Or extract it in one line with `awk`:
+
+```bash
+export REMNIC_AUTH_TOKEN=$(remnic token generate codex-cli | awk '/^ *Token:/ {print $2}')
+```
+
+See `docs/integration/connector-setup.md` in the Remnic repo for the canonical snippet.
 
 ## Agent note
 
