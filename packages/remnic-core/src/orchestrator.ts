@@ -488,6 +488,12 @@ function mapRecallSourceToXrayServedBy(
     | "cold_fallback"
     | "recent_scan",
 ): RecallXrayServedBy {
+  // Exhaustive switch: every current union member is explicitly
+  // listed so TypeScript surfaces a compile error if a new source is
+  // added without a deliberate mapping.  The `never`-typed fallthrough
+  // keeps the function total at runtime — if the caller passes an
+  // unexpected value that slipped past the type system (e.g. a JSON
+  // deserialization), we still fall back to `hybrid`.
   switch (source) {
     case "recent_scan":
       return "recent-scan";
@@ -495,9 +501,11 @@ function mapRecallSourceToXrayServedBy(
     case "hot_embedding":
     case "cold_fallback":
     case "none":
-    default:
       return "hybrid";
   }
+  const _exhaustive: never = source;
+  void _exhaustive;
+  return "hybrid";
 }
 
 export interface RecallInvocationOptions {
@@ -5343,6 +5351,14 @@ export class Orchestrator {
     let recalledMemoryCount = 0;
     let recalledMemoryIds: string[] = [];
     let recalledMemoryPaths: string[] = [];
+    // Pre-limit candidate pool size for the X-ray filter trace
+    // (issue #570 PR 1).  `recalledMemoryCount` is assigned AFTER MMR +
+    // truncation so using it alone would make the
+    // `recall-result-limit` trace report `considered == admitted`
+    // even when many candidates were dropped.  This counter captures
+    // the pool size BEFORE truncation at each branch that feeds it.
+    // Zero when no retrieval ran (initial state + `no_recall`).
+    let xrayCandidatePoolSize = 0;
     let identityInjectionModeUsed: IdentityInjectionMode | "none" = "none";
     let identityInjectedChars = 0;
     let identityInjectionTruncated = false;
@@ -7877,6 +7893,10 @@ export class Orchestrator {
       // Diversify via MMR over the full candidate pool *before* truncating to
       // the final recall limit. Running MMR after the slice would be unable
       // to promote diverse candidates sitting just below the cutoff.
+      xrayCandidatePoolSize = Math.max(
+        xrayCandidatePoolSize,
+        memoryResults.length,
+      );
       memoryResults = this.diversifyAndLimitRecallResults(
         "memories",
         memoryResults,
@@ -7981,6 +8001,10 @@ export class Orchestrator {
         );
         // MMR runs on the pre-truncation pool so diverse candidates just
         // below the cutoff can be promoted into the injected set.
+        xrayCandidatePoolSize = Math.max(
+          xrayCandidatePoolSize,
+          boostedScoped.length,
+        );
         const scoped = this.diversifyAndLimitRecallResults(
           "memories",
           boostedScoped,
@@ -8114,6 +8138,10 @@ export class Orchestrator {
       );
       // MMR runs on the pre-truncation pool so diverse candidates just
       // below the cutoff can be promoted into the injected set.
+      xrayCandidatePoolSize = Math.max(
+        xrayCandidatePoolSize,
+        boostedScoped.length,
+      );
       const scoped = this.diversifyAndLimitRecallResults(
         "memories",
         boostedScoped,
@@ -8255,6 +8283,10 @@ export class Orchestrator {
             ).sort((a, b) => b.score - a.score);
             // MMR runs on the pre-truncation pool so diverse candidates just
             // below the cutoff can be promoted into the injected set.
+            xrayCandidatePoolSize = Math.max(
+              xrayCandidatePoolSize,
+              boostedRecent.length,
+            );
             const recent = this.diversifyAndLimitRecallResults(
               "memories",
               boostedRecent,
@@ -8574,10 +8606,20 @@ export class Orchestrator {
             admittedBy: [],
           });
         }
+        // Use `xrayCandidatePoolSize` (captured pre-MMR / pre-truncation
+        // at each retrieval branch) so `considered` reflects the true
+        // candidate pool and `considered - admitted` is a meaningful
+        // "dropped by the limit" signal.  Falls back to
+        // `recalledMemoryCount` when no branch ran (shouldn't happen
+        // on this non-no_recall path, but is a safe floor).
+        const xrayConsidered = Math.max(
+          xrayCandidatePoolSize,
+          recalledMemoryCount,
+        );
         const filters: RecallFilterTrace[] = [
           {
             name: "recall-result-limit",
-            considered: recalledMemoryCount,
+            considered: xrayConsidered,
             admitted: recalledMemoryIds.length,
           },
         ];
