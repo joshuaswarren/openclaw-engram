@@ -1042,24 +1042,48 @@ test("parseBenchArgs rejects --judge-provider local-llm without --judge-base-url
 test("parseBenchArgs rejects unknown providers across all three flags with listed options", async () => {
   const { parseBenchArgs } = await import("../packages/remnic-cli/src/bench-args.ts");
 
-  for (const flag of [
-    "--system-provider",
-    "--judge-provider",
-    "--provider",
-  ]) {
-    assert.throws(
-      () => {
-        const args =
-          flag === "--provider"
-            ? ["published", "--name", "longmemeval", flag, "bogus", "--model", "m"]
-            : ["run", "longmemeval", flag, "bogus", flag.replace("provider", "model"), "m"];
-        parseBenchArgs(args);
-      },
-      new RegExp(
-        `ERROR: ${flag.replace(/-/g, "\\-")} must be one of "openai", "anthropic", "ollama", "litellm", or "local-llm"\\.`,
-      ),
-    );
-  }
+  // CLAUDE.md rule 52: the allow-list for --provider, --system-provider,
+  // and --judge-provider must be identical. Using three explicit cases
+  // (rather than a computed regex) keeps the assertions readable and
+  // dodges a CodeQL "incomplete string escaping" finding from building
+  // a regex out of a dash-containing flag name.
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        "published",
+        "--name",
+        "longmemeval",
+        "--provider",
+        "bogus",
+        "--model",
+        "m",
+      ]),
+    /ERROR: --provider must be one of "openai", "anthropic", "ollama", "litellm", or "local-llm"\./,
+  );
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        "run",
+        "longmemeval",
+        "--system-provider",
+        "bogus",
+        "--system-model",
+        "m",
+      ]),
+    /ERROR: --system-provider must be one of "openai", "anthropic", "ollama", "litellm", or "local-llm"\./,
+  );
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        "run",
+        "longmemeval",
+        "--judge-provider",
+        "bogus",
+        "--judge-model",
+        "m",
+      ]),
+    /ERROR: --judge-provider must be one of "openai", "anthropic", "ollama", "litellm", or "local-llm"\./,
+  );
 });
 
 test("CLI uses the package BenchmarkDefinition contract instead of a local benchmark metadata clone", async () => {
