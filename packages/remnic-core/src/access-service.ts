@@ -2857,17 +2857,6 @@ export class EngramAccessService {
     return this.orchestrator.fastGatewayLlm ?? null;
   }
 
-  get embeddingLookupRef(): SemanticDedupLookup | undefined {
-    if (!this.orchestrator.config.embeddingFallbackEnabled) return undefined;
-    return async (content: string, limit: number) => {
-      try {
-        return await this.orchestrator.semanticDedupLookup(content, limit, this.orchestrator.storage);
-      } catch {
-        return [];
-      }
-    };
-  }
-
   get embeddingLookupFactoryRef(): (storage: import("./storage.js").StorageManager) => SemanticDedupLookup | undefined {
     return (storage) => {
       if (!this.orchestrator.config.embeddingFallbackEnabled) return undefined;

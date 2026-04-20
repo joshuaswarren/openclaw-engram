@@ -4096,25 +4096,24 @@ export class Orchestrator {
 
       const sources: DirectAnswerSources = {
         taxonomy: DEFAULT_TAXONOMY,
-        listCandidateMemories: async () => {
-          const union: MemoryFile[] = [];
-          for (const ns of namespaces) {
-            const storage =
-              scopedStorages.get(ns) ??
-              (await this.storageRouter.storageFor(ns));
-            const all = await storage.readAllMemories();
-            for (const m of all) {
-              if ((m.frontmatter.status ?? "active") === "active") {
-                union.push(m);
-                memoryNamespaceByPath.set(m.path, ns);
-                if (m.frontmatter.id) {
-                  memoryNamespaceById.set(m.frontmatter.id, ns);
-                }
+        listCandidateMemories: async (options: { namespace: string; abortSignal?: AbortSignal }) => {
+          const targetNs = options.namespace;
+          const storage =
+            scopedStorages.get(targetNs) ??
+            (await this.storageRouter.storageFor(targetNs));
+          const all = await storage.readAllMemories();
+          const active: MemoryFile[] = [];
+          for (const m of all) {
+            if ((m.frontmatter.status ?? "active") === "active") {
+              active.push(m);
+              memoryNamespaceByPath.set(m.path, targetNs);
+              if (m.frontmatter.id) {
+                memoryNamespaceById.set(m.frontmatter.id, targetNs);
               }
             }
           }
-          candidatesConsidered = union.length;
-          return union;
+          candidatesConsidered = active.length;
+          return active;
         },
         trustZoneFor: async (memoryId: string) => {
           const ns = memoryNamespaceById.get(memoryId);
