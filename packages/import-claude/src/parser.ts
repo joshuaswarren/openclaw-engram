@@ -127,11 +127,25 @@ export function parseClaudeExport(
   // Shape 1: a top-level array.
   //   - `conversations.json` is an array of conversations.
   //   - `projects.json` is an array of projects.
-  // We branch on the first element's shape.
+  // Codex review on PR #598 — scan the full array for the first
+  // recognized entry (conversation or project) instead of branching on
+  // `raw[0]` only. A leading tombstone / malformed element (null, {},
+  // etc.) would otherwise defeat the classifier and cause valid later
+  // entries to be silently dropped.
   if (Array.isArray(raw)) {
     if (raw.length === 0) return result;
-    const first = raw[0];
-    if (looksLikeConversation(first)) {
+    let classification: "conversation" | "project" | undefined;
+    for (const entry of raw) {
+      if (looksLikeConversation(entry)) {
+        classification = "conversation";
+        break;
+      }
+      if (looksLikeProject(entry, { strict: options.strict })) {
+        classification = "project";
+        break;
+      }
+    }
+    if (classification === "conversation") {
       for (const entry of raw) {
         if (looksLikeConversation(entry)) {
           result.conversations.push(entry as ClaudeConversation);
@@ -141,7 +155,7 @@ export function parseClaudeExport(
       }
       return result;
     }
-    if (looksLikeProject(first, { strict: options.strict })) {
+    if (classification === "project") {
       for (const entry of raw) {
         if (looksLikeProject(entry, { strict: options.strict })) {
           result.projects.push(entry as ClaudeProject);
@@ -151,12 +165,13 @@ export function parseClaudeExport(
       }
       return result;
     }
-    if (options.strict) {
-      throw new Error(
-        "Unknown Claude export array shape (neither conversations nor projects).",
-      );
-    }
-    return result;
+    // Codex review on PR #598 — when an array has no recognized entries,
+    // throw in every mode, not just strict. The CLI path doesn't enable
+    // strict, so silent empty-success on the wrong JSON array would mask
+    // operator mistakes.
+    throw new Error(
+      "Unknown Claude export array shape (neither conversations nor projects).",
+    );
   }
 
   // Shape 2: an object. Look for the known keys.

@@ -49,11 +49,47 @@ describe("parseClaudeExport", () => {
     assert.throws(() => parseClaudeExport("{not-json"), /not valid JSON/);
   });
 
-  it("strict mode rejects unknown array shapes", () => {
+  // Codex review on PR #598 — unknown array shapes are rejected in every
+  // mode (not just strict) so pointing --file at the wrong JSON array
+  // surfaces the shape mismatch instead of silently returning 0
+  // memories.
+  it("rejects unknown array shapes in every mode", () => {
     assert.throws(
       () => parseClaudeExport(JSON.stringify([{ hello: "world" }]), { strict: true }),
       /Unknown Claude export array shape/,
     );
+    assert.throws(
+      () => parseClaudeExport([{ hello: "world" }]),
+      /Unknown Claude export array shape/,
+    );
+  });
+
+  // Codex review on PR #598 — classify from the first recognized entry,
+  // not from raw[0]. A leading tombstone / malformed element must not
+  // cause later valid entries to be dropped.
+  it("classifies array exports from first recognizable entry, not index 0", () => {
+    const withLeadingTombstones = [
+      null,
+      {},
+      {
+        uuid: "c-1",
+        chat_messages: [
+          { sender: "human", text: "hello" },
+        ],
+      },
+    ];
+    const parsed = parseClaudeExport(withLeadingTombstones);
+    assert.equal(parsed.conversations.length, 1);
+    assert.equal(parsed.projects.length, 0);
+
+    const withLeadingTombstonesProjects = [
+      null,
+      {},
+      { uuid: "p-1", prompt_template: "Be helpful" },
+    ];
+    const parsedProj = parseClaudeExport(withLeadingTombstonesProjects);
+    assert.equal(parsedProj.projects.length, 1);
+    assert.equal(parsedProj.conversations.length, 0);
   });
 
   it("preserves filePath in parsed output when provided", () => {
