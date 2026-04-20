@@ -281,6 +281,15 @@ describe("parseChatGPTExport", () => {
     );
   });
 
+  // Codex review on PR #595 — parseChatGPTExport MUST reject undefined /
+  // null input (what runImportCommand passes when --file is omitted) with
+  // a user-facing error. Silently returning 0 memories masks bad CLI
+  // invocations. Matches the gemini/claude slices.
+  it("rejects missing input with a user-facing error", () => {
+    assert.throws(() => parseChatGPTExport(undefined), /requires a file/);
+    assert.throws(() => parseChatGPTExport(null), /requires a file/);
+  });
+
   // Cursor review on PR #595 — asIsoString must not throw on corrupted
   // timestamps that overflow Date.toISOString's valid range.
   it("returns undefined for timestamps beyond Date's valid range", () => {

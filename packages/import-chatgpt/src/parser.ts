@@ -118,6 +118,16 @@ export function parseChatGPTExport(
   input: unknown,
   options: ChatGPTParseOptions = {},
 ): ParsedChatGPTExport {
+  // File-backed adapter contract: `runImportCommand` passes `undefined`
+  // when `--file` is omitted. ChatGPT is a file-only importer — a
+  // missing payload MUST surface as a user-facing error rather than
+  // silently succeeding with 0 memories. Codex review on PR #595.
+  if (input === undefined || input === null) {
+    throw new Error(
+      "The 'chatgpt' importer requires a file. Pass `--file <path>` pointing at " +
+        "your ChatGPT data-export `memory.json` or `conversations.json`.",
+    );
+  }
   const raw = coerceJson(input);
   const result: ParsedChatGPTExport = {
     savedMemories: [],
