@@ -1353,6 +1353,13 @@ export class Orchestrator {
    */
   setCodingContextForSession(sessionKey: string, codingContext: CodingContext | null): void {
     if (typeof sessionKey !== "string" || sessionKey.length === 0) return;
+    // Defensive init — `Object.create(Orchestrator.prototype)` stubs in
+    // legacy tests skip class-field initializers (rule 16 applies to test
+    // teardown; we apply the same defensiveness on construction here so
+    // PR 2 doesn't break those tests).
+    if (!this._codingContextBySession) {
+      (this as unknown as { _codingContextBySession: Map<string, CodingContext> })._codingContextBySession = new Map();
+    }
     if (codingContext === null) {
       this._codingContextBySession.delete(sessionKey);
       return;
@@ -1363,10 +1370,14 @@ export class Orchestrator {
   /**
    * Read-only accessor for the coding context attached to a session. Returns
    * `null` when none is set. Used by `remnic doctor` and by tests.
+   *
+   * Defensive `_codingContextBySession` lookup — legacy orchestrator-flush
+   * tests use `Object.create(Orchestrator.prototype)` which does not run
+   * class-field initializers, so the Map may be undefined on stubs.
    */
   getCodingContextForSession(sessionKey: string | undefined): CodingContext | null {
     if (typeof sessionKey !== "string" || sessionKey.length === 0) return null;
-    return this._codingContextBySession.get(sessionKey) ?? null;
+    return this._codingContextBySession?.get(sessionKey) ?? null;
   }
 
   /**
