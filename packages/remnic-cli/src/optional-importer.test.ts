@@ -29,19 +29,20 @@ describe("optional-importer loader", () => {
     assert.equal(isSupportedImporterName("chatgpt "), false);
   });
 
-  // Slices 2, 3, 4 (chatgpt, claude, gemini) are not yet installed so they
-  // make durable "missing package" fixtures that don't depend on which slice
-  // is currently being developed. The mem0 fixture intentionally is NOT used
-  // here because PR 5 installs @remnic/import-mem0 alongside, which would
-  // make the install-hint assertion race with that installation.
+  // Slices 3 and 4 (claude, gemini) are not yet installed, so they make
+  // durable "missing package" fixtures that do not depend on which slice is
+  // currently being developed. The chatgpt and mem0 fixtures intentionally
+  // are NOT used here because PR 2 installs @remnic/import-chatgpt and PR 5
+  // installs @remnic/import-mem0 alongside, which would make the
+  // install-hint assertion race with that installation.
   it("loading a missing importer throws a user-facing install hint", async () => {
     await assert.rejects(
-      () => loadImporterModule("chatgpt"),
+      () => loadImporterModule("claude"),
       (err: Error) => {
         // Install hint must include the package name and an install
         // command the user can actually run — not a raw MODULE_NOT_FOUND.
         assert.ok(
-          err.message.includes("@remnic/import-chatgpt"),
+          err.message.includes("@remnic/import-claude"),
           `expected package name in message, got: ${err.message}`,
         );
         assert.ok(
@@ -56,9 +57,9 @@ describe("optional-importer loader", () => {
 
   it("loader caches negative results so repeated calls do not re-import", async () => {
     // First call populates the cache with a null.
-    await assert.rejects(() => loadImporterModule("claude"));
+    await assert.rejects(() => loadImporterModule("gemini"));
     // Second call must still throw — but the cache hit path is covered
     // exclusively by the branch that rejects from cached null.
-    await assert.rejects(() => loadImporterModule("claude"));
+    await assert.rejects(() => loadImporterModule("gemini"));
   });
 });

@@ -20,6 +20,7 @@ export default defineConfig({
     "@remnic/bench",
     "@remnic/export-weclone",
     "@remnic/import-weclone",
+    "@remnic/import-chatgpt",
     "@remnic/import-mem0",
   ],
 });
