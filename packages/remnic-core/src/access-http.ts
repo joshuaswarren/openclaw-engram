@@ -761,7 +761,7 @@ export class EngramAccessHttpServer {
         storage: this.service.storageRef,
         config: this.service.configRef,
         memoryDir: this.service.memoryDir,
-        embeddingLookup: this.service.embeddingLookupRef,
+        embeddingLookupFactory: this.service.embeddingLookupFactoryRef,
         localLlm: this.service.localLlmRef,
         fallbackLlm: this.service.fallbackLlmRef,
         namespace: typeof body.namespace === "string" ? body.namespace : undefined,

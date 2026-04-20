@@ -2867,4 +2867,17 @@ export class EngramAccessService {
       }
     };
   }
+
+  get embeddingLookupFactoryRef(): (storage: import("./storage.js").StorageManager) => SemanticDedupLookup | undefined {
+    return (storage) => {
+      if (!this.orchestrator.config.embeddingFallbackEnabled) return undefined;
+      return async (content: string, limit: number) => {
+        try {
+          return await this.orchestrator.semanticDedupLookup(content, limit, storage);
+        } catch {
+          return [];
+        }
+      };
+    };
+  }
 }

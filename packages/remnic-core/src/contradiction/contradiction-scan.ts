@@ -63,7 +63,14 @@ export interface ScanDependencies {
   storage: StorageManager;
   config: PluginConfig;
   memoryDir: string;
+  /** Pre-built embedding lookup. When provided, used as-is for Strategy 3. */
   embeddingLookup?: SemanticDedupLookup;
+  /**
+   * Factory to build a namespace-scoped embedding lookup.
+   * When provided, takes precedence over `embeddingLookup`.
+   * The scan driver passes its own `storage` so the lookup queries the correct index.
+   */
+  embeddingLookupFactory?: (storage: StorageManager) => SemanticDedupLookup | undefined;
   localLlm: LocalLlmClient | null;
   fallbackLlm: FallbackLlmClient | null;
   namespace?: string;
@@ -78,8 +85,14 @@ export interface ScanDependencies {
  */
 export async function runContradictionScan(deps: ScanDependencies): Promise<ScanResult> {
   const startTime = Date.now();
-  const { storage, config, memoryDir, embeddingLookup, localLlm, fallbackLlm, namespace } = deps;
+  const { storage, config, memoryDir, embeddingLookup, embeddingLookupFactory, localLlm, fallbackLlm, namespace } = deps;
   const scanConfig = config.contradictionScan;
+
+  // Prefer the factory (which uses the scan's own storage for correct namespace scoping)
+  // over a pre-built lookup (which may use default-namespace storage).
+  const scopedEmbeddingLookup = embeddingLookupFactory
+    ? embeddingLookupFactory(storage)
+    : embeddingLookup;
 
   if (!scanConfig.enabled) {
     log.info("[contradiction-scan] disabled by config");
@@ -102,7 +115,7 @@ export async function runContradictionScan(deps: ScanDependencies): Promise<Scan
   }
 
   // 3. Generate candidate pairs
-  const candidates = await generatePairs(memories, existingMap, scanConfig, embeddingLookup);
+  const candidates = await generatePairs(memories, existingMap, scanConfig, scopedEmbeddingLookup);
   const cooledDown = candidates.skipped;
   log.info("[contradiction-scan] generated %d candidates (%d cooled down)", candidates.pairs.length, cooledDown);
 
