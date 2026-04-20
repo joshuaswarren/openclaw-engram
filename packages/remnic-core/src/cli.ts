@@ -6755,13 +6755,22 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           const options = (args[0] ?? {}) as Record<string, string>;
           const { runContradictionScan } = await import("./contradiction/contradiction-scan.js");
           console.log("Running contradiction scan...");
+          const embeddingLookup = orchestrator.config.embeddingFallbackEnabled
+            ? async (content: string, limit: number) => {
+                try {
+                  return await orchestrator.semanticDedupLookup(content, limit, orchestrator.storage);
+                } catch {
+                  return [];
+                }
+              }
+            : undefined;
           const result = await runContradictionScan({
             storage: orchestrator.storage,
             config: orchestrator.config,
             memoryDir: orchestrator.config.memoryDir,
-            embeddingLookup: undefined,
+            embeddingLookup,
             localLlm: orchestrator.localLlm ?? null,
-            fallbackLlm: null,
+            fallbackLlm: (orchestrator as unknown as { fastGatewayLlm: import("./fallback-llm.js").FallbackLlmClient | null }).fastGatewayLlm ?? null,
             namespace: options.namespace,
           });
           console.log(`Scan complete in ${result.elapsedMs}ms:`);
