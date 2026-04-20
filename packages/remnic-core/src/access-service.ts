@@ -1170,6 +1170,114 @@ export class EngramAccessService {
     return toRecallExplainJson(snapshot);
   }
 
+  /**
+   * Recall X-ray (issue #570).  Runs a recall with `xrayCapture: true`
+   * and returns the resulting snapshot as structured JSON so every
+   * surface (CLI / HTTP / MCP) gets the same payload.  Namespace scope
+   * is enforced before the recall fires (CLAUDE.md rule 42 — read and
+   * write paths must resolve through the same namespace layer) so an
+   * unauthorized principal cannot capture an x-ray for a namespace it
+   * cannot read.
+   */
+  async recallXray(request: {
+    query: string;
+    sessionKey?: string;
+    namespace?: string;
+    budget?: number;
+    authenticatedPrincipal?: string;
+  }): Promise<{
+    snapshotFound: boolean;
+    snapshot?: import("./recall-xray.js").RecallXraySnapshot;
+  }> {
+    const query = typeof request.query === "string" ? request.query : "";
+    if (query.trim().length === 0) {
+      // Match the CLI contract (CLAUDE.md rule 51): reject empty
+      // input with an explicit error rather than silently producing
+      // an empty snapshot.
+      throw new Error("recallXray: query is required and must be non-empty");
+    }
+
+    const namespacesEnabled = this.orchestrator.config.namespacesEnabled;
+    const requestedNamespace = request.namespace?.trim()
+      ? this.resolveNamespace(request.namespace)
+      : undefined;
+    const principal =
+      request.authenticatedPrincipal?.trim()
+      || resolvePrincipal(request.sessionKey, this.orchestrator.config);
+
+    if (requestedNamespace) {
+      if (
+        !canReadNamespace(
+          principal,
+          requestedNamespace,
+          this.orchestrator.config,
+        )
+      ) {
+        return { snapshotFound: false };
+      }
+    } else if (
+      namespacesEnabled
+      && !request.authenticatedPrincipal?.trim()
+      && !request.sessionKey?.trim()
+    ) {
+      // Namespaces enabled but no identity supplied — reject rather
+      // than scanning the global namespace (CLAUDE.md rule 48:
+      // least-privileged default).
+      return { snapshotFound: false };
+    }
+
+    // Optional `--budget` override must be a positive integer.  Invalid
+    // values throw rather than silently defaulting (CLAUDE.md rule 51).
+    let budgetOverride: number | undefined;
+    if (request.budget !== undefined && request.budget !== null) {
+      const parsed =
+        typeof request.budget === "number"
+          ? request.budget
+          : Number(request.budget);
+      if (
+        !Number.isFinite(parsed)
+        || parsed <= 0
+        || !Number.isInteger(parsed)
+      ) {
+        throw new Error(
+          `recallXray: budget expects a positive integer; got ${JSON.stringify(request.budget)}`,
+        );
+      }
+      budgetOverride = parsed;
+    }
+
+    const originalBudget = this.orchestrator.config.recallBudgetChars;
+    if (budgetOverride !== undefined) {
+      this.orchestrator.config.recallBudgetChars = budgetOverride;
+    }
+    try {
+      // Clear any prior snapshot so a capture failure surfaces as
+      // `{snapshotFound: false}` rather than returning stale data
+      // from an earlier call on the same orchestrator.
+      this.orchestrator.clearLastXraySnapshot();
+      await this.orchestrator.recall(query, request.sessionKey, {
+        xrayCapture: true,
+        ...(requestedNamespace ? { namespace: requestedNamespace } : {}),
+      });
+    } finally {
+      if (budgetOverride !== undefined) {
+        this.orchestrator.config.recallBudgetChars = originalBudget;
+      }
+    }
+
+    const snapshot = this.orchestrator.getLastXraySnapshot();
+    if (!snapshot) return { snapshotFound: false };
+    // Re-check namespace after capture: the recall may have served
+    // from a different namespace (default/global) than the caller
+    // requested.  Drop the snapshot rather than leak cross-tenant
+    // data (CLAUDE.md rule 42 + 47).
+    if (requestedNamespace && snapshot.namespace
+        && snapshot.namespace !== requestedNamespace) {
+      return { snapshotFound: false };
+    }
+    return { snapshotFound: true, snapshot };
+  }
+
   async memoryStore(request: EngramAccessMemoryStoreRequest): Promise<EngramAccessWriteResponse> {
     const namespace = this.resolveWritableNamespace(
       request.namespace,
