@@ -22,6 +22,7 @@ import type {
   RecallXraySnapshot,
   RecallXrayServedBy,
 } from "./recall-xray.js";
+import { renderTierExplainTextLines } from "./recall-explain-renderer.js";
 
 export type RecallXrayFormat = "json" | "text" | "markdown";
 
@@ -130,28 +131,8 @@ export function renderXrayText(snapshot: RecallXraySnapshot | null): string {
 
   lines.push("");
   lines.push("--- tier explain ---");
-  if (!snapshot.tierExplain) {
-    lines.push("(not populated — direct-answer tier disabled or did not fire)");
-  } else {
-    const te = snapshot.tierExplain;
-    lines.push(`tier: ${te.tier}`);
-    lines.push(`reason: ${te.tierReason}`);
-    lines.push(`candidates-considered: ${te.candidatesConsidered}`);
-    lines.push(`latency-ms: ${te.latencyMs}`);
-    if (te.filteredBy.length > 0) {
-      lines.push(`filtered-by: ${te.filteredBy.join(", ")}`);
-    } else {
-      lines.push("filtered-by: (none)");
-    }
-    if (te.sourceAnchors && te.sourceAnchors.length > 0) {
-      lines.push("source-anchors:");
-      for (const anchor of te.sourceAnchors) {
-        const range = anchor.lineRange
-          ? `:${anchor.lineRange[0]}-${anchor.lineRange[1]}`
-          : "";
-        lines.push(`  - ${anchor.path}${range}`);
-      }
-    }
+  for (const line of renderTierExplainTextLines(snapshot.tierExplain ?? null)) {
+    lines.push(line);
   }
 
   return lines.join("\n");

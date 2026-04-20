@@ -372,3 +372,34 @@ test("renderXray falls back to (unknown) for out-of-range finite capturedAt", ()
   const json = JSON.parse(renderXrayJson(snap));
   assert.equal(json.capturedAt, 1e20);
 });
+
+test("renderXrayText tier-explain block matches shared helper output", async () => {
+  // CLAUDE.md rule 22: the tier-explain text block must be a single
+  // source of truth shared between recall-explain-renderer and
+  // recall-xray-renderer.  Assert the output lines match the shared
+  // helper byte-for-byte so a future edit to either surface can't drift
+  // without a test failure.
+  const { renderTierExplainTextLines } = await import(
+    "./recall-explain-renderer.js"
+  );
+  const snap = fullSnapshot();
+  const text = renderXrayText(snap);
+  const sharedLines = renderTierExplainTextLines(snap.tierExplain ?? null);
+  for (const line of sharedLines) {
+    assert.ok(
+      text.includes(line),
+      `xray text is missing shared tier-explain line: ${line}`,
+    );
+  }
+
+  // Also exercise the null-tierExplain branch.
+  const nullSnap: RecallXraySnapshot = {
+    ...minimalSnapshot(),
+    tierExplain: null,
+  };
+  const nullText = renderXrayText(nullSnap);
+  const nullShared = renderTierExplainTextLines(null);
+  for (const line of nullShared) {
+    assert.ok(nullText.includes(line));
+  }
+});
