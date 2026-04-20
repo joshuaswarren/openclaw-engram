@@ -113,11 +113,11 @@ export class MeilisearchBackend implements SearchBackend {
     return this.doSearch(query, maxResults ?? 10, { hybrid: { semanticRatio: 0.5, embedder: "default" } }, collection);
   }
 
-  async update(): Promise<void> {
-    await this.updateCollection(this.collection);
+  async update(execution?: SearchExecutionOptions): Promise<void> {
+    await this.updateCollection(this.collection, execution);
   }
 
-  async updateCollection(collection: string): Promise<void> {
+  async updateCollection(collection: string, _execution?: SearchExecutionOptions): Promise<void> {
     if (!this.autoIndex || !this.memoryDir) return;
     if (!this.available) return;
 

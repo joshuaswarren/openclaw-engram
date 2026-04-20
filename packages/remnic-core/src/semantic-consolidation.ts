@@ -17,6 +17,18 @@ import { log } from "./logger.js";
 // consumers that import from semantic-consolidation.ts continue to work.
 export { resolveExtensionsRoot } from "./memory-extension-host/index.js";
 
+// Operator vocabulary (issue #561).  The types and validators live in a
+// standalone `consolidation-operator.ts` module so `storage.ts` can import
+// them without creating a `storage → semantic-consolidation →
+// codex-materialize-runner → storage` cycle.  Re-exported here so existing
+// consumers that reach for `./semantic-consolidation.js` keep working.
+export {
+  CONSOLIDATION_OPERATORS,
+  isConsolidationOperator,
+  isValidDerivedFromEntry,
+  type ConsolidationOperator,
+} from "./consolidation-operator.js";
+
 export interface ConsolidationCluster {
   category: string;
   memories: MemoryFile[];

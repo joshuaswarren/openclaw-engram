@@ -1,6 +1,6 @@
 {
   "name": "remnic-workspace",
-  "version": "9.3.92",
+  "version": "9.3.99",
   "private": true,
   "type": "module",
   "description": "Workspace root for the Remnic monorepo.",
@@ -106,6 +106,7 @@
     "prepack": "npm run build"
   },
   "devDependencies": {
+    "@remnic/bench": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
     "tsup": "^8.5.1",
     "tsx": "^4.0.0",

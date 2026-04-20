@@ -1241,6 +1241,10 @@ export class Orchestrator {
     }
   }
 
+  private async disposeSearchBackendIfNeeded(): Promise<void> {
+    await (this.qmd as { dispose?: () => void | Promise<void> }).dispose?.();
+  }
+
   /** Set per-session workspace for the next recall() call (compaction reset). @internal */
   setRecallWorkspaceOverride(sessionKey: string, dir: string): void {
     this._recallWorkspaceOverrides.set(sessionKey, dir);
@@ -1893,6 +1897,7 @@ export class Orchestrator {
               (entry) => entry.namespace === this.config.defaultNamespace,
             )?.state ?? "unknown";
           if (defaultState === "missing") {
+            await this.disposeSearchBackendIfNeeded();
             this.qmd = new NoopSearchBackend();
             log.warn(
               "Search collection missing for Remnic memory store; disabling search retrieval for this runtime (fallback retrieval remains enabled)",
@@ -1990,9 +1995,10 @@ export class Orchestrator {
         if (this.config.namespacesEnabled) {
           await this.namespaceSearchRouter.updateNamespaces(
             this.configuredNamespaces(),
+            { signal },
           );
         } else {
-          await this.qmd.update();
+          await this.qmd.update({ signal });
         }
         log.info("QMD startup sync: complete");
         this.deferredSyncSucceeded = true;
@@ -2017,7 +2023,7 @@ export class Orchestrator {
       log.info("QMD warmup: pre-loading models with a test search");
       warmupPromises.push(
         this.qmd
-          .search("warmup", warmupNs, 1)
+          .search("warmup", warmupNs, 1, undefined, { signal })
           .then(() => {
             log.info("QMD warmup: complete");
           })
@@ -2194,6 +2200,7 @@ export class Orchestrator {
       if ("available" in this.qmd) {
         (this.qmd as any).available = false;
       }
+      await this.disposeSearchBackendIfNeeded();
       this.qmd = new NoopSearchBackend();
       log.warn("startupSearchSync: search collection missing; disabling search (fallback retrieval remains enabled)");
       return false;
@@ -2218,9 +2225,12 @@ export class Orchestrator {
         log.info("startupSearchSync: updating index to match current disk state");
         let namespacesUpdated = 0;
         if (this.config.namespacesEnabled) {
-          namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(namespaces);
+          namespacesUpdated = await this.namespaceSearchRouter.updateNamespaces(
+            namespaces,
+            { signal },
+          );
         } else {
-          await (this.qmd as any).update(signal);
+          await this.qmd.update({ signal });
         }
         if (signal?.aborted) {
           log.debug("startupSearchSync: aborted after update");
