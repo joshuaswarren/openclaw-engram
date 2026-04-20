@@ -61,6 +61,33 @@ test("projectNamespaceName: length-capped to 64 chars, no trailing dash", () => 
   assert.ok(!out.endsWith("-"), "truncation must not leave a trailing dash");
 });
 
+test("branchNamespaceName: capped distinct long branches stay distinct (hash suffix)", () => {
+  // Regression: raw truncation collapsed two branches whose sanitized forms
+  // shared a long prefix but differed near the end, silently mixing recall
+  // and write state. With a deterministic hash suffix applied on truncation,
+  // distinct inputs must map to distinct namespaces.
+  const projectId = "origin:abcd1234";
+  const longA = `feature/${"a".repeat(80)}-variant-one`;
+  const longB = `feature/${"a".repeat(80)}-variant-two`;
+  const nsA = branchNamespaceName(projectId, longA);
+  const nsB = branchNamespaceName(projectId, longB);
+  assert.ok(nsA.length <= 64, `expected length ≤ 64, got ${nsA.length}`);
+  assert.ok(nsB.length <= 64, `expected length ≤ 64, got ${nsB.length}`);
+  assert.notEqual(
+    nsA,
+    nsB,
+    "distinct long branches must not collapse to the same namespace",
+  );
+});
+
+test("branchNamespaceName: capped output is deterministic for the same input", () => {
+  const huge = "x".repeat(200);
+  assert.equal(
+    branchNamespaceName("origin:abcd1234", huge),
+    branchNamespaceName("origin:abcd1234", huge),
+  );
+});
+
 test("projectNamespaceName: output satisfies isSafeRouteNamespace for typical projectIds", () => {
   const cases = [
     "origin:abcd1234",
@@ -95,18 +122,49 @@ test("branchNamespaceName: output satisfies isSafeRouteNamespace for typical bra
   }
 });
 
-test("branchNamespaceName: layers branch on project (uses `-` separators, no `/`)", () => {
+test("branchNamespaceName: simple all-lowercase branch needs no hash disambiguator", () => {
+  // `main` is already safe and lowercase — sanitization is a no-op, so the
+  // output is the plain project-id-branch form without a hash suffix.
   assert.equal(
-    branchNamespaceName("origin:abcd1234", "feat/ui"),
-    "project-origin-abcd1234-branch-feat-ui",
+    branchNamespaceName("origin:abcd1234", "main"),
+    "project-origin-abcd1234-branch-main",
+  );
+});
+
+test("branchNamespaceName: lossy branch names get a deterministic hash suffix", () => {
+  // `feat/ui` sanitizes to `feat-ui` — different from the raw input — so
+  // the namespace must include a disambiguating hash of the raw branch.
+  // The same collision class: `feat-ui` would sanitize to `feat-ui`
+  // unchanged (no hash), so the two inputs produce distinct namespaces
+  // even though their sanitized forms coincide.
+  const slashed = branchNamespaceName("origin:abcd1234", "feat/ui");
+  const dashed = branchNamespaceName("origin:abcd1234", "feat-ui");
+  assert.notEqual(
+    slashed,
+    dashed,
+    "feat/ui and feat-ui must not collapse to the same namespace",
+  );
+  assert.match(slashed, /^project-origin-abcd1234-branch-feat-ui-[0-9a-f]{8}$/);
+  assert.equal(dashed, "project-origin-abcd1234-branch-feat-ui");
+});
+
+test("branchNamespaceName: case-varying branches produce distinct namespaces", () => {
+  // Regression: `Feature` and `feature` both sanitize to `feature` without
+  // disambiguation. Including a hash of the raw input keeps them distinct.
+  const titled = branchNamespaceName("origin:abcd", "Feature");
+  const lowered = branchNamespaceName("origin:abcd", "feature");
+  assert.notEqual(
+    titled,
+    lowered,
+    "case-only variants must not collapse to the same namespace",
   );
 });
 
 test("branchNamespaceName: sanitizes branch name (lowercase + unsafe → dash)", () => {
-  assert.equal(
-    branchNamespaceName("origin:abcd", "FEAT/UI (wip)"),
-    "project-origin-abcd-branch-feat-ui-wip",
-  );
+  // With disambiguation, this also gains a hash suffix since the raw
+  // `FEAT/UI (wip)` is not equal to the sanitized `feat-ui-wip`.
+  const ns = branchNamespaceName("origin:abcd", "FEAT/UI (wip)");
+  assert.match(ns, /^project-origin-abcd-branch-feat-ui-wip-[0-9a-f]{8}$/);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -171,7 +229,13 @@ test("resolveCodingNamespaceOverlay: branchScope=true + branch set → branch ov
   );
   assert.ok(overlay);
   assert.equal(overlay!.scope, "branch");
-  assert.equal(overlay!.namespace, "project-origin-aaaa0000-branch-feat-x");
+  // `feat/x` is lossy under sanitization (`/` → `-`), so the branch
+  // namespace includes a deterministic hash suffix to keep it distinct
+  // from a literal `feat-x` branch on the same project.
+  assert.match(
+    overlay!.namespace,
+    /^project-origin-aaaa0000-branch-feat-x-[0-9a-f]{8}$/,
+  );
   assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa0000"]);
 });
 

@@ -108,12 +108,32 @@ test("applyCodingNamespaceOverlay: returns base unchanged when no context attach
   assert.equal(orch.applyCodingNamespaceOverlay("session-A", "default"), "default");
 });
 
-test("applyCodingNamespaceOverlay: returns project overlay when context is set and projectScope on", () => {
+test("applyCodingNamespaceOverlay: combines base + project overlay when context is set and projectScope on", () => {
   const orch = makeOrchestrator();
   orch.setCodingContextForSession("session-A", contextFor("origin:abcdef12"));
+  // Rule 42 / principal isolation: overlay is COMBINED with the principal
+  // base, not a replacement. Two principals in the same repo thus get
+  // distinct namespaces (`alice-project-…` vs `bob-project-…`).
   assert.equal(
     orch.applyCodingNamespaceOverlay("session-A", "default"),
-    "project-origin-abcdef12",
+    "default-project-origin-abcdef12",
+  );
+  assert.equal(
+    orch.applyCodingNamespaceOverlay("session-A", "alice"),
+    "alice-project-origin-abcdef12",
+  );
+});
+
+test("applyCodingNamespaceOverlay: different principals on same repo get isolated namespaces", () => {
+  const orch = makeOrchestrator();
+  orch.setCodingContextForSession("alice-sess", contextFor("origin:deadbeef"));
+  orch.setCodingContextForSession("bob-sess", contextFor("origin:deadbeef"));
+  const aliceNs = orch.applyCodingNamespaceOverlay("alice-sess", "alice");
+  const bobNs = orch.applyCodingNamespaceOverlay("bob-sess", "bob");
+  assert.notEqual(
+    aliceNs,
+    bobNs,
+    "distinct principals on the same repo must route to distinct namespaces",
   );
 });
 
@@ -124,6 +144,20 @@ test("applyCodingNamespaceOverlay: projectScope=false returns base unchanged (es
     orch.applyCodingNamespaceOverlay("session-A", "default"),
     "default",
     "codingMode.projectScope=false must exactly restore pre-#569 behaviour",
+  );
+});
+
+test("applyCodingNamespaceOverlay: namespacesEnabled=false returns base unchanged", () => {
+  // When namespacesEnabled is off the storage router maps every namespace
+  // to the same directory — a `project-*` overlay would create apparent
+  // route separation with no actual isolation. In that mode, coding mode
+  // degrades to unscoped behavior.
+  const orch = makeOrchestrator();
+  (orch.config as unknown as { namespacesEnabled: boolean }).namespacesEnabled = false;
+  orch.setCodingContextForSession("session-A", contextFor("origin:abcdef12"));
+  assert.equal(
+    orch.applyCodingNamespaceOverlay("session-A", "default"),
+    "default",
   );
 });
 
@@ -149,18 +183,33 @@ test("applyCodingRecallOverlay: projectScope=false → null (escape hatch)", () 
   assert.equal(orch.applyCodingRecallOverlay("session-A"), null);
 });
 
+test("applyCodingRecallOverlay: namespacesEnabled=false → null", () => {
+  const orch = makeOrchestrator();
+  (orch.config as unknown as { namespacesEnabled: boolean }).namespacesEnabled = false;
+  orch.setCodingContextForSession("session-A", contextFor("origin:aaaaaaaa"));
+  assert.equal(orch.applyCodingRecallOverlay("session-A"), null);
+});
+
 // ──────────────────────────────────────────────────────────────────────────
-// Rule 42 — read path and write path agree (bit-for-bit)
+// Rule 42 — read path and write path resolve consistently
 // ──────────────────────────────────────────────────────────────────────────
 
-test("CLAUDE.md #42: read and write paths resolve the same namespace for the same session", () => {
+test("CLAUDE.md #42: read and write paths resolve the same namespace for the same principal + session", () => {
+  // With the principal-scoped combine, the write-path namespace is
+  // `<principal>-project-<id>` and the read-path self namespace is the
+  // combine of the same principal base with the overlay. Both must be
+  // identical for the same (sessionKey, baseNamespace) pair.
   const orch = makeOrchestrator();
   orch.setCodingContextForSession("session-A", contextFor("origin:deadbeef"));
 
-  const writeNs = orch.applyCodingNamespaceOverlay("session-A", "default");
+  const base = "default";
+  const writeNs = orch.applyCodingNamespaceOverlay("session-A", base);
   const recallOverlay = orch.applyCodingRecallOverlay("session-A");
   assert.ok(recallOverlay);
-  assert.equal(writeNs, recallOverlay!.namespace);
+  // The read path callers also perform the combine; here we verify the
+  // equivalence contract: a raw overlay + base combined on the read path
+  // must match the write-path namespace.
+  assert.equal(writeNs, `${base}-${recallOverlay!.namespace}`);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -175,6 +224,6 @@ test("two sessions on different projects resolve to different namespaces (no cro
   const nsA = orch.applyCodingNamespaceOverlay("session-A", "default");
   const nsB = orch.applyCodingNamespaceOverlay("session-B", "default");
   assert.notEqual(nsA, nsB);
-  assert.equal(nsA, "project-origin-11111111");
-  assert.equal(nsB, "project-origin-22222222");
+  assert.equal(nsA, "default-project-origin-11111111");
+  assert.equal(nsB, "default-project-origin-22222222");
 });

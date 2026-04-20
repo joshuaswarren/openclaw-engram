@@ -69,13 +69,41 @@ function sanitizeFragment(input: string): string {
 }
 
 /**
- * Cap to the router's per-namespace upper bound. Trim trailing `-` introduced
- * by truncation so the final character is always alphanumeric or `.`, `_`.
+ * Cap to the router's per-namespace upper bound.
+ *
+ * Raw truncation alone would collapse distinct long inputs that differ near
+ * the end (e.g. two `feat/...` branches with different suffixes) into the
+ * same namespace — silently mixing recall/write state across branches or
+ * projects. When truncation is needed, we append a short deterministic
+ * hash suffix (`-<8hex>`) derived from the FULL pre-truncated value so
+ * collisions only happen under true hash collisions, not simple prefix
+ * overlap.
+ *
+ * The tail is trimmed to leave room for the separator and 8-char hash and
+ * any trailing `-` introduced by the slice is stripped so the final
+ * character before `-<hash>` is always alphanumeric or `.`/`_`.
  */
 const MAX_NAMESPACE_LEN = 64;
+const HASH_SUFFIX_LEN = 9; // "-" + 8 hex chars
+
+function fnv1a32Hex(value: string): string {
+  // FNV-1a 32-bit hash — pure, deterministic, no crypto dependency needed
+  // for non-security-boundary namespace disambiguation.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = (hash * 0x01000193) >>> 0;
+  }
+  return hash.toString(16).padStart(8, "0");
+}
+
 function capLength(value: string): string {
   if (value.length <= MAX_NAMESPACE_LEN) return value;
-  return value.slice(0, MAX_NAMESPACE_LEN).replace(/-+$/g, "");
+  const hash = fnv1a32Hex(value);
+  const head = value
+    .slice(0, MAX_NAMESPACE_LEN - HASH_SUFFIX_LEN)
+    .replace(/-+$/g, "");
+  return `${head}-${hash}`;
 }
 
 /**
@@ -89,17 +117,66 @@ export function projectNamespaceName(projectId: string): string {
 }
 
 /**
+ * Combine a principal-derived base namespace (e.g. `default`, `alice`) with a
+ * coding-agent overlay namespace (e.g. `project-origin-abcd1234`). The result
+ * is a single safe-route token that preserves principal isolation (CLAUDE.md
+ * rule 42: read + write must resolve through the same namespace layer — and
+ * here, through the same principal-scoped prefix) while layering project or
+ * project/branch scope on top.
+ *
+ * Multiple principals working in the same repo thus get distinct namespaces:
+ *
+ *   alice + project-origin-ab12  →  alice-project-origin-ab12
+ *   bob   + project-origin-ab12  →  bob-project-origin-ab12
+ *
+ * Output is re-capped through `capLength` so a very long base + overlay
+ * combination still fits inside `isSafeRouteNamespace` (≤ 64 chars). The
+ * deterministic hash suffix on truncation keeps distinct inputs distinct.
+ */
+export function combineNamespaces(base: string, overlay: string): string {
+  const baseFrag = sanitizeFragment(base);
+  const overlayFrag = sanitizeFragment(overlay);
+  if (!baseFrag) return capLength(overlayFrag || "unknown");
+  if (!overlayFrag) return capLength(baseFrag);
+  return capLength(`${baseFrag}-${overlayFrag}`);
+}
+
+/**
  * Produce the branch-scope namespace name. Format:
- * `project-<id>-branch-<name>`. Uses `-` as the structural separator rather
- * than `/` or `:` so the result is a single safe route-namespace token that
- * can be used directly as a filesystem directory.
+ * `project-<id>-branch-<name>[-<hash>]`. Uses `-` as the structural separator
+ * rather than `/` or `:` so the result is a single safe route-namespace
+ * token that can be used directly as a filesystem directory.
+ *
+ * Two failure modes must not collapse distinct branches to one namespace:
+ *
+ *   1. Sanitization is lossy (`feat/x` and `feat-x` both sanitize to
+ *      `feat-x`; `Feature` and `feature` both sanitize to `feature`). When
+ *      sanitization rewrote any character, we append a short hash of the
+ *      RAW branch so distinct inputs stay distinct.
+ *   2. Truncation is applied when the total exceeds 64 chars. In that
+ *      mode `capLength` appends its own hash of the full pre-truncated
+ *      value.
+ *
+ * Long branches that also sanitize may receive both kinds of hashes — that
+ * is acceptable: the router only requires the result be unique and
+ * deterministic, and the two hashes derive from different domains so they
+ * don't conflict.
  */
 export function branchNamespaceName(projectId: string, branch: string): string {
   const projectFrag = sanitizeFragment(projectId);
-  const branchFrag = sanitizeFragment(branch);
-  return capLength(
-    `project-${projectFrag || "unknown"}-branch-${branchFrag || "unknown"}`,
-  );
+  const trimmedBranch = branch.trim();
+  const branchFrag = sanitizeFragment(trimmedBranch);
+  // Lossy-sanitization disambiguator: append hash of the raw (trimmed)
+  // branch when sanitization actually changed the string. Preserves
+  // distinctness across `feat/x` vs `feat-x` and `Feature` vs `feature`.
+  // The comparison uses the raw trimmed value (NOT `.toLowerCase()`) so
+  // case-only variants are treated as lossy and receive their own hash.
+  // Empty / already-safe-lowercase inputs get no hash so the common case
+  // stays readable.
+  const disambig = trimmedBranch.length > 0 && branchFrag !== trimmedBranch;
+  const base = `project-${projectFrag || "unknown"}-branch-${branchFrag || "unknown"}`;
+  const suffixed = disambig ? `${base}-${fnv1a32Hex(trimmedBranch)}` : base;
+  return capLength(suffixed);
 }
 
 // ──────────────────────────────────────────────────────────────────────────
