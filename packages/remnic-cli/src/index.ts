@@ -154,6 +154,11 @@ import { expandTilde, resolveHomeDir } from "./path-utils.js";
 export { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { hasFlag, resolveFlag, stripResolveFlags, TAXONOMY_RESOLVE_BOOLEAN_FLAGS } from "./cli-args.js";
 import { parseConnectorConfig, stripConfigArgv } from "./parse-connector-config.js";
+// `remnic import` top-level command (issue #568 slice 1). The adapter packages
+// are optional à-la-carte installs loaded via computed-specifier dynamic
+// import; slice 1 ships only the dispatcher and surfaces a clean install hint
+// when an adapter package is absent.
+import { cmdImport, IMPORT_USAGE } from "./import-dispatch.js";
 
 export { parseConnectorConfig, stripConfigArgv };
 export {
@@ -197,7 +202,8 @@ type CommandName =
   | "enrich"
   | "openclaw"
   | "extensions"
-  | "training:export";
+  | "training:export"
+  | "import";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
@@ -6030,6 +6036,46 @@ Other:
       break;
     }
 
+    case "import": {
+      // Infrastructure-only in slice 1 (#568). The four adapter packages
+      // (@remnic/import-chatgpt/claude/gemini/mem0) land in slices 2-5 and
+      // are loaded via computed-specifier dynamic import — running
+      // `remnic import --adapter chatgpt` today surfaces a clean install
+      // hint rather than MODULE_NOT_FOUND.
+      if (rest.includes("--help") || rest.includes("-h") || rest.length === 0) {
+        console.log(IMPORT_USAGE);
+        break;
+      }
+
+      // Build the orchestrator lazily so `--help` / `--dry-run` without an
+      // installed adapter never incur memory-store I/O. We still construct
+      // it unconditionally for the actual run because adapter `writeTo`
+      // will need `ingestBulkImportBatch` even in slice 2+ integration runs.
+      const configPath = resolveConfigPath();
+      const raw = fs.existsSync(configPath)
+        ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+        : {};
+      const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+      const config = parseConfig(remnicCfg);
+      const orchestrator = new Orchestrator(config);
+      await orchestrator.initialize();
+      await orchestrator.deferredReady;
+      try {
+        await cmdImport(rest, orchestrator);
+      } finally {
+        // Orchestrator holds background timers / cache handles. Shutting
+        // it down keeps short-lived CLI runs from hanging the event loop.
+        if (typeof (orchestrator as unknown as { shutdown?: () => Promise<void> }).shutdown === "function") {
+          try {
+            await (orchestrator as unknown as { shutdown: () => Promise<void> }).shutdown();
+          } catch {
+            // Best effort — don't let a shutdown hiccup mask an import error.
+          }
+        }
+      }
+      break;
+    }
+
     case "openclaw": {
       const subAction = rest[0] ?? "help";
       const args = rest.slice(1);
@@ -6139,6 +6185,9 @@ Usage:
   remnic training:export --format <name> --output <path> [options]
     Export memories as a fine-tuning dataset (issue #459). Run
     'remnic training:export --help' for the full option list.
+  remnic import --adapter <name> --file <path> [--dry-run] [--batch-size <n>]
+    Import memory from ChatGPT/Claude/Gemini/Mem0 exports (issue #568).
+    Run 'remnic import --help' for the full adapter list.
 
 Options:
   --json    Output in JSON format
