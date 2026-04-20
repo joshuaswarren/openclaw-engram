@@ -195,6 +195,7 @@ import {
   type RuntimePolicyValues,
 } from "./policy-runtime.js";
 import { resolveHomeDir } from "./runtime/env.js";
+import { expandTildePath } from "./utils/path.js";
 import { convertMemoriesToRecords } from "./training-export/converter.js";
 import { parseStrictCliDate as parseStrictCliDateShared } from "./training-export/date-parse.js";
 import { getTrainingExportAdapter, listTrainingExportAdapters } from "./training-export/registry.js";
@@ -830,21 +831,6 @@ function isWorkTaskPriority(value: string | undefined): value is "low" | "medium
 
 function isWorkProjectStatus(value: string | undefined): value is "active" | "on_hold" | "completed" | "archived" {
   return value === "active" || value === "on_hold" || value === "completed" || value === "archived";
-}
-
-/**
- * Expand a leading `~` or `~/` in a user-supplied path to the real home
- * directory. Node.js `fs` does NOT expand `~` (per CLAUDE.md #17), and this
- * applies to every user-facing path input, not just `memoryDir`.
- * Uses `resolveHomeDir()` so that the `HOME` env-var override path is respected
- * consistently with the rest of the codebase.
- */
-function expandTildePath(p: string): string {
-  if (p === "~") return resolveHomeDir();
-  if (p.startsWith("~/") || p.startsWith("~\\")) {
-    return path.join(resolveHomeDir(), p.slice(2));
-  }
-  return p;
 }
 
 export async function runTrainingExportCliCommand(
