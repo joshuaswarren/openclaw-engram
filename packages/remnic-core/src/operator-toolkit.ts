@@ -1167,6 +1167,14 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
     : [];
   checks.push(summarizeHygieneWarnings(warnings, config.fileHygiene));
 
+  // Memory Worth legacy counter audit (issue #560 PR 1).
+  // Memories written before #560 have no `mw_success` / `mw_fail` frontmatter
+  // fields. That is fully supported — readers treat the absence as a uniform
+  // Beta(1,1) prior — but surfacing the count helps operators understand how
+  // much history will bootstrap the scoring pipeline landed in later PRs.
+  // This is an informational check, never an error.
+  checks.push(await summarizeMemoryWorthLegacyCounters(new StorageManager(config.memoryDir)));
+
   const summary = checks.reduce(
     (acc, check) => {
       acc[check.status] += 1;
@@ -1182,6 +1190,54 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
     summary,
     config: configStatus,
     checks,
+  };
+}
+
+/**
+ * Count memories that pre-date the Memory Worth counters introduced in issue
+ * #560 — i.e., neither `mw_success` nor `mw_fail` is set on the frontmatter.
+ *
+ * Returned as an `ok` check regardless of count, since legacy memories are
+ * fully functional (readers treat missing counters as zero observations). The
+ * numbers are informational for operators following the #560 rollout.
+ *
+ * Exported so unit tests can exercise the classification logic without
+ * booting a full orchestrator.
+ */
+export async function summarizeMemoryWorthLegacyCounters(
+  storage: StorageManager,
+): Promise<OperatorDoctorCheck> {
+  let legacy = 0;
+  let instrumented = 0;
+  try {
+    const memories = await storage.readAllMemories();
+    for (const memory of memories) {
+      const { mw_success, mw_fail } = memory.frontmatter;
+      if (mw_success === undefined && mw_fail === undefined) {
+        legacy += 1;
+      } else {
+        instrumented += 1;
+      }
+    }
+  } catch (err) {
+    return {
+      key: "memory_worth_legacy",
+      status: "warn",
+      summary: "Could not enumerate memories to count Memory Worth instrumentation.",
+      remediation: "Retry `remnic doctor` after ensuring the memory directory is readable.",
+      details: { error: String(err) },
+    };
+  }
+
+  const total = legacy + instrumented;
+  return {
+    key: "memory_worth_legacy",
+    status: "ok",
+    summary:
+      total === 0
+        ? "No memories on disk yet — Memory Worth counters will populate as extractions run."
+        : `${legacy} of ${total} memories have no Memory Worth counters yet (${instrumented} instrumented).`,
+    details: { legacy, instrumented, total },
   };
 }
 
