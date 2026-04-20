@@ -579,6 +579,29 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // Procedural memory stats (issue #567 PR 5/5). Read-only; namespace is
+    // scoped via the same resolver used by recall/trust-zones so cross-
+    // tenant reads aren't possible (CLAUDE.md rule 42).
+    if (req.method === "GET" && pathname === "/engram/v1/procedural/stats") {
+      const namespaceParam = parsed.searchParams.get("namespace");
+      this.respondJson(
+        res,
+        200,
+        await this.service.procedureStats(
+          {
+            namespace: this.resolveNamespace(
+              req,
+              namespaceParam && namespaceParam.length > 0
+                ? namespaceParam
+                : undefined,
+            ),
+          },
+          this.resolveRequestPrincipal(req),
+        ),
+      );
+      return;
+    }
+
     if (req.method === "GET" && pathname === "/engram/v1/trust-zones/records") {
       const limitRaw = parseInt(parsed.searchParams.get("limit") ?? "25", 10);
       const offsetRaw = parseInt(parsed.searchParams.get("offset") ?? "0", 10);

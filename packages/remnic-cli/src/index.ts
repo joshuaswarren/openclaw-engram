@@ -116,6 +116,9 @@ import {
   discoverMemoryExtensions,
   resolveExtensionsRoot,
   coerceInstallExtension,
+  StorageManager,
+  computeProcedureStats,
+  formatProcedureStatsText,
 } from "@remnic/core";
 // @remnic/export-weclone is an optional install surface (training:export
 // only uses it). Load lazily so the CLI works without it — see
@@ -200,6 +203,7 @@ type CommandName =
   | "binary"
   | "taxonomy"
   | "enrich"
+  | "procedural"
   | "openclaw"
   | "extensions"
   | "training:export"
@@ -2884,6 +2888,100 @@ async function cmdEnrich(rest: string[]): Promise<void> {
   if (totalPersisted > 0) {
     console.log(`\n  ${totalPersisted} candidate(s) persisted to memory store.`);
   }
+}
+
+/**
+ * `remnic procedural <subcommand>` (issue #567 PR 5/5). Currently supports:
+ *
+ *   remnic procedural stats [--format json|text] [--memory-dir <path>]
+ *
+ * Read-only — surfaces the same report as the HTTP
+ * `/engram/v1/procedural/stats` endpoint and the `remnic.procedural_stats`
+ * MCP tool so operators can quickly see procedural memory health.
+ */
+async function cmdProcedural(rest: string[]): Promise<void> {
+  initLogger();
+  const subcommand = rest[0];
+  if (!subcommand || subcommand === "--help" || subcommand === "-h") {
+    console.log(`remnic procedural — Procedural memory operations (issue #567)
+
+Usage:
+  remnic procedural stats [--format json|text] [--memory-dir <path>]
+
+Subcommands:
+  stats                Print counts by status + recent activity + active config.
+
+Shared with:
+  GET /engram/v1/procedural/stats
+  MCP remnic.procedural_stats (alias engram.procedural_stats)`);
+    return;
+  }
+
+  if (subcommand !== "stats") {
+    console.error(
+      `Unknown procedural subcommand "${subcommand}". Run \`remnic procedural --help\` for usage.`,
+    );
+    process.exit(1);
+  }
+
+  const args = rest.slice(1);
+  // CLAUDE.md rules 14 + 51: --format must have a value if the flag is
+  // present. Previously `resolveFlag` returned `undefined` for `--format`
+  // with no value and we silently defaulted to "text", which hides
+  // operator typos (cursor review on #611).
+  const formatPresent = hasFlag(args, "--format");
+  const formatRaw = resolveFlag(args, "--format");
+  if (formatPresent && (formatRaw === undefined || formatRaw === null)) {
+    console.error(
+      "--format requires a value. Use `--format json` or `--format text`.",
+    );
+    process.exit(1);
+  }
+  const format = (() => {
+    if (!formatPresent || formatRaw === undefined || formatRaw === null) {
+      return "text";
+    }
+    const normalized = String(formatRaw).trim().toLowerCase();
+    if (normalized !== "text" && normalized !== "json") {
+      console.error(
+        `Invalid --format "${formatRaw}". Allowed: text, json.`,
+      );
+      process.exit(1);
+    }
+    return normalized;
+  })();
+
+  const memoryDirPresent = hasFlag(args, "--memory-dir");
+  const memoryDirOverride = resolveFlag(args, "--memory-dir");
+  if (
+    memoryDirPresent &&
+    (memoryDirOverride === undefined || memoryDirOverride === null)
+  ) {
+    console.error(
+      "--memory-dir requires a path. Omit the flag to use the resolved default.",
+    );
+    process.exit(1);
+  }
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+
+  const memoryDir = expandTilde(
+    typeof memoryDirOverride === "string" && memoryDirOverride.length > 0
+      ? memoryDirOverride
+      : config.memoryDir ?? resolveMemoryDir(),
+  );
+
+  const storage = new StorageManager(memoryDir);
+  const report = await computeProcedureStats({ storage, config });
+  if (format === "json") {
+    process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+    return;
+  }
+  process.stdout.write(formatProcedureStatsText(report));
 }
 
 async function cmdExtensions(action: string, rest: string[]): Promise<void> {
@@ -6190,6 +6288,11 @@ Options:
       break;
     }
 
+    case "procedural": {
+      await cmdProcedural(rest);
+      break;
+    }
+
     case "extensions": {
       const action = rest[0] ?? "help";
       await cmdExtensions(action, rest.slice(1));
@@ -6397,6 +6500,10 @@ Usage:
   remnic enrich --dry-run        Preview what would be enriched
   remnic enrich audit            Show recent enrichment audit log
   remnic enrich providers        List registered providers and their status
+  remnic procedural stats [--format json|text] [--memory-dir <path>]
+    Print procedural memory stats (counts + recency + config). Mirrors
+    GET /engram/v1/procedural/stats and remnic.procedural_stats MCP tool
+    (issue #567).
   remnic training:export --format <name> --output <path> [options]
     Export memories as a fine-tuning dataset (issue #459). Run
     'remnic training:export --help' for the full option list.
