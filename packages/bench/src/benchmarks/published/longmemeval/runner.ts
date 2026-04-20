@@ -3,12 +3,12 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
+import { type LongMemEvalItem } from "./fixture.js";
 import {
-  LONG_MEM_EVAL_SMOKE_FIXTURE,
-  type LongMemEvalItem,
-} from "./fixture.js";
+  LONG_MEM_EVAL_DATASET_FILENAMES,
+  formatMissingDatasetError,
+  loadLongMemEvalS,
+} from "../dataset-loader.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
 import type { Message } from "../../../adapters/types.js";
 import type {
@@ -187,51 +187,40 @@ async function loadDataset(
   datasetDir: string | undefined,
   limit?: number,
 ): Promise<LongMemEvalItem[]> {
-  const ensureDatasetItems = (items: LongMemEvalItem[]): LongMemEvalItem[] => {
-    if (items.length === 0) {
+  const loaded = await loadLongMemEvalS({ mode, datasetDir, limit });
+
+  if (loaded.source === "missing") {
+    if (mode === "full") {
       throw new Error(
-        "LongMemEval dataset is empty after applying the requested limit.",
+        formatMissingDatasetError(
+          "longmemeval",
+          datasetDir,
+          LONG_MEM_EVAL_DATASET_FILENAMES,
+          loaded.errors,
+        ),
       );
     }
-    return items;
-  };
-
-  if (datasetDir) {
-    const datasetErrors: string[] = [];
-    for (const filename of [
-      "longmemeval_oracle.json",
-      "longmemeval_s_cleaned.json",
-      "longmemeval.json",
-    ]) {
-      try {
-        const raw = await readFile(path.join(datasetDir, filename), "utf8");
-        const parsed = JSON.parse(raw) as LongMemEvalItem[];
-        return ensureDatasetItems(limit ? parsed.slice(0, limit) : parsed);
-      } catch (error) {
-        datasetErrors.push(
-          `${filename}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-        continue;
-      }
-    }
-
     throw new Error(
-      `LongMemEval dataset not found under ${datasetDir}. Tried longmemeval_oracle.json, longmemeval_s_cleaned.json, and longmemeval.json. Errors: ${datasetErrors.join(" | ")}`,
+      "LongMemEval dataset not found and bundled smoke fixture is empty.",
     );
   }
 
-  if (mode === "full") {
+  if (loaded.items.length === 0) {
     throw new Error(
-      "LongMemEval full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
+      "LongMemEval dataset is empty after applying the requested limit.",
     );
   }
 
-  const bundledFixture = limit
-    ? LONG_MEM_EVAL_SMOKE_FIXTURE.slice(0, limit)
-    : LONG_MEM_EVAL_SMOKE_FIXTURE;
-  if (bundledFixture.length > 0) {
-    return ensureDatasetItems(bundledFixture);
+  if (loaded.source === "smoke" && loaded.errors.length > 0) {
+    // Surface probe errors so operators understand why the smoke fixture
+    // was used instead of the real dataset. Keep output minimal and only
+    // emit when we actually tried to read a dataset directory.
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[remnic-bench] LongMemEval falling back to smoke fixture: " +
+        loaded.errors.join(" | "),
+    );
   }
 
-  throw new Error("LongMemEval dataset not found and bundled smoke fixture is empty.");
+  return loaded.items;
 }

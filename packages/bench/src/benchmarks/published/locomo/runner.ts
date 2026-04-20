@@ -3,16 +3,18 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
-import path from "node:path";
 import type { Message } from "../../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
 import {
-  LOCOMO_SMOKE_FIXTURE,
   type LoCoMoConversation,
   type LoCoMoQA,
   type LoCoMoTurn,
 } from "./fixture.js";
+import {
+  LOCOMO_DATASET_FILENAMES,
+  formatMissingDatasetError,
+  loadLoCoMo10,
+} from "../dataset-loader.js";
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -234,47 +236,44 @@ async function loadDataset(
   limit?: number,
 ): Promise<LoCoMoConversation[]> {
   const normalizedLimit = normalizeLimit(limit);
-  const ensureDatasetConversations = (
-    conversations: LoCoMoConversation[],
-  ): LoCoMoConversation[] => {
-    if (conversations.length === 0) {
+  const loaded = await loadLoCoMo10({
+    mode,
+    datasetDir,
+    limit: normalizedLimit,
+    parseFile: parseDataset,
+  });
+
+  if (loaded.source === "missing") {
+    if (mode === "full") {
       throw new Error(
-        "LoCoMo dataset is empty after applying the requested limit.",
+        formatMissingDatasetError(
+          "locomo",
+          datasetDir,
+          LOCOMO_DATASET_FILENAMES,
+          loaded.errors,
+        ),
       );
     }
-    return conversations;
-  };
-
-  if (datasetDir) {
-    const datasetErrors: string[] = [];
-    for (const filename of ["locomo10.json", "locomo.json"]) {
-      try {
-        const raw = await readFile(path.join(datasetDir, filename), "utf8");
-        const parsed = parseDataset(raw, filename);
-        return ensureDatasetConversations(
-          applyLimit(parsed, normalizedLimit),
-        );
-      } catch (error) {
-        datasetErrors.push(
-          `${filename}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-
     throw new Error(
-      `LoCoMo dataset not found under ${datasetDir}. Tried locomo10.json and locomo.json. Errors: ${datasetErrors.join(" | ")}`,
+      "LoCoMo dataset not found and bundled smoke fixture is empty.",
     );
   }
 
-  if (mode === "full") {
+  if (loaded.items.length === 0) {
     throw new Error(
-      "LoCoMo full mode requires datasetDir. Pass a dataset path or use quick mode to run the bundled smoke fixture.",
+      "LoCoMo dataset is empty after applying the requested limit.",
     );
   }
 
-  return ensureDatasetConversations(
-    applyLimit(LOCOMO_SMOKE_FIXTURE, normalizedLimit),
-  );
+  if (loaded.source === "smoke" && loaded.errors.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      "[remnic-bench] LoCoMo falling back to smoke fixture: " +
+        loaded.errors.join(" | "),
+    );
+  }
+
+  return loaded.items;
 }
 
 function parseDataset(
@@ -404,11 +403,4 @@ function normalizeLimit(limit: number | undefined): number | undefined {
     );
   }
   return limit;
-}
-
-function applyLimit<T>(items: T[], limit: number | undefined): T[] {
-  if (limit === undefined) {
-    return [...items];
-  }
-  return items.slice(0, limit);
 }

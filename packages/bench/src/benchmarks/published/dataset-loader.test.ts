@@ -1,0 +1,286 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  LOCOMO_DATASET_FILENAMES,
+  LONG_MEM_EVAL_DATASET_FILENAMES,
+  formatMissingDatasetError,
+  loadLoCoMo10,
+  loadLongMemEvalS,
+} from "./dataset-loader.ts";
+
+async function withTempDir<T>(
+  fn: (dir: string) => Promise<T>,
+): Promise<T> {
+  const dir = await mkdtemp(path.join(tmpdir(), "remnic-bench-loader-"));
+  try {
+    return await fn(dir);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+test("loadLongMemEvalS loads the first probed filename that parses", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      JSON.stringify([
+        {
+          question_id: 1,
+          question_type: "single-session-user",
+          question: "Where does the user live?",
+          answer: "Paris",
+          question_date: "2025-01-01",
+          haystack_dates: [],
+          haystack_session_ids: [],
+          haystack_sessions: [],
+          answer_session_ids: [],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "dataset");
+    assert.equal(result.filename, "longmemeval_oracle.json");
+    assert.equal(result.items.length, 1);
+    assert.equal(result.items[0]?.question, "Where does the user live?");
+    assert.deepEqual(result.errors, []);
+  });
+});
+
+test("loadLongMemEvalS falls back from unreadable file to next probed filename", async () => {
+  await withTempDir(async (dir) => {
+    // longmemeval_oracle.json intentionally has invalid JSON; loader should
+    // record the parse error and fall through to the next filename.
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      "{ not valid json",
+      "utf8",
+    );
+    await writeFile(
+      path.join(dir, "longmemeval_s_cleaned.json"),
+      JSON.stringify([
+        {
+          question_id: 2,
+          question_type: "single-session-user",
+          question: "Favorite color?",
+          answer: "blue",
+          question_date: "2025-01-02",
+          haystack_dates: [],
+          haystack_session_ids: [],
+          haystack_sessions: [],
+          answer_session_ids: [],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "dataset");
+    assert.equal(result.filename, "longmemeval_s_cleaned.json");
+    assert.equal(result.items.length, 1);
+    assert.equal(result.errors.length, 1);
+    assert.match(result.errors[0]!, /longmemeval_oracle\.json/);
+  });
+});
+
+test("loadLongMemEvalS falls back to smoke fixture in quick mode when dataset missing", async () => {
+  await withTempDir(async (dir) => {
+    const result = await loadLongMemEvalS({
+      mode: "quick",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "smoke");
+    assert.ok(result.items.length >= 1);
+    // Errors should include ENOENT for every probed filename.
+    assert.equal(result.errors.length, LONG_MEM_EVAL_DATASET_FILENAMES.length);
+    for (const filename of LONG_MEM_EVAL_DATASET_FILENAMES) {
+      assert.ok(
+        result.errors.some((entry) => entry.startsWith(filename)),
+        `expected probe error for ${filename}`,
+      );
+    }
+  });
+});
+
+test("loadLongMemEvalS returns missing in full mode when dataset absent", async () => {
+  await withTempDir(async (dir) => {
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+    });
+    assert.equal(result.source, "missing");
+    assert.equal(result.items.length, 0);
+    assert.equal(result.errors.length, LONG_MEM_EVAL_DATASET_FILENAMES.length);
+  });
+});
+
+test("loadLongMemEvalS without datasetDir in quick mode returns smoke fixture with no errors", async () => {
+  const result = await loadLongMemEvalS({ mode: "quick" });
+  assert.equal(result.source, "smoke");
+  assert.ok(result.items.length >= 1);
+  assert.deepEqual(result.errors, []);
+});
+
+test("loadLongMemEvalS honors limit", async () => {
+  await withTempDir(async (dir) => {
+    const items = Array.from({ length: 5 }, (_, index) => ({
+      question_id: index,
+      question_type: "single-session-user",
+      question: `q${index}`,
+      answer: `a${index}`,
+      question_date: "2025-01-01",
+      haystack_dates: [],
+      haystack_session_ids: [],
+      haystack_sessions: [],
+      answer_session_ids: [],
+    }));
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      JSON.stringify(items),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+      limit: 2,
+    });
+    assert.equal(result.items.length, 2);
+  });
+});
+
+test("loadLongMemEvalS limit=0 returns zero items (CLAUDE.md rule 27)", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      JSON.stringify([
+        {
+          question_id: 1,
+          question_type: "single-session-user",
+          question: "q",
+          answer: "a",
+          question_date: "2025-01-01",
+          haystack_dates: [],
+          haystack_session_ids: [],
+          haystack_sessions: [],
+          answer_session_ids: [],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+      limit: 0,
+    });
+    assert.equal(result.items.length, 0);
+  });
+});
+
+test("loadLongMemEvalS rejects negative limit", async () => {
+  await assert.rejects(
+    () => loadLongMemEvalS({ mode: "quick", limit: -1 }),
+    /non-negative integer/,
+  );
+});
+
+test("loadLongMemEvalS rejects non-integer limit", async () => {
+  await assert.rejects(
+    () => loadLongMemEvalS({ mode: "quick", limit: 1.5 }),
+    /non-negative integer/,
+  );
+});
+
+test("loadLongMemEvalS rejects non-array payload", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "longmemeval_oracle.json"),
+      JSON.stringify({ items: [] }),
+      "utf8",
+    );
+    const result = await loadLongMemEvalS({
+      mode: "full",
+      datasetDir: dir,
+    });
+    // Parse error recorded, no subsequent files, fall through to missing.
+    assert.equal(result.source, "missing");
+    assert.ok(result.errors.some((entry) => /must contain an array/.test(entry)));
+  });
+});
+
+test("loadLoCoMo10 returns smoke fixture when dataset missing in quick mode", async () => {
+  const result = await loadLoCoMo10({ mode: "quick" });
+  assert.equal(result.source, "smoke");
+  assert.ok(result.items.length >= 1);
+});
+
+test("loadLoCoMo10 returns missing in full mode when dataset absent", async () => {
+  await withTempDir(async (dir) => {
+    const result = await loadLoCoMo10({ mode: "full", datasetDir: dir });
+    assert.equal(result.source, "missing");
+    assert.equal(result.items.length, 0);
+  });
+});
+
+test("loadLoCoMo10 uses custom parseFile when provided", async () => {
+  await withTempDir(async (dir) => {
+    await writeFile(
+      path.join(dir, "locomo10.json"),
+      JSON.stringify([
+        {
+          sample_id: "custom-1",
+          conversation: { speaker_a: "A", speaker_b: "B" },
+          qa: [],
+        },
+      ]),
+      "utf8",
+    );
+    const result = await loadLoCoMo10({
+      mode: "full",
+      datasetDir: dir,
+      parseFile: (raw, filename) => {
+        // Custom parser that enforces a stricter invariant.
+        const parsed = JSON.parse(raw) as Array<Record<string, unknown>>;
+        if (parsed.length === 0) {
+          throw new Error(`${filename} must have at least one conversation`);
+        }
+        return parsed as any;
+      },
+    });
+    assert.equal(result.source, "dataset");
+    assert.equal(result.items.length, 1);
+  });
+});
+
+test("formatMissingDatasetError surfaces filenames and fetch-script hint", () => {
+  const message = formatMissingDatasetError(
+    "longmemeval",
+    "/tmp/missing",
+    LONG_MEM_EVAL_DATASET_FILENAMES,
+    ["longmemeval_oracle.json: ENOENT"],
+  );
+  assert.match(message, /LongMemEval dataset not found/);
+  assert.match(message, /\/tmp\/missing/);
+  assert.match(message, /scripts\/bench\/fetch-datasets\.sh/);
+  assert.match(message, /longmemeval_oracle\.json/);
+  assert.match(message, /ENOENT/);
+});
+
+test("formatMissingDatasetError handles undefined datasetDir", () => {
+  const message = formatMissingDatasetError(
+    "locomo",
+    undefined,
+    LOCOMO_DATASET_FILENAMES,
+    [],
+  );
+  assert.match(message, /LoCoMo dataset not found/);
+  assert.match(message, /<no dataset directory configured>/);
+});

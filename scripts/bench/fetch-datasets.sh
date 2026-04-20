@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# fetch-datasets.sh — Documentation + optional helpers for downloading the
+# LongMemEval-S and LoCoMo-10 datasets used by the published-benchmark
+# runners in `@remnic/bench`.
+#
+# This script does NOT auto-download by default. It prints the exact
+# commands you would run so operators understand what the runners will see,
+# and so we never silently fetch data on CI or dev machines.
+#
+# Usage:
+#   scripts/bench/fetch-datasets.sh [--help]
+#   scripts/bench/fetch-datasets.sh --target <dir>   # prints commands scoped to <dir>
+#
+# Default target:
+#   ./bench-datasets/       (gitignored — see .gitignore)
+#
+# After downloading, point the runners at the directory:
+#   pnpm exec remnic bench published --name longmemeval --dataset ./bench-datasets/longmemeval
+#   pnpm exec remnic bench published --name locomo      --dataset ./bench-datasets/locomo
+#
+# Expected layout:
+#   bench-datasets/
+#     longmemeval/
+#       longmemeval_oracle.json            # preferred
+#       longmemeval_s_cleaned.json         # optional alternate
+#       longmemeval_s.json                 # optional alternate
+#     locomo/
+#       locomo10.json                      # preferred
+#       locomo.json                        # optional alternate
+
+set -euo pipefail
+
+TARGET_DIR="./bench-datasets"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --target)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --target requires a directory path" >&2
+        exit 2
+      fi
+      TARGET_DIR="$2"
+      shift 2
+      ;;
+    --target=*)
+      TARGET_DIR="${1#--target=}"
+      shift
+      ;;
+    -h | --help)
+      # Print the top-of-file help block.
+      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      echo "error: unknown argument: $1" >&2
+      echo "run 'scripts/bench/fetch-datasets.sh --help' for usage" >&2
+      exit 2
+      ;;
+  esac
+done
+
+LONG_MEM_EVAL_DIR="${TARGET_DIR}/longmemeval"
+LOCOMO_DIR="${TARGET_DIR}/locomo"
+
+cat <<EOF
+# Remnic published-benchmark datasets — download instructions
+#
+# These commands are PRINTED, not executed. Copy-paste the ones you need.
+# Both datasets live on HuggingFace. The huggingface-cli option is preferred
+# because it handles auth + resumable downloads; wget is shown as a fallback.
+
+# 1. Create the target directories
+mkdir -p "${LONG_MEM_EVAL_DIR}"
+mkdir -p "${LOCOMO_DIR}"
+
+# 2. LongMemEval-S  (https://huggingface.co/datasets/xiaowu0162/LongMemEval)
+#    Prefer the huggingface-cli path. Install via:  pipx install "huggingface_hub[cli]"
+huggingface-cli download xiaowu0162/LongMemEval \\
+  --repo-type dataset \\
+  --local-dir "${LONG_MEM_EVAL_DIR}" \\
+  --include "longmemeval_oracle.json" \\
+           "longmemeval_s_cleaned.json" \\
+           "longmemeval_s.json"
+
+# Fallback: direct file download (update commit hash if the upstream moves)
+# wget -P "${LONG_MEM_EVAL_DIR}" \\
+#   "https://huggingface.co/datasets/xiaowu0162/LongMemEval/resolve/main/longmemeval_oracle.json"
+
+# 3. LoCoMo-10  (https://huggingface.co/datasets/snap-research/locomo10)
+huggingface-cli download snap-research/locomo10 \\
+  --repo-type dataset \\
+  --local-dir "${LOCOMO_DIR}" \\
+  --include "locomo10.json" "locomo.json"
+
+# Fallback direct download
+# wget -P "${LOCOMO_DIR}" \\
+#   "https://huggingface.co/datasets/snap-research/locomo10/resolve/main/locomo10.json"
+
+# 4. Verify the loader sees your files (no model calls):
+#    pnpm exec remnic bench published --name longmemeval --dataset "${LONG_MEM_EVAL_DIR}" --dry-run
+#    pnpm exec remnic bench published --name locomo      --dataset "${LOCOMO_DIR}"      --dry-run
+
+EOF
+
+exit 0
