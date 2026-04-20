@@ -513,14 +513,30 @@ export async function cmdImport(
   // when a target was materialized. An install-hint miss (loadAdapter throws)
   // must NOT trigger dispose — there's nothing to dispose and disposing may
   // itself throw, masking the original error.
-  let targetMaterialized = false;
+  //
+  // Cursor review on PR #610 — memoize the materialized target across all
+  // calls to `getWriteTarget`. `runBundleImportCommand` invokes
+  // `runImportCommand` once per detected bundle entry and each invocation
+  // calls `io.getWriteTarget()`. Without memoization a non-singleton
+  // `targetFactory` would construct N separate resources while
+  // `disposeTarget` only runs once, leaking N-1. The single-construct
+  // invariant is now enforced at the io boundary rather than implicitly
+  // at the call site.
+  let materializedTarget: ImporterWriteTarget | undefined;
+  let materializePromise: Promise<ImporterWriteTarget> | undefined;
   const io: ImportDispatchIO = {
     readFile: async (p) => fs.promises.readFile(p, "utf-8"),
     loadAdapter: async (name) => (await loadImporterModule(name)).adapter,
     runImporter,
     getWriteTarget: async () => {
-      targetMaterialized = true;
-      return targetFactory();
+      if (materializedTarget !== undefined) return materializedTarget;
+      if (materializePromise === undefined) {
+        materializePromise = Promise.resolve(targetFactory()).then((t) => {
+          materializedTarget = t;
+          return t;
+        });
+      }
+      return materializePromise;
     },
     stdout: (line) => process.stdout.write(line + "\n"),
     stderr: (line) => process.stderr.write(line + "\n"),
@@ -553,7 +569,7 @@ export async function cmdImport(
     // Only dispose when the write target was actually constructed. Checking
     // `parsed.dryRun` alone would incorrectly dispose after install-hint
     // misses or parse errors that happen BEFORE `getWriteTarget` is called.
-    if (targetMaterialized && disposeTarget !== undefined) {
+    if (materializedTarget !== undefined && disposeTarget !== undefined) {
       try {
         await disposeTarget();
       } catch {

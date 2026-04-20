@@ -18,7 +18,7 @@
 // The scan walks one level deep (plus a single nested directory like
 // `Takeout/Gemini/`) so users don't have to flatten their unzipped bundles.
 
-import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import type { SupportedImporterName } from "./optional-importer.js";
@@ -39,6 +39,11 @@ export interface BundleDetectOptions {
   readdirImpl?: (dir: string) => string[];
   readFileImpl?: (p: string) => string;
   isDirectoryImpl?: (p: string) => boolean;
+  /**
+   * Report whether `p` is a regular file (not a symlink, device, etc.).
+   * Defaults to `lstatSync(p).isFile()`. Injected for tests.
+   */
+  isRegularFileImpl?: (p: string) => boolean;
 }
 
 /**
@@ -56,8 +61,14 @@ export function detectBundleEntries(
   const readdir = options.readdirImpl ?? defaultReaddir;
   const readFileImpl = options.readFileImpl ?? defaultReadFile;
   const isDirectory = options.isDirectoryImpl ?? defaultIsDirectory;
+  const isRegularFile = options.isRegularFileImpl ?? defaultIsRegularFile;
 
-  const roots = collectCandidatePaths(bundleDir, readdir, isDirectory);
+  const roots = collectCandidatePaths(
+    bundleDir,
+    readdir,
+    isDirectory,
+    isRegularFile,
+  );
   const entries: DetectedBundleEntry[] = [];
   const seenFiles = new Set<string>();
   for (const filePath of roots) {
@@ -91,6 +102,7 @@ function collectCandidatePaths(
   root: string,
   readdir: (p: string) => string[],
   isDirectory: (p: string) => boolean,
+  isRegularFile: (p: string) => boolean,
 ): string[] {
   // Validate top-level readability with a descriptive error; inner
   // directories that fail to read are skipped silently so a partial bundle
@@ -118,7 +130,12 @@ function collectCandidatePaths(
       const full = path.join(dir, entry);
       if (isDirectory(full)) {
         walk(full, depth + 1);
-      } else {
+      } else if (isRegularFile(full)) {
+        // Codex review on PR #610 — reject symlink files as well as
+        // symlink directories. A bundle containing e.g. a symlinked
+        // `memory.json` could otherwise be followed to an arbitrary
+        // filesystem location and imported as if it were part of the
+        // bundle.
         out.push(full);
       }
     }
@@ -198,6 +215,22 @@ function defaultIsDirectory(p: string): boolean {
     const s = lstatSync(p);
     if (s.isSymbolicLink()) return false;
     return s.isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function defaultIsRegularFile(p: string): boolean {
+  try {
+    // Use lstatSync so symlinks never report as regular files. Codex
+    // review on PR #610: a bundle containing a symlinked `memory.json`
+    // (or any other known filename) must NOT be followed — otherwise
+    // the importer could be tricked into reading arbitrary filesystem
+    // locations. Reject symlink files here so classifyFile() never
+    // sees them.
+    const s = lstatSync(p);
+    if (s.isSymbolicLink()) return false;
+    return s.isFile();
   } catch {
     return false;
   }
