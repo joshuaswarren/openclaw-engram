@@ -355,3 +355,20 @@ test("renderXray formats non-finite capturedAt as (unknown)", () => {
   const md = renderXrayMarkdown(snap);
   assert.ok(md.includes("| Captured at | (unknown) |"));
 });
+
+test("renderXray falls back to (unknown) for out-of-range finite capturedAt", () => {
+  // `new Date(1e20).toISOString()` throws RangeError.  The renderer
+  // must not crash on corrupted or custom-clock snapshots.
+  const snap: RecallXraySnapshot = {
+    ...minimalSnapshot(),
+    capturedAt: 1e20,
+  };
+  const text = renderXrayText(snap);
+  assert.ok(text.includes("captured-at: (unknown)"));
+  const md = renderXrayMarkdown(snap);
+  assert.ok(md.includes("| Captured at | (unknown) |"));
+  // Sanity: the JSON renderer is untouched — it serializes the raw
+  // number because JSON consumers want the value as captured.
+  const json = JSON.parse(renderXrayJson(snap));
+  assert.equal(json.capturedAt, 1e20);
+});
