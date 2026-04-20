@@ -2925,20 +2925,43 @@ Shared with:
   }
 
   const args = rest.slice(1);
+  // CLAUDE.md rules 14 + 51: --format must have a value if the flag is
+  // present. Previously `resolveFlag` returned `undefined` for `--format`
+  // with no value and we silently defaulted to "text", which hides
+  // operator typos (cursor review on #611).
+  const formatPresent = hasFlag(args, "--format");
+  const formatRaw = resolveFlag(args, "--format");
+  if (formatPresent && (formatRaw === undefined || formatRaw === null)) {
+    console.error(
+      "--format requires a value. Use `--format json` or `--format text`.",
+    );
+    process.exit(1);
+  }
   const format = (() => {
-    const raw = resolveFlag(args, "--format");
-    if (raw === undefined || raw === null) return "text";
-    const normalized = String(raw).trim().toLowerCase();
+    if (!formatPresent || formatRaw === undefined || formatRaw === null) {
+      return "text";
+    }
+    const normalized = String(formatRaw).trim().toLowerCase();
     if (normalized !== "text" && normalized !== "json") {
       console.error(
-        `Invalid --format "${raw}". Allowed: text, json.`,
+        `Invalid --format "${formatRaw}". Allowed: text, json.`,
       );
       process.exit(1);
     }
     return normalized;
   })();
 
+  const memoryDirPresent = hasFlag(args, "--memory-dir");
   const memoryDirOverride = resolveFlag(args, "--memory-dir");
+  if (
+    memoryDirPresent &&
+    (memoryDirOverride === undefined || memoryDirOverride === null)
+  ) {
+    console.error(
+      "--memory-dir requires a path. Omit the flag to use the resolved default.",
+    );
+    process.exit(1);
+  }
   const configPath = resolveConfigPath();
   const raw = fs.existsSync(configPath)
     ? JSON.parse(fs.readFileSync(configPath, "utf8"))

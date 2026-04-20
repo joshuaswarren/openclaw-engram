@@ -10,7 +10,7 @@
  *   - HTTP `GET /engram/v1/procedural/stats`
  *   - MCP `remnic.procedural_stats` (+ `engram.procedural_stats` alias)
  */
-import type { MemoryStatus, PluginConfig } from "../types.js";
+import type { MemoryFile, MemoryStatus, PluginConfig } from "../types.js";
 import type { StorageManager } from "../storage.js";
 
 export interface ProcedureStatusCounts {
@@ -112,9 +112,21 @@ export async function computeProcedureStats(options: {
     "archived",
   ];
 
-  const all = await storage.readAllMemories();
-  for (const m of all) {
+  // Iterate both live and archived memories so the counts surface matches
+  // what operators expect when procedures have been archived via
+  // `archiveMemory` (Codex P2 on #611). `readAllMemories` alone skips
+  // `archive/`, which would otherwise underreport `counts.archived` and
+  // `counts.total`.
+  const seen = new Set<string>();
+  const live = await storage.readAllMemories();
+  const archived = await storage.readArchivedMemories();
+  const pool: MemoryFile[] = [...live, ...archived];
+  for (const m of pool) {
     if (m.frontmatter.category !== "procedure") continue;
+    // Dedupe by id so a procedure appearing in both live + archive (mid-
+    // archive race) isn't counted twice.
+    if (seen.has(m.frontmatter.id)) continue;
+    seen.add(m.frontmatter.id);
     counts.total += 1;
     const status = m.frontmatter.status ?? "active";
     if ((known as string[]).includes(status)) {
@@ -124,14 +136,22 @@ export async function computeProcedureStats(options: {
       counts.other += 1;
     }
 
-    // Prefer `created`, fall back to `updated` for recency. Both are ISO 8601.
-    const createdMs = tsMs(m.frontmatter.created) ?? tsMs(m.frontmatter.updated);
-    if (createdMs !== null) {
-      if (lastWriteMs === null || createdMs > lastWriteMs) {
-        lastWriteMs = createdMs;
+    // Recency semantics (Codex P2 on #611): use the latest of `updated` and
+    // `created`, not a fallback chain, so recently-edited procedures are
+    // reflected in `lastWriteAt` and `writesLast7Days`. Missing timestamps
+    // skip the row.
+    const createdMs = tsMs(m.frontmatter.created);
+    const updatedMs = tsMs(m.frontmatter.updated);
+    const latestMs =
+      createdMs !== null && updatedMs !== null
+        ? Math.max(createdMs, updatedMs)
+        : (updatedMs ?? createdMs);
+    if (latestMs !== null) {
+      if (lastWriteMs === null || latestMs > lastWriteMs) {
+        lastWriteMs = latestMs;
       }
       // Exclusive upper bound per CLAUDE.md rule 35 — use half-open window.
-      if (createdMs >= nowMs - sevenDaysMs && createdMs < nowMs) {
+      if (latestMs >= nowMs - sevenDaysMs && latestMs < nowMs) {
         writesLast7Days += 1;
       }
     }

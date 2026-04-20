@@ -179,6 +179,114 @@ test("computeProcedureStats writesLast7Days uses a half-open window (CLAUDE.md r
   }
 });
 
+test("computeProcedureStats counts archived procedures (Codex P2 on #611)", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-proc-stats-archived-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const body = buildProcedureMarkdownBody([
+      { order: 1, intent: "Step A" },
+      { order: 2, intent: "Step B" },
+    ]);
+
+    // One live active procedure…
+    await storage.writeMemory("procedure", `Live active\n\n${body}`, {
+      source: "user",
+      status: "active",
+      tags: [],
+    });
+    // …and one that we then archive via `archiveMemory`.
+    await storage.writeMemory(
+      "procedure",
+      `To archive\n\n${body}`,
+      {
+        source: "user",
+        status: "active",
+        tags: [],
+      },
+    );
+    // Find the just-written procedure file and archive it.
+    const live = await storage.readAllMemories();
+    const toArchive = live.find(
+      (m) =>
+        m.frontmatter.category === "procedure" &&
+        m.content.includes("To archive"),
+    );
+    assert.ok(toArchive, "procedure to archive must exist on disk");
+    await storage.archiveMemory(toArchive);
+
+    const config = parseConfig({
+      memoryDir: dir,
+      openaiApiKey: "test-key",
+      procedural: { enabled: true },
+    });
+
+    const report = await computeProcedureStats({ storage, config });
+    // Both procedures should count. `readAllMemories` alone would have
+    // missed the archived one.
+    assert.equal(report.counts.total, 2);
+    assert.equal(report.counts.active, 1);
+    assert.equal(report.counts.archived, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("computeProcedureStats recency uses latest of created/updated (Codex P2 on #611)", async () => {
+  // Synthetic MemoryFile-shaped entries so we can pin both timestamps.
+  // Rather than set up a real edit cycle in StorageManager (which would
+  // only produce `updated >= created`), we mock a storage stub.
+  const mkEntry = (id: string, created: string, updated: string) => ({
+    path: `/tmp/${id}.md`,
+    content: "",
+    frontmatter: {
+      id,
+      category: "procedure" as const,
+      created,
+      updated,
+      source: "user",
+      confidence: 1,
+      confidenceTier: "high" as const,
+      tags: [] as string[],
+    },
+  });
+
+  const fakeStorage = {
+    readAllMemories: async () => [
+      // `updated` is MORE RECENT than `created`; the report must key off
+      // `updated`, not `created`, so this row lands in the 7-day window.
+      mkEntry(
+        "procA",
+        "2026-04-10T00:00:00.000Z",
+        "2026-04-20T10:00:00.000Z",
+      ),
+    ],
+    readArchivedMemories: async () => [],
+  } as unknown as StorageManager;
+
+  const config = parseConfig({
+    openaiApiKey: "sk-test",
+    procedural: { enabled: true },
+  });
+
+  const report = await computeProcedureStats({
+    storage: fakeStorage,
+    config,
+    nowMs: Date.parse("2026-04-20T12:00:00.000Z"),
+  });
+
+  assert.equal(
+    report.recent.lastWriteAt,
+    "2026-04-20T10:00:00.000Z",
+    "lastWriteAt must reflect the most recent of created/updated",
+  );
+  assert.equal(
+    report.recent.writesLast7Days,
+    1,
+    "row updated 2h ago must be inside the 7-day window",
+  );
+});
+
 test("formatProcedureStatsText is deterministic for a known report", () => {
   const text = formatProcedureStatsText({
     schemaVersion: 1,
