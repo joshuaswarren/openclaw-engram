@@ -2341,10 +2341,14 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
       // Default-on since issue #567 PR 4/5: the master `procedural.enabled`
       // gate now defaults to `true` when the key is omitted, so the recall
       // pipeline must stay in sync. Explicit `false` (or any coerceBool
-      // falsy variant) still disables recall injection. Unrecognized
-      // values fall through to the default-on path — `parseConfig` itself
-      // rejects invalid values loudly, so this branch only sees values
-      // that already passed parsing.
+      // falsy variant) still disables recall injection.
+      //
+      // CLAUDE.md rule 48 (least-privileged defaults) + Cursor review on #609:
+      // never fail open on unrecognized values. Only `coerced === true` or
+      // the "key omitted" path enables the section. `parseConfig` throws
+      // on invalid values upstream, so this branch only ever sees boolean
+      // results — `coerced === undefined` should never happen in practice,
+      // but defense-in-depth keeps the section disabled if it ever does.
       enabled: (() => {
         const proceduralRaw =
           typeof cfg.procedural === "object" &&
@@ -2355,8 +2359,7 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
         if (proceduralRaw === undefined) return true;
         const rawEnabled = proceduralRaw.enabled;
         if (rawEnabled === undefined) return true;
-        const coerced = coerceBool(rawEnabled);
-        return coerced !== false;
+        return coerceBool(rawEnabled) === true;
       })(),
       maxChars: 2400,
     },
