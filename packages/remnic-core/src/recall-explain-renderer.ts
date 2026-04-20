@@ -252,7 +252,12 @@ export function toRecallXraySnapshotFromLegacy(
         : "(legacy explain)",
     snapshotId: `legacy-${snapshot.sessionKey ?? "unknown"}-${capturedAt}`,
     capturedAt,
-    tierExplain: snapshot.tierExplain ?? null,
+    // Run the raw on-disk value through the same normalizer the text
+    // and JSON paths use so the markdown adapter cannot render
+    // unvalidated tier-explain payloads (cursor / codex review on
+    // #605).  A malformed tierExplain is dropped to null, matching the
+    // behavior of the non-markdown surfaces.
+    tierExplain: normalizeTierExplain(snapshot.tierExplain) ?? null,
     results,
     filters,
     budget: { chars: 0, used: 0 },
