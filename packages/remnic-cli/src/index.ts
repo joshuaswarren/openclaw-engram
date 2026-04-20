@@ -6047,32 +6047,41 @@ Other:
         break;
       }
 
-      // Build the orchestrator lazily so `--help` / `--dry-run` without an
-      // installed adapter never incur memory-store I/O. We still construct
-      // it unconditionally for the actual run because adapter `writeTo`
-      // will need `ingestBulkImportBatch` even in slice 2+ integration runs.
-      const configPath = resolveConfigPath();
-      const raw = fs.existsSync(configPath)
-        ? JSON.parse(fs.readFileSync(configPath, "utf8"))
-        : {};
-      const remnicCfg = raw.remnic ?? raw.engram ?? raw;
-      const config = parseConfig(remnicCfg);
-      const orchestrator = new Orchestrator(config);
-      await orchestrator.initialize();
-      await orchestrator.deferredReady;
-      try {
-        await cmdImport(rest, orchestrator);
-      } finally {
-        // Orchestrator holds background timers / cache handles. Shutting
-        // it down keeps short-lived CLI runs from hanging the event loop.
-        if (typeof (orchestrator as unknown as { shutdown?: () => Promise<void> }).shutdown === "function") {
+      // Lazy orchestrator factory: only invoked when the run actually needs
+      // to write memories. `--dry-run`, `--help`, and install-hint failures
+      // all short-circuit BEFORE touching the memory store, keeping
+      // responsiveness high for the common "preview what would be imported"
+      // path (Cursor review on PR #583).
+      let orchestratorSingleton: Orchestrator | undefined;
+      const targetFactory = async () => {
+        if (!orchestratorSingleton) {
+          const configPath = resolveConfigPath();
+          const raw = fs.existsSync(configPath)
+            ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+            : {};
+          const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+          const config = parseConfig(remnicCfg);
+          orchestratorSingleton = new Orchestrator(config);
+          await orchestratorSingleton.initialize();
+          await orchestratorSingleton.deferredReady;
+        }
+        return orchestratorSingleton;
+      };
+      const dispose = async () => {
+        if (!orchestratorSingleton) return;
+        const maybeShutdown = (
+          orchestratorSingleton as unknown as { shutdown?: () => Promise<void> }
+        ).shutdown;
+        if (typeof maybeShutdown === "function") {
           try {
-            await (orchestrator as unknown as { shutdown: () => Promise<void> }).shutdown();
+            await maybeShutdown.call(orchestratorSingleton);
           } catch {
-            // Best effort — don't let a shutdown hiccup mask an import error.
+            // Best effort — orchestrator shutdown errors must not mask
+            // import results on short-lived CLI runs.
           }
         }
-      }
+      };
+      await cmdImport(rest, targetFactory, dispose);
       break;
     }
 

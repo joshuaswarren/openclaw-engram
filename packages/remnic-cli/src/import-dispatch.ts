@@ -43,6 +43,7 @@ import {
   SUPPORTED_IMPORTERS,
   type SupportedImporterName,
 } from "./optional-importer.js";
+import { expandTilde } from "./path-utils.js";
 
 export interface ImportDispatchArgs {
   adapter: SupportedImporterName;
@@ -57,7 +58,20 @@ export interface ImportDispatchIO {
   readFile: (path: string) => Promise<string>;
   loadAdapter: (name: SupportedImporterName) => Promise<ImporterAdapter<unknown>>;
   runImporter: typeof runImporter;
-  target: ImporterWriteTarget;
+  /**
+   * Lazy factory for the write target. Called only when the run requires
+   * writes (dryRun === false). Keeping it lazy means `--dry-run` and
+   * `--help` invocations can complete without booting a full orchestrator
+   * — critical for CLI responsiveness and for Cursor-flagged I/O minimisation.
+   */
+  getWriteTarget: () => Promise<ImporterWriteTarget>;
+  /**
+   * Optional cleanup hook paired with `getWriteTarget`. Called after
+   * `runImporter` completes so hosts can shut down an orchestrator they
+   * constructed on demand. Skipping this on dry-run avoids the shutdown
+   * overhead entirely.
+   */
+  disposeWriteTarget?: () => Promise<void>;
   stdout: (line: string) => void;
   stderr: (line: string) => void;
 }
@@ -113,7 +127,10 @@ export function parseImportArgs(rest: readonly string[]): ImportDispatchArgs {
     );
   }
 
-  const file = takeOptionalValue(args, "--file");
+  const fileRaw = takeOptionalValue(args, "--file");
+  // Expand leading `~` so paths like `~/export.json` resolve. Node's fs
+  // does not expand the tilde — CLAUDE.md rule 17.
+  const file = fileRaw !== undefined ? expandTilde(fileRaw) : undefined;
   const dryRun = consumeFlag(args, "--dry-run");
   const includeConversations = consumeFlag(args, "--include-conversations");
 
@@ -220,7 +237,17 @@ export async function runImportCommand(
     },
   };
 
-  const result = await io.runImporter(adapter, input, io.target, runOptions);
+  // Dry-run must never boot the orchestrator — callers of
+  // getWriteTarget() may construct an Orchestrator instance, which opens
+  // cache / watcher handles that are wasted work when writes are skipped.
+  // Cursor review on PR #583 flagged the non-lazy version.
+  let target: ImporterWriteTarget;
+  if (args.dryRun) {
+    target = dryRunWriteTarget();
+  } else {
+    target = await io.getWriteTarget();
+  }
+  const result = await io.runImporter(adapter, input, target, runOptions);
 
   if (result.dryRun) {
     io.stdout(
@@ -237,12 +264,37 @@ export async function runImportCommand(
 }
 
 /**
+ * Write target used during `--dry-run`. `runImporter` short-circuits before
+ * invoking `writeTo`, but adapters may still pass this target around; every
+ * method throws to make accidental writes from a dry-run path loud rather
+ * than silent.
+ */
+function dryRunWriteTarget(): ImporterWriteTarget {
+  return {
+    async ingestBulkImportBatch() {
+      throw new Error(
+        "dry-run import: ingestBulkImportBatch was called despite dryRun being set. " +
+          "Adapters MUST NOT write in dry-run mode.",
+      );
+    },
+    bulkImportWriteNamespace() {
+      return "dry-run";
+    },
+  };
+}
+
+/**
  * Top-level CLI entry: `remnic import ...`. Reads `rest` from the CLI switch
  * statement. Uses `process.stdout` / `process.stderr` via the supplied io.
+ *
+ * `targetFactory` is invoked lazily only for non-dry-run invocations — this
+ * keeps `--dry-run` and missing-adapter install-hint paths from spinning up
+ * the orchestrator (Cursor review on PR #583).
  */
 export async function cmdImport(
   rest: string[],
-  target: ImporterWriteTarget,
+  targetFactory: () => Promise<ImporterWriteTarget>,
+  disposeTarget?: () => Promise<void>,
 ): Promise<RunImporterResult | undefined> {
   if (rest.includes("--help") || rest.includes("-h")) {
     process.stdout.write(IMPORT_USAGE);
@@ -263,7 +315,8 @@ export async function cmdImport(
     readFile: async (p) => fs.promises.readFile(p, "utf-8"),
     loadAdapter: async (name) => (await loadImporterModule(name)).adapter,
     runImporter,
-    target,
+    getWriteTarget: targetFactory,
+    ...(disposeTarget !== undefined ? { disposeWriteTarget: disposeTarget } : {}),
     stdout: (line) => process.stdout.write(line + "\n"),
     stderr: (line) => process.stderr.write(line + "\n"),
   };
@@ -276,6 +329,19 @@ export async function cmdImport(
     );
     process.exitCode = 1;
     return undefined;
+  } finally {
+    // Only run the disposer when writes actually happened — dry-run and
+    // install-hint misses never instantiate the target, so there is nothing
+    // to dispose. `runImportCommand` uses `dryRunWriteTarget()` on dry-run
+    // and does not call `getWriteTarget`, so the flag mirrors whether
+    // writes were intended.
+    if (!parsed.dryRun && disposeTarget !== undefined) {
+      try {
+        await disposeTarget();
+      } catch {
+        // Best-effort; do not mask import errors.
+      }
+    }
   }
 }
 

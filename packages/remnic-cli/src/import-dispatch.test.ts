@@ -44,20 +44,26 @@ function makeIo(opts: {
   io: ImportDispatchIO;
   stdoutLines: string[];
   stderrLines: string[];
+  getWriteTargetCalls: { count: number };
 } {
   const stdoutLines: string[] = [];
   const stderrLines: string[] = [];
+  const getWriteTargetCalls = { count: 0 };
   return {
     io: {
       readFile: async () => opts.fileContents ?? "{}",
       loadAdapter: async () => opts.adapter,
       runImporter,
-      target: opts.target,
+      getWriteTarget: async () => {
+        getWriteTargetCalls.count += 1;
+        return opts.target;
+      },
       stdout: (line) => stdoutLines.push(line),
       stderr: (line) => stderrLines.push(line),
     },
     stdoutLines,
     stderrLines,
+    getWriteTargetCalls,
   };
 }
 
@@ -174,7 +180,7 @@ describe("runImportCommand — slice 1 integration", () => {
     }));
     const adapter = makeFakeAdapter(memories);
     const { target, received } = makeTarget();
-    const { io, stdoutLines } = makeIo({ adapter, target });
+    const { io, stdoutLines, getWriteTargetCalls } = makeIo({ adapter, target });
 
     const args: ImportDispatchArgs = {
       adapter: "chatgpt",
@@ -188,6 +194,12 @@ describe("runImportCommand — slice 1 integration", () => {
     assert.equal(result.memoriesPlanned, 3);
     assert.equal(result.memoriesWritten, 0);
     assert.equal(received.length, 0);
+    // Dry-run must NOT instantiate the real write target (Cursor review).
+    assert.equal(
+      getWriteTargetCalls.count,
+      0,
+      "dry-run must not call getWriteTarget (lazy orchestrator invariant)",
+    );
     assert.ok(
       stdoutLines.some((l) => l.includes("Dry-run") && l.includes("3")),
       `expected dry-run stdout, got: ${stdoutLines.join("\n")}`,
@@ -201,7 +213,7 @@ describe("runImportCommand — slice 1 integration", () => {
     }));
     const adapter = makeFakeAdapter(memories);
     const { target, received } = makeTarget();
-    const { io, stdoutLines } = makeIo({ adapter, target });
+    const { io, stdoutLines, getWriteTargetCalls } = makeIo({ adapter, target });
 
     const args: ImportDispatchArgs = {
       adapter: "chatgpt",
@@ -215,6 +227,7 @@ describe("runImportCommand — slice 1 integration", () => {
     assert.equal(result.dryRun, false);
     assert.equal(result.memoriesWritten, 3);
     assert.equal(received.length, 2);
+    assert.equal(getWriteTargetCalls.count, 1);
     assert.ok(
       stdoutLines.some((l) => l.includes("Imported 3 memories")),
       `expected success stdout, got: ${stdoutLines.join("\n")}`,
@@ -223,6 +236,7 @@ describe("runImportCommand — slice 1 integration", () => {
 
   it("surfaces the loader's install-hint error when the adapter is missing", async () => {
     const { target } = makeTarget();
+    let writeTargetCalls = 0;
     const io: ImportDispatchIO = {
       readFile: async () => "{}",
       loadAdapter: async () => {
@@ -231,7 +245,10 @@ describe("runImportCommand — slice 1 integration", () => {
         );
       },
       runImporter,
-      target,
+      getWriteTarget: async () => {
+        writeTargetCalls += 1;
+        return target;
+      },
       stdout: () => {},
       stderr: () => {},
     };
@@ -248,5 +265,40 @@ describe("runImportCommand — slice 1 integration", () => {
         ),
       /optional @remnic\/import-chatgpt/,
     );
+    // Install-hint miss must happen before any write target is requested.
+    assert.equal(writeTargetCalls, 0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// parseImportArgs tilde-expansion (Cursor review fix on PR #583)
+// ---------------------------------------------------------------------------
+
+describe("parseImportArgs tilde expansion", () => {
+  it("expands a leading ~ in --file", () => {
+    const parsed = parseImportArgs([
+      "--adapter",
+      "chatgpt",
+      "--file",
+      "~/exports/chatgpt.json",
+    ]);
+    assert.ok(parsed.file);
+    // Expanded path must no longer begin with the tilde.
+    assert.ok(
+      !parsed.file!.startsWith("~/"),
+      `expected ~ expansion, got: ${parsed.file}`,
+    );
+    // Resolved to an absolute path somewhere under the user's home.
+    assert.ok(parsed.file!.includes("/exports/chatgpt.json"));
+  });
+
+  it("leaves non-tilde paths unchanged", () => {
+    const parsed = parseImportArgs([
+      "--adapter",
+      "chatgpt",
+      "--file",
+      "/tmp/export.json",
+    ]);
+    assert.equal(parsed.file, "/tmp/export.json");
   });
 });
