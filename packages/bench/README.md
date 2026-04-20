@@ -89,12 +89,13 @@ bench-datasets/
 
 Point the runners at the directory. Use the current `remnic bench run`
 CLI surface with `--dataset-dir` (a dedicated `remnic bench published`
-subcommand is planned for a later slice of
+subcommand with user-configurable `--limit`, `--model`, and `--seed` is
+planned for a later slice of
 [#566](https://github.com/joshuaswarren/remnic/issues/566)):
 
 ```bash
 pnpm exec remnic bench run longmemeval \
-  --dataset-dir ./bench-datasets/longmemeval --limit 100
+  --dataset-dir ./bench-datasets/longmemeval
 
 pnpm exec remnic bench run locomo \
   --dataset-dir ./bench-datasets/locomo

@@ -50,7 +50,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     -h | --help)
       # Print the top-of-file help block.
-      sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'
+      # Print the top-of-file help block. Uses a marker-based range
+      # (`^#`-prefix only, stop at the first non-`#` line) so future
+      # additions to the header stay in sync without hand-counting.
+      sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
