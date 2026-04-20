@@ -4,17 +4,23 @@ Native [Claude Code](https://docs.claude.com/en/docs/claude-code) plugin for [Re
 
 ## Install
 
-```bash
-# Recommended: the Remnic CLI installs + configures the plugin for you,
-# mints an MCP token, and wires it into ~/.claude/.
-remnic connectors install claude-code
-```
+Installation is a two-step flow — the Remnic CLI sets up the MCP connection side, and Claude Code's own plugin system deploys the hook/skill/agent tree.
 
-Or install the package and point Claude Code at it manually:
+1. **Wire up the MCP connection and mint a token.** This writes `~/.claude.json` (or the equivalent), rotates a bearer token for the daemon, and registers the Claude Code connector with Remnic:
 
-```bash
-npm install -g @remnic/plugin-claude-code
-```
+    ```bash
+    remnic connectors install claude-code
+    ```
+
+    This step does NOT install the hook scripts, skills, or agents — Remnic's connector installer only manages the MCP config + token today. The Claude Code memory-extension publisher is a stub (`isHostAvailable()` → false) because Claude Code doesn't yet expose a file-based extension directory; that's why hook wiring lives in this package and is installed by Claude Code itself.
+
+2. **Install the plugin into Claude Code.** Use Claude Code's plugin system (or add this package to the plugin path manually):
+
+    ```bash
+    npm install -g @remnic/plugin-claude-code
+    ```
+
+    Then load the plugin tree in Claude Code — consult Claude Code's plugin docs for the exact mechanism your install supports. Until this step runs, hooks and skills are not active and auto-recall / auto-observe won't fire.
 
 ## What ships
 
@@ -62,7 +68,12 @@ Replace `{{REMNIC_TOKEN}}` with a token minted via `remnic token generate <conne
 
 ## Agent note
 
-If you're an AI agent scaffolding a Claude Code integration: **do not** hand-edit hook scripts in a user's `~/.claude/` tree — run `remnic connectors install claude-code` instead, which keeps the installation in sync with this package and mints the right token. The plugin is intentionally data-only so the host `@remnic/cli` can manage upgrades atomically.
+If you're an AI agent scaffolding a Claude Code integration: **do not** hand-edit hook scripts in a user's `~/.claude/` tree. The full setup has two components:
+
+1. `remnic connectors install claude-code` mints the MCP token and writes Remnic-side connector config. This does NOT deploy hooks/skills/agents — Claude Code doesn't yet expose a file-based extension directory, so the corresponding publisher in `@remnic/core` is a stub.
+2. Install this npm package and load it through Claude Code's plugin system so the hook/skill/agent tree is picked up. Until both steps run, auto-recall and auto-observe will not fire even though `remnic connectors doctor claude-code` reports green.
+
+The plugin is intentionally data-only so Claude Code's plugin loader can manage upgrades atomically.
 
 ## Related
 
