@@ -146,8 +146,11 @@ export function normalizeOriginUrl(rawUrl: string): string {
   let url = rawUrl.trim();
   if (!url) return "";
 
-  // Strip trailing `.git`
-  if (url.endsWith(".git")) url = url.slice(0, -4);
+  // Strip trailing `.git` case-insensitively — the whole result is
+  // lowercased at the end, so `.GIT` / `.Git` must be treated the same as
+  // `.git`. Previously the `.endsWith(".git")` check let `.GIT` leak
+  // through and appear in the output.
+  if (/\.git$/i.test(url)) url = url.slice(0, -4);
 
   // Protocol-prefixed: ssh://, https://, http://, git://, file://
   // Must be tried FIRST so that scp-style detection below doesn't
@@ -209,60 +212,69 @@ export async function resolveGitContext(
   cwd: string,
   options: ResolveGitContextOptions = {},
 ): Promise<GitContext | null> {
-  // Validate input: must be a non-empty string.
-  if (typeof cwd !== "string" || cwd.length === 0) return null;
+  // Wrap the whole body so the documented "Never throws" contract is
+  // enforced. Possible throw sites include:
+  //   - `expandTildePath` → `resolveHomeDir()` → `os.homedir()` when HOME
+  //     is unset (e.g. minimal containers)
+  //   - a custom `options.invoker` that raises instead of returning a
+  //     non-zero exitCode
+  //   - any future helper added to this chain
+  // All of those map to "not in a repo" / `null`.
+  try {
+    // Validate input: must be a non-empty string.
+    if (typeof cwd !== "string" || cwd.length === 0) return null;
 
-  // Expand `~` per CLAUDE.md #17, then require absolute path.
-  const expanded = expandTildePath(cwd);
-  if (!path.isAbsolute(expanded)) return null;
+    // Expand `~` per CLAUDE.md #17, then require absolute path.
+    const expanded = expandTildePath(cwd);
+    if (!path.isAbsolute(expanded)) return null;
 
-  const invoker = options.invoker ?? defaultGitInvoker();
+    const invoker = options.invoker ?? defaultGitInvoker();
 
-  // 1. Locate the repo root. `rev-parse --show-toplevel` returns the absolute
-  //    path to the top of the working tree, or exits non-zero when outside a
-  //    repo.
-  const topLevel = invoker(expanded, ["rev-parse", "--show-toplevel"]);
-  if (topLevel.exitCode !== 0) return null;
-  const rootPath = topLevel.stdout.trim();
-  if (!rootPath) return null;
+    // 1. Locate the repo root.
+    const topLevel = invoker(expanded, ["rev-parse", "--show-toplevel"]);
+    if (topLevel.exitCode !== 0) return null;
+    const rootPath = topLevel.stdout.trim();
+    if (!rootPath) return null;
 
-  // 2. Current branch. `--abbrev-ref HEAD` returns `HEAD` in detached state,
-  //    which we normalize to `null`.
-  const branchResult = invoker(rootPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  let branch: string | null = null;
-  if (branchResult.exitCode === 0) {
-    const raw = branchResult.stdout.trim();
-    branch = raw && raw !== "HEAD" ? raw : null;
-  }
-
-  // 3. Origin URL — optional. Used to derive a stable `projectId`.
-  const originResult = invoker(rootPath, ["remote", "get-url", "origin"]);
-  let projectId: string;
-  if (originResult.exitCode === 0) {
-    const normalized = normalizeOriginUrl(originResult.stdout);
-    projectId = normalized ? `origin:${stableHash(normalized)}` : `root:${stableHash(rootPath)}`;
-  } else {
-    // No origin remote — fall back to hashing the root path.
-    projectId = `root:${stableHash(rootPath)}`;
-  }
-
-  // 4. Default branch — best effort. `symbolic-ref refs/remotes/origin/HEAD`
-  //    returns e.g. `refs/remotes/origin/main`.
-  const headRef = invoker(rootPath, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
-  let defaultBranch: string | null = null;
-  if (headRef.exitCode === 0) {
-    const raw = headRef.stdout.trim();
-    const prefix = "refs/remotes/origin/";
-    if (raw.startsWith(prefix)) {
-      const candidate = raw.slice(prefix.length);
-      if (candidate) defaultBranch = candidate;
+    // 2. Current branch. `--abbrev-ref HEAD` returns `HEAD` in detached
+    //    state, which we normalize to `null`.
+    const branchResult = invoker(rootPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    let branch: string | null = null;
+    if (branchResult.exitCode === 0) {
+      const raw = branchResult.stdout.trim();
+      branch = raw && raw !== "HEAD" ? raw : null;
     }
-  }
 
-  return {
-    projectId,
-    branch,
-    rootPath,
-    defaultBranch,
-  };
+    // 3. Origin URL — optional. Used to derive a stable `projectId`.
+    const originResult = invoker(rootPath, ["remote", "get-url", "origin"]);
+    let projectId: string;
+    if (originResult.exitCode === 0) {
+      const normalized = normalizeOriginUrl(originResult.stdout);
+      projectId = normalized ? `origin:${stableHash(normalized)}` : `root:${stableHash(rootPath)}`;
+    } else {
+      projectId = `root:${stableHash(rootPath)}`;
+    }
+
+    // 4. Default branch — best effort.
+    const headRef = invoker(rootPath, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
+    let defaultBranch: string | null = null;
+    if (headRef.exitCode === 0) {
+      const raw = headRef.stdout.trim();
+      const prefix = "refs/remotes/origin/";
+      if (raw.startsWith(prefix)) {
+        const candidate = raw.slice(prefix.length);
+        if (candidate) defaultBranch = candidate;
+      }
+    }
+
+    return {
+      projectId,
+      branch,
+      rootPath,
+      defaultBranch,
+    };
+  } catch {
+    // Never throws — any unexpected error falls back to "not in a repo".
+    return null;
+  }
 }

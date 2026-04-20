@@ -139,6 +139,24 @@ test("normalizeOriginUrl: git:// protocol form", () => {
   );
 });
 
+test("normalizeOriginUrl: uppercase .GIT suffix stripped (case-insensitive)", () => {
+  // Regression: earlier `.endsWith('.git')` was case-sensitive, so `.GIT`
+  // leaked through and appeared as `.git` in the lowercased output.
+  assert.equal(
+    normalizeOriginUrl("https://github.com/foo/bar.GIT"),
+    "github.com/foo/bar",
+  );
+  assert.equal(
+    normalizeOriginUrl("https://github.com/foo/bar.Git"),
+    "github.com/foo/bar",
+  );
+  assert.equal(
+    normalizeOriginUrl("https://github.com/foo/bar.git"),
+    normalizeOriginUrl("https://github.com/foo/bar.GIT"),
+    "case of .git suffix must not affect normalization",
+  );
+});
+
 test("normalizeOriginUrl: case-insensitive", () => {
   assert.equal(
     normalizeOriginUrl("https://GitHub.com/Foo/Bar.git"),
@@ -211,6 +229,29 @@ test("resolveGitContext: outside a git repo returns null", async () => {
 test("resolveGitContext: git not on PATH (exit 127) returns null", async () => {
   const invoker: GitInvoker = () => ({ stdout: "", exitCode: 127 });
   const ctx = await resolveGitContext("/tmp/anything", { invoker });
+  assert.equal(ctx, null);
+});
+
+test("resolveGitContext: custom invoker throwing synchronously → returns null (never throws contract)", async () => {
+  // Regression: the documented "Never throws" contract had no top-level
+  // try/catch. A misbehaving custom invoker used to propagate its error.
+  const invoker: GitInvoker = () => {
+    throw new Error("synthetic invoker failure");
+  };
+  const ctx = await resolveGitContext("/tmp/anything", { invoker });
+  assert.equal(ctx, null);
+});
+
+test("resolveGitContext: custom invoker throwing on a later call → returns null", async () => {
+  // First call succeeds (pretend we're in a repo), subsequent call throws.
+  // Must still resolve to null rather than leaking the error.
+  let callCount = 0;
+  const invoker: GitInvoker = (cwd) => {
+    callCount += 1;
+    if (callCount === 1) return { stdout: `${cwd}\n`, exitCode: 0 };
+    throw new Error(`synthetic failure on call ${callCount}`);
+  };
+  const ctx = await resolveGitContext("/work/repo", { invoker });
   assert.equal(ctx, null);
 });
 
