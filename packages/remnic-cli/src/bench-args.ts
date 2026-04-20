@@ -240,7 +240,11 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
       ? args.slice(1)
       : args;
   const benchmarks = collectBenchmarks(benchmarkArgs);
-  const datasetDir = readBenchOptionValue(args, "--dataset-dir");
+  // `--dataset` is an alias for `--dataset-dir`. `--dataset-dir` wins
+  // if both are supplied.
+  const datasetDir =
+    readBenchOptionValue(args, "--dataset-dir") ??
+    readBenchOptionValue(args, "--dataset");
   const resultsDir = readBenchOptionValue(args, "--results-dir");
   const baselinesDir = readBenchOptionValue(args, "--baselines-dir");
   const runtimeProfileRaw = readBenchOptionValue(args, "--runtime-profile");
@@ -351,7 +355,6 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   // etc. raise consistent errors even when used outside the `published`
   // action (mirrors CLAUDE.md rule 14: validate flag args at input boundaries).
   const publishedNameRaw = readBenchOptionValue(args, "--name");
-  const publishedDatasetRaw = readBenchOptionValue(args, "--dataset");
   const publishedModelRaw = readBenchOptionValue(args, "--model");
   const publishedLimitRaw = readBenchOptionValue(args, "--limit");
   const publishedSeedRaw = readBenchOptionValue(args, "--seed");
@@ -427,14 +430,6 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const effectiveSystemProvider = systemProvider ?? publishedProvider;
   const effectiveSystemModel = systemModel ?? publishedModelRaw;
   const effectiveSystemBaseUrl = systemBaseUrl ?? publishedBaseUrlRaw;
-  // `--dataset` is an alias for `--dataset-dir`. `--dataset-dir` wins
-  // if both are supplied.
-  const effectiveDatasetDir = datasetDir
-    ? path.resolve(expandTilde(datasetDir))
-    : publishedDatasetRaw
-      ? path.resolve(expandTilde(publishedDatasetRaw))
-      : undefined;
-
   return {
     action,
     benchmarks,
@@ -442,7 +437,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     all: args.includes("--all"),
     json: args.includes("--json"),
     detail: args.includes("--detail"),
-    datasetDir: effectiveDatasetDir,
+    datasetDir: datasetDir ? path.resolve(expandTilde(datasetDir)) : undefined,
     resultsDir: resultsDir ? path.resolve(expandTilde(resultsDir)) : undefined,
     baselinesDir: baselinesDir ? path.resolve(expandTilde(baselinesDir)) : undefined,
     runtimeProfile,
