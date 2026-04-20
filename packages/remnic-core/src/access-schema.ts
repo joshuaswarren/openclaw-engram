@@ -78,6 +78,7 @@ const categorySchema = z
   .enum([
     "fact", "preference", "correction", "entity", "decision",
     "relationship", "principle", "commitment", "moment", "skill", "rule", "procedure",
+    "reasoning_trace",
   ])
   .optional();
 const confidenceSchema = z.number().min(0).max(1).optional();

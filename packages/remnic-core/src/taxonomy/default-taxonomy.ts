@@ -72,5 +72,16 @@ export const DEFAULT_TAXONOMY: Taxonomy = {
       priority: 60,
       memoryCategories: ["moment"],
     },
+    {
+      id: "reasoning-traces",
+      name: "Reasoning Traces",
+      description:
+        "Stored intermediate reasoning / solution chains for a problem the agent previously solved",
+      filingRules: [
+        "A multi-step reasoning chain or solution walkthrough the agent can replay for a similar problem",
+      ],
+      priority: 55,
+      memoryCategories: ["reasoning_trace"],
+    },
   ],
 };
