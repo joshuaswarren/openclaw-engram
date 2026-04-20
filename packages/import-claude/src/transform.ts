@@ -163,7 +163,13 @@ function conversationToSummary(
       content = titleLine + bodyTruncated + effectiveSuffix;
     }
   }
-  const sourceTimestamp = firstTimestamp(turns);
+  // Codex review on PR #598 — when per-turn timestamps are absent, fall
+  // back to the conversation-level `updated_at`/`created_at`. Without
+  // this fallback, exports that omit message-level timestamps lose their
+  // original time metadata entirely, which makes old conversations look
+  // newly imported and skews recency-based retrieval.
+  const sourceTimestamp =
+    firstTimestamp(turns) ?? conversation.updated_at ?? conversation.created_at;
   const metadata: Record<string, unknown> = {
     kind: "conversation_summary",
     humanTurns: turns.length,
