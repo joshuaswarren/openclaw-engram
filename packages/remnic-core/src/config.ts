@@ -210,6 +210,13 @@ const MEMORY_OS_PRESETS: Record<MemoryOsPresetName, Record<string, unknown>> = {
     maxProactiveQuestionsPerExtraction: 0,
     maxCompressionTokensPerHour: 0,
     behaviorLoopAutoTuneEnabled: false,
+    // Issue #567 PR 4/5 flipped `procedural.enabled` default to `true`.
+    // The conservative preset intentionally keeps the feature OFF to
+    // match its restrictive intent (no proactive extraction, no
+    // compression guideline learning, etc.). Users who want procedural
+    // memory on a conservative preset must set `procedural.enabled: true`
+    // explicitly.
+    procedural: { enabled: false },
   },
   balanced: {
     maxMemoryTokens: 2000,
@@ -296,13 +303,41 @@ export function parseConfig(raw: unknown): PluginConfig {
       ? (raw as Record<string, unknown>)
       : {};
   const memoryOsPreset = resolveMemoryOsPreset(baseCfg.memoryOsPreset);
-  const cfg = memoryOsPreset
-    ? {
-        ...MEMORY_OS_PRESETS[memoryOsPreset],
-        ...baseCfg,
-        memoryOsPreset,
-      }
-    : baseCfg;
+  let cfg: Record<string, unknown>;
+  if (memoryOsPreset) {
+    const preset = MEMORY_OS_PRESETS[memoryOsPreset];
+    // Deep-merge the `procedural` block specifically: the preset may pin a
+    // subset of keys (e.g. `conservative` pins `procedural: { enabled: false }`),
+    // and a user-provided `procedural` block with just `minOccurrences` or
+    // `lookbackDays` must NOT silently discard the preset's `enabled: false`.
+    // CLAUDE.md rule 22 (dedup config resolution) + Codex P1 on #609.
+    const presetProcedural =
+      preset.procedural &&
+      typeof preset.procedural === "object" &&
+      !Array.isArray(preset.procedural)
+        ? (preset.procedural as Record<string, unknown>)
+        : undefined;
+    const baseProcedural =
+      baseCfg.procedural &&
+      typeof baseCfg.procedural === "object" &&
+      !Array.isArray(baseCfg.procedural)
+        ? (baseCfg.procedural as Record<string, unknown>)
+        : undefined;
+    const mergedProcedural =
+      presetProcedural && baseProcedural
+        ? { ...presetProcedural, ...baseProcedural }
+        : (baseProcedural ?? presetProcedural);
+    cfg = {
+      ...preset,
+      ...baseCfg,
+      memoryOsPreset,
+    };
+    if (mergedProcedural !== undefined) {
+      cfg.procedural = mergedProcedural;
+    }
+  } else {
+    cfg = baseCfg;
+  }
 
   let apiKey: string | undefined;
   if (typeof cfg.openaiApiKey === "string" && cfg.openaiApiKey.length > 0) {
@@ -428,6 +463,22 @@ export function parseConfig(raw: unknown): PluginConfig {
     fingerprintDedup: rawCodexCompat.fingerprintDedup !== false,
   };
 
+  // Validate the shape of the `procedural` config block BEFORE applying the
+  // default-on behavior. Codex P2 on #609: a shorthand opt-out like
+  // `procedural: false` or `procedural: null` would previously normalize
+  // silently to `{}`, and the omitted-key branch would then enable the
+  // feature — the opposite of what the user asked for. Reject
+  // non-object shapes loudly per CLAUDE.md rule 51.
+  if (
+    cfg.procedural !== undefined &&
+    (cfg.procedural === null ||
+      typeof cfg.procedural !== "object" ||
+      Array.isArray(cfg.procedural))
+  ) {
+    throw new Error(
+      `procedural must be an object (got ${JSON.stringify(cfg.procedural)}). Use procedural: { enabled: false } to opt out; omit the key to use the default-on behavior (issue #567 PR 4).`,
+    );
+  }
   const rawProcedural =
     cfg.procedural && typeof cfg.procedural === "object" && !Array.isArray(cfg.procedural)
       ? (cfg.procedural as Record<string, unknown>)
@@ -438,12 +489,16 @@ export function parseConfig(raw: unknown): PluginConfig {
       ? Math.floor(proceduralMinCoerced)
       : 3;
   const successFloorRaw = coerceNumber(rawProcedural.successFloor);
+  // Safer-by-default floor (issue #567 PR 3/5): raise from 0.7 to 0.75.
+  // Miner promotion now requires a stricter trajectory success rate before
+  // procedures become candidates, reducing false positives when procedural
+  // recall is enabled by default in slice 4.
   const successFloor =
     successFloorRaw !== undefined &&
     successFloorRaw >= 0 &&
     successFloorRaw <= 1
       ? successFloorRaw
-      : 0.7;
+      : 0.75;
   const autoPromoteOccRaw = coerceNumber(rawProcedural.autoPromoteOccurrences);
   const autoPromoteOccurrences =
     autoPromoteOccRaw !== undefined && Number.isFinite(autoPromoteOccRaw)
@@ -452,17 +507,46 @@ export function parseConfig(raw: unknown): PluginConfig {
         : Math.min(10_000, Math.max(1, Math.floor(autoPromoteOccRaw)))
       : 8;
   const lookbackCoerced = coerceNumber(rawProcedural.lookbackDays);
+  // Safer-by-default lookback (issue #567 PR 3/5): lower from 30 to 14 days.
+  // Shorter window keeps mined procedures more recent, which improves
+  // relevance once recall is on by default.
   const lookbackDays =
     lookbackCoerced !== undefined && Number.isFinite(lookbackCoerced)
       ? Math.min(3650, Math.max(1, Math.floor(lookbackCoerced)))
-      : 30;
+      : 14;
   const recallMaxCoerced = coerceNumber(rawProcedural.recallMaxProcedures);
+  // Safer-by-default recall cap (issue #567 PR 3/5): lower from 3 to 2.
+  // Cap the injected procedure block so enabling procedural recall by
+  // default does not crowd out other recall sections.
   const recallMaxProcedures =
     recallMaxCoerced !== undefined && Number.isFinite(recallMaxCoerced)
       ? Math.min(10, Math.max(1, Math.floor(recallMaxCoerced)))
-      : 3;
+      : 2;
+  // Default-on procedural memory (issue #567 PR 4/5): if the user has NOT
+  // explicitly set `procedural.enabled`, enable it. Explicit `false` (or any
+  // value coerceBool reads as false: `"0"`, `"no"`, `"off"`, `false`) keeps
+  // the feature off. CLAUDE.md rules:
+  //   - #30 — escape hatch remains for operators who want to stay opt-out.
+  //   - #36 — "false"-ish strings coerce to false via coerceBool.
+  //   - #51 — when the key IS present but the value can't be understood
+  //     (typo like `"fales"` or a number like `0`), reject loudly instead
+  //     of silently flipping the default. Silent fallback on bad input is
+  //     how procedural memory would end up "fail-open" for typos.
+  const rawEnabledValue = rawProcedural.enabled;
+  let proceduralEnabled: boolean;
+  if (rawEnabledValue === undefined) {
+    proceduralEnabled = true;
+  } else {
+    const enabledCoerced = coerceBool(rawEnabledValue);
+    if (enabledCoerced === undefined) {
+      throw new Error(
+        `procedural.enabled must be a boolean or one of "true"/"false"/"1"/"0"/"yes"/"no"/"on"/"off" (got ${JSON.stringify(rawEnabledValue)}). Omit the key to use the default-on behavior (issue #567 PR 4).`,
+      );
+    }
+    proceduralEnabled = enabledCoerced;
+  }
   const procedural: ProceduralConfig = {
-    enabled: coerceBool(rawProcedural.enabled) === true,
+    enabled: proceduralEnabled,
     /** `0` skips all mining (`minOccurrences_zero`); otherwise clusters need at least this many members. */
     minOccurrences: Math.min(1000, Math.max(0, proceduralMinRaw)),
     successFloor,
@@ -2270,11 +2354,29 @@ function buildDefaultRecallPipeline(cfg: Record<string, unknown>): RecallSection
     { id: "verbatim-artifacts", enabled: cfg.verbatimArtifactsEnabled === true },
     {
       id: "procedure-recall",
-      enabled:
-        typeof cfg.procedural === "object" &&
-        cfg.procedural !== null &&
-        !Array.isArray(cfg.procedural) &&
-        (cfg.procedural as { enabled?: unknown }).enabled === true,
+      // Default-on since issue #567 PR 4/5: the master `procedural.enabled`
+      // gate now defaults to `true` when the key is omitted, so the recall
+      // pipeline must stay in sync. Explicit `false` (or any coerceBool
+      // falsy variant) still disables recall injection.
+      //
+      // CLAUDE.md rule 48 (least-privileged defaults) + Cursor review on #609:
+      // never fail open on unrecognized values. Only `coerced === true` or
+      // the "key omitted" path enables the section. `parseConfig` throws
+      // on invalid values upstream, so this branch only ever sees boolean
+      // results — `coerced === undefined` should never happen in practice,
+      // but defense-in-depth keeps the section disabled if it ever does.
+      enabled: (() => {
+        const proceduralRaw =
+          typeof cfg.procedural === "object" &&
+          cfg.procedural !== null &&
+          !Array.isArray(cfg.procedural)
+            ? (cfg.procedural as { enabled?: unknown })
+            : undefined;
+        if (proceduralRaw === undefined) return true;
+        const rawEnabled = proceduralRaw.enabled;
+        if (rawEnabled === undefined) return true;
+        return coerceBool(rawEnabled) === true;
+      })(),
       maxChars: 2400,
     },
     { id: "memory-boxes", enabled: cfg.memoryBoxesEnabled === true },

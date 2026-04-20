@@ -318,6 +318,63 @@
           }
         }
       },
+      "procedural": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "Master gate for procedural memory: extraction, recall boost, and mining (issue #519). Default-on since issue #567 PR 4/5; set to `false` to opt out."
+          },
+          "minOccurrences": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000,
+            "default": 3,
+            "description": "Minimum clustered trajectory occurrences before emitting a candidate procedure (0 disables mining)."
+          },
+          "successFloor": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 0.75,
+            "description": "Minimum success-rate floor (from trajectory outcomes) for miner promotion."
+          },
+          "autoPromoteOccurrences": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 10000,
+            "default": 8,
+            "description": "When auto-promotion is enabled, minimum occurrence count to move pending_review procedures to active (0 disables auto-promotion by count)."
+          },
+          "autoPromoteEnabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, miner may auto-promote trusted procedures to active after autoPromoteOccurrences."
+          },
+          "lookbackDays": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3650,
+            "default": 14,
+            "description": "Trajectory lookback window for procedural mining."
+          },
+          "recallMaxProcedures": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "default": 2,
+            "description": "Maximum procedure memories to inject on task-initiation recall."
+          },
+          "proceduralMiningCronAutoRegister": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, installer may register the nightly procedural mining cron job."
+          }
+        }
+      },
       "slotBehavior": {
         "type": "object",
         "additionalProperties": false,
@@ -1299,7 +1356,8 @@
             "principle",
             "commitment",
             "moment",
-            "skill"
+            "skill",
+            "procedure"
           ]
         },
         "default": [
@@ -1863,6 +1921,48 @@
         "type": "boolean",
         "default": true,
         "description": "Automatically supersede contradicted memories"
+      },
+      "contradictionScan": {
+        "type": "object",
+        "description": "Configuration for the nightly contradiction-scan cron (issue #520)",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable the nightly contradiction scan cron (disabled by default per rule 48)"
+          },
+          "similarityFloor": {
+            "type": "number",
+            "default": 0.82,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Embedding cosine similarity floor for candidate pair generation"
+          },
+          "topicOverlapFloor": {
+            "type": "number",
+            "default": 0.4,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum topic-token Jaccard overlap for unstructured pairs"
+          },
+          "maxPairsPerRun": {
+            "type": "integer",
+            "default": 500,
+            "minimum": 1,
+            "description": "Cap on candidate pairs evaluated per cron run"
+          },
+          "cooldownDays": {
+            "type": "integer",
+            "default": 14,
+            "minimum": 0,
+            "description": "Cooldown in days. 0 = always re-evaluate."
+          },
+          "autoMergeDuplicates": {
+            "type": "boolean",
+            "default": false,
+            "description": "Auto-flag pairs judged duplicates for dedup (still requires user approval)"
+          }
+        }
       },
       "temporalSupersessionEnabled": {
         "type": "boolean",
@@ -2605,7 +2705,8 @@
         },
         "default": [
           "correction",
-          "commitment"
+          "commitment",
+          "procedure"
         ],
         "description": "Memory categories excluded from semantic consolidation."
       },
@@ -3018,7 +3119,8 @@
           "commitment",
           "preference",
           "decision",
-          "principle"
+          "principle",
+          "procedure"
         ],
         "description": "Categories that protect a fact from archival regardless of other criteria."
       },
@@ -3056,7 +3158,8 @@
           "decision",
           "principle",
           "commitment",
-          "preference"
+          "preference",
+          "procedure"
         ],
         "description": "Categories that lifecycle policy will not auto-archive."
       },
@@ -3992,6 +4095,10 @@
     "contradictionAutoResolve": {
       "label": "Auto-Resolve Contradictions",
       "help": "Automatically supersede old memories when contradiction is confirmed"
+    },
+    "contradictionScan": {
+      "label": "Contradiction Scan",
+      "help": "Nightly cron that pairs similar memories and flags contradictions for review (issue #520)"
     },
     "temporalSupersessionEnabled": {
       "label": "Temporal Supersession",

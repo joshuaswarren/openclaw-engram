@@ -962,14 +962,14 @@ Stored as `category: procedure` markdown under `memoryDir/procedures/`. Narrativ
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `procedural.enabled` | `false` | Master gate: when `false`, skip procedure extraction writes, task-initiation procedure recall injection, and trajectory mining side effects. Set `true` to enable the full feature set. |
+| `procedural.enabled` | `true` | Master gate: default-on since issue #567 PR 4/5 (previously `false`). Set to `false` (or any of `"0"`, `"no"`, `"off"`) to opt out of procedure extraction writes, task-initiation procedure recall injection, and trajectory mining side effects. |
 | `procedural.minOccurrences` | `3` | Minimum cluster size for a candidate; clusters smaller than this are skipped. **`0` disables procedural mining** (`runProcedureMining` returns immediately with `skippedReason: "minOccurrences_zero"`). |
-| `procedural.successFloor` | `0.7` | Minimum trajectory success rate in `[0, 1]` for miner eligibility. |
+| `procedural.successFloor` | `0.75` | Minimum trajectory success rate in `[0, 1]` for miner eligibility. Raised from `0.7` in issue #567 PR 3/5. |
 | `procedural.autoPromoteOccurrences` | `8` | When auto-promotion is on, occurrences before `pending_review` → `active`. |
 | `procedural.autoPromoteEnabled` | `false` | Allow automatic promotion of miner candidates that meet thresholds. |
-| `procedural.lookbackDays` | `30` | Trajectory lookback window for mining (days). |
+| `procedural.lookbackDays` | `14` | Trajectory lookback window for mining (days). Lowered from `30` in issue #567 PR 3/5. |
 | `procedural.proceduralMiningCronAutoRegister` | `false` | When `true`, installer may register the nightly procedural mining cron entry. |
-| `procedural.recallMaxProcedures` | `3` | Max procedure previews injected on task-initiation recall (`1`–`10`). |
+| `procedural.recallMaxProcedures` | `2` | Max procedure previews injected on task-initiation recall (`1`–`10`). Lowered from `3` in issue #567 PR 3/5 so procedural injection does not crowd other recall sections. |
 
 ## Codex Marketplace (issue #418)
 
@@ -1396,14 +1396,14 @@ This appendix is flattened from the runtime config schema and the live `parseCon
 | `lifecycleArchiveDecayThreshold` | `0.85` | `0.85` |
 | `lifecycleProtectedCategories` | `["decision","principle","commitment","preference","procedure"]` | `["decision","principle","commitment","preference","procedure"]` |
 | `lifecycleMetricsEnabled` | `false` | `true` when `lifecyclePolicyEnabled=true` |
-| `procedural.enabled` | `false` | `true` only after reading [procedural-memory.md](procedural-memory.md) and validating extraction + recall impact |
+| `procedural.enabled` | `true` | `true` (default-on since issue #567 PR 4/5) or `false` to opt out. See [procedural-memory.md](procedural-memory.md). |
 | `procedural.minOccurrences` | `3` | `3` (use `0` only to intentionally disable mining; see narrative section) |
-| `procedural.successFloor` | `0.7` | `0.7` |
+| `procedural.successFloor` | `0.75` | `0.75` (raised from `0.7` in issue #567 PR 3/5) |
 | `procedural.autoPromoteOccurrences` | `8` | `8` |
 | `procedural.autoPromoteEnabled` | `false` | `false` until promotion rules are validated on your corpus |
-| `procedural.lookbackDays` | `30` | `30` |
+| `procedural.lookbackDays` | `14` | `14` (lowered from `30` in issue #567 PR 3/5) |
 | `procedural.proceduralMiningCronAutoRegister` | `false` | `false` unless you intentionally want installer cron registration |
-| `procedural.recallMaxProcedures` | `3` | `3` |
+| `procedural.recallMaxProcedures` | `2` | `2` (lowered from `3` in issue #567 PR 3/5) |
 | `proactiveExtractionEnabled` | `false` | `false` until you validate the second pass in your environment |
 | `contextCompressionActionsEnabled` | `false` | `false` unless you are validating action-policy flows |
 | `compressionGuidelineLearningEnabled` | `false` | `false` unless action-policy telemetry is already stable |
