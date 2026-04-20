@@ -65,6 +65,7 @@ export const ExtractedFactSchema = z.object({
     "skill",
     "rule",
     "procedure",
+    "reasoning_trace",
   ]),
   content: z
     .string()

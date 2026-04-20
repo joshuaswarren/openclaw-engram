@@ -12,6 +12,7 @@ describe("causal rule category", () => {
     const categories: MemoryCategory[] = [
       "fact", "preference", "correction", "entity", "decision",
       "relationship", "principle", "commitment", "moment", "skill", "rule", "procedure",
+      "reasoning_trace",
     ];
     assert.equal(new Set(categories).size, categories.length);
   });

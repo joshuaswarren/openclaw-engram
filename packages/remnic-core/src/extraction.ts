@@ -1247,6 +1247,7 @@ ${truncatedConversation}`;
       "skill",
       "rule",
       "procedure",
+      "reasoning_trace",
     ]);
     const allowedEntityTypes = new Set([
       "person",
