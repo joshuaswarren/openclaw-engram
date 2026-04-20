@@ -141,6 +141,14 @@ test("StorageManager accepts single-quoted and bare YAML derived_from entries fr
         line: 'derived_from: ["facts/a.md:2", "facts/b.md:5"]',
         expected: ["facts/a.md:2", "facts/b.md:5"],
       },
+      {
+        // YAML single-quote escape: `''` is a literal `'` inside a
+        // single-quoted scalar.  External YAML emitters do this for
+        // paths containing apostrophes.
+        id: "fact-derived-single-doubled-apos",
+        line: "derived_from: ['facts/it''s.md:2', 'facts/b.md:5']",
+        expected: ["facts/it's.md:2", "facts/b.md:5"],
+      },
     ];
 
     for (const flavor of flavors) {

@@ -369,15 +369,67 @@ function parseFrontmatter(
   if (derivedFromStr.startsWith("[") && derivedFromStr.endsWith("]")) {
     const inner = derivedFromStr.slice(1, -1);
     const entries: string[] = [];
-    // First try quoted tokens (double or single).  Each quoted form has
-    // its own escape convention; `\\` and `\"` mirror the serializer.
-    const quoted = inner.matchAll(/"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'/g);
     let sawQuoted = false;
-    for (const match of quoted) {
-      sawQuoted = true;
-      const raw = match[1] ?? match[2] ?? "";
-      const unescaped = raw.replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, "\\");
-      if (unescaped.length > 0) entries.push(unescaped);
+    // Hand-rolled tokenizer: walk the inner characters, honoring
+    // double-quote escapes (`\"`, `\\`) and YAML single-quote doubling
+    // (`''` in a `'...'` string means a literal `'`).  This avoids the
+    // `'...'` regex footgun where `''` is parsed as two empty strings.
+    let i = 0;
+    while (i < inner.length) {
+      const ch = inner[i];
+      if (ch === '"') {
+        sawQuoted = true;
+        let buf = "";
+        i++;
+        while (i < inner.length) {
+          const c = inner[i];
+          if (c === "\\" && i + 1 < inner.length) {
+            const next = inner[i + 1];
+            if (next === '"') {
+              buf += '"';
+              i += 2;
+              continue;
+            }
+            if (next === "\\") {
+              buf += "\\";
+              i += 2;
+              continue;
+            }
+            buf += c;
+            i++;
+            continue;
+          }
+          if (c === '"') {
+            i++;
+            break;
+          }
+          buf += c;
+          i++;
+        }
+        if (buf.length > 0) entries.push(buf);
+      } else if (ch === "'") {
+        sawQuoted = true;
+        let buf = "";
+        i++;
+        while (i < inner.length) {
+          const c = inner[i];
+          if (c === "'") {
+            // YAML single-quote escape: `''` means a literal `'`.
+            if (i + 1 < inner.length && inner[i + 1] === "'") {
+              buf += "'";
+              i += 2;
+              continue;
+            }
+            i++;
+            break;
+          }
+          buf += c;
+          i++;
+        }
+        if (buf.length > 0) entries.push(buf);
+      } else {
+        i++;
+      }
     }
     if (!sawQuoted && inner.trim().length > 0) {
       // Bare YAML — split on commas.  Entries with commas in the path
