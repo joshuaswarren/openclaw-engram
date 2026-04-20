@@ -273,6 +273,38 @@ openclaw engram doctor --json        # Health diagnostics with remediation hints
 openclaw engram config-review --json # Opinionated config tuning recommendations
 ```
 
+## Bring your memory
+
+Remnic can import existing memory from the platforms you already use.
+Four optional importer packages ship alongside the CLI — install only the
+ones you need:
+
+```bash
+# ChatGPT (OpenAI data export: saved memories + optional conversation summaries)
+npm install -g @remnic/import-chatgpt
+remnic import --adapter chatgpt --file ~/chatgpt-export.zip/memory.json --dry-run
+
+# Claude (Anthropic data export: project docs + prompt templates)
+npm install -g @remnic/import-claude
+remnic import --adapter claude --file ~/claude-export/projects.json
+
+# Gemini (Google Takeout "Gemini Apps Activity")
+npm install -g @remnic/import-gemini
+remnic import --adapter gemini --file "~/Takeout/Gemini/My Activity.json"
+
+# mem0 (REST API — paginated; honors --rate-limit)
+npm install -g @remnic/import-mem0
+export MEM0_API_KEY=...
+remnic import --adapter mem0 --rate-limit 2
+```
+
+Each importer is an **optional peer dependency** — the base CLI install
+never pulls them in. If you run `remnic import --adapter <name>` without
+the matching package installed, the CLI prints a clean install hint.
+Every run supports `--dry-run` for a zero-write preview. See
+[docs/importers.md](docs/importers.md) for per-source details, input
+formats, and provenance metadata.
+
 ## Troubleshooting: hooks aren't firing
 
 **Symptom:** Remnic appears installed but no memories are created. The gateway log shows no `[remnic]` lines after conversations.
@@ -928,6 +960,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Memory Extensions](docs/architecture/memory-extensions.md) — Third-party extension discovery
 - [Codex Marketplace](docs/plugins/codex-marketplace.md) — Marketplace installation
 - [Procedural memory](docs/procedural-memory.md) — Procedure files, recall injection, mining; enable with `procedural.enabled` (issue #519)
+- [Memory importers](docs/importers.md) — Bring memory from ChatGPT, Claude, Gemini, and mem0 (issue #568)
 
 ## Contributing
 
