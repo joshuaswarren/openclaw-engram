@@ -18,7 +18,9 @@ test("@remnic/bench publishes compiled entrypoints instead of raw source paths",
   assert.equal(pkg.types, "./dist/index.d.ts");
   assert.equal(pkg.exports?.["."]?.import, "./dist/index.js");
   assert.equal(pkg.exports?.["."]?.types, "./dist/index.d.ts");
-  assert.deepEqual(pkg.files, ["dist"]);
+  // `baselines/` ships with the package so consumers can compare their
+  // ablation runs against the committed reference artifacts (issue #567 PR 2).
+  assert.deepEqual(pkg.files, ["dist", "baselines"]);
   assert.equal(pkg.scripts?.build, "tsup --config tsup.config.ts");
 });
 
