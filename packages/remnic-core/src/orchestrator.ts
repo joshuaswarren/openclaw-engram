@@ -1242,7 +1242,15 @@ export class Orchestrator {
   }
 
   private async disposeSearchBackendIfNeeded(): Promise<void> {
-    await (this.qmd as { dispose?: () => void | Promise<void> }).dispose?.();
+    const backends = [this.qmd, this.conversationQmd];
+    const disposed = new Set<object>();
+
+    for (const backend of backends) {
+      if (!backend || typeof backend !== "object") continue;
+      if (disposed.has(backend)) continue;
+      disposed.add(backend);
+      await (backend as { dispose?: () => void | Promise<void> }).dispose?.();
+    }
   }
 
   /** Set per-session workspace for the next recall() call (compaction reset). @internal */
@@ -1997,7 +2005,7 @@ export class Orchestrator {
             this.configuredNamespaces(),
           );
         } else {
-          await this.qmd.update();
+          await this.qmd.update(signal);
         }
         log.info("QMD startup sync: complete");
         this.deferredSyncSucceeded = true;
@@ -2022,7 +2030,7 @@ export class Orchestrator {
       log.info("QMD warmup: pre-loading models with a test search");
       warmupPromises.push(
         this.qmd
-          .search("warmup", warmupNs, 1)
+          .search("warmup", warmupNs, 1, undefined, { signal })
           .then(() => {
             log.info("QMD warmup: complete");
           })
