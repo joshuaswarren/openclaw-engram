@@ -77,6 +77,41 @@ test("StorageManager round-trips derived_from and derived_via frontmatter", asyn
   }
 });
 
+test("StorageManager round-trips derived_from entries whose paths contain commas and quotes", async () => {
+  // Quote-aware parser must not split on a comma embedded inside a path
+  // component.  The escape policy for embedded double-quotes mirrors the
+  // importanceReasons pipeline: `"` -> `\"` and `\` -> `\\`.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-derived-commapath-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const id = await storage.writeMemory("fact", "payload", { source: "test" });
+    const all = await storage.readAllMemories();
+    const memory = all.find((m) => m.frontmatter.id === id);
+    assert.ok(memory);
+
+    const pathyEntries = [
+      "facts/a,b.md:2", // comma inside path
+      'facts/weird "name".md:5', // quote inside path
+      "facts/normal.md:0",
+    ];
+    const targetPath = path.join(dir, "facts", "2026-04-19", `${id}.md`);
+    const mutated = {
+      ...memory,
+      frontmatter: { ...memory.frontmatter, derived_from: pathyEntries },
+    };
+    await storage.moveMemoryToPath(mutated, targetPath);
+
+    const reread = await storage.readAllMemories();
+    const back = reread.find((m) => m.frontmatter.id === id);
+    assert.ok(back);
+    assert.deepEqual(back.frontmatter.derived_from, pathyEntries);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("StorageManager reads legacy memories without derived_from or derived_via", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-derived-legacy-"));
   try {

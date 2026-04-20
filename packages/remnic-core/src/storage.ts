@@ -356,16 +356,20 @@ function parseFrontmatter(
   // / malformed entries survive a read, but serialization validates on
   // write (see serializeFrontmatter).  `derived_via` is a single operator
   // string; unknown values become `undefined` on read rather than raising.
+  //
+  // Use a quote-aware tokenizer (mirrors the importanceReasons path) so
+  // entries whose path contains a comma — a legal filesystem path — round
+  // trip correctly instead of being chopped at the first `,`.
   let derived_from: string[] | undefined;
   const derivedFromStr = fm.derived_from ?? "";
-  const derivedFromMatch = derivedFromStr.match(/\[(.*)]/);
-  if (derivedFromMatch) {
-    derived_from = derivedFromMatch[1]
-      .split(",")
-      .map((e) => e.trim().replace(/^"|"$/g, ""))
-      .map((e) => e.replace(/\\"/g, '"').replace(/\\\\/g, "\\"))
-      .filter(Boolean);
-    if (derived_from.length === 0) derived_from = undefined;
+  if (derivedFromStr.trim().startsWith("[") && derivedFromStr.trim().endsWith("]")) {
+    const entries: string[] = [];
+    for (const match of derivedFromStr.matchAll(/"((?:\\.|[^"\\])*)"/g)) {
+      // Unescape the same way we escaped on write.
+      const unescaped = match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+      if (unescaped.length > 0) entries.push(unescaped);
+    }
+    if (entries.length > 0) derived_from = entries;
   }
   const derivedViaRaw = fm.derived_via;
   const derived_via = isConsolidationOperator(derivedViaRaw) ? derivedViaRaw : undefined;
