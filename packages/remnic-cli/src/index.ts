@@ -4219,9 +4219,17 @@ Options:
     seed = parsedSeed;
   }
 
-  const fixturePath = fixturePathRaw
-    ? path.resolve(expandTilde(fixturePathRaw))
-    : null;
+  let fixturePath: string | null;
+  if (fixturePathRaw === undefined) {
+    fixturePath = null;
+  } else if (fixturePathRaw.trim() === "") {
+    console.error(
+      "--fixture requires a non-empty path. Omit the flag to use the built-in fixture.",
+    );
+    process.exit(1);
+  } else {
+    fixturePath = path.resolve(expandTilde(fixturePathRaw));
+  }
   const outPath = path.resolve(expandTilde(outPathRaw));
 
   const benchModule = await loadBenchModule();

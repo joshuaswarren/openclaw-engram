@@ -14,7 +14,7 @@
  *
  * CLI: `remnic bench procedural-ablation --fixture <path> --out <path>`
  */
-import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -427,6 +427,8 @@ export async function runProceduralAblationCli(
     seed: args.seed,
   });
 
+  const outDir = path.dirname(path.resolve(args.outPath));
+  await mkdir(outDir, { recursive: true });
   await writeFile(args.outPath, JSON.stringify(artifact, null, 2) + "\n", "utf8");
   return artifact;
 }

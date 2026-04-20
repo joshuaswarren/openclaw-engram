@@ -367,3 +367,25 @@ test("runProceduralAblationCli falls back to built-in fixture when --fixture omi
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("runProceduralAblationCli creates missing parent directories for --out", async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "remnic-ablation-cli-mkdir-"));
+  try {
+    // Nested, not-yet-existing output directory.
+    const outPath = path.join(dir, "nested", "deeper", "artifact.json");
+    const artifact = await runProceduralAblationCli({
+      fixturePath: null,
+      outPath,
+      random: mulberry32(7),
+      bootstrapIterations: 50,
+    });
+    const disk = JSON.parse(await readFile(outPath, "utf8")) as {
+      schemaVersion: number;
+      onScore: number;
+    };
+    assert.equal(disk.schemaVersion, 1);
+    assert.equal(disk.onScore, artifact.onScore);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
