@@ -13076,7 +13076,7 @@ export class Orchestrator {
    * path prefix (and, for the legacy default-namespace layout at
    * `memoryDir` root, an exclusion list for `namespaces/*`).
    */
-  private async semanticDedupLookup(
+  async semanticDedupLookup(
     content: string,
     limit: number,
     targetStorage: StorageManager,

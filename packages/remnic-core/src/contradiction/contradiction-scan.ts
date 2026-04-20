@@ -132,8 +132,9 @@ export async function runContradictionScan(deps: ScanDependencies): Promise<Scan
     categoryB: pair.categoryB,
   }));
 
-  // 6. Send to judge
-  const judgeResult = await judgeContradictionPairs(judgeInputs, config, localLlm, fallbackLlm);
+  // 6. Send to judge (per-scan cache avoids module-level singleton leak)
+  const scanCache = new Map<string, import("./contradiction-judge.js").ContradictionJudgeResult>();
+  const judgeResult = await judgeContradictionPairs(judgeInputs, config, localLlm, fallbackLlm, scanCache);
   log.info("[contradiction-scan] judge completed: %d judged, %d cached in %dms", judgeResult.judged, judgeResult.cached, judgeResult.elapsed);
 
   // 7. Write to review queue

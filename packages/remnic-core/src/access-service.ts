@@ -2854,10 +2854,17 @@ export class EngramAccessService {
   }
 
   get fallbackLlmRef(): FallbackLlmClient | null {
-    return null;
+    return this.orchestrator.fastGatewayLlm ?? null;
   }
 
   get embeddingLookupRef(): SemanticDedupLookup | undefined {
-    return undefined;
+    if (!this.orchestrator.config.embeddingFallbackEnabled) return undefined;
+    return async (content: string, limit: number) => {
+      try {
+        return await this.orchestrator.semanticDedupLookup(content, limit, this.orchestrator.storage);
+      } catch {
+        return [];
+      }
+    };
   }
 }
