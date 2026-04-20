@@ -37,6 +37,12 @@ clone on a machine with appropriate API keys; nothing auto-runs on CI.
 pnpm install
 pnpm --filter @remnic/core run build
 pnpm --filter @remnic/bench run build
+pnpm --filter @remnic/cli run build
+
+# `remnic` is only exposed as a bin from the @remnic/cli workspace
+# package. From repo root use either the shim below or add
+# `packages/remnic-cli/bin` to your PATH for the duration of the run.
+alias remnic='pnpm --filter @remnic/cli exec remnic'
 
 # Print the HuggingFace download commands for the published datasets.
 # The script does NOT auto-download; copy-paste the commands it prints.
@@ -60,7 +66,7 @@ bench-datasets/
 
 ```bash
 OPENAI_API_KEY=... \
-pnpm exec remnic bench run longmemeval \
+pnpm --filter @remnic/cli exec remnic bench run longmemeval \
   --dataset-dir ./bench-datasets/longmemeval \
   --system-provider openai \
   --system-model gpt-4o-mini \
@@ -100,7 +106,7 @@ The runner:
 
 ```bash
 OPENAI_API_KEY=... \
-pnpm exec remnic bench run locomo \
+pnpm --filter @remnic/cli exec remnic bench run locomo \
   --dataset-dir ./bench-datasets/locomo \
   --system-provider openai \
   --system-model gpt-4o-mini \
@@ -126,20 +132,22 @@ OK <filename> <benchmark> model=<id> seed=<n> metrics=<k>=<v>,<k>=<v>,... sha256
 
 ## 6. Publish
 
-Artifacts are committed to `docs/benchmarks/results/`. The site
-(`packages/remnic-site`) reads the directory at build time and renders
-the `/benchmarks` leaderboard page. A release of Remnic publishes the
-site + artifacts together.
+Artifacts live under `docs/benchmarks/results/`. That directory is
+gitignored by default — add the specific artifact you want to publish
+with `git add -f docs/benchmarks/results/<filename>.json` so nothing
+experimental leaks in. The site (`packages/remnic-site`) reads the
+directory at build time and renders the `/benchmarks` leaderboard
+page. A release of Remnic publishes the site + approved artifacts
+together.
 
-Between releases, `docs/benchmarks/results/` is git-tracked by default
-so incremental numbers are visible on the main branch. Individual runs
-can be excluded from the commit if they are experimental / not ready
-for public display.
+If a future release promotes results to tracked-by-default, remove
+the `docs/benchmarks/results/` entry from `.gitignore` in the same
+commit that updates this section.
 
 ## 7. Local-LLM parity run (slice 5, when shipped)
 
 ```bash
-pnpm exec remnic bench run longmemeval \
+pnpm --filter @remnic/cli exec remnic bench run longmemeval \
   --dataset-dir ./bench-datasets/longmemeval \
   --system-provider local-llm \
   --system-base-url http://127.0.0.1:8080 \
