@@ -112,6 +112,123 @@ test("StorageManager round-trips derived_from entries whose paths contain commas
   }
 });
 
+test("StorageManager accepts single-quoted and bare YAML derived_from entries from external editors", async () => {
+  // External YAML emitters may produce any of: double-quoted (our
+  // canonical form), single-quoted, or bare inline lists.  The parser
+  // must preserve provenance regardless of which flavor arrives.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-derived-yaml-flavors-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const day = "2026-04-19";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+
+    const flavors: Array<{ id: string; line: string; expected: string[] }> = [
+      {
+        id: "fact-derived-bare",
+        line: "derived_from: [facts/a.md:2, facts/b.md:5]",
+        expected: ["facts/a.md:2", "facts/b.md:5"],
+      },
+      {
+        id: "fact-derived-single-quoted",
+        line: "derived_from: ['facts/a.md:2', 'facts/b.md:5']",
+        expected: ["facts/a.md:2", "facts/b.md:5"],
+      },
+      {
+        id: "fact-derived-double-quoted",
+        line: 'derived_from: ["facts/a.md:2", "facts/b.md:5"]',
+        expected: ["facts/a.md:2", "facts/b.md:5"],
+      },
+    ];
+
+    for (const flavor of flavors) {
+      const raw = [
+        "---",
+        `id: ${flavor.id}`,
+        "category: fact",
+        "created: 2026-04-19T01:00:00.000Z",
+        "updated: 2026-04-19T01:00:00.000Z",
+        "source: test",
+        "confidence: 0.8",
+        "confidenceTier: implied",
+        'tags: ["consolidation"]',
+        flavor.line,
+        "---",
+        "",
+        "yaml flavor payload",
+        "",
+      ].join("\n");
+      await writeFile(path.join(factDir, `${flavor.id}.md`), raw, "utf-8");
+    }
+
+    const all = await storage.readAllMemories();
+    for (const flavor of flavors) {
+      const memory = all.find((m) => m.frontmatter.id === flavor.id);
+      assert.ok(memory, `${flavor.id} should load`);
+      assert.deepEqual(
+        memory.frontmatter.derived_from,
+        flavor.expected,
+        `${flavor.id} should parse to ${JSON.stringify(flavor.expected)}`,
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("StorageManager accepts quoted derived_via from external YAML emitters", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-derived-via-quoted-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const day = "2026-04-19";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+
+    const flavors: Array<{ id: string; line: string }> = [
+      { id: "fact-via-bare", line: "derived_via: merge" },
+      { id: "fact-via-double", line: 'derived_via: "merge"' },
+      { id: "fact-via-single", line: "derived_via: 'merge'" },
+    ];
+
+    for (const flavor of flavors) {
+      const raw = [
+        "---",
+        `id: ${flavor.id}`,
+        "category: fact",
+        "created: 2026-04-19T01:00:00.000Z",
+        "updated: 2026-04-19T01:00:00.000Z",
+        "source: test",
+        "confidence: 0.8",
+        "confidenceTier: implied",
+        'tags: ["consolidation"]',
+        flavor.line,
+        "---",
+        "",
+        "payload",
+        "",
+      ].join("\n");
+      await writeFile(path.join(factDir, `${flavor.id}.md`), raw, "utf-8");
+    }
+
+    const all = await storage.readAllMemories();
+    for (const flavor of flavors) {
+      const memory = all.find((m) => m.frontmatter.id === flavor.id);
+      assert.ok(memory, `${flavor.id} should load`);
+      assert.equal(
+        memory.frontmatter.derived_via,
+        "merge",
+        `${flavor.id} should parse to "merge"`,
+      );
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("StorageManager reads legacy memories without derived_from or derived_via", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-derived-legacy-"));
   try {

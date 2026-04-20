@@ -10,7 +10,7 @@ import { createVersion as createPageVersion, type VersioningConfig, type Version
 import {
   isConsolidationOperator,
   isValidDerivedFromEntry,
-} from "./semantic-consolidation.js";
+} from "./consolidation-operator.js";
 import {
   matchEntitySchemaSection,
   normalizeEntityStructuredSection,
@@ -357,22 +357,50 @@ function parseFrontmatter(
   // write (see serializeFrontmatter).  `derived_via` is a single operator
   // string; unknown values become `undefined` on read rather than raising.
   //
-  // Use a quote-aware tokenizer (mirrors the importanceReasons path) so
-  // entries whose path contains a comma — a legal filesystem path — round
-  // trip correctly instead of being chopped at the first `,`.
+  // Tokenization handles every inline-YAML flavor we may encounter from
+  // external editors and older builds:
+  //   - our canonical escape:   ["facts/a.md:2", "facts/b.md:5"]
+  //   - single-quoted:          ['facts/a.md:2', 'facts/b.md:5']
+  //   - bare (no quotes):       [facts/a.md:2, facts/b.md:5]
+  // Quoted entries preserve embedded commas in the path; bare entries
+  // fall back to comma splitting but are still validated on write.
   let derived_from: string[] | undefined;
-  const derivedFromStr = fm.derived_from ?? "";
-  if (derivedFromStr.trim().startsWith("[") && derivedFromStr.trim().endsWith("]")) {
+  const derivedFromStr = (fm.derived_from ?? "").trim();
+  if (derivedFromStr.startsWith("[") && derivedFromStr.endsWith("]")) {
+    const inner = derivedFromStr.slice(1, -1);
     const entries: string[] = [];
-    for (const match of derivedFromStr.matchAll(/"((?:\\.|[^"\\])*)"/g)) {
-      // Unescape the same way we escaped on write.
-      const unescaped = match[1].replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    // First try quoted tokens (double or single).  Each quoted form has
+    // its own escape convention; `\\` and `\"` mirror the serializer.
+    const quoted = inner.matchAll(/"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'/g);
+    let sawQuoted = false;
+    for (const match of quoted) {
+      sawQuoted = true;
+      const raw = match[1] ?? match[2] ?? "";
+      const unescaped = raw.replace(/\\"/g, '"').replace(/\\'/g, "'").replace(/\\\\/g, "\\");
       if (unescaped.length > 0) entries.push(unescaped);
+    }
+    if (!sawQuoted && inner.trim().length > 0) {
+      // Bare YAML — split on commas.  Entries with commas in the path
+      // cannot be round-tripped bare; our serializer always quotes so
+      // this path only matters for externally authored frontmatter.
+      for (const chunk of inner.split(",")) {
+        const trimmed = chunk.trim();
+        if (trimmed.length > 0) entries.push(trimmed);
+      }
     }
     if (entries.length > 0) derived_from = entries;
   }
-  const derivedViaRaw = fm.derived_via;
-  const derived_via = isConsolidationOperator(derivedViaRaw) ? derivedViaRaw : undefined;
+  // `derived_via` may arrive quoted from external YAML emitters
+  // (`derived_via: "merge"` or `'merge'`).  Strip a single surrounding
+  // quote pair before operator validation so semantically valid entries
+  // aren't silently downgraded to `undefined`.
+  const derivedViaRaw = (fm.derived_via ?? "").trim();
+  const derivedViaUnquoted =
+    (derivedViaRaw.startsWith('"') && derivedViaRaw.endsWith('"')) ||
+    (derivedViaRaw.startsWith("'") && derivedViaRaw.endsWith("'"))
+      ? derivedViaRaw.slice(1, -1)
+      : derivedViaRaw;
+  const derived_via = isConsolidationOperator(derivedViaUnquoted) ? derivedViaUnquoted : undefined;
 
   // Parse accessCount
   const accessCount = fm.accessCount ? parseInt(fm.accessCount, 10) : undefined;

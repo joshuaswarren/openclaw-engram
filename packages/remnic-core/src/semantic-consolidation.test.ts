@@ -12,6 +12,19 @@ import {
   isValidDerivedFromEntry,
   type ConsolidationOperator,
 } from "./semantic-consolidation.js";
+// The standalone module is the source of truth; semantic-consolidation.ts
+// re-exports it.  This test import proves both surfaces work.
+import {
+  CONSOLIDATION_OPERATORS as CONSOLIDATION_OPERATORS_DIRECT,
+  isConsolidationOperator as isConsolidationOperatorDirect,
+  isValidDerivedFromEntry as isValidDerivedFromEntryDirect,
+} from "./consolidation-operator.js";
+
+test("semantic-consolidation.ts re-exports match consolidation-operator.ts", () => {
+  assert.deepEqual([...CONSOLIDATION_OPERATORS], [...CONSOLIDATION_OPERATORS_DIRECT]);
+  assert.equal(isConsolidationOperator, isConsolidationOperatorDirect);
+  assert.equal(isValidDerivedFromEntry, isValidDerivedFromEntryDirect);
+});
 
 test("CONSOLIDATION_OPERATORS enumerates exactly split/merge/update", () => {
   assert.deepEqual([...CONSOLIDATION_OPERATORS], ["split", "merge", "update"]);
