@@ -15,6 +15,7 @@ export type BenchAction =
   | "export"
   | "providers"
   | "publish"
+  | "published"
   | "check"
   | "report";
 
@@ -59,7 +60,21 @@ export interface ParsedBenchArgs {
   output?: string;
   custom?: string;
   target?: BenchPublishTarget;
+  /** `bench published` — specific benchmark to run (longmemeval|locomo). */
+  publishedName?: PublishedBenchmarkName;
+  /** `bench published` — seed forwarded into the harness context. */
+  publishedSeed?: number;
+  /** `bench published` — item limit forwarded into the dataset loader. */
+  publishedLimit?: number;
+  /** `bench published` — published artifact output directory. */
+  publishedOut?: string;
+  /** `bench published` — dry-run: validate + load but do NOT call the model. */
+  publishedDryRun?: boolean;
 }
+
+export type PublishedBenchmarkName = "longmemeval" | "locomo";
+export const PUBLISHED_BENCHMARK_NAMES: readonly PublishedBenchmarkName[] =
+  Object.freeze(["longmemeval", "locomo"]);
 
 function isBenchRuntimeProfile(value: string): value is BenchRuntimeProfile {
   return (
@@ -127,7 +142,15 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--custom" ||
       arg === "--format" ||
       arg === "--output" ||
-      arg === "--target"
+      arg === "--target" ||
+      arg === "--name" ||
+      arg === "--dataset" ||
+      arg === "--model" ||
+      arg === "--limit" ||
+      arg === "--seed" ||
+      arg === "--out" ||
+      arg === "--provider" ||
+      arg === "--base-url"
     ) {
       index += 1;
       continue;
@@ -156,6 +179,7 @@ export function parseBenchActionArgs(argv: string[]): {
     first === "export" ||
     first === "providers" ||
     first === "publish" ||
+    first === "published" ||
     first === "check" ||
     first === "report"
       ? first
@@ -216,7 +240,11 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
       ? args.slice(1)
       : args;
   const benchmarks = collectBenchmarks(benchmarkArgs);
-  const datasetDir = readBenchOptionValue(args, "--dataset-dir");
+  // `--dataset` is an alias for `--dataset-dir`. `--dataset-dir` wins
+  // if both are supplied.
+  const datasetDir =
+    readBenchOptionValue(args, "--dataset-dir") ??
+    readBenchOptionValue(args, "--dataset");
   const resultsDir = readBenchOptionValue(args, "--results-dir");
   const baselinesDir = readBenchOptionValue(args, "--baselines-dir");
   const runtimeProfileRaw = readBenchOptionValue(args, "--runtime-profile");
@@ -323,6 +351,85 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     target = targetRaw;
   }
 
+  // `bench published` flags. Parsed unconditionally so `--name`, `--model`,
+  // etc. raise consistent errors even when used outside the `published`
+  // action (mirrors CLAUDE.md rule 14: validate flag args at input boundaries).
+  const publishedNameRaw = readBenchOptionValue(args, "--name");
+  const publishedModelRaw = readBenchOptionValue(args, "--model");
+  const publishedLimitRaw = readBenchOptionValue(args, "--limit");
+  const publishedSeedRaw = readBenchOptionValue(args, "--seed");
+  const publishedOutRaw = readBenchOptionValue(args, "--out");
+  const publishedProviderRaw = readBenchOptionValue(args, "--provider");
+  const publishedBaseUrlRaw = readBenchOptionValue(args, "--base-url");
+
+  let publishedName: PublishedBenchmarkName | undefined;
+  if (publishedNameRaw !== undefined) {
+    if (!PUBLISHED_BENCHMARK_NAMES.includes(
+      publishedNameRaw as PublishedBenchmarkName,
+    )) {
+      throw new Error(
+        `ERROR: --name must be one of ${PUBLISHED_BENCHMARK_NAMES.join(", ")}.`,
+      );
+    }
+    publishedName = publishedNameRaw as PublishedBenchmarkName;
+  }
+
+  let publishedLimit: number | undefined;
+  if (publishedLimitRaw !== undefined) {
+    const parsed = Number(publishedLimitRaw);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new Error(
+        "ERROR: --limit must be a non-negative integer (use 0 to load zero items).",
+      );
+    }
+    publishedLimit = parsed;
+  }
+
+  let publishedSeed: number | undefined;
+  if (publishedSeedRaw !== undefined) {
+    const parsed = Number(publishedSeedRaw);
+    if (!Number.isInteger(parsed) || parsed < 0) {
+      throw new Error(
+        "ERROR: --seed must be a non-negative integer.",
+      );
+    }
+    publishedSeed = parsed;
+  }
+
+  // `--model` is free-form (any provider-specific model ID), but we
+  // reject empty strings so it doesn't silently fall through to a
+  // default at a later stage.
+  if (publishedModelRaw !== undefined && publishedModelRaw.trim().length === 0) {
+    throw new Error("ERROR: --model must not be empty.");
+  }
+
+  // `--provider` is validated against the same allow-list as
+  // `--system-provider` so the two surfaces stay in lockstep.
+  // `bench published` callers that prefer the legacy flags can keep
+  // using `--system-provider`; `--provider` is a shorthand specific to
+  // the published action.
+  let publishedProvider: BuiltInProvider | undefined;
+  if (publishedProviderRaw !== undefined) {
+    if (
+      publishedProviderRaw !== "openai" &&
+      publishedProviderRaw !== "anthropic" &&
+      publishedProviderRaw !== "ollama" &&
+      publishedProviderRaw !== "litellm"
+    ) {
+      throw new Error(
+        'ERROR: --provider must be "openai", "anthropic", "ollama", or "litellm".',
+      );
+    }
+    publishedProvider = publishedProviderRaw;
+  }
+
+  // Published action aliases: `--system-*` takes precedence; the
+  // shorthand `--provider` / `--base-url` / `--model` only fill in
+  // when the legacy flags are absent so the two code paths stay
+  // behaviorally identical.
+  const effectiveSystemProvider = systemProvider ?? publishedProvider;
+  const effectiveSystemModel = systemModel ?? publishedModelRaw;
+  const effectiveSystemBaseUrl = systemBaseUrl ?? publishedBaseUrlRaw;
   return {
     action,
     benchmarks,
@@ -340,9 +447,9 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     modelSource,
     gatewayAgentId,
     fastGatewayAgentId,
-    systemProvider,
-    systemModel,
-    systemBaseUrl,
+    systemProvider: effectiveSystemProvider,
+    systemModel: effectiveSystemModel,
+    systemBaseUrl: effectiveSystemBaseUrl,
     judgeProvider,
     judgeModel,
     judgeBaseUrl,
@@ -355,5 +462,12 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     format,
     output: output ? path.resolve(expandTilde(output)) : undefined,
     target,
+    publishedName,
+    publishedSeed,
+    publishedLimit,
+    publishedOut: publishedOutRaw
+      ? path.resolve(expandTilde(publishedOutRaw))
+      : undefined,
+    publishedDryRun: args.includes("--dry-run"),
   };
 }

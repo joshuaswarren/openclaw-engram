@@ -286,6 +286,7 @@ type PackageBenchModule = {
     datasetDir?: string;
     outputDir?: string;
     limit?: number;
+    seed?: number;
     adapterMode?: string;
     runtimeProfile?: BenchRuntimeProfile | null;
     systemProvider?: {
@@ -394,6 +395,26 @@ type PackageBenchModule = {
     responder?: unknown;
     judge?: unknown;
   }) => Promise<{ destroy(): Promise<void> }>;
+  loadLongMemEvalS?: (options: {
+    mode: "full" | "quick";
+    datasetDir?: string;
+    limit?: number;
+  }) => Promise<{
+    source: "dataset" | "smoke" | "missing";
+    filename?: string;
+    items: unknown[];
+    errors: string[];
+  }>;
+  loadLoCoMo10?: (options: {
+    mode: "full" | "quick";
+    datasetDir?: string;
+    limit?: number;
+  }) => Promise<{
+    source: "dataset" | "smoke" | "missing";
+    filename?: string;
+    items: unknown[];
+    errors: string[];
+  }>;
 };
 
 interface TrainingExportOptions {
@@ -497,12 +518,16 @@ export interface PackageBenchExecutionPlan {
 }
 
 export function getBenchUsageText(): string {
-  return `Usage: remnic bench <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers> [options] [benchmark...]
-       remnic benchmark <list|run|datasets|runs|compare|results|baseline|export|publish|ui|providers|check|report> [options] [benchmark...]
+  return `Usage: remnic bench <list|run|published|datasets|runs|compare|results|baseline|export|publish|ui|providers> [options] [benchmark...]
+       remnic benchmark <list|run|published|datasets|runs|compare|results|baseline|export|publish|ui|providers|check|report> [options] [benchmark...]
 
 Commands:
   list                     List published benchmark packs
   run [benchmark...]       Run one or more benchmark packs
+  published --name <longmemeval|locomo> --dataset <path> --model <id>
+                           Run a published benchmark with leaderboard-friendly flags
+                           (see issue #566 slice 4). Accepts --limit, --seed,
+                           --out, --dry-run, --provider, --base-url.
   datasets download [benchmark...]
                            Download local datasets for supported published benchmarks
   datasets status          Show local dataset availability for supported benchmarks
@@ -1764,18 +1789,242 @@ async function publishBenchPackageResults(parsed: ParsedBenchArgs): Promise<void
   );
 }
 
+/**
+ * `remnic bench published --name <longmemeval|locomo> --dataset <path>
+ *    --model <id> --limit <n> --seed <n> --out <dir> [--dry-run]
+ *    [--provider openai|anthropic|ollama|litellm] [--base-url <url>]`
+ *
+ * Issue #566 PR 4/7. Thin wrapper that routes the user's flags into the
+ * existing `runBenchViaPackage` machinery. The wrapper is deliberately
+ * narrow: it only accepts the two published benchmark IDs, enforces the
+ * `--name` + `--dataset` invariants at the boundary, and — in `--dry-run`
+ * — loads the dataset and prints a preview without calling any LLM.
+ *
+ * Validation is upstream in `parseBenchArgs`, per CLAUDE.md rules 14
+ * (validate CLI flag args) and 51 (reject invalid input with listed
+ * options). `--model` / `--limit` / `--seed` without a value throw
+ * instead of silently defaulting.
+ */
+async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
+  if (!parsed.publishedName) {
+    console.error(
+      "ERROR: `bench published` requires --name longmemeval|locomo.",
+    );
+    process.exit(1);
+  }
+  if (!parsed.datasetDir) {
+    console.error(
+      "ERROR: `bench published` requires --dataset <path> (or --dataset-dir <path>) pointing at the dataset directory.",
+    );
+    process.exit(1);
+  }
+  if (!parsed.systemModel) {
+    console.error(
+      "ERROR: `bench published` requires --model <id> (or --system-model <id>).",
+    );
+    process.exit(1);
+  }
+  if (parsed.benchmarks.length > 0) {
+    console.error(
+      "ERROR: `bench published` does not accept positional benchmark arguments; use --name instead.",
+    );
+    process.exit(1);
+  }
+
+  // Dry-run: validate config and load the dataset, but never touch the
+  // model. Useful for pre-flight checking a long run. Prints a single
+  // summary line per benchmark.
+  if (parsed.publishedDryRun) {
+    const loaded = await tryLoadBenchModule();
+    if (!loaded) {
+      console.error(
+        "ERROR: @remnic/bench package is not installed. Run `npm install @remnic/bench`.",
+      );
+      process.exit(1);
+    }
+    const benchModule = loaded as unknown as PackageBenchModule;
+    const benchmarkId = parsed.publishedName;
+    const mode = parsed.quick ? "quick" : "full";
+    // Codex P2 review on PR #603: keep dry-run's effective limit in
+    // sync with the real run so preflight item counts match what will
+    // actually execute. Previously `limit: parsed.publishedLimit`
+    // alone meant `--quick` without `--limit` dry-ran the full smoke
+    // sample while the real run loaded only one item.
+    const effectiveLimit =
+      parsed.publishedLimit ?? (parsed.quick ? 1 : undefined);
+    let itemCount: number | undefined;
+    // Codex P2 review on PR #603: when the loader returns
+    // `source: "missing"` (full mode and the dataset file is absent or
+    // unreadable), dry-run must fail loudly. Previously the script
+    // logged the line and exited 0, so CI/users could not trust
+    // `--dry-run` as a preflight gate — the real run would later crash
+    // with the same missing dataset.
+    let loadResult:
+      | {
+          source: string;
+          filename?: string;
+          items: unknown[];
+          errors: unknown[];
+        }
+      | undefined;
+    if (benchmarkId === "longmemeval" && benchModule.loadLongMemEvalS) {
+      loadResult = await benchModule.loadLongMemEvalS({
+        mode,
+        datasetDir: parsed.datasetDir,
+        limit: effectiveLimit,
+      });
+      itemCount = loadResult.items.length;
+      console.log(
+        `[dry-run] longmemeval: source=${loadResult.source} filename=${loadResult.filename ?? "<smoke>"} items=${itemCount} errors=${loadResult.errors.length}`,
+      );
+    } else if (benchmarkId === "locomo" && benchModule.loadLoCoMo10) {
+      loadResult = await benchModule.loadLoCoMo10({
+        mode,
+        datasetDir: parsed.datasetDir,
+        limit: effectiveLimit,
+      });
+      itemCount = loadResult.items.length;
+      console.log(
+        `[dry-run] locomo: source=${loadResult.source} filename=${loadResult.filename ?? "<smoke>"} items=${itemCount} errors=${loadResult.errors.length}`,
+      );
+    } else {
+      console.error(
+        `ERROR: installed @remnic/bench version does not export a loader for "${benchmarkId}".`,
+      );
+      process.exit(1);
+    }
+    if (loadResult && loadResult.source === "missing") {
+      console.error(
+        `ERROR: [dry-run] ${benchmarkId}: dataset missing or unreadable under ${parsed.datasetDir}. Provide a valid --dataset path before running without --dry-run.`,
+      );
+      process.exit(1);
+    }
+    return;
+  }
+
+  const runtimeProfiles = resolveBenchRunProfiles(parsed);
+  const benchmarkId = parsed.publishedName;
+  // Collect artifact paths written by each runtime profile so the
+  // --out promotion step copies the exact file just produced rather
+  // than scanning the whole results directory (Cursor Medium + Codex
+  // P1 on PR #603: the previous newest-mtime scan could silently
+  // publish unrelated or older artifacts under the new canonical
+  // filename).
+  const writtenPaths: string[] = [];
+  for (const runtimeProfile of runtimeProfiles) {
+    // Forward `--limit` + `--seed` through the existing package
+    // runner. `--out` is handled below in the artifact write step.
+    const result = await runBenchViaPackage(
+      parsed,
+      benchmarkId,
+      runtimeProfile,
+    );
+    if (!result.ok) {
+      console.error(
+        `ERROR: unable to run ${benchmarkId} via @remnic/bench. Update the @remnic/bench install to a version that exports a runner for this benchmark.`,
+      );
+      process.exit(1);
+    }
+    if (result.writtenPath) {
+      writtenPaths.push(result.writtenPath);
+    }
+  }
+
+  // When `--out` is supplied, copy the result artifact we just wrote
+  // into the directory under a canonical leaderboard filename. We
+  // keep the primary result file under `~/.remnic/bench/results/`
+  // (set by `resolveBenchOutputDir`) and only publish a flatter copy
+  // to the user-specified directory so the dev environment stays in
+  // sync.
+  if (parsed.publishedOut) {
+    const { promoteArtifactsToPublished } = await loadPublishedPromotionHelpers();
+    await promoteArtifactsToPublished({
+      benchmarkId,
+      artifactPaths: writtenPaths,
+      publishedOutDir: parsed.publishedOut,
+      model: parsed.systemModel,
+    });
+  }
+}
+
+async function loadPublishedPromotionHelpers() {
+  const benchModule = (await loadBenchModule()) as unknown as PackageBenchModule;
+  return {
+    async promoteArtifactsToPublished(args: {
+      benchmarkId: string;
+      artifactPaths: string[];
+      publishedOutDir: string;
+      model: string;
+    }) {
+      const { mkdirSync, readFileSync, writeFileSync } = await import(
+        "node:fs"
+      );
+      const path = await import("node:path");
+      mkdirSync(args.publishedOutDir, { recursive: true });
+      if (args.artifactPaths.length === 0) {
+        console.warn(
+          `[bench published] No artifacts produced for ${args.benchmarkId}; nothing to promote.`,
+        );
+        return;
+      }
+      for (const artifactPath of args.artifactPaths) {
+        const raw = readFileSync(artifactPath, "utf8");
+        // Cursor Low on PR #603: `JSON.parse(null JSON literal)`
+        // returns `null`, which the old `as` cast hid. Validate the
+        // shape before dereferencing `.meta` to avoid a TypeError
+        // crashing the promotion step for a corrupted or empty
+        // artifact.
+        const parsedUnknown: unknown = JSON.parse(raw);
+        const parsedObj =
+          parsedUnknown !== null &&
+          typeof parsedUnknown === "object" &&
+          !Array.isArray(parsedUnknown)
+            ? (parsedUnknown as {
+                meta?: { gitSha?: string };
+                config?: { runtimeProfile?: string | null };
+              })
+            : {};
+        const gitShaShort = (parsedObj.meta?.gitSha ?? "unknown").slice(0, 7);
+        const today = new Date().toISOString().slice(0, 10);
+        const modelSlug = args.model.replace(/[^a-zA-Z0-9_.-]/g, "-");
+        // Codex P2 on PR #603: include the runtime profile in the
+        // published filename so multi-profile (e.g. --matrix) runs do
+        // not silently overwrite one another. The profile lives in
+        // `result.config.runtimeProfile` and is "baseline", "real",
+        // or "openclaw-chain" in practice.
+        const rawProfile = parsedObj.config?.runtimeProfile;
+        const profileSlug =
+          typeof rawProfile === "string" && rawProfile.length > 0
+            ? `-${rawProfile.replace(/[^a-zA-Z0-9_.-]/g, "-")}`
+            : "";
+        const target = path.join(
+          args.publishedOutDir,
+          `${today}-${args.benchmarkId}-${modelSlug}${profileSlug}-${gitShaShort}.json`,
+        );
+        writeFileSync(target, raw, "utf8");
+        console.log(
+          `[bench published] Promoted ${path.basename(artifactPath)} → ${target}`,
+        );
+      }
+      // Reference the bench module so the import isn't tree-shaken if
+      // a future refactor wants to call into it from here.
+      void benchModule;
+    },
+  };
+}
+
 async function runBenchViaPackage(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
   runtimeProfile: BenchRuntimeProfile,
-): Promise<boolean> {
+): Promise<{ ok: boolean; writtenPath?: string }> {
   const loaded = await tryLoadBenchModule();
-  if (!loaded) return false;
+  if (!loaded) return { ok: false };
   const benchModule = loaded as unknown as PackageBenchModule;
 
   const definition = benchModule.getBenchmark?.(benchmarkId);
   if (!definition?.runnerAvailable || !benchModule.runBenchmark || !benchModule.writeBenchmarkResult) {
-    return false;
+    return { ok: false };
   }
 
   if (definition.meta?.category === "ingestion") {
@@ -1791,11 +2040,11 @@ async function runBenchViaPackage(
     [runtimeProfile],
   );
   if (!plans) {
-    return false;
+    return { ok: false };
   }
   const [plan] = plans;
   if (!plan) {
-    return false;
+    return { ok: false };
   }
 
   const outputDir = resolveBenchOutputDir();
@@ -1808,11 +2057,22 @@ async function runBenchViaPackage(
   const system = await plan.createAdapter(plan.runtime.adapterOptions);
 
   try {
+    // `publishedLimit` (from `bench published --limit N`) takes
+    // precedence over the implicit quick-mode limit of 1.
+    const effectiveLimit =
+      parsed.publishedLimit ?? (parsed.quick ? 1 : undefined);
+    // Forward `--seed` through to the runner so the determinism contract
+    // advertised by `bench published --seed N` is actually honored.
+    // Cursor + Codex review on PR #603: without this, `publishedSeed` was
+    // parsed but dropped, and the harness recorded `ctx.options.seed ?? 0`
+    // instead of the user-specified seed, breaking reproducibility.
+    const effectiveSeed = parsed.publishedSeed;
     const result = await benchModule.runBenchmark(benchmarkId, {
       mode: parsed.quick ? "quick" : "full",
       datasetDir,
       outputDir,
-      limit: parsed.quick ? 1 : undefined,
+      limit: effectiveLimit,
+      seed: effectiveSeed,
       adapterMode: plan.adapterMode,
       runtimeProfile: plan.runtime.profile,
       systemProvider: plan.runtime.systemProvider,
@@ -1827,7 +2087,7 @@ async function runBenchViaPackage(
     } else {
       printBenchPackageSummary(result, writtenPath);
     }
-    return true;
+    return { ok: true, writtenPath };
   } finally {
     await system.destroy();
   }
@@ -4286,6 +4546,11 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
+  if (parsed.action === "published") {
+    await runBenchPublished(parsed);
+    return;
+  }
+
   if (parsed.action === "ui") {
     await launchBenchUi(parsed.resultsDir ?? resolveBenchOutputDir());
     return;
@@ -4353,7 +4618,7 @@ async function cmdBench(rest: string[]): Promise<void> {
         benchmarkId,
         runtimeProfile,
       );
-      if (!handledByPackage) {
+      if (!handledByPackage.ok) {
         await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
       }
     }
