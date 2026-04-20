@@ -4047,31 +4047,25 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             args[0],
             (args[1] ?? {}) as Record<string, unknown>,
           );
-          // Budget override is applied by temporarily swapping the
-          // config entry around the recall call.  The orchestrator
-          // reads `config.recallBudgetChars` each time
-          // `getRecallBudgetChars` runs, so a brief swap is enough to
-          // thread the override through without widening the public
-          // recall signature.  Restored in a finally block so a
-          // thrown recall cannot leave the config mutated.
-          const originalBudget = orchestrator.config.recallBudgetChars;
-          if (parsed.budget !== undefined) {
-            orchestrator.config.recallBudgetChars = parsed.budget;
-          }
-          try {
-            // Clear any prior snapshot so a capture failure surfaces
-            // as `null` rather than returning stale data from an
-            // earlier call in the same process.
-            orchestrator.clearLastXraySnapshot();
-            await orchestrator.recall(parsed.query, undefined, {
-              xrayCapture: true,
-              ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
-            });
-          } finally {
-            if (parsed.budget !== undefined) {
-              orchestrator.config.recallBudgetChars = originalBudget;
-            }
-          }
+          // Budget override is threaded through `RecallInvocationOptions`
+          // so it applies only to this recall invocation.  Previously the
+          // CLI mutated `orchestrator.config.recallBudgetChars` around
+          // the await, which would leak into any concurrent recall
+          // running on the same orchestrator (e.g., gateway agents) and
+          // produce nondeterministic truncation.  CLAUDE.md rule 47
+          // (no shared mutable state across async boundaries).
+          //
+          // Clear any prior snapshot so a capture failure surfaces
+          // as `null` rather than returning stale data from an
+          // earlier call in the same process.
+          orchestrator.clearLastXraySnapshot();
+          await orchestrator.recall(parsed.query, undefined, {
+            xrayCapture: true,
+            ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+            ...(parsed.budget !== undefined
+              ? { budgetCharsOverride: parsed.budget }
+              : {}),
+          });
           const snapshot = orchestrator.getLastXraySnapshot();
           const rendered = renderXray(snapshot, parsed.format);
           if (parsed.outPath) {
