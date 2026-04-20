@@ -61,6 +61,22 @@ remnic bench publish --target remnic-ai
 
 Dataset markers match the runner's accepted filenames, so `datasets status` reports "downloaded" exactly when the runner will load successfully.
 
+## CI regression gate (smoke fixtures)
+
+`.github/workflows/bench-smoke.yml` runs `scripts/bench/bench-smoke.ts`
+on every PR. The script exercises the LongMemEval + LoCoMo runners
+against their bundled smoke fixtures with a fixed seed and a
+deterministic in-memory adapter (no real datasets, no LLM calls, no
+network). Metrics are compared to the committed baseline at
+`tests/fixtures/bench-smoke/baseline.json`; any drop greater than 5%
+fails the job.
+
+Regenerate the baseline after an intentional runner change:
+
+```bash
+pnpm exec tsx scripts/bench/bench-smoke.ts --update-baseline
+```
+
 ## Programmatic API
 
 ```ts
