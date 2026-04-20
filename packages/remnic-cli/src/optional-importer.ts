@@ -50,6 +50,20 @@ export function isSupportedImporterName(value: string): value is SupportedImport
 
 const cached = new Map<string, ImporterModule | null>();
 
+// Test seam. Defaults to a dynamic import with a computed specifier so
+// bundlers cannot statically resolve it. Tests inject a deterministic
+// loader to exercise the install-hint and negative-cache branches without
+// depending on which `@remnic/import-*` packages happen to be present in
+// the workspace at test time. Codex/Cursor reviews on PR #600.
+let dynamicImportForTesting:
+  | ((specifier: string) => Promise<unknown>)
+  | undefined;
+export function setImporterDynamicImportForTesting(
+  impl: ((specifier: string) => Promise<unknown>) | undefined,
+): void {
+  dynamicImportForTesting = impl;
+}
+
 /**
  * Load a specific importer module. Returns the module when installed, throws
  * a user-facing install hint when not installed, and re-throws any other
@@ -69,8 +83,9 @@ export async function loadImporterModule(
   // dependency. CLAUDE.md rule 57: optional packages must not be present in
   // the CLI's runtime `dependencies` or bundled `noExternal` list.
   const specifier = "@remnic/" + "import-" + name;
+  const doImport = dynamicImportForTesting ?? ((s: string) => import(s));
   try {
-    const mod = (await import(specifier)) as Partial<ImporterModule> & {
+    const mod = (await doImport(specifier)) as Partial<ImporterModule> & {
       // Some packages export the adapter under a name-prefixed export; we
       // accept either the canonical `adapter` export or a `<name>Adapter`
       // alias to keep the contract flexible for slice-authoring ergonomics.

@@ -6,11 +6,27 @@ import {
   clearImporterModuleCacheForTesting,
   isSupportedImporterName,
   loadImporterModule,
+  setImporterDynamicImportForTesting,
 } from "./optional-importer.js";
+
+/**
+ * Build a synthetic `ERR_MODULE_NOT_FOUND` error that matches the shape
+ * `isSpecifierNotFoundError` checks for. Used to simulate a missing
+ * `@remnic/import-*` package deterministically — the real install state
+ * of the workspace is irrelevant for this test's contract.
+ */
+function makeModuleNotFoundError(specifier: string): Error {
+  const err = new Error(`Cannot find package '${specifier}'`) as Error & {
+    code?: string;
+  };
+  err.code = "ERR_MODULE_NOT_FOUND";
+  return err;
+}
 
 describe("optional-importer loader", () => {
   beforeEach(() => {
     clearImporterModuleCacheForTesting();
+    setImporterDynamicImportForTesting(undefined);
   });
 
   it("SUPPORTED_IMPORTERS lists the four canonical sources in a stable order", () => {
@@ -29,19 +45,16 @@ describe("optional-importer loader", () => {
     assert.equal(isSupportedImporterName("chatgpt "), false);
   });
 
-  // All four slice packages (chatgpt, claude, gemini, mem0) are installed
-  // alongside the CLI once the import series lands, so no durable
-  // "missing package" fixture remains inside the `remnic/import-*`
-  // family. The loader still raises a clear install hint when the user
-  // asks for an importer whose package is absent at runtime; we
-  // exercise that branch via a non-existent name that satisfies the
-  // SupportedImporterName type at the call site.
-  //
-  // Keeping "claude" here is still valid during the rollout window
-  // because PR 3 has not yet been merged from this branch's POV — the
-  // merged `main` will only see this once PR 3 lands. If this test
-  // destabilizes, flip it to another not-yet-shipped adapter.
+  // Codex + Cursor reviews on PR #600: once all four importer packages
+  // are installed in the workspace, we can't rely on a real "missing
+  // package" fixture. Instead we inject a deterministic loader via
+  // setImporterDynamicImportForTesting and have it throw the same
+  // ERR_MODULE_NOT_FOUND that Node produces on a missing specifier.
+  // This exercises the install-hint path independent of workspace state.
   it("loading a missing importer throws a user-facing install hint", async () => {
+    setImporterDynamicImportForTesting(async (specifier) => {
+      throw makeModuleNotFoundError(specifier);
+    });
     await assert.rejects(
       () => loadImporterModule("gemini"),
       (err: Error) => {
@@ -62,10 +75,20 @@ describe("optional-importer loader", () => {
   });
 
   it("loader caches negative results so repeated calls do not re-import", async () => {
-    // First call populates the cache with a null.
-    await assert.rejects(() => loadImporterModule("claude"));
-    // Second call must still throw — but the cache hit path is covered
-    // exclusively by the branch that rejects from cached null.
-    await assert.rejects(() => loadImporterModule("claude"));
+    let importAttempts = 0;
+    setImporterDynamicImportForTesting(async (specifier) => {
+      importAttempts += 1;
+      throw makeModuleNotFoundError(specifier);
+    });
+    // First call hits the import and populates the cache with null.
+    await assert.rejects(() => loadImporterModule("gemini"));
+    // Second call must still throw, but from the cache hit — the
+    // injected loader should NOT be invoked again.
+    await assert.rejects(() => loadImporterModule("gemini"));
+    assert.equal(
+      importAttempts,
+      1,
+      "second loadImporterModule call must be served from negative cache",
+    );
   });
 });
