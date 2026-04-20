@@ -38,6 +38,10 @@ import {
 } from "@remnic/core";
 
 import {
+  detectBundleEntries,
+  type DetectedBundleEntry,
+} from "./import-bundle-detect.js";
+import {
   isSupportedImporterName,
   loadImporterModule,
   SUPPORTED_IMPORTERS,
@@ -48,6 +52,19 @@ import { expandTilde } from "./path-utils.js";
 export interface ImportDispatchArgs {
   adapter: SupportedImporterName;
   file?: string;
+  dryRun: boolean;
+  batchSize?: number;
+  rateLimit?: number;
+  includeConversations: boolean;
+}
+
+/**
+ * Separate args struct for `remnic import --all-from-bundle <dir>` (slice 7).
+ * Unlike single-adapter mode, bundle mode derives the adapter from files
+ * discovered in the directory and does not accept `--adapter`.
+ */
+export interface ImportBundleArgs {
+  bundleDir: string;
   dryRun: boolean;
   batchSize?: number;
   rateLimit?: number;
@@ -92,6 +109,12 @@ Options:
   --include-conversations     Adapter hint: opt into conversation imports
                               (e.g. ChatGPT bulk conversation summaries).
   --help, -h                  Show this help.
+
+Bulk mode (slice 7):
+  remnic import --all-from-bundle <dir>
+                              Auto-detect ChatGPT / Claude / Takeout /
+                              mem0 exports inside <dir> and run each
+                              matching adapter. Replaces --adapter/--file.
 
 Slice 1 ships infrastructure only. The four adapter packages
 (@remnic/import-chatgpt, @remnic/import-claude, @remnic/import-gemini,
@@ -273,6 +296,154 @@ export async function runImportCommand(
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Bundle mode (slice 7): --all-from-bundle <dir>
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse `remnic import --all-from-bundle <dir> [options]`. Returns a struct
+ * with the bundle directory path (tilde-expanded) and the shared import
+ * options. Throws with a user-facing error on missing / malformed args.
+ *
+ * When `--all-from-bundle` is not present in the args, returns `undefined`
+ * so the caller can fall back to single-adapter mode.
+ */
+export function parseImportBundleArgs(
+  rest: readonly string[],
+): ImportBundleArgs | undefined {
+  const args = [...rest];
+  if (!args.includes("--all-from-bundle")) return undefined;
+
+  const rawDir = takeValue(args, "--all-from-bundle");
+  if (!rawDir) {
+    throw new Error(
+      "--all-from-bundle <dir> requires a directory path. Example: " +
+        "remnic import --all-from-bundle ~/chatgpt-export",
+    );
+  }
+  const bundleDir = expandTilde(rawDir);
+
+  // Bundle mode cannot combine with per-adapter flags — reject them loudly
+  // rather than silently ignoring (CLAUDE.md rule 51).
+  for (const incompatible of ["--adapter", "--file"] as const) {
+    if (args.includes(incompatible)) {
+      throw new Error(
+        `${incompatible} is not valid with --all-from-bundle. Use one or the other.`,
+      );
+    }
+  }
+
+  const batchSizeRaw = takeOptionalValue(args, "--batch-size");
+  let batchSize: number | undefined;
+  if (batchSizeRaw !== undefined) {
+    const parsed = Number(batchSizeRaw);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(
+        `--batch-size must be an integer. Received '${batchSizeRaw}'.`,
+      );
+    }
+    batchSize = validateImportBatchSize(parsed);
+  }
+
+  const rateLimitRaw = takeOptionalValue(args, "--rate-limit");
+  let rateLimit: number | undefined;
+  if (rateLimitRaw !== undefined) {
+    const parsed = Number(rateLimitRaw);
+    if (!Number.isFinite(parsed)) {
+      throw new Error(
+        `--rate-limit must be a positive number. Received '${rateLimitRaw}'.`,
+      );
+    }
+    rateLimit = validateImportRateLimit(parsed);
+  }
+
+  const dryRun = consumeFlag(args, "--dry-run");
+  const includeConversations = consumeFlag(args, "--include-conversations");
+
+  const unknownFlags = args.filter((a) => a.startsWith("--"));
+  if (unknownFlags.length > 0) {
+    throw new Error(
+      `Unknown flag(s) for 'remnic import --all-from-bundle': ${unknownFlags.join(", ")}.`,
+    );
+  }
+
+  return {
+    bundleDir,
+    dryRun,
+    batchSize,
+    rateLimit,
+    includeConversations,
+  };
+}
+
+export interface BundleImportOutcome {
+  results: RunImporterResult[];
+  /** Number of detected entries that threw during their per-file run. */
+  failedCount: number;
+}
+
+/**
+ * Execute a bundle import. For each detected file we run the single-adapter
+ * pipeline via `runImportCommand`, accumulating the per-adapter results and
+ * returning a summary. Failures on individual entries do NOT abort the
+ * remaining imports — each is surfaced to stderr and the walk continues so
+ * a bad chatgpt file doesn't block claude + gemini imports that would have
+ * succeeded. The return value reports how many entries failed so callers
+ * can signal a non-zero exit status to automation (Codex review on
+ * PR #610).
+ */
+export async function runBundleImportCommand(
+  args: ImportBundleArgs,
+  io: ImportDispatchIO,
+  detector: (dir: string) => DetectedBundleEntry[] = detectBundleEntries,
+): Promise<BundleImportOutcome> {
+  const entries = detector(args.bundleDir);
+  if (entries.length === 0) {
+    io.stdout(
+      `No known exports found in '${args.bundleDir}'. Supported filenames: ` +
+        "memory.json, projects.json, conversations.json, My Activity.json, mem0.json.",
+    );
+    return { results: [], failedCount: 0 };
+  }
+
+  io.stdout(
+    `Detected ${entries.length} import${entries.length === 1 ? "" : "s"} in '${args.bundleDir}':`,
+  );
+  for (const entry of entries) {
+    io.stdout(`  - ${entry.adapter} → ${entry.filePath}`);
+  }
+
+  const results: RunImporterResult[] = [];
+  let failedCount = 0;
+  for (const entry of entries) {
+    io.stdout("");
+    io.stdout(`Running '${entry.adapter}' adapter on ${entry.filePath} ...`);
+    const perEntryArgs: ImportDispatchArgs = {
+      adapter: entry.adapter,
+      file: entry.filePath,
+      dryRun: args.dryRun,
+      ...(args.batchSize !== undefined ? { batchSize: args.batchSize } : {}),
+      ...(args.rateLimit !== undefined ? { rateLimit: args.rateLimit } : {}),
+      // The per-file hint wins (e.g. conversations.json → true) but the
+      // top-level flag overrides when the user passed it explicitly.
+      includeConversations:
+        args.includeConversations || entry.includeConversations === true,
+    };
+    try {
+      const result = await runImportCommand(perEntryArgs, io);
+      results.push(result);
+    } catch (err) {
+      failedCount += 1;
+      io.stderr(
+        `  adapter '${entry.adapter}' failed on ${entry.filePath}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+  return { results, failedCount };
+}
+
 /**
  * Write target used during `--dry-run`. `runImporter` short-circuits before
  * invoking `writeTo`, but adapters may still pass this target around; every
@@ -305,14 +476,18 @@ export async function cmdImport(
   rest: string[],
   targetFactory: () => Promise<ImporterWriteTarget>,
   disposeTarget?: () => Promise<void>,
-): Promise<RunImporterResult | undefined> {
+): Promise<RunImporterResult | RunImporterResult[] | undefined> {
   if (rest.includes("--help") || rest.includes("-h")) {
     process.stdout.write(IMPORT_USAGE);
     return undefined;
   }
-  let parsed: ImportDispatchArgs;
+
+  // Slice 7: `--all-from-bundle <dir>` routes to the bundle pipeline
+  // instead of single-adapter parse. We detect it BEFORE parseImportArgs
+  // because `--adapter` is not required in bundle mode.
+  let bundleArgs: ImportBundleArgs | undefined;
   try {
-    parsed = parseImportArgs(rest);
+    bundleArgs = parseImportBundleArgs(rest);
   } catch (err) {
     process.stderr.write(
       (err instanceof Error ? err.message : String(err)) + "\n",
@@ -321,25 +496,69 @@ export async function cmdImport(
     return undefined;
   }
 
+  let parsed: ImportDispatchArgs | undefined;
+  if (!bundleArgs) {
+    try {
+      parsed = parseImportArgs(rest);
+    } catch (err) {
+      process.stderr.write(
+        (err instanceof Error ? err.message : String(err)) + "\n",
+      );
+      process.exitCode = 1;
+      return undefined;
+    }
+  }
+
   // Track whether `getWriteTarget` was actually called so dispose only runs
   // when a target was materialized. An install-hint miss (loadAdapter throws)
   // must NOT trigger dispose — there's nothing to dispose and disposing may
   // itself throw, masking the original error.
-  let targetMaterialized = false;
+  //
+  // Cursor review on PR #610 — memoize the materialized target across all
+  // calls to `getWriteTarget`. `runBundleImportCommand` invokes
+  // `runImportCommand` once per detected bundle entry and each invocation
+  // calls `io.getWriteTarget()`. Without memoization a non-singleton
+  // `targetFactory` would construct N separate resources while
+  // `disposeTarget` only runs once, leaking N-1. The single-construct
+  // invariant is now enforced at the io boundary rather than implicitly
+  // at the call site.
+  let materializedTarget: ImporterWriteTarget | undefined;
+  let materializePromise: Promise<ImporterWriteTarget> | undefined;
   const io: ImportDispatchIO = {
     readFile: async (p) => fs.promises.readFile(p, "utf-8"),
     loadAdapter: async (name) => (await loadImporterModule(name)).adapter,
     runImporter,
     getWriteTarget: async () => {
-      targetMaterialized = true;
-      return targetFactory();
+      if (materializedTarget !== undefined) return materializedTarget;
+      if (materializePromise === undefined) {
+        materializePromise = Promise.resolve(targetFactory()).then((t) => {
+          materializedTarget = t;
+          return t;
+        });
+      }
+      return materializePromise;
     },
     stdout: (line) => process.stdout.write(line + "\n"),
     stderr: (line) => process.stderr.write(line + "\n"),
   };
 
   try {
-    return await runImportCommand(parsed, io);
+    if (bundleArgs) {
+      const outcome = await runBundleImportCommand(bundleArgs, io);
+      // Signal partial failure to automation. The walk kept going on
+      // error (so the user sees every failure in one pass), but the
+      // process must exit non-zero when any entry failed so shell
+      // pipelines (`remnic import --all-from-bundle ... && ...`) don't
+      // falsely treat the run as success. Codex review on PR #610.
+      if (outcome.failedCount > 0) {
+        process.exitCode = 1;
+        process.stderr.write(
+          `Bundle import completed with ${outcome.failedCount} failed entr${outcome.failedCount === 1 ? "y" : "ies"} (see above).\n`,
+        );
+      }
+      return outcome.results;
+    }
+    return await runImportCommand(parsed!, io);
   } catch (err) {
     process.stderr.write(
       (err instanceof Error ? err.message : String(err)) + "\n",
@@ -350,7 +569,7 @@ export async function cmdImport(
     // Only dispose when the write target was actually constructed. Checking
     // `parsed.dryRun` alone would incorrectly dispose after install-hint
     // misses or parse errors that happen BEFORE `getWriteTarget` is called.
-    if (targetMaterialized && disposeTarget !== undefined) {
+    if (materializedTarget !== undefined && disposeTarget !== undefined) {
       try {
         await disposeTarget();
       } catch {
