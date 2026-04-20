@@ -173,6 +173,21 @@ importers:
         specifier: ^5.7.0
         version: 5.9.3
 
+  packages/import-claude:
+    devDependencies:
+      '@remnic/core':
+        specifier: workspace:*
+        version: link:../remnic-core
+      tsup:
+        specifier: ^8.0.0
+        version: 8.5.1(postcss@8.5.10)(tsx@4.21.0)(typescript@5.9.3)(yaml@2.8.3)
+      tsx:
+        specifier: ^4.0.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.0
+        version: 5.9.3
+
   packages/import-mem0:
     devDependencies:
       '@remnic/core':
@@ -246,6 +261,9 @@ importers:
       '@remnic/import-chatgpt':
         specifier: workspace:*
         version: link:../import-chatgpt
+      '@remnic/import-claude':
+        specifier: workspace:*
+        version: link:../import-claude
       '@remnic/import-mem0':
         specifier: workspace:*
         version: link:../import-mem0
