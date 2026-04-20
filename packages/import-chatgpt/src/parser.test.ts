@@ -242,6 +242,45 @@ describe("parseChatGPTExport", () => {
     );
   });
 
+  // Codex review on PR #595 — when current_node's parent chain is broken
+  // (dangling reference to a node that doesn't exist in mapping),
+  // followCurrentNodeChain must return [] rather than a partial tail, so
+  // the caller falls back to a timestamp-sorted traversal of ALL nodes.
+  it("falls back to sorted traversal when current_node's parent chain is broken", () => {
+    const conv = {
+      current_node: "msg-3",
+      mapping: {
+        // msg-3 → parent "missing-id" which is NOT in the mapping.
+        "msg-3": {
+          id: "msg-3",
+          parent: "missing-id",
+          message: {
+            id: "msg-3",
+            author: { role: "user" },
+            content: { parts: ["latest"] },
+            create_time: 300,
+          },
+        },
+        // These should still appear because we fall back to timestamp sort.
+        "msg-1": {
+          id: "msg-1",
+          parent: null,
+          message: {
+            id: "msg-1",
+            author: { role: "user" },
+            content: { parts: ["oldest"] },
+            create_time: 100,
+          },
+        },
+      },
+    };
+    const turns = collectUserTurnsFromConversation(conv);
+    assert.deepEqual(
+      turns.map((t) => t.content),
+      ["oldest", "latest"],
+    );
+  });
+
   // Cursor review on PR #595 — asIsoString must not throw on corrupted
   // timestamps that overflow Date.toISOString's valid range.
   it("returns undefined for timestamps beyond Date's valid range", () => {

@@ -372,10 +372,20 @@ function followCurrentNodeChain(
   const visited = new Set<string>();
   const chain: ChatGPTConversationNode[] = [];
   let cursor: string | null | undefined = currentNode;
-  while (cursor && !visited.has(cursor)) {
+  while (cursor) {
+    if (visited.has(cursor)) {
+      // Cycle — refuse to trust the chain. Fall back to timestamp sort.
+      return [];
+    }
     visited.add(cursor);
     const node = mapping[cursor];
-    if (!node) break;
+    if (!node) {
+      // Broken parent link (dangling reference). Don't return a partial
+      // tail — it would silently omit the root and leave the caller with
+      // an inconsistent view. Fall back to the timestamp-sorted walk.
+      // Codex review on PR #595.
+      return [];
+    }
     chain.push(node);
     cursor = node.parent ?? null;
   }
