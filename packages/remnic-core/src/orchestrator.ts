@@ -100,6 +100,13 @@ import {
   type TierMigrationStatusSnapshot,
 } from "./recall-state.js";
 import {
+  buildXraySnapshot,
+  type RecallFilterTrace,
+  type RecallXrayResult,
+  type RecallXraySnapshot,
+  type RecallXrayServedBy,
+} from "./recall-xray.js";
+import {
   recordEvalShadowRecall,
   type EvalShadowRecallRecord,
 } from "./evals.js";
@@ -461,11 +468,51 @@ export interface RecallModeDecision {
   graphReason?: string;
 }
 
+/**
+ * Map the orchestrator's internal `recallSource` strings to the
+ * X-ray `servedBy` vocabulary (issue #570 PR 1).  The X-ray tier
+ * ladder intentionally flattens QMD / embedding / cold-fallback to
+ * the `hybrid` tier because they all materialize through the same
+ * hybrid BM25+vector pipeline from the caller's perspective.  The
+ * `recent_scan` path gets its own dedicated tier because it bypasses
+ * the hybrid pipeline entirely.  `none` is treated as `hybrid` on the
+ * theory that a query that returned nothing still routed through the
+ * hybrid pipeline — but callers should normally gate capture on
+ * `recalledMemoryIds.length > 0`.
+ */
+function mapRecallSourceToXrayServedBy(
+  source:
+    | "none"
+    | "hot_qmd"
+    | "hot_embedding"
+    | "cold_fallback"
+    | "recent_scan",
+): RecallXrayServedBy {
+  switch (source) {
+    case "recent_scan":
+      return "recent-scan";
+    case "hot_qmd":
+    case "hot_embedding":
+    case "cold_fallback":
+    case "none":
+    default:
+      return "hybrid";
+  }
+}
+
 export interface RecallInvocationOptions {
   namespace?: string;
   topK?: number;
   mode?: RecallPlanMode;
   abortSignal?: AbortSignal;
+  /**
+   * Capture a `RecallXraySnapshot` for this recall (issue #570).  When
+   * `true`, the orchestrator builds a snapshot from the data it has
+   * already gathered and stashes it in memory, accessible via
+   * `getLastXraySnapshot()`.  When `false` or absent, nothing is
+   * captured and recall behavior is unchanged (schema-only slice).
+   */
+  xrayCapture?: boolean;
 }
 
 type QueryAwarePrefilter = {
@@ -1124,6 +1171,16 @@ export class Orchestrator {
   readonly negatives: NegativeExampleStore;
   readonly lastRecall: LastRecallStore;
   readonly tierMigrationStatus: TierMigrationStatusStore;
+  /**
+   * In-memory X-ray snapshot from the most recent `recall()` call that
+   * was invoked with `xrayCapture: true` (issue #570 PR 1).  Scope is
+   * per-process; later slices add CLI/HTTP/MCP surfaces that consume
+   * this via the shared renderer.  `null` until the first capture, and
+   * NEVER overwritten by a recall that did not request capture —
+   * requests without the flag leave prior captures intact so the
+   * capturing caller can still read their snapshot back.
+   */
+  private lastXraySnapshot: RecallXraySnapshot | null = null;
   readonly embeddingFallback: EmbeddingFallback;
   private readonly conversationIndexDir: string;
   private readonly extraction: ExtractionEngine;
@@ -3973,6 +4030,23 @@ export class Orchestrator {
     } finally {
       options.abortSignal?.removeEventListener("abort", onAbort);
     }
+  }
+
+  /**
+   * Return the most recent X-ray snapshot captured during a
+   * `recall()` call that passed `xrayCapture: true` (issue #570 PR 1).
+   * Returns `null` when no such capture has occurred on this
+   * orchestrator instance.  Returned snapshot is a deep copy so
+   * caller mutation cannot tear the stored value.
+   */
+  getLastXraySnapshot(): RecallXraySnapshot | null {
+    if (!this.lastXraySnapshot) return null;
+    return structuredClone(this.lastXraySnapshot);
+  }
+
+  /** Clear the captured X-ray snapshot.  Exposed for tests / explicit reset. */
+  clearLastXraySnapshot(): void {
+    this.lastXraySnapshot = null;
   }
 
   /**
@@ -8434,6 +8508,52 @@ export class Orchestrator {
       includedSections: assembledRecall.includedIds,
       omittedSections: assembledRecall.omittedIds,
     });
+
+    // X-ray capture (issue #570 PR 1).  Only fires when the caller
+    // explicitly opts in via `xrayCapture: true`.  No behavior change
+    // when the flag is absent — this branch and the setter both
+    // short-circuit.  Captured data is composed from values we have
+    // already derived above, so capture cost is a single object
+    // allocation; no new recall work is performed.
+    if (options.xrayCapture === true) {
+      try {
+        const servedBy = mapRecallSourceToXrayServedBy(recallSource);
+        const results: RecallXrayResult[] = recalledMemoryIds.map(
+          (memoryId, index) => ({
+            memoryId,
+            path: recalledMemoryPaths[index] ?? "",
+            servedBy,
+            scoreDecomposition: { final: 0 },
+            admittedBy: [],
+          }),
+        );
+        const filters: RecallFilterTrace[] = [
+          {
+            name: "recall-result-limit",
+            considered: recalledMemoryCount,
+            admitted: recalledMemoryIds.length,
+          },
+        ];
+        this.lastXraySnapshot = buildXraySnapshot({
+          query: retrievalQuery,
+          tierExplain: null,
+          results,
+          filters,
+          budget: {
+            chars: this.getRecallBudgetChars(),
+            used: assembledRecall.finalChars,
+          },
+          sessionKey,
+          namespace: selfNamespace,
+          traceId,
+        });
+      } catch (err) {
+        // Capture is a best-effort side channel: a capture failure
+        // must NEVER propagate into the primary recall path.
+        log.debug(`x-ray capture failed: ${err}`);
+      }
+    }
+
     if (sessionKey) {
       throwIfRecallAborted(options.abortSignal);
       this.lastRecall
