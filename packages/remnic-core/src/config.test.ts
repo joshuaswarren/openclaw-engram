@@ -337,6 +337,26 @@ test("buildDefaultRecallPipeline enables procedure-recall when procedural defaul
   assert.equal(optOutSection?.enabled, false);
 });
 
+test("parseConfig rejects non-object procedural shapes (Codex P2 on #609)", () => {
+  // `procedural: false` or `procedural: null` would previously normalize
+  // to `{}` and then the omitted-key branch would silently enable the
+  // feature — the opposite of the user's shorthand intent. Reject loudly.
+  for (const v of [false, true, null, 42, "disabled", []] as unknown[]) {
+    assert.throws(
+      () =>
+        parseConfig({ openaiApiKey: "sk-test", procedural: v } as Record<
+          string,
+          unknown
+        >),
+      /procedural must be an object/,
+      `invalid procedural shape ${JSON.stringify(v)} should throw`,
+    );
+  }
+  // Valid empty object still parses (means "use defaults").
+  const blank = parseConfig({ openaiApiKey: "sk-test", procedural: {} });
+  assert.equal(blank.procedural.enabled, true);
+});
+
 test("conservative memoryOsPreset keeps procedural.enabled off after default flip (issue #567 PR 4/5)", () => {
   // Cursor Medium on #609: the `conservative` preset disables many
   // features; the default flip must not silently opt it into procedural

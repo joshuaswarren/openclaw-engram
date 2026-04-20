@@ -463,6 +463,22 @@ export function parseConfig(raw: unknown): PluginConfig {
     fingerprintDedup: rawCodexCompat.fingerprintDedup !== false,
   };
 
+  // Validate the shape of the `procedural` config block BEFORE applying the
+  // default-on behavior. Codex P2 on #609: a shorthand opt-out like
+  // `procedural: false` or `procedural: null` would previously normalize
+  // silently to `{}`, and the omitted-key branch would then enable the
+  // feature — the opposite of what the user asked for. Reject
+  // non-object shapes loudly per CLAUDE.md rule 51.
+  if (
+    cfg.procedural !== undefined &&
+    (cfg.procedural === null ||
+      typeof cfg.procedural !== "object" ||
+      Array.isArray(cfg.procedural))
+  ) {
+    throw new Error(
+      `procedural must be an object (got ${JSON.stringify(cfg.procedural)}). Use procedural: { enabled: false } to opt out; omit the key to use the default-on behavior (issue #567 PR 4).`,
+    );
+  }
   const rawProcedural =
     cfg.procedural && typeof cfg.procedural === "object" && !Array.isArray(cfg.procedural)
       ? (cfg.procedural as Record<string, unknown>)
