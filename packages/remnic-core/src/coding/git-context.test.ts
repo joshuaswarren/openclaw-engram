@@ -107,6 +107,14 @@ test("normalizeOriginUrl: userless scp form (`host:path`) normalizes identically
   assert.equal(normalizeOriginUrl("github.com:foo/bar.git"), "github.com/foo/bar");
 });
 
+test("normalizeOriginUrl: scp paths may start with digits", () => {
+  // Valid scp remote where the first path segment is purely numeric.
+  assert.equal(
+    normalizeOriginUrl("git@host:123/repo.git"),
+    "host/123/repo",
+  );
+});
+
 test("normalizeOriginUrl: https:// with non-standard port — port stripped", () => {
   assert.equal(
     normalizeOriginUrl("https://github.com:8443/foo/bar.git"),
