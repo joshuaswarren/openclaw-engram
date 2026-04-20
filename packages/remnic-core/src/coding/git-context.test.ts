@@ -199,6 +199,29 @@ test("normalizeOriginUrl: empty input yields empty string", () => {
   assert.equal(normalizeOriginUrl("   "), "");
 });
 
+test("normalizeOriginUrl: file:/// URLs do not fall through to scp parser", () => {
+  // Regression: `file:///path/to/repo` has an empty host component. Before the
+  // fix, the protocol regex required a non-empty host and so fell through to
+  // the scp regex, which mis-parsed `file` as the host and `///path/to/repo`
+  // as the path, producing `file/path/to/repo`. Now the protocol regex
+  // accepts an empty host and `file://` URLs normalize under a stable
+  // `localhost/<path>` prefix.
+  assert.equal(
+    normalizeOriginUrl("file:///path/to/repo"),
+    "localhost/path/to/repo",
+  );
+  // Two distinct local file paths must NOT collapse to the same namespace.
+  assert.notEqual(
+    normalizeOriginUrl("file:///home/alice/repo"),
+    normalizeOriginUrl("file:///home/bob/repo"),
+  );
+  // file:// with an explicit host still normalizes under that host.
+  assert.equal(
+    normalizeOriginUrl("file://host.example/path/to/repo"),
+    "host.example/path/to/repo",
+  );
+});
+
 // ──────────────────────────────────────────────────────────────────────────
 // stableHash
 // ──────────────────────────────────────────────────────────────────────────

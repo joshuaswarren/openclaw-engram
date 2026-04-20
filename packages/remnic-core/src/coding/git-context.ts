@@ -166,29 +166,36 @@ export function normalizeOriginUrl(rawUrl: string): string {
   // incorrectly swallow an ssh:// URL that happens to contain `:port/`.
   //
   // Matches:
-  //   1: host — bracketed IPv6 `[2001:db8::1]` or plain host with no `:` / `/`
+  //   1: host — bracketed IPv6 `[2001:db8::1]`, plain host with no `:` / `/`,
+  //      OR empty (for `file:///path` which has no host component).
   //   2: port (optional) — preserved in the output so two repos on the same
   //      host under different ports get distinct project namespaces.
   //      Losing the port risked false-coalescing separate repos on custom
   //      SSH mesh setups.
   //   3: path (optional)
   const protoMatch =
-    /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?(\[[^\]]+\]|[^/:]+)(?::(\d+))?(\/.*)?$/i.exec(url);
+    /^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]+@)?(\[[^\]]+\]|[^/:]*)(?::(\d+))?(\/.*)?$/i.exec(url);
   if (protoMatch) {
     let host = protoMatch[1] ?? "";
     if (host.startsWith("[") && host.endsWith("]")) host = host.slice(1, -1);
     const port = protoMatch[2];
     const repoPath = (protoMatch[3] ?? "").replace(/^\/+/, "");
     const hostPort = port ? `${host}:${port}` : host;
-    return `${hostPort}/${repoPath}`.toLowerCase();
+    // For protocols without a host component (file:///path), fall back to
+    // a stable prefix so distinct local paths don't collapse to "/path".
+    const prefix = hostPort.length > 0 ? hostPort : "localhost";
+    return `${prefix}/${repoPath}`.toLowerCase();
   }
 
-  // scp-like syntax: [user@]host:path. Deliberately rejects anything that
-  // contains `://` (handled above). `user@` is optional — git also accepts
-  // userless scp forms like `host:org/repo`. Valid scp paths may start with
-  // digits (e.g. `git@host:123/repo.git`), so no numeric guard is needed:
-  // port-bearing URLs have the `://` prefix and match the protocol branch
-  // above before reaching here.
+  // scp-like syntax: [user@]host:path. Protocol-prefixed URLs (`scheme://`)
+  // are handled above, so the scp branch below guards against them: a
+  // matched `host` of `scheme` followed by a path starting with `//` is
+  // a protocol URL that fell through and must NOT be parsed here.
+  // `user@` is optional — git also accepts userless scp forms like
+  // `host:org/repo`. Valid scp paths may start with digits (e.g.
+  // `git@host:123/repo.git`), so no numeric guard is needed: port-bearing
+  // URLs have the `://` prefix and match the protocol branch above before
+  // reaching here.
   //
   // Windows drive letters were filtered above, so single-character SSH
   // host aliases (`h:foo/bar`) are accepted here.
@@ -196,6 +203,11 @@ export function normalizeOriginUrl(rawUrl: string): string {
   if (scpMatch) {
     const host = scpMatch[2] ?? "";
     const repoPath = scpMatch[3] ?? "";
+    // Reject protocol-like leftovers (e.g. `file:///path` where the scp
+    // regex greedily matched `file` as host and `///path` as path).
+    if (repoPath.startsWith("//")) {
+      return url.toLowerCase();
+    }
     return `${host}/${repoPath.replace(/^\/+/, "")}`.toLowerCase();
   }
 
