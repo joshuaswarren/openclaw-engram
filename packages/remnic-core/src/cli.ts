@@ -6631,6 +6631,116 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
 
           console.log(orchestrator.summarizer.formatForRecall(summaries, summaries.length));
         });
+
+      // ── Review subcommand (issue #520) ──────────────────────────────────
+      const reviewCmd = cmd.command("review").description("Manage contradiction review queue");
+
+      reviewCmd
+        .command("list")
+        .description("List contradiction review items")
+        .option("--filter <type>", "Filter: all, unresolved, contradicts, independent, duplicates, needs-user", "unresolved")
+        .option("--namespace <ns>", "Filter by namespace")
+        .option("--limit <n>", "Max items (default 50)", "50")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, string>;
+          const filter = options.filter ?? "unresolved";
+          const validFilters = ["all", "unresolved", "contradicts", "independent", "duplicates", "needs-user"];
+          if (!validFilters.includes(filter)) {
+            console.error(`Invalid filter: ${filter}. Must be one of: ${validFilters.join(", ")}`);
+            process.exit(1);
+          }
+          const limit = parseInt(options.limit ?? "50", 10);
+          const { listPairs } = await import("./contradiction/contradiction-review.js");
+          const result = listPairs(orchestrator.config.memoryDir, {
+            filter: filter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user",
+            namespace: options.namespace,
+            limit: Number.isFinite(limit) ? limit : 50,
+          });
+          if (result.pairs.length === 0) {
+            console.log("No review items found.");
+            return;
+          }
+          console.log(`Found ${result.total} item(s) (${result.durationMs}ms):\n`);
+          for (const pair of result.pairs) {
+            console.log(`  [${pair.verdict}] ${pair.pairId}`);
+            console.log(`    Memories: ${pair.memoryIds.join(", ")}`);
+            console.log(`    Rationale: ${pair.rationale}`);
+            console.log(`    Confidence: ${pair.confidence.toFixed(2)}`);
+            if (pair.resolution) console.log(`    Resolution: ${pair.resolution}`);
+            console.log();
+          }
+        });
+
+      reviewCmd
+        .command("show <pairId>")
+        .description("Show details of a contradiction pair")
+        .action(async (...args: unknown[]) => {
+          const pairId = typeof args[0] === "string" ? args[0] : "";
+          if (!pairId) {
+            console.error("pairId is required");
+            process.exit(1);
+          }
+          const { readPair } = await import("./contradiction/contradiction-review.js");
+          const pair = readPair(orchestrator.config.memoryDir, pairId);
+          if (!pair) {
+            console.error(`Pair ${pairId} not found.`);
+            process.exit(1);
+          }
+          console.log(JSON.stringify(pair, null, 2));
+        });
+
+      reviewCmd
+        .command("resolve <pairId>")
+        .description("Resolve a contradiction pair")
+        .requiredOption("--verb <verb>", "Resolution verb: keep-a, keep-b, merge, both-valid, needs-more-context")
+        .action(async (...args: unknown[]) => {
+          const pairId = typeof args[0] === "string" ? args[0] : "";
+          const cmdOpts = (args[1] ?? {}) as Record<string, string>;
+          if (!pairId) {
+            console.error("pairId is required");
+            process.exit(1);
+          }
+          const verb = cmdOpts.verb;
+          if (!verb) {
+            console.error("--verb is required. Must be one of: keep-a, keep-b, merge, both-valid, needs-more-context");
+            process.exit(1);
+          }
+          const { isValidResolutionVerb, executeResolution } = await import("./contradiction/resolution.js");
+          if (!isValidResolutionVerb(verb)) {
+            console.error(`Invalid verb: ${verb}. Must be one of: keep-a, keep-b, merge, both-valid, needs-more-context`);
+            process.exit(1);
+          }
+          const result = await executeResolution(orchestrator.config.memoryDir, orchestrator.storage, pairId, verb);
+          console.log(result.message);
+          if (result.affectedIds.length > 0) {
+            console.log(`Affected: ${result.affectedIds.join(", ")}`);
+          }
+        });
+
+      reviewCmd
+        .command("scan")
+        .description("Run an on-demand contradiction scan")
+        .option("--namespace <ns>", "Namespace to scan")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, string>;
+          const { runContradictionScan } = await import("./contradiction/contradiction-scan.js");
+          console.log("Running contradiction scan...");
+          const result = await runContradictionScan({
+            storage: orchestrator.storage,
+            config: orchestrator.config,
+            memoryDir: orchestrator.config.memoryDir,
+            embeddingLookup: undefined,
+            localLlm: orchestrator.localLlm ?? null,
+            fallbackLlm: null,
+            namespace: options.namespace,
+          });
+          console.log(`Scan complete in ${result.elapsedMs}ms:`);
+          console.log(`  Scanned: ${result.scanned} memories`);
+          console.log(`  Candidates: ${result.candidates} pairs`);
+          console.log(`  Judged: ${result.judged}`);
+          console.log(`  Queued: ${result.queued}`);
+          console.log(`  Cooled down: ${result.cooledDown}`);
+        });
     },
     { commands: ["engram"] },
   );

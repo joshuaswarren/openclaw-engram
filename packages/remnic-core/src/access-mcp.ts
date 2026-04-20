@@ -757,6 +757,44 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       }] : []),
+      // ── Contradiction Review (issue #520) ────────────────────────────────
+      {
+        name: "engram.review_list",
+        description: "List contradiction review items pending user resolution.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            filter: { type: "string", enum: ["all", "unresolved", "contradicts", "independent", "duplicates", "needs-user"], description: "Filter by verdict type. Default: unresolved." },
+            namespace: { type: "string" },
+            limit: { type: "number", description: "Max items to return (default 50)." },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.review_resolve",
+        description: "Resolve a contradiction pair with a chosen verb.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pairId: { type: "string", description: "The contradiction pair ID to resolve." },
+            verb: { type: "string", enum: ["keep-a", "keep-b", "merge", "both-valid", "needs-more-context"], description: "Resolution action." },
+          },
+          required: ["pairId", "verb"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "engram.contradiction_scan_run",
+        description: "Run an on-demand contradiction scan over the memory corpus.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+          },
+          additionalProperties: false,
+        },
+      },
     ].flatMap((tool) => withToolAliases(tool));
   }
 
@@ -1374,6 +1412,39 @@ export class EngramMcpServer {
           maxFollowups:
             typeof args.maxFollowups === "number" ? args.maxFollowups : undefined,
           principal: effectivePrincipal,
+        });
+      }
+      // ── Contradiction Review (issue #520) ──────────────────────────────────
+      case "engram.review_list":
+      case "remnic.review_list": {
+        const { listPairs } = await import("./contradiction/contradiction-review.js");
+        const filter = typeof args.filter === "string" ? args.filter as "all" | "unresolved" | "contradicts" | "independent" | "duplicates" | "needs-user" : "unresolved";
+        const ns = typeof args.namespace === "string" ? args.namespace : undefined;
+        const limit = typeof args.limit === "number" ? args.limit : 50;
+        return listPairs(this.service.memoryDir, { filter, namespace: ns, limit });
+      }
+      case "engram.review_resolve":
+      case "remnic.review_resolve": {
+        const pairId = typeof args.pairId === "string" ? args.pairId : "";
+        const verb = typeof args.verb === "string" ? args.verb : "";
+        if (!pairId) throw new Error("pairId is required");
+        if (!verb) throw new Error("verb is required");
+        const { isValidResolutionVerb } = await import("./contradiction/resolution.js");
+        if (!isValidResolutionVerb(verb)) throw new Error(`Invalid verb: ${verb}. Must be one of: keep-a, keep-b, merge, both-valid, needs-more-context`);
+        const { executeResolution } = await import("./contradiction/resolution.js");
+        return executeResolution(this.service.memoryDir, this.service.storageRef, pairId, verb);
+      }
+      case "engram.contradiction_scan_run":
+      case "remnic.contradiction_scan_run": {
+        const { runContradictionScan } = await import("./contradiction/contradiction-scan.js");
+        return runContradictionScan({
+          storage: this.service.storageRef,
+          config: this.service.configRef,
+          memoryDir: this.service.memoryDir,
+          embeddingLookup: this.service.embeddingLookupRef,
+          localLlm: this.service.localLlmRef,
+          fallbackLlm: this.service.fallbackLlmRef,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
         });
       }
       default:

@@ -200,6 +200,22 @@ export interface ProceduralConfig {
   recallMaxProcedures: number;
 }
 
+/** Configuration for the nightly contradiction-scan cron (issue #520). */
+export interface ContradictionScanConfig {
+  /** Master switch for the contradiction scan cron. Default true. */
+  enabled: boolean;
+  /** Embedding cosine similarity floor for candidate pair generation. Default 0.82. */
+  similarityFloor: number;
+  /** Minimum topic-token Jaccard overlap for unstructured pairs. Default 0.4. */
+  topicOverlapFloor: number;
+  /** Cap on candidate pairs evaluated per cron run. Default 500. */
+  maxPairsPerRun: number;
+  /** Cooldown in days before re-evaluating a pair judged independent/both-valid. Default 14. */
+  cooldownDays: number;
+  /** When true, pairs judged "duplicates" are auto-flagged for dedup (still need user approval). Default false. */
+  autoMergeDuplicates: boolean;
+}
+
 export interface HeartbeatConfig {
   enabled: boolean;
   journalPath: string;
@@ -336,6 +352,8 @@ export interface PluginConfig {
   contradictionSimilarityThreshold: number;
   contradictionMinConfidence: number;
   contradictionAutoResolve: boolean;
+  /** Nightly contradiction-scan cron config (issue #520). */
+  contradictionScan: ContradictionScanConfig;
   // Temporal Supersession (issue #375)
   /**
    * When enabled, writes that carry `structuredAttributes` mark any older

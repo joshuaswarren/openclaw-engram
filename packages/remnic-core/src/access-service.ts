@@ -41,7 +41,7 @@ import type {
   Orchestrator,
   RecallInvocationOptions,
 } from "./orchestrator.js";
-import { parseEntityFile } from "./storage.js";
+import { parseEntityFile, StorageManager } from "./storage.js";
 import {
   buildBriefing,
   FileCalendarSource,
@@ -70,8 +70,12 @@ import type {
   MemoryFile,
   MemoryLifecycleEvent,
   MemoryStatus,
+  PluginConfig,
   RecallPlanMode,
 } from "./types.js";
+import type { LocalLlmClient } from "./local-llm.js";
+import type { FallbackLlmClient } from "./fallback-llm.js";
+import type { SemanticDedupLookup } from "./dedup/semantic.js";
 
 export class EngramAccessInputError extends Error {}
 
@@ -2788,5 +2792,31 @@ export class EngramAccessService {
     }
 
     return { submitted: memoryIds.length, matched: matchedIds.length };
+  }
+
+  // ── Contradiction Review (issue #520) ──────────────────────────────────────
+
+  get memoryDir(): string {
+    return this.orchestrator.config.memoryDir;
+  }
+
+  get storageRef(): StorageManager {
+    return this.orchestrator.storage;
+  }
+
+  get configRef(): PluginConfig {
+    return this.orchestrator.config;
+  }
+
+  get localLlmRef(): LocalLlmClient | null {
+    return this.orchestrator.localLlm ?? null;
+  }
+
+  get fallbackLlmRef(): FallbackLlmClient | null {
+    return null;
+  }
+
+  get embeddingLookupRef(): SemanticDedupLookup | undefined {
+    return undefined;
   }
 }
