@@ -29,7 +29,7 @@ The package is **data + one small runtime materializer** (no runtime JS beyond t
 | `skills/` | `remnic-recall`, `remnic-remember`, `remnic-search`, `remnic-status`, `remnic-entities`, `remnic-memory-workflow` — invocable from Codex chats |
 | `memories_extensions/remnic/` | Codex phase-2 consolidation instructions — tells the Codex compactor sub-agent to treat Remnic's on-disk Markdown as an authoritative local memory source when it builds `MEMORY.md`. Local-only (no MCP, no network); runtime recall/observe still flow through the hooks above. |
 | `.mcp.json` | MCP server config pointing Codex at `http://localhost:4318/mcp` |
-| `bin/materialize.cjs` | Runtime entrypoint invoked by the session-end hook (and `remnic` CLI) to refresh `~/.codex/memories` from the Remnic store. Not an installer — the plugin tree itself is deployed by `@remnic/core`'s `installCodexMemoryExtension` during `remnic connectors install codex-cli`. |
+| `bin/materialize.cjs` | Runtime entrypoint invoked exclusively by the Codex `Stop` hook (`hooks/bin/session-end.sh`) to refresh `~/.codex/memories` from the Remnic store at the end of a session. Not an installer, and not wired into any `remnic` CLI command — the plugin tree itself is deployed by `@remnic/core`'s `installCodexMemoryExtension` during `remnic connectors install codex-cli`. |
 
 ## What you get at runtime
 
@@ -63,7 +63,7 @@ Replace `{{REMNIC_TOKEN}}` with a token minted via `remnic token generate <conne
 
 ## Agent note
 
-If you're an AI agent scaffolding a Codex integration: **do not** hand-edit `~/.codex/` directly — run `remnic connectors install codex-cli` so `@remnic/core`'s `installCodexMemoryExtension` deploys the plugin tree and keeps upgrades + token rotation in sync. `bin/materialize.cjs` is a runtime helper called by the session-end hook to refresh `~/.codex/memories` from the live Remnic store; it does not install hooks, so re-running it won't recover a broken plugin install.
+If you're an AI agent scaffolding a Codex integration: **do not** hand-edit `~/.codex/` directly — run `remnic connectors install codex-cli` so `@remnic/core`'s `installCodexMemoryExtension` deploys the plugin tree and keeps upgrades + token rotation in sync. `bin/materialize.cjs` is a runtime helper called only by the Codex `Stop` hook to refresh `~/.codex/memories` from the live Remnic store at session end; it's not wired into any `remnic` CLI command, so re-running it manually won't recover a broken plugin install.
 
 ## Related
 
