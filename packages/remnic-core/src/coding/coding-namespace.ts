@@ -16,6 +16,7 @@
  */
 
 import type { CodingContext, CodingModeConfig } from "../types.js";
+import { stableHash } from "./git-context.js";
 
 export interface CodingNamespaceOverlay {
   /**
@@ -59,13 +60,36 @@ export interface CodingNamespaceOverlay {
  * hex), and branch names come from local git. This defends against corrupt
  * input only.
  */
+/**
+ * Single-pass sanitization — each input character is visited exactly once.
+ * Rewriting as an explicit loop (instead of chained `replace()` calls with
+ * greedy quantifiers) closes the polynomial-backtracking surface that
+ * CodeQL flagged on patterns like `-+` and `^-+|-+$`.
+ */
 function sanitizeFragment(input: string): string {
-  return input
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9._-]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
+  if (typeof input !== "string") return "";
+  const trimmed = input.trim().toLowerCase();
+  let out = "";
+  let prevIsDash = true; // suppress leading dashes
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const c = trimmed[i]!;
+    const cc = trimmed.charCodeAt(i);
+    const isSafe =
+      (cc >= 48 && cc <= 57) /* 0-9 */ ||
+      (cc >= 97 && cc <= 122) /* a-z */ ||
+      cc === 46 /* . */ ||
+      cc === 95 /* _ */;
+    if (isSafe) {
+      out += c;
+      prevIsDash = false;
+    } else if (!prevIsDash) {
+      out += "-";
+      prevIsDash = true;
+    }
+  }
+  // Strip a single trailing dash introduced by the final run of unsafe chars.
+  if (out.endsWith("-")) out = out.slice(0, -1);
+  return out;
 }
 
 /**
@@ -86,24 +110,20 @@ function sanitizeFragment(input: string): string {
 const MAX_NAMESPACE_LEN = 64;
 const HASH_SUFFIX_LEN = 9; // "-" + 8 hex chars
 
-function fnv1a32Hex(value: string): string {
-  // FNV-1a 32-bit hash — pure, deterministic, no crypto dependency needed
-  // for non-security-boundary namespace disambiguation.
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = (hash * 0x01000193) >>> 0;
-  }
-  return hash.toString(16).padStart(8, "0");
-}
-
 function capLength(value: string): string {
   if (value.length <= MAX_NAMESPACE_LEN) return value;
-  const hash = fnv1a32Hex(value);
-  const head = value
-    .slice(0, MAX_NAMESPACE_LEN - HASH_SUFFIX_LEN)
-    .replace(/-+$/g, "");
-  return `${head}-${hash}`;
+  // Reuse the FNV-1a 32-bit hash from git-context — one canonical
+  // implementation, one set of edge-case fixes. Uses Math.imul for
+  // correct 32-bit wrap-around, which plain `*` would not guarantee
+  // for the largest intermediate products.
+  const hash = stableHash(value);
+  // Trim trailing '-' with a linear, non-backtracking loop. A regex
+  // like `-+$` is linear too, but an explicit loop keeps CodeQL happy
+  // about polynomial backtracking warnings when several `\-+` patterns
+  // appear in the same module.
+  let end = MAX_NAMESPACE_LEN - HASH_SUFFIX_LEN;
+  while (end > 0 && value.charCodeAt(end - 1) === 45 /* '-' */) end -= 1;
+  return `${value.slice(0, end)}-${hash}`;
 }
 
 /**
@@ -114,6 +134,43 @@ function capLength(value: string): string {
 export function projectNamespaceName(projectId: string): string {
   const frag = sanitizeFragment(projectId);
   return capLength(`project-${frag || "unknown"}`);
+}
+
+/**
+ * Preserve case when sanitizing a principal-derived base namespace. The
+ * router's `isSafeRouteNamespace` check accepts `[A-Za-z0-9._-]{1,64}`, so
+ * upper-case characters in the principal name are safe and MUST be kept to
+ * avoid colliding two otherwise-distinct principals (e.g. `Alice` vs
+ * `alice`) into the same combined namespace.
+ *
+ * Otherwise identical to `sanitizeFragment`: single-pass, linear, no
+ * polynomial-backtracking quantifiers, unsafe chars collapse to `-` with
+ * leading/trailing dashes suppressed.
+ */
+function sanitizeBaseFragment(input: string): string {
+  if (typeof input !== "string") return "";
+  const trimmed = input.trim();
+  let out = "";
+  let prevIsDash = true;
+  for (let i = 0; i < trimmed.length; i += 1) {
+    const c = trimmed[i]!;
+    const cc = trimmed.charCodeAt(i);
+    const isSafe =
+      (cc >= 48 && cc <= 57) /* 0-9 */ ||
+      (cc >= 65 && cc <= 90) /* A-Z */ ||
+      (cc >= 97 && cc <= 122) /* a-z */ ||
+      cc === 46 /* . */ ||
+      cc === 95 /* _ */;
+    if (isSafe) {
+      out += c;
+      prevIsDash = false;
+    } else if (!prevIsDash) {
+      out += "-";
+      prevIsDash = true;
+    }
+  }
+  if (out.endsWith("-")) out = out.slice(0, -1);
+  return out;
 }
 
 /**
@@ -128,13 +185,18 @@ export function projectNamespaceName(projectId: string): string {
  *
  *   alice + project-origin-ab12  →  alice-project-origin-ab12
  *   bob   + project-origin-ab12  →  bob-project-origin-ab12
+ *   Alice + project-origin-ab12  →  Alice-project-origin-ab12 (distinct)
+ *
+ * The base fragment preserves case so `Alice` and `alice` remain distinct;
+ * the overlay fragment is still lowercase-sanitized because it derives from
+ * deterministic, pre-lowercased git hashes.
  *
  * Output is re-capped through `capLength` so a very long base + overlay
  * combination still fits inside `isSafeRouteNamespace` (≤ 64 chars). The
  * deterministic hash suffix on truncation keeps distinct inputs distinct.
  */
 export function combineNamespaces(base: string, overlay: string): string {
-  const baseFrag = sanitizeFragment(base);
+  const baseFrag = sanitizeBaseFragment(base);
   const overlayFrag = sanitizeFragment(overlay);
   if (!baseFrag) return capLength(overlayFrag || "unknown");
   if (!overlayFrag) return capLength(baseFrag);
@@ -175,7 +237,7 @@ export function branchNamespaceName(projectId: string, branch: string): string {
   // stays readable.
   const disambig = trimmedBranch.length > 0 && branchFrag !== trimmedBranch;
   const base = `project-${projectFrag || "unknown"}-branch-${branchFrag || "unknown"}`;
-  const suffixed = disambig ? `${base}-${fnv1a32Hex(trimmedBranch)}` : base;
+  const suffixed = disambig ? `${base}-${stableHash(trimmedBranch)}` : base;
   return capLength(suffixed);
 }
 

@@ -137,6 +137,26 @@ test("applyCodingNamespaceOverlay: different principals on same repo get isolate
   );
 });
 
+test("applyCodingNamespaceOverlay: principal base namespace preserves case", () => {
+  // Regression: sanitizeFragment() was lowercasing the base, so two valid
+  // but case-differing principal identifiers (`Alice` vs `alice`) would
+  // collapse to the same combined namespace. The router accepts
+  // [A-Za-z0-9._-]{1,64}, so case is a legal discriminator and must not
+  // be dropped on the write / read paths.
+  const orch = makeOrchestrator();
+  orch.setCodingContextForSession("A-sess", contextFor("origin:deadbeef"));
+  orch.setCodingContextForSession("a-sess", contextFor("origin:deadbeef"));
+  const upperNs = orch.applyCodingNamespaceOverlay("A-sess", "Alice");
+  const lowerNs = orch.applyCodingNamespaceOverlay("a-sess", "alice");
+  assert.notEqual(
+    upperNs,
+    lowerNs,
+    "case-only principal variants must not collapse to the same namespace",
+  );
+  assert.equal(upperNs, "Alice-project-origin-deadbeef");
+  assert.equal(lowerNs, "alice-project-origin-deadbeef");
+});
+
 test("applyCodingNamespaceOverlay: projectScope=false returns base unchanged (escape hatch)", () => {
   const orch = makeOrchestrator({ projectScope: false });
   orch.setCodingContextForSession("session-A", contextFor("origin:abcdef12"));
