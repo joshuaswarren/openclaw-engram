@@ -99,6 +99,14 @@ test("normalizeOriginUrl: ssh:// and ssh://...:port normalize to the same string
   );
 });
 
+test("normalizeOriginUrl: userless scp form (`host:path`) normalizes identically to user@ form", () => {
+  assert.equal(
+    normalizeOriginUrl("github.com:foo/bar.git"),
+    normalizeOriginUrl("git@github.com:foo/bar.git"),
+  );
+  assert.equal(normalizeOriginUrl("github.com:foo/bar.git"), "github.com/foo/bar");
+});
+
 test("normalizeOriginUrl: https:// with non-standard port — port stripped", () => {
   assert.equal(
     normalizeOriginUrl("https://github.com:8443/foo/bar.git"),

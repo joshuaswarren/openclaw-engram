@@ -165,11 +165,13 @@ export function normalizeOriginUrl(rawUrl: string): string {
     return `${host}/${repoPath}`.toLowerCase();
   }
 
-  // scp-like syntax: user@host:path. Deliberately rejects anything that
-  // contains `://` (handled above), and uses `[^:@/\s]+` for the host so that
-  // `git@host:port/repo` is only treated as scp when the part after `:` is
-  // non-numeric — scp paths start with a path component, not a port number.
-  const scpMatch = /^([^@\s/]+)@([^:@\s/]+):(.+)$/.exec(url);
+  // scp-like syntax: [user@]host:path. Deliberately rejects anything that
+  // contains `://` (handled above). `user@` is optional — git also accepts
+  // userless scp forms like `host:org/repo`. Uses `[^:@/\s]+` for the host
+  // so that `host:port/repo` is only treated as scp when the part after `:`
+  // is non-numeric — scp paths start with a path component, not a port
+  // number.
+  const scpMatch = /^(?:([^@\s/]+)@)?([^:@\s/]+):(?!\d+(?:\/|$))(.+)$/.exec(url);
   if (scpMatch) {
     const host = scpMatch[2] ?? "";
     const repoPath = scpMatch[3] ?? "";
