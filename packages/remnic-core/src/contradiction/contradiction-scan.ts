@@ -102,7 +102,7 @@ export async function runContradictionScan(deps: ScanDependencies): Promise<Scan
   }
 
   // 3. Generate candidate pairs
-  const candidates = generatePairs(memories, existingMap, scanConfig, embeddingLookup);
+  const candidates = await generatePairs(memories, existingMap, scanConfig, embeddingLookup);
   const cooledDown = candidates.skipped;
   log.info("[contradiction-scan] generated %d candidates (%d cooled down)", candidates.pairs.length, cooledDown);
 
@@ -181,12 +181,12 @@ interface PairGenResult {
   skipped: number;
 }
 
-function generatePairs(
+async function generatePairs(
   memories: MemoryFile[],
   existingPairs: Map<string, ContradictionPair>,
   scanConfig: PluginConfig["contradictionScan"],
   embeddingLookup?: SemanticDedupLookup,
-): PairGenResult {
+): Promise<PairGenResult> {
   const pairs: CandidatePair[] = [];
   let skipped = 0;
   const seen = new Set<string>();
@@ -264,6 +264,44 @@ function generatePairs(
         categoryA: a.frontmatter.category as string | undefined,
         categoryB: b.frontmatter.category as string | undefined,
       });
+    }
+  }
+
+  // Strategy 3: Embedding cosine similarity (enforces similarityFloor config)
+  if (embeddingLookup) {
+    const memoryById = new Map(memories.map((m) => [m.frontmatter.id!, m]));
+    for (const mem of memories) {
+      const id = mem.frontmatter.id!;
+      try {
+        const hits = await embeddingLookup(mem.content, 20);
+        for (const hit of hits) {
+          if (hit.score < scanConfig.similarityFloor) continue;
+          if (hit.id === id) continue;
+          const peer = memoryById.get(hit.id);
+          if (!peer) continue;
+
+          const pairId = computePairId(id, hit.id);
+          if (seen.has(pairId)) continue;
+          seen.add(pairId);
+
+          const existing = existingPairs.get(pairId);
+          if (existing && isCoolingDown(existing, scanConfig.cooldownDays)) {
+            skipped++;
+            continue;
+          }
+
+          pairs.push({
+            idA: id,
+            idB: hit.id,
+            textA: mem.content,
+            textB: peer.content,
+            categoryA: mem.frontmatter.category as string | undefined,
+            categoryB: peer.frontmatter.category as string | undefined,
+          });
+        }
+      } catch {
+        // Embedding backend unavailable — skip, entity-ref/tag strategies already covered
+      }
     }
   }
 
