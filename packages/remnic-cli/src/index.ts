@@ -3356,17 +3356,37 @@ async function cmdDoctor(): Promise<void> {
           `defaultBranch=${gitCtx.defaultBranch ?? "(unknown)"}`,
         ];
         // Compute effective namespace using the same resolver the orchestrator
-        // uses, with the defaults that ship in `@remnic/core`. Operators can
-        // confirm the overlay is reachable even before the daemon sees the
-        // session.
+        // uses, with the operator's ACTUAL configured codingMode values so
+        // that the reported effectiveNamespace matches what recall + writes
+        // will use at runtime. Falls back to the ship defaults
+        // (projectScope on, branchScope off) only when no codingMode is
+        // configured in openclaw.plugin.json.
+        const pluginRemnic =
+          typeof openclawConfig.remnic === "object" && openclawConfig.remnic !== null
+            ? (openclawConfig.remnic as Record<string, unknown>)
+            : (openclawConfig as Record<string, unknown>);
+        const pluginCodingMode =
+          typeof pluginRemnic.codingMode === "object" && pluginRemnic.codingMode !== null
+            ? (pluginRemnic.codingMode as Record<string, unknown>)
+            : {};
+        const projectScopeCfg =
+          typeof pluginCodingMode.projectScope === "boolean"
+            ? pluginCodingMode.projectScope
+            : true;
+        const branchScopeCfg =
+          typeof pluginCodingMode.branchScope === "boolean"
+            ? pluginCodingMode.branchScope
+            : false;
         let effective = `project-…`;
         if (typeof core.describeCodingScope === "function") {
           const desc = core.describeCodingScope(gitCtx, {
-            projectScope: true,
-            branchScope: false,
+            projectScope: projectScopeCfg,
+            branchScope: branchScopeCfg,
           });
           effective = desc.effectiveNamespace ?? "(no overlay)";
         }
+        parts.push(`projectScope=${projectScopeCfg}`);
+        parts.push(`branchScope=${branchScopeCfg}`);
         checks.push({
           name: "Coding-agent context",
           ok: true,

@@ -9,6 +9,8 @@
 
 import { randomUUID } from "node:crypto";
 
+import { rankReviewCandidates } from "@remnic/core";
+
 import type {
   BenchmarkDefinition,
   BenchmarkResult,
@@ -128,48 +130,35 @@ export async function runCodingRecallBenchmark(
 // ──────────────────────────────────────────────────────────────────────────
 // Scoring
 // ──────────────────────────────────────────────────────────────────────────
-
-const REVIEW_BOOST_PER_MATCH = 0.5;
-const REVIEW_MAX_BOOST = 1.0;
+//
+// The benchmark delegates the actual review-context ranking logic to
+// `@remnic/core`'s `rankReviewCandidates` so that the benchmark verdict
+// exercises the SAME code path production does. Previously the benchmark
+// reimplemented the boost + sort logic locally and could have diverged from
+// the shipped behavior; now an accidental change to production ranking
+// would be caught by the benchmark instead of hidden by a parallel copy.
 
 function scoreCase(sample: CodingRecallCase): CodingRecallCaseMemory[] {
   // 1. Filter candidates to the session's readable namespaces (rule 42).
   const allowedNs = new Set(sample.sessionNamespaces);
   const filtered = sample.candidates.filter((c) => allowedNs.has(c.namespace));
 
-  // 2. Compute review-context boosts when a touched-file list is present.
+  // 2. Delegate review-context boosting + deterministic ordering to the
+  //    canonical production ranker. When no touched files are supplied the
+  //    boost is 0 for every candidate and the original sort order is
+  //    preserved with the stable-id tiebreak.
   const touched = sample.touchedFiles ?? [];
-  const annotated = filtered.map((c) => {
-    const boost = touched.length > 0 ? computeReviewBoost(c.entityRefs, touched) : 0;
-    return { ...c, adjusted: c.score + boost, boost };
-  });
+  const ranked = rankReviewCandidates(
+    filtered.map((c) => ({ id: c.id, score: c.score, entityRefs: c.entityRefs })),
+    touched,
+  );
 
-  // 3. Sort by adjusted score desc, stable by id asc (CLAUDE.md #19).
-  annotated.sort((a, b) => {
-    if (a.adjusted !== b.adjusted) return b.adjusted - a.adjusted;
-    if (a.id < b.id) return -1;
-    if (a.id > b.id) return 1;
-    return 0;
-  });
-
-  return annotated.map(({ boost: _b, adjusted: _a, ...rest }) => rest);
-}
-
-function computeReviewBoost(entityRefs: string[] | undefined, touchedFiles: string[]): number {
-  if (!entityRefs || entityRefs.length === 0) return 0;
-  let hits = 0;
-  for (const ref of entityRefs) {
-    if (typeof ref !== "string" || !ref) continue;
-    const rlower = ref.toLowerCase();
-    for (const file of touchedFiles) {
-      const flower = file.toLowerCase();
-      if (rlower === flower || rlower.includes(flower) || flower.includes(rlower)) {
-        hits += 1;
-        break;
-      }
-    }
-  }
-  return Math.min(REVIEW_MAX_BOOST, hits * REVIEW_BOOST_PER_MATCH);
+  // 3. Re-project the candidate back to the benchmark's result shape
+  //    (rankReviewCandidates returns only the subset it needs).
+  const byId = new Map(filtered.map((c) => [c.id, c]));
+  return ranked
+    .map((r) => byId.get(r.id))
+    .filter((c): c is CodingRecallCaseMemory => c !== undefined);
 }
 
 // ──────────────────────────────────────────────────────────────────────────

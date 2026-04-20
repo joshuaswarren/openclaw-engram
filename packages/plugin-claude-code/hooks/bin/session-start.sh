@@ -171,7 +171,17 @@ REQUEST_BODY="$(REMNIC_CODING_CONTEXT_JSON="$CODING_CONTEXT_JSON" node -e "
   };
   const raw = process.env.REMNIC_CODING_CONTEXT_JSON || '';
   if (raw) {
-    try { body.codingContext = JSON.parse(raw); } catch (_) { /* ignore */ }
+    try { body.codingContext = JSON.parse(raw); } catch (_) {
+      // Context envelope was provided but failed to parse. Explicitly
+      // clear any previously-attached context for this session so a
+      // malformed envelope does not silently keep stale state.
+      body.codingContext = null;
+    }
+  } else {
+    // No git context resolvable for this cwd. Explicitly clear any
+    // previously-attached context so a session that moves out of a repo
+    // does not keep routing to the old project namespace.
+    body.codingContext = null;
   }
   process.stdout.write(JSON.stringify(body));
 " "$QUERY" "$SESSION_ID" 2>/dev/null)"
