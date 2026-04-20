@@ -60,12 +60,27 @@ export function hashBytes(value: Uint8Array): string {
 /**
  * Canonicalize a JSON-serializable value so equivalent payloads produce the
  * same digest regardless of key insertion order.
+ *
+ * `space` matches the third argument of `JSON.stringify` — pass `2` (or any
+ * positive integer / indent string) when you want a pretty-printed output
+ * that is still byte-stable across runs. Default is compact output.
  */
-export function canonicalJsonStringify(value: unknown): string {
-  return JSON.stringify(value, canonicalReplacer);
+export function canonicalJsonStringify(
+  value: unknown,
+  space?: string | number,
+): string {
+  return JSON.stringify(value, canonicalReplacer, space);
 }
 
-function canonicalReplacer(this: unknown, _key: string, value: unknown): unknown {
+/**
+ * Exported so downstream callers can compose the canonical key-sort
+ * contract into their own stringification (e.g. with a custom indent).
+ */
+export function canonicalReplacer(
+  this: unknown,
+  _key: string,
+  value: unknown,
+): unknown {
   if (Array.isArray(value)) {
     return value;
   }
