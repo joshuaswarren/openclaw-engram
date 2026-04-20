@@ -57,6 +57,8 @@
  * the output is deterministic.
  */
 
+import { cosineSimilarity } from "./semantic-chunking.js";
+
 /** Minimal shape of a recent memory passed to `computeSurprise`. */
 export interface RecentMemoryLike {
   /** Stable identifier. Only used for debug/logging; not part of the score. */
@@ -134,7 +136,7 @@ export async function computeSurprise(
   const sims: number[] = [];
   for (let i = 0; i < candidates.length; i += 1) {
     const candEmbedding = candidateEmbeddings[i] ?? [];
-    sims.push(clampedCosine(turnEmbedding, candEmbedding));
+    sims.push(safeCosine(turnEmbedding, candEmbedding));
   }
 
   // Sort similarities descending and take the top-k (the nearest neighbors).
@@ -177,37 +179,25 @@ function clampK(k: number, ceiling: number): number {
 }
 
 /**
- * Cosine similarity clamped to `[0, 1]`. Negative cosines (opposite
- * directions) are treated as `0` rather than as extra diversity, matching
- * the convention used by `recall-mmr.ts` so surprise and diversity metrics
- * agree on what "maximally different" means.
+ * Safe wrapper around `cosineSimilarity` that returns a similarity value in
+ * `[0, 1]` (negative cosines are clamped to 0, matching the convention used
+ * by `recall-mmr.ts`) and tolerates mismatched or empty vectors without
+ * throwing. See `semantic-chunking.ts` for the shared cosine implementation.
  *
  * Returns `0` for:
  * - empty vectors,
- * - zero-norm vectors (all zeros), and
- * - length mismatches (callers likely have a config bug we should not hide).
+ * - length mismatches (callers likely have a config bug, but surprise
+ *   scoring is a soft signal — do not crash the buffer flush decision),
+ * - non-finite cosine results (zero-norm inputs, arithmetic drift).
  */
-function clampedCosine(
-  a: readonly number[],
-  b: readonly number[],
-): number {
+function safeCosine(a: readonly number[], b: readonly number[]): number {
   if (!Array.isArray(a) || !Array.isArray(b)) return 0;
   if (a.length === 0 || b.length === 0) return 0;
   if (a.length !== b.length) return 0;
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    const av = a[i] ?? 0;
-    const bv = b[i] ?? 0;
-    dot += av * bv;
-    na += av * av;
-    nb += bv * bv;
-  }
-  if (na === 0 || nb === 0) return 0;
-  const cos = dot / (Math.sqrt(na) * Math.sqrt(nb));
-  if (!Number.isFinite(cos)) return 0;
-  if (cos < 0) return 0;
-  if (cos > 1) return 1;
-  return cos;
+  const raw = cosineSimilarity(a as number[], b as number[]);
+  if (!Number.isFinite(raw)) return 0;
+  if (raw < 0) return 0;
+  if (raw > 1) return 1;
+  return raw;
 }
+
