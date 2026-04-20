@@ -12,13 +12,19 @@ import {
  * ending in `/` are directories; every other path is a file whose contents
  * live in `files[path]` (or default to `{}`).
  */
-function makeFs(files: Record<string, string>, dirs: string[]): BundleDetectOptions {
+function makeFs(
+  files: Record<string, string>,
+  dirs: string[],
+  symlinks: string[] = [],
+): BundleDetectOptions {
   const dirSet = new Set(dirs);
+  const fileSet = new Set(Object.keys(files));
+  const symlinkSet = new Set(symlinks);
   return {
     readdirImpl: (dir: string) => {
       const normalized = dir.endsWith("/") ? dir : dir + "/";
       const all = new Set<string>();
-      for (const key of [...Object.keys(files), ...dirs]) {
+      for (const key of [...Object.keys(files), ...dirs, ...symlinks]) {
         if (key === dir) continue;
         if (key.startsWith(normalized)) {
           const rest = key.slice(normalized.length);
@@ -30,7 +36,12 @@ function makeFs(files: Record<string, string>, dirs: string[]): BundleDetectOpti
       return [...all];
     },
     readFileImpl: (p: string) => files[p] ?? "{}",
-    isDirectoryImpl: (p: string) => dirSet.has(p),
+    // Codex review on PR #610 — symlinks never report as directories OR
+    // as regular files, so the walker refuses to follow them. This
+    // matches defaultIsDirectory / defaultIsRegularFile in the
+    // production module.
+    isDirectoryImpl: (p: string) => dirSet.has(p) && !symlinkSet.has(p),
+    isRegularFileImpl: (p: string) => fileSet.has(p) && !symlinkSet.has(p),
   };
 }
 
@@ -142,8 +153,37 @@ describe("detectBundleEntries", () => {
       readdirImpl: () => ["memory.json"],
       readFileImpl: () => "{}",
       isDirectoryImpl: () => false,
+      isRegularFileImpl: () => true,
     };
     const entries = detectBundleEntries("/bundle", fs);
     assert.equal(entries.length, 1);
+  });
+
+  // Codex review on PR #610 — a bundle containing a symlink named
+  // memory.json / projects.json must NOT be followed, or the importer
+  // could be tricked into reading arbitrary filesystem locations.
+  // defaultIsRegularFile rejects symlinks; verify through the injected
+  // BundleDetectOptions surface.
+  it("rejects symlinked files even when their name matches a known shape", () => {
+    const fs = makeFs(
+      {
+        "/bundle/real.json": "{}",
+        "/bundle/memory.json": "{}",
+      },
+      ["/bundle"],
+      ["/bundle/memory.json"], // mark memory.json as a symlink
+    );
+    const entries = detectBundleEntries("/bundle", fs);
+    assert.equal(entries.length, 0);
+  });
+
+  it("rejects symlinked directories and does not recurse into them", () => {
+    const fs = makeFs(
+      { "/bundle/inner/memory.json": "{}" },
+      ["/bundle", "/bundle/inner"],
+      ["/bundle/inner"], // mark inner/ as a symlink
+    );
+    const entries = detectBundleEntries("/bundle", fs);
+    assert.equal(entries.length, 0);
   });
 });
