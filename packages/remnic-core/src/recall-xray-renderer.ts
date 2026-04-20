@@ -352,7 +352,16 @@ function formatScore(value: number): string {
 
 function formatCapturedAt(ts: number): string {
   if (!Number.isFinite(ts) || ts < 0) return "(unknown)";
-  return new Date(ts).toISOString();
+  // `new Date(n).toISOString()` throws a RangeError for finite numbers
+  // outside the valid Date range (roughly |n| > 8.64e15).  That case
+  // can surface when snapshots are corrupted or captured with a
+  // custom clock, so coerce it to the same "(unknown)" fallback
+  // rather than crashing the renderer.
+  try {
+    return new Date(ts).toISOString();
+  } catch {
+    return "(unknown)";
+  }
 }
 
 function mdEscape(value: string): string {
