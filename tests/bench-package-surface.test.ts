@@ -9,16 +9,35 @@ test("@remnic/bench publishes compiled entrypoints instead of raw source paths",
   ) as {
     main?: string;
     types?: string;
-    exports?: { ".": { import?: string; types?: string } };
+    exports?: Record<string, unknown>;
     files?: string[];
     scripts?: Record<string, string>;
   };
 
   assert.equal(pkg.main, "./dist/index.js");
   assert.equal(pkg.types, "./dist/index.d.ts");
-  assert.equal(pkg.exports?.["."]?.import, "./dist/index.js");
-  assert.equal(pkg.exports?.["."]?.types, "./dist/index.d.ts");
-  assert.deepEqual(pkg.files, ["dist"]);
+  const dotExport = pkg.exports?.["."] as
+    | { import?: string; types?: string }
+    | undefined;
+  assert.equal(dotExport?.import, "./dist/index.js");
+  assert.equal(dotExport?.types, "./dist/index.d.ts");
+  // `baselines/` ships with the package so consumers can compare their
+  // ablation runs against the committed reference artifacts (issue #567 PR 2).
+  assert.deepEqual(pkg.files, ["dist", "baselines"]);
+  // The baseline JSON is importable via subpath so consumers can read it
+  // without reaching into `node_modules` by relative path (issue #567 PR 2,
+  // Codex #606). We expose both a generic glob and a `.json`-qualified
+  // pattern so bundlers and Node resolvers both work.
+  assert.equal(
+    pkg.exports?.["./baselines/*"],
+    "./baselines/*",
+    "baselines subpath export missing",
+  );
+  assert.equal(
+    pkg.exports?.["./baselines/*.json"],
+    "./baselines/*.json",
+    "baselines *.json subpath export missing",
+  );
   assert.equal(pkg.scripts?.build, "tsup --config tsup.config.ts");
 });
 
