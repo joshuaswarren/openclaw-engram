@@ -128,3 +128,70 @@ test("processQueue clears queueProcessing on exit regardless of task outcomes", 
   await orch.processQueue();
   assert.equal(orch.queueProcessing, false);
 });
+
+// ── Outer processQueue().catch() branch (Codex follow-up on #549) ──────────
+
+type QueueProcessorOrchestrator = QueueOrchestrator & {
+  logExtractionQueueFailure: (err: unknown, source: "task" | "processor") => void;
+};
+
+test("logExtractionQueueFailure(processor) classifies AbortError as debug (#549)", async () => {
+  // Covers the outer `processQueue().catch(...)` path in
+  // `queueBufferedExtraction`.  A processor-level AbortError can
+  // bubble from e.g. a processQueue rewrite that awaits an external
+  // signal, so the handler must fail open to debug — otherwise a
+  // session-transition-triggered processor abort would get logged
+  // at error next to the successful extraction it just produced.
+  const { entries } = installCapturingLogger();
+  const orch = createQueueOrchestrator() as QueueProcessorOrchestrator;
+  orch.logExtractionQueueFailure(
+    abortError("queue processor aborted"),
+    "processor",
+  );
+  const errorEntries = entries.filter((e) => e.level === "error");
+  const debugEntries = entries.filter(
+    (e) =>
+      e.level === "debug" &&
+      e.message.includes("background extraction queue processor aborted"),
+  );
+  assert.equal(errorEntries.length, 0);
+  assert.equal(debugEntries.length, 1);
+});
+
+test("logExtractionQueueFailure(processor) preserves error-level for real failures", async () => {
+  const { entries } = installCapturingLogger();
+  const orch = createQueueOrchestrator() as QueueProcessorOrchestrator;
+  orch.logExtractionQueueFailure(
+    new Error("unexpected processor crash"),
+    "processor",
+  );
+  const errorEntries = entries.filter((e) => e.level === "error");
+  assert.equal(errorEntries.length, 1);
+  assert.ok(
+    errorEntries[0]?.message.includes(
+      "background extraction queue processor failed",
+    ),
+  );
+});
+
+test("logExtractionQueueFailure names the right layer (task vs processor)", async () => {
+  // Regression guard that keeps the two log messages distinct — a
+  // single shared message would lose the operator context that
+  // tells them whether a specific extraction aborted or the queue
+  // processor itself did.
+  const { entries } = installCapturingLogger();
+  const orch = createQueueOrchestrator() as QueueProcessorOrchestrator;
+  orch.logExtractionQueueFailure(abortError("a"), "task");
+  orch.logExtractionQueueFailure(abortError("b"), "processor");
+  const debugMessages = entries
+    .filter((e) => e.level === "debug")
+    .map((e) => e.message);
+  assert.ok(
+    debugMessages.some((m) => m.includes("background extraction task aborted")),
+  );
+  assert.ok(
+    debugMessages.some((m) =>
+      m.includes("background extraction queue processor aborted"),
+    ),
+  );
+});

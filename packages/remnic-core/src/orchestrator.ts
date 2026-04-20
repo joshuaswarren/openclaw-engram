@@ -8637,17 +8637,7 @@ export class Orchestrator {
     if (!this.queueProcessing) {
       this.queueProcessing = true;
       this.processQueue().catch((err) => {
-        // Issue #549: an AbortError bubbling up here is session-
-        // transition cancellation, not a failure.  Log at debug so
-        // operators don't see spurious "queue processor failed"
-        // errors right next to a successful extraction log.
-        if (isAbortError(err)) {
-          log.debug(
-            "background extraction queue processor aborted (session transition)",
-          );
-        } else {
-          log.error("background extraction queue processor failed", err);
-        }
+        this.logExtractionQueueFailure(err, "processor");
         this.queueProcessing = false;
       });
     }
@@ -8729,29 +8719,48 @@ export class Orchestrator {
         try {
           await task();
         } catch (err) {
-          // Issue #549: `throwIfRecallAborted` (used throughout
-          // runExtraction) raises an Error whose `name` is
-          // `"AbortError"`.  That path fires when `before_reset`
-          // aborts a queued task to avoid duplicate extraction — it
-          // is intentional cancellation, not a failure.  Downgrading
-          // the log to debug prevents spurious `error`-level lines
-          // that routinely appear right next to a successful
-          // `persisted: N facts, M entities` log and that confuse
-          // operators into thinking extraction is broken.  Genuine
-          // extraction failures (network, parse, I/O) still log at
-          // `error`.
-          if (isAbortError(err)) {
-            log.debug(
-              "background extraction task aborted (session transition)",
-            );
-          } else {
-            log.error("background extraction task failed", err);
-          }
+          this.logExtractionQueueFailure(err, "task");
         }
       }
     }
 
     this.queueProcessing = false;
+  }
+
+  /**
+   * Classify + log a failure from either the per-task catch inside
+   * `processQueue()` or the outer `processQueue().catch(...)` in
+   * `queueBufferedExtraction()`.  Issue #549: `throwIfRecallAborted`
+   * (used throughout `runExtraction`) raises an Error whose `name` is
+   * `"AbortError"`.  That path fires when `before_reset` aborts a
+   * queued task to avoid duplicate extraction — it is intentional
+   * cancellation, not a failure.  Downgrading the log to debug
+   * prevents spurious `error`-level lines that routinely appear
+   * right next to a successful `persisted: N facts, M entities` log
+   * and that confuse operators into thinking extraction is broken.
+   * Genuine extraction failures (network, parse, I/O) still log at
+   * `error`.
+   *
+   * Source differentiates the two call sites so the log message
+   * names the right layer (`task` vs `processor`).
+   */
+  private logExtractionQueueFailure(
+    err: unknown,
+    source: "task" | "processor",
+  ): void {
+    const aborted =
+      source === "task"
+        ? "background extraction task aborted (session transition)"
+        : "background extraction queue processor aborted (session transition)";
+    const failed =
+      source === "task"
+        ? "background extraction task failed"
+        : "background extraction queue processor failed";
+    if (isAbortError(err)) {
+      log.debug(aborted);
+    } else {
+      log.error(failed, err);
+    }
   }
 
   private async runExtraction(
