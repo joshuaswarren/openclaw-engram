@@ -273,6 +273,47 @@ openclaw engram doctor --json        # Health diagnostics with remediation hints
 openclaw engram config-review --json # Opinionated config tuning recommendations
 ```
 
+## Bring your memory
+
+Remnic can import existing memory from the platforms you already use.
+Four optional importer packages ship alongside the CLI — install only the
+ones you need:
+
+```bash
+# ChatGPT (OpenAI data export: saved memories + optional conversation summaries)
+npm install -g @remnic/import-chatgpt
+remnic import --adapter chatgpt --file ~/chatgpt-export/memory.json --dry-run
+
+# Claude (Anthropic data export: project docs + prompt templates)
+npm install -g @remnic/import-claude
+remnic import --adapter claude --file ~/claude-export/projects.json
+
+# Gemini (Google Takeout "Gemini Apps Activity")
+npm install -g @remnic/import-gemini
+remnic import --adapter gemini --file "~/Takeout/Gemini/My Activity.json"
+
+# mem0 (REST API — paginated; honors --rate-limit)
+npm install -g @remnic/import-mem0
+export MEM0_API_KEY=...
+remnic import --adapter mem0 --rate-limit 2
+```
+
+Each importer is an **optional runtime companion** — the base CLI
+install never pulls them in. If you run `remnic import --adapter <name>`
+without the matching package installed, the CLI prints a clean install
+hint. Every run supports `--dry-run` for a zero-write preview.
+
+> **Privacy note:** import parsing and storage run locally, but after
+> the orchestrator accepts a record it enters the normal extraction
+> pipeline — which calls whatever model provider you have configured.
+> If extraction is routed to a remote provider, imported content is
+> transmitted to that provider during extraction. To keep imports fully
+> local, configure a local extraction model or use `--dry-run` to
+> preview without writing.
+
+See [docs/importers.md](docs/importers.md) for per-source details, input
+formats, provenance metadata, and the full privacy breakdown.
+
 ## Troubleshooting: hooks aren't firing
 
 **Symptom:** Remnic appears installed but no memories are created. The gateway log shows no `[remnic]` lines after conversations.
@@ -928,6 +969,7 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Memory Extensions](docs/architecture/memory-extensions.md) — Third-party extension discovery
 - [Codex Marketplace](docs/plugins/codex-marketplace.md) — Marketplace installation
 - [Procedural memory](docs/procedural-memory.md) — Procedure files, recall injection, mining; enable with `procedural.enabled` (issue #519)
+- [Memory importers](docs/importers.md) — Bring memory from ChatGPT, Claude, Gemini, and mem0 (issue #568)
 
 ## Contributing
 
