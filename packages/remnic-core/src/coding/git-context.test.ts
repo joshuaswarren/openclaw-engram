@@ -117,11 +117,22 @@ test("normalizeOriginUrl: scp paths may start with digits", () => {
 
 test("normalizeOriginUrl: Windows drive-letter path is not parsed as scp", () => {
   // `git remote get-url origin` can return `C:/repos/app.git` for local
-  // Windows paths.  A single-letter host should not trigger scp parsing.
-  // Expected: raw-lowercase fallback (without `.git`).
+  // Windows paths. The drive-letter branch short-circuits scp parsing.
   assert.equal(
     normalizeOriginUrl("C:/repos/app.git"),
     "c:/repos/app",
+  );
+});
+
+test("normalizeOriginUrl: single-character scp host alias is accepted", () => {
+  // `.ssh/config` host aliases may be a single character (`h:foo/bar`),
+  // and git treats those as scp remotes. The Windows drive-letter check
+  // only matches `[A-Za-z]:[\\/]`, so a single-char alias followed by
+  // `:<path>` (no slash immediately after the colon) still falls through
+  // to scp.
+  assert.equal(
+    normalizeOriginUrl("h:foo/bar.git"),
+    "h/foo/bar",
   );
 });
 
@@ -379,6 +390,30 @@ test("resolveGitContext: no origin HEAD symref — defaultBranch is null", async
   const ctx = await resolveGitContext(cwd, { invoker });
   assert.ok(ctx);
   assert.equal(ctx!.defaultBranch, null);
+});
+
+test("resolveGitContext: unborn HEAD repo — branch recovered from symbolic-ref HEAD", async () => {
+  // Fresh `git init` leaves HEAD unborn: `rev-parse --abbrev-ref HEAD`
+  // fails, but `symbolic-ref HEAD` still returns `refs/heads/main`.
+  const cwd = "/work/fresh";
+  const root = "/work/fresh";
+  const invoker = mockInvoker({
+    [keyFor(cwd, ["rev-parse", "--show-toplevel"])]: { stdout: `${root}\n`, exitCode: 0 },
+    [keyFor(root, ["rev-parse", "--abbrev-ref", "HEAD"])]: { stdout: "", exitCode: 128 },
+    [keyFor(root, ["symbolic-ref", "--quiet", "HEAD"])]: {
+      stdout: "refs/heads/main\n",
+      exitCode: 0,
+    },
+    [keyFor(root, ["remote", "get-url", "origin"])]: { stdout: "", exitCode: 1 },
+    [keyFor(root, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])]: {
+      stdout: "",
+      exitCode: 1,
+    },
+  });
+
+  const ctx = await resolveGitContext(cwd, { invoker });
+  assert.ok(ctx);
+  assert.equal(ctx!.branch, "main");
 });
 
 // ──────────────────────────────────────────────────────────────────────────

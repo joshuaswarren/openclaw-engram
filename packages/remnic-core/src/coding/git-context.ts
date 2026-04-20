@@ -152,6 +152,15 @@ export function normalizeOriginUrl(rawUrl: string): string {
   // through and appear in the output.
   if (/\.git$/i.test(url)) url = url.slice(0, -4);
 
+  // Windows drive-letter local path (e.g. `C:/repos/app`): detect here
+  // so the scp matcher below can accept single-character SSH host aliases
+  // (`h:foo/bar` from `.ssh/config`). A drive letter is exactly one ASCII
+  // letter followed by `:/` or `:\`; SSH aliases never have a slash
+  // immediately after the colon.
+  if (/^[A-Za-z]:[\\/]/.test(url)) {
+    return url.toLowerCase();
+  }
+
   // Protocol-prefixed: ssh://, https://, http://, git://, file://
   // Must be tried FIRST so that scp-style detection below doesn't
   // incorrectly swallow an ssh:// URL that happens to contain `:port/`.
@@ -175,10 +184,9 @@ export function normalizeOriginUrl(rawUrl: string): string {
   // port-bearing URLs have the `://` prefix and match the protocol branch
   // above before reaching here.
   //
-  // Requires the host to be at least two characters to avoid misreading
-  // Windows local paths like `C:/repos/app.git` (which `git remote get-url
-  // origin` can return verbatim) as an scp remote with host `C`.
-  const scpMatch = /^(?:([^@\s/]+)@)?([^:@\s/]{2,}):(.+)$/.exec(url);
+  // Windows drive letters were filtered above, so single-character SSH
+  // host aliases (`h:foo/bar`) are accepted here.
+  const scpMatch = /^(?:([^@\s/]+)@)?([^:@\s/]+):(.+)$/.exec(url);
   if (scpMatch) {
     const host = scpMatch[2] ?? "";
     const repoPath = scpMatch[3] ?? "";
@@ -237,12 +245,25 @@ export async function resolveGitContext(
     if (!rootPath) return null;
 
     // 2. Current branch. `--abbrev-ref HEAD` returns `HEAD` in detached
-    //    state, which we normalize to `null`.
+    //    state, which we normalize to `null`. On a fresh `git init` the
+    //    HEAD ref is unborn and `--abbrev-ref HEAD` fails, but
+    //    `symbolic-ref HEAD` still returns the target branch. Fall back
+    //    so newly-initialized repos get a sensible branch name.
     const branchResult = invoker(rootPath, ["rev-parse", "--abbrev-ref", "HEAD"]);
     let branch: string | null = null;
     if (branchResult.exitCode === 0) {
       const raw = branchResult.stdout.trim();
       branch = raw && raw !== "HEAD" ? raw : null;
+    } else {
+      const unbornRef = invoker(rootPath, ["symbolic-ref", "--quiet", "HEAD"]);
+      if (unbornRef.exitCode === 0) {
+        const raw = unbornRef.stdout.trim();
+        const prefix = "refs/heads/";
+        if (raw.startsWith(prefix)) {
+          const candidate = raw.slice(prefix.length);
+          if (candidate) branch = candidate;
+        }
+      }
     }
 
     // 3. Origin URL — optional. Used to derive a stable `projectId`.
