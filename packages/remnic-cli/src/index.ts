@@ -1897,32 +1897,43 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
 
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
   const benchmarkId = parsed.publishedName;
+  // Collect artifact paths written by each runtime profile so the
+  // --out promotion step copies the exact file just produced rather
+  // than scanning the whole results directory (Cursor Medium + Codex
+  // P1 on PR #603: the previous newest-mtime scan could silently
+  // publish unrelated or older artifacts under the new canonical
+  // filename).
+  const writtenPaths: string[] = [];
   for (const runtimeProfile of runtimeProfiles) {
     // Forward `--limit` + `--seed` through the existing package
     // runner. `--out` is handled below in the artifact write step.
-    const ok = await runBenchViaPackage(
+    const result = await runBenchViaPackage(
       parsed,
       benchmarkId,
       runtimeProfile,
     );
-    if (!ok) {
+    if (!result.ok) {
       console.error(
         `ERROR: unable to run ${benchmarkId} via @remnic/bench. Update the @remnic/bench install to a version that exports a runner for this benchmark.`,
       );
       process.exit(1);
     }
+    if (result.writtenPath) {
+      writtenPaths.push(result.writtenPath);
+    }
   }
 
-  // When `--out` is supplied, copy the newest result artifact into the
-  // directory under a canonical leaderboard filename. We keep the
-  // primary result file under `~/.remnic/bench/results/` (set by
-  // `resolveBenchOutputDir`) and only publish a flatter copy to the
-  // user-specified directory so the dev environment stays in sync.
+  // When `--out` is supplied, copy the result artifact we just wrote
+  // into the directory under a canonical leaderboard filename. We
+  // keep the primary result file under `~/.remnic/bench/results/`
+  // (set by `resolveBenchOutputDir`) and only publish a flatter copy
+  // to the user-specified directory so the dev environment stays in
+  // sync.
   if (parsed.publishedOut) {
-    const { promoteLatestArtifactToPublished } = await loadPublishedPromotionHelpers();
-    await promoteLatestArtifactToPublished({
+    const { promoteArtifactsToPublished } = await loadPublishedPromotionHelpers();
+    await promoteArtifactsToPublished({
       benchmarkId,
-      outputDir: resolveBenchOutputDir(),
+      artifactPaths: writtenPaths,
       publishedOutDir: parsed.publishedOut,
       model: parsed.systemModel,
     });
@@ -1932,47 +1943,49 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
 async function loadPublishedPromotionHelpers() {
   const benchModule = (await loadBenchModule()) as unknown as PackageBenchModule;
   return {
-    async promoteLatestArtifactToPublished(args: {
+    async promoteArtifactsToPublished(args: {
       benchmarkId: string;
-      outputDir: string;
+      artifactPaths: string[];
       publishedOutDir: string;
       model: string;
     }) {
-      const { mkdirSync, readdirSync, readFileSync, writeFileSync } = await import(
+      const { mkdirSync, readFileSync, writeFileSync } = await import(
         "node:fs"
       );
       const path = await import("node:path");
       mkdirSync(args.publishedOutDir, { recursive: true });
-      const entries = readdirSync(args.outputDir)
-        .filter((entry) => entry.endsWith(".json"))
-        .map((entry) => ({
-          name: entry,
-          mtimeMs: 0,
-          full: path.join(args.outputDir, entry),
-        }));
-      if (entries.length === 0) {
+      if (args.artifactPaths.length === 0) {
         console.warn(
-          `[bench published] No artifacts found under ${args.outputDir} to promote.`,
+          `[bench published] No artifacts produced for ${args.benchmarkId}; nothing to promote.`,
         );
         return;
       }
-      const { statSync } = await import("node:fs");
-      for (const entry of entries) {
-        entry.mtimeMs = statSync(entry.full).mtimeMs;
+      for (const artifactPath of args.artifactPaths) {
+        const raw = readFileSync(artifactPath, "utf8");
+        // Cursor Low on PR #603: `JSON.parse(null JSON literal)`
+        // returns `null`, which the old `as` cast hid. Validate the
+        // shape before dereferencing `.meta` to avoid a TypeError
+        // crashing the promotion step for a corrupted or empty
+        // artifact.
+        const parsedUnknown: unknown = JSON.parse(raw);
+        const parsedObj =
+          parsedUnknown !== null &&
+          typeof parsedUnknown === "object" &&
+          !Array.isArray(parsedUnknown)
+            ? (parsedUnknown as { meta?: { gitSha?: string } })
+            : {};
+        const gitShaShort = (parsedObj.meta?.gitSha ?? "unknown").slice(0, 7);
+        const today = new Date().toISOString().slice(0, 10);
+        const modelSlug = args.model.replace(/[^a-zA-Z0-9_.-]/g, "-");
+        const target = path.join(
+          args.publishedOutDir,
+          `${today}-${args.benchmarkId}-${modelSlug}-${gitShaShort}.json`,
+        );
+        writeFileSync(target, raw, "utf8");
+        console.log(
+          `[bench published] Promoted ${path.basename(artifactPath)} → ${target}`,
+        );
       }
-      entries.sort((a, b) => b.mtimeMs - a.mtimeMs);
-      const latest = entries[0]!;
-      const raw = readFileSync(latest.full, "utf8");
-      const parsed = JSON.parse(raw) as { meta?: { gitSha?: string } };
-      const gitShaShort = (parsed.meta?.gitSha ?? "unknown").slice(0, 7);
-      const today = new Date().toISOString().slice(0, 10);
-      const modelSlug = args.model.replace(/[^a-zA-Z0-9_.-]/g, "-");
-      const target = path.join(
-        args.publishedOutDir,
-        `${today}-${args.benchmarkId}-${modelSlug}-${gitShaShort}.json`,
-      );
-      writeFileSync(target, raw, "utf8");
-      console.log(`[bench published] Promoted ${latest.name} → ${target}`);
       // Reference the bench module so the import isn't tree-shaken if
       // a future refactor wants to call into it from here.
       void benchModule;
@@ -1984,14 +1997,14 @@ async function runBenchViaPackage(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
   runtimeProfile: BenchRuntimeProfile,
-): Promise<boolean> {
+): Promise<{ ok: boolean; writtenPath?: string }> {
   const loaded = await tryLoadBenchModule();
-  if (!loaded) return false;
+  if (!loaded) return { ok: false };
   const benchModule = loaded as unknown as PackageBenchModule;
 
   const definition = benchModule.getBenchmark?.(benchmarkId);
   if (!definition?.runnerAvailable || !benchModule.runBenchmark || !benchModule.writeBenchmarkResult) {
-    return false;
+    return { ok: false };
   }
 
   if (definition.meta?.category === "ingestion") {
@@ -2007,11 +2020,11 @@ async function runBenchViaPackage(
     [runtimeProfile],
   );
   if (!plans) {
-    return false;
+    return { ok: false };
   }
   const [plan] = plans;
   if (!plan) {
-    return false;
+    return { ok: false };
   }
 
   const outputDir = resolveBenchOutputDir();
@@ -2054,7 +2067,7 @@ async function runBenchViaPackage(
     } else {
       printBenchPackageSummary(result, writtenPath);
     }
-    return true;
+    return { ok: true, writtenPath };
   } finally {
     await system.destroy();
   }
@@ -4585,7 +4598,7 @@ async function cmdBench(rest: string[]): Promise<void> {
         benchmarkId,
         runtimeProfile,
       );
-      if (!handledByPackage) {
+      if (!handledByPackage.ok) {
         await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
       }
     }
