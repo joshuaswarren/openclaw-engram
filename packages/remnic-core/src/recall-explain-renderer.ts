@@ -220,6 +220,18 @@ export function toRecallExplainText(
  * left empty because the legacy snapshot doesn't carry them.  The
  * renderer handles missing fields gracefully.
  */
+/**
+ * Strip backticks, pipes, and newlines from a host-provided string so it
+ * cannot escape its enclosing markdown code span, break the surrounding
+ * table row, or inject extra rows when it lands in
+ * `renderXrayMarkdown`.  Applied at the adapter boundary because
+ * `LastRecallSnapshot` is hydrated from on-disk JSON without schema
+ * validation (codex P2 review on #605).
+ */
+function sanitizeForMarkdownInline(value: string): string {
+  return value.replace(/[`|\r\n]/g, " ").trim();
+}
+
 export function toRecallXraySnapshotFromLegacy(
   snapshot: LastRecallSnapshot | null,
 ): RecallXraySnapshot | null {
@@ -250,7 +262,10 @@ export function toRecallXraySnapshotFromLegacy(
       snapshot.queryHash
         ? `(legacy explain; queryHash=${snapshot.queryHash})`
         : "(legacy explain)",
-    snapshotId: `legacy-${snapshot.sessionKey ?? "unknown"}-${capturedAt}`,
+    // `snapshotId` is synthesized here; `sessionKey` is already
+    // sanitized before it reaches the ID because we re-use the
+    // sanitized string below.
+    snapshotId: `legacy-${sanitizeForMarkdownInline(snapshot.sessionKey ?? "unknown") || "unknown"}-${capturedAt}`,
     capturedAt,
     // Run the raw on-disk value through the same normalizer the text
     // and JSON paths use so the markdown adapter cannot render
@@ -261,8 +276,23 @@ export function toRecallXraySnapshotFromLegacy(
     results,
     filters,
     budget: { chars: 0, used: 0 },
-    ...(snapshot.sessionKey ? { sessionKey: snapshot.sessionKey } : {}),
-    ...(snapshot.namespace ? { namespace: snapshot.namespace } : {}),
+    // Sanitize legacy session metadata at the adapter boundary so a
+    // malformed on-disk value (containing backticks, pipes, or
+    // newlines) cannot break the enclosing markdown table when
+    // `renderXrayMarkdown` prints it in a raw code-span cell (codex P2
+    // review on #605).
+    ...(snapshot.sessionKey
+      ? (() => {
+          const clean = sanitizeForMarkdownInline(snapshot.sessionKey);
+          return clean ? { sessionKey: clean } : {};
+        })()
+      : {}),
+    ...(snapshot.namespace
+      ? (() => {
+          const clean = sanitizeForMarkdownInline(snapshot.namespace);
+          return clean ? { namespace: clean } : {};
+        })()
+      : {}),
   };
 }
 
