@@ -111,6 +111,9 @@ class LocalLlmProvider implements LlmProvider {
             ],
             temperature: opts.temperature,
             max_tokens: opts.maxTokens,
+            ...(this.config.disableThinking
+              ? { chat_template_kwargs: { enable_thinking: false } }
+              : {}),
           }),
         },
         this.config.retryOptions,

@@ -61,6 +61,8 @@ export interface ParsedBenchArgs {
   custom?: string;
   target?: BenchPublishTarget;
   requestTimeout?: number;
+  /** Suppress thinking/reasoning tokens for thinking-capable models (Gemma 4, Qwen 3.5, DeepSeek). */
+  disableThinking?: boolean;
   /** `bench published` — specific benchmark to run (longmemeval|locomo). */
   publishedName?: PublishedBenchmarkName;
   /** `bench published` — seed forwarded into the harness context. */
@@ -501,5 +503,6 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
       : undefined,
     publishedDryRun: args.includes("--dry-run"),
     requestTimeout,
+    disableThinking: args.includes("--disable-thinking"),
   };
 }

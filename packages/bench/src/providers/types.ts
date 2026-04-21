@@ -33,6 +33,8 @@ export interface ProviderBaseConfig {
   apiKey?: string;
   headers?: Record<string, string>;
   retryOptions?: { maxAttempts?: number; baseBackoffMs?: number; timeoutMs?: number };
+  /** Suppress thinking/reasoning tokens for thinking-capable models (Qwen 3.5, Gemma 4, DeepSeek). */
+  disableThinking?: boolean;
 }
 
 export interface OpenAiCompatibleProviderConfig extends ProviderBaseConfig {

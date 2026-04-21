@@ -41,6 +41,7 @@ export interface ResolveBenchRuntimeProfileOptions {
   judgeModel?: string;
   judgeBaseUrl?: string;
   requestTimeout?: number;
+  disableThinking?: boolean;
 }
 
 export interface ResolvedBenchRuntimeProfile {
@@ -89,6 +90,7 @@ export async function resolveBenchRuntimeProfile(
       options.systemModel,
       options.systemBaseUrl,
       options.requestTimeout,
+      options.disableThinking,
     );
   const judgeProvider = resolveProviderConfig(
     "judge",
@@ -96,6 +98,7 @@ export async function resolveBenchRuntimeProfile(
     options.judgeModel,
     options.judgeBaseUrl,
     options.requestTimeout,
+    options.disableThinking,
   );
   const responderFactoryConfig = systemProvider
     ? asProviderFactoryConfig(systemProvider)
@@ -317,6 +320,7 @@ function resolveProviderConfig(
   model: string | undefined,
   baseUrl: string | undefined,
   requestTimeout?: number,
+  disableThinking?: boolean,
 ): ProviderConfig | null {
   const hasProvider = typeof provider === "string";
   const hasModel = typeof model === "string" && model.trim().length > 0;
@@ -347,6 +351,7 @@ function resolveProviderConfig(
     model: model.trim(),
     ...(hasBaseUrl ? { baseUrl: baseUrl!.trim() } : {}),
     ...(requestTimeout ? { retryOptions: { timeoutMs: requestTimeout } } : {}),
+    ...(disableThinking ? { disableThinking: true } : {}),
   };
 }
 
@@ -384,6 +389,7 @@ function asProviderFactoryConfig(config: ProviderConfig): ProviderFactoryConfig 
     model: config.model,
     ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
     ...(config.retryOptions ? { retryOptions: config.retryOptions } : {}),
+    ...(config.disableThinking ? { disableThinking: config.disableThinking } : {}),
   } as ProviderFactoryConfig;
 }
 

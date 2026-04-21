@@ -669,6 +669,7 @@ export function buildBenchRuntimeProfileRequest(
     judgeModel: parsed.judgeModel,
     judgeBaseUrl: parsed.judgeBaseUrl,
     requestTimeout: parsed.requestTimeout,
+    disableThinking: parsed.disableThinking,
   };
 }
 

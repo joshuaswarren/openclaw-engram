@@ -76,6 +76,10 @@ class OpenAiCompatibleProvider implements LlmProvider {
           ],
           temperature: opts.temperature,
           max_tokens: opts.maxTokens,
+          ...(this.config.disableThinking &&
+          isThinkingCompatibleBackend(this.config.baseUrl)
+            ? { chat_template_kwargs: { enable_thinking: false } }
+            : {}),
         }),
       },
       this.config.retryOptions,
@@ -216,7 +220,7 @@ function isContextWindowError(errorBody: string): boolean {
   );
 }
 
-function isLmStudioBaseUrl(baseUrl?: string): boolean {
+export function isLmStudioBaseUrl(baseUrl?: string): boolean {
   if (!baseUrl) {
     return false;
   }
@@ -230,6 +234,26 @@ function isLmStudioBaseUrl(baseUrl?: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isVllmBaseUrl(baseUrl?: string): boolean {
+  if (!baseUrl) {
+    return false;
+  }
+
+  try {
+    const url = new URL(baseUrl);
+    return (
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost") &&
+      url.port === "8000"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isThinkingCompatibleBackend(baseUrl?: string): boolean {
+  return isLmStudioBaseUrl(baseUrl) || isVllmBaseUrl(baseUrl);
 }
 
 function readMessageText(payload: ChatCompletionResponse): string {

@@ -33,6 +33,7 @@ export interface ProviderConfig {
   model: string;
   baseUrl?: string;
   retryOptions?: { maxAttempts?: number; baseBackoffMs?: number; timeoutMs?: number };
+  disableThinking?: boolean;
 }
 
 export interface TaskTokenUsage {

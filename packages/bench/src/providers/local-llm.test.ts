@@ -179,3 +179,70 @@ test("local-llm provider forwards Authorization header when apiKey is set", asyn
     globalThis.fetch = originalFetch;
   }
 });
+
+test("local-llm provider sends chat_template_kwargs when disableThinking is true", async () => {
+  let capturedBody: string | null = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    capturedBody = init?.body as string;
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+        model: "test",
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const provider = createLocalLlmProvider({
+      provider: "local-llm",
+      model: "google/gemma-4-26b-a4b",
+      baseUrl: "http://127.0.0.1:1234/v1",
+      disableThinking: true,
+    });
+
+    await provider.complete("hello");
+    const parsed = JSON.parse(capturedBody!);
+    assert.deepEqual(parsed.chat_template_kwargs, { enable_thinking: false });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("local-llm provider does not send chat_template_kwargs when disableThinking is omitted", async () => {
+  let capturedBody: string | null = null;
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    capturedBody = init?.body as string;
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+        model: "test",
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const provider = createLocalLlmProvider({
+      provider: "local-llm",
+      model: "some-model",
+      baseUrl: "http://127.0.0.1:1234/v1",
+    });
+
+    await provider.complete("hello");
+    const parsed = JSON.parse(capturedBody!);
+    assert.equal(parsed.chat_template_kwargs, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
