@@ -58,6 +58,14 @@ interface SurpriseTelemetryQueueEntry {
   surpriseScore: number;
   triggered: boolean;
   turnCountInWindow: number;
+  /**
+   * ISO timestamp captured at the moment the turn was scored, NOT when
+   * the ledger append eventually runs. Backpressure on the serialized
+   * write chain could otherwise shift event timestamps away from the
+   * real decision moment and distort the distribution report (p90
+   * inflated, current-threshold row misidentified).
+   */
+  timestamp: string;
 }
 
 export class SmartBuffer {
@@ -257,6 +265,10 @@ export class SmartBuffer {
           surpriseScore: surprise,
           triggered,
           turnCountInWindow: entry.turns.length,
+          // Stamp at decision time so backpressure on the write chain
+          // does not shift the event's apparent moment away from when
+          // the turn was actually scored.
+          timestamp: new Date().toISOString(),
         });
       }
     }
@@ -317,7 +329,11 @@ export class SmartBuffer {
     }
     const event: BufferSurpriseEvent = {
       event: "BUFFER_SURPRISE",
-      timestamp: new Date().toISOString(),
+      // Use the decision-time stamp captured when the event was
+      // queued, NOT `Date.now()` here — backpressure on the write
+      // chain could otherwise shift timestamps into the future relative
+      // to when the turn was scored.
+      timestamp: params.timestamp,
       bufferKey: params.bufferKey,
       sessionKey: params.sessionKey,
       turnRole: params.turnRole,

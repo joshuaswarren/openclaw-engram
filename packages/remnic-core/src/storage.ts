@@ -1921,6 +1921,39 @@ function buildEntitySchemaCacheKey(entitySchemas?: PluginConfig["entitySchemas"]
   return JSON.stringify(normalized);
 }
 
+/**
+ * Full-schema type guard for a `BUFFER_SURPRISE` telemetry row
+ * (issue #563 PR 3).
+ *
+ * The reader applies `limit` over the count of VALID rows, so
+ * applying only a partial check (e.g. "has a finite surpriseScore")
+ * and then deferring the rest of validation to
+ * `reportBufferSurpriseDistribution` would silently count
+ * schema-incomplete rows toward the limit, pushing genuinely-valid
+ * earlier rows out of the report window. Validate everything the
+ * downstream report requires at read time so the limit semantics and
+ * the distribution semantics stay consistent.
+ */
+function isValidBufferSurpriseEvent(value: unknown): value is BufferSurpriseEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (v.event !== "BUFFER_SURPRISE") return false;
+  if (typeof v.timestamp !== "string" || v.timestamp.length === 0) return false;
+  if (!Number.isFinite(Date.parse(v.timestamp))) return false;
+  if (typeof v.bufferKey !== "string" || v.bufferKey.length === 0) return false;
+  if (v.sessionKey !== null && typeof v.sessionKey !== "string") return false;
+  if (v.turnRole !== "user" && v.turnRole !== "assistant") return false;
+  if (typeof v.surpriseScore !== "number" || !Number.isFinite(v.surpriseScore)) {
+    return false;
+  }
+  if (typeof v.threshold !== "number" || !Number.isFinite(v.threshold)) return false;
+  if (typeof v.triggeredFlush !== "boolean") return false;
+  if (typeof v.turnCountInWindow !== "number" || !Number.isFinite(v.turnCountInWindow)) {
+    return false;
+  }
+  return true;
+}
+
 export class StorageManager {
   private knowledgeIndexCache: { result: string; builtAt: number } | null = null;
   private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
@@ -4015,14 +4048,9 @@ export class StorageManager {
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
       try {
-        const parsed = JSON.parse(trimmed) as Partial<BufferSurpriseEvent>;
-        if (
-          parsed &&
-          typeof parsed === "object" &&
-          typeof parsed.surpriseScore === "number" &&
-          Number.isFinite(parsed.surpriseScore)
-        ) {
-          events.push(parsed as BufferSurpriseEvent);
+        const parsed = JSON.parse(trimmed);
+        if (isValidBufferSurpriseEvent(parsed)) {
+          events.push(parsed);
         }
       } catch {
         // Malformed row — fail open, skip.
