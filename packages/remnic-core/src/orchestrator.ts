@@ -29,6 +29,10 @@ import {
   type JudgeCandidate,
   type JudgeVerdict,
 } from "./extraction-judge.js";
+import {
+  EXTRACTION_JUDGE_VERDICT_CATEGORY,
+  recordJudgeVerdict,
+} from "./extraction-judge-telemetry.js";
 import { buildProcedurePersistBody } from "./procedural/procedure-types.js";
 import { buildProcedureRecallSection } from "./procedural/procedure-recall.js";
 import {
@@ -10845,6 +10849,38 @@ export class Orchestrator {
           });
           candidateToFactIndex.push(fi);
         }
+        // Telemetry callback (issue #562 PR 3). Emits one structured row to
+        // the observation ledger per resolved verdict. Gated on
+        // `extractionJudgeTelemetryEnabled`; the callback is a no-op when
+        // the flag is off. `recordJudgeVerdict` swallows write errors so
+        // telemetry never blocks extraction.
+        const judgeTelemetryOpts = {
+          enabled: this.config.extractionJudgeTelemetryEnabled === true,
+          memoryDir: this.config.memoryDir,
+        };
+        const judgeTelemetryHandler = judgeTelemetryOpts.enabled
+          ? (obs: import("./extraction-judge.js").JudgeVerdictObservation) => {
+              const event: import("./extraction-judge-telemetry.js").JudgeVerdictEvent = {
+                version: 1,
+                category: EXTRACTION_JUDGE_VERDICT_CATEGORY,
+                ts: new Date().toISOString(),
+                verdictKind: getVerdictKind(obs.verdict),
+                reason: obs.verdict.reason,
+                deferrals: obs.priorDeferrals,
+                elapsedMs: obs.elapsedMs,
+                candidateCategory: obs.candidate.category,
+                confidence: obs.candidate.confidence,
+                contentHash: obs.contentHash,
+                fromCache: obs.source === "cache",
+                ...(obs.source === "llm-cap-rejected"
+                  ? { deferCapTriggered: true }
+                  : {}),
+              };
+              // Best-effort fire-and-forget: don't await the write, but log
+              // failures at debug via the helper's internal catch.
+              void recordJudgeVerdict(event, judgeTelemetryOpts);
+            }
+          : undefined;
         const judgeResult = await judgeFactDurability(
           judgeCandidates,
           this.config,
@@ -10852,6 +10888,7 @@ export class Orchestrator {
           new FallbackLlmClient(this.config.gatewayConfig),
           this.judgeVerdictCache,
           this.judgeDeferCounts,
+          judgeTelemetryHandler,
         );
         // Remap candidate-indexed verdicts to original fact indexes
         judgeVerdictsByFactIndex = new Map();

@@ -583,6 +583,13 @@ export interface PluginConfig {
    * Defaults to 2 (issue #562, PR 2).
    */
   extractionJudgeMaxDeferrals: number;
+  /**
+   * Emit structured telemetry rows to
+   * `state/observation-ledger/extraction-judge-verdicts.jsonl` on every
+   * judge verdict. Off by default; enable to collect defer-rate / latency
+   * metrics for operator dashboards (issue #562, PR 3).
+   */
+  extractionJudgeTelemetryEnabled: boolean;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   daySummaryEnabled: boolean;

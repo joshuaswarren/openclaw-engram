@@ -1543,6 +1543,10 @@ export function parseConfig(raw: unknown): PluginConfig {
       cfg.extractionJudgeMaxDeferrals >= 1
         ? Math.floor(cfg.extractionJudgeMaxDeferrals)
         : 2,
+    // Judge telemetry (issue #562 PR 3): opt-in structured emit to the
+    // observation ledger for defer-rate / latency metrics.
+    extractionJudgeTelemetryEnabled:
+      cfg.extractionJudgeTelemetryEnabled === true,
     // Inline source attribution (issue #369). Opt-in to preserve
     // backwards compatibility with existing downstream consumers.
     inlineSourceAttributionEnabled: cfg.inlineSourceAttributionEnabled === true,
