@@ -1071,10 +1071,13 @@ export function parseConfig(raw: unknown): PluginConfig {
           (v): v is string => typeof v === "string" && v.length > 0,
         )
       : ["decisions", "principles", "conventions", "runbooks", "entities"],
-    // Memory Worth recall filter (issue #560 PR 4). Default off — PR 5
-    // flips the default after bench validation.
+    // Memory Worth recall filter (issue #560 PR 4, default flipped in PR 5).
+    // Bench result on the seeded fixture: precision@5 lifts from 0.00 to
+    // 0.60 across all 50 cases with zero regressions. See
+    // `runMemoryWorthBench` in memory-worth-bench.ts. Operators can still
+    // opt out with recallMemoryWorthFilterEnabled=false.
     recallMemoryWorthFilterEnabled:
-      coerceBool(cfg.recallMemoryWorthFilterEnabled) ?? false,
+      coerceBool(cfg.recallMemoryWorthFilterEnabled) ?? true,
     recallMemoryWorthHalfLifeMs: (() => {
       const n = coerceNumber(cfg.recallMemoryWorthHalfLifeMs);
       return n !== undefined && n >= 0 ? n : 0;

@@ -735,6 +735,15 @@ export {
 } from "./memory-worth-filter.js";
 
 // ---------------------------------------------------------------------------
+// Memory Worth recall-precision benchmark (issue #560 PR 5 of 5)
+// ---------------------------------------------------------------------------
+
+export {
+  runMemoryWorthBench,
+  type MemoryWorthBenchResult,
+} from "./memory-worth-bench.js";
+
+// ---------------------------------------------------------------------------
 // Graph retrieval types (issue #559, PR 1 of 5)
 // ---------------------------------------------------------------------------
 
