@@ -1553,6 +1553,13 @@ export function parseConfig(raw: unknown): PluginConfig {
     // codebase (CLAUDE.md gotcha 36).
     extractionJudgeTelemetryEnabled:
       coerceBool(cfg.extractionJudgeTelemetryEnabled) === true,
+    // Judge training-pair collection (issue #562 PR 4): opt-in shim for a
+    // future GRPO training pipeline. Rows land under ~/.remnic/judge-
+    // training/<date>.jsonl — NOT in the shared memory directory.
+    // Uses `coerceBool` per CLAUDE.md gotcha 36 for CLI-string parity.
+    collectJudgeTrainingPairs: coerceBool(cfg.collectJudgeTrainingPairs) === true,
+    judgeTrainingDir:
+      typeof cfg.judgeTrainingDir === "string" ? cfg.judgeTrainingDir : "",
     // Inline source attribution (issue #369). Opt-in to preserve
     // backwards compatibility with existing downstream consumers.
     inlineSourceAttributionEnabled: cfg.inlineSourceAttributionEnabled === true,

@@ -590,6 +590,21 @@ export interface PluginConfig {
    * metrics for operator dashboards (issue #562, PR 3).
    */
   extractionJudgeTelemetryEnabled: boolean;
+  /**
+   * Collect `(candidate_text, verdict_kind, reason)` tuples into
+   * `~/.remnic/judge-training/<date>.jsonl` for use by a future GRPO
+   * training pipeline (issue #562, PR 4). Off by default. Rows live in
+   * the user's home directory rather than the shared memory directory so
+   * they are not committed, sync'd, or bundled into memory exports.
+   */
+  collectJudgeTrainingPairs: boolean;
+  /**
+   * Override directory for judge training-pair collection. Empty string
+   * means use the default (`~/.remnic/judge-training`). Primarily for
+   * tests and for operators who want the output to land in a specific
+   * location.
+   */
+  judgeTrainingDir: string;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   daySummaryEnabled: boolean;

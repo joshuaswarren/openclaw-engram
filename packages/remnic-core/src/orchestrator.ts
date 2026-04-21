@@ -33,6 +33,7 @@ import {
   EXTRACTION_JUDGE_VERDICT_CATEGORY,
   recordJudgeVerdict,
 } from "./extraction-judge-telemetry.js";
+import { recordJudgeTrainingPair } from "./extraction-judge-training.js";
 import { buildProcedurePersistBody } from "./procedural/procedure-types.js";
 import { buildProcedureRecallSection } from "./procedural/procedure-recall.js";
 import {
@@ -10866,38 +10867,63 @@ export class Orchestrator {
           });
           candidateToFactIndex.push(fi);
         }
-        // Telemetry callback (issue #562 PR 3). Emits one structured row to
-        // the observation ledger per resolved verdict. Gated on
-        // `extractionJudgeTelemetryEnabled`; the callback is a no-op when
-        // the flag is off. `recordJudgeVerdict` swallows write errors so
-        // telemetry never blocks extraction.
+        // Telemetry + training-pair emit (issue #562 PR 3 + PR 4). The
+        // orchestrator wires two fire-and-forget writers behind a single
+        // callback so `judgeFactDurability` does not need to know about
+        // either ledger. Both handlers are skipped when their flags are
+        // off; the combined callback itself is undefined when both are
+        // disabled so there is zero overhead in the default configuration.
         const judgeTelemetryOpts = {
           enabled: this.config.extractionJudgeTelemetryEnabled === true,
           memoryDir: this.config.memoryDir,
         };
-        const judgeTelemetryHandler = judgeTelemetryOpts.enabled
-          ? (obs: import("./extraction-judge.js").JudgeVerdictObservation) => {
-              const event: import("./extraction-judge-telemetry.js").JudgeVerdictEvent = {
-                version: 1,
-                category: EXTRACTION_JUDGE_VERDICT_CATEGORY,
-                ts: new Date().toISOString(),
-                verdictKind: getVerdictKind(obs.verdict),
-                reason: obs.verdict.reason,
-                deferrals: obs.priorDeferrals,
-                elapsedMs: obs.elapsedMs,
-                candidateCategory: obs.candidate.category,
-                confidence: obs.candidate.confidence,
-                contentHash: obs.contentHash,
-                fromCache: obs.source === "cache",
-                ...(obs.source === "llm-cap-rejected"
-                  ? { deferCapTriggered: true }
-                  : {}),
-              };
-              // Best-effort fire-and-forget: don't await the write, but log
-              // failures at debug via the helper's internal catch.
-              void recordJudgeVerdict(event, judgeTelemetryOpts);
-            }
-          : undefined;
+        const judgeTrainingOpts = {
+          enabled: this.config.collectJudgeTrainingPairs === true,
+          ...(this.config.judgeTrainingDir
+            ? { directory: this.config.judgeTrainingDir }
+            : {}),
+        };
+        const judgeTelemetryHandler =
+          judgeTelemetryOpts.enabled || judgeTrainingOpts.enabled
+            ? (obs: import("./extraction-judge.js").JudgeVerdictObservation) => {
+                const ts = new Date().toISOString();
+                const verdictKind = getVerdictKind(obs.verdict);
+                if (judgeTelemetryOpts.enabled) {
+                  const event: import("./extraction-judge-telemetry.js").JudgeVerdictEvent = {
+                    version: 1,
+                    category: EXTRACTION_JUDGE_VERDICT_CATEGORY,
+                    ts,
+                    verdictKind,
+                    reason: obs.verdict.reason,
+                    deferrals: obs.priorDeferrals,
+                    elapsedMs: obs.elapsedMs,
+                    candidateCategory: obs.candidate.category,
+                    confidence: obs.candidate.confidence,
+                    contentHash: obs.contentHash,
+                    fromCache: obs.source === "cache",
+                    ...(obs.source === "llm-cap-rejected"
+                      ? { deferCapTriggered: true }
+                      : {}),
+                  };
+                  void recordJudgeVerdict(event, judgeTelemetryOpts);
+                }
+                if (judgeTrainingOpts.enabled) {
+                  const pair: import("./extraction-judge-training.js").JudgeTrainingPair = {
+                    version: 1,
+                    ts,
+                    candidateText: obs.candidate.text,
+                    candidateCategory: obs.candidate.category,
+                    ...(typeof obs.candidate.confidence === "number"
+                      ? { candidateConfidence: obs.candidate.confidence }
+                      : {}),
+                    verdictKind,
+                    reason: obs.verdict.reason,
+                    priorDeferrals: obs.priorDeferrals,
+                  };
+                  void recordJudgeTrainingPair(pair, judgeTrainingOpts);
+                }
+              }
+            : undefined;
         const judgeResult = await judgeFactDurability(
           judgeCandidates,
           this.config,
