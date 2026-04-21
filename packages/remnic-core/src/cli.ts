@@ -3450,6 +3450,12 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log("=== Extraction Judge Verdict Stats ===\n");
           console.log(`Total verdicts: ${stats.total}`);
           if (stats.total === 0) {
+            // Surface malformed-ledger rows even when totals are zero so
+            // operators can distinguish "telemetry off / empty ledger"
+            // from "ledger is corrupt / schema mismatch" (codex P2).
+            if (stats.malformed > 0) {
+              console.log(`  malformed rows skipped: ${stats.malformed}`);
+            }
             if (!orchestrator.config.extractionJudgeTelemetryEnabled) {
               console.log(
                 "\nNote: extractionJudgeTelemetryEnabled is OFF. Enable it in plugin config to collect verdict telemetry.",
