@@ -347,6 +347,14 @@ export interface PluginConfig {
    * against → treat as not-applicable rather than maximally surprising).
    */
   bufferSurpriseRecentMemoryCount: number;
+  /**
+   * Hard timeout (ms) for the surprise probe. If the probe does not
+   * resolve within this window, the buffer treats the probe as failed,
+   * logs at debug, and falls through to the existing triggers. Ensures
+   * a slow or hung embedder cannot stall the turn-append path. Default
+   * `2000` (2s).
+   */
+  bufferSurpriseProbeTimeoutMs: number;
   consolidateEveryN: number;
   highSignalPatterns: string[];
   maxMemoryTokens: number;

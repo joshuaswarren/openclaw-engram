@@ -875,21 +875,26 @@ export function parseConfig(raw: unknown): PluginConfig {
     // other boolean config keys (CLAUDE.md rule #36).
     bufferSurpriseTriggerEnabled:
       coerceBool(cfg.bufferSurpriseTriggerEnabled) === true,
-    bufferSurpriseThreshold:
-      typeof cfg.bufferSurpriseThreshold === "number" &&
-      Number.isFinite(cfg.bufferSurpriseThreshold)
-        ? Math.min(1, Math.max(0, cfg.bufferSurpriseThreshold))
-        : 0.35,
-    bufferSurpriseK:
-      typeof cfg.bufferSurpriseK === "number" &&
-      Number.isFinite(cfg.bufferSurpriseK)
-        ? Math.max(1, Math.floor(cfg.bufferSurpriseK))
-        : 5,
-    bufferSurpriseRecentMemoryCount:
-      typeof cfg.bufferSurpriseRecentMemoryCount === "number" &&
-      Number.isFinite(cfg.bufferSurpriseRecentMemoryCount)
-        ? Math.max(0, Math.floor(cfg.bufferSurpriseRecentMemoryCount))
-        : 20,
+    // Numeric surprise knobs go through `coerceNumber` so CLI operators
+    // can pass `--config bufferSurpriseThreshold=0.5` without the string
+    // silently dropping to the default. Matches the coercion contract
+    // applied to other numeric config keys (CLAUDE.md rule #28).
+    bufferSurpriseThreshold: clampSurpriseThreshold(
+      coerceNumber(cfg.bufferSurpriseThreshold),
+      0.35,
+    ),
+    bufferSurpriseK: clampSurpriseK(
+      coerceNumber(cfg.bufferSurpriseK),
+      5,
+    ),
+    bufferSurpriseRecentMemoryCount: clampSurpriseRecentMemoryCount(
+      coerceNumber(cfg.bufferSurpriseRecentMemoryCount),
+      20,
+    ),
+    bufferSurpriseProbeTimeoutMs: clampSurpriseProbeTimeoutMs(
+      coerceNumber(cfg.bufferSurpriseProbeTimeoutMs),
+      2000,
+    ),
     consolidateEveryN:
       typeof cfg.consolidateEveryN === "number" ? cfg.consolidateEveryN : 3,
     highSignalPatterns: Array.isArray(cfg.highSignalPatterns)
@@ -2288,6 +2293,52 @@ function parseBriefingConfig(raw: unknown): import("./types.js").BriefingConfig 
 function clampNonNegativeNumber(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.max(0, Math.floor(value));
+}
+
+// -----------------------------------------------------------------------------
+// Issue #563 buffer-surprise knobs — shared clamp helpers
+// -----------------------------------------------------------------------------
+//
+// Each helper takes a post-`coerceNumber` value (number | undefined) and a
+// fallback. This keeps the coercion layer (coerce CLI strings → number) and
+// the range layer (clamp to valid domain) cleanly separated — a common
+// source of post-merge fixes when these were inlined (CLAUDE.md rule #28).
+
+function clampSurpriseThreshold(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  // [0, 1] inclusive. 0 means "always flush on any score"; 1 means "never
+  // flush on surprise alone" — both are valid-but-odd configurations.
+  return Math.min(1, Math.max(0, value));
+}
+
+function clampSurpriseK(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  return Math.max(1, Math.floor(value));
+}
+
+function clampSurpriseRecentMemoryCount(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  return Math.max(0, Math.floor(value));
+}
+
+function clampSurpriseProbeTimeoutMs(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  // A zero or negative timeout would either skip the probe entirely or
+  // fire instantly — both surprising behaviors that hide config errors.
+  // Clamp to a minimum of 1ms and round to integer.
+  return Math.max(1, Math.floor(value));
 }
 
 function parseRecallSectionEntry(raw: unknown): RecallSectionConfig {

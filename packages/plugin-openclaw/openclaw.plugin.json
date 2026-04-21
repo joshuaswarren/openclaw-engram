@@ -82,6 +82,12 @@
         "minimum": 0,
         "description": "Maximum number of recent memories sampled for surprise scoring. Bounds embedding cost per turn. Set to 0 to effectively disable the trigger even when the flag is on."
       },
+      "bufferSurpriseProbeTimeoutMs": {
+        "type": "number",
+        "default": 2000,
+        "minimum": 1,
+        "description": "Hard timeout (ms) for the surprise probe. If the probe does not resolve within this window the buffer treats it as failed and falls through to the existing triggers — a slow or hung embedder cannot stall the turn-append path."
+      },
       "consolidateEveryN": {
         "type": "number",
         "default": 3,

@@ -420,3 +420,83 @@ test("config: string 'false' for bufferSurpriseTriggerEnabled disables the flag"
   });
   assert.equal(config.bufferSurpriseTriggerEnabled, false);
 });
+
+test("config: numeric surprise knobs coerce CLI string values", async () => {
+  const config = parseConfig({
+    bufferSurpriseThreshold: "0.9" as unknown as number,
+    bufferSurpriseK: "7" as unknown as number,
+    bufferSurpriseRecentMemoryCount: "10" as unknown as number,
+    bufferSurpriseProbeTimeoutMs: "500" as unknown as number,
+  });
+  assert.equal(config.bufferSurpriseThreshold, 0.9);
+  assert.equal(config.bufferSurpriseK, 7);
+  assert.equal(config.bufferSurpriseRecentMemoryCount, 10);
+  assert.equal(config.bufferSurpriseProbeTimeoutMs, 500);
+});
+
+test("config: invalid numeric values fall back to defaults", async () => {
+  const config = parseConfig({
+    bufferSurpriseThreshold: "not a number" as unknown as number,
+    bufferSurpriseK: "oops" as unknown as number,
+    bufferSurpriseRecentMemoryCount: NaN,
+    bufferSurpriseProbeTimeoutMs: "" as unknown as number,
+  });
+  assert.equal(config.bufferSurpriseThreshold, 0.35);
+  assert.equal(config.bufferSurpriseK, 5);
+  assert.equal(config.bufferSurpriseRecentMemoryCount, 20);
+  assert.equal(config.bufferSurpriseProbeTimeoutMs, 2000);
+});
+
+test("config: threshold is clamped to [0, 1]", async () => {
+  const high = parseConfig({ bufferSurpriseThreshold: 2.5 });
+  assert.equal(high.bufferSurpriseThreshold, 1);
+  const low = parseConfig({ bufferSurpriseThreshold: -0.5 });
+  assert.equal(low.bufferSurpriseThreshold, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Probe timeout
+// ---------------------------------------------------------------------------
+
+test("flag on: probe that never resolves is timed out, turn is still saved", async () => {
+  const storage = new FakeStorage(emptyBuffer());
+  // A probe that resolves well after the configured timeout. We clear
+  // the underlying timer explicitly at the end of the test so node:test
+  // does not wait for it during teardown.
+  let slowTimer: NodeJS.Timeout | null = null;
+  const slowResolver = new Promise<number | null>((resolve) => {
+    slowTimer = setTimeout(() => resolve(0.99), 5_000);
+  });
+  const probe: BufferSurpriseProbe = {
+    scoreTurn: () => slowResolver,
+  };
+  const config = parseConfig({
+    bufferSurpriseTriggerEnabled: true,
+    bufferSurpriseThreshold: 0.35,
+    bufferSurpriseProbeTimeoutMs: 30,
+    bufferMaxTurns: 5,
+    triggerMode: "smart",
+  });
+  const buffer = new SmartBuffer(config, storage as any, probe);
+
+  try {
+    const startedAt = Date.now();
+    const decision = await buffer.addTurn(
+      "sess-1",
+      makeTurn("sess-1", "turn content"),
+    );
+    const elapsed = Date.now() - startedAt;
+    assert.equal(decision, "keep_buffering");
+    assert.ok(
+      elapsed < 2000,
+      `addTurn should have short-circuited via timeout; took ${elapsed}ms`,
+    );
+    const entry = storage.saved?.entries?.["sess-1"];
+    assert.ok(
+      entry && entry.turns.length === 1,
+      "turn must still be persisted after probe timeout",
+    );
+  } finally {
+    if (slowTimer) clearTimeout(slowTimer);
+  }
+});

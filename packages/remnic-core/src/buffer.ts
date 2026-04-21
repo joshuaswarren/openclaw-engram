@@ -230,7 +230,17 @@ export class SmartBuffer {
       ? entry.turns.slice(0, -1)
       : [];
     try {
-      const score = await this.surpriseProbe.scoreTurn(bufferKey, turn, prior);
+      // Hard timeout around the probe so a hung embedder cannot stall
+      // `addTurn()` before `save()`. A slow probe would otherwise
+      // prevent the just-appended turn from ever being persisted. The
+      // timeout is a soft bound — we race it against the probe, take
+      // whichever settles first, and treat the timeout as
+      // "probe unavailable, fall through" rather than an error that
+      // surfaces to the caller.
+      const score = await probeWithTimeout(
+        this.surpriseProbe.scoreTurn(bufferKey, turn, prior),
+        this.config.bufferSurpriseProbeTimeoutMs,
+      );
       if (score === null) return null;
       if (typeof score !== "number" || !Number.isFinite(score)) {
         log.debug(
@@ -374,4 +384,41 @@ function describeError(err: unknown): string {
   } catch {
     return String(err);
   }
+}
+
+/**
+ * Sentinel error class for the probe timeout path. Catching it via
+ * `instanceof` lets the buffer's surprise helper distinguish a timeout
+ * from a probe rejection (which could carry operational context the
+ * operator wants to see).
+ */
+class ProbeTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`probe exceeded ${timeoutMs}ms`);
+    this.name = "ProbeTimeoutError";
+  }
+}
+
+/**
+ * Race `inflight` against a timeout clock. Resolves with `inflight`'s
+ * value if it settles first, otherwise rejects with `ProbeTimeoutError`.
+ * The timer is cleared in both branches so a fast-resolving probe does
+ * not leak a handle that would keep the Node event loop alive.
+ */
+function probeWithTimeout<T>(
+  inflight: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new ProbeTimeoutError(timeoutMs)), timeoutMs);
+    // `.unref()` so the timer does not hold the event loop open if the
+    // caller decides the probe result is no longer interesting.
+    if (typeof (timer as NodeJS.Timeout).unref === "function") {
+      (timer as NodeJS.Timeout).unref();
+    }
+  });
+  return Promise.race([inflight, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
