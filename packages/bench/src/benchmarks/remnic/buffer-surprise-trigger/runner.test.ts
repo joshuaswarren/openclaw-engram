@@ -88,6 +88,8 @@ test("runner produces aggregates for every per-task metric", async () => {
     "topic_shift_f1_delta",
     "candidate_flush_count",
     "control_flush_count",
+    "candidate_mean_turns_between_flushes",
+    "control_mean_turns_between_flushes",
   ];
   for (const key of expectedKeys) {
     const agg = result.results.aggregates[key];
@@ -163,4 +165,21 @@ test("topicShiftF1: each expected index matches at most one predicted", () => {
     Math.abs(f1 - 2 / 3) < 1e-9,
     `expected 2/3, got ${f1}`,
   );
+});
+
+test("topicShiftF1: max-bipartite matching outperforms greedy on overlaps", () => {
+  // expected=[4, 5], predicted=[5, 6], tolerance=1.
+  // A greedy nearest-first pass pairs 5↔5 first and then cannot pair
+  // 6 (4 is out of tolerance), yielding TP=1.  Max bipartite finds
+  // the valid assignment 5↔4, 6↔5 and reports TP=2.
+  // TP=2, FP=0, FN=0 → F1 = 1.
+  assert.equal(topicShiftF1([5, 6], [4, 5], 1), 1);
+});
+
+test("topicShiftF1: returns 0 precision+0 recall → 0, not NaN", () => {
+  // Out-of-tolerance prediction against a single expected target must
+  // return a defined score, not NaN / undefined — downstream
+  // aggregators rely on scalar output.
+  const f1 = topicShiftF1([20], [1], 1);
+  assert.equal(f1, 0);
 });

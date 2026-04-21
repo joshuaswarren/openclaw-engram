@@ -275,6 +275,8 @@ export async function runBufferSurpriseTriggerBenchmark(
 interface CaseRunOutput {
   flushTurnIndices: number[];
   turnsBetweenFlushesMean: number;
+  /** Wall-clock ms spent replaying this case (excludes setup/teardown). */
+  replayLatencyMs: number;
 }
 
 interface RunCaseOptions {
@@ -343,6 +345,7 @@ async function runSingleCase(
 
   const flushTurnIndices: number[] = [];
 
+  const replayStart = performance.now();
   for (let i = 0; i < caseDef.turns.length; i += 1) {
     const content = caseDef.turns[i]!;
     const role: "user" | "assistant" = i % 2 === 0 ? "user" : "assistant";
@@ -357,12 +360,18 @@ async function runSingleCase(
       await buffer.clearAfterExtraction("bench");
     }
   }
+  const replayLatencyMs = Math.round(performance.now() - replayStart);
 
+  // Only count intervals between CONSECUTIVE flushes. The previous
+  // implementation seeded `prev` to `-1`, which mixed the "start of
+  // conversation → first flush" distance into the mean and silently
+  // skewed it downward. When there is 0 or 1 flush there is no
+  // consecutive-pair interval to average — fall back to the full
+  // conversation length as a "never-flushed / flushed-once" proxy so
+  // the CSV column stays numeric.
   const turnsBetween: number[] = [];
-  let prev = -1;
-  for (const idx of flushTurnIndices) {
-    turnsBetween.push(idx - prev);
-    prev = idx;
+  for (let i = 1; i < flushTurnIndices.length; i += 1) {
+    turnsBetween.push(flushTurnIndices[i]! - flushTurnIndices[i - 1]!);
   }
   const mean =
     turnsBetween.length > 0
@@ -372,6 +381,7 @@ async function runSingleCase(
   return {
     flushTurnIndices,
     turnsBetweenFlushesMean: mean,
+    replayLatencyMs,
   };
 }
 
@@ -411,12 +421,17 @@ function buildTaskResult(
       candidate_mean_turns_between_flushes: candidate.turnsBetweenFlushesMean,
       control_mean_turns_between_flushes: control.turnsBetweenFlushesMean,
     },
-    latencyMs: 0,
+    // Sum of control + candidate replay time for this case. Per-task
+    // latency lets downstream tooling build per-case latency histograms
+    // instead of having to re-derive them from the run-level total.
+    latencyMs: control.replayLatencyMs + candidate.replayLatencyMs,
     tokens: { input: 0, output: 0 },
     details: {
       candidateFlushTurnIndices: candidate.flushTurnIndices,
       controlFlushTurnIndices: control.flushTurnIndices,
       topicShiftTurnIndices: caseDef.topicShiftTurnIndices,
+      candidateReplayLatencyMs: candidate.replayLatencyMs,
+      controlReplayLatencyMs: control.replayLatencyMs,
     },
   };
 }
@@ -428,10 +443,18 @@ function buildTaskResult(
  * Exact-match over turn indices would be unfair — the fixture marks the
  * FIRST turn of a new topic as the shift, but the surprise gate may fire
  * on that turn or one or two turns later as buffered context accumulates.
- * We use a window-tolerant match: a predicted flush within ±1 of an
- * annotated shift counts as a true positive. This matches the
+ * We use a window-tolerant match: a predicted flush within ±`tolerance`
+ * of an annotated shift counts as a true positive. This matches the
  * operational intent — "flush near the topic boundary" — not "flush on
  * the exact index".
+ *
+ * Matching is MAXIMUM bipartite (not greedy nearest-first). Greedy
+ * matching can miss a valid pairing when two predictions overlap the
+ * same expected index's tolerance window — e.g. `predicted=[5, 6]` vs
+ * `expected=[4, 5]` with `tolerance=1`: greedy would pair 5↔5 and then
+ * leave 6 unmatched, yielding 1 TP instead of the achievable 2.
+ * Fixture sizes here are ≤10, so a straightforward DFS augmenting-path
+ * search (Hopcroft-Karp is overkill) is fine and the cost stays O(P·E).
  *
  * Edge case: if there are no annotated shifts, a prediction of no
  * flushes scores 1. Any prediction in that case is a false positive.
@@ -445,24 +468,7 @@ export function topicShiftF1(
   if (expected.length === 0) return 0;
   if (predicted.length === 0) return 0;
 
-  const matchedExpected = new Set<number>();
-  let truePositive = 0;
-  for (const p of predicted) {
-    // Find the nearest still-unmatched expected index within tolerance.
-    let best: { idx: number; dist: number } | null = null;
-    for (const e of expected) {
-      if (matchedExpected.has(e)) continue;
-      const dist = Math.abs(p - e);
-      if (dist > tolerance) continue;
-      if (best === null || dist < best.dist) {
-        best = { idx: e, dist };
-      }
-    }
-    if (best !== null) {
-      matchedExpected.add(best.idx);
-      truePositive += 1;
-    }
-  }
+  const truePositive = maxBipartiteMatch(predicted, expected, tolerance);
   const falsePositive = predicted.length - truePositive;
   const falseNegative = expected.length - truePositive;
   const precision =
@@ -471,6 +477,46 @@ export function topicShiftF1(
     truePositive === 0 ? 0 : truePositive / (truePositive + falseNegative);
   if (precision === 0 && recall === 0) return 0;
   return (2 * precision * recall) / (precision + recall);
+}
+
+/**
+ * Maximum bipartite matching between predicted and expected indices
+ * with a tolerance window. Returns the largest number of 1:1 pairings
+ * where `|p - e| <= tolerance`. DFS augmenting-path style, O(|P|·|E|),
+ * chosen for simplicity at the fixture sizes we evaluate here.
+ */
+function maxBipartiteMatch(
+  predicted: readonly number[],
+  expected: readonly number[],
+  tolerance: number,
+): number {
+  // For each expected index, which predicted index currently claims it.
+  const expectedOwner = new Array<number>(expected.length).fill(-1);
+
+  const tryMatch = (
+    predIdx: number,
+    seen: boolean[],
+  ): boolean => {
+    const p = predicted[predIdx]!;
+    for (let eIdx = 0; eIdx < expected.length; eIdx += 1) {
+      if (seen[eIdx]) continue;
+      const e = expected[eIdx]!;
+      if (Math.abs(p - e) > tolerance) continue;
+      seen[eIdx] = true;
+      if (expectedOwner[eIdx] === -1 || tryMatch(expectedOwner[eIdx]!, seen)) {
+        expectedOwner[eIdx] = predIdx;
+        return true;
+      }
+    }
+    return false;
+  };
+
+  let matched = 0;
+  for (let pIdx = 0; pIdx < predicted.length; pIdx += 1) {
+    const seen = new Array<boolean>(expected.length).fill(false);
+    if (tryMatch(pIdx, seen)) matched += 1;
+  }
+  return matched;
 }
 
 function buildAggregates(tasks: TaskResult[]): Record<string, MetricAggregate> {
