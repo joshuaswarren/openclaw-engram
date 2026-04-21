@@ -1040,6 +1040,32 @@ export function parseConfig(raw: unknown): PluginConfig {
           (v): v is string => typeof v === "string" && v.length > 0,
         )
       : ["decisions", "principles", "conventions", "runbooks", "entities"],
+    // Recall-audit anomaly detector (issue #565 PR 5/5). Defaults off so
+    // existing deployments are unaffected; enable explicitly to let the
+    // access surfaces flag suspicious query patterns derived from the
+    // audit trail.
+    recallAuditAnomalyDetectionEnabled:
+      coerceBool(cfg.recallAuditAnomalyDetectionEnabled) ?? false,
+    recallAuditAnomalyWindowMs: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyWindowMs);
+      return n !== undefined && n > 0 ? Math.floor(n) : 5 * 60_000;
+    })(),
+    recallAuditAnomalyRepeatQueryLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyRepeatQueryLimit);
+      return n !== undefined && n > 0 ? Math.floor(n) : 5;
+    })(),
+    recallAuditAnomalyNamespaceWalkLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyNamespaceWalkLimit);
+      return n !== undefined && n > 0 ? Math.floor(n) : 3;
+    })(),
+    recallAuditAnomalyHighCardinalityLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyHighCardinalityLimit);
+      return n !== undefined && n > 0 ? Math.floor(n) : 50;
+    })(),
+    recallAuditAnomalyRapidFireLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyRapidFireLimit);
+      return n !== undefined && n > 0 ? Math.floor(n) : 30;
+    })(),
     // Memory Linking (Phase 3A)
     memoryLinkingEnabled: cfg.memoryLinkingEnabled === true, // Off by default initially
     // Conversation Threading (Phase 3B)

@@ -2032,6 +2032,41 @@
         ],
         "description": "Taxonomy category IDs eligible for direct-answer routing."
       },
+      "recallAuditAnomalyDetectionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Recall-audit anomaly detector (issue #565). When true, access surfaces run the detector over a tail of the audit trail after each recall and surface any flags. Ships disabled."
+      },
+      "recallAuditAnomalyWindowMs": {
+        "type": "number",
+        "minimum": 1,
+        "default": 300000,
+        "description": "Rolling window (ms) over which audit entries are analyzed by the anomaly detector."
+      },
+      "recallAuditAnomalyRepeatQueryLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 5,
+        "description": "Threshold for the repeat-query flag: a normalized query repeated more than this many times in the window trips."
+      },
+      "recallAuditAnomalyNamespaceWalkLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 3,
+        "description": "Threshold for the namespace-walk flag: more than this many distinct candidate namespaces in the window trips."
+      },
+      "recallAuditAnomalyHighCardinalityLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 50,
+        "description": "Threshold for the high-cardinality-return flag: a single recall surfacing more than this many candidate IDs trips."
+      },
+      "recallAuditAnomalyRapidFireLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 30,
+        "description": "Threshold for the rapid-fire flag: more than this many audit entries in the window trips, regardless of content."
+      },
       "memoryLinkingEnabled": {
         "type": "boolean",
         "default": false,
