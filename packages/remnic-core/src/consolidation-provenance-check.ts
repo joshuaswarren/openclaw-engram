@@ -42,6 +42,49 @@ const DERIVED_VIA_RAW_RE = /^derived_via:[\t ]*(.*)$/mu;
 const DERIVED_FROM_RAW_RE = /^derived_from:[\t ]*(.*)$/mu;
 
 /**
+ * Tokenize a YAML-block-style list under `key:` in the given
+ * frontmatter slice.  Looks for lines matching `^  - <value>` after a
+ * `key:` line and before the next non-list line.  Returns `null` when
+ * the key is missing or the value is a scalar / flow list (no block
+ * entries found).
+ *
+ * Only used for the mixed-list malformed-entry detection — it does
+ * not try to decode YAML escape sequences since we only need the
+ * entry count + raw token text to compare against the parsed array.
+ */
+function tokenizeRawBlockList(fmSlice: string, key: string): string[] | null {
+  const lines = fmSlice.split("\n");
+  const keyPrefix = `${key}:`;
+  let startIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith(keyPrefix)) {
+      const after = lines[i].slice(keyPrefix.length).trim();
+      if (after.length === 0) {
+        startIdx = i + 1;
+      }
+      break;
+    }
+  }
+  if (startIdx < 0) return null;
+  const items: string[] = [];
+  for (let i = startIdx; i < lines.length; i++) {
+    const line = lines[i];
+    if (!/^\s+-/.test(line)) break; // not a block-list entry
+    const m = line.match(/^\s+-\s*(.*)$/u);
+    if (!m) break;
+    let tok = m[1].trim();
+    if (
+      (tok.startsWith('"') && tok.endsWith('"') && tok.length >= 2) ||
+      (tok.startsWith("'") && tok.endsWith("'") && tok.length >= 2)
+    ) {
+      tok = tok.slice(1, -1);
+    }
+    items.push(tok);
+  }
+  return items.length > 0 ? items : null;
+}
+
+/**
  * Tokenize a YAML-flow-style list (`["a", "b", ...]`) into a flat
  * string array.  Returns `null` when the input isn't a flow list.
  * Best-effort — we don't implement a full YAML parser, just enough to
@@ -216,10 +259,11 @@ export async function runConsolidationProvenanceCheck(options: {
     let rawDerivedFrom: string | undefined;
     let rawDerivedViaKeyPresent = false;
     let rawDerivedFromKeyPresent = false;
+    let fmSlice = "";
     try {
       const raw = await readFile(memory.path, "utf-8");
       const frontmatterEnd = raw.indexOf("\n---", raw.indexOf("---") + 3);
-      const fmSlice = frontmatterEnd > 0 ? raw.slice(0, frontmatterEnd) : raw;
+      fmSlice = frontmatterEnd > 0 ? raw.slice(0, frontmatterEnd) : raw;
       const viaMatch = fmSlice.match(DERIVED_VIA_RAW_RE);
       if (viaMatch) {
         rawDerivedViaKeyPresent = true;
@@ -274,16 +318,22 @@ export async function runConsolidationProvenanceCheck(options: {
       });
     }
 
-    // Mixed-list detection (PR #634 round-4 review, codex P2): when
-    // the parser DID return a valid list but the raw YAML includes
-    // additional tokens that got dropped (e.g. `"..." , ""` with an
-    // empty string among valid entries), flag those as malformed.  We
-    // tokenize the raw `derived_from` list in a minimal way: split on
-    // commas outside quotes, trim, and validate each piece.  If the
-    // tokenized count exceeds the parsed-array length, some entries
-    // were dropped — flag the remainder as malformed.
-    if (hasFrom && rawDerivedFromKeyPresent && rawDerivedFrom) {
-      const rawList = tokenizeRawFlowList(rawDerivedFrom);
+    // Mixed-list detection (PR #634 round-4 + round-5 review, codex
+    // P2): when the parser DID return a valid list but the raw YAML
+    // includes additional tokens that got dropped, flag those as
+    // malformed.  Handles both flow-style (`["a", "", "b"]`) and
+    // block-style (`\n  - a\n  - \n  - b`) YAML lists.
+    if (hasFrom && rawDerivedFromKeyPresent) {
+      let rawList: string[] | null = null;
+      if (rawDerivedFrom && rawDerivedFrom.length > 0) {
+        rawList = tokenizeRawFlowList(rawDerivedFrom);
+      }
+      if (rawList === null) {
+        // Fall back to block-list tokenization by re-reading the full
+        // frontmatter (already loaded above as `raw`) and scanning
+        // the lines following `derived_from:`.
+        rawList = tokenizeRawBlockList(fmSlice, "derived_from");
+      }
       if (rawList !== null && rawList.length > derivedFrom!.length) {
         for (const tok of rawList) {
           if (tok.length === 0) {
@@ -296,7 +346,6 @@ export async function runConsolidationProvenanceCheck(options: {
             continue;
           }
           if (!derivedFrom!.includes(tok)) {
-            // A non-empty token the parser dropped — surface it.
             if (!/^(.+):(\d+)$/u.test(tok)) {
               report.issues.push({
                 memoryPath: memory.path,
