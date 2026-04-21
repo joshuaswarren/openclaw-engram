@@ -6,6 +6,7 @@ import type {
   OllamaProviderConfig,
   TokenUsage,
 } from "./types.js";
+import { retryFetch } from "./retry-fetch.js";
 
 interface OllamaGenerateResponse {
   model?: string;
@@ -47,20 +48,24 @@ class OllamaProvider implements LlmProvider {
     opts: CompletionOpts = {},
   ): Promise<CompletionResult> {
     const startedAt = performance.now();
-    const response = await fetch(this.urlFor("generate"), {
-      method: "POST",
-      headers: this.headers(opts.headers),
-      body: JSON.stringify({
-        model: this.config.model,
-        prompt,
-        system: opts.systemPrompt,
-        stream: false,
-        options: {
-          temperature: opts.temperature,
-          num_predict: opts.maxTokens,
-        },
-      }),
-    });
+    const response = await retryFetch(
+      this.urlFor("generate"),
+      {
+        method: "POST",
+        headers: this.headers(opts.headers),
+        body: JSON.stringify({
+          model: this.config.model,
+          prompt,
+          system: opts.systemPrompt,
+          stream: false,
+          options: {
+            temperature: opts.temperature,
+            num_predict: opts.maxTokens,
+          },
+        }),
+      },
+      this.config.retryOptions,
+    );
 
     if (!response.ok) {
       throw new Error(
@@ -85,10 +90,14 @@ class OllamaProvider implements LlmProvider {
   }
 
   async discover(): Promise<DiscoveredModel[]> {
-    const response = await fetch(this.urlFor("tags"), {
-      method: "GET",
-      headers: this.headers(),
-    });
+    const response = await retryFetch(
+      this.urlFor("tags"),
+      {
+        method: "GET",
+        headers: this.headers(),
+      },
+      this.config.retryOptions,
+    );
 
     if (!response.ok) {
       throw new Error(

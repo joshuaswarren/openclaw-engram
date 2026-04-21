@@ -66,61 +66,80 @@ export async function runMemBenchBenchmark(
   const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
 
+  const totalTasks = dataset.length;
+
   for (const testCase of dataset) {
-    await options.system.reset();
+    try {
+      await options.system.reset();
 
-    const sessionId = `membench-${testCase.id}`;
-    if (testCase.turns.length > 0) {
-      await options.system.store(sessionId, testCase.turns);
-    }
+      const sessionId = `membench-${testCase.id}`;
+      if (testCase.turns.length > 0) {
+        await options.system.store(sessionId, testCase.turns);
+      }
 
-    const { result: recalledText, durationMs } = await timed(async () =>
-      options.system.recall(sessionId, testCase.question),
-    );
-    const answered = await answerBenchmarkQuestion({
-      question: testCase.question,
-      recalledText,
-      responder: options.system.responder,
-    });
-    const judgeResult = await llmJudgeScoreDetailed(
-      options.system.judge,
-      testCase.question,
-      answered.finalAnswer,
-      testCase.answer,
-    );
-
-    const scores: Record<string, number> = {
-      f1: f1Score(answered.finalAnswer, testCase.answer),
-      contains_answer: containsAnswer(answered.finalAnswer, testCase.answer),
-    };
-    if (judgeResult.score >= 0) {
-      scores.llm_judge = judgeResult.score;
-    }
-
-    tasks.push({
-      taskId: testCase.id,
-      question: testCase.question,
-      expected: testCase.answer,
-      actual: answered.finalAnswer,
-      scores,
-      latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
-      tokens: {
-        input: answered.tokens.input + judgeResult.tokens.input,
-        output: answered.tokens.output + judgeResult.tokens.output,
-      },
-      details: {
-        memoryType: testCase.memoryType,
-        scenario: testCase.scenario,
-        level: testCase.level,
-        turnCount: testCase.turns.length,
-        recalledLength: recalledText.length,
-        answeredLength: answered.finalAnswer.length,
+      const { result: recalledText, durationMs } = await timed(async () =>
+        options.system.recall(sessionId, testCase.question),
+      );
+      const answered = await answerBenchmarkQuestion({
+        question: testCase.question,
         recalledText,
-        answeredText: answered.finalAnswer,
-        responderModel: answered.model,
-        judgeModel: judgeResult.model,
-      },
-    });
+        responder: options.system.responder,
+      });
+      const judgeResult = await llmJudgeScoreDetailed(
+        options.system.judge,
+        testCase.question,
+        answered.finalAnswer,
+        testCase.answer,
+      );
+
+      const scores: Record<string, number> = {
+        f1: f1Score(answered.finalAnswer, testCase.answer),
+        contains_answer: containsAnswer(answered.finalAnswer, testCase.answer),
+      };
+      if (judgeResult.score >= 0) {
+        scores.llm_judge = judgeResult.score;
+      }
+
+      tasks.push({
+        taskId: testCase.id,
+        question: testCase.question,
+        expected: testCase.answer,
+        actual: answered.finalAnswer,
+        scores,
+        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+        tokens: {
+          input: answered.tokens.input + judgeResult.tokens.input,
+          output: answered.tokens.output + judgeResult.tokens.output,
+        },
+        details: {
+          memoryType: testCase.memoryType,
+          scenario: testCase.scenario,
+          level: testCase.level,
+          turnCount: testCase.turns.length,
+          recalledLength: recalledText.length,
+          answeredLength: answered.finalAnswer.length,
+          recalledText,
+          answeredText: answered.finalAnswer,
+          responderModel: answered.model,
+          judgeModel: judgeResult.model,
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  [WARN] membench task ${testCase.id} failed: ${message}`);
+      tasks.push({
+        taskId: testCase.id,
+        question: testCase.question,
+        expected: testCase.answer,
+        actual: `(error: ${message})`,
+        scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+        latencyMs: 0,
+        tokens: { input: 0, output: 0 },
+        details: { error: message },
+      });
+    }
+
+    options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalTasks);
   }
 
   const remnicVersion = await getRemnicVersion();

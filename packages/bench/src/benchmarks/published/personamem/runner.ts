@@ -77,77 +77,97 @@ export async function runPersonaMemBenchmark(
   const samples = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
 
+  const totalTasks = samples.length;
+
   for (let sampleIndex = 0; sampleIndex < samples.length; sampleIndex += 1) {
     const sample = samples[sampleIndex]!;
-    await options.system.reset();
+    const taskId = `${sample.personaId}-q${sampleIndex}`;
+    try {
+      await options.system.reset();
 
-    const sessionId = `personamem-${sample.personaId}`;
-    const messages = buildMessages(sample.chatHistory.chat_history);
-    if (messages.length > 0) {
-      await options.system.store(sessionId, messages);
-    }
+      const sessionId = `personamem-${sample.personaId}`;
+      const messages = buildMessages(sample.chatHistory.chat_history);
+      if (messages.length > 0) {
+        await options.system.store(sessionId, messages);
+      }
 
-    const { result: recalledText, durationMs } = await timed(async () =>
-      options.system.recall(sessionId, sample.userQuery),
-    );
-    const searchResults = await options.system.search(
-      sample.userQuery,
-      10,
-      sessionId,
-    );
-    const answered = await answerBenchmarkQuestion({
-      question: sample.userQuery,
-      recalledText,
-      responder: options.system.responder,
-    });
-    const judgeResult = await llmJudgeScoreDetailed(
-      options.system.judge,
-      sample.userQuery,
-      answered.finalAnswer,
-      sample.correctAnswer,
-    );
-
-    const scores: Record<string, number> = {
-      f1: f1Score(answered.finalAnswer, sample.correctAnswer),
-      contains_answer: containsAnswer(answered.finalAnswer, sample.correctAnswer),
-      search_hits: searchResults.length,
-    };
-    if (judgeResult.score >= 0) {
-      scores.llm_judge = judgeResult.score;
-    }
-
-    tasks.push({
-      taskId: `${sample.personaId}-q${sampleIndex}`,
-      question: sample.userQuery,
-      expected: sample.correctAnswer,
-      actual: answered.finalAnswer,
-      scores,
-      latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
-      tokens: {
-        input: answered.tokens.input + judgeResult.tokens.input,
-        output: answered.tokens.output + judgeResult.tokens.output,
-      },
-      details: {
-        personaId: sample.personaId,
-        topicQuery: sample.topicQuery,
-        preference: sample.preference,
-        topicPreference: sample.topicPreference,
-        prefType: sample.prefType,
-        relatedConversationSnippet: sample.relatedConversationSnippet,
-        who: sample.who,
-        updated: sample.updated,
-        prevPref: sample.prevPref,
-        chatHistoryMessageCount: sample.chatHistory.chat_history.length,
-        chatHistory32kLink: sample.chatHistory32kLink,
-        chatHistory128kLink: sample.chatHistory128kLink,
-        recalledLength: recalledText.length,
-        answeredLength: answered.finalAnswer.length,
+      const { result: recalledText, durationMs } = await timed(async () =>
+        options.system.recall(sessionId, sample.userQuery),
+      );
+      const searchResults = await options.system.search(
+        sample.userQuery,
+        10,
+        sessionId,
+      );
+      const answered = await answerBenchmarkQuestion({
+        question: sample.userQuery,
         recalledText,
-        answeredText: answered.finalAnswer,
-        responderModel: answered.model,
-        judgeModel: judgeResult.model,
-      },
-    });
+        responder: options.system.responder,
+      });
+      const judgeResult = await llmJudgeScoreDetailed(
+        options.system.judge,
+        sample.userQuery,
+        answered.finalAnswer,
+        sample.correctAnswer,
+      );
+
+      const scores: Record<string, number> = {
+        f1: f1Score(answered.finalAnswer, sample.correctAnswer),
+        contains_answer: containsAnswer(answered.finalAnswer, sample.correctAnswer),
+        search_hits: searchResults.length,
+      };
+      if (judgeResult.score >= 0) {
+        scores.llm_judge = judgeResult.score;
+      }
+
+      tasks.push({
+        taskId,
+        question: sample.userQuery,
+        expected: sample.correctAnswer,
+        actual: answered.finalAnswer,
+        scores,
+        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+        tokens: {
+          input: answered.tokens.input + judgeResult.tokens.input,
+          output: answered.tokens.output + judgeResult.tokens.output,
+        },
+        details: {
+          personaId: sample.personaId,
+          topicQuery: sample.topicQuery,
+          preference: sample.preference,
+          topicPreference: sample.topicPreference,
+          prefType: sample.prefType,
+          relatedConversationSnippet: sample.relatedConversationSnippet,
+          who: sample.who,
+          updated: sample.updated,
+          prevPref: sample.prevPref,
+          chatHistoryMessageCount: sample.chatHistory.chat_history.length,
+          chatHistory32kLink: sample.chatHistory32kLink,
+          chatHistory128kLink: sample.chatHistory128kLink,
+          recalledLength: recalledText.length,
+          answeredLength: answered.finalAnswer.length,
+          recalledText,
+          answeredText: answered.finalAnswer,
+          responderModel: answered.model,
+          judgeModel: judgeResult.model,
+        },
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`  [WARN] personamem task ${taskId} failed: ${message}`);
+      tasks.push({
+        taskId,
+        question: sample.userQuery,
+        expected: sample.correctAnswer,
+        actual: `(error: ${message})`,
+        scores: { f1: -1, contains_answer: -1, search_hits: -1, llm_judge: -1 },
+        latencyMs: 0,
+        tokens: { input: 0, output: 0 },
+        details: { error: message },
+      });
+    }
+
+    options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalTasks);
   }
 
   const remnicVersion = await getRemnicVersion();

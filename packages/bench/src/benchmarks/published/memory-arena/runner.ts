@@ -51,6 +51,12 @@ export async function runMemoryArenaBenchmark(
   const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
 
+  const totalTasks = dataset.reduce(
+    (sum, { tasks: domainTasks }) =>
+      sum + domainTasks.reduce((tSum, task) => tSum + task.questions.length, 0),
+    0,
+  );
+
   for (const { domain, tasks: domainTasks } of dataset) {
     for (const task of domainTasks) {
       await options.system.reset();
@@ -70,68 +76,91 @@ export async function runMemoryArenaBenchmark(
         }
 
         const expected = answerToString(expectedAnswer);
-        await options.system.store(sessionId, [
-          { role: "user", content: question },
-          {
-            role: "assistant",
-            content: `Processing subtask ${questionIndex + 1}: ${question.slice(0, 100)}...`,
-          },
-        ]);
+        const taskResultId = `${domain}-t${task.id}-q${questionIndex}`;
 
-        const { result: recalledText, durationMs } = await timed(async () =>
-          options.system.recall(sessionId, question),
-        );
-        const answered = await answerBenchmarkQuestion({
-          question,
-          recalledText,
-          responder: options.system.responder,
-        });
-        const judgeResult = await llmJudgeScoreDetailed(
-          options.system.judge,
-          question,
-          answered.finalAnswer,
-          expected,
-        );
+        try {
+          await options.system.store(sessionId, [
+            { role: "user", content: question },
+            {
+              role: "assistant",
+              content: `Processing subtask ${questionIndex + 1}: ${question.slice(0, 100)}...`,
+            },
+          ]);
 
-        const scores: Record<string, number> = {
-          f1: f1Score(answered.finalAnswer, expected),
-          contains_answer: containsAnswer(answered.finalAnswer, expected),
-        };
-        if (judgeResult.score >= 0) {
-          scores.llm_judge = judgeResult.score;
+          const { result: recalledText, durationMs } = await timed(async () =>
+            options.system.recall(sessionId, question),
+          );
+          const answered = await answerBenchmarkQuestion({
+            question,
+            recalledText,
+            responder: options.system.responder,
+          });
+          const judgeResult = await llmJudgeScoreDetailed(
+            options.system.judge,
+            question,
+            answered.finalAnswer,
+            expected,
+          );
+
+          const scores: Record<string, number> = {
+            f1: f1Score(answered.finalAnswer, expected),
+            contains_answer: containsAnswer(answered.finalAnswer, expected),
+          };
+          if (judgeResult.score >= 0) {
+            scores.llm_judge = judgeResult.score;
+          }
+
+          tasks.push({
+            taskId: taskResultId,
+            question,
+            expected,
+            actual: answered.finalAnswer,
+            scores,
+            latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+            tokens: {
+              input: answered.tokens.input + judgeResult.tokens.input,
+              output: answered.tokens.output + judgeResult.tokens.output,
+            },
+            details: {
+              domain,
+              taskId: task.id,
+              subtaskIndex: questionIndex,
+              category: task.category,
+              recalledLength: recalledText.length,
+              answeredLength: answered.finalAnswer.length,
+              recalledText,
+              answeredText: answered.finalAnswer,
+              responderModel: answered.model,
+              judgeModel: judgeResult.model,
+            },
+          });
+
+          try {
+            await options.system.store(sessionId, [
+              {
+                role: "assistant",
+                content: `Answer for subtask ${questionIndex + 1}: ${expected}`,
+              },
+            ]);
+          } catch (storeErr) {
+            console.error(`  [WARN] memory-arena store failed for ${taskResultId}: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`  [WARN] memory-arena task ${taskResultId} failed: ${message}`);
+          tasks.push({
+            taskId: taskResultId,
+            question,
+            expected,
+            actual: `(error: ${message})`,
+            scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+            latencyMs: 0,
+            tokens: { input: 0, output: 0 },
+            details: { error: message },
+          });
         }
 
-        tasks.push({
-          taskId: `${domain}-t${task.id}-q${questionIndex}`,
-          question,
-          expected,
-          actual: answered.finalAnswer,
-          scores,
-          latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
-          tokens: {
-            input: answered.tokens.input + judgeResult.tokens.input,
-            output: answered.tokens.output + judgeResult.tokens.output,
-          },
-          details: {
-            domain,
-            taskId: task.id,
-            subtaskIndex: questionIndex,
-            category: task.category,
-            recalledLength: recalledText.length,
-            answeredLength: answered.finalAnswer.length,
-            recalledText,
-            answeredText: answered.finalAnswer,
-            responderModel: answered.model,
-            judgeModel: judgeResult.model,
-          },
-        });
-
-        await options.system.store(sessionId, [
-          {
-            role: "assistant",
-            content: `Answer for subtask ${questionIndex + 1}: ${expected}`,
-          },
-        ]);
+        options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalTasks);
       }
     }
   }

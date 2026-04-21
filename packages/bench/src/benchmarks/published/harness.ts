@@ -180,8 +180,29 @@ export async function runPublishedHarness(
         await ctx.options.system.store(session.sessionId, session.messages);
       }
     }
+    const planIndex = tasks.length;
     for (const trial of plan.trials) {
-      tasks.push(await executeTrial(ctx, trial));
+      const trialId = trial.taskId ?? trial.question.slice(0, 60);
+      try {
+        tasks.push(await executeTrial(ctx, trial));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`  [WARN] harness trial plan-${planIndex}/${trialId} failed: ${message}`);
+        tasks.push({
+          taskId: trial.taskId,
+          question: trial.question,
+          expected: trial.expected,
+          actual: `(error: ${message})`,
+          scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+          latencyMs: 0,
+          tokens: { input: 0, output: 0 },
+          details: { error: message },
+        });
+      }
+      // Pass the GLOBAL total (ctx.totalCount), not a per-plan total —
+      // `tasks.length` is cumulative across every plan in ctx.plans, so a
+      // per-plan divisor would overflow to "N/3" nonsense in plan 2+.
+      ctx.options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, ctx.totalCount);
     }
   }
 

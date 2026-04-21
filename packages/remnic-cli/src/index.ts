@@ -303,6 +303,7 @@ type PackageBenchModule = {
     system: {
       destroy(): Promise<void>;
     };
+    onTaskComplete?: (task: { taskId: string; scores: Record<string, number>; latencyMs: number; tokens: { input: number; output: number } }, completedCount: number, totalCount?: number) => void;
   }) => Promise<{
     meta: { benchmark: string; mode: string };
     config: {
@@ -383,6 +384,7 @@ type PackageBenchModule = {
     results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
     cost: { meanQueryLatencyMs: number };
   }, outputDir: string) => Promise<string>;
+  getRemnicVersion?: () => Promise<string>;
   createLightweightAdapter?: (options?: {
     configOverrides?: Record<string, unknown>;
     preserveRuntimeDefaults?: boolean;
@@ -2055,6 +2057,8 @@ async function runBenchViaPackage(
   );
 
   const system = await plan.createAdapter(plan.runtime.adapterOptions);
+  const benchStartTime = Date.now();
+  const partialTasks: import("@remnic/bench").TaskResult[] = [];
 
   try {
     // `publishedLimit` (from `bench published --limit N`) takes
@@ -2079,6 +2083,16 @@ async function runBenchViaPackage(
       judgeProvider: plan.runtime.judgeProvider,
       remnicConfig: plan.runtime.effectiveRemnicConfig,
       system,
+      onTaskComplete: (task, completed, total) => {
+        partialTasks.push(task);
+        if (completed % 50 === 0 || completed === total) {
+          const elapsed = Math.round((Date.now() - benchStartTime) / 1000);
+          const remaining = total && elapsed > 0 ? Math.round((total - completed) / (completed / elapsed)) : "?";
+          console.log(
+            `  [${benchmarkId}] ${completed}/${total ?? "?"} tasks (${elapsed}s elapsed, ~${remaining}s remaining)`,
+          );
+        }
+      },
     });
     result.config.remnicConfig = plan.runtime.remnicConfig;
     const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
@@ -2088,9 +2102,79 @@ async function runBenchViaPackage(
       printBenchPackageSummary(result, writtenPath);
     }
     return { ok: true, writtenPath };
+  } catch (err) {
+    if (partialTasks.length > 0) {
+      const remnicVersion = await benchModule.getRemnicVersion?.() ?? "unknown";
+      const partialResult = buildPartialBenchmarkResult(
+        benchmarkId,
+        definition,
+        partialTasks,
+        plan,
+        remnicVersion,
+        err instanceof Error ? err.message : String(err),
+        parsed.quick ? "quick" : "full",
+      );
+      try {
+        const partialPath = await benchModule.writeBenchmarkResult(partialResult, outputDir);
+        console.error(`  Partial results (${partialTasks.length} tasks) written to ${partialPath}`);
+      } catch (writeErr) {
+        console.error(`  Failed to write partial results: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
+      }
+    }
+    throw err;
   } finally {
     await system.destroy();
   }
+}
+
+function buildPartialBenchmarkResult(
+  benchmarkId: string,
+  definition: { tier?: string; meta?: { category?: string; version?: string } } | undefined,
+  tasks: Array<{ taskId: string; scores: Record<string, number>; latencyMs: number; tokens: { input: number; output: number } }>,
+  plan: PackageBenchExecutionPlan,
+  remnicVersion: string,
+  failureReason: string,
+  mode: "full" | "quick",
+) {
+  const totalLatencyMs = tasks.reduce((sum, t) => sum + t.latencyMs, 0);
+  const totalInput = tasks.reduce((sum, t) => sum + t.tokens.input, 0);
+  const totalOutput = tasks.reduce((sum, t) => sum + t.tokens.output, 0);
+  return {
+    meta: {
+      id: "partial",
+      benchmark: benchmarkId,
+      benchmarkTier: (definition?.tier ?? "remnic") as "published" | "remnic" | "custom",
+      version: definition?.meta?.version ?? "0.0.0",
+      remnicVersion,
+      gitSha: "unknown",
+      timestamp: new Date().toISOString(),
+      mode,
+      runCount: 1,
+      seeds: [0],
+      status: "partial" as const,
+      failureReason,
+    },
+    config: {
+      systemProvider: plan.runtime.systemProvider ?? null,
+      judgeProvider: plan.runtime.judgeProvider ?? null,
+      adapterMode: plan.adapterMode,
+      remnicConfig: plan.runtime.remnicConfig ?? {},
+    },
+    cost: {
+      totalTokens: totalInput + totalOutput,
+      inputTokens: totalInput,
+      outputTokens: totalOutput,
+      estimatedCostUsd: 0,
+      totalLatencyMs,
+      meanQueryLatencyMs: tasks.length > 0 ? totalLatencyMs / tasks.length : 0,
+    },
+    results: { tasks: tasks as never[], aggregates: {} },
+    environment: {
+      os: process.platform,
+      nodeVersion: process.version,
+      hardware: process.arch,
+    },
+  };
 }
 
 async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolean> {
@@ -4611,16 +4695,29 @@ async function cmdBench(rest: string[]): Promise<void> {
   }
 
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
+  const failures = new Set<string>();
   for (const benchmarkId of selectedBenchmarks) {
     for (const runtimeProfile of runtimeProfiles) {
-      const handledByPackage = await runBenchViaPackage(
-        parsed,
-        benchmarkId,
-        runtimeProfile,
-      );
-      if (!handledByPackage.ok) {
-        await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
+      try {
+        const handledByPackage = await runBenchViaPackage(
+          parsed,
+          benchmarkId,
+          runtimeProfile,
+        );
+        if (!handledByPackage.ok) {
+          await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`  [ERROR] benchmark "${benchmarkId}" failed: ${message}`);
+        failures.add(benchmarkId);
       }
+    }
+  }
+  if (failures.size > 0) {
+    console.error(`\nFailed benchmarks: ${[...failures].join(", ")}`);
+    if (failures.size === selectedBenchmarks.length) {
+      process.exit(1);
     }
   }
 }
