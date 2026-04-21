@@ -2965,16 +2965,22 @@ export async function runXrayCommand(
  * startup cost (Codex P2 on PR #643 — CLAUDE.md rules 14 + 51 require
  * explicit, fail-fast validation).
  *
- * Once the arg bag is validated, bootstraps the orchestrator the same
- * way `cmdQuery` does and delegates to `runXrayCommand` for the
- * recall + render + emit flow.
+ * After the arg bag is validated, bootstraps the orchestrator the
+ * same way `cmdQuery` does and delegates to `runXrayCommand` for the
+ * recall + render + emit flow.  Delegation keeps the production
+ * handler's post-orchestrator path covered by `runXrayCommand`'s
+ * existing unit tests (Cursor Medium on PR #643 — avoid duplicated
+ * code paths that only one surface exercises).
  */
 async function cmdXray(rest: string[]): Promise<void> {
   // Parse and validate flags FIRST — `parseXrayCliOptions` throws
   // listed-options errors for bad input.  Keep this before any IO so
   // a bad invocation surfaces the right error without touching disk.
+  // `runXrayCommand` re-runs the same validators below; re-parsing is
+  // cheap (pure + no IO) and avoids a second "validated flags" shape
+  // that would drift from the raw-argv contract tests already cover.
   const { rawQuery, options } = extractXrayRawArgs(rest);
-  const parsed = parseXrayCliOptions(rawQuery, options);
+  parseXrayCliOptions(rawQuery, options);
 
   initLogger();
   const configPath = resolveConfigPath();
@@ -2988,19 +2994,14 @@ async function cmdXray(rest: string[]): Promise<void> {
   await orchestrator.deferredReady;
   const service = new EngramAccessService(orchestrator);
 
-  const response = await service.recallXray({
-    query: parsed.query,
-    ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
-    ...(parsed.budget !== undefined ? { budget: parsed.budget } : {}),
+  await runXrayCommand(rest, {
+    recallXray: (request) => service.recallXray(request),
+    writeFile: async (filePath, data) => {
+      const { writeFile: fsWriteFile } = await import("node:fs/promises");
+      await fsWriteFile(filePath, data, "utf8");
+    },
+    stdout: (line) => console.log(line),
   });
-  const snapshot = response.snapshotFound ? response.snapshot ?? null : null;
-  const rendered = renderXray(snapshot, parsed.format);
-  if (parsed.outPath) {
-    const { writeFile: fsWriteFile } = await import("node:fs/promises");
-    await fsWriteFile(expandTildePath(parsed.outPath), rendered, "utf8");
-  } else {
-    console.log(rendered);
-  }
 }
 
 // ── Page-level versioning (issue #371) ─────────────────────────────────────
