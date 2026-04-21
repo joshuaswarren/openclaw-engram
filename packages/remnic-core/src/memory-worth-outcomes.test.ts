@@ -255,6 +255,57 @@ test("path without .md suffix returns invalid_path", async () => {
   }
 });
 
+test("directory-prefixed path without .md suffix also rejected", async () => {
+  // Bugbot/codex P2: previously, conditional .md check let a deep path
+  // like /tmp/facts/2026-01-01/not-a-memory through (basename strips the
+  // dirs, so `basename === memoryPath` was false and the .md guard was
+  // skipped). With the fix the check runs unconditionally on the raw
+  // input.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-mw-outcome-deep-badpath-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const result = await recordMemoryOutcome(storage, {
+      memoryPath: "/tmp/facts/2026-01-01/not-a-memory",
+      outcome: "success",
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.reason, "invalid_path");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("concurrent outcomes for the same memory do NOT lose updates", async () => {
+  // Codex P1: two concurrent recordMemoryOutcome calls must each persist
+  // a +1 instead of reading the same snapshot and overwriting. The module
+  // enforces per-ID serialization, so 10 parallel successes must land as
+  // mw_success = 10, not something < 10.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-mw-outcome-concurrent-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+    const { id, filePath } = await writeFactFile(storage, "Concurrency target.");
+
+    const N = 10;
+    const calls = Array.from({ length: N }, () =>
+      recordMemoryOutcome(storage, { memoryPath: filePath, outcome: "success" }),
+    );
+    const results = await Promise.all(calls);
+
+    // Every call must succeed.
+    for (const r of results) assert.equal(r.ok, true);
+
+    // The persisted counter must reflect every increment, not a subset.
+    const after = await storage.getMemoryById(id);
+    assert.ok(after);
+    assert.equal(after!.frontmatter.mw_success, N);
+    assert.equal(after!.frontmatter.mw_fail, 0);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("eligible-category set is exactly {fact}", () => {
   // Pinning this keeps PR 3 in lockstep with the PR 1 doctor allowlist in
   // operator-toolkit.ts (MEMORY_WORTH_ELIGIBLE_CATEGORIES). If either side

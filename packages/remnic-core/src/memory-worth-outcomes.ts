@@ -45,6 +45,41 @@ import type { StorageManager } from "./storage.js";
 import type { MemoryFrontmatter } from "./types.js";
 
 /**
+ * Per-memory-ID serialization of the read-modify-write increment.
+ *
+ * Codex P1: without this, concurrent calls for the same memory race. Both
+ * callers read the same `mw_*` values, each writes +1, and one increment
+ * is lost — silently undercounting outcomes. We chain an async promise
+ * per memory ID so read-then-write is atomic with respect to other calls
+ * into this module.
+ *
+ * This serializes only THIS module. Direct writers (e.g. hand-rolled
+ * frontmatter patches) still bypass the lock, but the documented surface
+ * for Memory Worth increments is this function, and the bench only uses
+ * this path.
+ *
+ * The lock map is WeakRef-free by design: the chain self-cleans once the
+ * last pending write resolves (we delete the entry inside the `.finally`
+ * of the tail), so memory use stays bounded even for long-running
+ * processes that touch many different memory IDs.
+ */
+const outcomeLocks = new Map<string, Promise<unknown>>();
+
+function runSerialized<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const prev = outcomeLocks.get(key) ?? Promise.resolve();
+  // Swallow upstream errors so a failed outcome for memory A doesn't
+  // permanently poison the chain for memory A. We still propagate our own
+  // result/errors to the caller.
+  const next = prev.catch(() => undefined).then(task);
+  outcomeLocks.set(key, next);
+  // Clean up once this task completes, as long as nothing newer chained on.
+  void next.finally(() => {
+    if (outcomeLocks.get(key) === next) outcomeLocks.delete(key);
+  });
+  return next;
+}
+
+/**
  * Categories currently instrumented for Memory Worth counters. Must be kept
  * in sync with `MEMORY_WORTH_ELIGIBLE_CATEGORIES` in `operator-toolkit.ts`.
  * Declared here (not imported) to avoid a circular dep with operator-toolkit,
@@ -129,15 +164,18 @@ export type RecordMemoryOutcomeResult =
  * Extract the memory ID from a file path. Memory files are stored as
  * `<id>.md`, matching the rest of the system (see `getMemoryById`, which
  * infers paths from IDs).
+ *
+ * Returns `null` for any path that does not end in `.md`. The check is
+ * unconditional — `path.basename` strips directory components before the
+ * suffix check, so previous conditional logic silently accepted
+ * directory-prefixed paths like `/tmp/facts/2026-01-01/not-a-memory`
+ * (the basename `not-a-memory` is not equal to the input, so the `.md`
+ * guard was skipped). The new check looks at the raw input once.
  */
 function memoryIdFromPath(memoryPath: string): string | null {
   if (!memoryPath || typeof memoryPath !== "string") return null;
+  if (!memoryPath.endsWith(".md")) return null;
   const basename = path.basename(memoryPath, ".md");
-  if (!basename || basename === memoryPath) {
-    // `path.basename(X, ".md")` returning the original path means there was
-    // no `.md` suffix — caller passed something that isn't a memory file.
-    if (!memoryPath.endsWith(".md")) return null;
-  }
   if (!basename) return null;
   return basename;
 }
@@ -171,46 +209,51 @@ export async function recordMemoryOutcome(
     };
   }
 
-  const memory = await storage.getMemoryById(memoryId);
-  if (!memory) {
+  // Serialize the read-modify-write per memory ID so concurrent callers
+  // (parallel ledger drain, multiple MCP clients, etc.) can't each read
+  // the same snapshot and race to write `+1`, losing an increment.
+  return runSerialized(memoryId, async () => {
+    const memory = await storage.getMemoryById(memoryId);
+    if (!memory) {
+      return {
+        ok: false,
+        reason: "not_found",
+        message: `no memory with id ${memoryId}`,
+      };
+    }
+
+    if (!MEMORY_WORTH_OUTCOME_ELIGIBLE_CATEGORIES.has(memory.frontmatter.category)) {
+      return {
+        ok: false,
+        reason: "ineligible_category",
+        message: `category ${memory.frontmatter.category} is not instrumented for Memory Worth`,
+      };
+    }
+
+    // Absent counters are treated as 0 (matching the PR 1 semantics — legacy
+    // memories implicitly have Beta(1,1) priors). Increments land on the
+    // actual counter regardless of whether the field was previously set.
+    const currentSuccess = memory.frontmatter.mw_success ?? 0;
+    const currentFail = memory.frontmatter.mw_fail ?? 0;
+
+    const nextSuccess = input.outcome === "success" ? currentSuccess + 1 : currentSuccess;
+    const nextFail = input.outcome === "failure" ? currentFail + 1 : currentFail;
+
+    // `updateMemoryFrontmatter` goes through `writeMemoryFrontmatter`, which
+    // routes through the PR 1 serializer — so a stored corrupt value (e.g., a
+    // pre-existing float) would be rejected here. That is intentional: we
+    // refuse to layer a fresh increment on top of garbage. Operators should
+    // use `remnic doctor` to find and fix those rows before PR 4 ships.
+    await storage.updateMemoryFrontmatter(memoryId, {
+      mw_success: nextSuccess,
+      mw_fail: nextFail,
+    });
+
     return {
-      ok: false,
-      reason: "not_found",
-      message: `no memory with id ${memoryId}`,
+      ok: true,
+      memoryId,
+      mw_success: nextSuccess,
+      mw_fail: nextFail,
     };
-  }
-
-  if (!MEMORY_WORTH_OUTCOME_ELIGIBLE_CATEGORIES.has(memory.frontmatter.category)) {
-    return {
-      ok: false,
-      reason: "ineligible_category",
-      message: `category ${memory.frontmatter.category} is not instrumented for Memory Worth`,
-    };
-  }
-
-  // Absent counters are treated as 0 (matching the PR 1 semantics — legacy
-  // memories implicitly have Beta(1,1) priors). Increments land on the
-  // actual counter regardless of whether the field was previously set.
-  const currentSuccess = memory.frontmatter.mw_success ?? 0;
-  const currentFail = memory.frontmatter.mw_fail ?? 0;
-
-  const nextSuccess = input.outcome === "success" ? currentSuccess + 1 : currentSuccess;
-  const nextFail = input.outcome === "failure" ? currentFail + 1 : currentFail;
-
-  // `updateMemoryFrontmatter` goes through `writeMemoryFrontmatter`, which
-  // routes through the PR 1 serializer — so a stored corrupt value (e.g., a
-  // pre-existing float) would be rejected here. That is intentional: we
-  // refuse to layer a fresh increment on top of garbage. Operators should
-  // use `remnic doctor` to find and fix those rows before PR 4 ships.
-  await storage.updateMemoryFrontmatter(memoryId, {
-    mw_success: nextSuccess,
-    mw_fail: nextFail,
   });
-
-  return {
-    ok: true,
-    memoryId,
-    mw_success: nextSuccess,
-    mw_fail: nextFail,
-  };
 }
