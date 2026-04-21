@@ -467,7 +467,7 @@ export async function runConsolidationProvenanceCheck(options: {
   // doctor is meant to surface.
   try {
     const seenPaths = new Set(memories.map((m) => m.path));
-    const scanRoots = ["facts", "corrections", "procedures"];
+    const scanRoots = ["facts", "corrections", "procedures", "reasoning-traces"];
     for (const rootName of scanRoots) {
       const rootPath = path.join(memoryDir, rootName);
       for await (const file of walkMarkdownFiles(rootPath)) {
