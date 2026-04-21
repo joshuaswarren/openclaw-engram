@@ -2040,14 +2040,14 @@
         "description": "PPR damping factor used by the graph retrieval tier (issue #559)."
       },
       "recallGraphIterations": {
-        "type": "number",
+        "type": "integer",
         "minimum": 0,
         "maximum": 500,
         "default": 20,
         "description": "Maximum power-iteration rounds for PPR. Higher values trade latency for convergence."
       },
       "recallGraphTopK": {
-        "type": "number",
+        "type": "integer",
         "minimum": 0,
         "maximum": 10000,
         "default": 50,

@@ -121,7 +121,14 @@ export function runGraphRecall(
     };
   }
 
-  const topK = typeof config.recallGraphTopK === "number" ? config.recallGraphTopK : 50;
+  // `isFinite` guard on `topK` mirrors the checks on `damping` and
+  // `iterations` below. Without it a `NaN` topK would pass the typeof
+  // check, then `NaN <= 0` is false (bypassing the short-circuit) and
+  // the downstream `memoryResults.length >= topK` never triggers.
+  const topK =
+    typeof config.recallGraphTopK === "number" && Number.isFinite(config.recallGraphTopK)
+      ? config.recallGraphTopK
+      : 50;
   if (topK <= 0) {
     return {
       ran: false,
