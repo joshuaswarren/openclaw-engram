@@ -19,7 +19,10 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { StorageManager } from "../src/storage.ts";
-import { runConsolidationUndo } from "../src/consolidation-undo.ts";
+import {
+  runConsolidationUndo,
+  isInsideDirectory,
+} from "../src/consolidation-undo.ts";
 import type { VersioningConfig } from "../src/page-versioning.ts";
 
 const versioning: VersioningConfig = {
@@ -267,12 +270,193 @@ test("runConsolidationUndo flags malformed derived_from entries", async () => {
     });
     // The read-path parser is permissive and preserves the entry
     // verbatim.  The undo helper recognizes the malformed shape and
-    // records `skipped_malformed_entry` instead of crashing.  This
-    // matches the defense-in-depth contract: hostile on-disk shapes
-    // produce graceful skips, never a traceback.
-    assert.equal(result.error, undefined);
+    // records `skipped_malformed_entry` instead of crashing.  Because
+    // no source was recovered, the archive guard (PR #637 review,
+    // cursor High) surfaces the "no sources could be recovered"
+    // error — the target memory stays active.
     assert.equal(result.restores.length, 1);
     assert.equal(result.restores[0].outcome, "skipped_malformed_entry");
+    assert.equal(result.targetArchived, false);
+    assert.match(result.error ?? "", /no sources could be recovered/u);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── PR #637 review hardening: path traversal + archive guard ────────────────
+
+test("isInsideDirectory returns true for descendants and false for traversal attempts", () => {
+  assert.equal(isInsideDirectory("/memory/facts/a.md", "/memory"), true);
+  assert.equal(isInsideDirectory("/memory", "/memory"), true);
+  assert.equal(isInsideDirectory("/memory/facts/../outside.md", "/memory"), true);
+  assert.equal(isInsideDirectory("/memory/../outside.md", "/memory"), false);
+  assert.equal(isInsideDirectory("/other-root/memory.md", "/memory"), false);
+});
+
+test("runConsolidationUndo rejects target paths outside memoryDir (path-traversal guard)", async () => {
+  // Regression for PR #637 review (codex P1): pointing the CLI at an
+  // external markdown file with memory-like frontmatter must NOT let
+  // the undo flow unlink that external file.
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "remnic-undo-traversal-"));
+  try {
+    const memoryDir = path.join(rootDir, "memory");
+    const externalDir = path.join(rootDir, "external");
+    await mkdir(memoryDir, { recursive: true });
+    await mkdir(externalDir, { recursive: true });
+
+    const externalPath = path.join(externalDir, "hostile.md");
+    await writeFile(externalPath, "---\nid: fact-external\ncategory: fact\n---\n\nbody\n", "utf-8");
+
+    const storage = new StorageManager(memoryDir);
+    storage.setVersioningConfig({
+      enabled: true,
+      maxVersionsPerPage: 10,
+      sidecarDir: ".versions",
+    });
+    await storage.ensureDirectories();
+
+    const result = await runConsolidationUndo({
+      storage,
+      memoryDir,
+      targetPath: externalPath,
+      versioning: {
+        enabled: true,
+        maxVersionsPerPage: 10,
+        sidecarDir: ".versions",
+      },
+    });
+
+    assert.ok(result.error, "should surface a fatal error for external target");
+    assert.match(result.error!, /outside memory directory/u);
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("runConsolidationUndo refuses to restore sources whose derived_from escapes memoryDir", async () => {
+  // Regression for PR #637 review (codex P1): a crafted derived_from
+  // entry like "../outside.md:1" resolves outside memoryDir; the
+  // restore flow must flag those as skipped_outside_memory_dir and
+  // refuse to write outside the memory tree.  Without the guard this
+  // becomes an arbitrary write primitive.
+  const rootDir = await mkdtemp(path.join(os.tmpdir(), "remnic-undo-escape-"));
+  try {
+    const memoryDir = path.join(rootDir, "memory");
+    await mkdir(memoryDir, { recursive: true });
+    const storage = new StorageManager(memoryDir);
+    storage.setVersioningConfig({
+      enabled: true,
+      maxVersionsPerPage: 10,
+      sidecarDir: ".versions",
+    });
+    await storage.ensureDirectories();
+
+    // Hand-build a target memory with a hostile derived_from entry.
+    // writeMemory's validator would reject it, so we bypass to
+    // simulate on-disk corruption.  Use a `.md` suffix on the hostile
+    // path so `derived_from` format validation passes.
+    const day = "2026-04-20";
+    const factDir = path.join(memoryDir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+    const targetPath = path.join(factDir, "fact-hostile.md");
+    const raw = [
+      "---",
+      "id: fact-hostile",
+      "category: fact",
+      "created: 2026-04-20T00:00:00.000Z",
+      "updated: 2026-04-20T00:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      'derived_from: ["../../outside.md:1"]',
+      "derived_via: merge",
+      "---",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    await writeFile(targetPath, raw, "utf-8");
+
+    const result = await runConsolidationUndo({
+      storage,
+      memoryDir,
+      targetPath,
+      versioning: {
+        enabled: true,
+        maxVersionsPerPage: 10,
+        sidecarDir: ".versions",
+      },
+    });
+
+    assert.equal(result.restores.length, 1);
+    assert.equal(result.restores[0].outcome, "skipped_outside_memory_dir");
+    // Target NOT archived because no source was recovered.
+    assert.equal(result.targetArchived, false);
+    assert.ok(result.error, "no-recovery guard should surface an error");
+  } finally {
+    await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("runConsolidationUndo does NOT archive the target when no sources could be recovered", async () => {
+  // Regression for PR #637 review (cursor High): if every derived_from
+  // entry was skipped, archiving the target would silently delete the
+  // consolidated content — nothing replaces it on the active tree.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-undo-no-recovery-"));
+  try {
+    const storage = new StorageManager(dir);
+    storage.setVersioningConfig({
+      enabled: true,
+      maxVersionsPerPage: 10,
+      sidecarDir: ".versions",
+    });
+    await storage.ensureDirectories();
+
+    const srcId = await storage.writeMemory("fact", "source body", { source: "extraction" });
+    const all = await storage.readAllMemories();
+    const src = all.find((m) => m.frontmatter.id === srcId)!;
+    const entry = await storage.snapshotForProvenance(src.path);
+    assert.ok(entry);
+    await unlink(src.path);
+    storage.invalidateAllMemoriesCache();
+
+    const canonicalId = await storage.writeMemory("fact", "canonical", {
+      source: "semantic-consolidation",
+      derivedFrom: [entry],
+      derivedVia: "merge",
+    });
+    const after = await storage.readAllMemories();
+    const canonical = after.find((m) => m.frontmatter.id === canonicalId)!;
+
+    // Delete snapshot so restore fails.
+    const [rel, version] = entry.split(":");
+    await unlink(path.join(
+      dir,
+      ".versions",
+      rel.replace(/\.md$/, "").replace(/\//g, "__"),
+      `${version}.md`,
+    ));
+
+    const result = await runConsolidationUndo({
+      storage,
+      memoryDir: dir,
+      targetPath: canonical.path,
+      versioning: {
+        enabled: true,
+        maxVersionsPerPage: 10,
+        sidecarDir: ".versions",
+      },
+    });
+
+    assert.equal(result.restores.length, 1);
+    assert.equal(result.restores[0].outcome, "skipped_snapshot_missing");
+    assert.equal(result.targetArchived, false, "target must stay active when no sources recovered");
+    assert.ok(result.error);
+    assert.match(result.error!, /no sources could be recovered/u);
+
+    // Verify the target memory file is still on disk.
+    const still = await readFile(canonical.path, "utf-8");
+    assert.ok(still.includes("canonical"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

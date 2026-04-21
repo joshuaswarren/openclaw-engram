@@ -6186,20 +6186,23 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         )
         .option("--dry-run", "Show the restore plan without modifying files")
         .action(async (...args: unknown[]) => {
-          const target = typeof args[0] === "string" ? args[0] : "";
+          const rawTarget = typeof args[0] === "string" ? args[0] : "";
           const options = (args[1] ?? {}) as Record<string, unknown>;
           const dryRun = options.dryRun === true;
-          if (!target) {
+          if (!rawTarget) {
             console.error("consolidate-undo: missing <target> argument");
             process.exitCode = 1;
             return;
           }
-          // Accept either an absolute path or a path relative to the
-          // configured memory directory so operators can point at the
-          // file the way they would in a text editor or via `ls`.
-          const targetPath = path.isAbsolute(target)
-            ? target
-            : path.join(orchestrator.config.memoryDir, target);
+          // Expand `~` first (gotcha #17 — Node's fs doesn't do this
+          // automatically).  Accept either an absolute path or a path
+          // relative to the configured memory directory so operators
+          // can point at the file the way they would in a text editor
+          // or via `ls`.
+          const expandedTarget = expandTildePath(rawTarget);
+          const targetPath = path.isAbsolute(expandedTarget)
+            ? expandedTarget
+            : path.join(orchestrator.config.memoryDir, expandedTarget);
 
           const { runConsolidationUndo, formatConsolidationUndoResult } = await import(
             "./consolidation-undo.js"

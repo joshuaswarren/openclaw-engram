@@ -41,6 +41,8 @@ export interface ConsolidationUndoRestore {
     | "skipped_file_exists"
     | "skipped_snapshot_missing"
     | "skipped_malformed_entry"
+    | "skipped_outside_memory_dir"
+    | "skipped_write_failed"
     | "skipped_dry_run";
   /** Human-readable detail. */
   detail?: string;
@@ -68,6 +70,24 @@ function parseEntry(entry: string): { pagePath: string; versionId: string } | nu
   const match = entry.match(DERIVED_FROM_ENTRY_RE);
   if (!match) return null;
   return { pagePath: match[1], versionId: match[2] };
+}
+
+/**
+ * Verify that `candidate` resolves inside `root` (defense against
+ * path-traversal in `derived_from` entries and user-facing target
+ * paths).  Both paths are resolved to absolute form before comparison
+ * so `..` segments, symlinks-as-strings, and relative prefixes are
+ * normalized.  Returns true when the candidate is `root` itself or a
+ * descendant.
+ */
+export function isInsideDirectory(candidate: string, root: string): boolean {
+  const normRoot = path.resolve(root);
+  const normCandidate = path.resolve(candidate);
+  const rel = path.relative(normRoot, normCandidate);
+  if (rel.length === 0) return true;
+  if (rel.startsWith("..")) return false;
+  if (path.isAbsolute(rel)) return false;
+  return true;
 }
 
 async function fileExists(p: string): Promise<boolean> {
@@ -108,6 +128,16 @@ export async function runConsolidationUndo(options: {
     dryRun,
   };
 
+  // Defense against path-traversal (PR #637 review, codex P1): refuse
+  // to operate on a target outside the configured memory directory.
+  // Archive moves and eventual unlink would otherwise let an operator
+  // accidentally destroy an unrelated file with memory-like
+  // frontmatter.
+  if (!isInsideDirectory(targetPath, memoryDir)) {
+    result.error = `target path ${targetPath} is outside memory directory ${memoryDir}`;
+    return result;
+  }
+
   // Load the target memory.  readMemoryByPath returns null when the file
   // is absent or unparseable — surface that as a fatal error because the
   // caller cannot continue without a derived_from list.
@@ -138,6 +168,22 @@ export async function runConsolidationUndo(options: {
     }
 
     const sourcePath = path.join(memoryDir, parsed.pagePath);
+
+    // Defense against crafted `derived_from` entries (PR #637 review,
+    // codex P1): `path.join(memoryDir, "../outside.md")` resolves
+    // outside the memory directory.  Refuse to write there.  Malformed
+    // provenance is explicitly tolerated elsewhere in this pipeline,
+    // so containment must be enforced here rather than trusted up the
+    // stack.
+    if (!isInsideDirectory(sourcePath, memoryDir)) {
+      result.restores.push({
+        entry,
+        sourcePath,
+        outcome: "skipped_outside_memory_dir",
+        detail: `resolved path escapes memory directory ${memoryDir}`,
+      });
+      continue;
+    }
 
     // Fetch the snapshot content.  getVersion throws when the snapshot
     // file is missing; translate that to a skip so one missing snapshot
@@ -184,6 +230,8 @@ export async function runConsolidationUndo(options: {
     }
 
     // Live restore: write the snapshot content back to the source path.
+    // A disk write failure is distinct from a missing snapshot (PR #637
+    // review, cursor Medium) so it gets its own outcome code.
     try {
       await mkdir(path.dirname(sourcePath), { recursive: true });
       await writeFile(sourcePath, snapshotContent, "utf-8");
@@ -192,13 +240,29 @@ export async function runConsolidationUndo(options: {
       result.restores.push({
         entry,
         sourcePath,
-        outcome: "skipped_snapshot_missing",
+        outcome: "skipped_write_failed",
         detail: `write failed: ${err instanceof Error ? err.message : String(err)}`,
       });
     }
   }
 
   if (dryRun) {
+    return result;
+  }
+
+  // Archive guard (PR #637 review, cursor High): if we failed to
+  // restore ANY source we must NOT archive the target — archiving it
+  // would create silent data loss (the consolidated content goes to
+  // the archive bucket and nothing replaces it on the active tree).
+  // Treat `restored` and `skipped_file_exists` as success because both
+  // leave a source file in place; every other outcome means the undo
+  // did not recover that source.
+  const recoveredCount = result.restores.filter(
+    (r) => r.outcome === "restored" || r.outcome === "skipped_file_exists",
+  ).length;
+  if (recoveredCount === 0) {
+    result.error =
+      "no sources could be recovered (all snapshots missing or paths unsafe); target not archived to preserve data";
     return result;
   }
 
