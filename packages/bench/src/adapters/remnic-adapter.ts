@@ -27,7 +27,7 @@ type BenchAdapterMode = "lightweight" | "direct";
 interface BenchAdapterBaseConfig {
   memoryDir: string;
   workspaceDir: string;
-  lcmEnabled: true;
+  lcmEnabled: boolean;
 }
 
 export const BENCH_ADAPTER_SHARED_CONFIG: Record<string, unknown> = {
@@ -179,7 +179,7 @@ async function createBenchOrchestrator(
   const commonConfig: BenchAdapterBaseConfig = {
     memoryDir: tempDir,
     workspaceDir: tempDir,
-    lcmEnabled: true,
+    lcmEnabled: false,
   };
 
   const orchestrator = new Orchestrator(
@@ -191,9 +191,6 @@ async function createBenchOrchestrator(
   );
 
   await orchestrator.initialize();
-  if (!orchestrator.lcmEngine) {
-    throw new Error("Remnic benchmark adapter requires LCM to be enabled.");
-  }
 
   return { tempDir, orchestrator };
 }
@@ -207,14 +204,6 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       options.configOverrides,
       options.preserveRuntimeDefaults === true,
     );
-
-    const getEngine = () => {
-      const engine = state.orchestrator.lcmEngine;
-      if (!engine) {
-        throw new Error("LCM engine unavailable for Remnic benchmark adapter.");
-      }
-      return engine;
-    };
 
     const cleanup = async (): Promise<void> => {
       const orchestrator = state.orchestrator as unknown as OrchestratorTeardownView;
@@ -248,7 +237,10 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
     return {
       async store(sessionId: string, messages: Message[]): Promise<void> {
-        await getEngine().observeMessages(
+        const engine = state.orchestrator.lcmEngine;
+        if (!engine) return;
+
+        await engine.observeMessages(
           sessionId,
           messages.map((message) => ({
             role: message.role,
@@ -258,8 +250,13 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       },
 
       async recall(sessionId: string, query: string, budgetChars?: number): Promise<string> {
-        const engine = getEngine();
+        const engine = state.orchestrator.lcmEngine;
         const budget = budgetChars ?? 32_000;
+
+        if (!engine) {
+          return query ? `## Query\n${query}` : "";
+        }
+
         const sections: string[] = [];
 
         if (query) {
@@ -302,7 +299,10 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       },
 
       async search(query: string, limit: number, sessionId?: string): Promise<SearchResult[]> {
-        const results = await getEngine().searchContext(query, limit, sessionId);
+        const engine = state.orchestrator.lcmEngine;
+        if (!engine) return [];
+
+        const results = await engine.searchContext(query, limit, sessionId);
         return results.map((result) => ({
           turnIndex: result.turn_index,
           role: result.role,
@@ -316,7 +316,11 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       },
 
       async getStats(sessionId?: string): Promise<MemoryStats> {
-        return getEngine().getStats(sessionId);
+        const engine = state.orchestrator.lcmEngine;
+        if (!engine) {
+          return { totalMessages: 0, totalSummaryNodes: 0, maxDepth: 0 };
+        }
+        return engine.getStats(sessionId);
       },
 
       async destroy(): Promise<void> {
