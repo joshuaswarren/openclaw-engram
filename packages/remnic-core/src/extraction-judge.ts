@@ -179,6 +179,33 @@ export interface JudgeBatchResult {
   deferredCappedToReject: number;
 }
 
+/**
+ * Per-verdict observation emitted by `judgeFactDurability` when an
+ * `onVerdict` callback is supplied (issue #562, PR 3). Used to wire the
+ * observation ledger / telemetry stream without coupling the judge module
+ * directly to filesystem I/O. One event is emitted for every resolved
+ * verdict, including auto-approved and cache-hit paths.
+ */
+export interface JudgeVerdictObservation {
+  verdict: JudgeVerdict;
+  /** The original `JudgeCandidate` passed in (same reference). */
+  candidate: JudgeCandidate;
+  /** SHA-256 of `text\0category`, same key the cache/deferCounter use. */
+  contentHash: string;
+  /** Verdict resolution path. Useful for debugging + dashboards. */
+  source: "auto-approve" | "cache" | "llm" | "llm-cap-rejected" | "fail-open";
+  /**
+   * How many times this candidate had already been deferred before this
+   * verdict resolved. 0 when the candidate had never been deferred.
+   */
+  priorDeferrals: number;
+  /**
+   * Milliseconds from batch start to now. Shared across verdicts emitted in
+   * the same batch.
+   */
+  elapsedMs: number;
+}
+
 // ---------------------------------------------------------------------------
 // Prompt (embedded; mirrors prompts/extraction_judge.prompt.md)
 // ---------------------------------------------------------------------------
@@ -334,6 +361,7 @@ export async function judgeFactDurability(
   fallbackLlm: FallbackLlmClient | null,
   cache?: Map<string, JudgeVerdict>,
   deferCounts?: Map<string, number>,
+  onVerdict?: (observation: JudgeVerdictObservation) => void,
 ): Promise<JudgeBatchResult> {
   const startMs = Date.now();
   const verdicts = new Map<number, JudgeVerdict>();
@@ -347,6 +375,34 @@ export async function judgeFactDurability(
   const verdictCache = cache ?? defaultVerdictCache;
   const deferCountMap = deferCounts ?? defaultDeferCounts;
   const deferCap = resolveDeferCap(config);
+
+  // Lazy emit (Codex P2): when `onVerdict` is undefined (default path —
+  // telemetry off), payload construction is skipped entirely. Callers
+  // pass a factory instead of a pre-built observation so the `sha256`
+  // `contentHash` and surrounding object allocation only run when a
+  // subscriber is present. For large batches with telemetry off this
+  // removes per-verdict overhead that would otherwise fire on every
+  // auto-approved / cache / fail-open path.
+  const emit = (build: () => JudgeVerdictObservation): void => {
+    if (!onVerdict) return;
+    let observation: JudgeVerdictObservation;
+    try {
+      observation = build();
+    } catch (err) {
+      log.debug(
+        `extraction-judge: onVerdict builder threw (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
+    try {
+      onVerdict(observation);
+    } catch (err) {
+      // Fail-open: telemetry errors must never block extraction.
+      log.debug(
+        `extraction-judge: onVerdict callback threw (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  };
 
   if (candidates.length === 0) {
     return {
@@ -367,19 +423,37 @@ export async function judgeFactDurability(
 
     // Auto-approve safety categories
     if (AUTO_APPROVE_CATEGORIES.has(c.category)) {
-      verdicts.set(i, {
+      const v: JudgeVerdict = {
         durable: true,
         reason: `Auto-approved: ${c.category} category bypasses judge`,
-      });
+      };
+      verdicts.set(i, v);
+      emit(() => ({
+        verdict: v,
+        candidate: c,
+        contentHash: cacheKey(c.text, c.category),
+        source: "auto-approve",
+        priorDeferrals: 0,
+        elapsedMs: Date.now() - startMs,
+      }));
       continue;
     }
 
     // Auto-approve critical importance
     if (c.importanceLevel === "critical") {
-      verdicts.set(i, {
+      const v: JudgeVerdict = {
         durable: true,
         reason: "Auto-approved: critical importance",
-      });
+      };
+      verdicts.set(i, v);
+      emit(() => ({
+        verdict: v,
+        candidate: c,
+        contentHash: cacheKey(c.text, c.category),
+        source: "auto-approve",
+        priorDeferrals: 0,
+        elapsedMs: Date.now() - startMs,
+      }));
       continue;
     }
 
@@ -389,6 +463,14 @@ export async function judgeFactDurability(
     if (cachedVerdict) {
       verdicts.set(i, cachedVerdict);
       cached++;
+      emit(() => ({
+        verdict: cachedVerdict,
+        candidate: c,
+        contentHash: key,
+        source: "cache",
+        priorDeferrals: deferCountMap.get(key) ?? 0,
+        elapsedMs: Date.now() - startMs,
+      }));
       continue;
     }
 
@@ -440,18 +522,20 @@ export async function judgeFactDurability(
           const c = candidates[idx];
           const key = cacheKey(c.text, c.category);
           let verdict = rawVerdict;
+          let source: JudgeVerdictObservation["source"] = "llm";
+          const priorDefers = deferCountMap.get(key) ?? 0;
 
           // Defer cap (issue #562, PR 2). A candidate that has already been
           // deferred `deferCap` times is forcibly rejected so a pathological
           // LLM response cannot produce an infinite defer loop.
           if (getVerdictKind(verdict) === "defer") {
-            const priorDefers = deferCountMap.get(key) ?? 0;
             if (priorDefers >= deferCap) {
               verdict = {
                 durable: false,
                 reason: `Defer cap reached (${deferCap} prior defers); rejecting`,
                 kind: "reject",
               };
+              source = "llm-cap-rejected";
               // Only clear + count the cap conversion once per batch for
               // this key — duplicates in the same response all resolve to
               // reject but should not inflate the cap-rejection counter.
@@ -491,6 +575,14 @@ export async function judgeFactDurability(
           if (getVerdictKind(verdict) !== "defer") {
             verdictCache.set(key, verdict);
           }
+          emit(() => ({
+            verdict,
+            candidate: c,
+            contentHash: key,
+            source,
+            priorDeferrals: priorDefers,
+            elapsedMs: Date.now() - startMs,
+          }));
         }
         // Evict oldest entries if cache exceeds max size
         enforceMaxCacheSize(verdictCache);
@@ -505,9 +597,25 @@ export async function judgeFactDurability(
     // Fill in any missing verdicts from this batch (fail-open: approve)
     for (const idx of batchIndices) {
       if (!verdicts.has(idx)) {
-        verdicts.set(idx, {
+        const c = candidates[idx];
+        const v: JudgeVerdict = {
           durable: true,
           reason: "Approved by default (judge unavailable or parse error)",
+        };
+        verdicts.set(idx, v);
+        emit(() => {
+          // Compute the content hash once and reuse for both the event
+          // payload and the defer-counter lookup so we do not pay for
+          // sha256 twice on this cold path.
+          const hash = cacheKey(c.text, c.category);
+          return {
+            verdict: v,
+            candidate: c,
+            contentHash: hash,
+            source: "fail-open",
+            priorDeferrals: deferCountMap.get(hash) ?? 0,
+            elapsedMs: Date.now() - startMs,
+          };
         });
       }
     }
