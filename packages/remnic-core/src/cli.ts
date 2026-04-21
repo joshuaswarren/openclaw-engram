@@ -4047,26 +4047,25 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             args[0],
             (args[1] ?? {}) as Record<string, unknown>,
           );
-          // Budget override is threaded through `RecallInvocationOptions`
-          // so it applies only to this recall invocation.  Previously the
-          // CLI mutated `orchestrator.config.recallBudgetChars` around
-          // the await, which would leak into any concurrent recall
-          // running on the same orchestrator (e.g., gateway agents) and
-          // produce nondeterministic truncation.  CLAUDE.md rule 47
-          // (no shared mutable state across async boundaries).
-          //
-          // Clear any prior snapshot so a capture failure surfaces
-          // as `null` rather than returning stale data from an
-          // earlier call in the same process.
-          orchestrator.clearLastXraySnapshot();
-          await orchestrator.recall(parsed.query, undefined, {
-            xrayCapture: true,
+          // Route the xray capture through `EngramAccessService` so
+          // the CLI shares the same `xrayQueue` mutex that the HTTP
+          // and MCP surfaces use — otherwise the
+          // `clearLastXraySnapshot() → recall() → getLastXraySnapshot()`
+          // sequence races with concurrent callers (e.g., a gateway
+          // agent hitting the same orchestrator) and could swap in
+          // their snapshot mid-flight, or our capture could overwrite
+          // theirs (cursor Medium + codex P1 review on #597).  The
+          // service enforces CLAUDE.md rules 40 (serialized state) and
+          // 47 (no shared mutable state across async boundaries).
+          const xrayService = new EngramAccessService(orchestrator);
+          const response = await xrayService.recallXray({
+            query: parsed.query,
             ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
-            ...(parsed.budget !== undefined
-              ? { budgetCharsOverride: parsed.budget }
-              : {}),
+            ...(parsed.budget !== undefined ? { budget: parsed.budget } : {}),
           });
-          const snapshot = orchestrator.getLastXraySnapshot();
+          const snapshot = response.snapshotFound
+            ? response.snapshot ?? null
+            : null;
           const rendered = renderXray(snapshot, parsed.format);
           if (parsed.outPath) {
             const { writeFile: fsWriteFile } = await import("node:fs/promises");
