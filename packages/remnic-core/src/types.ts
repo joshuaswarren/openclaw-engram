@@ -512,6 +512,16 @@ export interface PluginConfig {
   recallCrossNamespaceBudgetSoftLimit: number;
   /** Hard threshold — calls past this count are denied in the window. */
   recallCrossNamespaceBudgetHardLimit: number;
+  // Memory Worth recall filter (issue #560 PR 4)
+  /**
+   * When true, recall multiplies candidate scores by the Memory Worth
+   * factor computed from `mw_success` / `mw_fail` counters on each
+   * memory's frontmatter (see `computeMemoryWorth`). Memories with a
+   * history of failed sessions sink; neutral / uninstrumented memories
+   * are untouched (multiplier 1.0). Default false — flip to true in PR 5
+   * once the benchmark shows precision tie-or-win.
+   */
+  recallMemoryWorthFilterEnabled: boolean;
   /**
    * Recall-audit anomaly detector (issue #565 PR 5/5). When true,
    * access surfaces run the anomaly detector over a tail of the audit
@@ -529,8 +539,12 @@ export interface PluginConfig {
   recallAuditAnomalyHighCardinalityLimit: number;
   /** Threshold for the `rapid-fire` flag. */
   recallAuditAnomalyRapidFireLimit: number;
-  // Memory Worth recall filter (issue #560 PR 4)
-  recallMemoryWorthFilterEnabled: boolean;
+  /**
+   * Optional half-life for Memory Worth decay, in milliseconds. When
+   * positive, older outcome observations are exponentially decayed toward
+   * the uniform prior. Set to 0 (default) to disable decay and use raw
+   * counter values.
+   */
   recallMemoryWorthHalfLifeMs: number;
   // Memory Linking (Phase 3A)
   memoryLinkingEnabled: boolean;

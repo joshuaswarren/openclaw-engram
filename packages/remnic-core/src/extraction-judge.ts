@@ -594,26 +594,29 @@ export async function judgeFactDurability(
       );
     }
 
-    // Fill in any missing verdicts from this batch (fail-open: approve)
+    // Fill in any missing verdicts from this batch (fail-open: approve).
+    // Clear defer counts so a transient outage doesn't leave stale state
+    // that causes later defers to hit the cap early.
     for (const idx of batchIndices) {
       if (!verdicts.has(idx)) {
         const c = candidates[idx];
+        const hash = cacheKey(c.text, c.category);
+        // Capture the prior deferral count BEFORE clearing so the
+        // telemetry event reflects the true state rather than always 0.
+        const priorDefers = deferCountMap.get(hash) ?? 0;
+        deferCountMap.delete(hash);
         const v: JudgeVerdict = {
           durable: true,
           reason: "Approved by default (judge unavailable or parse error)",
         };
         verdicts.set(idx, v);
         emit(() => {
-          // Compute the content hash once and reuse for both the event
-          // payload and the defer-counter lookup so we do not pay for
-          // sha256 twice on this cold path.
-          const hash = cacheKey(c.text, c.category);
           return {
             verdict: v,
             candidate: c,
             contentHash: hash,
             source: "fail-open",
-            priorDeferrals: deferCountMap.get(hash) ?? 0,
+            priorDeferrals: priorDefers,
             elapsedMs: Date.now() - startMs,
           };
         });

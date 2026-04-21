@@ -6253,6 +6253,54 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           );
         });
 
+      // consolidate-undo (issue #561 PR 5) — reverts a consolidated memory
+      // by restoring each source from its page-version snapshot and
+      // archiving the target.  See `consolidation-undo.ts` for the helper.
+      cmd
+        .command("consolidate-undo <target>")
+        .description(
+          "Undo a consolidation: restore source memories from their derived_from snapshots and archive the target",
+        )
+        .option("--dry-run", "Show the restore plan without modifying files")
+        .action(async (...args: unknown[]) => {
+          const rawTarget = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const dryRun = options.dryRun === true;
+          if (!rawTarget) {
+            console.error("consolidate-undo: missing <target> argument");
+            process.exitCode = 1;
+            return;
+          }
+          // Expand `~` first (gotcha #17 — Node's fs doesn't do this
+          // automatically).  Accept either an absolute path or a path
+          // relative to the configured memory directory so operators
+          // can point at the file the way they would in a text editor
+          // or via `ls`.
+          const expandedTarget = expandTildePath(rawTarget);
+          const targetPath = path.isAbsolute(expandedTarget)
+            ? expandedTarget
+            : path.join(orchestrator.config.memoryDir, expandedTarget);
+
+          const { runConsolidationUndo, formatConsolidationUndoResult } = await import(
+            "./consolidation-undo.js"
+          );
+          const result = await runConsolidationUndo({
+            storage: orchestrator.storage,
+            memoryDir: orchestrator.config.memoryDir,
+            targetPath,
+            versioning: {
+              enabled: orchestrator.config.versioningEnabled,
+              maxVersionsPerPage: orchestrator.config.versioningMaxPerPage,
+              sidecarDir: orchestrator.config.versioningSidecarDir,
+            },
+            dryRun,
+          });
+          console.log(formatConsolidationUndoResult(result));
+          if (result.error) {
+            process.exitCode = 1;
+          }
+        });
+
       cmd
         .command("questions")
         .description("List open questions from memory extraction")
