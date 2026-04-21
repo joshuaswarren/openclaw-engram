@@ -1352,6 +1352,16 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.semanticConsolidationMaxPerRun === "number"
         ? Math.max(0, Math.floor(cfg.semanticConsolidationMaxPerRun))
         : 100,
+    // Operator-aware consolidation prompt (issue #561 PR 3).  Defaults to
+    // true so new installs get SPLIT/MERGE/UPDATE operator selection on
+    // the `derived_via` frontmatter field.  Operators set `false`
+    // explicitly to fall back to the legacy plain-text prompt (useful for
+    // older models that don't reliably return JSON).  Gotcha #36: strings
+    // like "false" are coerced at the config-read boundary in parseConfig
+    // helpers; this field follows the same `=== false` pattern used by
+    // sibling consolidation toggles.
+    operatorAwareConsolidationEnabled:
+      cfg.operatorAwareConsolidationEnabled === false ? false : true,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,

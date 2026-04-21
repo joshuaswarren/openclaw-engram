@@ -224,6 +224,9 @@ import {
   findSimilarClusters,
   buildConsolidationPrompt,
   parseConsolidationResponse,
+  buildOperatorAwareConsolidationPrompt,
+  parseOperatorAwareConsolidationResponse,
+  chooseConsolidationOperator,
   buildExtensionsBlockForConsolidation,
   materializeAfterSemanticConsolidation,
   type SemanticConsolidationResult,
@@ -2777,15 +2780,25 @@ export class Orchestrator {
 
     for (const cluster of clusters) {
       try {
-        let prompt = buildConsolidationPrompt(cluster);
+        // Operator-aware prompt (issue #561 PR 3): ask the LLM to pick the
+        // SPLIT/MERGE/UPDATE operator alongside the canonical output.  Falls
+        // back to the legacy plain-blob prompt when operator-aware
+        // consolidation is explicitly disabled via config, so rollbacks stay
+        // clean.
+        const operatorAwareEnabled =
+          this.config.operatorAwareConsolidationEnabled !== false;
+        let prompt = operatorAwareEnabled
+          ? buildOperatorAwareConsolidationPrompt(cluster)
+          : buildConsolidationPrompt(cluster);
         if (extensionsBlock.length > 0) {
           prompt += "\n\n" + extensionsBlock;
         }
         const messages = [
           {
             role: "system" as const,
-            content:
-              "You are a memory consolidation system. Output only the consolidated memory text.",
+            content: operatorAwareEnabled
+              ? 'You are a memory consolidation system. Return ONLY a JSON object: {"operator":"merge|update|split","output":"..."}.'
+              : "You are a memory consolidation system. Output only the consolidated memory text.",
           },
           { role: "user" as const, content: prompt },
         ];
@@ -2816,7 +2829,22 @@ export class Orchestrator {
           continue;
         }
 
-        const canonicalContent = parseConsolidationResponse(response.content);
+        // Operator-aware parse (issue #561 PR 3).  In legacy mode we fall
+        // back to the plain-text parser and derive the operator from the
+        // cluster-shape heuristic so `derived_via` still lands.
+        let canonicalContent: string;
+        let operator: "split" | "merge" | "update";
+        if (operatorAwareEnabled) {
+          const parsed = parseOperatorAwareConsolidationResponse(
+            response.content,
+            cluster,
+          );
+          canonicalContent = parsed.output;
+          operator = parsed.operator;
+        } else {
+          canonicalContent = parseConsolidationResponse(response.content);
+          operator = chooseConsolidationOperator(cluster);
+        }
         cluster.canonicalContent = canonicalContent;
 
         // Pick the most recent memory's metadata as the basis for lineage
@@ -2828,17 +2856,17 @@ export class Orchestrator {
         const newest = sorted[0];
         const lineageIds = cluster.memories.map((m) => m.frontmatter.id);
 
-        // Consolidation provenance (issue #561 PR 2): snapshot each source
-        // memory BEFORE archiving it, collecting "<relpath>:<versionId>"
-        // pointers for the new canonical memory's `derived_from` frontmatter
-        // field.  Snapshots are best-effort — if page-versioning is disabled
-        // (the default in `config.ts`) or a single source fails to snapshot
-        // we omit that entry rather than abort the consolidation.  Review
-        // feedback (codex): `derived_via` is emitted unconditionally so
-        // downstream logic can still identify consolidation outputs by
-        // operator even when no `derived_from` snapshots could be
-        // captured.  PR 3 selects SPLIT/MERGE/UPDATE dynamically; here we
-        // hardcode `"merge"`.
+        // Consolidation provenance (issue #561 PR 2+3): snapshot each
+        // source memory BEFORE archiving it, collecting
+        // "<relpath>:<versionId>" pointers for the new canonical memory's
+        // `derived_from` frontmatter field.  Snapshots are best-effort — if
+        // page-versioning is disabled (default in `config.ts`) or a single
+        // source fails to snapshot we simply omit that entry rather than
+        // abort the consolidation.  The `derived_via` operator is chosen
+        // above (PR 3) from the LLM response or the cluster-shape
+        // heuristic fallback and emitted unconditionally so consolidation
+        // outputs stay identifiable even when no snapshots are captured
+        // (PR #624 review feedback).
         const derivedFromEntries: string[] = [];
         for (const m of cluster.memories) {
           if (!m.path) continue;
@@ -2861,7 +2889,7 @@ export class Orchestrator {
             source: "semantic-consolidation",
             lineage: lineageIds,
             derivedFrom: derivedFromEntries.length > 0 ? derivedFromEntries : undefined,
-            derivedVia: "merge",
+            derivedVia: operator,
           },
         );
 

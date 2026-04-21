@@ -2738,6 +2738,11 @@
         "default": 100,
         "description": "Max memories to consolidate per run to limit LLM cost."
       },
+      "operatorAwareConsolidationEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "Ask the consolidation LLM to return a structured {operator, output} JSON object so SPLIT/MERGE/UPDATE is recorded on derived_via. Disable to fall back to the legacy plain-text prompt."
+      },
       "creationMemoryEnabled": {
         "type": "boolean",
         "default": false,
@@ -4510,6 +4515,11 @@
       "label": "Semantic Consolidation Max Per Run",
       "advanced": true,
       "help": "Max memories to consolidate per run to limit LLM cost."
+    },
+    "operatorAwareConsolidationEnabled": {
+      "label": "Operator-Aware Consolidation Prompt",
+      "advanced": true,
+      "help": "When enabled (default), the consolidation LLM picks SPLIT/MERGE/UPDATE per cluster and we record it on derived_via. Disable to use the legacy plain-text prompt."
     },
     "creationMemoryEnabled": {
       "label": "Creation Memory",

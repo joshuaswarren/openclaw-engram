@@ -29,6 +29,12 @@ export {
   type ConsolidationOperator,
 } from "./consolidation-operator.js";
 
+import {
+  CONSOLIDATION_OPERATORS as _CONSOLIDATION_OPERATORS,
+  isConsolidationOperator as _isConsolidationOperator,
+  type ConsolidationOperator as _ConsolidationOperator,
+} from "./consolidation-operator.js";
+
 export interface ConsolidationCluster {
   category: string;
   memories: MemoryFile[];
@@ -158,6 +164,158 @@ Write ONLY the consolidated memory content (no metadata, no explanation, no prea
 export function parseConsolidationResponse(response: string): string {
   return response.trim();
 }
+
+// ─── Operator-aware prompt / parse (issue #561 PR 3) ─────────────────────────
+
+/**
+ * Structured result from an operator-aware consolidation LLM call.
+ *
+ * - `operator` — the consolidation operator the LLM chose for this cluster.
+ *   Falls back to the heuristic default when the LLM omits or returns an
+ *   unknown value (the parser never surfaces an invalid operator; see
+ *   `parseOperatorAwareConsolidationResponse`).
+ * - `output` — the canonical content (same format the legacy prompt
+ *   returns).  Callers persist this as the body of the new memory.
+ */
+export interface OperatorAwareConsolidationResult {
+  operator: _ConsolidationOperator;
+  output: string;
+}
+
+/**
+ * Heuristic default operator for a cluster.  Used as the fallback when the
+ * LLM does not return a parseable operator, and as the "floor" decision in
+ * `parseOperatorAwareConsolidationResponse`.
+ *
+ * Current heuristic (kept deliberately conservative — PR 3 only):
+ *
+ *   - Two or more memories being collapsed into one canonical blob is a
+ *     MERGE by definition.  This is the path the current clustering
+ *     pipeline exercises.
+ *   - A cluster of size 1 that still reaches consolidation (future path,
+ *     e.g. supersession of a single older memory by a newer value) is an
+ *     UPDATE.
+ *   - SPLIT is never selected by the heuristic because the current write
+ *     path emits exactly one canonical memory per cluster.  The prompt
+ *     reserves SPLIT for future cluster shapes where the LLM decides one
+ *     logical source actually encodes several distinct facts — at which
+ *     point the orchestrator would need to write multiple outputs.
+ */
+export function chooseConsolidationOperator(
+  cluster: ConsolidationCluster,
+): _ConsolidationOperator {
+  if (cluster.memories.length <= 1) return "update";
+  return "merge";
+}
+
+/**
+ * Build the operator-aware LLM prompt.  The LLM is asked to return a
+ * JSON object `{ "operator": <split|merge|update>, "output": <content> }`.
+ *
+ * The prompt is additive: it still asks for a single canonical blob under
+ * `output`, so the upstream write path does not change.  Future expansions
+ * (SPLIT emitting multiple outputs) are explicitly documented as
+ * out-of-scope for the parser — `parseOperatorAwareConsolidationResponse`
+ * collapses any SPLIT response into a single canonical output for now.
+ */
+export function buildOperatorAwareConsolidationPrompt(
+  cluster: ConsolidationCluster,
+): string {
+  const memoryTexts = cluster.memories
+    .map(
+      (m, i) =>
+        `Memory ${i + 1} (${m.frontmatter.id}, created ${m.frontmatter.created}):\n${m.content}`,
+    )
+    .join("\n\n");
+
+  return `You are a memory consolidation system.  The following ${cluster.memories.length} memories in the "${cluster.category}" category contain overlapping information.
+
+Pick exactly ONE consolidation operator for this cluster and return a JSON object.
+
+Operator vocabulary:
+  - "merge"  — multiple distinct source memories overlap and should be collapsed into one canonical memory (most common).
+  - "update" — one source memory carries a stale value that a newer source supersedes within the same logical fact.
+  - "split"  — a single logical source really encodes multiple distinct facts that should be separated (rare; if you pick split, still emit ONE canonical body — the write path will chunk it later).
+
+Output JSON ONLY, no prose before or after.  Schema:
+  {
+    "operator": "merge" | "update" | "split",
+    "output": "<the canonical memory text>"
+  }
+
+The "output" value must:
+1. Preserve ALL unique information from every source memory
+2. Remove redundancy and repetition
+3. Use clear, concise language
+4. Match the "${cluster.category}" category and tone
+5. NOT add information that isn't in the sources
+
+${memoryTexts}
+
+Return ONLY the JSON object:`;
+}
+
+/**
+ * Parse an operator-aware consolidation response.
+ *
+ * Contract:
+ *   - Accepts strict JSON `{ "operator": "...", "output": "..." }`.
+ *   - Tolerates a JSON payload wrapped in a fenced code block (```json ...```).
+ *   - Falls back to the heuristic operator when the JSON is malformed,
+ *     the `operator` field is missing / unknown, or the raw response is
+ *     a plain blob with no JSON at all.  This keeps PR 3 backwards
+ *     compatible with older models that ignore the JSON instruction.
+ *   - Never throws.  A missing / empty `output` field falls back to the
+ *     trimmed raw response so the caller still writes something rather
+ *     than dropping the cluster.
+ */
+export function parseOperatorAwareConsolidationResponse(
+  response: string,
+  cluster: ConsolidationCluster,
+): OperatorAwareConsolidationResult {
+  const fallback: OperatorAwareConsolidationResult = {
+    operator: chooseConsolidationOperator(cluster),
+    output: response.trim(),
+  };
+
+  const trimmed = response.trim();
+  if (trimmed.length === 0) return fallback;
+
+  // Strip a fenced code block if present.
+  const fenced = /^```(?:json)?\s*([\s\S]*?)```\s*$/u.exec(trimmed);
+  const payload = fenced ? fenced[1].trim() : trimmed;
+
+  // Find the first "{" — models sometimes prepend a sentence despite the
+  // instruction.  Parse from there to the matching outermost "}".
+  const firstBrace = payload.indexOf("{");
+  if (firstBrace < 0) return fallback;
+  const lastBrace = payload.lastIndexOf("}");
+  if (lastBrace <= firstBrace) return fallback;
+  const jsonSlice = payload.slice(firstBrace, lastBrace + 1);
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonSlice);
+  } catch {
+    return fallback;
+  }
+  if (typeof parsed !== "object" || parsed === null) return fallback;
+
+  const obj = parsed as Record<string, unknown>;
+  const rawOperator = typeof obj.operator === "string" ? obj.operator.trim().toLowerCase() : "";
+  const rawOutput = typeof obj.output === "string" ? obj.output : "";
+
+  const operator = _isConsolidationOperator(rawOperator)
+    ? rawOperator
+    : chooseConsolidationOperator(cluster);
+  const output = rawOutput.trim().length > 0 ? rawOutput.trim() : response.trim();
+
+  return { operator, output };
+}
+
+// Silence unused-import warnings when tsup tree-shakes: these are used
+// above in chooseConsolidationOperator + parse helpers.
+void _CONSOLIDATION_OPERATORS;
 
 /**
  * Discover extensions and build the block to append to a consolidation prompt.

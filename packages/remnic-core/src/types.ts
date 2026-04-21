@@ -591,6 +591,15 @@ export interface PluginConfig {
   semanticConsolidationExcludeCategories: string[];
   semanticConsolidationIntervalHours: number;
   semanticConsolidationMaxPerRun: number;
+  /**
+   * When true (default), semantic-consolidation prompts the LLM with an
+   * operator-aware format asking for JSON `{operator, output}` and records
+   * the resulting SPLIT/MERGE/UPDATE operator on `derived_via`.  When
+   * false, falls back to the legacy plain-text prompt — `derived_via` is
+   * still populated via the cluster-shape heuristic in
+   * `chooseConsolidationOperator`.  Issue #561 PR 3.
+   */
+  operatorAwareConsolidationEnabled: boolean;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   memoryUtilityLearningEnabled: boolean;
