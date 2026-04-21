@@ -557,14 +557,22 @@ test("runConsolidationUndo does NOT archive the target on partial recovery (all-
       },
     });
 
-    // One restored, one skipped — archive must be refused.
+    // Two-pass contract: if any plan would fail, NO writes happen.
+    // Both sources must report as skipped, not restored.  The target
+    // stays active and the error surfaces.
     const restored = result.restores.filter((r) => r.outcome === "restored").length;
     const skipped = result.restores.filter((r) => r.outcome === "skipped_snapshot_missing").length;
-    assert.equal(restored, 1);
-    assert.equal(skipped, 1);
+    assert.equal(restored, 0, "no writes happen under two-pass contract");
+    assert.equal(skipped, 2); // both sources report as skipped
     assert.equal(result.targetArchived, false);
     assert.ok(result.error);
-    assert.match(result.error!, /all-or-nothing/u);
+    // Two-pass: zero writes happen, so the error reflects "no
+    // sources could be recovered" rather than partial-all-or-nothing.
+    assert.match(result.error!, /no sources could be recovered|all-or-nothing/u);
+
+    // Additionally: neither source file was actually written.
+    await assert.rejects(() => readFile(srcA.path, "utf-8"));
+    await assert.rejects(() => readFile(srcB.path, "utf-8"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
