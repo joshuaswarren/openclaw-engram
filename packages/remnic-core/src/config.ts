@@ -1138,6 +1138,45 @@ export function parseConfig(raw: unknown): PluginConfig {
     // 0.60 across all 50 cases with zero regressions. See
     // `runMemoryWorthBench` in memory-worth-bench.ts. Operators can still
     // opt out with recallMemoryWorthFilterEnabled=false.
+    // Recall-audit anomaly detector (issue #565 PR 5/5). Defaults off so
+    // existing deployments are unaffected; enable explicitly to let the
+    // access surfaces flag suspicious query patterns derived from the
+    // audit trail. Thresholds floor AFTER validating the floored value
+    // is still >= 1 — a `0.5` input that floors to 0 would turn every
+    // detector into a flood-on-anything, flipping the default to
+    // max-noise instead of max-silence.
+    recallAuditAnomalyDetectionEnabled:
+      coerceBool(cfg.recallAuditAnomalyDetectionEnabled) ?? false,
+    recallAuditAnomalyWindowMs: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyWindowMs);
+      if (n === undefined) return 5 * 60_000;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 5 * 60_000;
+    })(),
+    recallAuditAnomalyRepeatQueryLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyRepeatQueryLimit);
+      if (n === undefined) return 5;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 5;
+    })(),
+    recallAuditAnomalyNamespaceWalkLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyNamespaceWalkLimit);
+      if (n === undefined) return 3;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 3;
+    })(),
+    recallAuditAnomalyHighCardinalityLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyHighCardinalityLimit);
+      if (n === undefined) return 50;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 50;
+    })(),
+    recallAuditAnomalyRapidFireLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyRapidFireLimit);
+      if (n === undefined) return 30;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 30;
+    })(),
     recallMemoryWorthFilterEnabled:
       coerceBool(cfg.recallMemoryWorthFilterEnabled) ?? true,
     recallMemoryWorthHalfLifeMs: (() => {

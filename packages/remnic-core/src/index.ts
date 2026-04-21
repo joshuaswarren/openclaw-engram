@@ -834,6 +834,31 @@ export type {
   CrossNamespaceBudgetConfig,
 } from "./cross-namespace-budget.js";
 
+
+// ---------------------------------------------------------------------------
+// Recall-audit anomaly detector (issue #565 PR 5/5)
+// ---------------------------------------------------------------------------
+
+export {
+  DEFAULT_ANOMALY_DETECTOR_CONFIG,
+  detectRecallAnomalies,
+  normalizeQueryText,
+} from "./recall-audit-anomaly.js";
+export type {
+  AnomalyDetectorConfig,
+  AnomalyDetectorInput,
+  AnomalyDetectorResult,
+  AnomalyFlag,
+  AnomalyKind,
+  AnomalySeverity,
+} from "./recall-audit-anomaly.js";
+
+export { AccessAuditAdapter } from "./access-audit.js";
+export type {
+  AccessAuditConfig,
+  AccessAuditResult,
+} from "./access-audit.js";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
