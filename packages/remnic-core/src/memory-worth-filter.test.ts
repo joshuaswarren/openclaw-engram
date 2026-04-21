@@ -183,3 +183,27 @@ test("buildMemoryWorthCounterMap only indexes memories with counter data", () =>
   assert.ok(map.has("c.md"));
   assert.ok(!map.has("b.md"));
 });
+
+test("negative candidate scores do not invert filter direction", () => {
+  // Codex P2: if upstream penalties push a score below zero, the
+  // multiplier must not flip sign. A high-worth memory (multiplier > 1)
+  // must NOT move further negative (worse rank), and a low-worth memory
+  // (multiplier < 1) must NOT move toward zero (better rank). Clamping
+  // base at 0 before multiplying preserves "failure-prone sinks".
+  const counters = new Map<string, MemoryWorthCounters>([
+    ["good.md", { mw_success: 10, mw_fail: 0 }],
+    ["bad.md", { mw_success: 0, mw_fail: 10 }],
+  ]);
+  const out = applyMemoryWorthFilter(
+    [
+      { path: "good.md", score: -1 },
+      { path: "bad.md", score: -2 },
+      { path: "neutral.md", score: -3 },
+    ],
+    { counters, now: NOW, reorder: false },
+  );
+  // All scaled scores must be non-negative (bases clamped to 0).
+  for (const item of out) {
+    assert.ok(item.score >= 0, `${item.path} score should be >= 0, got ${item.score}`);
+  }
+});

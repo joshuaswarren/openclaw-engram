@@ -142,7 +142,15 @@ export function applyMemoryWorthFilter(
       halfLifeMs: options.halfLifeMs,
     });
     const multiplier = worth.score / NEUTRAL_PRIOR;
-    const scored = candidate.score * multiplier;
+    // Clamp the candidate score at zero before multiplying. A negative
+    // base score (can happen when upstream penalties push a candidate
+    // below zero) would flip the intended direction: a multiplier > 1
+    // would move the score further negative (worse rank), while a
+    // multiplier < 1 would move it toward zero (better rank). That's the
+    // opposite of "failure-prone memories sink". Treat negatives as zero
+    // so the filter's semantics hold regardless of upstream arithmetic.
+    const safeBase = candidate.score < 0 ? 0 : candidate.score;
+    const scored = safeBase * multiplier;
     result.push({
       path: candidate.path,
       score: scored,
