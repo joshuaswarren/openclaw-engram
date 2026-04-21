@@ -1115,6 +1115,24 @@ export function parseConfig(raw: unknown): PluginConfig {
           (v): v is string => typeof v === "string" && v.length > 0,
         )
       : ["decisions", "principles", "conventions", "runbooks", "entities"],
+    // Cross-namespace query-budget limiter (issue #565 PR 4/5).
+    // Defaults to false — ships disabled so existing deployments are
+    // unaffected. When enabled, the read path throttles a principal that
+    // issues a burst of recalls against namespaces other than their own.
+    recallCrossNamespaceBudgetEnabled:
+      coerceBool(cfg.recallCrossNamespaceBudgetEnabled) ?? false,
+    recallCrossNamespaceBudgetWindowMs: (() => {
+      const n = coerceNumber(cfg.recallCrossNamespaceBudgetWindowMs);
+      return n !== undefined && n > 0 ? Math.floor(n) : 60_000;
+    })(),
+    recallCrossNamespaceBudgetSoftLimit: (() => {
+      const n = coerceNumber(cfg.recallCrossNamespaceBudgetSoftLimit);
+      return n !== undefined && n >= 0 ? Math.floor(n) : 10;
+    })(),
+    recallCrossNamespaceBudgetHardLimit: (() => {
+      const n = coerceNumber(cfg.recallCrossNamespaceBudgetHardLimit);
+      return n !== undefined && n > 0 ? Math.floor(n) : 30;
+    })(),
     // Memory Worth recall filter (issue #560 PR 4, default flipped in PR 5).
     // Bench result on the seeded fixture: precision@5 lifts from 0.00 to
     // 0.60 across all 50 cases with zero regressions. See
