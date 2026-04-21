@@ -91,17 +91,21 @@ export class AccessAuditAdapter {
       }
     }
 
-    // Update the in-memory tail whether or not audit writes landed, so
-    // detection still works in read-only deployments.
-    const key = principalKey.length > 0 ? principalKey : "__anonymous__";
-    const tail = this.trails.get(key) ?? { entries: [] };
-    tail.entries.push(entry);
-    if (tail.entries.length > this.trailBufferSize) {
-      tail.entries.splice(0, tail.entries.length - this.trailBufferSize);
-    }
-    this.trails.set(key, tail);
-
+    // Only maintain the in-memory tail when detection is actually
+    // enabled — otherwise a long-lived MCP/HTTP service with many
+    // transient session keys accumulates unbounded `trails` state with
+    // no corresponding detector output to use it. This also keeps the
+    // adapter's default (detection off) a true no-op beyond the audit
+    // write.
     if (this.config.detection.enabled) {
+      const key = principalKey.length > 0 ? principalKey : "__anonymous__";
+      const tail = this.trails.get(key) ?? { entries: [] };
+      tail.entries.push(entry);
+      if (tail.entries.length > this.trailBufferSize) {
+        tail.entries.splice(0, tail.entries.length - this.trailBufferSize);
+      }
+      this.trails.set(key, tail);
+
       result.anomalies = detectRecallAnomalies({
         entries: tail.entries,
         now,

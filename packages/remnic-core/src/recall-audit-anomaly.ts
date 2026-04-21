@@ -217,21 +217,32 @@ export function detectRecallAnomalies(
   }
 
   // 2) namespace-walk: distinct namespaces extracted from candidateMemoryIds.
-  //    Candidate IDs that begin with `<namespace>/` disclose the namespace.
-  //    Entries whose IDs have no prefix are treated as "own namespace".
+  //    Candidate IDs that begin with `<namespace>/` disclose the namespace
+  //    directly. IDs without a slash prefix (e.g. bare filenames) do not
+  //    disclose a namespace, but a recall whose result list mixes
+  //    prefixed AND unprefixed IDs is itself suspicious — it suggests
+  //    the backend leaked memories from both the caller's own namespace
+  //    and named tenants. We track unprefixed IDs under a reserved
+  //    sentinel namespace so they still contribute to the count when a
+  //    trail is all-unprefixed (common for older audit entries sourced
+  //    from filenames).
   {
     const namespaces = new Set<string>();
     const indices: number[] = [];
     for (const { entry, index } of windowed) {
       if (!Array.isArray(entry.candidateMemoryIds)) continue;
+      let touchedAny = false;
       for (const id of entry.candidateMemoryIds) {
-        if (typeof id !== "string") continue;
+        if (typeof id !== "string" || id.length === 0) continue;
         const slash = id.indexOf("/");
         if (slash > 0) {
           namespaces.add(id.slice(0, slash));
+        } else {
+          namespaces.add("__unprefixed__");
         }
+        touchedAny = true;
       }
-      indices.push(index);
+      if (touchedAny) indices.push(index);
     }
     if (namespaces.size > cfg.namespaceWalkLimit) {
       flags.push({
