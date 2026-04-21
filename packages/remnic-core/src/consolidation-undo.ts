@@ -552,37 +552,11 @@ export async function runConsolidationUndo(options: {
     return result;
   }
 
-  // Dry-run: report what each plan would do.
-  if (dryRun) {
-    for (const p of plans) {
-      if (p.kind === "write") {
-        result.restores.push({
-          entry: p.entry,
-          sourcePath: p.sourcePath,
-          outcome: "skipped_dry_run",
-          detail: "would restore from snapshot",
-        });
-      } else if (p.kind === "recovered_existing") {
-        result.restores.push({
-          entry: p.entry,
-          sourcePath: p.sourcePath,
-          outcome: "skipped_file_exists",
-          detail: "source file already exists; no restore needed",
-        });
-      }
-    }
-    return result;
-  }
-
-  // All validations passed — execute writes.  A write failure here
-  // is a filesystem problem rather than a provenance problem, but
-  // any failure still aborts the archive.
-  //
-  // Deduplicate plans by sourcePath first: duplicate derived_from
-  // entries for the same source would cause the second wx-flagged
-  // write to fail with EEXIST after the first succeeds.  The first
-  // plan for each source wins; subsequent duplicates are recorded as
-  // skipped (PR #637 round-12 review, cursor medium).
+  // Deduplicate plans by sourcePath: duplicate derived_from entries for
+  // the same source would cause the second wx-flagged write to fail with
+  // EEXIST after the first succeeds.  The first plan for each source wins;
+  // subsequent duplicates are recorded as skipped.  Applied before dry-run
+  // so the preview accurately reflects what execution would do.
   const seenSourcePaths = new Set<string>();
   const dedupedPlans: RestorePlan[] = [];
   for (const p of plans) {
@@ -603,6 +577,34 @@ export async function runConsolidationUndo(options: {
     }
     dedupedPlans.push(p);
   }
+
+  // Dry-run: report what each plan would do.
+  if (dryRun) {
+    for (const p of dedupedPlans) {
+      if (p.kind === "write") {
+        result.restores.push({
+          entry: p.entry,
+          sourcePath: p.sourcePath,
+          outcome: "skipped_dry_run",
+          detail: "would restore from snapshot",
+        });
+      } else if (p.kind === "recovered_existing") {
+        result.restores.push({
+          entry: p.entry,
+          sourcePath: p.sourcePath,
+          outcome: "skipped_file_exists",
+          detail: "source file already exists; no restore needed",
+        });
+      } else if (p.kind === "skip" && p.restore) {
+        result.restores.push(p.restore);
+      }
+    }
+    return result;
+  }
+
+  // All validations passed — execute writes.  A write failure here
+  // is a filesystem problem rather than a provenance problem, but
+  // any failure still aborts the archive.
 
   let writeFailed = false;
   for (const p of dedupedPlans) {
