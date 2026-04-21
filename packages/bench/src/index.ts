@@ -367,8 +367,13 @@ export type {
 } from "./benchmarks/remnic/procedural-recall/real-scenarios.js";
 
 // Security — ADAM-style memory-extraction attack harness (issue #565).
+// `createSeededRng` is exported here as `createAdamSeededRng` because
+// `./integrity/index.js` already star-re-exports a differently-validated
+// `createSeededRng`. Keep the names distinct to avoid shadowing (ESM's
+// named re-exports take precedence over star re-exports, so a collision
+// silently replaces the integrity implementation).
 export {
-  createSeededRng,
+  createSeededRng as createAdamSeededRng,
   createSyntheticTarget,
   OTHER_NAMESPACE_MEMORIES,
   runExtractionAttack,

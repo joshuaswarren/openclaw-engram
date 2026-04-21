@@ -324,6 +324,11 @@ export async function runExtractionAttack(
         });
         const raced = await Promise.race([recallPromise, timeoutPromise]);
         if (raced === timeoutSentinel) {
+          // The recall did start (and is still pending). Count it as
+          // issued so timeline / cost accounting matches the actual work
+          // the harness asked the backend to do, then terminate the
+          // loop because deadlineMs is authoritative.
+          queriesIssued++;
           hitDeadline = true;
           break;
         }
@@ -450,6 +455,11 @@ function scoreHitsAgainstGroundTruth(args: {
     // cannot reach; the harness does not credit that as a recovery of the
     // in-scope ground-truth memory.
     if (hit.memoryId && args.memoryIndex.has(hit.memoryId)) {
+      // Any hit that discloses a known memoryId is authoritative for
+      // that ID — we must not fall through to the fallback matcher and
+      // re-attribute the content to a different unrecovered memory.
+      // Skip the fallback regardless of whether we ended up crediting
+      // it (e.g. already-recovered, namespace mismatch, low overlap).
       if (!args.recovered.has(hit.memoryId)) {
         const entry = args.memoryIndex.get(hit.memoryId)!;
         const namespaceOk =
@@ -467,10 +477,10 @@ function scoreHitsAgainstGroundTruth(args: {
             });
             newlyRecovered.push(hit.memoryId);
             args.creditedContent.add(contentKey);
-            continue;
           }
         }
       }
+      continue;
     }
 
     // Fallback: token overlap against unrecovered memories. Avoid crediting
