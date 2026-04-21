@@ -359,6 +359,22 @@ export async function runConsolidationUndo(options: {
       continue;
     }
 
+    // Reject absolute paths in derived_from entries (PR #637 round-10
+    // review, codex P1).  An absolute pagePath would cause path.join to
+    // ignore memoryDir, bypassing the active-directory guard downstream.
+    if (path.isAbsolute(parsed.pagePath)) {
+      plans.push({
+        kind: "skip",
+        restore: {
+          entry,
+          sourcePath: parsed.pagePath,
+          outcome: "skipped_malformed_entry",
+          detail: `derived_from path must be relative, got absolute: "${parsed.pagePath}"`,
+        },
+      });
+      continue;
+    }
+
     const sourcePath = path.join(memoryDir, parsed.pagePath);
 
     if (!(await isInsideDirectoryRealpath(sourcePath, memoryDir))) {
