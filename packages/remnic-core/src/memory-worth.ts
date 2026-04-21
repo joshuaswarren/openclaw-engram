@@ -102,10 +102,13 @@ function sanitizeCounter(value: number | undefined): number {
   if (typeof value !== "number") return 0;
   if (!Number.isFinite(value)) return 0;
   if (value < 0) return 0;
-  // Non-integer counters round down — they can only arise from hand-edited
-  // frontmatter or mis-seeded bench fixtures. Preserving partial counts would
-  // let decay produce fractional observations anyway, so truncation is safe.
-  return Math.floor(value);
+  // Non-integer counters are refused outright (not floored). Fractional
+  // counters can only arise from hand-edited frontmatter or a mis-seeded
+  // bench fixture — the PR 1 serializer rejects them on write. Treating
+  // `1.9` as `1` would give obviously-corrupt data non-zero confidence and
+  // shift the score away from the neutral prior. Fail to 0 instead.
+  if (!Number.isInteger(value)) return 0;
+  return value;
 }
 
 /**
@@ -145,8 +148,14 @@ export function computeMemoryWorth(input: ComputeMemoryWorthInput): MemoryWorthR
 
   const lastAccessedMs = parseLastAccessedMs(input.lastAccessed);
   const nowMs = input.now.getTime();
-  const ageMs = lastAccessedMs === null ? 0 : Math.max(0, nowMs - lastAccessedMs);
-  const factor = decayFactor(ageMs, input.halfLifeMs);
+  // An invalid `now` Date (`new Date("bad")`) would otherwise propagate
+  // NaN through `ageMs` → `decayFactor` → score and poison any downstream
+  // sort that treats NaN as "less than everything". Skip decay in that
+  // case — the raw counters are still well-defined.
+  const nowUsable = Number.isFinite(nowMs);
+  const ageMs =
+    !nowUsable || lastAccessedMs === null ? 0 : Math.max(0, nowMs - lastAccessedMs);
+  const factor = nowUsable ? decayFactor(ageMs, input.halfLifeMs) : 1;
 
   const sEff = rawS * factor;
   const fEff = rawF * factor;

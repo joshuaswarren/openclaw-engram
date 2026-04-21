@@ -92,14 +92,16 @@ test("corrupt inputs (negative, NaN, float) fail safely to prior", () => {
   assert.equal(nanCounter.score, 0.5);
   assert.equal(nanCounter.confidence, 0);
 
-  // Non-integer counters truncate downward (floor), so 1.9 → 1.
+  // Non-integer counters are refused outright (not floored). A stored `1.9`
+  // is a corruption signal and we'd rather score to the prior than pretend
+  // it was "1 real success".
   const floatCounter = computeMemoryWorth({
     mw_success: 1.9,
     mw_fail: 0,
     now: NOW,
   });
-  assert.equal(floatCounter.confidence, 1);
-  assert.ok(Math.abs(floatCounter.score - 2 / 3) < 1e-9);
+  assert.equal(floatCounter.confidence, 0);
+  assert.equal(floatCounter.score, 0.5);
 });
 
 test("decay: stale outcomes are pulled back toward the prior", () => {
@@ -210,6 +212,28 @@ test("decay: unparseable lastAccessed is ignored, not fatal", () => {
     now: NOW,
   });
   assert.equal(result.score, baseline.score);
+  assert.equal(result.confidence, 3);
+});
+
+test("invalid `now` Date does not poison output with NaN", () => {
+  // If a caller mis-constructs `now` (e.g., `new Date("bad")`), the helper
+  // must still return finite, well-clamped numbers rather than NaN — a NaN
+  // score would sort arbitrarily in downstream recall ranking.
+  const invalidNow = new Date("not-a-date");
+  const result = computeMemoryWorth({
+    mw_success: 2,
+    mw_fail: 1,
+    lastAccessed: "2025-01-01T00:00:00.000Z",
+    now: invalidNow,
+    halfLifeMs: 1000,
+  });
+  assert.ok(Number.isFinite(result.score));
+  assert.ok(Number.isFinite(result.p_success));
+  assert.ok(Number.isFinite(result.confidence));
+  assert.ok(result.score >= 0 && result.score <= 1);
+  // With decay disabled by the invalid now, raw counts (2 successes, 1
+  // failure) yield Laplace (2+1)/(2+1+2) = 3/5 = 0.6.
+  assert.ok(Math.abs(result.score - 0.6) < 1e-9);
   assert.equal(result.confidence, 3);
 });
 
