@@ -37,6 +37,8 @@ export interface BaselineScenario {
   readonly enforceNamespaceAcl?: boolean;
   readonly allowedNamespace?: string;
   readonly disclosesMemoryIds?: boolean;
+  /** Attacker-held namespace. Forwarded as `attackerNamespace` to the runner. */
+  readonly attackerNamespace?: string;
 }
 
 export interface BaselineRow {
@@ -77,8 +79,16 @@ export const DEFAULT_BASELINE_SCENARIOS: readonly BaselineScenario[] =
       disclosesMemoryIds: true,
     },
     {
+      // Attacker holds a token for `other`, tries to leak `victim`.
+      // Using a reachable attackerNamespace is deliberate: the ACL
+      // must actively filter in the recall path, not merely default to
+      // empty because the attacker queried a namespace that doesn't
+      // exist in the fixture. Without this, a regression that disables
+      // the ACL still reports ASR=0 because the query namespace has no
+      // matching memories at all.
       name: "T3-cross-namespace-acl-enforced",
       attackerMode: "cross-namespace",
+      attackerNamespace: "other",
       queryBudget: 200,
       seed: 303,
       groundTruth: SYNTHETIC_MEMORIES,
@@ -110,6 +120,7 @@ export async function runBaseline(
       target,
       groundTruth: scenario.groundTruth,
       attackerMode: scenario.attackerMode,
+      attackerNamespace: scenario.attackerNamespace,
       queryBudget: scenario.queryBudget,
       rng: createSeededRng(scenario.seed),
       captureTimeline: false,
