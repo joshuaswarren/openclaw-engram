@@ -701,6 +701,20 @@ export {
 } from "./graph-retrieval.js";
 
 // ---------------------------------------------------------------------------
+// Cross-namespace query-budget limiter (issue #565 PR 4/5)
+// ---------------------------------------------------------------------------
+
+export {
+  CrossNamespaceBudget,
+  DEFAULT_CROSS_NAMESPACE_BUDGET,
+} from "./cross-namespace-budget.js";
+export type {
+  BudgetDecision,
+  BudgetDecisionReason,
+  CrossNamespaceBudgetConfig,
+} from "./cross-namespace-budget.js";
+
+// ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
 
