@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.3.140] — 2026-04-21
+
 ### Added
 
 - **Memory importers for ChatGPT, Claude, Gemini, Mem0** (issue #568).
