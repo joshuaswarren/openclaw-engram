@@ -4732,7 +4732,7 @@ async function cmdBench(rest: string[]): Promise<void> {
         const statusId = runtimeProfiles.length > 1
           ? `${benchmarkId} [${runtimeProfile}]`
           : benchmarkId;
-        await updateBenchmarkStarted(benchStatusPath, statusId);
+        try { await updateBenchmarkStarted(benchStatusPath, statusId); } catch { /* non-fatal */ }
         try {
           const handledByPackage = await runBenchViaPackage(
             parsed,
@@ -4741,7 +4741,7 @@ async function cmdBench(rest: string[]): Promise<void> {
             benchStatusPath,
           );
           if (handledByPackage.ok && handledByPackage.writtenPath) {
-            await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath);
+            try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath); } catch { /* non-fatal */ }
           } else if (!handledByPackage.ok) {
             // Fallback runner doesn't return a writtenPath — look for the
             // result file in the default output directory after completion.
@@ -4752,18 +4752,18 @@ async function cmdBench(rest: string[]): Promise<void> {
               resolveBenchOutputDir(),
               `${benchmarkId}-result.json`,
             );
-            await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath);
+            try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath); } catch { /* non-fatal */ }
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.error(`  [ERROR] benchmark "${benchmarkId}" failed: ${message}`);
           failures.add(benchmarkId);
-          await updateBenchmarkFailed(benchStatusPath, statusId, message);
+          try { await updateBenchmarkFailed(benchStatusPath, statusId, message); } catch { /* non-fatal */ }
         }
       }
     }
   } finally {
-    await finalizeBenchStatus(benchStatusPath);
+    try { await finalizeBenchStatus(benchStatusPath); } catch { /* non-fatal */ }
   }
   if (failures.size > 0) {
     console.error(`\nFailed benchmarks: ${[...failures].join(", ")}`);

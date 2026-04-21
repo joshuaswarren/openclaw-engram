@@ -5,11 +5,13 @@
  * (or humans) can poll to track benchmark progress without relying on
  * Node.js stdout (which is invisible when piped/nohup'd).
  *
- * All writes use atomic temp-file + rename so readers never see
+ * All writes are serialized through a per-file queue so that concurrent
+ * task-progress updates never race with benchmark completion/failure writes.
+ * Each write uses atomic temp-file + rename so readers never see
  * partially-written JSON.
  */
 
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface BenchmarkStatusEntry {
@@ -47,6 +49,34 @@ async function readStatusFile(filePath: string): Promise<BenchStatus | null> {
   }
 }
 
+// Per-file serialized write queue to prevent concurrent writes from racing.
+const writeQueues = new Map<string, Promise<void>>();
+
+function serializedWrite(
+  filePath: string,
+  fn: (status: BenchStatus) => BenchStatus | null,
+): Promise<void> {
+  const prev = writeQueues.get(filePath) ?? Promise.resolve();
+  const next = prev.then(async () => {
+    const current = await readStatusFile(filePath);
+    if (!current) return;
+    const updated = fn(current);
+    if (updated) {
+      await atomicWriteJSON(filePath, updated);
+    }
+  }).catch(() => {
+    // Swallow I/O errors so status file failures never crash the benchmark loop.
+  });
+  writeQueues.set(filePath, next);
+  // Prune completed entries to avoid unbounded map growth.
+  void next.finally(() => {
+    if (writeQueues.get(filePath) === next) {
+      writeQueues.delete(filePath);
+    }
+  });
+  return next;
+}
+
 export async function initBenchStatus(
   filePath: string,
   benchmarks: string[],
@@ -63,89 +93,79 @@ export async function initBenchStatus(
   await atomicWriteJSON(filePath, status);
 }
 
-export async function updateBenchmarkStarted(
+export function updateBenchmarkStarted(
   filePath: string,
   benchmarkId: string,
 ): Promise<void> {
-  const status = await readStatusFile(filePath);
-  if (!status) return;
-  status.updatedAt = new Date().toISOString();
-  status.currentBenchmark = benchmarkId;
-  status.currentTaskProgress = { completed: 0 };
-  const entry = status.benchmarks.find((b) => b.id === benchmarkId);
-  if (entry) {
-    entry.status = "running";
-    entry.startedAt = new Date().toISOString();
-  }
-  await atomicWriteJSON(filePath, status);
+  return serializedWrite(filePath, (status) => {
+    status.updatedAt = new Date().toISOString();
+    status.currentBenchmark = benchmarkId;
+    status.currentTaskProgress = { completed: 0 };
+    const entry = status.benchmarks.find((b) => b.id === benchmarkId);
+    if (entry) {
+      entry.status = "running";
+      entry.startedAt = new Date().toISOString();
+    }
+    return status;
+  });
 }
 
-export async function updateBenchmarkCompleted(
+export function updateBenchmarkCompleted(
   filePath: string,
   benchmarkId: string,
   resultPath: string,
 ): Promise<void> {
-  const status = await readStatusFile(filePath);
-  if (!status) return;
-  status.updatedAt = new Date().toISOString();
-  const entry = status.benchmarks.find((b) => b.id === benchmarkId);
-  if (entry) {
-    entry.status = "complete";
-    entry.completedAt = new Date().toISOString();
-    entry.resultPath = resultPath;
-  }
-  status.completedResults.push(resultPath);
-  delete status.currentTaskProgress;
-  await atomicWriteJSON(filePath, status);
+  return serializedWrite(filePath, (status) => {
+    status.updatedAt = new Date().toISOString();
+    const entry = status.benchmarks.find((b) => b.id === benchmarkId);
+    if (entry) {
+      entry.status = "complete";
+      entry.completedAt = new Date().toISOString();
+      entry.resultPath = resultPath;
+    }
+    status.completedResults.push(resultPath);
+    delete status.currentTaskProgress;
+    return status;
+  });
 }
 
-export async function updateBenchmarkFailed(
+export function updateBenchmarkFailed(
   filePath: string,
   benchmarkId: string,
   error: string,
 ): Promise<void> {
-  const status = await readStatusFile(filePath);
-  if (!status) return;
-  status.updatedAt = new Date().toISOString();
-  const entry = status.benchmarks.find((b) => b.id === benchmarkId);
-  if (entry) {
-    entry.status = "failed";
-    entry.completedAt = new Date().toISOString();
-    entry.error = error;
-  }
-  delete status.currentTaskProgress;
-  await atomicWriteJSON(filePath, status);
+  return serializedWrite(filePath, (status) => {
+    status.updatedAt = new Date().toISOString();
+    const entry = status.benchmarks.find((b) => b.id === benchmarkId);
+    if (entry) {
+      entry.status = "failed";
+      entry.completedAt = new Date().toISOString();
+      entry.error = error;
+    }
+    delete status.currentTaskProgress;
+    return status;
+  });
 }
 
-export async function updateTaskProgress(
+export function updateTaskProgress(
   filePath: string,
   completed: number,
   total?: number,
 ): Promise<void> {
-  const status = await readStatusFile(filePath);
-  if (!status) return;
-  status.updatedAt = new Date().toISOString();
-  status.currentTaskProgress = { completed, ...(total ? { total } : {}) };
-  await atomicWriteJSON(filePath, status);
+  return serializedWrite(filePath, (status) => {
+    status.updatedAt = new Date().toISOString();
+    status.currentTaskProgress = { completed, ...(total ? { total } : {}) };
+    return status;
+  });
 }
 
-export async function finalizeBenchStatus(
+export function finalizeBenchStatus(
   filePath: string,
 ): Promise<void> {
-  const status = await readStatusFile(filePath);
-  if (!status) return;
-  status.updatedAt = new Date().toISOString();
-  delete status.currentBenchmark;
-  delete status.currentTaskProgress;
-  await atomicWriteJSON(filePath, status);
-}
-
-export async function removeBenchStatus(
-  filePath: string,
-): Promise<void> {
-  try {
-    await unlink(filePath);
-  } catch {
-    // already gone is fine
-  }
+  return serializedWrite(filePath, (status) => {
+    status.updatedAt = new Date().toISOString();
+    delete status.currentBenchmark;
+    delete status.currentTaskProgress;
+    return status;
+  });
 }
