@@ -127,6 +127,10 @@ import {
   bufferSurpriseTriggerDefinition,
   runBufferSurpriseTriggerBenchmark,
 } from "./benchmarks/remnic/buffer-surprise-trigger/runner.js";
+import {
+  contradictionDetectionDefinition,
+  runContradictionDetectionBenchmark,
+} from "./benchmarks/remnic/contradiction-detection/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -258,6 +262,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...bufferSurpriseTriggerDefinition,
     run: runBufferSurpriseTriggerBenchmark,
+  },
+  {
+    ...contradictionDetectionDefinition,
+    run: runContradictionDetectionBenchmark,
   },
 ];
 
