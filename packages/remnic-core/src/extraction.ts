@@ -985,8 +985,21 @@ export class ExtractionEngine {
         log.debug(
           `extracted ${result.facts.length} facts, ${result.entities.length} entities, ${(result.questions ?? []).length} questions via fallback (${detailed.modelUsed})`,
         );
+        // Zod schema accepts snake_case aliases (final_answer / observed_outcome)
+        // alongside camelCase for gateway-tolerance, but the downstream
+        // ExtractedFact contract only exposes camelCase. Collapse each fact's
+        // reasoningTrace through normalizeReasoningTrace before passing it on so
+        // gateway output matches the shape local/direct-client paths produce.
+        const normalizedFacts = result.facts.map((f: any) => {
+          if (!f?.reasoningTrace) return f;
+          return {
+            ...f,
+            reasoningTrace: normalizeReasoningTrace(f.reasoningTrace) ?? undefined,
+          };
+        });
         const sanitized = this.sanitizeExtractionResult({
           ...result,
+          facts: normalizedFacts,
           questions: result.questions ?? [],
           identityReflection: result.identityReflection ?? undefined,
         } as ExtractionResult, messageTimestamp);
