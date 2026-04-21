@@ -2113,8 +2113,8 @@
       },
       "recallMemoryWorthFilterEnabled": {
         "type": "boolean",
-        "default": false,
-        "description": "When true, recall multiplies candidate scores by the Memory Worth factor (mw_success / mw_fail counters, see issue #560). Memories with a history of failed sessions sink; neutral/uninstrumented memories are untouched. PR 5 bench: +0.60 precision@5 vs baseline on all 50 seeded cases. Operators can opt in with true."
+        "default": true,
+        "description": "When true, recall multiplies candidate scores by the Memory Worth factor (mw_success / mw_fail counters, see issue #560). Memories with a history of failed sessions sink; neutral/uninstrumented memories are untouched. PR 5 bench: +0.60 precision@5 vs baseline on all 50 seeded cases. Operators can opt out with false."
       },
       "recallMemoryWorthHalfLifeMs": {
         "type": "number",
