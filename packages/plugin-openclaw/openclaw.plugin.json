@@ -2334,6 +2334,16 @@
         "default": false,
         "description": "Emit structured telemetry rows to state/observation-ledger/extraction-judge-verdicts.jsonl on every judge verdict. Off by default; enable to collect defer-rate and latency metrics for operator dashboards (issue #562)."
       },
+      "collectJudgeTrainingPairs": {
+        "type": "boolean",
+        "default": false,
+        "description": "Opt-in collector for (candidate_text, verdict_kind, reason) tuples used to prep a future GRPO training pipeline. Rows land under ~/.remnic/judge-training/<date>.jsonl (NOT in the shared memory directory). Off by default (issue #562)."
+      },
+      "judgeTrainingDir": {
+        "type": "string",
+        "default": "",
+        "description": "Override directory for judge training-pair collection. Empty string uses the default (~/.remnic/judge-training). Only consulted when collectJudgeTrainingPairs is true."
+      },
       "inlineSourceAttributionEnabled": {
         "type": "boolean",
         "default": false,
