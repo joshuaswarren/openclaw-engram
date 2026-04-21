@@ -501,6 +501,75 @@ test("isInsideDirectoryRealpath rejects paths that tunnel through a symlinked di
   }
 });
 
+test("runConsolidationUndo does NOT archive the target on partial recovery (all-or-nothing)", async () => {
+  // Regression for PR #637 round-3 review (codex P1): a mixed
+  // outcome (e.g. one restored + one skipped_snapshot_missing) must
+  // keep the target active.  Otherwise one un-recovered source is
+  // silently dropped while the consolidated content that contained
+  // it gets moved to archive.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-undo-partial-"));
+  try {
+    const storage = new StorageManager(dir);
+    storage.setVersioningConfig({
+      enabled: true,
+      maxVersionsPerPage: 10,
+      sidecarDir: ".versions",
+    });
+    await storage.ensureDirectories();
+
+    const srcAId = await storage.writeMemory("fact", "alpha body", { source: "extraction" });
+    const srcBId = await storage.writeMemory("fact", "bravo body", { source: "extraction" });
+    const all = await storage.readAllMemories();
+    const srcA = all.find((m) => m.frontmatter.id === srcAId)!;
+    const srcB = all.find((m) => m.frontmatter.id === srcBId)!;
+    const entryA = await storage.snapshotForProvenance(srcA.path);
+    const entryB = await storage.snapshotForProvenance(srcB.path);
+    assert.ok(entryA && entryB);
+    await unlink(srcA.path);
+    await unlink(srcB.path);
+    storage.invalidateAllMemoriesCache();
+
+    const canonicalId = await storage.writeMemory("fact", "canonical", {
+      source: "semantic-consolidation",
+      derivedFrom: [entryA, entryB],
+      derivedVia: "merge",
+    });
+    const after = await storage.readAllMemories();
+    const canonical = after.find((m) => m.frontmatter.id === canonicalId)!;
+
+    // Delete only B's snapshot to force a partial recovery.
+    const [relB, versionB] = entryB.split(":");
+    await unlink(path.join(
+      dir,
+      ".versions",
+      relB.replace(/\.md$/, "").replace(/\//g, "__"),
+      `${versionB}.md`,
+    ));
+
+    const result = await runConsolidationUndo({
+      storage,
+      memoryDir: dir,
+      targetPath: canonical.path,
+      versioning: {
+        enabled: true,
+        maxVersionsPerPage: 10,
+        sidecarDir: ".versions",
+      },
+    });
+
+    // One restored, one skipped — archive must be refused.
+    const restored = result.restores.filter((r) => r.outcome === "restored").length;
+    const skipped = result.restores.filter((r) => r.outcome === "skipped_snapshot_missing").length;
+    assert.equal(restored, 1);
+    assert.equal(skipped, 1);
+    assert.equal(result.targetArchived, false);
+    assert.ok(result.error);
+    assert.match(result.error!, /all-or-nothing/u);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("formatConsolidationUndoResult emits per-restore detail lines even when an error is set", async () => {
   // Regression for PR #637 round-2 review (cursor Medium): the
   // "no sources could be recovered" error is set AFTER the restore

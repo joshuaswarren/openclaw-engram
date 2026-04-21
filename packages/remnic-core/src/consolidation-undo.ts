@@ -304,19 +304,26 @@ export async function runConsolidationUndo(options: {
     return result;
   }
 
-  // Archive guard (PR #637 review, cursor High): if we failed to
-  // restore ANY source we must NOT archive the target — archiving it
-  // would create silent data loss (the consolidated content goes to
-  // the archive bucket and nothing replaces it on the active tree).
-  // Treat `restored` and `skipped_file_exists` as success because both
-  // leave a source file in place; every other outcome means the undo
-  // did not recover that source.
+  // Archive guard (PR #637 review, cursor High + codex P1 round 3):
+  // archiving the target when ANY source could not be recovered is
+  // silent data loss — the consolidated content disappears from the
+  // active tree while the un-recovered source stays lost too.  Undo
+  // is therefore all-or-nothing: every `derived_from` entry must end
+  // up as `restored` or `skipped_file_exists` (source was never
+  // archived in the first place) before we archive the target.
   const recoveredCount = result.restores.filter(
     (r) => r.outcome === "restored" || r.outcome === "skipped_file_exists",
   ).length;
-  if (recoveredCount === 0) {
-    result.error =
-      "no sources could be recovered (all snapshots missing or paths unsafe); target not archived to preserve data";
+  const notRecovered = result.restores.filter(
+    (r) => r.outcome !== "restored" && r.outcome !== "skipped_file_exists",
+  );
+  if (notRecovered.length > 0) {
+    if (recoveredCount === 0) {
+      result.error =
+        "no sources could be recovered (all snapshots missing or paths unsafe); target not archived to preserve data";
+    } else {
+      result.error = `${notRecovered.length} of ${result.restores.length} sources could not be recovered; target not archived (undo is all-or-nothing)`;
+    }
     return result;
   }
 
