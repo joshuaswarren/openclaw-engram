@@ -2095,6 +2095,9 @@ export class StorageManager {
   private get proceduresDir(): string {
     return path.join(this.baseDir, "procedures");
   }
+  private get reasoningTracesDir(): string {
+    return path.join(this.baseDir, "reasoning-traces");
+  }
   private get entitiesDir(): string {
     return path.join(this.baseDir, "entities");
   }
@@ -2303,6 +2306,7 @@ export class StorageManager {
     const today = new Date().toISOString().slice(0, 10);
     await mkdir(path.join(this.factsDir, today), { recursive: true });
     await mkdir(path.join(this.proceduresDir, today), { recursive: true });
+    await mkdir(path.join(this.reasoningTracesDir, today), { recursive: true });
     await mkdir(this.correctionsDir, { recursive: true });
     await mkdir(this.entitiesDir, { recursive: true });
     await mkdir(this.stateDir, { recursive: true });
@@ -2431,6 +2435,11 @@ export class StorageManager {
     } else if (category === "procedure") {
       await mkdir(path.join(this.proceduresDir, today), { recursive: true });
       filePath = path.join(this.proceduresDir, today, `${id}.md`);
+    } else if (category === "reasoning_trace") {
+      // Issue #564 PR 3: reasoning traces live in their own subtree so recall
+      // can filter on path cheaply without parsing frontmatter.
+      await mkdir(path.join(this.reasoningTracesDir, today), { recursive: true });
+      filePath = path.join(this.reasoningTracesDir, today, `${id}.md`);
     } else {
       filePath = path.join(this.factsDir, today, `${id}.md`);
     }
@@ -2956,6 +2965,7 @@ export class StorageManager {
 
     await collectPaths(this.factsDir);
     await collectPaths(this.proceduresDir);
+    await collectPaths(this.reasoningTracesDir);
     await collectPaths(this.correctionsDir);
     return filePaths;
   }
@@ -5600,6 +5610,11 @@ export class StorageManager {
     } else if (category === "procedure") {
       await mkdir(path.join(this.proceduresDir, today), { recursive: true });
       filePath = path.join(this.proceduresDir, today, `${id}.md`);
+    } else if (category === "reasoning_trace") {
+      // Issue #564 PR 3: chunks of a reasoning_trace memory live alongside the
+      // parent in reasoning-traces/<date>/.
+      await mkdir(path.join(this.reasoningTracesDir, today), { recursive: true });
+      filePath = path.join(this.reasoningTracesDir, today, `${id}.md`);
     } else {
       filePath = path.join(this.factsDir, today, `${id}.md`);
     }
