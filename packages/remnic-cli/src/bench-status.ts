@@ -43,7 +43,9 @@ async function atomicWriteJSON(filePath: string, data: unknown): Promise<void> {
 async function readStatusFile(filePath: string): Promise<BenchStatus | null> {
   try {
     const raw = await readFile(filePath, "utf-8");
-    return JSON.parse(raw) as BenchStatus;
+    const parsed = JSON.parse(raw);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return parsed as BenchStatus;
   } catch {
     return null;
   }

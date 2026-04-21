@@ -372,6 +372,11 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
         "ERROR: --request-timeout must be a positive integer (milliseconds).",
       );
     }
+    if (requestTimeout > 3600_000) {
+      throw new Error(
+        "ERROR: --request-timeout must not exceed 3,600,000 ms (1 hour).",
+      );
+    }
   }
 
   // `bench published` flags. Parsed unconditionally so `--name`, `--model`,

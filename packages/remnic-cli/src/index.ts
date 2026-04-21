@@ -4740,9 +4740,9 @@ async function cmdBench(rest: string[]): Promise<void> {
             runtimeProfile,
             benchStatusPath,
           );
-          if (handledByPackage.ok && handledByPackage.writtenPath) {
-            try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath); } catch { /* non-fatal */ }
-          } else if (!handledByPackage.ok) {
+          if (handledByPackage.ok) {
+            try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath ?? ""); } catch { /* non-fatal */ }
+          } else {
             await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
             // Fallback runner writes to evals/results (not
             // resolveBenchOutputDir()), so we cannot reliably determine the
