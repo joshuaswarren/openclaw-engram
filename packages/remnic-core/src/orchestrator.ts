@@ -1168,13 +1168,25 @@ export function resolvePersistedMemoryRelativePath(options: {
   if (options.category === "correction") {
     return path.join("corrections", `${options.memoryId}.md`);
   }
+  // Pick the subtree that matches the StorageManager.writeMemory routing
+  // so fallback paths (used before memoryPathById has seen the fresh
+  // write) agree with where the file actually lives. Without this branch,
+  // reasoning_trace graph edges point at facts/<date>/, and subsequent
+  // graph expansion silently drops those nodes when readMemoryByPath
+  // cannot resolve them (issue #564 PR 3 review).
+  const subtree =
+    options.category === "procedure"
+      ? "procedures"
+      : options.category === "reasoning_trace"
+        ? "reasoning-traces"
+        : "facts";
   const idParts = options.memoryId.split("-");
   const maybeTimestamp = Number(idParts[1]);
   if (Number.isFinite(maybeTimestamp) && maybeTimestamp > 0) {
     const day = new Date(maybeTimestamp).toISOString().slice(0, 10);
-    return path.join("facts", day, `${options.memoryId}.md`);
+    return path.join(subtree, day, `${options.memoryId}.md`);
   }
-  return path.join("facts", `${options.memoryId}.md`);
+  return path.join(subtree, `${options.memoryId}.md`);
 }
 
 export class Orchestrator {

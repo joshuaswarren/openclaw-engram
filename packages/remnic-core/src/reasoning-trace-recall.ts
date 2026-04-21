@@ -49,20 +49,28 @@ export function looksLikeProblemSolvingQuery(query: string): boolean {
     if (re.test(q)) return true;
   }
 
-  // Anywhere-in-string phrases.
+  // Anywhere-in-string phrases. These mirror the doc-comment's stated
+  // positive signals: broader variants ("work through", "figure out",
+  // "debug this") are included so "how do I debug this" doesn't have to
+  // lean on the `help me debug` starts-with entry alone, and so queries
+  // like "work through the problem" or "figure out why it broke" trigger
+  // the heuristic as the docstring claims.
   const phrases = [
     "step by step",
     "step-by-step",
-    "work through this",
-    "walk through this",
+    "work through",
+    "walk through",
     "walk me through",
     "reason through",
     "think through",
-    "figure out how",
+    "figure out",
     "chain of thought",
     "reasoning trace",
     "solution chain",
     "troubleshoot",
+    "debug this",
+    "debug the",
+    " debug ",
   ];
   for (const phrase of phrases) {
     if (q.includes(phrase)) return true;
