@@ -35,6 +35,10 @@ import {
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
 } from "./maintenance/memory-governance.js";
+import {
+  runConsolidationProvenanceCheck,
+  type ConsolidationProvenanceReport,
+} from "./consolidation-provenance-check.js";
 import type {
   BufferSurpriseEvent,
   FileHygieneConfig,
@@ -1189,6 +1193,19 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
     await summarizeBufferSurpriseDistribution(new StorageManager(config.memoryDir), config),
   );
 
+  // Consolidation provenance integrity (issue #561 PR 4).
+  // Validates that every `derived_from` entry resolves to an on-disk
+  // page-version snapshot and every `derived_via` is a known operator.
+  // Broken provenance emits warnings with the offending file path — the
+  // check is informational (never an error) because a missing snapshot
+  // can legitimately occur after log pruning or versioning being disabled
+  // retroactively; operators need visibility, not a hard fail.  Review
+  // feedback (PR #634): the summarizer threads the configured
+  // `versioningSidecarDir` into the scan so deployments that override
+  // the default `.versions` directory get accurate results instead of
+  // false-missing warnings.
+  checks.push(await summarizeConsolidationProvenance(new StorageManager(config.memoryDir), config));
+
   const summary = checks.reduce(
     (acc, check) => {
       acc[check.status] += 1;
@@ -1357,6 +1374,64 @@ export async function summarizeBufferSurpriseDistribution(
       details: { error: String(err) },
     };
   }
+}
+
+/**
+ * Summarize the consolidation-provenance integrity scan for the doctor
+ * report (issue #561 PR 4).  Returns an `ok` check when no issues are
+ * found, `warn` otherwise.  Never returns `error` — a broken provenance
+ * pointer is informational because it can legitimately result from log
+ * pruning, versioning being disabled retroactively, or operator-driven
+ * archive operations.
+ *
+ * Exported so unit tests can exercise the summarization without booting a
+ * full orchestrator.
+ */
+export async function summarizeConsolidationProvenance(
+  storage: StorageManager,
+  config: Pick<PluginConfig, "memoryDir"> & { versioningSidecarDir?: string },
+): Promise<OperatorDoctorCheck> {
+  let report: ConsolidationProvenanceReport;
+  try {
+    report = await runConsolidationProvenanceCheck({
+      storage,
+      memoryDir: config.memoryDir,
+      // Honor the configured sidecar directory (PR #634 review): when an
+      // operator overrides `versioningSidecarDir`, the default `.versions`
+      // would point at the wrong location and every entry would report as
+      // missing.  Undefined falls back to the helper's default.
+      sidecarDir: config.versioningSidecarDir,
+    });
+  } catch (err) {
+    return {
+      key: "consolidation_provenance",
+      status: "warn",
+      summary: "Could not run consolidation-provenance integrity check.",
+      remediation: "Ensure the memory directory is readable and rerun `remnic doctor`.",
+      details: { error: String(err) },
+    };
+  }
+
+  if (report.issues.length === 0) {
+    return {
+      key: "consolidation_provenance",
+      status: "ok",
+      summary:
+        report.withProvenance === 0
+          ? "No consolidation-provenance memories on disk yet."
+          : `${report.withProvenance} consolidation-provenance memories verified (no broken references).`,
+      details: report,
+    };
+  }
+
+  return {
+    key: "consolidation_provenance",
+    status: "warn",
+    summary: `${report.issues.length} consolidation-provenance integrity issue(s) detected across ${report.withProvenance} memories with provenance frontmatter.`,
+    remediation:
+      "Broken pointers are informational. Inspect flagged memories, and if they should resolve, re-snapshot via a consolidation pass or accept pruning.",
+    details: report,
+  };
 }
 
 function getMemoryAgeBand(memory: MemoryFile, now: Date): string {
