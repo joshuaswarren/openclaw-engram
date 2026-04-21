@@ -1782,6 +1782,9 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.recallMmrTopN === "number" && Number.isFinite(cfg.recallMmrTopN)
         ? Math.max(0, Math.floor(cfg.recallMmrTopN))
         : 40,
+    // Issue #564 PR 3: off by default; enable explicitly after bench validation.
+    recallReasoningTraceBoostEnabled:
+      coerceBool(cfg.recallReasoningTraceBoostEnabled) ?? false,
     qmdRecallCacheTtlMs:
       typeof cfg.qmdRecallCacheTtlMs === "number" ? Math.max(0, Math.floor(cfg.qmdRecallCacheTtlMs)) : 60_000,
     qmdRecallCacheStaleTtlMs:

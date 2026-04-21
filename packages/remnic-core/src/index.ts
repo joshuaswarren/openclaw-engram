@@ -138,6 +138,19 @@ export {
 } from "./direct-answer.js";
 
 // ---------------------------------------------------------------------------
+// Reasoning-trace retrieval boost (issue #564)
+// ---------------------------------------------------------------------------
+
+export {
+  applyReasoningTraceBoost,
+  isReasoningTracePath,
+  looksLikeProblemSolvingQuery,
+  DEFAULT_REASONING_TRACE_BOOST,
+  type ApplyReasoningTraceBoostOptions,
+  type BoostableResult,
+} from "./reasoning-trace-recall.js";
+
+// ---------------------------------------------------------------------------
 // Inline source attribution (issue #369)
 // ---------------------------------------------------------------------------
 
