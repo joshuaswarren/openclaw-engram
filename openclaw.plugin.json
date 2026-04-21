@@ -58,6 +58,36 @@
         "default": 15,
         "description": "Max minutes before forced extraction"
       },
+      "bufferSurpriseTriggerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Issue #563 (D-MEM). When true, the smart buffer flushes immediately on turns whose embedding-based surprise score exceeds bufferSurpriseThreshold, in addition to the existing turn-count / signal / time triggers. Additive only — never suppresses existing flushes. Off by default."
+      },
+      "bufferSurpriseThreshold": {
+        "type": "number",
+        "default": 0.35,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Threshold in [0, 1] above which a surprise score flushes the buffer. Higher = require more novelty to flush. Ignored when bufferSurpriseTriggerEnabled is false."
+      },
+      "bufferSurpriseK": {
+        "type": "number",
+        "default": 5,
+        "minimum": 1,
+        "description": "Number of nearest-neighbor memories to average over when computing the surprise score. Clamped to the recent-memory window size."
+      },
+      "bufferSurpriseRecentMemoryCount": {
+        "type": "number",
+        "default": 20,
+        "minimum": 0,
+        "description": "Maximum number of recent memories sampled for surprise scoring. Bounds embedding cost per turn. Set to 0 to effectively disable the trigger even when the flag is on."
+      },
+      "bufferSurpriseProbeTimeoutMs": {
+        "type": "number",
+        "default": 2000,
+        "minimum": 1,
+        "description": "Hard timeout (ms) for the surprise probe. If the probe does not resolve within this window the buffer treats it as failed and falls through to the existing triggers — a slow or hung embedder cannot stall the turn-append path."
+      },
       "consolidateEveryN": {
         "type": "number",
         "default": 3,
@@ -1997,6 +2027,32 @@
         "default": true,
         "description": "When true, recall runs the direct-answer tier in observation mode: annotates LastRecallSnapshot.tierExplain with which tier would have served the query (issue #518). Does not short-circuit the QMD path in the current release."
       },
+      "recallGraphEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, recall builds a retrieval graph from memory frontmatter and runs Personalized PageRank, merging the result with QMD via MMR (issue #559 PR 4). Default false — ships off pending the retrieval-graph bench in PR 5."
+      },
+      "recallGraphDamping": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 0.999999999,
+        "default": 0.85,
+        "description": "PPR damping factor used by the graph retrieval tier (issue #559)."
+      },
+      "recallGraphIterations": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 500,
+        "default": 20,
+        "description": "Maximum power-iteration rounds for PPR. Higher values trade latency for convergence."
+      },
+      "recallGraphTopK": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10000,
+        "default": 50,
+        "description": "Maximum memories returned by the graph retrieval tier before the MMR diversifier runs."
+      },
       "recallDirectAnswerTokenOverlapFloor": {
         "type": "number",
         "minimum": 0,
@@ -2054,6 +2110,17 @@
         "minimum": 1,
         "default": 30,
         "description": "Hard threshold for the cross-namespace budget: calls past this count are denied until the window advances."
+      },
+      "recallMemoryWorthFilterEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "When true, recall multiplies candidate scores by the Memory Worth factor (mw_success / mw_fail counters, see issue #560). Memories with a history of failed sessions sink; neutral/uninstrumented memories are untouched. PR 5 bench: +0.60 precision@5 vs baseline on all 50 seeded cases. Operators can opt out with false."
+      },
+      "recallMemoryWorthHalfLifeMs": {
+        "type": "number",
+        "minimum": 0,
+        "default": 0,
+        "description": "Half-life (ms) for Memory Worth decay. Positive values exponentially decay older outcomes toward the neutral prior; 0 disables decay."
       },
       "memoryLinkingEnabled": {
         "type": "boolean",
@@ -2346,6 +2413,27 @@
         "type": "boolean",
         "default": false,
         "description": "Shadow mode for the extraction judge. When true, judge verdicts are logged but all facts are still persisted regardless of the verdict."
+      },
+      "extractionJudgeMaxDeferrals": {
+        "type": "number",
+        "default": 2,
+        "minimum": 1,
+        "description": "Maximum number of times the same candidate text may be deferred by the extraction judge before the verdict is forcibly converted to 'reject'. Prevents pathological LLM responses from looping forever on ambiguous facts (issue #562)."
+      },
+      "extractionJudgeTelemetryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Emit structured telemetry rows to state/observation-ledger/extraction-judge-verdicts.jsonl on every judge verdict. Off by default; enable to collect defer-rate and latency metrics for operator dashboards (issue #562)."
+      },
+      "collectJudgeTrainingPairs": {
+        "type": "boolean",
+        "default": false,
+        "description": "Opt-in collector for (candidate_text, verdict_kind, reason) tuples used to prep a future GRPO training pipeline. Rows land under ~/.remnic/judge-training/<date>.jsonl (NOT in the shared memory directory). Off by default (issue #562)."
+      },
+      "judgeTrainingDir": {
+        "type": "string",
+        "default": "",
+        "description": "Override directory for judge training-pair collection. Empty string uses the default (~/.remnic/judge-training). Only consulted when collectJudgeTrainingPairs is true."
       },
       "inlineSourceAttributionEnabled": {
         "type": "boolean",
@@ -2760,6 +2848,11 @@
         "type": "number",
         "default": 100,
         "description": "Max memories to consolidate per run to limit LLM cost."
+      },
+      "operatorAwareConsolidationEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Opt in to operator-aware consolidation prompts so the LLM returns structured {operator, output} JSON and SPLIT/MERGE/UPDATE is recorded on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
       },
       "creationMemoryEnabled": {
         "type": "boolean",
@@ -3539,6 +3632,11 @@
         "minimum": 0,
         "description": "Number of top candidates per section to run MMR over. Candidates past this remain in original order."
       },
+      "recallReasoningTraceBoostEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Boost stored reasoning_trace memories in recall results when the incoming query reads like a problem-solving ask (e.g. 'how do I...', 'step by step', 'walk me through...'). Default false - opt in after benchmarking (issue #564)."
+      },
       "recallPipeline": {
         "type": "array",
         "description": "Ordered recall sections with per-section budgets and feature knobs.",
@@ -4154,6 +4252,25 @@
       "label": "Direct-Answer Retrieval Tier",
       "help": "Route validated high-trust queries to a fast direct-answer path before QMD (issue #518)."
     },
+    "recallGraphEnabled": {
+      "label": "Graph Retrieval (PPR)",
+      "help": "Run Personalized PageRank on the retrieval graph and merge with QMD via MMR (issue #559)."
+    },
+    "recallGraphDamping": {
+      "label": "Graph Recall Damping",
+      "advanced": true,
+      "placeholder": "0.85"
+    },
+    "recallGraphIterations": {
+      "label": "Graph Recall Iterations",
+      "advanced": true,
+      "placeholder": "20"
+    },
+    "recallGraphTopK": {
+      "label": "Graph Recall Top-K",
+      "advanced": true,
+      "placeholder": "50"
+    },
     "recallDirectAnswerTokenOverlapFloor": {
       "label": "Direct-Answer Token Overlap Floor",
       "advanced": true,
@@ -4534,6 +4651,11 @@
       "advanced": true,
       "help": "Max memories to consolidate per run to limit LLM cost."
     },
+    "operatorAwareConsolidationEnabled": {
+      "label": "Operator-Aware Consolidation Prompt",
+      "advanced": true,
+      "help": "Opt in to operator-aware consolidation prompts (default off). When enabled, the LLM returns structured {operator, output} JSON and we record SPLIT/MERGE/UPDATE on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
+    },
     "creationMemoryEnabled": {
       "label": "Creation Memory",
       "advanced": true,
@@ -4844,6 +4966,11 @@
       "advanced": true,
       "placeholder": "40",
       "help": "Number of top candidates per section over which MMR is applied"
+    },
+    "recallReasoningTraceBoostEnabled": {
+      "label": "Boost Reasoning Traces on Problem-Solving Queries",
+      "advanced": true,
+      "help": "Promote stored reasoning_trace memories to the top of recall results when the incoming query reads like a problem-solving ask. Default off; enable after benchmarking (issue #564)."
     }
   }
 }
