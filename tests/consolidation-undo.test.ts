@@ -558,12 +558,14 @@ test("runConsolidationUndo does NOT archive the target on partial recovery (all-
     });
 
     // Two-pass contract: if any plan would fail, NO writes happen.
-    // Both sources must report as skipped, not restored.  The target
-    // stays active and the error surfaces.
+    // One source's plan reports as skipped_snapshot_missing (real
+    // failure); the other reports as skipped_blocked_by_other_failures
+    // because it had a valid plan but was aborted.
     const restored = result.restores.filter((r) => r.outcome === "restored").length;
-    const skipped = result.restores.filter((r) => r.outcome === "skipped_snapshot_missing").length;
+    const skippedMissing = result.restores.filter((r) => r.outcome === "skipped_snapshot_missing").length;
+    const skippedBlocked = result.restores.filter((r) => r.outcome === "skipped_blocked_by_other_failures").length;
     assert.equal(restored, 0, "no writes happen under two-pass contract");
-    assert.equal(skipped, 2); // both sources report as skipped
+    assert.equal(skippedMissing + skippedBlocked, 2); // both sources accounted for
     assert.equal(result.targetArchived, false);
     assert.ok(result.error);
     // Two-pass: zero writes happen, so the error reflects "no

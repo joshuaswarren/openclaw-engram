@@ -44,6 +44,7 @@ export interface ConsolidationUndoRestore {
     | "skipped_malformed_entry"
     | "skipped_outside_memory_dir"
     | "skipped_write_failed"
+    | "skipped_blocked_by_other_failures"
     | "skipped_dry_run";
   /** Human-readable detail. */
   detail?: string;
@@ -367,7 +368,7 @@ export async function runConsolidationUndo(options: {
         result.restores.push({
           entry: p.entry,
           sourcePath: p.sourcePath,
-          outcome: dryRun ? "skipped_dry_run" : "skipped_snapshot_missing",
+          outcome: dryRun ? "skipped_dry_run" : "skipped_blocked_by_other_failures",
           detail: dryRun
             ? "would restore from snapshot (blocked by other failures)"
             : "snapshot available but undo aborted due to other failures",
