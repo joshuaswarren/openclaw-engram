@@ -74,6 +74,12 @@ const CONTRA_SIGNALS = [
   " no longer ",
   " disabled by default",
   " enabled by default",
+  " lost on restart",
+  " persisted to disk",
+  " survives restarts",
+  " in memory and",
+  " now the default",
+  " only used as a fallback",
 ];
 
 function heuristicVerdict(
@@ -88,17 +94,17 @@ function heuristicVerdict(
   const aHasContra = CONTRA_SIGNALS.some((s) => a.includes(s));
   const bHasContra = CONTRA_SIGNALS.some((s) => b.includes(s));
   if (aHasContra || bHasContra) {
-    // If the texts share significant token overlap, the signal
+    // If the texts share even modest token overlap, the signal
     // likely indicates a genuine contradiction.
-    if (overlap > 0.3) return "contradicts";
+    if (overlap > 0.15) return "contradicts";
   }
 
   // Check for near-duplicate
-  if (overlap > 0.7) return "duplicates";
+  if (overlap > 0.55) return "duplicates";
 
-  // Moderate overlap with contradiction signals but low overlap score —
+  // Contradiction signal present but virtually no token overlap —
   // ambiguous, defer to human review.
-  if ((aHasContra || bHasContra) && overlap <= 0.3) return "needs-user";
+  if ((aHasContra || bHasContra) && overlap <= 0.15) return "needs-user";
 
   // Some topic overlap but not duplicate and not contradictory
   if (overlap > 0.2) return "independent";
@@ -108,6 +114,8 @@ function heuristicVerdict(
 }
 
 function tokenOverlap(a: string, b: string): number {
+  // Dice coefficient on word unigrams — symmetric, and more generous
+  // than Jaccard for near-paraphrases with asymmetric length.
   const setA = new Set(a.split(/\s+/).filter(Boolean));
   const setB = new Set(b.split(/\s+/).filter(Boolean));
   if (setA.size === 0 && setB.size === 0) return 1;
@@ -116,7 +124,21 @@ function tokenOverlap(a: string, b: string): number {
   for (const t of setA) {
     if (setB.has(t)) shared++;
   }
-  return shared / Math.max(setA.size, setB.size);
+  const dice = (2 * shared) / (setA.size + setB.size);
+
+  // Containment: fraction of the smaller set's tokens found in the larger.
+  // Handles paraphrases where one sentence is a subset restatement.
+  const smaller = setA.size <= setB.size ? setA : setB;
+  const larger = setA.size <= setB.size ? setB : setA;
+  let contained = 0;
+  for (const t of smaller) {
+    if (larger.has(t)) contained++;
+  }
+  const containment = contained / smaller.size;
+
+  // Weighted blend: containment alone would over-score contradictions
+  // that happen to share all short-text tokens, so mix with Dice.
+  return 0.5 * dice + 0.5 * containment;
 }
 
 // ── Per-verdict metrics ───────────────────────────────────────────────────────
