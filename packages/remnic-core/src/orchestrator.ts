@@ -2828,6 +2828,21 @@ export class Orchestrator {
         const newest = sorted[0];
         const lineageIds = cluster.memories.map((m) => m.frontmatter.id);
 
+        // Consolidation provenance (issue #561 PR 2): snapshot each source
+        // memory BEFORE archiving it, collecting "<relpath>:<versionId>"
+        // pointers for the new canonical memory's `derived_from` frontmatter
+        // field.  Snapshots are best-effort — if page-versioning is disabled
+        // or a single source fails to snapshot we simply omit that entry
+        // rather than abort the consolidation.  `derived_via` is hardcoded
+        // to `"merge"` here; operator selection (SPLIT/MERGE/UPDATE) lands
+        // in PR 3.
+        const derivedFromEntries: string[] = [];
+        for (const m of cluster.memories) {
+          if (!m.path) continue;
+          const entry = await this.storage.snapshotForProvenance(m.path);
+          if (entry) derivedFromEntries.push(entry);
+        }
+
         // Write the canonical memory
         const canonicalId = await this.storage.writeMemory(
           newest.frontmatter.category,
@@ -2842,6 +2857,8 @@ export class Orchestrator {
             ],
             source: "semantic-consolidation",
             lineage: lineageIds,
+            derivedFrom: derivedFromEntries.length > 0 ? derivedFromEntries : undefined,
+            derivedVia: derivedFromEntries.length > 0 ? "merge" : undefined,
           },
         );
 

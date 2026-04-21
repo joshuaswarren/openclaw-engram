@@ -10,6 +10,7 @@ import { createVersion as createPageVersion, type VersioningConfig, type Version
 import {
   isConsolidationOperator,
   isValidDerivedFromEntry,
+  type ConsolidationOperator,
 } from "./consolidation-operator.js";
 import {
   matchEntitySchemaSection,
@@ -2013,6 +2014,48 @@ export class StorageManager {
     }
   }
 
+  /**
+   * Consolidation provenance helper (issue #561 PR 2).
+   *
+   * Captures the current on-disk content of a source memory as a
+   * page-version snapshot so the downstream consolidated write can record a
+   * `derived_from` pointer that actually resolves.  Returns the
+   * `"<relative-path>:<versionId>"` entry expected by the `derived_from`
+   * frontmatter field.
+   *
+   * Returns `null` when versioning is disabled (snapshots would not be
+   * created), when the file does not exist (nothing to snapshot), or when
+   * the snapshot write itself fails (best-effort — callers skip the entry
+   * rather than block the consolidation).
+   */
+  async snapshotForProvenance(filePath: string): Promise<string | null> {
+    if (!this._versioningConfig || !this._versioningConfig.enabled) return null;
+    let existing: string;
+    try {
+      existing = await readFile(filePath, "utf-8");
+    } catch {
+      return null;
+    }
+    try {
+      const version = await createPageVersion(
+        filePath,
+        existing,
+        "consolidation",
+        this._versioningConfig,
+        log,
+        undefined,
+        this.baseDir,
+      );
+      const rel = path.relative(this.baseDir, filePath).split(path.sep).join("/");
+      return `${rel}:${version.versionId}`;
+    } catch (err) {
+      log.warn(
+        `storage.snapshotForProvenance: failed to snapshot ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
   constructor(
     private readonly baseDir: string,
     private readonly entitySchemas?: PluginConfig["entitySchemas"],
@@ -2350,6 +2393,15 @@ export class StorageManager {
        */
       contentHashSource?: string;
       status?: MemoryStatus;
+      /**
+       * Consolidation provenance (issue #561 PR 2).  When the caller is a
+       * consolidation / supersession / dedup-merge path, these fields wire
+       * the page-version snapshots the new memory was derived from and the
+       * operator that produced it.  Persisted onto frontmatter as
+       * `derived_from` + `derived_via`; validated at serialize time.
+       */
+      derivedFrom?: string[];
+      derivedVia?: ConsolidationOperator;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -2394,6 +2446,16 @@ export class StorageManager {
     };
     if (options.status !== undefined) {
       fm.status = options.status;
+    }
+    // Consolidation provenance (issue #561 PR 2).  We filter empty arrays to
+    // avoid serializing a no-op `derived_from: []` on legacy write paths that
+    // pass an explicit empty array.  Missing values survive the roundtrip as
+    // undefined.
+    if (options.derivedFrom !== undefined && options.derivedFrom.length > 0) {
+      fm.derived_from = options.derivedFrom;
+    }
+    if (options.derivedVia !== undefined) {
+      fm.derived_via = options.derivedVia;
     }
 
     // Append structured attributes as searchable suffix so QMD indexes them.
