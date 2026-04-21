@@ -234,8 +234,8 @@ export function isActiveMemoryRelativePath(
   const normalized = normalizeRelativePath(pagePath);
   const prefixes = [...NON_ACTIVE_PREFIXES];
   if (sidecarDir) {
-    const normSidecar = sidecarDir.replace(/\\/g, "/");
-    prefixes.push(normSidecar.endsWith("/") ? normSidecar : normSidecar + "/");
+    const normSidecar = normalizeRelativePath(sidecarDir);
+    prefixes.push(normSidecar + "/");
   }
   for (const prefix of prefixes) {
     if (normalized === prefix.slice(0, -1) || normalized.startsWith(prefix)) {
@@ -376,9 +376,23 @@ export async function runConsolidationUndo(options: {
     // Reject source paths inside non-active directories (archive/,
     // state/, versioning sidecar).  A crafted or corrupted derived_from
     // entry like "archive/2024-01-01/x.md:1" would otherwise be counted
-    // as "recovered_existing" even though no active memory was restored
-    // (PR #637 round-7 review, codex P2).
-    if (!isActiveMemoryRelativePath(parsed.pagePath, versioning.sidecarDir)) {
+    // as "recovered_existing" even though no active memory was restored.
+    // Also resolve symlinks before checking — a derived_from entry like
+    // "facts/link/stale.md:1" where `facts/link` points to `archive/…`
+    // must be caught (PR #637 round-8 review, cursor+codex).
+    let resolvedRelative = parsed.pagePath;
+    try {
+      const realSource = await realpath(sourcePath);
+      const realBase = await realpath(memoryDir);
+      const rel = path.relative(realBase, realSource);
+      if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
+        resolvedRelative = rel.replace(/\\/g, "/");
+      }
+    } catch {
+      // realpath failed (file doesn't exist yet) — use the text path
+    }
+    if (!isActiveMemoryRelativePath(parsed.pagePath, versioning.sidecarDir) ||
+        !isActiveMemoryRelativePath(resolvedRelative, versioning.sidecarDir)) {
       plans.push({
         kind: "skip",
         restore: {
