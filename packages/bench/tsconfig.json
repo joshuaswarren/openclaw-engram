@@ -31,7 +31,8 @@
     "src/stats/**/*.ts",
     "src/benchmarks/published/**/*.ts",
     "src/benchmarks/custom/**/*.ts",
-    "src/benchmarks/remnic/**/*.ts"
+    "src/benchmarks/remnic/**/*.ts",
+    "src/security/**/*.ts"
   ],
   "exclude": [
     "src/**/*.test.ts"
