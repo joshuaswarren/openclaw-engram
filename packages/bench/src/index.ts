@@ -365,3 +365,25 @@ export type {
   ProceduralRealScenario,
   ProceduralRealScenarioCategory,
 } from "./benchmarks/remnic/procedural-recall/real-scenarios.js";
+
+// Security — ADAM-style memory-extraction attack harness (issue #565).
+export {
+  createSeededRng,
+  createSyntheticTarget,
+  OTHER_NAMESPACE_MEMORIES,
+  runExtractionAttack,
+  SYNTHETIC_MEMORIES,
+} from "./security/extraction-attack/index.js";
+export type {
+  AttackerMode,
+  AttackRecallOptions,
+  AttackRetrievalHit,
+  ExtractionAttackOptions,
+  ExtractionAttackResult,
+  ExtractionAttackTarget,
+  HarnessRng,
+  RecoveredMemory,
+  SeededMemory,
+  SyntheticTargetOptions,
+  TimelineEntry,
+} from "./security/extraction-attack/index.js";
