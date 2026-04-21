@@ -18,10 +18,20 @@
  */
 
 import path from "node:path";
-import { access } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import type { StorageManager } from "./storage.js";
 import { isConsolidationOperator } from "./consolidation-operator.js";
+
+/**
+ * Regex to spot a `derived_via: <value>` line in the raw YAML frontmatter
+ * between the opening and first closing `---` delimiters.  We use the raw
+ * text rather than the parsed `frontmatter.derived_via` because the
+ * read-path parser coerces unknown values back to `undefined` — that
+ * would silently hide corrupted-or-future operators from the doctor scan
+ * (PR #634 review feedback, codex P2).
+ */
+const DERIVED_VIA_RAW_RE = /^derived_via:\s*(.+)$/mu;
 
 /**
  * One integrity warning attached to a specific memory.
@@ -136,9 +146,37 @@ export async function runConsolidationProvenanceCheck(options: {
     const derivedFrom = fm.derived_from;
     const derivedVia = fm.derived_via;
 
+    // Raw `derived_via` from disk — the read-path parser coerces unknown
+    // values to `undefined`, so we re-extract from the raw YAML to flag
+    // corrupted or future operator values that would otherwise be hidden
+    // (PR #634 review feedback, codex P2).  Best-effort: if the file
+    // can't be read, we fall through to the parsed value and silently
+    // accept that we may miss a rare corruption case.
+    let rawDerivedVia: string | undefined;
+    try {
+      const raw = await readFile(memory.path, "utf-8");
+      const frontmatterEnd = raw.indexOf("\n---", raw.indexOf("---") + 3);
+      const fmSlice = frontmatterEnd > 0 ? raw.slice(0, frontmatterEnd) : raw;
+      const match = fmSlice.match(DERIVED_VIA_RAW_RE);
+      if (match) {
+        // Strip surrounding quotes (single or double) and whitespace.
+        let val = match[1].trim();
+        if (
+          (val.startsWith('"') && val.endsWith('"')) ||
+          (val.startsWith("'") && val.endsWith("'"))
+        ) {
+          val = val.slice(1, -1);
+        }
+        rawDerivedVia = val;
+      }
+    } catch {
+      // Fall through to the parsed value.
+    }
+
     const hasFrom = Array.isArray(derivedFrom) && derivedFrom.length > 0;
     const hasVia = derivedVia !== undefined && derivedVia !== null;
-    if (!hasFrom && !hasVia) continue;
+    const hasRawVia = rawDerivedVia !== undefined && rawDerivedVia.length > 0;
+    if (!hasFrom && !hasVia && !hasRawVia) continue;
     report.withProvenance += 1;
 
     if (hasFrom) {
@@ -166,12 +204,15 @@ export async function runConsolidationProvenanceCheck(options: {
       }
     }
 
-    if (hasVia && !isConsolidationOperator(derivedVia)) {
+    // Check the RAW YAML value for unknown operators.  The parsed value
+    // (`fm.derived_via`) is always known-good because the read-path
+    // normalizer dropped anything else to undefined.
+    if (hasRawVia && !isConsolidationOperator(rawDerivedVia)) {
       report.issues.push({
         memoryPath: memory.path,
         memoryId: fm.id,
         kind: "derived_via_unknown_operator",
-        detail: `unknown operator: ${JSON.stringify(derivedVia)}`,
+        detail: `unknown operator: ${JSON.stringify(rawDerivedVia)}`,
       });
     }
   }

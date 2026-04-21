@@ -141,13 +141,13 @@ test("runConsolidationProvenanceCheck flags unknown derived_via operators", asyn
     await writeFile(filePath, raw, "utf-8");
 
     const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
-    // Parser drops unknown operators to undefined on read, so the scan
-    // sees no provenance on this memory — it won't be flagged.  That is
-    // the *intended* defence: unknown operators are also invisible to
-    // downstream logic.  Document this behavior so later revisions that
-    // change read-path tolerance catch the drift.
-    assert.equal(report.withProvenance, 0);
-    assert.equal(report.issues.length, 0);
+    // The normalized read-path parser drops unknown operators to
+    // undefined, but the doctor re-extracts the raw YAML value so
+    // on-disk corruption is still surfaced (PR #634 review feedback).
+    assert.equal(report.issues.length, 1);
+    const issue = report.issues[0];
+    assert.equal(issue.kind, "derived_via_unknown_operator");
+    assert.ok(issue.detail.includes("annihilate"));
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
@@ -199,6 +199,45 @@ test("summarizeConsolidationProvenance returns warn when integrity issues exist"
     assert.ok(check.remediation);
     const detail = check.details as ConsolidationProvenanceReport;
     assert.ok(detail.issues.length >= 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("summarizeConsolidationProvenance honors versioningSidecarDir from config", async () => {
+  // Regression for PR #634 review feedback (codex P2 / cursor Medium):
+  // the summarizer must thread the configured `versioningSidecarDir`
+  // into the scan.  Deployments that override the default `.versions`
+  // directory would otherwise see false-missing warnings for every
+  // `derived_from` entry because the scan looks in the wrong directory.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-sidecar-"));
+  try {
+    const storage = new StorageManager(dir);
+    // Use a non-default sidecar directory to prove threading works.
+    storage.setVersioningConfig({
+      enabled: true,
+      maxVersionsPerPage: 10,
+      sidecarDir: ".custom-versions",
+    });
+    await storage.ensureDirectories();
+
+    const srcId = await storage.writeMemory("fact", "source body", { source: "extraction" });
+    const all = await storage.readAllMemories();
+    const src = all.find((m) => m.frontmatter.id === srcId)!;
+    const entry = await storage.snapshotForProvenance(src.path);
+    assert.ok(entry);
+
+    await storage.writeMemory("fact", "canonical", {
+      source: "semantic-consolidation",
+      derivedFrom: [entry],
+      derivedVia: "merge",
+    });
+
+    const check = await summarizeConsolidationProvenance(storage, {
+      memoryDir: dir,
+      versioningSidecarDir: ".custom-versions",
+    });
+    assert.equal(check.status, "ok", `got ${check.status}: ${check.summary}`);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }

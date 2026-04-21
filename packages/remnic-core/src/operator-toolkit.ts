@@ -1185,7 +1185,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // Broken provenance emits warnings with the offending file path — the
   // check is informational (never an error) because a missing snapshot
   // can legitimately occur after log pruning or versioning being disabled
-  // retroactively; operators need visibility, not a hard fail.
+  // retroactively; operators need visibility, not a hard fail.  Review
+  // feedback (PR #634): the summarizer threads the configured
+  // `versioningSidecarDir` into the scan so deployments that override
+  // the default `.versions` directory get accurate results instead of
+  // false-missing warnings.
   checks.push(await summarizeConsolidationProvenance(new StorageManager(config.memoryDir), config));
 
   const summary = checks.reduce(
@@ -1295,13 +1299,18 @@ export async function summarizeMemoryWorthLegacyCounters(
  */
 export async function summarizeConsolidationProvenance(
   storage: StorageManager,
-  config: Pick<PluginConfig, "memoryDir">,
+  config: Pick<PluginConfig, "memoryDir" | "versioningSidecarDir">,
 ): Promise<OperatorDoctorCheck> {
   let report: ConsolidationProvenanceReport;
   try {
     report = await runConsolidationProvenanceCheck({
       storage,
       memoryDir: config.memoryDir,
+      // Honor the configured sidecar directory (PR #634 review): when an
+      // operator overrides `versioningSidecarDir`, the default `.versions`
+      // would point at the wrong location and every entry would report as
+      // missing.  Undefined falls back to the helper's default.
+      sidecarDir: config.versioningSidecarDir,
     });
   } catch (err) {
     return {
