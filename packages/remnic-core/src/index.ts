@@ -734,6 +734,12 @@ export {
   type MemoryWorthFilterResultItem,
 } from "./memory-worth-filter.js";
 
+// Memory Worth recall-precision benchmark (issue #560 PR 5 of 5) is NOT
+// re-exported from the public API surface. The bench is for in-package
+// test/script use only — see packages/remnic-core/src/memory-worth-bench.ts
+// and its companion test. Benchmarks the broader package ecosystem relies
+// on live in packages/bench/.
+
 // ---------------------------------------------------------------------------
 // Graph retrieval types (issue #559, PR 1 of 5)
 // ---------------------------------------------------------------------------
