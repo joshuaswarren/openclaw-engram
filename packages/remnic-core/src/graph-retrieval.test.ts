@@ -773,3 +773,37 @@ test("PPR converges to a stable fixed point (two iterations close to each other)
     );
   }
 });
+
+test("PPR honors RemnicGraphNode.weight as a starting-rank prior (no seedWeights)", () => {
+  // Two disconnected nodes. Without edges, PPR's rank follows the
+  // seed distribution; node weights must bias the uniform fallback.
+  const nodes = new Map<string, RemnicGraphNode>();
+  nodes.set("a", { id: "a", type: "memory", weight: 3 });
+  nodes.set("b", { id: "b", type: "memory", weight: 1 });
+  const graph: RemnicGraph = { nodes, edges: [] };
+  const result = queryGraph(graph, [], { iterations: 0 });
+  const scoreA = result.rankedNodes.find((n) => n.id === "a")?.score ?? 0;
+  const scoreB = result.rankedNodes.find((n) => n.id === "b")?.score ?? 0;
+  assert.ok(scoreA > scoreB * 2, `expected a(${scoreA}) >> b(${scoreB})`);
+});
+
+test("PPR does not double-bias explicit seedWeights with node weights (Codex P2)", () => {
+  // With both `seedWeights` provided AND node weights, the node
+  // weights must not silently amplify the caller's explicit bias.
+  // This test: a has node weight 10, b has node weight 1. Caller sets
+  // seedWeights a=1, b=1 (equal). Expected: equal shares.
+  const nodes = new Map<string, RemnicGraphNode>();
+  nodes.set("a", { id: "a", type: "memory", weight: 10 });
+  nodes.set("b", { id: "b", type: "memory", weight: 1 });
+  const graph: RemnicGraph = { nodes, edges: [] };
+  const result = queryGraph(graph, ["a", "b"], {
+    seedWeights: { a: 1, b: 1 },
+    iterations: 0,
+  });
+  const scoreA = result.rankedNodes.find((n) => n.id === "a")?.score ?? 0;
+  const scoreB = result.rankedNodes.find((n) => n.id === "b")?.score ?? 0;
+  assert.ok(
+    Math.abs(scoreA - scoreB) < 1e-9,
+    `expected equal shares, got a=${scoreA}, b=${scoreB}`,
+  );
+});

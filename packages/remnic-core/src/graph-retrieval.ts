@@ -350,6 +350,36 @@ export function queryGraph(
   if (!Number.isFinite(tolerance) || tolerance < 0) tolerance = 0;
 
   const seed = buildSeedVector(graph, seedIds, options);
+
+  // Apply `RemnicGraphNode.weight` as a starting-rank prior — BUT only
+  // when the caller did not supply explicit `seedWeights`. Explicit
+  // caller-supplied weights must not be silently re-biased by node
+  // priors (would double-count and contradict the documented contract
+  // for `seedWeights`). When no explicit weights are given, multiply
+  // each seed entry by its node weight (defaulting missing / non-
+  // positive / non-finite weights to 1) and renormalize.
+  const hasExplicitWeights =
+    options.seedWeights !== undefined && options.seedWeights !== null;
+  if (!hasExplicitWeights) {
+    let priorTotal = 0;
+    for (const [id, s] of seed) {
+      const node = graph.nodes.get(id);
+      const w =
+        node !== undefined &&
+        typeof node.weight === "number" &&
+        Number.isFinite(node.weight) &&
+        node.weight > 0
+          ? node.weight
+          : 1;
+      const biased = s * w;
+      seed.set(id, biased);
+      priorTotal += biased;
+    }
+    if (priorTotal > 0) {
+      for (const [id, s] of seed) seed.set(id, s / priorTotal);
+    }
+  }
+
   const { outgoing, outSum } = buildAdjacency(graph);
 
   // Initialize rank vector = seed.
