@@ -226,7 +226,14 @@ export async function runContradictionDetectionBenchmark(
   const correctCount = tasks.filter((t) => t.scores.accuracy === 1).length;
   verdictScores.overall_accuracy = cases.length > 0 ? correctCount / cases.length : 0;
 
-  // Add a synthetic aggregate task so verdict-level scores appear in aggregates
+  // Compute latency metrics BEFORE adding the synthetic aggregate task
+  // so meanQueryLatencyMs denominator reflects real cases only.
+  const remnicVersion = await getRemnicVersion();
+  const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
+  const meanQueryLatencyMs = tasks.length > 0 ? totalLatencyMs / tasks.length : 0;
+
+  // Add a synthetic aggregate task so verdict-level scores appear in aggregates.
+  // Excluded from latency computation above.
   tasks.push({
     taskId: "_aggregate_verdict_metrics",
     question: "Per-verdict precision/recall/F1",
@@ -236,9 +243,6 @@ export async function runContradictionDetectionBenchmark(
     latencyMs: 0,
     tokens: { input: 0, output: 0 },
   });
-
-  const remnicVersion = await getRemnicVersion();
-  const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
 
   return {
     meta: {
@@ -265,7 +269,7 @@ export async function runContradictionDetectionBenchmark(
       outputTokens: 0,
       estimatedCostUsd: 0,
       totalLatencyMs,
-      meanQueryLatencyMs: tasks.length > 0 ? totalLatencyMs / tasks.length : 0,
+      meanQueryLatencyMs,
     },
     results: {
       tasks,
