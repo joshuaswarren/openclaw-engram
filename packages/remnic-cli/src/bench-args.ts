@@ -60,6 +60,9 @@ export interface ParsedBenchArgs {
   output?: string;
   custom?: string;
   target?: BenchPublishTarget;
+  requestTimeout?: number;
+  /** Suppress thinking/reasoning tokens for thinking-capable models (Gemma 4, Qwen 3.5, DeepSeek). */
+  disableThinking?: boolean;
   /** `bench published` — specific benchmark to run (longmemeval|locomo). */
   publishedName?: PublishedBenchmarkName;
   /** `bench published` — seed forwarded into the harness context. */
@@ -178,7 +181,8 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--seed" ||
       arg === "--out" ||
       arg === "--provider" ||
-      arg === "--base-url"
+      arg === "--base-url" ||
+      arg === "--request-timeout"
     ) {
       index += 1;
       continue;
@@ -293,6 +297,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const formatRaw = readBenchOptionValue(args, "--format");
   const output = readBenchOptionValue(args, "--output");
   const targetRaw = readBenchOptionValue(args, "--target");
+  const requestTimeoutRaw = readBenchOptionValue(args, "--request-timeout");
   let runtimeProfile: BenchRuntimeProfile | undefined;
   if (runtimeProfileRaw !== undefined) {
     runtimeProfile = parseBenchRuntimeProfile(
@@ -357,6 +362,21 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
       throw new Error('ERROR: --target must be "remnic-ai".');
     }
     target = targetRaw;
+  }
+
+  let requestTimeout: number | undefined;
+  if (requestTimeoutRaw !== undefined) {
+    requestTimeout = Number(requestTimeoutRaw);
+    if (!Number.isInteger(requestTimeout) || requestTimeout <= 0) {
+      throw new Error(
+        "ERROR: --request-timeout must be a positive integer (milliseconds).",
+      );
+    }
+    if (requestTimeout > 3600_000) {
+      throw new Error(
+        "ERROR: --request-timeout must not exceed 3,600,000 ms (1 hour).",
+      );
+    }
   }
 
   // `bench published` flags. Parsed unconditionally so `--name`, `--model`,
@@ -487,5 +507,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
       ? path.resolve(expandTilde(publishedOutRaw))
       : undefined,
     publishedDryRun: args.includes("--dry-run"),
+    requestTimeout,
+    disableThinking: args.includes("--disable-thinking"),
   };
 }

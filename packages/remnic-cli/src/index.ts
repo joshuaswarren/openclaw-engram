@@ -151,6 +151,14 @@ import {
   parseBenchArgs,
 } from "./bench-args.js";
 import {
+  initBenchStatus,
+  updateBenchmarkStarted,
+  updateBenchmarkCompleted,
+  updateBenchmarkFailed,
+  updateTaskProgress as updateBenchStatusTaskProgress,
+  finalizeBenchStatus,
+} from "./bench-status.js";
+import {
   cleanupRollbackDirectoryBestEffort,
   createOpenclawUpgradeRollbackFailure,
   runBestEffortGatewayRestart,
@@ -664,6 +672,8 @@ export function buildBenchRuntimeProfileRequest(
     judgeProvider: parsed.judgeProvider,
     judgeModel: parsed.judgeModel,
     judgeBaseUrl: parsed.judgeBaseUrl,
+    requestTimeout: parsed.requestTimeout,
+    disableThinking: parsed.disableThinking,
   };
 }
 
@@ -770,10 +780,12 @@ async function runBenchViaFallback(
     parsed.systemBaseUrl !== undefined ||
     parsed.judgeProvider !== undefined ||
     parsed.judgeModel !== undefined ||
-    parsed.judgeBaseUrl !== undefined
+    parsed.judgeBaseUrl !== undefined ||
+    parsed.disableThinking === true ||
+    parsed.requestTimeout !== undefined
   ) {
     throw new Error(
-      "Fallback benchmark runner does not support provider-backed or gateway runtime flags. Build/install @remnic/bench to use those options.",
+      "Fallback benchmark runner does not support provider-backed, gateway, or thinking/timeout flags. Build/install @remnic/bench to use those options.",
     );
   }
   if (!fs.existsSync(EVAL_RUNNER_PATH)) {
@@ -2024,6 +2036,7 @@ async function runBenchViaPackage(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
   runtimeProfile: BenchRuntimeProfile,
+  benchStatusPath?: string,
 ): Promise<{ ok: boolean; writtenPath?: string }> {
   const loaded = await tryLoadBenchModule();
   if (!loaded) return { ok: false };
@@ -2090,6 +2103,13 @@ async function runBenchViaPackage(
       system,
       onTaskComplete: (task, completed, total) => {
         partialTasks.push(task);
+        if (benchStatusPath) {
+          updateBenchStatusTaskProgress(
+            benchStatusPath,
+            completed,
+            total ?? undefined,
+          ).catch(() => {});
+        }
         if (completed % 50 === 0 || completed === total) {
           const elapsed = Math.round((Date.now() - benchStartTime) / 1000);
           const remaining = total && elapsed > 0 ? Math.round((total - completed) / (completed / elapsed)) : "?";
@@ -4841,23 +4861,63 @@ async function cmdBench(rest: string[]): Promise<void> {
 
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
   const failures = new Set<string>();
-  for (const benchmarkId of selectedBenchmarks) {
-    for (const runtimeProfile of runtimeProfiles) {
-      try {
-        const handledByPackage = await runBenchViaPackage(
-          parsed,
-          benchmarkId,
-          runtimeProfile,
-        );
-        if (!handledByPackage.ok) {
-          await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
+  const benchStatusPath = path.join(
+    parsed.resultsDir ?? resolveBenchOutputDir(),
+    "bench-status.json",
+  );
+  // When running a matrix (multiple profiles), create profile-specific status
+  // entries so that a failed profile doesn't get overwritten by a later success.
+  const statusEntryIds = [...new Set(
+    runtimeProfiles.length > 1
+      ? selectedBenchmarks.flatMap((benchmarkId) =>
+          runtimeProfiles.map((profile) => `${benchmarkId} [${profile}]`),
+        )
+      : selectedBenchmarks,
+  )];
+  try { await initBenchStatus(benchStatusPath, statusEntryIds, process.pid); } catch { /* non-fatal */ }
+  try {
+    for (const benchmarkId of selectedBenchmarks) {
+      for (const runtimeProfile of runtimeProfiles) {
+        const statusId = runtimeProfiles.length > 1
+          ? `${benchmarkId} [${runtimeProfile}]`
+          : benchmarkId;
+        try { await updateBenchmarkStarted(benchStatusPath, statusId); } catch { /* non-fatal */ }
+        try {
+          const handledByPackage = await runBenchViaPackage(
+            parsed,
+            benchmarkId,
+            runtimeProfile,
+            benchStatusPath,
+          );
+          if (handledByPackage.ok) {
+            try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath ?? ""); } catch { /* non-fatal */ }
+          } else {
+            await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
+            // Fallback runner writes to evals/results with a timestamped
+            // filename. Scan for the most recent match by mtime.
+            let fallbackResultPath = "";
+            try {
+              const fallbackDir = path.join(path.dirname(EVAL_RUNNER_PATH), "results");
+              const files = fs.readdirSync(fallbackDir)
+                .filter((f) => f.startsWith(benchmarkId) && f.endsWith(".json"))
+                .map((f) => ({ name: f, mtime: fs.statSync(path.join(fallbackDir, f)).mtimeMs }))
+                .sort((a, b) => b.mtime - a.mtime);
+              if (files.length > 0) {
+                fallbackResultPath = path.join(fallbackDir, files[0].name);
+              }
+            } catch { /* scan failure is non-fatal */ }
+            try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath); } catch { /* non-fatal */ }
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`  [ERROR] benchmark "${benchmarkId}" failed: ${message}`);
+          failures.add(benchmarkId);
+          try { await updateBenchmarkFailed(benchStatusPath, statusId, message); } catch { /* non-fatal */ }
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`  [ERROR] benchmark "${benchmarkId}" failed: ${message}`);
-        failures.add(benchmarkId);
       }
     }
+  } finally {
+    try { await finalizeBenchStatus(benchStatusPath); } catch { /* non-fatal */ }
   }
   if (failures.size > 0) {
     console.error(`\nFailed benchmarks: ${[...failures].join(", ")}`);
