@@ -1235,6 +1235,20 @@ export class Orchestrator {
   /** Lossless Context Management engine — proactive session archive + DAG summarization. */
   readonly lcmEngine: LcmEngine | null = null;
   private readonly rerankCache = new RerankCache();
+
+  /**
+   * Short-TTL cache for Memory Worth counter lookups so interactive recall
+   * doesn't trigger a full `readAllMemories` scan per query. Keyed by
+   * namespace; the filter unions across namespaces at query time. The TTL
+   * is intentionally short (seconds, not minutes) because counters are
+   * mutated by `recordMemoryOutcome` asynchronously and we'd rather serve
+   * a 30-second-stale worth score than a stable-but-wrong one.
+   */
+  private readonly memoryWorthCounterCache = new Map<
+    string,
+    { at: number; counters: ReadonlyMap<string, MemoryWorthCounters> }
+  >();
+  private static readonly MEMORY_WORTH_CACHE_TTL_MS = 30_000;
   /**
    * Per-session workspace overrides keyed by sessionKey.
    * Set by the before_agent_start hook so recall() uses the correct
@@ -13512,19 +13526,32 @@ export class Orchestrator {
     results: QmdSearchResult[],
     namespaces: string[],
   ): Promise<QmdSearchResult[]> {
-    // Build the counter lookup once per call. We union frontmatter counters
-    // across every namespace the recall spans — the recall path itself
-    // already aggregates candidates from multiple namespaces, so we must
-    // do the same when looking up the counters.
+    // Build the counter lookup. We union frontmatter counters across every
+    // namespace the recall spans — the recall path itself already
+    // aggregates candidates from multiple namespaces, so we must do the
+    // same when looking up counters. Per-namespace results are cached with
+    // a short TTL so interactive recall doesn't trigger a full
+    // `readAllMemories` scan per query (addresses codex P2 on PR 4).
     const counters = new Map<string, MemoryWorthCounters>();
     const seenNamespaces = new Set<string>();
+    const nowMs = Date.now();
     for (const ns of namespaces) {
       if (seenNamespaces.has(ns)) continue;
       seenNamespaces.add(ns);
       try {
-        const storage = await this.getStorage(ns);
-        const memories = await storage.readAllMemories();
-        const nsMap = buildMemoryWorthCounterMap(memories);
+        const cached = this.memoryWorthCounterCache.get(ns);
+        let nsMap: ReadonlyMap<string, MemoryWorthCounters> | undefined;
+        if (
+          cached &&
+          nowMs - cached.at < Orchestrator.MEMORY_WORTH_CACHE_TTL_MS
+        ) {
+          nsMap = cached.counters;
+        } else {
+          const storage = await this.getStorage(ns);
+          const memories = await storage.readAllMemories();
+          nsMap = buildMemoryWorthCounterMap(memories);
+          this.memoryWorthCounterCache.set(ns, { at: nowMs, counters: nsMap });
+        }
         for (const [path, c] of nsMap) counters.set(path, c);
       } catch (err) {
         log.debug("memory-worth: failed to read namespace, skipping", {
@@ -14027,6 +14054,19 @@ export class Orchestrator {
       log.debug(
         "rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank",
       );
+    }
+
+    // Memory Worth filter — must fire on the cold fallback path too, or the
+    // feature flag produces divergent behavior by retrieval path (CLAUDE.md
+    // rule 39). Fail-open on lookup errors.
+    if (this.config.recallMemoryWorthFilterEnabled && results.length > 0) {
+      try {
+        results = await this.applyMemoryWorthRerank(results, options.recallNamespaces);
+      } catch (err) {
+        log.debug("memory-worth filter (cold) failed open", {
+          error: (err as Error).message,
+        });
+      }
     }
 
     // Apply MMR before final truncation so the cold fallback path mirrors
