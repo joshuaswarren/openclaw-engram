@@ -584,7 +584,11 @@ export async function runConsolidationUndo(options: {
       }
       try {
         await mkdir(path.dirname(p.sourcePath), { recursive: true });
-        await writeFile(p.sourcePath, p.content, "utf-8");
+        // Use exclusive create (wx / O_EXCL) so that if another process
+        // recreates the source file between planning and execution, this
+        // write fails with EEXIST instead of silently overwriting the new
+        // file (PR #637 round-11 review, codex P1).
+        await writeFile(p.sourcePath, p.content, { encoding: "utf-8", flag: "wx" });
         result.restores.push({
           entry: p.entry,
           sourcePath: p.sourcePath,

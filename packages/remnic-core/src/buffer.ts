@@ -125,6 +125,11 @@ export class SmartBuffer {
   }
 
   private peekEntry(key: string): BufferEntryState | null {
+    // Apply the same prototype-pollution guard as entryFor so reads and
+    // writes use the same key namespace for dangerous keys.
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      key = `__safe_${key}`;
+    }
     const existing = this.state.entries?.[key];
     if (existing) return existing;
     if (key !== "default") return null;
