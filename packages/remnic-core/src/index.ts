@@ -74,6 +74,15 @@ export {
   type ComputeSurpriseOptions,
 } from "./buffer-surprise.js";
 
+export {
+  reportBufferSurpriseDistribution,
+  type BufferSurpriseDistribution,
+  type BufferSurpriseReader,
+  type BufferSurpriseReportOptions,
+} from "./buffer-surprise-report.js";
+
+export type { BufferSurpriseEvent } from "./types.js";
+
 // ---------------------------------------------------------------------------
 // Extraction Judge (issue #376)
 // ---------------------------------------------------------------------------

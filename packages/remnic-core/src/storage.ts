@@ -54,6 +54,7 @@ import type {
   MemoryLifecycleStateSummary,
   MemoryProjectionCurrentState,
   BehaviorSignalEvent,
+  BufferSurpriseEvent,
   MemorySummary,
   MetaState,
   CompressionGuidelineOptimizerState,
@@ -2321,6 +2322,19 @@ export class StorageManager {
   private get behaviorSignalsPath(): string {
     return path.join(this.stateDir, "behavior-signals.jsonl");
   }
+  /**
+   * Buffer surprise telemetry ledger (issue #563 PR 3).
+   *
+   * Append-only JSONL of per-turn `BUFFER_SURPRISE` events emitted by
+   * `SmartBuffer` when `bufferSurpriseTriggerEnabled` is on. Each row
+   * captures the score, the threshold in force at the time, whether the
+   * turn caused an extract_now upgrade, and the buffer size. Kept in
+   * `state/` alongside the other append-only ledgers so cleanup and
+   * governance sweeps can treat it uniformly.
+   */
+  private get bufferSurpriseLedgerPath(): string {
+    return path.join(this.stateDir, "buffer-surprise-ledger.jsonl");
+  }
 
   /**
    * Load user-defined entity aliases from config/aliases.json in the memory store.
@@ -3895,6 +3909,83 @@ export class StorageManager {
 
     await appendFile(this.memoryLifecycleLedgerPath, payload, "utf-8");
     return events.length;
+  }
+
+  /**
+   * Append a batch of `BUFFER_SURPRISE` telemetry events (issue #563 PR 3).
+   *
+   * Each event records a single buffer flush decision driven by the
+   * surprise gate. The ledger is consumed by
+   * `reportBufferSurpriseDistribution` (Doctor report) and by downstream
+   * benchmark analysis. This method is fire-and-forget by contract:
+   * callers log but do not fail the hot path if the append throws.
+   */
+  async appendBufferSurpriseEvents(
+    events: BufferSurpriseEvent[],
+  ): Promise<number> {
+    if (events.length === 0) return 0;
+    await this.ensureDirectories();
+
+    const nowIso = new Date().toISOString();
+    const payload = events
+      .map((event) => {
+        const normalized: BufferSurpriseEvent = {
+          ...event,
+          event: "BUFFER_SURPRISE",
+          timestamp:
+            event.timestamp && event.timestamp.length > 0
+              ? event.timestamp
+              : nowIso,
+        };
+        return `${JSON.stringify(normalized)}\n`;
+      })
+      .join("");
+
+    await appendFile(this.bufferSurpriseLedgerPath, payload, "utf-8");
+    return events.length;
+  }
+
+  /**
+   * Read the buffer-surprise ledger, most recent rows last. `limit` bounds
+   * the number of rows parsed from the tail of the file — reports typically
+   * need a recent window rather than the entire history. Malformed rows
+   * are skipped silently (same policy as other ledger readers).
+   */
+  async readBufferSurpriseEvents(
+    options: { limit?: number } = {},
+  ): Promise<BufferSurpriseEvent[]> {
+    let raw: string;
+    try {
+      raw = await readFile(this.bufferSurpriseLedgerPath, "utf-8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return [];
+      throw err;
+    }
+    const lines = raw.split("\n").filter((line) => line.trim().length > 0);
+    // Take from the tail when a limit is supplied — the Doctor surface
+    // wants a recent-window summary, not the full history.
+    const slice =
+      typeof options.limit === "number" && options.limit > 0
+        ? lines.slice(-options.limit)
+        : lines;
+    const events: BufferSurpriseEvent[] = [];
+    for (const line of slice) {
+      try {
+        const parsed = JSON.parse(line) as Partial<BufferSurpriseEvent>;
+        if (
+          parsed &&
+          typeof parsed === "object" &&
+          typeof parsed.surpriseScore === "number" &&
+          Number.isFinite(parsed.surpriseScore)
+        ) {
+          events.push(parsed as BufferSurpriseEvent);
+        }
+      } catch {
+        // Malformed row — fail open, skip.
+      }
+    }
+    return events;
   }
 
   async appendBehaviorSignals(events: BehaviorSignalEvent[]): Promise<number> {

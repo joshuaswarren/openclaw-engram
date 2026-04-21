@@ -4,6 +4,7 @@ import type { StorageManager } from "./storage.js";
 import type {
   BufferEntryState,
   BufferState,
+  BufferSurpriseEvent,
   BufferTurn,
   PluginConfig,
   SignalLevel,
@@ -191,14 +192,25 @@ export class SmartBuffer {
       signal.level !== "high"
     ) {
       const surprise = await this.computeSurpriseSafe(bufferKey, turn, entry);
-      if (
-        surprise !== null &&
-        surprise > this.config.bufferSurpriseThreshold
-      ) {
-        log.debug(
-          `buffer[${bufferKey}]: surprise=${surprise.toFixed(3)} > threshold=${this.config.bufferSurpriseThreshold} → extract_now`,
-        );
-        decision = "extract_now";
+      if (surprise !== null) {
+        const triggered = surprise > this.config.bufferSurpriseThreshold;
+        if (triggered) {
+          log.debug(
+            `buffer[${bufferKey}]: surprise=${surprise.toFixed(3)} > threshold=${this.config.bufferSurpriseThreshold} → extract_now`,
+          );
+          decision = "extract_now";
+        }
+        // Emit telemetry on every scored turn — both triggering and
+        // non-triggering — so operators can fit the threshold to real
+        // traffic distributions. Fire-and-forget: if the ledger write
+        // throws, we must not crash the hot path.
+        await this.emitSurpriseEventSafe({
+          bufferKey,
+          turn,
+          surpriseScore: surprise,
+          triggered,
+          turnCountInWindow: entry.turns.length,
+        });
       }
     }
 
@@ -209,6 +221,51 @@ export class SmartBuffer {
     this.pruneEntries([bufferKey]);
     await this.save();
     return decision;
+  }
+
+  /**
+   * Append a single `BUFFER_SURPRISE` telemetry row (issue #563 PR 3).
+   *
+   * Deliberately swallows write errors: the buffer must never fail to
+   * record a turn because the observation ledger is read-only, out of
+   * disk, or otherwise unhappy. The log line at debug lets operators
+   * confirm the path fired without polluting the error channel.
+   */
+  private async emitSurpriseEventSafe(params: {
+    bufferKey: string;
+    turn: BufferTurn;
+    surpriseScore: number;
+    triggered: boolean;
+    turnCountInWindow: number;
+  }): Promise<void> {
+    const storage = this.storage as StorageManager & {
+      appendBufferSurpriseEvents?: (
+        events: BufferSurpriseEvent[],
+      ) => Promise<number>;
+    };
+    if (typeof storage.appendBufferSurpriseEvents !== "function") {
+      // Older StorageManager / test double without the telemetry sink.
+      // Silently skip — core path is still covered by the log line above.
+      return;
+    }
+    const event: BufferSurpriseEvent = {
+      event: "BUFFER_SURPRISE",
+      timestamp: new Date().toISOString(),
+      bufferKey: params.bufferKey,
+      sessionKey: typeof params.turn.sessionKey === "string" ? params.turn.sessionKey : null,
+      turnRole: params.turn.role,
+      surpriseScore: params.surpriseScore,
+      threshold: this.config.bufferSurpriseThreshold,
+      triggeredFlush: params.triggered,
+      turnCountInWindow: params.turnCountInWindow,
+    };
+    try {
+      await storage.appendBufferSurpriseEvents([event]);
+    } catch (err) {
+      log.debug(
+        `buffer[${params.bufferKey}]: surprise telemetry write failed, continuing: ${(err as Error).message}`,
+      );
+    }
   }
 
   /**
