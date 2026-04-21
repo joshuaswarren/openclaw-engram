@@ -22,6 +22,10 @@ import { access, readFile } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import type { StorageManager } from "./storage.js";
 import { isConsolidationOperator } from "./consolidation-operator.js";
+// Import the canonical `sidecarKey` from page-versioning (PR #634
+// review, cursor Medium) so a future key-format change stays in
+// lock-step with the doctor scan.
+import { sidecarKey } from "./page-versioning.js";
 
 /**
  * Regex to spot a `derived_via: <value>` line in the raw YAML frontmatter
@@ -65,11 +69,6 @@ export interface ConsolidationProvenanceReport {
 }
 
 const DERIVED_FROM_ENTRY_RE = /^(.+):(\d+)$/;
-
-function sidecarKey(pageRelPath: string): string {
-  const withoutExt = pageRelPath.replace(/\.md$/i, "");
-  return withoutExt.replace(/[\\/]/g, "__");
-}
 
 /**
  * Build the on-disk snapshot path for a `"<relpath>:<version>"` entry,
