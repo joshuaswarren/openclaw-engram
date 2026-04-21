@@ -35,6 +35,10 @@ import {
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
 } from "./maintenance/memory-governance.js";
+import {
+  runConsolidationProvenanceCheck,
+  type ConsolidationProvenanceReport,
+} from "./consolidation-provenance-check.js";
 import type { FileHygieneConfig, MemoryFile, PluginConfig } from "./types.js";
 
 interface QmdRuntimeLike {
@@ -1175,6 +1179,15 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // This is an informational check, never an error.
   checks.push(await summarizeMemoryWorthLegacyCounters(new StorageManager(config.memoryDir)));
 
+  // Consolidation provenance integrity (issue #561 PR 4).
+  // Validates that every `derived_from` entry resolves to an on-disk
+  // page-version snapshot and every `derived_via` is a known operator.
+  // Broken provenance emits warnings with the offending file path — the
+  // check is informational (never an error) because a missing snapshot
+  // can legitimately occur after log pruning or versioning being disabled
+  // retroactively; operators need visibility, not a hard fail.
+  checks.push(await summarizeConsolidationProvenance(new StorageManager(config.memoryDir), config));
+
   const summary = checks.reduce(
     (acc, check) => {
       acc[check.status] += 1;
@@ -1266,6 +1279,59 @@ export async function summarizeMemoryWorthLegacyCounters(
         ? "No Memory Worth–eligible memories on disk yet — counters will populate as facts are extracted."
         : `${legacy} of ${total} eligible memories have no Memory Worth counters yet (${instrumented} instrumented).`,
     details: { legacy, instrumented, total, ineligible },
+  };
+}
+
+/**
+ * Summarize the consolidation-provenance integrity scan for the doctor
+ * report (issue #561 PR 4).  Returns an `ok` check when no issues are
+ * found, `warn` otherwise.  Never returns `error` — a broken provenance
+ * pointer is informational because it can legitimately result from log
+ * pruning, versioning being disabled retroactively, or operator-driven
+ * archive operations.
+ *
+ * Exported so unit tests can exercise the summarization without booting a
+ * full orchestrator.
+ */
+export async function summarizeConsolidationProvenance(
+  storage: StorageManager,
+  config: Pick<PluginConfig, "memoryDir">,
+): Promise<OperatorDoctorCheck> {
+  let report: ConsolidationProvenanceReport;
+  try {
+    report = await runConsolidationProvenanceCheck({
+      storage,
+      memoryDir: config.memoryDir,
+    });
+  } catch (err) {
+    return {
+      key: "consolidation_provenance",
+      status: "warn",
+      summary: "Could not run consolidation-provenance integrity check.",
+      remediation: "Ensure the memory directory is readable and rerun `remnic doctor`.",
+      details: { error: String(err) },
+    };
+  }
+
+  if (report.issues.length === 0) {
+    return {
+      key: "consolidation_provenance",
+      status: "ok",
+      summary:
+        report.withProvenance === 0
+          ? "No consolidation-provenance memories on disk yet."
+          : `${report.withProvenance} consolidation-provenance memories verified (no broken references).`,
+      details: report,
+    };
+  }
+
+  return {
+    key: "consolidation_provenance",
+    status: "warn",
+    summary: `${report.issues.length} consolidation-provenance integrity issue(s) detected across ${report.withProvenance} memories with provenance frontmatter.`,
+    remediation:
+      "Broken pointers are informational. Inspect flagged memories, and if they should resolve, re-snapshot via a consolidation pass or accept pruning.",
+    details: report,
   };
 }
 
