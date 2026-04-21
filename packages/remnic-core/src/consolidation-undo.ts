@@ -21,7 +21,7 @@
  */
 
 import path from "node:path";
-import { mkdir, writeFile, access, realpath } from "node:fs/promises";
+import { mkdir, writeFile, access, realpath, lstat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import type { StorageManager } from "./storage.js";
 import type { VersioningConfig } from "./page-versioning.js";
@@ -66,7 +66,10 @@ export interface ConsolidationUndoResult {
 
 const DERIVED_FROM_ENTRY_RE = /^(.+):(\d+)$/;
 
-function parseEntry(entry: string): { pagePath: string; versionId: string } | null {
+function parseEntry(entry: unknown): { pagePath: string; versionId: string } | null {
+  // Non-string entries (PR #637 round-3 review, cursor Low) can arrive
+  // from hostile on-disk frontmatter — guard against a .match() crash.
+  if (typeof entry !== "string") return null;
   const match = entry.match(DERIVED_FROM_ENTRY_RE);
   if (!match) return null;
   return { pagePath: match[1], versionId: match[2] };
@@ -117,9 +120,44 @@ export async function isInsideDirectoryRealpath(
   } catch {
     return false;
   }
+  const normCandidate = path.resolve(candidate);
+
+  // Reject dangling symlinks (PR #637 round-3 review, codex P1).
+  // If the candidate itself is a symlink (even if its target doesn't
+  // exist), Node will follow it when we later call `writeFile`.
+  // `lstat` inspects the link itself without dereferencing; if it
+  // succeeds and reports a symlink, we treat the candidate as
+  // unsafe.  We must check every non-root ancestor too — a symlink
+  // anywhere along the path lets an attacker redirect writes.
+  const normRoot = path.resolve(root);
+  const relFromRoot = path.relative(normRoot, normCandidate);
+  const segments = relFromRoot.length > 0 ? relFromRoot.split(path.sep) : [];
+  for (let i = 0; i <= segments.length; i++) {
+    const probe = i === 0 ? normRoot : path.join(normRoot, ...segments.slice(0, i));
+    try {
+      const st = await lstat(probe);
+      if (st.isSymbolicLink() && probe !== normRoot) {
+        // A symlink on the path — resolve THIS segment and bail out
+        // if the resolved target escapes `resolvedRoot`.
+        let target: string;
+        try {
+          target = await realpath(probe);
+        } catch {
+          // Dangling symlink inside memoryDir — always unsafe.
+          return false;
+        }
+        const rel = path.relative(resolvedRoot, target);
+        if (rel.length === 0) continue;
+        if (rel.startsWith("..") || path.isAbsolute(rel)) return false;
+      }
+    } catch {
+      // Segment doesn't exist yet — that's fine, fall through to the
+      // textual containment verification below.
+    }
+  }
+
   // Walk up from the candidate until we hit a path that exists, then
   // realpath THAT and re-apply the trailing segments textually.
-  const normCandidate = path.resolve(candidate);
   const parts = normCandidate.split(path.sep);
   for (let i = parts.length; i > 0; i--) {
     const probe = parts.slice(0, i).join(path.sep) || path.sep;
@@ -209,8 +247,9 @@ export async function runConsolidationUndo(options: {
 
   // Plan every restore.  In dry-run mode we stop before any filesystem
   // mutations; in live mode we still probe for collisions before writing.
-  for (const entry of derivedFrom) {
-    const parsed = parseEntry(entry);
+  for (const rawEntry of derivedFrom) {
+    const entry = typeof rawEntry === "string" ? rawEntry : String(rawEntry);
+    const parsed = parseEntry(rawEntry);
     if (!parsed) {
       result.restores.push({
         entry,
