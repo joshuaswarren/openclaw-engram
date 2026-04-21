@@ -149,7 +149,18 @@ describe("normalizeReasoningTrace", () => {
 
   it("returns null when finalAnswer is missing", () => {
     const trace = normalizeReasoningTrace({
-      steps: [{ order: 1, description: "step" }],
+      steps: [
+        { order: 1, description: "step a" },
+        { order: 2, description: "step b" },
+      ],
+    });
+    assert.equal(trace, null);
+  });
+
+  it("rejects single-step traces (category requires >=2 ordered steps)", () => {
+    const trace = normalizeReasoningTrace({
+      steps: [{ order: 1, description: "only one step" }],
+      finalAnswer: "done",
     });
     assert.equal(trace, null);
   });
@@ -259,6 +270,17 @@ describe("looksLikeReasoningTrace heuristic", () => {
     ].join("\n");
     assert.equal(looksLikeReasoningTrace(msg), false);
   });
+
+  it("does not double-count when multiple marker styles appear on one line", () => {
+    // Single real step with both "Step 1:" and a "First," marker on one
+    // physical line; the heuristic must not treat this as two steps.
+    const msg = [
+      "Here's a single step but with multiple marker styles blended in.",
+      "Step 1: First, I checked the metrics and saw a flat CPU.",
+      "So the answer is we had a slow downstream service.",
+    ].join("\n");
+    assert.equal(looksLikeReasoningTrace(msg), false);
+  });
 });
 
 describe("extraction prompt includes reasoning_trace guidance", () => {
@@ -285,6 +307,20 @@ describe("extraction prompt includes reasoning_trace guidance", () => {
     assert.ok(
       src.includes('"reasoningTrace"'),
       "prompt JSON example should include a reasoningTrace field",
+    );
+  });
+
+  it("normalizeExtractionResultPayload accepts snake_case reasoning_trace key", async () => {
+    const src = await (await import("node:fs/promises")).readFile(
+      new URL("../packages/remnic-core/src/extraction.ts", import.meta.url),
+      "utf-8",
+    );
+    // Source-level guarantee: the normalize path must also read
+    // `reasoning_trace` so loose local/direct-client LLM output that uses
+    // snake_case keys still surfaces the structured chain.
+    assert.ok(
+      src.includes("f?.reasoning_trace"),
+      "normalizeExtractionResultPayload should fall back to snake_case reasoning_trace",
     );
   });
 });

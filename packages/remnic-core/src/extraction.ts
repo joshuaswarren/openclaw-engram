@@ -208,10 +208,20 @@ export class ExtractionEngine {
             procedureSteps: Array.isArray(f?.procedureSteps)
               ? normalizeProcedureSteps(f.procedureSteps)
               : undefined,
-            reasoningTrace:
-              f?.reasoningTrace && typeof f.reasoningTrace === "object" && !Array.isArray(f.reasoningTrace)
-                ? normalizeReasoningTrace(f.reasoningTrace) ?? undefined
-                : undefined,
+            reasoningTrace: (() => {
+              // Accept both camelCase and snake_case payload keys. The
+              // category itself is snake_case and we already tolerate
+              // snake_case nested fields in normalizeReasoningTrace, so a
+              // loose local/direct LLM that outputs `reasoning_trace` on the
+              // fact should not silently drop the structured chain.
+              const candidate =
+                f?.reasoningTrace && typeof f.reasoningTrace === "object" && !Array.isArray(f.reasoningTrace)
+                  ? f.reasoningTrace
+                  : f?.reasoning_trace && typeof f.reasoning_trace === "object" && !Array.isArray(f.reasoning_trace)
+                    ? f.reasoning_trace
+                    : null;
+              return candidate ? normalizeReasoningTrace(candidate) ?? undefined : undefined;
+            })(),
           }))
           .filter((f: any) => f.content.length > 0)
       : [];

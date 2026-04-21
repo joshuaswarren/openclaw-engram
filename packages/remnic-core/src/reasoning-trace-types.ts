@@ -63,7 +63,11 @@ export function normalizeReasoningTrace(raw: unknown): ReasoningTraceStructuredD
       : typeof o.final_answer === "string"
       ? (o.final_answer as string).trim()
       : "";
-  if (steps.length === 0 || finalAnswer.length === 0) return null;
+  // Prompts describe reasoning_trace as requiring ≥2 ordered steps + a final
+  // answer. Rejecting one-step payloads here keeps the category semantically
+  // distinct from ordinary `decision` facts and prevents malformed traces
+  // from sneaking through loose local/direct extraction JSON.
+  if (steps.length < 2 || finalAnswer.length === 0) return null;
   const observedRaw =
     typeof o.observedOutcome === "string"
       ? o.observedOutcome
@@ -196,16 +200,23 @@ export function looksLikeReasoningTrace(message: string): boolean {
   const text = message.trim();
   if (text.length < 80) return false;
 
-  // Count step markers: "Step 1:", "1.", "1)", "First,", "First:"
-  const stepMarkers = [
-    /\bstep\s+\d+\s*[:.\-]/gi,
-    /(^|\n)\s*\d+[.)]\s+\S/g,
-    /(^|\n)\s*(first|second|third|fourth|finally|then|next)\b[,:]/gi,
+  // Count lines that carry at least one step marker, not the total number of
+  // marker matches. Summing across multiple regexes can let a single line
+  // contribute two "steps" (e.g. "Step 1: First,…" matches both patterns),
+  // which weakens the "false positives > false negatives" bias. Per-line
+  // counting keeps the gate symmetric with real step structure.
+  const stepMarkerRes = [
+    /\bstep\s+\d+\s*[:.\-]/i,
+    /^\s*\d+[.)]\s+\S/,
+    /^\s*(first|second|third|fourth|finally|then|next)\b[,:]/i,
   ];
+  const lines = text.split(/\r?\n/);
   let stepCount = 0;
-  for (const re of stepMarkers) {
-    const matches = text.match(re);
-    if (matches) stepCount += matches.length;
+  for (const line of lines) {
+    if (stepMarkerRes.some((re) => re.test(line))) {
+      stepCount += 1;
+      if (stepCount >= 2) break;
+    }
   }
   if (stepCount < 2) return false;
 
