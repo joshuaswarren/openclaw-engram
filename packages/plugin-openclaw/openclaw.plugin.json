@@ -787,7 +787,11 @@
       },
       "binaryLifecycleBackendType": {
         "type": "string",
-        "enum": ["none", "filesystem", "s3"],
+        "enum": [
+          "none",
+          "filesystem",
+          "s3"
+        ],
         "default": "none",
         "description": "Storage backend for binary lifecycle mirror stage."
       },
@@ -1970,12 +1974,42 @@
         "type": "object",
         "description": "Configuration for the nightly contradiction-scan cron (issue #520)",
         "properties": {
-          "enabled": { "type": "boolean", "default": false, "description": "Enable the nightly contradiction scan cron (disabled by default per rule 48)" },
-          "similarityFloor": { "type": "number", "default": 0.82, "minimum": 0, "maximum": 1, "description": "Embedding cosine similarity floor for candidate pair generation" },
-          "topicOverlapFloor": { "type": "number", "default": 0.4, "minimum": 0, "maximum": 1, "description": "Minimum topic-token Jaccard overlap for unstructured pairs" },
-          "maxPairsPerRun": { "type": "integer", "default": 500, "minimum": 1, "description": "Cap on candidate pairs evaluated per cron run" },
-          "cooldownDays": { "type": "integer", "default": 14, "minimum": 0, "description": "Cooldown in days. 0 = always re-evaluate." },
-          "autoMergeDuplicates": { "type": "boolean", "default": false, "description": "Auto-flag pairs judged duplicates for dedup (still requires user approval)" }
+          "enabled": {
+            "type": "boolean",
+            "default": false,
+            "description": "Enable the nightly contradiction scan cron (disabled by default per rule 48)"
+          },
+          "similarityFloor": {
+            "type": "number",
+            "default": 0.82,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Embedding cosine similarity floor for candidate pair generation"
+          },
+          "topicOverlapFloor": {
+            "type": "number",
+            "default": 0.4,
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum topic-token Jaccard overlap for unstructured pairs"
+          },
+          "maxPairsPerRun": {
+            "type": "integer",
+            "default": 500,
+            "minimum": 1,
+            "description": "Cap on candidate pairs evaluated per cron run"
+          },
+          "cooldownDays": {
+            "type": "integer",
+            "default": 14,
+            "minimum": 0,
+            "description": "Cooldown in days. 0 = always re-evaluate."
+          },
+          "autoMergeDuplicates": {
+            "type": "boolean",
+            "default": false,
+            "description": "Auto-flag pairs judged duplicates for dedup (still requires user approval)"
+          }
         }
       },
       "temporalSupersessionEnabled": {
@@ -1992,6 +2026,32 @@
         "type": "boolean",
         "default": true,
         "description": "When true, recall runs the direct-answer tier in observation mode: annotates LastRecallSnapshot.tierExplain with which tier would have served the query (issue #518). Does not short-circuit the QMD path in the current release."
+      },
+      "recallGraphEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, recall builds a retrieval graph from memory frontmatter and runs Personalized PageRank, merging the result with QMD via MMR (issue #559 PR 4). Default false — ships off pending the retrieval-graph bench in PR 5."
+      },
+      "recallGraphDamping": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 0.999999999,
+        "default": 0.85,
+        "description": "PPR damping factor used by the graph retrieval tier (issue #559)."
+      },
+      "recallGraphIterations": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 500,
+        "default": 20,
+        "description": "Maximum power-iteration rounds for PPR. Higher values trade latency for convergence."
+      },
+      "recallGraphTopK": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 10000,
+        "default": 50,
+        "description": "Maximum memories returned by the graph retrieval tier before the MMR diversifier runs."
       },
       "recallDirectAnswerTokenOverlapFloor": {
         "type": "number",
@@ -2016,8 +2076,16 @@
       },
       "recallDirectAnswerEligibleTaxonomyBuckets": {
         "type": "array",
-        "items": { "type": "string" },
-        "default": ["decisions", "principles", "conventions", "runbooks", "entities"],
+        "items": {
+          "type": "string"
+        },
+        "default": [
+          "decisions",
+          "principles",
+          "conventions",
+          "runbooks",
+          "entities"
+        ],
         "description": "Taxonomy category IDs eligible for direct-answer routing."
       },
       "recallMemoryWorthFilterEnabled": {
@@ -4155,6 +4223,25 @@
     "recallDirectAnswerEnabled": {
       "label": "Direct-Answer Retrieval Tier",
       "help": "Route validated high-trust queries to a fast direct-answer path before QMD (issue #518)."
+    },
+    "recallGraphEnabled": {
+      "label": "Graph Retrieval (PPR)",
+      "help": "Run Personalized PageRank on the retrieval graph and merge with QMD via MMR (issue #559)."
+    },
+    "recallGraphDamping": {
+      "label": "Graph Recall Damping",
+      "advanced": true,
+      "placeholder": "0.85"
+    },
+    "recallGraphIterations": {
+      "label": "Graph Recall Iterations",
+      "advanced": true,
+      "placeholder": "20"
+    },
+    "recallGraphTopK": {
+      "label": "Graph Recall Top-K",
+      "advanced": true,
+      "placeholder": "50"
     },
     "recallDirectAnswerTokenOverlapFloor": {
       "label": "Direct-Answer Token Overlap Floor",
