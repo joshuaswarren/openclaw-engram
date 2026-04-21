@@ -341,6 +341,41 @@ test("buildGraphFromMemories wraps extractGraphEdges into a RemnicGraph", () => 
   assert.equal(graph.edges.length, 2); // m1→Jane mentions, m2→m1 supersedes
 });
 
+test("extractGraphEdges rejects type mismatch: supersedes points at entity, not memory", () => {
+  // memory-A carries entityRef "shared-id" (creates an entity node).
+  // memory-B carries supersedes: "shared-id" — must NOT emit the edge,
+  // because the only existing "shared-id" node is an entity, not a memory.
+  const memories: MemoryEdgeSource[] = [
+    { id: "m-A", entityRef: "shared-id" },
+    { id: "m-B", supersedes: "shared-id" },
+  ];
+  const { edges } = extractGraphEdges(memories);
+  assert.equal(edges.filter((e) => e.type === "supersedes").length, 0);
+  // The mention edge must still fire.
+  assert.equal(edges.filter((e) => e.type === "mentions").length, 1);
+});
+
+test("extractGraphEdges rejects type mismatch: derived-from points at entity, not memory", () => {
+  const memories: MemoryEdgeSource[] = [
+    { id: "m-A", entityRef: "shared-id" },
+    { id: "m-B", lineage: ["shared-id"] },
+    { id: "m-C", derived_from: ["shared-id:1"] },
+  ];
+  const { edges } = extractGraphEdges(memories);
+  assert.equal(edges.filter((e) => e.type === "derived-from").length, 0);
+});
+
+test("extractGraphEdges lowercases citation keys (case-insensitive match)", () => {
+  const memories: MemoryEdgeSource[] = [
+    { id: "m1", content: "[Source: Agent=Planner, SESSION=abc]" },
+    { id: "m2", content: "[source: agent=judge]" },
+  ];
+  const { edges } = extractGraphEdges(memories);
+  const authored = edges.filter((e) => e.type === "authored-by");
+  const pairs = authored.map((e) => `${e.from}->${e.to}`).sort();
+  assert.deepEqual(pairs, ["m1->agent:Planner", "m2->agent:judge"]);
+});
+
 test("extractGraphEdges skips memories with no id", () => {
   const memories: MemoryEdgeSource[] = [
     { id: "m1" },

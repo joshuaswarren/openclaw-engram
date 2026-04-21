@@ -255,12 +255,17 @@ export interface ExtractGraphEdgesOptions {
  * template configuration — it only recognizes the default shape plus minor
  * whitespace / ordering variants.
  */
-const CITATION_REGEX = /\[Source:\s*([^\]\n]+?)\]/gi;
+// Non-greedy quantifiers on classes like `[^\]\n]+?` can be polynomial on
+// pathological inputs (CodeQL rule js/polynomial-redos). Using a greedy
+// quantifier with a negated character class that also excludes `[` prevents
+// nested-bracket inputs from forcing catastrophic backtracking, and the `\s*`
+// after `Source:` is bounded by the terminal `]`.
+const CITATION_REGEX = /\[Source:[ \t]*([^\]\n[]+)\]/gi;
 
 /**
- * Parse `key=value` pairs out of a citation body. Whitespace-tolerant.
- * Returns a plain object — callers should defensively check for the keys
- * they care about.
+ * Parse `key=value` pairs out of a citation body. Whitespace-tolerant and
+ * case-insensitive: keys are normalized to lowercase so callers can do
+ * `fields.agent` without worrying about `[Source: Agent=...]` variants.
  */
 function parseCitationFields(body: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -269,7 +274,7 @@ function parseCitationFields(body: string): Record<string, string> {
     if (!part) continue;
     const eq = part.indexOf("=");
     if (eq <= 0) continue;
-    const key = part.slice(0, eq).trim();
+    const key = part.slice(0, eq).trim().toLowerCase();
     const value = part.slice(eq + 1).trim();
     if (key && value) out[key] = value;
   }
@@ -356,10 +361,20 @@ export function extractGraphEdges(
     if (!memory?.id) continue;
     const from = memory.id;
 
+    // `supersedes`, `lineage`, and `derived_from` edges must point at a
+    // memory node specifically — when `includeDanglingEdges` is false we
+    // require the target to already be registered as a memory (never just
+    // "present in the map", because an entity node may share the same id
+    // as a referenced memory that did not make it into the input batch).
+    const isKnownMemory = (id: string): boolean => {
+      const existing = nodes.get(id);
+      return existing !== undefined && existing.type === "memory";
+    };
+
     // supersedes: memory → older memory
     if (typeof memory.supersedes === "string" && memory.supersedes) {
       const to = memory.supersedes;
-      if (includeDangling || nodes.has(to)) {
+      if (includeDangling || isKnownMemory(to)) {
         if (!nodes.has(to)) addNode(to, "memory");
         addEdge(from, to, "supersedes");
       }
@@ -369,7 +384,7 @@ export function extractGraphEdges(
     if (Array.isArray(memory.lineage)) {
       for (const parent of memory.lineage) {
         if (typeof parent !== "string" || !parent) continue;
-        if (!includeDangling && !nodes.has(parent)) continue;
+        if (!includeDangling && !isKnownMemory(parent)) continue;
         if (!nodes.has(parent)) addNode(parent, "memory");
         addEdge(from, parent, "derived-from");
       }
@@ -381,7 +396,7 @@ export function extractGraphEdges(
         if (typeof raw !== "string" || !raw) continue;
         const to = stripDerivedFromVersion(raw);
         if (!to) continue;
-        if (!includeDangling && !nodes.has(to)) continue;
+        if (!includeDangling && !isKnownMemory(to)) continue;
         if (!nodes.has(to)) addNode(to, "memory");
         addEdge(from, to, "derived-from");
       }
