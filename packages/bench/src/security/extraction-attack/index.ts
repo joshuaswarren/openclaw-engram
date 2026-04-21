@@ -24,3 +24,14 @@ export type {
   SeededMemory,
   TimelineEntry,
 } from "./types.js";
+
+// Baseline runner + default scenarios (issue #565 PR 3/5).
+export {
+  DEFAULT_BASELINE_SCENARIOS,
+  renderBaselineMarkdown,
+  runBaseline,
+} from "./baseline.js";
+export type {
+  BaselineRow,
+  BaselineScenario,
+} from "./baseline.js";
