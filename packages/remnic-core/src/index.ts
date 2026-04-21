@@ -742,6 +742,8 @@ export {
   queryGraph,
   isNodeType,
   isEdgeType,
+  extractGraphEdges,
+  buildGraphFromMemories,
   type NodeType,
   type EdgeType,
   type RemnicGraphNode,
@@ -750,6 +752,8 @@ export {
   type QueryGraphOptions,
   type QueryGraphResult,
   type RankedGraphNode,
+  type MemoryEdgeSource,
+  type ExtractGraphEdgesOptions,
 } from "./graph-retrieval.js";
 
 // ---------------------------------------------------------------------------
