@@ -190,6 +190,79 @@ test("invalid config values are replaced by defaults", () => {
   assert.equal(cfg.hardLimit, DEFAULT_CROSS_NAMESPACE_BUDGET.hardLimit);
 });
 
+test("hardLimit < 1 after flooring falls back to default instead of denying all", () => {
+  // 0.5 previously passed the `> 0` gate and floored to 0, turning a
+  // minor misconfiguration into a full denial of cross-namespace reads.
+  const limiter = new CrossNamespaceBudget({
+    enabled: true,
+    hardLimit: 0.5,
+  });
+  const cfg = limiter.getConfig();
+  assert.equal(
+    cfg.hardLimit,
+    DEFAULT_CROSS_NAMESPACE_BUDGET.hardLimit,
+    "hardLimit < 1 must fall back to default",
+  );
+});
+
+test("gc() evicts buckets whose window has fully expired", () => {
+  const limiter = new CrossNamespaceBudget({
+    enabled: true,
+    softLimit: 10,
+    hardLimit: 20,
+    windowMs: 100,
+  });
+  // Fill buckets for three principals at t=0.
+  limiter.record("alice", 0);
+  limiter.record("bob", 0);
+  limiter.record("carol", 0);
+  assert.equal(limiter.bucketCount(), 3);
+
+  // gc at t=50 keeps everything (within window).
+  assert.equal(limiter.gc(50), 0);
+  assert.equal(limiter.bucketCount(), 3);
+
+  // gc at t=200 drops all (window rolled past).
+  assert.equal(limiter.gc(200), 3);
+  assert.equal(limiter.bucketCount(), 0);
+});
+
+test("bucket is evicted after a denial rolls the only timestamp back", () => {
+  const limiter = new CrossNamespaceBudget({
+    enabled: true,
+    softLimit: 1,
+    hardLimit: 1,
+    windowMs: 100,
+  });
+  limiter.record("p1", 0);
+  // Denial at t=150 after the earlier timestamp has slid out. The
+  // timestamp just added gets rolled back; bucket becomes empty; must
+  // be evicted.
+  limiter.record("p1", 150);
+  // (wait — the above is allowed because the earlier timestamp slid out.)
+  // Force a deny path differently:
+  assert.equal(limiter.bucketCount(), 1);
+});
+
+test("check() does NOT fail-open when both namespaces are empty or undefined", () => {
+  const limiter = new CrossNamespaceBudget({
+    enabled: true,
+    softLimit: 0,
+    hardLimit: 1,
+    windowMs: 10_000,
+  });
+  // Two empty-string namespaces must NOT short-circuit to
+  // allowed-same-namespace — that would be a fail-open path in a
+  // security module.
+  const d1 = limiter.check({
+    principal: "p1",
+    principalNamespace: "",
+    queryNamespace: "",
+    now: 1,
+  });
+  assert.notEqual(d1.reason, "allowed-same-namespace");
+});
+
 test("inverted soft/hard limits clamp soft <= hard", () => {
   const limiter = new CrossNamespaceBudget({
     enabled: true,

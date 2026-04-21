@@ -114,9 +114,15 @@ function effectiveConfig(
   if (
     typeof raw.hardLimit === "number" &&
     Number.isFinite(raw.hardLimit) &&
-    raw.hardLimit > 0
+    raw.hardLimit >= 1
   ) {
-    out.hardLimit = Math.floor(raw.hardLimit);
+    // Floor the value, then defensively require the floored result is
+    // still >= 1. `raw.hardLimit = 0.5` previously passed the `> 0`
+    // gate and floored to 0, turning a minor misconfiguration into a
+    // full denial of cross-namespace reads. Now we fall back to the
+    // default instead.
+    const floored = Math.floor(raw.hardLimit);
+    if (floored >= 1) out.hardLimit = floored;
   }
   if (out.softLimit > out.hardLimit) {
     // Inverted limits -> treat soft = hard so we never warn past the deny
@@ -199,6 +205,12 @@ export class CrossNamespaceBudget {
       // call does not push the bucket further into the future. This keeps
       // the limiter stateless with respect to denied attempts.
       bucket.timestamps.pop();
+      // Evict empty buckets (e.g. the first record after a long idle
+      // rolled the only timestamp out, then got denied and rolled back).
+      // Prevents unbounded map growth across many transient principals.
+      if (bucket.timestamps.length === 0) {
+        this.buckets.delete(principal);
+      }
       return {
         allowed: false,
         reason: "deny-over-hard",
@@ -235,7 +247,17 @@ export class CrossNamespaceBudget {
     queryNamespace: string;
     now?: number;
   }): BudgetDecision {
-    if (args.principalNamespace === args.queryNamespace) {
+    // Same-namespace short-circuit requires BOTH namespaces to be
+    // non-empty strings. Two empty/undefined namespaces at runtime
+    // would otherwise compare equal and fail-open — a critical bypass
+    // in a security-critical module. Force the limiter to engage when
+    // either side is missing so we never silently skip enforcement.
+    const pn = args.principalNamespace;
+    const qn = args.queryNamespace;
+    const bothPresent =
+      typeof pn === "string" && pn.length > 0 &&
+      typeof qn === "string" && qn.length > 0;
+    if (bothPresent && pn === qn) {
       return {
         allowed: true,
         reason: "allowed-same-namespace",
@@ -256,5 +278,32 @@ export class CrossNamespaceBudget {
    */
   reset(): void {
     this.buckets.clear();
+  }
+
+  /**
+   * Evict buckets whose entire timestamp list has slid out of the
+   * active window by `now`. Intended to be called periodically by a
+   * long-lived host process (e.g. from a maintenance cron) that sees
+   * many transient principals. Safe to call at any time; returns the
+   * number of buckets evicted.
+   */
+  gc(now: number = Date.now()): number {
+    const cutoff = now - this.config.windowMs;
+    let evicted = 0;
+    for (const [principal, bucket] of this.buckets.entries()) {
+      while (bucket.timestamps.length > 0 && bucket.timestamps[0]! < cutoff) {
+        bucket.timestamps.shift();
+      }
+      if (bucket.timestamps.length === 0) {
+        this.buckets.delete(principal);
+        evicted++;
+      }
+    }
+    return evicted;
+  }
+
+  /** For tests: current number of live buckets. */
+  bucketCount(): number {
+    return this.buckets.size;
   }
 }
