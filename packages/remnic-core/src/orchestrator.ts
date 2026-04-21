@@ -9781,13 +9781,21 @@ export class Orchestrator {
     // window so the next extraction pass has the surrounding context that
     // may disambiguate the deferred fact. Non-defer runs clear the slot.
     //
-    // Gated on `clearBufferAfterExtraction` — replay / bulk-import paths
-    // call `runExtraction` with `clearBufferAfterExtraction: false` and do
-    // not operate on live buffer state. Writing retention there would
-    // create synthetic buffer entries and cross-contaminate future live
-    // extraction runs for the same bufferKey.
+    // Gated on:
+    //   - `clearBufferAfterExtraction` — replay / bulk-import paths call
+    //     `runExtraction` with this false and do not operate on live buffer
+    //     state. Writing retention there would create synthetic buffer
+    //     entries and cross-contaminate future live extractions.
+    //   - NOT `extractionJudgeShadow` — in shadow mode the judge is only
+    //     advisory; facts are still persisted regardless of verdict, so
+    //     retaining the turn window on top of a persisted write would both
+    //     waste buffer space and cause the same facts to re-enter the
+    //     pipeline on the next pass.
     try {
-      if (clearBufferAfterExtraction) {
+      if (
+        clearBufferAfterExtraction &&
+        !this.config.extractionJudgeShadow
+      ) {
         const deferredCount = this.lastPersistExtractionDeferredCount;
         if (deferredCount > 0 && normalizedTurns.length > 0) {
           await this.buffer.retainDeferredTurns(

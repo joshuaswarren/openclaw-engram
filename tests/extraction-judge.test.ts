@@ -973,6 +973,69 @@ test("PR 2: JudgeBatchResult includes deferred + deferredCappedToReject counters
   assert.equal(result.deferredCappedToReject, 0);
 });
 
+test("PR 2: duplicate defer candidates in one batch increment counter once", async () => {
+  // Codex P2 review: duplicate `text+category` in the same LLM response
+  // must advance the defer cap only once per extraction pass. With cap=2
+  // and three duplicates in a single batch, the first two passes should
+  // all defer and the third pass should convert to reject — NOT the third
+  // duplicate within the first pass.
+  clearVerdictCache();
+  const cache = new Map<string, JudgeVerdict>();
+  const defers = new Map<string, number>();
+  const mockLocalLlm = {
+    chatCompletion: async (_msgs: any) => {
+      const items = JSON.parse(_msgs[1].content) as Array<{ index: number }>;
+      return {
+        content: JSON.stringify(
+          items.map((it) => ({
+            index: it.index,
+            kind: "defer",
+            durable: false,
+            reason: "mock-defer",
+          })),
+        ),
+      };
+    },
+  };
+  const candidates: JudgeCandidate[] = [
+    {
+      text: "Duplicate ambiguous content",
+      category: "fact",
+      confidence: 0.5,
+      importanceLevel: "normal",
+    },
+    {
+      text: "Duplicate ambiguous content",
+      category: "fact",
+      confidence: 0.5,
+      importanceLevel: "normal",
+    },
+    {
+      text: "Duplicate ambiguous content",
+      category: "fact",
+      confidence: 0.5,
+      importanceLevel: "normal",
+    },
+  ];
+  const cfg = makeConfig({ extractionJudgeMaxDeferrals: 2 });
+  const r = await judgeFactDurability(
+    candidates,
+    cfg,
+    mockLocalLlm as any,
+    null,
+    cache,
+    defers,
+  );
+  assert.equal(r.deferred, 1, "Defer counter must increment only once per batch");
+  assert.equal(defers.size, 1);
+  // The content hash should have a count of 1 — not 3.
+  assert.equal([...defers.values()][0], 1);
+  // All three verdicts are still defer in this pass.
+  for (const v of r.verdicts.values()) {
+    assert.equal(v.kind, "defer");
+  }
+});
+
 test("PR 2: auto-approved categories never emit defer", async () => {
   clearVerdictCache();
   const candidates: JudgeCandidate[] = [

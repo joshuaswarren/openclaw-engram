@@ -430,6 +430,12 @@ export async function judgeFactDurability(
 
       if (llmResponse) {
         const parsed = parseJudgeResponse(llmResponse, batchIndices);
+        // Per-batch defer-increment dedupe (codex P2): a single extraction
+        // pass must not advance the cap more than once for identical
+        // candidate content, even if the same text appears multiple times
+        // in the same LLM response. Duplicate hits share the first
+        // increment's `priorDeferrals` snapshot.
+        const deferredThisBatch = new Set<string>();
         for (const [idx, rawVerdict] of parsed.entries()) {
           const c = candidates[idx];
           const key = cacheKey(c.text, c.category);
@@ -446,11 +452,18 @@ export async function judgeFactDurability(
                 reason: `Defer cap reached (${deferCap} prior defers); rejecting`,
                 kind: "reject",
               };
-              deferCountMap.delete(key);
-              deferredCappedToReject++;
-            } else {
+              // Only clear + count the cap conversion once per batch for
+              // this key — duplicates in the same response all resolve to
+              // reject but should not inflate the cap-rejection counter.
+              if (!deferredThisBatch.has(key)) {
+                deferCountMap.delete(key);
+                deferredCappedToReject++;
+                deferredThisBatch.add(key);
+              }
+            } else if (!deferredThisBatch.has(key)) {
               deferCountMap.set(key, priorDefers + 1);
               deferred++;
+              deferredThisBatch.add(key);
               // Bound the per-process defer-counter map.
               if (deferCountMap.size > DEFER_COUNT_MAX_SIZE) {
                 const drop = Math.floor(deferCountMap.size / 2);
@@ -462,6 +475,8 @@ export async function judgeFactDurability(
                 }
               }
             }
+            // else: duplicate defer for a key already counted this batch —
+            // no additional counter increment, verdict still marked defer.
           } else {
             // On accept/reject, clear any outstanding defer counter so a
             // future reappearance of the same text starts fresh.
