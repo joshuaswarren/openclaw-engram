@@ -314,6 +314,39 @@ export interface PluginConfig {
   triggerMode: TriggerMode;
   bufferMaxTurns: number;
   bufferMaxMinutes: number;
+  /**
+   * Surprise-gated buffer flush (issue #563, D-MEM).
+   *
+   * When enabled, every turn added to the smart buffer is scored against a
+   * configurable window of recent memories using an embedding-distance proxy
+   * for novelty (see `buffer-surprise.ts`). A turn whose surprise score
+   * exceeds `bufferSurpriseThreshold` triggers an immediate extract flush,
+   * even if the existing signal/turn-count/time triggers would otherwise keep
+   * buffering. Disabled by default — when `false`, buffer behavior is
+   * identical to pre-#563 code. Additive only: existing triggers are never
+   * suppressed by this flag.
+   */
+  bufferSurpriseTriggerEnabled: boolean;
+  /**
+   * Threshold in `[0, 1]` above which a surprise score causes an immediate
+   * flush. `0.35` is a conservative default chosen to favor precision over
+   * recall during the opt-in phase. Ignored unless
+   * `bufferSurpriseTriggerEnabled` is `true`.
+   */
+  bufferSurpriseThreshold: number;
+  /**
+   * Number of nearest neighbors to average over when computing the surprise
+   * score (see `computeSurprise`). Default `5`. Clamped to the recent-memory
+   * window size at call time.
+   */
+  bufferSurpriseK: number;
+  /**
+   * Maximum number of recent memories to sample when computing the surprise
+   * score. Bounds embedding cost per turn. Default `20`. Set to `0` to
+   * disable the trigger even when the flag is on (no memories to compare
+   * against → treat as not-applicable rather than maximally surprising).
+   */
+  bufferSurpriseRecentMemoryCount: number;
   consolidateEveryN: number;
   highSignalPatterns: string[];
   maxMemoryTokens: number;

@@ -58,6 +58,30 @@
         "default": 15,
         "description": "Max minutes before forced extraction"
       },
+      "bufferSurpriseTriggerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Issue #563 (D-MEM). When true, the smart buffer flushes immediately on turns whose embedding-based surprise score exceeds bufferSurpriseThreshold, in addition to the existing turn-count / signal / time triggers. Additive only — never suppresses existing flushes. Off by default."
+      },
+      "bufferSurpriseThreshold": {
+        "type": "number",
+        "default": 0.35,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Threshold in [0, 1] above which a surprise score flushes the buffer. Higher = require more novelty to flush. Ignored when bufferSurpriseTriggerEnabled is false."
+      },
+      "bufferSurpriseK": {
+        "type": "number",
+        "default": 5,
+        "minimum": 1,
+        "description": "Number of nearest-neighbor memories to average over when computing the surprise score. Clamped to the recent-memory window size."
+      },
+      "bufferSurpriseRecentMemoryCount": {
+        "type": "number",
+        "default": 20,
+        "minimum": 0,
+        "description": "Maximum number of recent memories sampled for surprise scoring. Bounds embedding cost per turn. Set to 0 to effectively disable the trigger even when the flag is on."
+      },
       "consolidateEveryN": {
         "type": "number",
         "default": 3,

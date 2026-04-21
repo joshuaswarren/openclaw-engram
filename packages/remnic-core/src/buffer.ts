@@ -11,17 +11,47 @@ import type {
 
 export type TriggerDecision = "extract_now" | "extract_batch" | "keep_buffering";
 
+/**
+ * Optional surprise probe injected into `SmartBuffer`.
+ *
+ * Computes a D-MEM-style novelty score in `[0, 1]` for an incoming turn.
+ * The buffer treats the probe as purely additive: if it is not provided, if
+ * the feature flag is off, or if the probe throws/times out, the buffer
+ * falls back to the existing signal/turn-count/time triggers unchanged.
+ *
+ * Callers are responsible for sampling recent memories and passing them
+ * through the embedding pipeline — the buffer does not want to know about
+ * storage, embeddings, or QMD.
+ *
+ * @param bufferKey Identifier for the active buffer (session/thread).
+ * @param turn      The incoming turn whose novelty is being scored.
+ * @param recentTurns Turns already buffered for this key (most recent first
+ *                    is NOT guaranteed — treat as unordered corpus).
+ * @returns A surprise score in `[0, 1]`, or `null` if no score could be
+ *          produced (e.g. empty corpus, probe declined to embed).
+ */
+export interface BufferSurpriseProbe {
+  scoreTurn(
+    bufferKey: string,
+    turn: BufferTurn,
+    recentTurns: readonly BufferTurn[],
+  ): Promise<number | null>;
+}
+
 const MAX_BUFFER_ENTRY_COUNT = 200;
 
 export class SmartBuffer {
   private state: BufferState;
   private loaded = false;
+  private readonly surpriseProbe: BufferSurpriseProbe | null;
 
   constructor(
     private readonly config: PluginConfig,
     private readonly storage: StorageManager,
+    surpriseProbe: BufferSurpriseProbe | null = null,
   ) {
     this.state = { turns: [], lastExtractionAt: null, extractionCount: 0 };
+    this.surpriseProbe = surpriseProbe;
   }
 
   private entryFor(key: string): BufferEntryState {
@@ -142,7 +172,35 @@ export class SmartBuffer {
     }
 
     const signal = scanSignals(turn.content, this.config.highSignalPatterns);
-    const decision = this.evaluate(entry, signal.level);
+    let decision = this.evaluate(entry, signal.level);
+
+    // Surprise-gated flush (issue #563). Additive only: if the probe is
+    // disabled, unavailable, or the score is below threshold, the decision
+    // from the existing trigger logic stands. The probe only ever *promotes*
+    // `keep_buffering` → `extract_now`; it never suppresses an existing
+    // flush. This preserves the invariant that enabling surprise cannot
+    // *reduce* extraction frequency.
+    if (
+      decision === "keep_buffering" &&
+      this.config.bufferSurpriseTriggerEnabled &&
+      this.surpriseProbe !== null &&
+      // Matching the existing "smart" branch: surprise is a lower-tier
+      // novelty signal that should not second-guess a high-signal hit
+      // (which already flushes) or fight `every_n` / `time_based` modes.
+      this.config.triggerMode === "smart" &&
+      signal.level !== "high"
+    ) {
+      const surprise = await this.computeSurpriseSafe(bufferKey, turn, entry);
+      if (
+        surprise !== null &&
+        surprise > this.config.bufferSurpriseThreshold
+      ) {
+        log.debug(
+          `buffer[${bufferKey}]: surprise=${surprise.toFixed(3)} > threshold=${this.config.bufferSurpriseThreshold} → extract_now`,
+        );
+        decision = "extract_now";
+      }
+    }
 
     log.debug(
       `buffer[${bufferKey}]: ${entry.turns.length} turns, signal=${signal.level}, decision=${decision}`,
@@ -151,6 +209,47 @@ export class SmartBuffer {
     this.pruneEntries([bufferKey]);
     await this.save();
     return decision;
+  }
+
+  /**
+   * Invoke the injected surprise probe defensively. Any error (probe throws,
+   * embedder unavailable, timeout) is swallowed and logged at debug: the
+   * surprise path must never crash the happy-path trigger evaluation. A
+   * `null` return indicates "no score available, fall through to existing
+   * triggers".
+   */
+  private async computeSurpriseSafe(
+    bufferKey: string,
+    turn: BufferTurn,
+    entry: BufferEntryState,
+  ): Promise<number | null> {
+    if (!this.surpriseProbe) return null;
+    // The current turn was just pushed into entry.turns; exclude it from the
+    // corpus so the probe never compares a turn to itself.
+    const prior = entry.turns.length > 0
+      ? entry.turns.slice(0, -1)
+      : [];
+    try {
+      const score = await this.surpriseProbe.scoreTurn(bufferKey, turn, prior);
+      if (score === null) return null;
+      if (typeof score !== "number" || !Number.isFinite(score)) {
+        log.debug(
+          `buffer[${bufferKey}]: surprise probe returned non-finite score (${String(score)}), ignoring`,
+        );
+        return null;
+      }
+      // Defensive clamp: formula lives in buffer-surprise.ts, but we never
+      // want a misbehaving probe to inject an out-of-range value into the
+      // threshold comparison.
+      if (score < 0) return 0;
+      if (score > 1) return 1;
+      return score;
+    } catch (err) {
+      log.debug(
+        `buffer[${bufferKey}]: surprise probe failed, falling back to existing triggers: ${(err as Error).message}`,
+      );
+      return null;
+    }
   }
 
   private evaluate(entry: BufferEntryState, signalLevel: SignalLevel): TriggerDecision {

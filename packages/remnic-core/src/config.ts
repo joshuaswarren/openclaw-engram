@@ -864,6 +864,25 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.bufferMaxTurns === "number" ? cfg.bufferMaxTurns : 5,
     bufferMaxMinutes:
       typeof cfg.bufferMaxMinutes === "number" ? cfg.bufferMaxMinutes : 15,
+    // Surprise-gated buffer flush (issue #563, D-MEM). See types.ts for
+    // semantics. Default off so PR 2 ships as a pure no-op until an operator
+    // opts in. PR 4 benchmarks the flag and may flip the default.
+    bufferSurpriseTriggerEnabled: cfg.bufferSurpriseTriggerEnabled === true,
+    bufferSurpriseThreshold:
+      typeof cfg.bufferSurpriseThreshold === "number" &&
+      Number.isFinite(cfg.bufferSurpriseThreshold)
+        ? Math.min(1, Math.max(0, cfg.bufferSurpriseThreshold))
+        : 0.35,
+    bufferSurpriseK:
+      typeof cfg.bufferSurpriseK === "number" &&
+      Number.isFinite(cfg.bufferSurpriseK)
+        ? Math.max(1, Math.floor(cfg.bufferSurpriseK))
+        : 5,
+    bufferSurpriseRecentMemoryCount:
+      typeof cfg.bufferSurpriseRecentMemoryCount === "number" &&
+      Number.isFinite(cfg.bufferSurpriseRecentMemoryCount)
+        ? Math.max(0, Math.floor(cfg.bufferSurpriseRecentMemoryCount))
+        : 20,
     consolidateEveryN:
       typeof cfg.consolidateEveryN === "number" ? cfg.consolidateEveryN : 3,
     highSignalPatterns: Array.isArray(cfg.highSignalPatterns)
