@@ -1133,11 +1133,6 @@ export function parseConfig(raw: unknown): PluginConfig {
       const n = coerceNumber(cfg.recallCrossNamespaceBudgetHardLimit);
       return n !== undefined && n > 0 ? Math.floor(n) : 30;
     })(),
-    // Memory Worth recall filter (issue #560 PR 4, default flipped in PR 5).
-    // Bench result on the seeded fixture: precision@5 lifts from 0.00 to
-    // 0.60 across all 50 cases with zero regressions. See
-    // `runMemoryWorthBench` in memory-worth-bench.ts. Operators can still
-    // opt out with recallMemoryWorthFilterEnabled=false.
     // Recall-audit anomaly detector (issue #565 PR 5/5). Defaults off so
     // existing deployments are unaffected; enable explicitly to let the
     // access surfaces flag suspicious query patterns derived from the
@@ -1177,6 +1172,12 @@ export function parseConfig(raw: unknown): PluginConfig {
       const floored = Math.floor(n);
       return floored >= 1 ? floored : 30;
     })(),
+
+    // Memory Worth recall filter (issue #560 PR 4, default flipped in PR 5).
+    // Bench result on the seeded fixture: precision@5 lifts from 0.00 to
+    // 0.60 across all 50 cases with zero regressions. See
+    // `runMemoryWorthBench` in memory-worth-bench.ts. Operators can still
+    // opt out with recallMemoryWorthFilterEnabled=false.
     recallMemoryWorthFilterEnabled:
       coerceBool(cfg.recallMemoryWorthFilterEnabled) ?? true,
     recallMemoryWorthHalfLifeMs: (() => {
