@@ -85,6 +85,7 @@ test("emits one BUFFER_SURPRISE row per scored turn (triggering)", async () => {
   const buffer = new SmartBuffer(config, storage as any, fixedScoreProbe(0.9));
 
   await buffer.addTurn("sess-1", makeTurn("sess-1", "novel"));
+  await buffer.flushSurpriseTelemetry();
 
   assert.equal(storage.events.length, 1);
   const row = storage.events[0]!;
@@ -115,6 +116,7 @@ test("emits BUFFER_SURPRISE row for non-triggering turns too", async () => {
   const buffer = new SmartBuffer(config, storage as any, fixedScoreProbe(0.1));
 
   await buffer.addTurn("sess-1", makeTurn("sess-1", "routine"));
+  await buffer.flushSurpriseTelemetry();
 
   assert.equal(storage.events.length, 1);
   assert.equal(storage.events[0]!.triggeredFlush, false);
@@ -204,13 +206,59 @@ test("does NOT emit when turn-count path already flushes (extract_batch)", async
   const buffer = new SmartBuffer(config, storage as any, fixedScoreProbe(0.9));
 
   await buffer.addTurn("sess-1", makeTurn("sess-1", "first"));
+  await buffer.flushSurpriseTelemetry();
   // first turn WAS scored (decision was keep_buffering)
   assert.equal(storage.events.length, 1);
 
   const before = storage.events.length;
   await buffer.addTurn("sess-1", makeTurn("sess-1", "second"));
+  await buffer.flushSurpriseTelemetry();
   // second turn flushes via turn-count; probe is not consulted → no new row.
   assert.equal(storage.events.length, before);
+});
+
+test("telemetry writes are serialized in wall-clock order under variable latency", async () => {
+  // Reviewer concern: fire-and-forget appends could settle out of
+  // order on slow filesystems. Simulate this with a storage double
+  // whose append latency decreases with each call via microtask
+  // hops — without serialization, the later appends would land first.
+  // Using microtask chains instead of setTimeout keeps the test
+  // deterministic and does not leak timers into the node:test teardown.
+  const order: number[] = [];
+  let call = 0;
+  class ReorderingStorage {
+    async loadBuffer(): Promise<BufferState> {
+      return emptyBuffer();
+    }
+    async saveBuffer() {}
+    async appendBufferSurpriseEvents(events: BufferSurpriseEvent[]) {
+      const nth = ++call;
+      // First append hops the microtask queue more times than later
+      // ones, mimicking variable latency deterministically.
+      const hops = Math.max(1, 6 - nth * 2);
+      for (let i = 0; i < hops; i += 1) {
+        await Promise.resolve();
+      }
+      for (const ev of events) order.push(ev.turnCountInWindow);
+      return events.length;
+    }
+  }
+
+  const storage = new ReorderingStorage();
+  const config = parseConfig({
+    bufferSurpriseTriggerEnabled: true,
+    bufferMaxTurns: 50,
+    triggerMode: "smart",
+  });
+  const buffer = new SmartBuffer(config, storage as any, fixedScoreProbe(0.1));
+  for (const i of [1, 2, 3]) {
+    await buffer.addTurn(
+      "sess-1",
+      { ...makeTurn("sess-1", "turn " + i) },
+    );
+  }
+  await buffer.flushSurpriseTelemetry();
+  assert.deepEqual(order, [1, 2, 3]);
 });
 
 test("works with legacy StorageManager lacking appendBufferSurpriseEvents", async () => {
