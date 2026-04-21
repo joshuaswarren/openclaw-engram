@@ -314,6 +314,47 @@ export interface PluginConfig {
   triggerMode: TriggerMode;
   bufferMaxTurns: number;
   bufferMaxMinutes: number;
+  /**
+   * Surprise-gated buffer flush (issue #563, D-MEM).
+   *
+   * When enabled, every turn added to the smart buffer is scored against a
+   * configurable window of recent memories using an embedding-distance proxy
+   * for novelty (see `buffer-surprise.ts`). A turn whose surprise score
+   * exceeds `bufferSurpriseThreshold` triggers an immediate extract flush,
+   * even if the existing signal/turn-count/time triggers would otherwise keep
+   * buffering. Disabled by default — when `false`, buffer behavior is
+   * identical to pre-#563 code. Additive only: existing triggers are never
+   * suppressed by this flag.
+   */
+  bufferSurpriseTriggerEnabled: boolean;
+  /**
+   * Threshold in `[0, 1]` above which a surprise score causes an immediate
+   * flush. `0.35` is a conservative default chosen to favor precision over
+   * recall during the opt-in phase. Ignored unless
+   * `bufferSurpriseTriggerEnabled` is `true`.
+   */
+  bufferSurpriseThreshold: number;
+  /**
+   * Number of nearest neighbors to average over when computing the surprise
+   * score (see `computeSurprise`). Default `5`. Clamped to the recent-memory
+   * window size at call time.
+   */
+  bufferSurpriseK: number;
+  /**
+   * Maximum number of recent memories to sample when computing the surprise
+   * score. Bounds embedding cost per turn. Default `20`. Set to `0` to
+   * disable the trigger even when the flag is on (no memories to compare
+   * against → treat as not-applicable rather than maximally surprising).
+   */
+  bufferSurpriseRecentMemoryCount: number;
+  /**
+   * Hard timeout (ms) for the surprise probe. If the probe does not
+   * resolve within this window, the buffer treats the probe as failed,
+   * logs at debug, and falls through to the existing triggers. Ensures
+   * a slow or hung embedder cannot stall the turn-append path. Default
+   * `2000` (2s).
+   */
+  bufferSurpriseProbeTimeoutMs: number;
   consolidateEveryN: number;
   highSignalPatterns: string[];
   maxMemoryTokens: number;
@@ -419,6 +460,22 @@ export interface PluginConfig {
    */
   recallDirectAnswerEnabled: boolean;
   /**
+   * Graph-based retrieval tier via Personalized PageRank (issue #559 PR 4).
+   * When true, recall builds a retrieval graph from memory frontmatter
+   * and runs PPR, merging the result with QMD via MMR.  Default false —
+   * ships off pending the retrieval-graph bench in PR 5.
+   */
+  recallGraphEnabled: boolean;
+  /** PPR damping factor used when `recallGraphEnabled` is true. */
+  recallGraphDamping: number;
+  /** PPR power-iteration cap used when `recallGraphEnabled` is true. */
+  recallGraphIterations: number;
+  /**
+   * Max memories returned by the graph tier before MMR.  Set to 0 to
+   * disable the graph tier's contribution without flipping the flag.
+   */
+  recallGraphTopK: number;
+  /**
    * Minimum token-overlap ratio (query tokens ∩ memory tokens / query tokens)
    * required for direct-answer eligibility.  Set to 0 to disable the gate.
    */
@@ -438,6 +495,40 @@ export interface PluginConfig {
    * whose resolved taxonomy category is not in this list never qualify.
    */
   recallDirectAnswerEligibleTaxonomyBuckets: string[];
+  /**
+   * Cross-namespace query-budget limiter (issue #565 PR 4/5). When true,
+   * a principal that issues a burst of recalls against namespaces other
+   * than their own is throttled once its per-window count crosses
+   * `recallCrossNamespaceBudgetHardLimit`. Default false — ships disabled.
+   */
+  recallCrossNamespaceBudgetEnabled: boolean;
+  /** Rolling window in milliseconds over which cross-namespace reads are counted. */
+  recallCrossNamespaceBudgetWindowMs: number;
+  /**
+   * Soft threshold — the first point at which the limiter flags a burst.
+   * Calls are still allowed; anomaly detection (issue #565 PR 5) will
+   * surface the warning.
+   */
+  recallCrossNamespaceBudgetSoftLimit: number;
+  /** Hard threshold — calls past this count are denied in the window. */
+  recallCrossNamespaceBudgetHardLimit: number;
+  // Memory Worth recall filter (issue #560 PR 4)
+  /**
+   * When true, recall multiplies candidate scores by the Memory Worth
+   * factor computed from `mw_success` / `mw_fail` counters on each
+   * memory's frontmatter (see `computeMemoryWorth`). Memories with a
+   * history of failed sessions sink; neutral / uninstrumented memories
+   * are untouched (multiplier 1.0). Default false — flip to true in PR 5
+   * once the benchmark shows precision tie-or-win.
+   */
+  recallMemoryWorthFilterEnabled: boolean;
+  /**
+   * Optional half-life for Memory Worth decay, in milliseconds. When
+   * positive, older outcome observations are exponentially decayed toward
+   * the uniform prior. Set to 0 (default) to disable decay and use raw
+   * counter values.
+   */
+  recallMemoryWorthHalfLifeMs: number;
   // Memory Linking (Phase 3A)
   memoryLinkingEnabled: boolean;
   // Conversation Threading (Phase 3B)
@@ -518,6 +609,35 @@ export interface PluginConfig {
   extractionJudgeBatchSize: number;
   /** Shadow mode: log judge verdicts but do not filter facts. Default false. */
   extractionJudgeShadow: boolean;
+  /**
+   * Maximum number of times the same candidate text may be deferred before
+   * the judge forcibly converts the verdict to `"reject"`. Prevents
+   * pathological LLM responses from looping forever on ambiguous facts.
+   * Defaults to 2 (issue #562, PR 2).
+   */
+  extractionJudgeMaxDeferrals: number;
+  /**
+   * Emit structured telemetry rows to
+   * `state/observation-ledger/extraction-judge-verdicts.jsonl` on every
+   * judge verdict. Off by default; enable to collect defer-rate / latency
+   * metrics for operator dashboards (issue #562, PR 3).
+   */
+  extractionJudgeTelemetryEnabled: boolean;
+  /**
+   * Collect `(candidate_text, verdict_kind, reason)` tuples into
+   * `~/.remnic/judge-training/<date>.jsonl` for use by a future GRPO
+   * training pipeline (issue #562, PR 4). Off by default. Rows live in
+   * the user's home directory rather than the shared memory directory so
+   * they are not committed, sync'd, or bundled into memory exports.
+   */
+  collectJudgeTrainingPairs: boolean;
+  /**
+   * Override directory for judge training-pair collection. Empty string
+   * means use the default (`~/.remnic/judge-training`). Primarily for
+   * tests and for operators who want the output to land in a specific
+   * location.
+   */
+  judgeTrainingDir: string;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   daySummaryEnabled: boolean;
@@ -591,6 +711,15 @@ export interface PluginConfig {
   semanticConsolidationExcludeCategories: string[];
   semanticConsolidationIntervalHours: number;
   semanticConsolidationMaxPerRun: number;
+  /**
+   * When true (default), semantic-consolidation prompts the LLM with an
+   * operator-aware format asking for JSON `{operator, output}` and records
+   * the resulting SPLIT/MERGE/UPDATE operator on `derived_via`.  When
+   * false, falls back to the legacy plain-text prompt — `derived_via` is
+   * still populated via the cluster-shape heuristic in
+   * `chooseConsolidationOperator`.  Issue #561 PR 3.
+   */
+  operatorAwareConsolidationEnabled: boolean;
   // Creation-memory foundation
   creationMemoryEnabled: boolean;
   memoryUtilityLearningEnabled: boolean;
@@ -847,6 +976,13 @@ export interface PluginConfig {
   recallMmrLambda: number;
   /** MMR is applied over the top N candidates per section. Default 40. */
   recallMmrTopN: number;
+  /**
+   * Boost stored `reasoning_trace` memories in recall results when the
+   * incoming query reads like a problem-solving ask (e.g. "how do I…",
+   * "step by step", "walk me through…"). Default false — opt in after
+   * benchmarking (issue #564 PR 3).
+   */
+  recallReasoningTraceBoostEnabled: boolean;
   qmdRecallCacheTtlMs: number;
   qmdRecallCacheStaleTtlMs: number;
   qmdRecallCacheMaxEntries: number;
@@ -1313,6 +1449,13 @@ export interface BufferEntryState {
   turns: BufferTurn[];
   lastExtractionAt: string | null;
   extractionCount: number;
+  /**
+   * Turns retained across `clearAfterExtraction` so a later extraction pass
+   * sees the context that caused a defer verdict (issue #562, PR 2). Bounded
+   * to the configured retention cap by `retainDeferredTurns`. Empty / absent
+   * means no retention in effect.
+   */
+  retainedTurns?: BufferTurn[];
 }
 
 export interface BufferState {
@@ -1356,6 +1499,41 @@ export interface BehaviorSignalEvent {
   confidence: number;
   signalHash: string;
   source: "extraction" | "correction";
+}
+
+/**
+ * One row of the buffer-surprise telemetry ledger (issue #563 PR 3).
+ *
+ * Emitted by `SmartBuffer` each time the surprise probe produces a score
+ * for an incoming turn (i.e. the feature flag is on and the existing
+ * trigger-logic path called through to the probe). Not written when the
+ * probe is skipped — the absence of a row is meaningful and matches the
+ * "probe was not consulted" state.
+ *
+ * The ledger is intentionally lean: we record the score, the threshold in
+ * force, whether the turn caused a flush, and the turn count so operators
+ * can re-derive precision/recall without replaying traffic. Turn content
+ * is never persisted — this ledger is safe to commit to shared storage.
+ */
+export interface BufferSurpriseEvent {
+  /** Literal tag to simplify multiplexed log consumers. */
+  event: "BUFFER_SURPRISE";
+  /** ISO timestamp when the decision was made. Server-side, not turn ts. */
+  timestamp: string;
+  /** Buffer identifier (session / thread). Opaque string. */
+  bufferKey: string;
+  /** Session key if available; null when the turn has no session binding. */
+  sessionKey: string | null;
+  /** Role of the scored turn. */
+  turnRole: "user" | "assistant";
+  /** Surprise score in `[0, 1]`, already clamped. */
+  surpriseScore: number;
+  /** Threshold in force when the decision was made. */
+  threshold: number;
+  /** Whether this turn upgraded `keep_buffering` → `extract_now`. */
+  triggeredFlush: boolean;
+  /** Number of turns in the buffer (including the current turn). */
+  turnCountInWindow: number;
 }
 
 /** Memory status for lifecycle management */
@@ -1566,6 +1744,22 @@ export interface ExtractedFact {
   structuredAttributes?: Record<string, string>;
   /** When category is `procedure`, ordered steps with intents (persisted under procedures/). */
   procedureSteps?: ExtractedProcedureStep[];
+  /**
+   * When category is `reasoning_trace`, the stored solution chain the user
+   * walked through. Persisted under reasoning-traces/.
+   */
+  reasoningTrace?: ExtractedReasoningTrace;
+}
+
+export interface ExtractedReasoningTraceStep {
+  order: number;
+  description: string;
+}
+
+export interface ExtractedReasoningTrace {
+  steps: ExtractedReasoningTraceStep[];
+  finalAnswer: string;
+  observedOutcome?: string;
 }
 
 export interface MemoryIntent {

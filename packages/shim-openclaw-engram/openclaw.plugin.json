@@ -58,6 +58,36 @@
         "default": 15,
         "description": "Max minutes before forced extraction"
       },
+      "bufferSurpriseTriggerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Issue #563 (D-MEM). When true, the smart buffer flushes immediately on turns whose embedding-based surprise score exceeds bufferSurpriseThreshold, in addition to the existing turn-count / signal / time triggers. Additive only — never suppresses existing flushes. Off by default."
+      },
+      "bufferSurpriseThreshold": {
+        "type": "number",
+        "default": 0.35,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Threshold in [0, 1] above which a surprise score flushes the buffer. Higher = require more novelty to flush. Ignored when bufferSurpriseTriggerEnabled is false."
+      },
+      "bufferSurpriseK": {
+        "type": "number",
+        "default": 5,
+        "minimum": 1,
+        "description": "Number of nearest-neighbor memories to average over when computing the surprise score. Clamped to the recent-memory window size."
+      },
+      "bufferSurpriseRecentMemoryCount": {
+        "type": "number",
+        "default": 20,
+        "minimum": 0,
+        "description": "Maximum number of recent memories sampled for surprise scoring. Bounds embedding cost per turn. Set to 0 to effectively disable the trigger even when the flag is on."
+      },
+      "bufferSurpriseProbeTimeoutMs": {
+        "type": "number",
+        "default": 2000,
+        "minimum": 1,
+        "description": "Hard timeout (ms) for the surprise probe. If the probe does not resolve within this window the buffer treats it as failed and falls through to the existing triggers — a slow or hung embedder cannot stall the turn-append path."
+      },
       "consolidateEveryN": {
         "type": "number",
         "default": 3,
@@ -315,6 +345,24 @@
           "gateExtractionDuringHeartbeat": {
             "type": "boolean",
             "default": true
+          }
+        }
+      },
+      "codingMode": {
+        "type": "object",
+        "additionalProperties": false,
+        "default": {},
+        "description": "Coding-agent project/branch scoping (issue #569).",
+        "properties": {
+          "projectScope": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true and the session has a resolved git context, memory routes to a project-scoped namespace (project:<id>). Set to false to restore pre-#569 behaviour exactly."
+          },
+          "branchScope": {
+            "type": "boolean",
+            "default": false,
+            "description": "When true, memory also overlays the current branch (project:<id>/branch:<name>). Opt-in — most development wants cross-branch recall. Wired in PR 3 of #569."
           }
         }
       },
@@ -2305,6 +2353,27 @@
         "type": "boolean",
         "default": false,
         "description": "Shadow mode for the extraction judge. When true, judge verdicts are logged but all facts are still persisted regardless of the verdict."
+      },
+      "extractionJudgeMaxDeferrals": {
+        "type": "number",
+        "default": 2,
+        "minimum": 1,
+        "description": "Maximum number of times the same candidate text may be deferred by the extraction judge before the verdict is forcibly converted to 'reject'. Prevents pathological LLM responses from looping forever on ambiguous facts (issue #562)."
+      },
+      "extractionJudgeTelemetryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Emit structured telemetry rows to state/observation-ledger/extraction-judge-verdicts.jsonl on every judge verdict. Off by default; enable to collect defer-rate and latency metrics for operator dashboards (issue #562)."
+      },
+      "collectJudgeTrainingPairs": {
+        "type": "boolean",
+        "default": false,
+        "description": "Opt-in collector for (candidate_text, verdict_kind, reason) tuples used to prep a future GRPO training pipeline. Rows land under ~/.remnic/judge-training/<date>.jsonl (NOT in the shared memory directory). Off by default (issue #562)."
+      },
+      "judgeTrainingDir": {
+        "type": "string",
+        "default": "",
+        "description": "Override directory for judge training-pair collection. Empty string uses the default (~/.remnic/judge-training). Only consulted when collectJudgeTrainingPairs is true."
       },
       "inlineSourceAttributionEnabled": {
         "type": "boolean",

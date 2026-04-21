@@ -15,6 +15,11 @@ const LEGACY_NAMESPACE_CHILDREN = [
   "state",
   "config",
   "summaries",
+  "procedures",
+  // Issue #564 PR 3: reasoning_trace memories live in their own subtree.
+  // Must be included here so namespace migration moves existing traces
+  // into the target namespace root alongside other memory data.
+  "reasoning-traces",
   "profile.md",
 ] as const;
 

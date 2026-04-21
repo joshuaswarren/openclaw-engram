@@ -39,7 +39,13 @@ import {
   runConsolidationProvenanceCheck,
   type ConsolidationProvenanceReport,
 } from "./consolidation-provenance-check.js";
-import type { FileHygieneConfig, MemoryFile, PluginConfig } from "./types.js";
+import type {
+  BufferSurpriseEvent,
+  FileHygieneConfig,
+  MemoryFile,
+  PluginConfig,
+} from "./types.js";
+import { reportBufferSurpriseDistribution } from "./buffer-surprise-report.js";
 
 interface QmdRuntimeLike {
   probe(): Promise<boolean>;
@@ -1179,6 +1185,14 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // This is an informational check, never an error.
   checks.push(await summarizeMemoryWorthLegacyCounters(new StorageManager(config.memoryDir)));
 
+  // Buffer surprise telemetry distribution (issue #563 PR 3).
+  // Surfaces recent surprise scores so operators can calibrate the
+  // `bufferSurpriseThreshold` from real traffic. Never an error — an empty
+  // ledger is the expected state until the flag is turned on.
+  checks.push(
+    await summarizeBufferSurpriseDistribution(new StorageManager(config.memoryDir), config),
+  );
+
   // Consolidation provenance integrity (issue #561 PR 4).
   // Validates that every `derived_from` entry resolves to an on-disk
   // page-version snapshot and every `derived_via` is a known operator.
@@ -1284,6 +1298,82 @@ export async function summarizeMemoryWorthLegacyCounters(
         : `${legacy} of ${total} eligible memories have no Memory Worth counters yet (${instrumented} instrumented).`,
     details: { legacy, instrumented, total, ineligible },
   };
+}
+
+/**
+ * Summarize the recent buffer-surprise telemetry distribution for the
+ * Doctor report (issue #563 PR 3).
+ *
+ * Reports mean/median/p90 surprise scores and the triggered-flush rate
+ * over the most recent window of ledger rows. An empty ledger is the
+ * expected state until `bufferSurpriseTriggerEnabled` is turned on — the
+ * check never escalates beyond `ok` / `warn` (ledger unreadable).
+ *
+ * Exported so tests can exercise the formatting without booting a real
+ * orchestrator.
+ */
+export async function summarizeBufferSurpriseDistribution(
+  storage: StorageManager,
+  config: PluginConfig,
+): Promise<OperatorDoctorCheck> {
+  const storageWithLedger = storage as StorageManager & {
+    readBufferSurpriseEvents?: (
+      opts: { limit?: number },
+    ) => Promise<BufferSurpriseEvent[]>;
+  };
+
+  // Defensive: older StorageManager builds (not yet rebuilt) may lack the
+  // reader. Do not fail the entire Doctor run in that case.
+  if (typeof storageWithLedger.readBufferSurpriseEvents !== "function") {
+    return {
+      key: "buffer_surprise_distribution",
+      status: "ok",
+      summary: "Buffer-surprise telemetry reader unavailable in this build.",
+      details: { available: false },
+    };
+  }
+
+  try {
+    const dist = await reportBufferSurpriseDistribution(
+      async (opts) =>
+        storageWithLedger.readBufferSurpriseEvents!({ limit: opts.limit }),
+      { limit: 200 },
+    );
+
+    if (dist.count === 0) {
+      return {
+        key: "buffer_surprise_distribution",
+        status: "ok",
+        summary: config.bufferSurpriseTriggerEnabled
+          ? "Surprise trigger is enabled but no telemetry has been recorded yet."
+          : "Surprise trigger is disabled; no telemetry expected.",
+        details: {
+          enabled: config.bufferSurpriseTriggerEnabled,
+          distribution: dist,
+        },
+      };
+    }
+
+    const pct = (value: number) => (value * 100).toFixed(1);
+    return {
+      key: "buffer_surprise_distribution",
+      status: "ok",
+      summary: `Recent surprise: mean=${dist.mean.toFixed(3)}, median=${dist.median.toFixed(3)}, p90=${dist.p90.toFixed(3)}, triggered=${pct(dist.triggeredRate)}% over ${dist.count} turns (threshold=${dist.currentThreshold ?? config.bufferSurpriseThreshold}).`,
+      details: {
+        enabled: config.bufferSurpriseTriggerEnabled,
+        distribution: dist,
+      },
+    };
+  } catch (err) {
+    return {
+      key: "buffer_surprise_distribution",
+      status: "warn",
+      summary: "Could not read buffer-surprise telemetry ledger.",
+      remediation:
+        "Retry `remnic doctor` after ensuring the memory state directory is readable.",
+      details: { error: String(err) },
+    };
+  }
 }
 
 /**
