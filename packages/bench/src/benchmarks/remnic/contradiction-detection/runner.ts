@@ -191,7 +191,7 @@ export async function runContradictionDetectionBenchmark(
     const sample = cases[i];
     const startedAt = performance.now();
     const pred = heuristicVerdict(sample.textA, sample.textB);
-    const latencyMs = Math.round(performance.now() - startedAt);
+    const latencyMs = Math.round((performance.now() - startedAt) * 1000) / 1000;
     predicted.push(pred);
 
     const correct = pred === sample.expectedVerdict ? 1 : 0;
