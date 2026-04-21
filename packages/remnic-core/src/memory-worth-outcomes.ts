@@ -1,0 +1,216 @@
+/**
+ * Issue #560 PR 3 — Memory Worth outcome signal pipeline.
+ *
+ * PR 1 added `mw_success` / `mw_fail` fields to MemoryFrontmatter. PR 2 added
+ * a pure scoring helper. This module adds the one piece tying the two
+ * together: a way for callers to record a single outcome observation against
+ * a memory, which increments the appropriate counter in frontmatter.
+ *
+ * The public entry point is `recordMemoryOutcome({ memoryPath, outcome, ... })`.
+ * Callers pass the full path to the memory file (not just the ID) because in
+ * the usual outcome source — the observation ledger — the memory path is
+ * already captured in the event payload, and path-based lookup avoids a
+ * full-corpus scan.
+ *
+ * Intentional properties:
+ *   - Works on a per-memory basis (no bulk API in this slice). Bulk update is
+ *     an easy layer on top of this once a second caller needs it.
+ *   - Reuses the existing `updateMemoryFrontmatter(id, patch)` write path so
+ *     unrelated fields (confidence, importance, lifecycle hooks, etc.) are
+ *     preserved. The PR 1 serializer rejects negative / non-integer counters,
+ *     so we rely on that for defensive validation rather than duplicating it.
+ *   - Only instruments categories in `MEMORY_WORTH_OUTCOME_ELIGIBLE_CATEGORIES`
+ *     (currently `fact`, matching `MEMORY_WORTH_ELIGIBLE_CATEGORIES` in
+ *     operator-toolkit.ts for the doctor audit). Non-eligible memories return
+ *     `{ ok: false, reason: "ineligible_category" }` rather than throwing so
+ *     the caller — typically a ledger consumer draining heterogeneous events
+ *     — doesn't need to pre-filter by category.
+ *   - Missing / unknown memory IDs return `{ ok: false, reason: "not_found" }`
+ *     rather than throwing, because outcome events may reference memories
+ *     that were archived/deleted between the session and the ledger drain.
+ *     That isn't an operator-actionable error.
+ *   - On success, returns the new counter values so observability surfaces
+ *     can report the increment without a second read.
+ *
+ * Out of scope (later PRs):
+ *   - Recall filter reading the counters (PR 4).
+ *   - Benchmark + default flip (PR 5).
+ *   - Automatic increments from extraction or summarization. Only the
+ *     explicit `MEM_OUTCOME` ledger tag or an MCP tool call drives writes.
+ */
+
+import path from "node:path";
+
+import type { StorageManager } from "./storage.js";
+import type { MemoryFrontmatter } from "./types.js";
+
+/**
+ * Categories currently instrumented for Memory Worth counters. Must be kept
+ * in sync with `MEMORY_WORTH_ELIGIBLE_CATEGORIES` in `operator-toolkit.ts`.
+ * Declared here (not imported) to avoid a circular dep with operator-toolkit,
+ * which imports from this file's peers. The two constants are validated by a
+ * test to stay in lockstep.
+ */
+const MEMORY_WORTH_OUTCOME_ELIGIBLE_CATEGORIES: ReadonlySet<MemoryFrontmatter["category"]> =
+  new Set(["fact"]);
+
+/**
+ * Exported so downstream tests / operators can query the allowlist without
+ * re-declaring it. Returned as a frozen copy so consumers cannot mutate the
+ * module-internal set.
+ */
+export function memoryWorthOutcomeEligibleCategories(): ReadonlySet<MemoryFrontmatter["category"]> {
+  return new Set(MEMORY_WORTH_OUTCOME_ELIGIBLE_CATEGORIES);
+}
+
+/**
+ * The direction of an outcome — whether the session that consumed this
+ * memory succeeded or failed. Restricted to a string literal union so
+ * callers in TypeScript land can't pass arbitrary tags.
+ */
+export type MemoryOutcomeKind = "success" | "failure";
+
+/**
+ * Arguments to `recordMemoryOutcome`.
+ *
+ * `memoryPath` is the filesystem path to the memory; we derive the ID from
+ * the basename, matching how the operator-toolkit and recall layers map
+ * paths to IDs.
+ */
+export interface RecordMemoryOutcomeInput {
+  /**
+   * Absolute or repo-relative path to the memory file. Typically the value
+   * of `MemoryFile.path` for a memory returned by `readAllMemories`.
+   */
+  memoryPath: string;
+  /** Outcome direction — "success" bumps mw_success; "failure" bumps mw_fail. */
+  outcome: MemoryOutcomeKind;
+  /**
+   * Optional observation timestamp for audit / telemetry. This PR doesn't
+   * persist the timestamp (PR 4/5 will use `lastAccessed`, which already
+   * covers the recency-decay requirement), but accepting it here keeps the
+   * call shape stable so future ledger integrations don't need a breaking
+   * change.
+   */
+  timestamp?: Date | string;
+}
+
+/**
+ * Outcome of a `recordMemoryOutcome` call.
+ *
+ * `ok: true` means the counter was incremented and flushed. The returned
+ * values reflect the post-increment state, so callers can log
+ * `"fact-xyz: 4/1 → 5/1"` without re-reading.
+ *
+ * `ok: false` carries a short machine-readable `reason` so a ledger drainer
+ * can aggregate metrics ("how many events hit not_found this hour?"). The
+ * human-readable `message` is a friendlier version for logs.
+ */
+export type RecordMemoryOutcomeResult =
+  | {
+      ok: true;
+      memoryId: string;
+      /** New value of `mw_success` after the increment. */
+      mw_success: number;
+      /** New value of `mw_fail` after the increment. */
+      mw_fail: number;
+    }
+  | {
+      ok: false;
+      reason:
+        | "not_found"
+        | "ineligible_category"
+        | "invalid_outcome"
+        | "invalid_path";
+      message: string;
+    };
+
+/**
+ * Extract the memory ID from a file path. Memory files are stored as
+ * `<id>.md`, matching the rest of the system (see `getMemoryById`, which
+ * infers paths from IDs).
+ */
+function memoryIdFromPath(memoryPath: string): string | null {
+  if (!memoryPath || typeof memoryPath !== "string") return null;
+  const basename = path.basename(memoryPath, ".md");
+  if (!basename || basename === memoryPath) {
+    // `path.basename(X, ".md")` returning the original path means there was
+    // no `.md` suffix — caller passed something that isn't a memory file.
+    if (!memoryPath.endsWith(".md")) return null;
+  }
+  if (!basename) return null;
+  return basename;
+}
+
+/**
+ * Record a single outcome observation against a memory. Increments
+ * `mw_success` or `mw_fail` on the memory's frontmatter (preserving all
+ * other fields) via the existing `updateMemoryFrontmatter` write path.
+ *
+ * See the top-of-file doc comment for policy details (eligible categories,
+ * error semantics, and what is intentionally out of scope).
+ */
+export async function recordMemoryOutcome(
+  storage: StorageManager,
+  input: RecordMemoryOutcomeInput,
+): Promise<RecordMemoryOutcomeResult> {
+  if (input.outcome !== "success" && input.outcome !== "failure") {
+    return {
+      ok: false,
+      reason: "invalid_outcome",
+      message: `outcome must be "success" or "failure"; got ${JSON.stringify(input.outcome)}`,
+    };
+  }
+
+  const memoryId = memoryIdFromPath(input.memoryPath);
+  if (memoryId === null) {
+    return {
+      ok: false,
+      reason: "invalid_path",
+      message: `memoryPath must end in .md; got ${JSON.stringify(input.memoryPath)}`,
+    };
+  }
+
+  const memory = await storage.getMemoryById(memoryId);
+  if (!memory) {
+    return {
+      ok: false,
+      reason: "not_found",
+      message: `no memory with id ${memoryId}`,
+    };
+  }
+
+  if (!MEMORY_WORTH_OUTCOME_ELIGIBLE_CATEGORIES.has(memory.frontmatter.category)) {
+    return {
+      ok: false,
+      reason: "ineligible_category",
+      message: `category ${memory.frontmatter.category} is not instrumented for Memory Worth`,
+    };
+  }
+
+  // Absent counters are treated as 0 (matching the PR 1 semantics — legacy
+  // memories implicitly have Beta(1,1) priors). Increments land on the
+  // actual counter regardless of whether the field was previously set.
+  const currentSuccess = memory.frontmatter.mw_success ?? 0;
+  const currentFail = memory.frontmatter.mw_fail ?? 0;
+
+  const nextSuccess = input.outcome === "success" ? currentSuccess + 1 : currentSuccess;
+  const nextFail = input.outcome === "failure" ? currentFail + 1 : currentFail;
+
+  // `updateMemoryFrontmatter` goes through `writeMemoryFrontmatter`, which
+  // routes through the PR 1 serializer — so a stored corrupt value (e.g., a
+  // pre-existing float) would be rejected here. That is intentional: we
+  // refuse to layer a fresh increment on top of garbage. Operators should
+  // use `remnic doctor` to find and fix those rows before PR 4 ships.
+  await storage.updateMemoryFrontmatter(memoryId, {
+    mw_success: nextSuccess,
+    mw_fail: nextFail,
+  });
+
+  return {
+    ok: true,
+    memoryId,
+    mw_success: nextSuccess,
+    mw_fail: nextFail,
+  };
+}
