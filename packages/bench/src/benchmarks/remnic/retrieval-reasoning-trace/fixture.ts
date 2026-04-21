@@ -16,8 +16,6 @@
  *   shift results).
  */
 
-export type BenchPathKind = "reasoning_trace" | "fact";
-
 export interface ReasoningTraceBenchCandidate {
   docid: string;
   /** Absolute-style path mimicking the real storage layout. */

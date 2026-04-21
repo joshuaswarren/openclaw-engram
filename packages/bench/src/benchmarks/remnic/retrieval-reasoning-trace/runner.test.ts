@@ -114,6 +114,27 @@ test("runner: full-mode run produces boost_recall_at_1 > 0 and boost_noop_preser
   );
 });
 
+test("runner: quick mode exercises at least one positive AND one negative case", async () => {
+  const result = await runRetrievalReasoningTraceBenchmark({
+    benchmark: retrievalReasoningTraceDefinition,
+    mode: "quick",
+    runCount: 1,
+    adapterMode: "direct",
+  } as Parameters<typeof runRetrievalReasoningTraceBenchmark>[0]);
+
+  // In quick mode we should still see both `boost_recall_at_1` (from a
+  // positive case) and `boost_noop_preserved` (from a negative case) so a
+  // one-sided regression can't slip through a smoke run.
+  assert.ok(
+    result.results.aggregates.boost_recall_at_1,
+    "quick mode must exercise the positive boost path",
+  );
+  assert.ok(
+    result.results.aggregates.boost_noop_preserved,
+    "quick mode must exercise the negative guard path",
+  );
+});
+
 test("runner: latency p95 stays well under 5ms (pure helper)", async () => {
   const result = await runRetrievalReasoningTraceBenchmark({
     benchmark: retrievalReasoningTraceDefinition,

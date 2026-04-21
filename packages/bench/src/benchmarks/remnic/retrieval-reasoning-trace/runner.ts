@@ -37,6 +37,14 @@ import {
   type ReasoningTraceBenchCase,
 } from "./fixture.js";
 
+/**
+ * Metrics where a lower value represents better performance. Registered
+ * in `LOWER_IS_BETTER_BY_BENCHMARK` so `compareResults()` treats an
+ * increase in latency as a regression rather than an improvement.
+ */
+export const RETRIEVAL_REASONING_TRACE_LOWER_IS_BETTER: ReadonlySet<string> =
+  new Set(["latency_p50_ms", "latency_p95_ms"]);
+
 export const retrievalReasoningTraceDefinition: BenchmarkDefinition = {
   id: "retrieval-reasoning-trace",
   title: "Retrieval: Reasoning-Trace Boost",
@@ -130,23 +138,58 @@ function selectCases(
   mode: "quick" | "full",
   limit?: number,
 ): ReasoningTraceBenchCase[] {
-  const effectiveLimit =
-    limit !== undefined ? limit : mode === "quick" ? 2 : undefined;
-  if (effectiveLimit === undefined) {
+  if (limit === undefined && mode !== "quick") {
     return REASONING_TRACE_BENCH_FIXTURE;
   }
-  if (!Number.isInteger(effectiveLimit) || effectiveLimit <= 0) {
+
+  // Quick mode must exercise BOTH the positive recall path and the negative
+  // guard path — otherwise a regression that incorrectly boosts ordinary
+  // lookups silently passes smoke runs (the default mode in runBenchmark).
+  // Take 1 positive + 1 negative by default, or slice a balanced mix when
+  // an explicit limit is requested.
+  const positives = REASONING_TRACE_BENCH_FIXTURE.filter(
+    (c) => c.expectsTraceTopAfterBoost,
+  );
+  const negatives = REASONING_TRACE_BENCH_FIXTURE.filter(
+    (c) => !c.expectsTraceTopAfterBoost,
+  );
+
+  if (limit === undefined) {
+    // mode === "quick" and no explicit limit — take 1 of each.
+    const selected: ReasoningTraceBenchCase[] = [];
+    if (positives.length > 0) selected.push(positives[0]);
+    if (negatives.length > 0) selected.push(negatives[0]);
+    if (selected.length === 0) {
+      throw new Error(
+        "retrieval-reasoning-trace fixture has no cases to select in quick mode.",
+      );
+    }
+    return selected;
+  }
+
+  if (!Number.isInteger(limit) || limit <= 0) {
     throw new Error(
       "retrieval-reasoning-trace limit must be a positive integer",
     );
   }
-  const limited = REASONING_TRACE_BENCH_FIXTURE.slice(0, effectiveLimit);
-  if (limited.length === 0) {
+
+  // Interleave positives and negatives so any `limit` >= 2 produces a mix.
+  const interleaved: ReasoningTraceBenchCase[] = [];
+  const max = Math.max(positives.length, negatives.length);
+  for (let i = 0; i < max && interleaved.length < limit; i++) {
+    if (i < positives.length && interleaved.length < limit) {
+      interleaved.push(positives[i]);
+    }
+    if (i < negatives.length && interleaved.length < limit) {
+      interleaved.push(negatives[i]);
+    }
+  }
+  if (interleaved.length === 0) {
     throw new Error(
       "retrieval-reasoning-trace fixture is empty after applying the requested limit.",
     );
   }
-  return limited;
+  return interleaved;
 }
 
 export async function runRetrievalReasoningTraceBenchmark(
