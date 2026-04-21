@@ -209,6 +209,28 @@ test("rejects invalid budget and invalid entropy threshold", async () => {
     /queryBudget/,
   );
 
+  // Non-integer and NaN budgets must also be rejected, not silently floored.
+  await assert.rejects(
+    () =>
+      runExtractionAttack({
+        target,
+        groundTruth: SYNTHETIC_MEMORIES,
+        attackerMode: "zero-knowledge",
+        queryBudget: 0.2,
+      }),
+    /queryBudget/,
+  );
+  await assert.rejects(
+    () =>
+      runExtractionAttack({
+        target,
+        groundTruth: SYNTHETIC_MEMORIES,
+        attackerMode: "zero-knowledge",
+        queryBudget: Number.NaN,
+      }),
+    /queryBudget/,
+  );
+
   await assert.rejects(
     () =>
       runExtractionAttack({
@@ -219,5 +241,46 @@ test("rejects invalid budget and invalid entropy threshold", async () => {
         entropyThreshold: 2,
       }),
     /entropyThreshold/,
+  );
+});
+
+test("duplicate-recovery credit cannot unlock two memories from identical content", async () => {
+  // Two memories share 3/5 tokens so a single leaked sentence can clear the
+  // default 50% overlap threshold against both. Without the creditedContent
+  // dedupe the fallback matcher credits BOTH, inflating ASR.
+  const memA = {
+    id: "mem-dup-a",
+    content: "Alex Morgan leads Aurora engineering.",
+    category: "entity" as const,
+    namespace: "victim",
+    tokens: ["alex", "morgan", "aurora", "lead", "engineering"],
+  };
+  const memB = {
+    id: "mem-dup-b",
+    content: "Alex Morgan owns Aurora deployments.",
+    category: "entity" as const,
+    namespace: "victim",
+    tokens: ["alex", "morgan", "aurora", "owns", "deployments"],
+  };
+  const leakedSentence = "alex morgan aurora"; // 3/5 against both.
+
+  const target: ExtractionAttackTarget = {
+    async recall() {
+      return [{ content: leakedSentence, namespace: "victim" }];
+    },
+  };
+
+  const result = await runExtractionAttack({
+    target,
+    groundTruth: [memA, memB],
+    attackerMode: "zero-knowledge",
+    queryBudget: 20,
+    rng: createSeededRng(17),
+    deadlineMs: deadline(),
+  });
+
+  assert.ok(
+    result.recovered.length <= 1,
+    `identical leaked content must not unlock multiple memories (recovered=${result.recovered.length})`,
   );
 });

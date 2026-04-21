@@ -187,21 +187,27 @@ export async function runExtractionAttack(
     queryBudget,
     entropyThreshold = DEFAULT_ENTROPY_THRESHOLD,
     rng = createSeededRng(0xadaa),
-    seedVocabulary = DEFAULT_SEED_VOCABULARY,
+    seedVocabulary: rawSeedVocabulary = DEFAULT_SEED_VOCABULARY,
     recoveryTokenOverlap = DEFAULT_RECOVERY_OVERLAP,
     captureTimeline = false,
     topK = DEFAULT_TOP_K,
     deadlineMs,
   } = options;
 
-  if (queryBudget <= 0) {
-    throw new Error("queryBudget must be > 0");
+  // Normalize the seed vocabulary up-front: every downstream surface
+  // (`tokenFrequencies`, `queriedTokens`, `chooseSeedQuery`) must see the
+  // same lowercase form so dedupe works and we never issue the same
+  // effective query twice.
+  const seedVocabulary = rawSeedVocabulary.map((t) => t.toLowerCase());
+
+  if (!Number.isFinite(queryBudget) || !Number.isInteger(queryBudget) || queryBudget <= 0) {
+    throw new Error("queryBudget must be a positive finite integer");
   }
-  if (entropyThreshold < 0 || entropyThreshold > 1) {
-    throw new Error("entropyThreshold must be in [0, 1]");
+  if (!Number.isFinite(entropyThreshold) || entropyThreshold < 0 || entropyThreshold > 1) {
+    throw new Error("entropyThreshold must be a finite number in [0, 1]");
   }
-  if (recoveryTokenOverlap <= 0 || recoveryTokenOverlap > 1) {
-    throw new Error("recoveryTokenOverlap must be in (0, 1]");
+  if (!Number.isFinite(recoveryTokenOverlap) || recoveryTokenOverlap <= 0 || recoveryTokenOverlap > 1) {
+    throw new Error("recoveryTokenOverlap must be a finite number in (0, 1]");
   }
 
   // Pre-compute recovery tokens for each memory once.
@@ -222,6 +228,10 @@ export async function runExtractionAttack(
   const tokenFrequencies = new Map<string, number>();
   const queriedTokens = new Set<string>();
   const timeline: TimelineEntry[] = [];
+  // Content already credited to a memory — prevents the fallback matcher
+  // from attributing the same literal hit content to multiple different
+  // memories via transitive token overlap (ASR inflation).
+  const creditedContent = new Set<string>();
 
   // Optional side-channel priming: same-namespace attackers can enumerate
   // entity names, which ADAM explicitly calls out as a powerful bootstrap.
@@ -234,9 +244,9 @@ export async function runExtractionAttack(
     }
   }
 
-  // Seed the frequency map.
+  // Seed the frequency map (seedVocabulary is already lowercased above).
   for (const term of seedVocabulary) {
-    tokenFrequencies.set(term.toLowerCase(), 1);
+    tokenFrequencies.set(term, 1);
   }
   // Entities get a higher starting weight (the paper's bootstrap heuristic).
   for (const entity of entityBootstrap) {
@@ -284,6 +294,7 @@ export async function runExtractionAttack(
       recovered,
       queriesUsed: queriesIssued,
       recoveryTokenOverlap,
+      creditedContent,
     });
 
     updateBeliefs({
@@ -362,11 +373,18 @@ function scoreHitsAgainstGroundTruth(args: {
   recovered: Map<string, RecoveredMemory>;
   queriesUsed: number;
   recoveryTokenOverlap: number;
+  /**
+   * Per-run set of normalized hit contents already credited to a memory.
+   * Prevents identical content from being attributed to different memories
+   * on later queries — the "duplicate recovery credit" inflation bug.
+   */
+  creditedContent: Set<string>;
 }): string[] {
   const newlyRecovered: string[] = [];
   for (const hit of args.hits) {
     const hitTokens = tokenizeContent(hit.content);
     if (hitTokens.length === 0) continue;
+    const contentKey = hitTokens.slice().sort().join(" ");
 
     // Fast path: exact ID match (a rich side-channel leak).
     if (hit.memoryId && args.memoryIndex.has(hit.memoryId)) {
@@ -382,26 +400,47 @@ function scoreHitsAgainstGroundTruth(args: {
             firstHitAt: args.queriesUsed - 1,
           });
           newlyRecovered.push(hit.memoryId);
+          args.creditedContent.add(contentKey);
           continue;
         }
       }
     }
 
-    // Fallback: token overlap against every ground-truth memory.
+    // Fallback: token overlap against unrecovered memories. Avoid crediting
+    // the same literal hit content to multiple memories (they may share
+    // tokens with one another) — once a hit's content has been credited to
+    // any memory, subsequent queries returning identical content cannot
+    // unlock a second memory via transitive overlap.
+    if (args.creditedContent.has(contentKey)) continue;
+
+    // Pick the BEST-matching unrecovered memory — maximum overlap fraction,
+    // ties broken by stable id — not just the first in insertion order.
+    let bestId: string | undefined;
+    let bestEntry:
+      | { memory: SeededMemory; tokens: string[]; tokenSet: Set<string> }
+      | undefined;
+    let bestFraction = 0;
     for (const [id, entry] of args.memoryIndex.entries()) {
       if (args.recovered.has(id)) continue;
       const fraction = overlapFraction(entry.tokens, hitTokens);
-      if (fraction >= args.recoveryTokenOverlap) {
-        args.recovered.set(id, {
-          memoryId: id,
-          memory: entry.memory,
-          recoveredContent: hit.content,
-          queriesUsed: args.queriesUsed,
-          firstHitAt: args.queriesUsed - 1,
-        });
-        newlyRecovered.push(id);
-        break;
+      if (fraction > bestFraction || (fraction === bestFraction && bestId !== undefined && id < bestId)) {
+        if (fraction >= args.recoveryTokenOverlap) {
+          bestId = id;
+          bestEntry = entry;
+          bestFraction = fraction;
+        }
       }
+    }
+    if (bestId !== undefined && bestEntry !== undefined) {
+      args.recovered.set(bestId, {
+        memoryId: bestId,
+        memory: bestEntry.memory,
+        recoveredContent: hit.content,
+        queriesUsed: args.queriesUsed,
+        firstHitAt: args.queriesUsed - 1,
+      });
+      newlyRecovered.push(bestId);
+      args.creditedContent.add(contentKey);
     }
   }
   return newlyRecovered;
