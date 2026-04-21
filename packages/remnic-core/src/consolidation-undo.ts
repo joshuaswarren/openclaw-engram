@@ -118,6 +118,11 @@ export async function isInsideDirectoryRealpath(
   root: string,
 ): Promise<boolean> {
   if (!isInsideDirectory(candidate, root)) return false;
+  // Reject raw `..` segments before canonicalization so that symlinks
+  // cannot be hidden behind intermediate dot-dot components (PR #637
+  // round-14 review, codex P1).
+  const rawSegments = candidate.replace(/\\/g, "/").split("/");
+  if (rawSegments.some((s) => s === "..")) return false;
   let resolvedRoot: string;
   try {
     resolvedRoot = await realpath(path.resolve(root));
