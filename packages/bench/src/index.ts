@@ -392,3 +392,14 @@ export type {
   SyntheticTargetOptions,
   TimelineEntry,
 } from "./security/extraction-attack/index.js";
+
+// ADAM baseline runner + default scenarios (issue #565 PR 3/5).
+export {
+  DEFAULT_BASELINE_SCENARIOS,
+  renderBaselineMarkdown,
+  runBaseline,
+} from "./security/extraction-attack/index.js";
+export type {
+  BaselineRow,
+  BaselineScenario,
+} from "./security/extraction-attack/index.js";
