@@ -41,6 +41,25 @@ export interface BufferSurpriseProbe {
 
 const MAX_BUFFER_ENTRY_COUNT = 200;
 
+/**
+ * Minimal data carried on the serialized telemetry write chain
+ * (issue #563 PR 3).
+ *
+ * We intentionally do NOT capture the full `BufferTurn` here: under
+ * slow filesystem latency the chain can back up, and retaining
+ * `turn.content` for every pending append causes memory pressure on
+ * large conversations. Only the fields the ledger row actually needs
+ * cross the chain boundary.
+ */
+interface SurpriseTelemetryQueueEntry {
+  bufferKey: string;
+  turnRole: "user" | "assistant";
+  sessionKey: string | null;
+  surpriseScore: number;
+  triggered: boolean;
+  turnCountInWindow: number;
+}
+
 export class SmartBuffer {
   private state: BufferState;
   private loaded = false;
@@ -224,9 +243,17 @@ export class SmartBuffer {
         // appends settle in wall-clock order — the report path assumes
         // chronological tail rows and reads the most recent as the
         // "current" threshold.
+        //
+        // Project only the fields we need into the queue entry rather
+        // than capturing the full `BufferTurn` — under slow filesystem
+        // latency the chain can back up, and we must not retain the
+        // (potentially large) `turn.content` string for every pending
+        // append.
         this.queueSurpriseTelemetryWrite({
           bufferKey,
-          turn,
+          turnRole: turn.role,
+          sessionKey:
+            typeof turn.sessionKey === "string" ? turn.sessionKey : null,
           surpriseScore: surprise,
           triggered,
           turnCountInWindow: entry.turns.length,
@@ -257,13 +284,7 @@ export class SmartBuffer {
    * Public surface is deliberately narrow — only `addTurn` should call
    * this, so the surprise telemetry path stays centralized.
    */
-  private queueSurpriseTelemetryWrite(params: {
-    bufferKey: string;
-    turn: BufferTurn;
-    surpriseScore: number;
-    triggered: boolean;
-    turnCountInWindow: number;
-  }): void {
+  private queueSurpriseTelemetryWrite(params: SurpriseTelemetryQueueEntry): void {
     this.surpriseTelemetryWriteChain = this.surpriseTelemetryWriteChain
       .then(() => this.emitSurpriseEventSafe(params))
       .catch(() => {
@@ -281,13 +302,9 @@ export class SmartBuffer {
    * disk, or otherwise unhappy. The log line at debug lets operators
    * confirm the path fired without polluting the error channel.
    */
-  private async emitSurpriseEventSafe(params: {
-    bufferKey: string;
-    turn: BufferTurn;
-    surpriseScore: number;
-    triggered: boolean;
-    turnCountInWindow: number;
-  }): Promise<void> {
+  private async emitSurpriseEventSafe(
+    params: SurpriseTelemetryQueueEntry,
+  ): Promise<void> {
     const storage = this.storage as StorageManager & {
       appendBufferSurpriseEvents?: (
         events: BufferSurpriseEvent[],
@@ -302,8 +319,8 @@ export class SmartBuffer {
       event: "BUFFER_SURPRISE",
       timestamp: new Date().toISOString(),
       bufferKey: params.bufferKey,
-      sessionKey: typeof params.turn.sessionKey === "string" ? params.turn.sessionKey : null,
-      turnRole: params.turn.role,
+      sessionKey: params.sessionKey,
+      turnRole: params.turnRole,
       surpriseScore: params.surpriseScore,
       threshold: this.config.bufferSurpriseThreshold,
       triggeredFlush: params.triggered,

@@ -3958,6 +3958,23 @@ export class StorageManager {
    * than the entire file, matching the other ledger readers in this
    * class and protecting against `slice(-0.5)` → `slice(-0)` silently
    * devolving into an unbounded parse.
+   *
+   * # Performance note
+   *
+   * For very large ledgers (issue #563 follow-up), a tail-first reader
+   * would avoid parsing the full file when only a recent window is
+   * needed. We keep the full-scan implementation here because:
+   *
+   *   - the ledger is opt-in (flag off by default), so early deployments
+   *     accumulate rows slowly;
+   *   - telemetry rows are small (~200 bytes), so even 100k rows parse
+   *     in well under a second;
+   *   - the governance archive/cleanup flow can trim the ledger when
+   *     size becomes a concern, reusing the existing maintenance hooks.
+   *
+   * Swap to a chunked tail-reader if production logs show this is a
+   * hot path — leaving that work for a follow-up keeps this PR scoped
+   * to correctness, not optimization.
    */
   async readBufferSurpriseEvents(
     options: { limit?: number } = {},
