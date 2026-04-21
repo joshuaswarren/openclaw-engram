@@ -61,8 +61,13 @@ export class AccessAuditAdapter {
 
   constructor(private readonly config: AccessAuditConfig) {
     const n = config.trailBufferSize;
-    this.trailBufferSize =
-      typeof n === "number" && Number.isFinite(n) && n > 0 ? Math.floor(n) : 256;
+    if (typeof n === "number" && Number.isFinite(n) && n > 0) {
+      const floored = Math.floor(n);
+      // Guard against fractional inputs (e.g. 0.5) that floor to 0.
+      this.trailBufferSize = floored >= 1 ? floored : 256;
+    } else {
+      this.trailBufferSize = 256;
+    }
   }
 
   /**
