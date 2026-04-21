@@ -709,3 +709,286 @@ test("no emit path in current judge produces defer (PR 1 is type-only)", async (
     );
   }
 });
+
+// ---------------------------------------------------------------------------
+// Issue #562 PR 2 — defer-capable prompt + routing
+// ---------------------------------------------------------------------------
+
+test("PR 2: judge emits defer when LLM returns kind=defer", async () => {
+  clearVerdictCache();
+  const mockLocalLlm = {
+    chatCompletion: async (_msgs: any) => {
+      const items = JSON.parse(_msgs[1].content) as Array<{ index: number }>;
+      return {
+        content: JSON.stringify(
+          items.map((it) => ({
+            index: it.index,
+            kind: "defer",
+            durable: false,
+            reason: "Ambiguous referent",
+          })),
+        ),
+      };
+    },
+  };
+
+  const candidates: JudgeCandidate[] = [
+    {
+      text: "They said they'd follow up on it soon",
+      category: "fact",
+      confidence: 0.6,
+      importanceLevel: "normal",
+    },
+  ];
+  const config = makeConfig();
+  const result = await judgeFactDurability(
+    candidates,
+    config,
+    mockLocalLlm as any,
+    null,
+  );
+
+  const v = result.verdicts.get(0);
+  assert.ok(v);
+  assert.equal(v!.kind, "defer");
+  assert.equal(v!.durable, false);
+  assert.equal(getVerdictKind(v!), "defer");
+  assert.equal(result.deferred, 1);
+  assert.equal(result.deferredCappedToReject, 0);
+});
+
+test("PR 2: judge accepts 'action' as alias for 'kind'", async () => {
+  clearVerdictCache();
+  const mockLocalLlm = {
+    chatCompletion: async (_msgs: any) => {
+      const items = JSON.parse(_msgs[1].content) as Array<{ index: number }>;
+      return {
+        content: JSON.stringify(
+          items.map((it) => ({
+            index: it.index,
+            action: "defer",
+            reason: "Partial",
+          })),
+        ),
+      };
+    },
+  };
+
+  const candidates: JudgeCandidate[] = [
+    {
+      text: "Planning to refactor…",
+      category: "fact",
+      confidence: 0.6,
+      importanceLevel: "normal",
+    },
+  ];
+  const result = await judgeFactDurability(
+    candidates,
+    makeConfig(),
+    mockLocalLlm as any,
+    null,
+  );
+  assert.equal(result.verdicts.get(0)?.kind, "defer");
+});
+
+test("PR 2: defer verdicts are NOT cached — re-evaluated on next pass", async () => {
+  clearVerdictCache();
+  let callCount = 0;
+  const cache = new Map<string, JudgeVerdict>();
+  const mockLocalLlm = {
+    chatCompletion: async (_msgs: any) => {
+      callCount++;
+      const items = JSON.parse(_msgs[1].content) as Array<{ index: number }>;
+      return {
+        content: JSON.stringify(
+          items.map((it) => ({
+            index: it.index,
+            kind: "defer",
+            durable: false,
+            reason: "Still ambiguous",
+          })),
+        ),
+      };
+    },
+  };
+
+  const candidates: JudgeCandidate[] = [
+    {
+      text: "It's about that thing we discussed",
+      category: "fact",
+      confidence: 0.6,
+      importanceLevel: "normal",
+    },
+  ];
+  const config = makeConfig();
+
+  // First pass: defer. The defer counter should increment; nothing cached.
+  await judgeFactDurability(candidates, config, mockLocalLlm as any, null, cache);
+  assert.equal(cache.size, 0, "Defer verdicts must not populate the verdict cache");
+
+  // Second pass: judge is called again (cache miss) and returns defer again.
+  await judgeFactDurability(candidates, config, mockLocalLlm as any, null, cache);
+  assert.equal(callCount, 2, "Second pass must call the LLM (defer was not cached)");
+});
+
+test("PR 2: defer cap converts to reject after N prior defers", async () => {
+  clearVerdictCache();
+  const cache = new Map<string, JudgeVerdict>();
+  const defers = new Map<string, number>();
+  let currentResponseKind: "defer" | "reject" = "defer";
+  const mockLocalLlm = {
+    chatCompletion: async (_msgs: any) => {
+      const items = JSON.parse(_msgs[1].content) as Array<{ index: number }>;
+      return {
+        content: JSON.stringify(
+          items.map((it) => ({
+            index: it.index,
+            kind: currentResponseKind,
+            durable: false,
+            reason: "mock",
+          })),
+        ),
+      };
+    },
+  };
+
+  // Cap at 2 (the default). Passes 1 and 2 should defer; pass 3 should be
+  // forcibly rejected by the cap enforcement even though the LLM keeps
+  // returning defer.
+  const config = makeConfig({ extractionJudgeMaxDeferrals: 2 });
+  const candidates: JudgeCandidate[] = [
+    {
+      text: "Pathologically ambiguous candidate text",
+      category: "fact",
+      confidence: 0.5,
+      importanceLevel: "normal",
+    },
+  ];
+
+  const r1 = await judgeFactDurability(
+    candidates,
+    config,
+    mockLocalLlm as any,
+    null,
+    cache,
+    defers,
+  );
+  assert.equal(r1.verdicts.get(0)?.kind, "defer");
+  assert.equal(r1.deferred, 1);
+  assert.equal(r1.deferredCappedToReject, 0);
+
+  const r2 = await judgeFactDurability(
+    candidates,
+    config,
+    mockLocalLlm as any,
+    null,
+    cache,
+    defers,
+  );
+  assert.equal(r2.verdicts.get(0)?.kind, "defer");
+  assert.equal(r2.deferred, 1);
+
+  const r3 = await judgeFactDurability(
+    candidates,
+    config,
+    mockLocalLlm as any,
+    null,
+    cache,
+    defers,
+  );
+  assert.equal(
+    r3.verdicts.get(0)?.kind,
+    "reject",
+    "Third defer must be converted to reject by the cap",
+  );
+  assert.equal(r3.deferred, 0);
+  assert.equal(r3.deferredCappedToReject, 1);
+  // After cap rejection the result must be cached so repeat candidates
+  // short-circuit without another LLM call.
+  assert.ok(cache.size > 0, "Cap-rejected verdict should be cached");
+});
+
+test("PR 2: accept after defer resets the defer counter", async () => {
+  clearVerdictCache();
+  const cache = new Map<string, JudgeVerdict>();
+  const defers = new Map<string, number>();
+  let kind: "defer" | "accept" = "defer";
+  const mockLocalLlm = {
+    chatCompletion: async (_msgs: any) => {
+      const items = JSON.parse(_msgs[1].content) as Array<{ index: number }>;
+      return {
+        content: JSON.stringify(
+          items.map((it) => ({
+            index: it.index,
+            kind,
+            durable: kind === "accept",
+            reason: "mock",
+          })),
+        ),
+      };
+    },
+  };
+
+  const candidates: JudgeCandidate[] = [
+    {
+      text: "Context will sharpen this fact",
+      category: "fact",
+      confidence: 0.6,
+      importanceLevel: "normal",
+    },
+  ];
+
+  // Defer once.
+  const r1 = await judgeFactDurability(
+    candidates,
+    makeConfig({ extractionJudgeMaxDeferrals: 2 }),
+    mockLocalLlm as any,
+    null,
+    cache,
+    defers,
+  );
+  assert.equal(r1.verdicts.get(0)?.kind, "defer");
+  assert.equal(defers.size, 1);
+
+  // Now accept — counter should clear.
+  kind = "accept";
+  const r2 = await judgeFactDurability(
+    candidates,
+    makeConfig({ extractionJudgeMaxDeferrals: 2 }),
+    mockLocalLlm as any,
+    null,
+    cache,
+    defers,
+  );
+  assert.equal(r2.verdicts.get(0)?.kind, "accept");
+  assert.equal(defers.size, 0, "Accept must clear the defer counter");
+});
+
+test("PR 2: JudgeBatchResult includes deferred + deferredCappedToReject counters", async () => {
+  clearVerdictCache();
+  const result = await judgeFactDurability([], makeConfig(), null, null);
+  assert.equal(typeof result.deferred, "number");
+  assert.equal(typeof result.deferredCappedToReject, "number");
+  assert.equal(result.deferred, 0);
+  assert.equal(result.deferredCappedToReject, 0);
+});
+
+test("PR 2: auto-approved categories never emit defer", async () => {
+  clearVerdictCache();
+  const candidates: JudgeCandidate[] = [
+    { text: "Correction content", category: "correction", confidence: 0.9 },
+    { text: "Principle content", category: "principle", confidence: 0.9 },
+    {
+      text: "Critical fact",
+      category: "fact",
+      confidence: 0.9,
+      importanceLevel: "critical",
+    },
+  ];
+  const result = await judgeFactDurability(candidates, makeConfig(), null, null);
+  for (const v of result.verdicts.values()) {
+    assert.notEqual(getVerdictKind(v), "defer");
+    assert.equal(v.durable, true);
+  }
+  assert.equal(result.deferred, 0);
+});

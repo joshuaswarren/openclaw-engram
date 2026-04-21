@@ -518,6 +518,13 @@ export interface PluginConfig {
   extractionJudgeBatchSize: number;
   /** Shadow mode: log judge verdicts but do not filter facts. Default false. */
   extractionJudgeShadow: boolean;
+  /**
+   * Maximum number of times the same candidate text may be deferred before
+   * the judge forcibly converts the verdict to `"reject"`. Prevents
+   * pathological LLM responses from looping forever on ambiguous facts.
+   * Defaults to 2 (issue #562, PR 2).
+   */
+  extractionJudgeMaxDeferrals: number;
   // Hourly summaries
   hourlySummariesEnabled: boolean;
   daySummaryEnabled: boolean;
@@ -1313,6 +1320,13 @@ export interface BufferEntryState {
   turns: BufferTurn[];
   lastExtractionAt: string | null;
   extractionCount: number;
+  /**
+   * Turns retained across `clearAfterExtraction` so a later extraction pass
+   * sees the context that caused a defer verdict (issue #562, PR 2). Bounded
+   * to the configured retention cap by `retainDeferredTurns`. Empty / absent
+   * means no retention in effect.
+   */
+  retainedTurns?: BufferTurn[];
 }
 
 export interface BufferState {

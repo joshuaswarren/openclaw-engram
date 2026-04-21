@@ -164,6 +164,19 @@ export interface JudgeBatchResult {
   judged: number;
   /** Total wall-clock time in milliseconds. */
   elapsed: number;
+  /**
+   * Number of verdicts in this batch that resolved to `"defer"` (issue #562,
+   * PR 2). Callers can use this to decide whether to retain buffer turns for
+   * the next extraction pass.
+   */
+  deferred: number;
+  /**
+   * Number of defers that were forcibly converted to `"reject"` because the
+   * same candidate text had already been deferred at least
+   * `extractionJudgeMaxDeferrals` times. Rolled out of `deferred` — a
+   * candidate counted here is *not* also in `deferred`.
+   */
+  deferredCappedToReject: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,7 +187,9 @@ const JUDGE_SYSTEM_PROMPT = `You are a memory curator evaluating whether extract
 
 A fact is **durable** if it will still be useful 30+ days from now and is relevant across multiple sessions, not just the current task.
 
-DURABLE examples (approve):
+Return one of three verdicts per candidate:
+
+ACCEPT — the fact is durable, persist it:
 - Personal preferences, identities, or relationships
 - Decisions with rationale that affect future work
 - Corrections to previously held beliefs
@@ -182,7 +197,7 @@ DURABLE examples (approve):
 - Stable facts about projects, tools, or workflows
 - Commitments, deadlines, or obligations
 
-NOT DURABLE examples (reject):
+REJECT — the fact is not durable, drop it:
 - Transient task details ("currently debugging line 42")
 - Ephemeral state ("the build is running now")
 - Routine operations ("ran npm install")
@@ -190,19 +205,29 @@ NOT DURABLE examples (reject):
 - Information that will be stale within hours
 - Step-by-step instructions for a one-time task
 
+DEFER — the fact MIGHT be durable but needs more context to decide. The candidate will be re-evaluated on a later extraction pass with fresh context; if it cannot be resolved within a small number of re-evaluations it will be rejected.
+- Ambiguous referents ("he said they'd follow up on it")
+- Partial or in-progress statements that might become durable once completed
+- Future-tense commitments whose subject or timeline is unclear
+- Facts whose durability hinges on context not present in the candidate text
+
+Do NOT use defer as a soft reject. Reject facts you are confident are transient. Only defer when another turn of context would genuinely change the verdict.
+
 Return a JSON array of objects with these fields:
 - index: number (the candidate index)
-- durable: boolean (true if the fact is durable)
-- reason: string (brief explanation)
+- kind: string — one of "accept", "reject", "defer"
+- reason: string (brief explanation, under 80 characters)
+
+You may also include durable (boolean) for backwards compatibility: true for accept, false for reject or defer. If kind is omitted, durable determines the verdict.
 
 Rules:
 1. Return exactly one verdict per input candidate, matched by index.
-2. The reason field must be a short phrase (under 80 characters).
-3. When in doubt lean toward durable — false negatives are worse than false positives.
+2. When in doubt between accept and reject, lean toward accept — false negatives (losing a useful fact) are worse than false positives (keeping a marginal one).
+3. Use defer only when another turn of context would genuinely change the verdict.
 4. Output valid JSON only. No markdown fences, no commentary.
 
 Example output:
-[{"index": 0, "durable": true, "reason": "Stable personal preference"}, {"index": 1, "durable": false, "reason": "Ephemeral build status"}]`;
+[{"index": 0, "kind": "accept", "durable": true, "reason": "Stable personal preference"}, {"index": 1, "kind": "reject", "durable": false, "reason": "Ephemeral build status"}, {"index": 2, "kind": "defer", "durable": false, "reason": "Ambiguous pronoun"}]`;
 
 // ---------------------------------------------------------------------------
 // Content-hash cache (in-memory, per-process fallback)
@@ -214,8 +239,35 @@ const VERDICT_CACHE_MAX_SIZE = 10_000;
 /** Module-level fallback cache, used when callers do not pass their own. */
 const defaultVerdictCache = new Map<string, JudgeVerdict>();
 
+/**
+ * Per-content-hash deferral counter (issue #562, PR 2).
+ *
+ * When the judge emits a `"defer"` verdict for a candidate whose content
+ * has already been deferred `extractionJudgeMaxDeferrals` times, the verdict
+ * is forcibly converted to `"reject"` so a pathological LLM response cannot
+ * produce an infinite defer loop.
+ *
+ * Module-level with a size cap so stale test state cannot leak between runs
+ * in the unlikely case a caller does not clear it between processes.
+ */
+const defaultDeferCounts = new Map<string, number>();
+const DEFER_COUNT_MAX_SIZE = 20_000;
+
 function cacheKey(text: string, category: string): string {
   return createHash("sha256").update(`${text}\0${category}`).digest("hex");
+}
+
+/**
+ * Resolve the effective defer cap from config, defaulting to 2 when the
+ * config value is missing or non-positive. Matches the PR 2 spec.
+ */
+function resolveDeferCap(config: PluginConfig): number {
+  const raw = (config as { extractionJudgeMaxDeferrals?: number })
+    .extractionJudgeMaxDeferrals;
+  if (typeof raw === "number" && Number.isFinite(raw) && raw >= 1) {
+    return Math.floor(raw);
+  }
+  return 2;
 }
 
 /**
@@ -281,18 +333,30 @@ export async function judgeFactDurability(
   localLlm: LocalLlmClient | null,
   fallbackLlm: FallbackLlmClient | null,
   cache?: Map<string, JudgeVerdict>,
+  deferCounts?: Map<string, number>,
 ): Promise<JudgeBatchResult> {
   const startMs = Date.now();
   const verdicts = new Map<number, JudgeVerdict>();
   let cached = 0;
   let judged = 0;
+  let deferred = 0;
+  let deferredCappedToReject = 0;
 
   // Use caller-provided cache for per-orchestrator scoping, or fall back
   // to the module-level default cache.
   const verdictCache = cache ?? defaultVerdictCache;
+  const deferCountMap = deferCounts ?? defaultDeferCounts;
+  const deferCap = resolveDeferCap(config);
 
   if (candidates.length === 0) {
-    return { verdicts, cached, judged, elapsed: 0 };
+    return {
+      verdicts,
+      cached,
+      judged,
+      elapsed: 0,
+      deferred,
+      deferredCappedToReject,
+    };
   }
 
   // Indices that need LLM judgment
@@ -333,7 +397,14 @@ export async function judgeFactDurability(
 
   // If all resolved without LLM, return early
   if (pendingIndices.length === 0) {
-    return { verdicts, cached, judged, elapsed: Date.now() - startMs };
+    return {
+      verdicts,
+      cached,
+      judged,
+      elapsed: Date.now() - startMs,
+      deferred,
+      deferredCappedToReject,
+    };
   }
 
   // Batch the pending candidates up to batchSize
@@ -359,12 +430,52 @@ export async function judgeFactDurability(
 
       if (llmResponse) {
         const parsed = parseJudgeResponse(llmResponse, batchIndices);
-        for (const [idx, verdict] of parsed.entries()) {
+        for (const [idx, rawVerdict] of parsed.entries()) {
+          const c = candidates[idx];
+          const key = cacheKey(c.text, c.category);
+          let verdict = rawVerdict;
+
+          // Defer cap (issue #562, PR 2). A candidate that has already been
+          // deferred `deferCap` times is forcibly rejected so a pathological
+          // LLM response cannot produce an infinite defer loop.
+          if (getVerdictKind(verdict) === "defer") {
+            const priorDefers = deferCountMap.get(key) ?? 0;
+            if (priorDefers >= deferCap) {
+              verdict = {
+                durable: false,
+                reason: `Defer cap reached (${deferCap} prior defers); rejecting`,
+                kind: "reject",
+              };
+              deferCountMap.delete(key);
+              deferredCappedToReject++;
+            } else {
+              deferCountMap.set(key, priorDefers + 1);
+              deferred++;
+              // Bound the per-process defer-counter map.
+              if (deferCountMap.size > DEFER_COUNT_MAX_SIZE) {
+                const drop = Math.floor(deferCountMap.size / 2);
+                let dropped = 0;
+                for (const k of deferCountMap.keys()) {
+                  if (dropped >= drop) break;
+                  deferCountMap.delete(k);
+                  dropped++;
+                }
+              }
+            }
+          } else {
+            // On accept/reject, clear any outstanding defer counter so a
+            // future reappearance of the same text starts fresh.
+            deferCountMap.delete(key);
+          }
+
           verdicts.set(idx, verdict);
           judged++;
-          // Cache the verdict
-          const c = candidates[idx];
-          verdictCache.set(cacheKey(c.text, c.category), verdict);
+          // Cache non-defer verdicts. Defer is intentionally NOT cached:
+          // caching it would short-circuit the re-evaluation pass that is
+          // the entire point of the defer verdict.
+          if (getVerdictKind(verdict) !== "defer") {
+            verdictCache.set(key, verdict);
+          }
         }
         // Evict oldest entries if cache exceeds max size
         enforceMaxCacheSize(verdictCache);
@@ -387,7 +498,14 @@ export async function judgeFactDurability(
     }
   }
 
-  return { verdicts, cached, judged, elapsed: Date.now() - startMs };
+  return {
+    verdicts,
+    cached,
+    judged,
+    elapsed: Date.now() - startMs,
+    deferred,
+    deferredCappedToReject,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -518,16 +636,50 @@ function parseJudgeResponse(
       const idx = (item as any).index as number;
       if (!expectedSet.has(idx)) continue;
 
-      const durable =
-        typeof (item as any).durable === "boolean"
-          ? (item as any).durable
-          : true; // fail-open
+      // Parse kind first — it's the primary signal in PR 2 and above.
+      // Fall back to durable for pre-PR-2 model responses that only return
+      // the boolean.
+      let kind: JudgeVerdictKind | undefined;
+      const rawKind = (item as any).kind;
+      const rawAction = (item as any).action;
+      if (rawKind === "accept" || rawKind === "reject" || rawKind === "defer") {
+        kind = rawKind;
+      } else if (
+        rawAction === "accept" ||
+        rawAction === "reject" ||
+        rawAction === "defer"
+      ) {
+        // Tolerate `action` as an alias — MemReader uses that word in the
+        // paper and models may echo it.
+        kind = rawAction;
+      }
+
+      const hasDurable = typeof (item as any).durable === "boolean";
+      const durableFromModel = hasDurable
+        ? ((item as any).durable as boolean)
+        : undefined;
+
+      // Resolve the durable flag from kind when present; otherwise trust
+      // the model's boolean; otherwise fail-open to durable=true.
+      let durable: boolean;
+      if (kind === "accept") {
+        durable = true;
+      } else if (kind === "reject" || kind === "defer") {
+        durable = false;
+      } else if (durableFromModel !== undefined) {
+        durable = durableFromModel;
+      } else {
+        durable = true; // fail-open
+      }
+
       const reason =
         typeof (item as any).reason === "string"
           ? ((item as any).reason as string).slice(0, 120)
           : "No reason provided";
 
-      result.set(idx, { durable, reason });
+      const verdict: JudgeVerdict = { durable, reason };
+      if (kind !== undefined) verdict.kind = kind;
+      result.set(idx, verdict);
     }
   } catch (err) {
     log.debug(
@@ -545,6 +697,7 @@ function parseJudgeResponse(
 /** Clear the in-memory default verdict cache. Primarily for tests. */
 export function clearVerdictCache(): void {
   defaultVerdictCache.clear();
+  defaultDeferCounts.clear();
 }
 
 /** Return the current default verdict cache size. Primarily for tests. */
@@ -555,4 +708,22 @@ export function verdictCacheSize(): number {
 /** Create a new per-instance verdict cache. Orchestrators should hold one. */
 export function createVerdictCache(): Map<string, JudgeVerdict> {
   return new Map();
+}
+
+/**
+ * Create a new per-instance defer-counter map. Orchestrators should hold one
+ * alongside their verdict cache so defer counts survive across extraction
+ * passes within a single orchestrator but do not leak across orchestrators.
+ */
+export function createDeferCountMap(): Map<string, number> {
+  return new Map();
+}
+
+/**
+ * Compute the cache/defer-counter key for a (text, category) pair. Exported
+ * so orchestrators and tests can inspect counter state for the same key the
+ * judge uses internally.
+ */
+export function deferCounterKey(text: string, category: string): string {
+  return cacheKey(text, category);
 }
