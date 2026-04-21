@@ -4748,10 +4748,20 @@ async function cmdBench(rest: string[]): Promise<void> {
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath ?? ""); } catch { /* non-fatal */ }
           } else {
             await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
-            // Fallback runner writes to evals/results (not
-            // resolveBenchOutputDir()), so we cannot reliably determine the
-            // result path.  Mark complete without a resultPath.
-            try { await updateBenchmarkCompleted(benchStatusPath, statusId, ""); } catch { /* non-fatal */ }
+            // Fallback runner writes to evals/results with a timestamped
+            // filename. Scan for the most recent match by mtime.
+            let fallbackResultPath = "";
+            try {
+              const fallbackDir = path.join(path.dirname(EVAL_RUNNER_PATH), "results");
+              const files = fs.readdirSync(fallbackDir)
+                .filter((f) => f.startsWith(benchmarkId) && f.endsWith(".json"))
+                .map((f) => ({ name: f, mtime: fs.statSync(path.join(fallbackDir, f)).mtimeMs }))
+                .sort((a, b) => b.mtime - a.mtime);
+              if (files.length > 0) {
+                fallbackResultPath = path.join(fallbackDir, files[0].name);
+              }
+            } catch { /* scan failure is non-fatal */ }
+            try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath); } catch { /* non-fatal */ }
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
