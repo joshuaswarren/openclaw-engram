@@ -2354,6 +2354,12 @@
         "default": false,
         "description": "Shadow mode for the extraction judge. When true, judge verdicts are logged but all facts are still persisted regardless of the verdict."
       },
+      "extractionJudgeMaxDeferrals": {
+        "type": "number",
+        "default": 2,
+        "minimum": 1,
+        "description": "Maximum number of times the same candidate text may be deferred by the extraction judge before the verdict is forcibly converted to 'reject'. Prevents pathological LLM responses from looping forever on ambiguous facts (issue #562)."
+      },
       "inlineSourceAttributionEnabled": {
         "type": "boolean",
         "default": false,

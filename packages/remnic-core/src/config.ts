@@ -1535,6 +1535,14 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? Math.max(1, Math.round(cfg.extractionJudgeBatchSize))
         : 20,
     extractionJudgeShadow: cfg.extractionJudgeShadow === true,
+    // Defer cap (issue #562 PR 2): max re-deferrals for the same candidate
+    // text before the verdict is forcibly converted to reject.
+    extractionJudgeMaxDeferrals:
+      typeof cfg.extractionJudgeMaxDeferrals === "number" &&
+      Number.isFinite(cfg.extractionJudgeMaxDeferrals) &&
+      cfg.extractionJudgeMaxDeferrals >= 1
+        ? Math.floor(cfg.extractionJudgeMaxDeferrals)
+        : 2,
     // Inline source attribution (issue #369). Opt-in to preserve
     // backwards compatibility with existing downstream consumers.
     inlineSourceAttributionEnabled: cfg.inlineSourceAttributionEnabled === true,
