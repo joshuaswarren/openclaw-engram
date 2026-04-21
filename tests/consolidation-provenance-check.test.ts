@@ -331,6 +331,82 @@ test("runConsolidationProvenanceCheck flags blank derived_from key (truncated fr
   }
 });
 
+test("runConsolidationProvenanceCheck flags malformed entries inside a mixed-valid/invalid derived_from list", async () => {
+  // Regression for PR #634 round-4 review (codex P2): if the parser
+  // returned a valid list but dropped some empty / malformed tokens,
+  // the doctor must surface the loss rather than silently show ok.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-mixed-"));
+  try {
+    const storage = await seedStorage(dir);
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+    const id = "fact-mixed-list";
+    const filePath = path.join(factDir, `${id}.md`);
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-04-20T01:00:00.000Z",
+      "updated: 2026-04-20T01:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      // Mixed list: one valid + one empty + one malformed.
+      'derived_from: ["facts/a.md:1", "", "facts/b.md-no-version"]',
+      "---",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    const malformed = report.issues.filter(
+      (i) => i.kind === "derived_from_malformed_entry",
+    );
+    // At least one malformed entry must be surfaced (empty token or
+    // the no-version entry).
+    assert.ok(malformed.length >= 1, `expected malformed issues; got ${JSON.stringify(report.issues)}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("runConsolidationProvenanceCheck surfaces parse-failed files that carry provenance keys", async () => {
+  // Regression for PR #634 round-4 review (codex P2): `readAllMemories`
+  // silently drops files whose frontmatter doesn't parse, so the
+  // scan would miss corruption entirely.  A post-pass scans the
+  // facts directory for .md files carrying raw provenance keys that
+  // the reader didn't return, and surfaces them as malformed.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-parse-fail-"));
+  try {
+    const storage = await seedStorage(dir);
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+    const id = "fact-broken";
+    const filePath = path.join(factDir, `${id}.md`);
+    // Truncated frontmatter — missing closing `---` delimiter so the
+    // storage reader refuses the file.
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "derived_from: [\"facts/a.md:1\"]",
+      "derived_via: merge",
+      "body text with no closing delimiter",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    const parseFailed = report.issues.filter((i) => i.memoryId === "(parse failed)");
+    assert.equal(parseFailed.length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("runConsolidationProvenanceCheck flags blank derived_via key (truncated frontmatter)", async () => {
   // Regression for PR #634 round-3 review (codex P2): a truncated
   // frontmatter that ends with `derived_via:` (key present, no

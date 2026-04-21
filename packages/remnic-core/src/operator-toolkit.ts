@@ -1299,7 +1299,7 @@ export async function summarizeMemoryWorthLegacyCounters(
  */
 export async function summarizeConsolidationProvenance(
   storage: StorageManager,
-  config: Pick<PluginConfig, "memoryDir" | "versioningSidecarDir">,
+  config: Pick<PluginConfig, "memoryDir"> & { versioningSidecarDir?: string },
 ): Promise<OperatorDoctorCheck> {
   let report: ConsolidationProvenanceReport;
   try {

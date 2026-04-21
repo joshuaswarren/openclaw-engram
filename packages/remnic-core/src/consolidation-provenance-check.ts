@@ -18,7 +18,7 @@
  */
 
 import path from "node:path";
-import { access, readFile } from "node:fs/promises";
+import { access, readdir, readFile, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import type { StorageManager } from "./storage.js";
 import { isConsolidationOperator } from "./consolidation-operator.js";
@@ -40,6 +40,60 @@ import { sidecarKey } from "./page-versioning.js";
 // from "key missing entirely" (regex returns null).
 const DERIVED_VIA_RAW_RE = /^derived_via:[\t ]*(.*)$/mu;
 const DERIVED_FROM_RAW_RE = /^derived_from:[\t ]*(.*)$/mu;
+
+/**
+ * Tokenize a YAML-flow-style list (`["a", "b", ...]`) into a flat
+ * string array.  Returns `null` when the input isn't a flow list.
+ * Best-effort — we don't implement a full YAML parser, just enough to
+ * detect mixed valid/invalid entries for the doctor integrity check.
+ */
+function tokenizeRawFlowList(raw: string): string[] | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return null;
+  const inner = trimmed.slice(1, -1);
+  const parts: string[] = [];
+  let current = "";
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (inDouble) {
+      if (ch === "\\" && i + 1 < inner.length) {
+        current += inner[++i];
+        continue;
+      }
+      if (ch === '"') {
+        inDouble = false;
+        continue;
+      }
+      current += ch;
+    } else if (inSingle) {
+      if (ch === "'" && inner[i + 1] === "'") {
+        current += "'";
+        i++;
+        continue;
+      }
+      if (ch === "'") {
+        inSingle = false;
+        continue;
+      }
+      current += ch;
+    } else if (ch === '"') {
+      inDouble = true;
+    } else if (ch === "'") {
+      inSingle = true;
+    } else if (ch === ",") {
+      parts.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  if (current.trim().length > 0 || parts.length > 0) {
+    parts.push(current.trim());
+  }
+  return parts;
+}
 
 /**
  * One integrity warning attached to a specific memory.
@@ -219,6 +273,42 @@ export async function runConsolidationProvenanceCheck(options: {
         detail: `raw YAML "derived_from: ${display}" could not be parsed as a list`,
       });
     }
+
+    // Mixed-list detection (PR #634 round-4 review, codex P2): when
+    // the parser DID return a valid list but the raw YAML includes
+    // additional tokens that got dropped (e.g. `"..." , ""` with an
+    // empty string among valid entries), flag those as malformed.  We
+    // tokenize the raw `derived_from` list in a minimal way: split on
+    // commas outside quotes, trim, and validate each piece.  If the
+    // tokenized count exceeds the parsed-array length, some entries
+    // were dropped — flag the remainder as malformed.
+    if (hasFrom && rawDerivedFromKeyPresent && rawDerivedFrom) {
+      const rawList = tokenizeRawFlowList(rawDerivedFrom);
+      if (rawList !== null && rawList.length > derivedFrom!.length) {
+        for (const tok of rawList) {
+          if (tok.length === 0) {
+            report.issues.push({
+              memoryPath: memory.path,
+              memoryId: fm.id,
+              kind: "derived_from_malformed_entry",
+              detail: `raw YAML derived_from contains an empty entry (mixed list)`,
+            });
+            continue;
+          }
+          if (!derivedFrom!.includes(tok)) {
+            // A non-empty token the parser dropped — surface it.
+            if (!/^(.+):(\d+)$/u.test(tok)) {
+              report.issues.push({
+                memoryPath: memory.path,
+                memoryId: fm.id,
+                kind: "derived_from_malformed_entry",
+                detail: `raw YAML derived_from contains a malformed entry: ${JSON.stringify(tok)}`,
+              });
+            }
+          }
+        }
+      }
+    }
     if (hasBlankRawVia) {
       report.issues.push({
         memoryPath: memory.path,
@@ -266,5 +356,64 @@ export async function runConsolidationProvenanceCheck(options: {
     }
   }
 
+  // Parse-failure detection (PR #634 round-4 review, codex P2):
+  // `readAllMemories()` silently drops files whose frontmatter
+  // doesn't parse.  Walk the facts/ and corrections/ directories for
+  // `.md` files that DO reference provenance frontmatter but didn't
+  // come back from the reader — those are the corruption cases the
+  // doctor is meant to surface.
+  try {
+    const seenPaths = new Set(memories.map((m) => m.path));
+    const scanRoots = ["facts", "corrections", "procedures"];
+    for (const rootName of scanRoots) {
+      const rootPath = path.join(memoryDir, rootName);
+      for await (const file of walkMarkdownFiles(rootPath)) {
+        if (seenPaths.has(file)) continue;
+        try {
+          const raw = await readFile(file, "utf-8");
+          if (
+            DERIVED_FROM_RAW_RE.test(raw) ||
+            DERIVED_VIA_RAW_RE.test(raw)
+          ) {
+            report.withProvenance += 1;
+            report.issues.push({
+              memoryPath: file,
+              memoryId: "(parse failed)",
+              kind: "derived_from_malformed_entry",
+              detail:
+                "frontmatter could not be parsed by storage reader; provenance fields visible in raw YAML",
+            });
+          }
+        } catch {
+          // Unreadable file — skip.
+        }
+      }
+    }
+  } catch {
+    // Best-effort; don't fail the whole scan on a filesystem hiccup.
+  }
+
   return report;
+}
+
+/**
+ * Recursively yield all `.md` file paths under `root`.  Silent on
+ * missing directories — the facts/corrections dirs may not exist in
+ * fresh installs.
+ */
+async function* walkMarkdownFiles(root: string): AsyncGenerator<string> {
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      yield* walkMarkdownFiles(full);
+    } else if (entry.isFile() && entry.name.endsWith(".md")) {
+      yield full;
+    }
+  }
 }
