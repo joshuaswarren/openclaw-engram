@@ -255,12 +255,16 @@ export interface ExtractGraphEdgesOptions {
  * template configuration — it only recognizes the default shape plus minor
  * whitespace / ordering variants.
  */
-// Non-greedy quantifiers on classes like `[^\]\n]+?` can be polynomial on
-// pathological inputs (CodeQL rule js/polynomial-redos). Using a greedy
-// quantifier with a negated character class that also excludes `[` prevents
-// nested-bracket inputs from forcing catastrophic backtracking, and the `\s*`
-// after `Source:` is bounded by the terminal `]`.
-const CITATION_REGEX = /\[Source:[ \t]*([^\]\n[]+)\]/gi;
+// Match the `[Source: ...]` citation block without ambiguous whitespace
+// quantifiers (CodeQL rule js/polynomial-redos). Keeping `[^\]\n[]+` as
+// the only quantified group — a negated class excluding `]`, `[`, and
+// newline — means every character in the body is consumed in a single,
+// non-backtracking pass. The preceding `[ \t]*` was flagged as
+// polynomial-redos too, so we accept any whitespace as the first char
+// of the body instead of pre-consuming it; `parseCitationFields` trims
+// each key/value pair anyway, so leading whitespace inside the body is
+// harmless.
+const CITATION_REGEX = /\[Source:([^\]\n[]+)\]/gi;
 
 /**
  * Parse `key=value` pairs out of a citation body. Whitespace-tolerant and
