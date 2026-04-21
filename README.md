@@ -608,6 +608,8 @@ Run Engram as a standalone HTTP server that multiple agent harnesses share. Isol
 - **Semantic Chunking** — Smoothing-based topic boundary detection using sentence embeddings and cosine similarity, as an alternative to recursive chunking. Opt-in via `semanticChunkingEnabled`. (issue #368)
 - **OAI-mem-citation Blocks** — Recall responses emit `<oai-mem-citation>` blocks matching the Codex citation format for memory attribution and usage tracking. Opt-in via `citationsEnabled`. (issue #379)
 - **Procedural memory** — Stores repeatable **how-to** memories as `category: procedure` markdown under `procedures/`, mines candidates from causal trajectories, and can inject a **Relevant procedures** section on task-initiation prompts. **On by default** since issue #567 PR 4/5 (previously off); set `procedural.enabled` to `false` in plugin config to opt out. See [Procedural memory](docs/procedural-memory.md). (issue #519)
+- **Coding agent mode** — Auto-scopes memory to the current git project (origin-URL hash) and optionally to the current branch, so memories from project A never surface in project B and feature-branch experiments don't leak into `main`. Claude Code and Codex CLI session-start hooks detect git context automatically; Cursor and other MCP clients can call the `remnic.set_coding_context` MCP tool. Diff-aware review-context recall tier boosts memories touching the files in a reviewed diff. `remnic doctor` prints detected `projectId`, branch, and effective namespace. Opt out with `codingMode.projectScope: false`. See [Coding agent mode](docs/coding-agent.md). (issue #569)
+- **Recall X-ray** — `remnic xray "<query>"` prints a per-result breakdown showing which retrieval tier served each memory, the score decomposition, the graph path (when graph retrieval fired), the filter ladder that admitted it, and the audit entry ID. Same snapshot via HTTP `GET /engram/v1/recall/xray` and MCP tool `remnic.recall_xray`. Legacy `/recall/explain` gains a markdown mode that delegates to the same renderer (backwards-compatible). See [Recall X-ray](docs/xray.md). (issue #570)
 
 ### Organization & Taxonomy (opt-in)
 
@@ -929,6 +931,8 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `enrichmentEnabled` | `false` | External entity enrichment pipeline |
 | `binaryLifecycleEnabled` | `false` | Binary file lifecycle management (mirror/redirect/clean) |
 | `procedural.enabled` | `true` | **Procedural memory (issue #519):** master gate for procedure extraction, task-init recall injection, and trajectory mining. Default-on since issue #567 PR 4/5; set nested `procedural: { "enabled": false }` to opt out (see [Procedural memory](docs/procedural-memory.md)). |
+| `codingMode.projectScope` | `true` | **Coding agent mode (issue #569):** auto-scope memory to the git project (stable origin-URL hash, falls back to root path). Set to `false` to disable project-based namespace isolation. See [Coding agent mode](docs/coding-agent.md). |
+| `codingMode.branchScope` | `false` | **Coding agent mode (issue #569):** additionally scope writes to the current git branch; reads fall back to the project-level namespace so project memories stay visible from any branch while branch writes don't leak. Enable for per-branch experimentation. |
 
 **[See the full config reference for all 60+ settings](docs/config-reference.md)** including search backend configuration, namespace policies, Memory OS features, governance, evaluation harness, trust zones, causal trajectories, and more.
 
@@ -969,6 +973,8 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Memory Extensions](docs/architecture/memory-extensions.md) — Third-party extension discovery
 - [Codex Marketplace](docs/plugins/codex-marketplace.md) — Marketplace installation
 - [Procedural memory](docs/procedural-memory.md) — Procedure files, recall injection, mining; enable with `procedural.enabled` (issue #519)
+- [Coding agent mode](docs/coding-agent.md) — Auto-scope memory to git project / branch, review-context recall, `set_coding_context` MCP tool (issue #569)
+- [Recall X-ray](docs/xray.md) — `remnic xray` CLI, HTTP endpoint, MCP tool for per-result retrieval attribution (issue #570)
 - [Memory importers](docs/importers.md) — Bring memory from ChatGPT, Claude, Gemini, and mem0 (issue #568)
 
 ## Contributing

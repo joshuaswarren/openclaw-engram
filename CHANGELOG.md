@@ -4,6 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Memory importers for ChatGPT, Claude, Gemini, Mem0** (issue #568).
+  Ship as optional peer-dep packages: `@remnic/import-chatgpt`,
+  `@remnic/import-claude`, `@remnic/import-gemini`, `@remnic/import-mem0`.
+  Load via computed dynamic import from `remnic-cli` so the base install
+  stays small; missing adapter yields a clean install hint, never
+  `MODULE_NOT_FOUND`. CLI: `remnic import --adapter <source> --file <path>`
+  with `--dry-run`, `--rate-limit`, `--batch-size` flags. The
+  `--all-from-bundle <dir>` auto-detects every export format in one
+  directory. See [`docs/importers.md`](docs/importers.md) and the
+  [`/import`](https://remnic.ai/import) page.
+- **Coding agent mode** (issue #569) auto-scopes memory to the git
+  project (origin-URL hash) and optionally to the current branch. New
+  `codingMode.projectScope` (default `true`) and `codingMode.branchScope`
+  (default `false`) config keys. Branch scope falls back to project-level
+  reads so project memories stay visible from any branch while branch
+  writes don't leak. `remnic doctor` now prints detected `projectId`,
+  `branch`, and effective namespace. New MCP tool
+  `remnic.set_coding_context` (with `engram.*` alias) for clients that
+  don't send `cwd`. Claude Code and Codex CLI session-start hooks
+  auto-detect git context with a 2s timeout so wedged filesystems can't
+  stall launch. Diff-aware review-context recall tier activates on
+  review keywords (`review`, `diff`, `what changed`, `look at this PR`)
+  and boosts memories whose `entityRefs` touch the modified files. See
+  [`docs/coding-agent.md`](docs/coding-agent.md) and the
+  [`/coding-agent`](https://remnic.ai/coding-agent) page.
+- **Recall X-ray observability** (issue #570): know exactly why each
+  memory surfaced. New `RecallXraySnapshot` schema captures per-result
+  tier (`direct-answer` / `hybrid` / `graph` / `recent-scan` /
+  `procedural` / `review-context`), score decomposition, filter ladder,
+  graph path, and audit entry ID. Shared renderer
+  (`recall-xray-renderer.ts`) emits JSON, text, or markdown. New CLI
+  `remnic xray "<query>"` with `--format`, `--budget`, `--namespace`,
+  `--out`. HTTP `GET /engram/v1/recall/xray` with bearer + namespace
+  scope. MCP tool `remnic.recall_xray` (with `engram.*` alias). Legacy
+  `/recall/explain` gains a markdown mode that delegates to the xray
+  renderer; existing text/json responses are unchanged and
+  backwards-compatible. See [`docs/xray.md`](docs/xray.md) and the
+  [`/observability`](https://remnic.ai/observability) page.
+
 ### Changed
 
 - **Procedural memory is now enabled by default** (issue #567 PR 4/5;
