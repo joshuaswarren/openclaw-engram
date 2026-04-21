@@ -117,6 +117,7 @@ export type {
   WriteBenchmarkArtifactResult,
 } from "./published-artifact.js";
 export { createAnthropicProvider } from "./providers/anthropic.js";
+export { getRemnicVersion } from "./reporter.js";
 export {
   createProvider,
   discoverAllProviders,
