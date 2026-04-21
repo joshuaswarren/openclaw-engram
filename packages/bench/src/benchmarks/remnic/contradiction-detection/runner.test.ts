@@ -35,7 +35,7 @@ test("runContradictionDetectionBenchmark produces tasks per fixture case plus ag
   const result = await runContradictionDetectionBenchmark(
     buildOptions({ mode: "full" }),
   );
-  // 16 cases + 1 aggregate task
+  // 19 cases + 1 aggregate task
   assert.equal(
     result.results.tasks.length,
     CONTRADICTION_DETECTION_FIXTURE.length + 1,

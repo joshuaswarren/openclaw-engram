@@ -2,12 +2,13 @@
  * Synthetic fixture for the contradiction-detection benchmark
  * (issue #647).
  *
- * Four fixture classes exercise every verdict in the judge taxonomy:
+ * Five fixture classes exercise every verdict in the judge taxonomy:
  *
  *   true-contradiction  — pairs that genuinely contradict
  *   near-paraphrase     — semantically equivalent, should be "duplicates"
  *   independent-similar — same topic, different claims, no conflict
  *   independent-distant — unrelated memories
+ *   needs-user         — ambiguous pairs that should defer to human review
  *
  * Each case includes a deterministic "judge" that inspects the pair
  * text with simple heuristics (no LLM).  The bench runner compares
@@ -202,6 +203,38 @@ const INDEPENDENT_DISSIMILAR: ContradictionBenchCase[] = [
   },
 ];
 
+// ── Needs-user (ambiguous / defer to human) ──────────────────────────────────
+
+const NEEDS_USER: ContradictionBenchCase[] = [
+  {
+    id: "needs-user-1",
+    title: "Contradiction signal but low overlap — ambiguous",
+    textA: "The project does not use a linter in CI.",
+    textB: "The logging subsystem was replaced with a structured logger.",
+    expectedVerdict: "needs-user",
+    categoryA: "decision",
+    categoryB: "decision",
+  },
+  {
+    id: "needs-user-2",
+    title: "Switch keyword with unrelated content",
+    textA: "The default tokenizer is whitespace-only.",
+    textB: "The project switched to pnpm, but the README still references npm.",
+    expectedVerdict: "needs-user",
+    categoryA: "fact",
+    categoryB: "fact",
+  },
+  {
+    id: "needs-user-3",
+    title: "Deprecated mention with no context overlap",
+    textA: "The configuration file format is JSON only.",
+    textB: "YAML support was deprecated last quarter in favor of TOML.",
+    expectedVerdict: "needs-user",
+    categoryA: "decision",
+    categoryB: "decision",
+  },
+];
+
 // ── Exports ──────────────────────────────────────────────────────────────────
 
 export const CONTRADICTION_DETECTION_FIXTURE: ContradictionBenchCase[] = [
@@ -209,6 +242,7 @@ export const CONTRADICTION_DETECTION_FIXTURE: ContradictionBenchCase[] = [
   ...NEAR_PARAPHRASE,
   ...INDEPENDENT_SIMILAR,
   ...INDEPENDENT_DISSIMILAR,
+  ...NEEDS_USER,
 ];
 
 export const CONTRADICTION_DETECTION_SMOKE_FIXTURE: ContradictionBenchCase[] = [
@@ -216,4 +250,5 @@ export const CONTRADICTION_DETECTION_SMOKE_FIXTURE: ContradictionBenchCase[] = [
   NEAR_PARAPHRASE[0],
   INDEPENDENT_SIMILAR[0],
   INDEPENDENT_DISSIMILAR[0],
+  NEEDS_USER[0],
 ];

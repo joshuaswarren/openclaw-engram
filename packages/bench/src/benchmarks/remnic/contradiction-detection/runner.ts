@@ -6,10 +6,11 @@
  * and measures per-verdict precision, recall, and F1 against the
  * ground-truth labels.
  *
- * The heuristic is deliberately simple (token-overlap + antonym
- * detection) so that the bench measures structural correctness of
- * the pipeline wiring, not LLM quality.  A real LLM-based variant
- * can be added later as a separate bench mode.
+ * The heuristic is deliberately simple (token-overlap + keyword
+ * signals) so that the bench measures structural correctness of
+ * the pipeline wiring, not LLM quality.  It emits all four verdicts
+ * (contradicts, duplicates, independent, needs-user).  A real
+ * LLM-based variant can be added later as a separate bench mode.
  */
 
 import { randomUUID } from "node:crypto";
@@ -81,6 +82,7 @@ function heuristicVerdict(
 ): ContradictionFixtureVerdict {
   const a = textA.toLowerCase();
   const b = textB.toLowerCase();
+  const overlap = tokenOverlap(a, b);
 
   // Check for contradiction signals
   const aHasContra = CONTRA_SIGNALS.some((s) => a.includes(s));
@@ -88,13 +90,15 @@ function heuristicVerdict(
   if (aHasContra || bHasContra) {
     // If the texts share significant token overlap, the signal
     // likely indicates a genuine contradiction.
-    const overlap = tokenOverlap(a, b);
     if (overlap > 0.3) return "contradicts";
   }
 
   // Check for near-duplicate
-  const overlap = tokenOverlap(a, b);
   if (overlap > 0.7) return "duplicates";
+
+  // Moderate overlap with contradiction signals but low overlap score —
+  // ambiguous, defer to human review.
+  if ((aHasContra || bHasContra) && overlap <= 0.3) return "needs-user";
 
   // Some topic overlap but not duplicate and not contradictory
   if (overlap > 0.2) return "independent";
@@ -158,19 +162,17 @@ export async function runContradictionDetectionBenchmark(
   const cases = loadCases(options.mode, options.limit);
   const tasks: TaskResult[] = [];
 
-  // Run heuristic on each case
-  const predicted: ContradictionFixtureVerdict[] = cases.map((c) =>
-    heuristicVerdict(c.textA, c.textB),
-  );
+  // Per-case task results — time each heuristic call individually
+  const predicted: ContradictionFixtureVerdict[] = [];
 
-  // Per-case task results
   for (let i = 0; i < cases.length; i++) {
     const sample = cases[i];
-    const pred = predicted[i];
-    const correct = pred === sample.expectedVerdict ? 1 : 0;
-
     const startedAt = performance.now();
+    const pred = heuristicVerdict(sample.textA, sample.textB);
     const latencyMs = Math.round(performance.now() - startedAt);
+    predicted.push(pred);
+
+    const correct = pred === sample.expectedVerdict ? 1 : 0;
 
     tasks.push({
       taskId: sample.id,
