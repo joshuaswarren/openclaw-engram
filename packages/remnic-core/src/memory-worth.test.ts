@@ -215,6 +215,38 @@ test("decay: unparseable lastAccessed is ignored, not fatal", () => {
   assert.equal(result.confidence, 3);
 });
 
+test("partial corruption fails the whole record to the prior", () => {
+  // Codex P2: `mw_success: 10` with `mw_fail: NaN` must NOT read as strong
+  // positive evidence. Either counter being corrupt must collapse both to
+  // the prior.
+  const sGoodFBad = computeMemoryWorth({
+    mw_success: 10,
+    mw_fail: Number.NaN,
+    now: NOW,
+  });
+  assert.equal(sGoodFBad.score, 0.5);
+  assert.equal(sGoodFBad.confidence, 0);
+
+  const sBadFGood = computeMemoryWorth({
+    mw_success: -1,
+    mw_fail: 10,
+    now: NOW,
+  });
+  assert.equal(sBadFGood.score, 0.5);
+  assert.equal(sBadFGood.confidence, 0);
+
+  // Sanity: an absent counter is not corruption, so a record with
+  // `mw_success: 10, mw_fail: undefined` still reads as strong positive
+  // evidence (legacy half-instrumentation is allowed).
+  const sGoodFAbsent = computeMemoryWorth({
+    mw_success: 10,
+    mw_fail: undefined,
+    now: NOW,
+  });
+  assert.ok(sGoodFAbsent.score > 0.8);
+  assert.equal(sGoodFAbsent.confidence, 10);
+});
+
 test("overflow-prone counters fail safely to the neutral prior", () => {
   // 1e308 + 1e308 + 2 overflows to Infinity in IEEE-754, which would drive
   // the ratio to 0 instead of the neutral 0.5. The helper must detect the

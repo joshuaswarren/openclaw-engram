@@ -108,23 +108,34 @@ export interface MemoryWorthResult {
  */
 const MAX_COUNTER = 1e12;
 
-function sanitizeCounter(value: number | undefined): number {
-  if (typeof value !== "number") return 0;
-  if (!Number.isFinite(value)) return 0;
-  if (value < 0) return 0;
+/**
+ * Classify a counter into `{ok, value}` for the scorer:
+ *   - `{ok: true, value}` means the input was absent or a valid non-negative
+ *     integer within range. Treated as a normal signal.
+ *   - `{ok: false}` means the caller supplied a value but it was corrupt
+ *     (negative, NaN, Infinity, non-integer, or absurdly large). The scorer
+ *     treats the record as corrupted and collapses BOTH counters to the
+ *     prior — a partial-corruption record (e.g. `mw_success: 10` with
+ *     `mw_fail: NaN`) must not be read as strong evidence.
+ */
+function classifyCounter(value: number | undefined): { ok: true; value: number } | { ok: false } {
+  // Absent counter is a legitimate "no data yet" signal, not corruption.
+  if (value === undefined) return { ok: true, value: 0 };
+  if (typeof value !== "number") return { ok: false };
+  if (!Number.isFinite(value)) return { ok: false };
+  if (value < 0) return { ok: false };
   // Non-integer counters are refused outright (not floored). Fractional
   // counters can only arise from hand-edited frontmatter or a mis-seeded
   // bench fixture — the PR 1 serializer rejects them on write. Treating
   // `1.9` as `1` would give obviously-corrupt data non-zero confidence and
-  // shift the score away from the neutral prior. Fail to 0 instead.
-  if (!Number.isInteger(value)) return 0;
+  // shift the score away from the neutral prior.
+  if (!Number.isInteger(value)) return { ok: false };
   // Overflow guard. `mw_success: 1e308` (or anything past `MAX_COUNTER`)
   // would let `sEff + fEff + 2` overflow to `Infinity` and drive the
   // computed score to 0 for symmetric counts — exactly the opposite of
-  // the neutral-prior fail-safe contract. Treat absurd counter magnitudes
-  // as corruption and fall back to the prior.
-  if (value > MAX_COUNTER) return 0;
-  return value;
+  // the neutral-prior fail-safe contract.
+  if (value > MAX_COUNTER) return { ok: false };
+  return { ok: true, value };
 }
 
 /**
@@ -159,8 +170,17 @@ function decayFactor(ageMs: number, halfLifeMs: number | undefined): number {
  * identically — neither should be penalized.
  */
 export function computeMemoryWorth(input: ComputeMemoryWorthInput): MemoryWorthResult {
-  const rawS = sanitizeCounter(input.mw_success);
-  const rawF = sanitizeCounter(input.mw_fail);
+  const sClass = classifyCounter(input.mw_success);
+  const fClass = classifyCounter(input.mw_fail);
+  // If EITHER counter is corrupt, fail the whole record to the prior. A
+  // partially-corrupt record (e.g. `mw_success: 10` with `mw_fail: NaN`)
+  // would otherwise read as strong positive evidence — the exact opposite
+  // of the documented "corrupt inputs fail safely" contract.
+  if (!sClass.ok || !fClass.ok) {
+    return { score: 0.5, p_success: 0.5, confidence: 0 };
+  }
+  const rawS = sClass.value;
+  const rawF = fClass.value;
 
   const lastAccessedMs = parseLastAccessedMs(input.lastAccessed);
   const nowMs = input.now.getTime();
