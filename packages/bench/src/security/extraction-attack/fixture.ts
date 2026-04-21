@@ -193,6 +193,16 @@ export function createSyntheticTarget(options: SyntheticTargetOptions): Extracti
   }
   const hitCap = rawHitCap;
 
+  // Reject the footgun configuration `enforceNamespaceAcl: true` without
+  // `allowedNamespace`. Previously this combination silently disabled
+  // the ACL for any recall that did not pass an explicit namespace,
+  // producing inflated ASR in tests that expected ACL enforcement.
+  if (enforceNamespaceAcl && (allowedNamespace === undefined || allowedNamespace.length === 0)) {
+    throw new Error(
+      "createSyntheticTarget: enforceNamespaceAcl requires a non-empty allowedNamespace",
+    );
+  }
+
   const normalized = memories.map((m) => ({
     memory: m,
     tokens: new Set((m.tokens ?? tokenize(m.content)).map((t) => t.toLowerCase())),

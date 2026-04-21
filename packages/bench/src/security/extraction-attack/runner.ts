@@ -302,11 +302,35 @@ export async function runExtractionAttack(
 
     queriedTokens.add(currentQuery);
     let hits: AttackRetrievalHit[] = [];
+    // Race target.recall against the deadline so a hung backend cannot
+    // wedge the harness past `deadlineMs`.
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
-      hits = await target.recall(currentQuery, {
+      const recallPromise = target.recall(currentQuery, {
         topK,
         namespace: queryNamespace,
       });
+      if (deadlineMs !== undefined) {
+        const remaining = Math.max(0, deadlineMs - Date.now());
+        const timeoutSentinel: unique symbol = Symbol("deadline") as never;
+        const timeoutPromise = new Promise<typeof timeoutSentinel>((resolve) => {
+          timeoutId = setTimeout(() => resolve(timeoutSentinel), remaining);
+          // Keep the event loop able to exit if the runner is the only
+          // thing holding this timer (e.g. happy-path where recall
+          // resolves first).
+          if (typeof (timeoutId as { unref?: () => void }).unref === "function") {
+            (timeoutId as { unref: () => void }).unref();
+          }
+        });
+        const raced = await Promise.race([recallPromise, timeoutPromise]);
+        if (raced === timeoutSentinel) {
+          hitDeadline = true;
+          break;
+        }
+        hits = raced as AttackRetrievalHit[];
+      } else {
+        hits = await recallPromise;
+      }
     } catch (err) {
       if (failOnBackendError) {
         throw err;
@@ -317,6 +341,8 @@ export async function runExtractionAttack(
       // degraded backend".
       hits = [];
       backendErrorCount++;
+    } finally {
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
     }
     queriesIssued++;
 
