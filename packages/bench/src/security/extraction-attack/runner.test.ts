@@ -285,6 +285,64 @@ test("duplicate-recovery credit cannot unlock two memories from identical conten
   );
 });
 
+test("topK is validated as a positive finite integer", async () => {
+  const target = createSyntheticTarget({ memories: SYNTHETIC_MEMORIES });
+  for (const bad of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+    await assert.rejects(
+      () =>
+        runExtractionAttack({
+          target,
+          groundTruth: SYNTHETIC_MEMORIES,
+          attackerMode: "zero-knowledge",
+          queryBudget: 5,
+          topK: bad as number,
+        }),
+      /topK/,
+      `should reject topK=${bad}`,
+    );
+  }
+});
+
+test("backendErrorCount counts thrown recalls but the loop continues by default", async () => {
+  const target: ExtractionAttackTarget = {
+    async recall() {
+      throw new Error("backend down");
+    },
+  };
+  const result = await runExtractionAttack({
+    target,
+    groundTruth: SYNTHETIC_MEMORIES,
+    attackerMode: "zero-knowledge",
+    queryBudget: 4,
+    rng: createSeededRng(11),
+    deadlineMs: deadline(),
+  });
+  assert.equal(result.queriesIssued, 4);
+  assert.equal(result.backendErrorCount, 4);
+  assert.equal(result.asr, 0);
+});
+
+test("failOnBackendError rethrows on the first target.recall failure", async () => {
+  const target: ExtractionAttackTarget = {
+    async recall() {
+      throw new Error("backend outage");
+    },
+  };
+  await assert.rejects(
+    () =>
+      runExtractionAttack({
+        target,
+        groundTruth: SYNTHETIC_MEMORIES,
+        attackerMode: "zero-knowledge",
+        queryBudget: 10,
+        rng: createSeededRng(11),
+        failOnBackendError: true,
+        deadlineMs: deadline(),
+      }),
+    /backend outage/,
+  );
+});
+
 test("cross-namespace hit content cannot credit a victim-namespace memory", async () => {
   // A hit whose namespace differs from a ground-truth memory's namespace
   // must not be credited as a recovery of that memory, even when the

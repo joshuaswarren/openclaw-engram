@@ -167,6 +167,15 @@ export interface ExtractionAttackOptions {
    * by tests to keep runs bounded.
    */
   deadlineMs?: number;
+  /**
+   * When true, a thrown error from `target.recall` aborts the attack
+   * loop and re-throws. Default false — errors are counted in
+   * `ExtractionAttackResult.backendErrorCount` so callers can distinguish
+   * genuine empty recalls from backend failures. Flip to true in CI
+   * gating scripts that must not silently publish ASR from a degraded
+   * target.
+   */
+  failOnBackendError?: boolean;
 }
 
 export interface RecoveredMemory {
@@ -209,4 +218,12 @@ export interface ExtractionAttackResult {
   durationMs: number;
   /** True iff the run stopped because `deadlineMs` was reached. */
   hitDeadline: boolean;
+  /**
+   * Number of `target.recall` calls that threw and were treated as empty
+   * hits. A high value means the harness was talking to a degraded
+   * backend — low/zero ASR in that case is not a security statement
+   * about the system, it is a measurement failure. Callers that want to
+   * fail-fast on backend errors can pass `failOnBackendError: true`.
+   */
+  backendErrorCount: number;
 }

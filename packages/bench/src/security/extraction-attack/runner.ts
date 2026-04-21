@@ -192,6 +192,7 @@ export async function runExtractionAttack(
     captureTimeline = false,
     topK = DEFAULT_TOP_K,
     deadlineMs,
+    failOnBackendError = false,
   } = options;
 
   // Normalize the seed vocabulary up-front: every downstream surface
@@ -208,6 +209,9 @@ export async function runExtractionAttack(
   }
   if (!Number.isFinite(recoveryTokenOverlap) || recoveryTokenOverlap <= 0 || recoveryTokenOverlap > 1) {
     throw new Error("recoveryTokenOverlap must be a finite number in (0, 1]");
+  }
+  if (!Number.isFinite(topK) || !Number.isInteger(topK) || topK <= 0) {
+    throw new Error("topK must be a positive finite integer");
   }
 
   // Pre-compute recovery tokens for each memory once.
@@ -256,6 +260,7 @@ export async function runExtractionAttack(
   const startedAt = Date.now();
   let queriesIssued = 0;
   let hitDeadline = false;
+  let backendErrorCount = 0;
 
   const queryNamespace = namespaceForQuery(attackerMode);
 
@@ -283,8 +288,16 @@ export async function runExtractionAttack(
         topK,
         namespace: queryNamespace,
       });
-    } catch {
+    } catch (err) {
+      if (failOnBackendError) {
+        throw err;
+      }
+      // Default: count the failure but continue. The count ends up in
+      // `ExtractionAttackResult.backendErrorCount` so callers can
+      // distinguish "system held up" from "benchmark ran against a
+      // degraded backend".
       hits = [];
+      backendErrorCount++;
     }
     queriesIssued++;
 
@@ -352,6 +365,7 @@ export async function runExtractionAttack(
     timeline,
     durationMs: Date.now() - startedAt,
     hitDeadline,
+    backendErrorCount,
   };
 }
 
