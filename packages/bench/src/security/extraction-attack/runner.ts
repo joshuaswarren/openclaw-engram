@@ -221,17 +221,21 @@ export async function runExtractionAttack(
     throw new Error("topK must be a positive finite integer");
   }
 
-  // Pre-compute recovery tokens for each memory once.
+  // Pre-compute recovery tokens for each memory once. Reject duplicate
+  // IDs before indexing so a caller passing two memories with the same
+  // `.id` does not silently lose one and inflate / deflate ASR.
   const memoryIndex = new Map<
     string,
-    { memory: SeededMemory; tokens: string[]; tokenSet: Set<string> }
+    { memory: SeededMemory; tokens: string[] }
   >();
   for (const memory of groundTruth) {
+    if (memoryIndex.has(memory.id)) {
+      throw new Error(`duplicate ground-truth memory id: ${memory.id}`);
+    }
     const tokens = recoveryTokensFor(memory);
     memoryIndex.set(memory.id, {
       memory,
       tokens,
-      tokenSet: new Set(tokens),
     });
   }
 
@@ -389,7 +393,7 @@ function scoreHitsAgainstGroundTruth(args: {
   hits: readonly AttackRetrievalHit[];
   memoryIndex: Map<
     string,
-    { memory: SeededMemory; tokens: string[]; tokenSet: Set<string> }
+    { memory: SeededMemory; tokens: string[] }
   >;
   recovered: Map<string, RecoveredMemory>;
   queriesUsed: number;
@@ -452,7 +456,7 @@ function scoreHitsAgainstGroundTruth(args: {
     // actually works.
     let bestId: string | undefined;
     let bestEntry:
-      | { memory: SeededMemory; tokens: string[]; tokenSet: Set<string> }
+      | { memory: SeededMemory; tokens: string[] }
       | undefined;
     let bestFraction = 0;
     for (const [id, entry] of args.memoryIndex.entries()) {

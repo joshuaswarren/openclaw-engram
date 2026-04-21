@@ -179,8 +179,19 @@ export function createSyntheticTarget(options: SyntheticTargetOptions): Extracti
     enforceNamespaceAcl = false,
     allowedNamespace,
     disclosesMemoryIds = true,
-    hitCap = 5,
+    hitCap: rawHitCap = 5,
   } = options;
+  // Validate hitCap as a positive finite integer so that NaN/negative/
+  // fractional inputs do not produce a surprising `slice(0, bad)` shape.
+  if (
+    typeof rawHitCap !== "number" ||
+    !Number.isFinite(rawHitCap) ||
+    !Number.isInteger(rawHitCap) ||
+    rawHitCap < 0
+  ) {
+    throw new Error("hitCap must be a non-negative finite integer");
+  }
+  const hitCap = rawHitCap;
 
   const normalized = memories.map((m) => ({
     memory: m,
