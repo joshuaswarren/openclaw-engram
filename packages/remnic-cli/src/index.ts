@@ -4722,11 +4722,13 @@ async function cmdBench(rest: string[]): Promise<void> {
   );
   // When running a matrix (multiple profiles), create profile-specific status
   // entries so that a failed profile doesn't get overwritten by a later success.
-  const statusEntryIds = runtimeProfiles.length > 1
-    ? selectedBenchmarks.flatMap((benchmarkId) =>
-        runtimeProfiles.map((profile) => `${benchmarkId} [${profile}]`),
-      )
-    : selectedBenchmarks;
+  const statusEntryIds = [...new Set(
+    runtimeProfiles.length > 1
+      ? selectedBenchmarks.flatMap((benchmarkId) =>
+          runtimeProfiles.map((profile) => `${benchmarkId} [${profile}]`),
+        )
+      : selectedBenchmarks,
+  )];
   try { await initBenchStatus(benchStatusPath, statusEntryIds, process.pid); } catch { /* non-fatal */ }
   try {
     for (const benchmarkId of selectedBenchmarks) {
