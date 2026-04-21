@@ -81,6 +81,11 @@ import {
   type ParallelSearchResult,
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
+import {
+  applyMemoryWorthFilter,
+  buildMemoryWorthCounterMap,
+  type MemoryWorthCounters,
+} from "./memory-worth-filter.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
 import {
   applyTemporalSupersession,
@@ -8122,6 +8127,20 @@ export class Orchestrator {
         );
       }
 
+      // Memory Worth recall filter (issue #560 PR 4). When enabled, multiply
+      // each candidate's score by its Memory Worth factor so memories with
+      // a history of failed outcomes sink. Default off in this PR; PR 5
+      // flips the default once bench shows tie-or-win. Fail-open: any
+      // lookup error leaves the original scores untouched rather than
+      // breaking recall for the whole namespace.
+      if (this.config.recallMemoryWorthFilterEnabled && memoryResults.length > 0) {
+        try {
+          memoryResults = await this.applyMemoryWorthRerank(memoryResults, recallNamespaces);
+        } catch (err) {
+          log.debug("memory-worth filter failed open", { error: (err as Error).message });
+        }
+      }
+
       // Synapse-inspired confidence gate: check scores BEFORE slicing so
       // reranking doesn't affect which score the gate evaluates.
       //
@@ -13489,6 +13508,59 @@ export class Orchestrator {
    *
    * Callers must pass the full candidate pool (post-rerank, pre-slice).
    */
+  private async applyMemoryWorthRerank(
+    results: QmdSearchResult[],
+    namespaces: string[],
+  ): Promise<QmdSearchResult[]> {
+    // Build the counter lookup once per call. We union frontmatter counters
+    // across every namespace the recall spans — the recall path itself
+    // already aggregates candidates from multiple namespaces, so we must
+    // do the same when looking up the counters.
+    const counters = new Map<string, MemoryWorthCounters>();
+    const seenNamespaces = new Set<string>();
+    for (const ns of namespaces) {
+      if (seenNamespaces.has(ns)) continue;
+      seenNamespaces.add(ns);
+      try {
+        const storage = await this.getStorage(ns);
+        const memories = await storage.readAllMemories();
+        const nsMap = buildMemoryWorthCounterMap(memories);
+        for (const [path, c] of nsMap) counters.set(path, c);
+      } catch (err) {
+        log.debug("memory-worth: failed to read namespace, skipping", {
+          namespace: ns,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    // If no memory in the candidate set has any counter data, the filter
+    // would be a no-op — skip the reorder to avoid spurious log spam.
+    if (counters.size === 0) return results;
+
+    const filtered = applyMemoryWorthFilter(
+      results.map((r) => ({ path: r.path, score: r.score })),
+      {
+        counters,
+        now: new Date(),
+        halfLifeMs:
+          this.config.recallMemoryWorthHalfLifeMs > 0
+            ? this.config.recallMemoryWorthHalfLifeMs
+            : undefined,
+      },
+    );
+
+    // Reconstruct the QmdSearchResult list in the new order, updating
+    // `.score` and preserving every other field (snippet, explain, etc.).
+    const byPath = new Map(results.map((r) => [r.path, r]));
+    const reordered: QmdSearchResult[] = [];
+    for (const item of filtered) {
+      const original = byPath.get(item.path);
+      if (original) reordered.push({ ...original, score: item.score });
+    }
+    return reordered;
+  }
+
   private diversifyAndLimitRecallResults(
     sectionId: string,
     results: QmdSearchResult[],
