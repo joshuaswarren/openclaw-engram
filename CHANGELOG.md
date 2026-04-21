@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.3.147] — 2026-04-21
+
 ### Added
 
 - **Contradiction-detection bench scenario** (issue #647). Synthetic
