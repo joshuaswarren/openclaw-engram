@@ -2027,6 +2027,32 @@
         "default": true,
         "description": "When true, recall runs the direct-answer tier in observation mode: annotates LastRecallSnapshot.tierExplain with which tier would have served the query (issue #518). Does not short-circuit the QMD path in the current release."
       },
+      "recallGraphEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, recall builds a retrieval graph from memory frontmatter and runs Personalized PageRank, merging the result with QMD via MMR (issue #559 PR 4). Default false — ships off pending the retrieval-graph bench in PR 5."
+      },
+      "recallGraphDamping": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 0.999999999,
+        "default": 0.85,
+        "description": "PPR damping factor used by the graph retrieval tier (issue #559)."
+      },
+      "recallGraphIterations": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 500,
+        "default": 20,
+        "description": "Maximum power-iteration rounds for PPR. Higher values trade latency for convergence."
+      },
+      "recallGraphTopK": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 10000,
+        "default": 50,
+        "description": "Maximum memories returned by the graph retrieval tier before the MMR diversifier runs."
+      },
       "recallDirectAnswerTokenOverlapFloor": {
         "type": "number",
         "minimum": 0,
@@ -4197,6 +4223,25 @@
     "recallDirectAnswerEnabled": {
       "label": "Direct-Answer Retrieval Tier",
       "help": "Route validated high-trust queries to a fast direct-answer path before QMD (issue #518)."
+    },
+    "recallGraphEnabled": {
+      "label": "Graph Retrieval (PPR)",
+      "help": "Run Personalized PageRank on the retrieval graph and merge with QMD via MMR (issue #559)."
+    },
+    "recallGraphDamping": {
+      "label": "Graph Recall Damping",
+      "advanced": true,
+      "placeholder": "0.85"
+    },
+    "recallGraphIterations": {
+      "label": "Graph Recall Iterations",
+      "advanced": true,
+      "placeholder": "20"
+    },
+    "recallGraphTopK": {
+      "label": "Graph Recall Top-K",
+      "advanced": true,
+      "placeholder": "50"
     },
     "recallDirectAnswerTokenOverlapFloor": {
       "label": "Direct-Answer Token Overlap Floor",

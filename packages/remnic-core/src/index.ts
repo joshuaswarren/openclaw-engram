@@ -812,6 +812,14 @@ export {
   type ExtractGraphEdgesOptions,
 } from "./graph-retrieval.js";
 
+export {
+  runGraphRecall,
+  type GraphRecallConfig,
+  type GraphRecallOptions,
+  type GraphRecallResult,
+  type GraphRecallRun,
+} from "./graph-recall.js";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
