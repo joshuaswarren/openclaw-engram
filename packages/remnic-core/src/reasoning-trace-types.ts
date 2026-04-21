@@ -158,7 +158,10 @@ export function parseReasoningTraceFromBody(content: string): ReasoningTraceStru
     });
   }
 
-  if (steps.length === 0) return null;
+  // Honor the >=2 ordered-steps invariant enforced everywhere else in the
+  // pipeline (prompts, normalizer, schema). A single-step manually-edited
+  // or corrupt file should not round-trip back in as a reasoning_trace.
+  if (steps.length < 2) return null;
 
   const finalStart = (finalMatch.index ?? 0) + finalMatch[0].length;
   const finalEnd = observedMatch?.index ?? text.length;
@@ -220,10 +223,13 @@ export function looksLikeReasoningTrace(message: string): boolean {
   }
   if (stepCount < 2) return false;
 
-  // Final-answer / resolution marker
-  const finalMarker =
-    /\b(final answer|so the answer|therefore|conclusion|in the end|ended up|picked|chose|answer:|result:)\b/i;
-  if (!finalMarker.test(text)) return false;
+  // Final-answer / resolution marker. Split into two checks so the trailing
+  // `\b` on the word-final alternatives doesn't accidentally require a word
+  // character after `answer:` / `result:` (both end in a non-word `:`).
+  const wordFinalMarker =
+    /\b(final answer|so the answer|therefore|conclusion|in the end|ended up|picked|chose)\b/i;
+  const colonMarker = /\b(answer:|result:)/i;
+  if (!wordFinalMarker.test(text) && !colonMarker.test(text)) return false;
 
   return true;
 }

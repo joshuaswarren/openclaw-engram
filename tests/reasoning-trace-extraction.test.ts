@@ -75,6 +75,54 @@ describe("ExtractedFactSchema reasoningTrace", () => {
     });
     assert.equal(parsed.success, true);
   });
+
+  it("rejects reasoningTrace with only one step at the schema layer", () => {
+    const parsed = ExtractedFactSchema.safeParse({
+      category: "reasoning_trace",
+      content: "Not a real chain",
+      confidence: 0.8,
+      tags: [],
+      reasoningTrace: {
+        steps: [{ order: 1, description: "only one" }],
+        finalAnswer: "done",
+      },
+    });
+    assert.equal(parsed.success, false);
+  });
+
+  it("accepts snake_case final_answer and observed_outcome at the schema layer", () => {
+    const parsed = ExtractedFactSchema.safeParse({
+      category: "reasoning_trace",
+      content: "Gateway-loose JSON with snake_case keys",
+      confidence: 0.8,
+      tags: [],
+      reasoningTrace: {
+        steps: [
+          { order: 1, description: "a" },
+          { order: 2, description: "b" },
+        ],
+        final_answer: "answer",
+        observed_outcome: "outcome",
+      },
+    });
+    assert.equal(parsed.success, true);
+  });
+
+  it("rejects reasoningTrace missing finalAnswer in both camel and snake forms", () => {
+    const parsed = ExtractedFactSchema.safeParse({
+      category: "reasoning_trace",
+      content: "Missing final answer",
+      confidence: 0.8,
+      tags: [],
+      reasoningTrace: {
+        steps: [
+          { order: 1, description: "a" },
+          { order: 2, description: "b" },
+        ],
+      },
+    });
+    assert.equal(parsed.success, false);
+  });
 });
 
 describe("normalizeReasoningTraceSteps", () => {
@@ -214,6 +262,19 @@ describe("buildReasoningTraceMarkdownBody / parseReasoningTraceFromBody", () => 
     );
   });
 
+  it("parseReasoningTraceFromBody rejects single-step bodies (>=2 invariant)", () => {
+    const body = [
+      "## Step 1",
+      "",
+      "only one step",
+      "",
+      "## Final Answer",
+      "",
+      "done",
+    ].join("\n");
+    assert.equal(parseReasoningTraceFromBody(body), null);
+  });
+
   it("buildReasoningTracePersistBody prepends a title", () => {
     const body = buildReasoningTracePersistBody("How I picked route-b", {
       steps: [
@@ -269,6 +330,24 @@ describe("looksLikeReasoningTrace heuristic", () => {
       "3. opened a PR",
     ].join("\n");
     assert.equal(looksLikeReasoningTrace(msg), false);
+  });
+
+  it("recognizes `answer:` and `result:` final markers in prose (no trailing word required)", () => {
+    const withAnswer = [
+      "Walk-through:",
+      "Step 1: I pulled the logs.",
+      "Step 2: I narrowed down the stack trace.",
+      "answer: a NullPointerException in the cache layer.",
+    ].join("\n");
+    assert.equal(looksLikeReasoningTrace(withAnswer), true);
+
+    const withResult = [
+      "Here is how I looked into it.",
+      "First, I checked dashboards.",
+      "Then, I correlated with the deploy log.",
+      "result: a stuck canary blocked promotion.",
+    ].join("\n");
+    assert.equal(looksLikeReasoningTrace(withResult), true);
   });
 
   it("does not double-count when multiple marker styles appear on one line", () => {
