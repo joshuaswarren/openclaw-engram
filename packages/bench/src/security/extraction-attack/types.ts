@@ -162,6 +162,20 @@ export interface ExtractionAttackOptions {
   /** TopK to request per query. Defaults to 10. */
   topK?: number;
   /**
+   * Namespace the attacker addresses their queries to. When set, every
+   * `target.recall()` is invoked with `namespace: attackerNamespace`.
+   * Useful for T3-class runs where the caller wants to simulate an
+   * attacker holding a token for a specific cross-namespace tenant.
+   *
+   * Defaults:
+   * - `zero-knowledge`: undefined (target uses its own default).
+   * - `same-namespace`: undefined (target uses its own default).
+   * - `cross-namespace`: `"shared"` (matches the residual-leak path the
+   *   threat model calls out in §5, but callers targeting other namespace
+   *   models should pass an explicit value here).
+   */
+  attackerNamespace?: string;
+  /**
    * Optional absolute deadline in ms since epoch. If the harness crosses it
    * during the attack loop, it terminates early with a partial result. Used
    * by tests to keep runs bounded.

@@ -166,16 +166,23 @@ function overlapFraction(queryTokens: readonly string[], contentTokens: readonly
 }
 
 /**
- * Decide which namespace to issue the query against based on attacker mode.
- * For `cross-namespace` we probe the `shared` pseudo-namespace because that
- * is the principal residual leak path the threat model calls out (§5).
+ * Decide which namespace to issue the query against based on attacker
+ * mode, honoring an optional caller-provided override. T3 runs against
+ * targets whose namespace model is not `"shared"` (or whose fixture
+ * filters by a specific attacker-held namespace) should pass
+ * `attackerNamespace` explicitly — otherwise the hard-coded default
+ * always misses and ASR is forced to 0.
  */
-function namespaceForQuery(mode: AttackerMode): string | undefined {
+function namespaceForQuery(
+  mode: AttackerMode,
+  override: string | undefined,
+): string | undefined {
+  if (override !== undefined) return override;
   switch (mode) {
     case "zero-knowledge":
-      return undefined; // caller's default
+      return undefined;
     case "same-namespace":
-      return undefined; // caller's default
+      return undefined;
     case "cross-namespace":
       return "shared";
   }
@@ -200,6 +207,7 @@ export async function runExtractionAttack(
     topK = DEFAULT_TOP_K,
     deadlineMs,
     failOnBackendError = false,
+    attackerNamespace,
   } = options;
 
   // Normalize the seed vocabulary up-front: every downstream surface
@@ -273,7 +281,7 @@ export async function runExtractionAttack(
   let hitDeadline = false;
   let backendErrorCount = 0;
 
-  const queryNamespace = namespaceForQuery(attackerMode);
+  const queryNamespace = namespaceForQuery(attackerMode, attackerNamespace);
 
   let strategy: TimelineEntry["strategy"] = "seed";
   let currentQuery = chooseSeedQuery(seedVocabulary, entityBootstrap, rng);
@@ -351,7 +359,6 @@ export async function runExtractionAttack(
       entropyThreshold,
       tokenFrequencies,
       queriedTokens,
-      seedVocabulary,
       entityBootstrap,
       rng,
     });
@@ -524,7 +531,6 @@ function chooseNextQuery(args: {
   entropyThreshold: number;
   tokenFrequencies: Map<string, number>;
   queriedTokens: Set<string>;
-  seedVocabulary: readonly string[];
   entityBootstrap: readonly string[];
   rng: HarnessRng;
 }): { query: string | undefined; strategy: TimelineEntry["strategy"] } {
@@ -543,8 +549,10 @@ function chooseNextQuery(args: {
     }
   }
 
-  // Explore: entropy is high. Prefer a token we have not issued yet from
-  // the belief map (entropy-guided exploration), fall back to a seed word.
+  // Explore: entropy is high. Pick any token we have not issued yet from
+  // the belief map (which already contains every seed-vocabulary term
+  // merged with observed hit tokens — no separate seed fallback is
+  // needed because seeds are always a subset of the belief map).
   const candidates: string[] = [];
   for (const key of tokenFrequencies.keys()) {
     if (!queriedTokens.has(key)) candidates.push(key);
@@ -554,12 +562,6 @@ function chooseNextQuery(args: {
     if (picked !== undefined) {
       return { query: picked, strategy: "explore-entropy" };
     }
-  }
-
-  const seedCandidates = args.seedVocabulary.filter((t) => !queriedTokens.has(t));
-  const seed = pickRandom(seedCandidates, args.rng);
-  if (seed !== undefined) {
-    return { query: seed, strategy: "explore-random" };
   }
 
   return { query: undefined, strategy: "explore-random" };
