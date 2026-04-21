@@ -44,6 +44,7 @@ export interface ConsolidationUndoRestore {
     | "skipped_malformed_entry"
     | "skipped_outside_memory_dir"
     | "skipped_non_active_path"
+    | "skipped_self_referential"
     | "skipped_write_failed"
     | "skipped_blocked_by_other_failures"
     | "skipped_dry_run";
@@ -400,6 +401,24 @@ export async function runConsolidationUndo(options: {
           sourcePath,
           outcome: "skipped_non_active_path",
           detail: `source path "${parsed.pagePath}" is inside a non-active directory (archive/state/versions)`,
+        },
+      });
+      continue;
+    }
+
+    // Reject self-referential derived_from entries (PR #637 round-9 review,
+    // codex P1).  If the source resolves to the same file as the target,
+    // counting it as "recovered" would let undo archive the target without
+    // restoring any independent source — leaving no active copy.  This
+    // guards against corrupted or manually-edited derived_from lists.
+    if (path.resolve(sourcePath) === path.resolve(targetPath)) {
+      plans.push({
+        kind: "skip",
+        restore: {
+          entry,
+          sourcePath,
+          outcome: "skipped_self_referential",
+          detail: `derived_from entry "${entry}" resolves to the same file as the target — refusing to count as recovered`,
         },
       });
       continue;
