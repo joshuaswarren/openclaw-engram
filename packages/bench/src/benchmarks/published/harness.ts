@@ -181,7 +181,6 @@ export async function runPublishedHarness(
       }
     }
     const planIndex = tasks.length;
-    const totalInPlan = plan.trials.length;
     for (const trial of plan.trials) {
       const trialId = trial.taskId ?? trial.question.slice(0, 60);
       try {
@@ -200,7 +199,10 @@ export async function runPublishedHarness(
           details: { error: message },
         });
       }
-      ctx.options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalInPlan);
+      // Pass the GLOBAL total (ctx.totalCount), not a per-plan total —
+      // `tasks.length` is cumulative across every plan in ctx.plans, so a
+      // per-plan divisor would overflow to "N/3" nonsense in plan 2+.
+      ctx.options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, ctx.totalCount);
     }
   }
 
