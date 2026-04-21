@@ -187,3 +187,28 @@ test("parseOperatorAwareConsolidationResponse handles mixed-case operator values
   assert.equal(res.operator, "merge");
   assert.equal(res.output, "upper case");
 });
+
+// ─── Config coercion (regression for PR #632 review feedback) ────────────────
+// codex P1 / cursor Medium: `operatorAwareConsolidationEnabled` must
+// coerce string-valued falsey config inputs (e.g.
+// `--config operatorAwareConsolidationEnabled=false`) so the documented
+// rollback escape hatch actually works when the CLI passes string
+// values.
+
+test("operatorAwareConsolidationEnabled coerces string 'false' to disabled", async () => {
+  const { parseConfig } = await import("../src/config.ts");
+  const parsed = parseConfig({ operatorAwareConsolidationEnabled: "false" } as any);
+  assert.equal(parsed.operatorAwareConsolidationEnabled, false);
+});
+
+test("operatorAwareConsolidationEnabled defaults to true when unset", async () => {
+  const { parseConfig } = await import("../src/config.ts");
+  const parsed = parseConfig({});
+  assert.equal(parsed.operatorAwareConsolidationEnabled, true);
+});
+
+test("operatorAwareConsolidationEnabled honors boolean false", async () => {
+  const { parseConfig } = await import("../src/config.ts");
+  const parsed = parseConfig({ operatorAwareConsolidationEnabled: false });
+  assert.equal(parsed.operatorAwareConsolidationEnabled, false);
+});

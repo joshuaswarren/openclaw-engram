@@ -1354,14 +1354,14 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 100,
     // Operator-aware consolidation prompt (issue #561 PR 3).  Defaults to
     // true so new installs get SPLIT/MERGE/UPDATE operator selection on
-    // the `derived_via` frontmatter field.  Operators set `false`
-    // explicitly to fall back to the legacy plain-text prompt (useful for
-    // older models that don't reliably return JSON).  Gotcha #36: strings
-    // like "false" are coerced at the config-read boundary in parseConfig
-    // helpers; this field follows the same `=== false` pattern used by
-    // sibling consolidation toggles.
+    // the `derived_via` frontmatter field.  Operators set the value to a
+    // falsey coercion ("false", "0", "no", "off", boolean `false`) to
+    // fall back to the legacy plain-text prompt (useful for older models
+    // that don't reliably return JSON).  Uses `coerceBool` per Gotcha #36
+    // so CLI `--config operatorAwareConsolidationEnabled=false` and
+    // env-substituted string values actually disable the feature.
     operatorAwareConsolidationEnabled:
-      cfg.operatorAwareConsolidationEnabled === false ? false : true,
+      coerceBool(cfg.operatorAwareConsolidationEnabled) ?? true,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,
