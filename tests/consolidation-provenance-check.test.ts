@@ -204,6 +204,54 @@ test("summarizeConsolidationProvenance returns warn when integrity issues exist"
   }
 });
 
+test("runConsolidationProvenanceCheck flags raw derived_from that the parser dropped (scalar form)", async () => {
+  // Regression for PR #634 round-2 review feedback (codex P2): the
+  // read-path parser drops non-list `derived_from` values to
+  // `undefined`, so a scalar like `derived_from: facts/a.md:7` (no
+  // list brackets) was previously silently ignored by the scan.  The
+  // doctor re-extracts the raw YAML line and flags the drop as a
+  // `derived_from_malformed_entry` issue.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-scalar-"));
+  try {
+    const storage = await seedStorage(dir);
+
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+
+    const id = "fact-scalar-from";
+    const filePath = path.join(factDir, `${id}.md`);
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-04-20T01:00:00.000Z",
+      "updated: 2026-04-20T01:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      "derived_from: facts/a.md:7", // scalar — not a list
+      "derived_via: merge",
+      "---",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    // One malformed_entry issue — the scalar form is preserved in
+    // the detail message so operators can grep the offending line.
+    const malformed = report.issues.filter(
+      (i) => i.kind === "derived_from_malformed_entry",
+    );
+    assert.equal(malformed.length, 1);
+    assert.ok(malformed[0].detail.includes("facts/a.md:7"));
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("summarizeConsolidationProvenance honors versioningSidecarDir from config", async () => {
   // Regression for PR #634 review feedback (codex P2 / cursor Medium):
   // the summarizer must thread the configured `versioningSidecarDir`

@@ -32,6 +32,7 @@ import { isConsolidationOperator } from "./consolidation-operator.js";
  * (PR #634 review feedback, codex P2).
  */
 const DERIVED_VIA_RAW_RE = /^derived_via:\s*(.+)$/mu;
+const DERIVED_FROM_RAW_RE = /^derived_from:\s*(.+)$/mu;
 
 /**
  * One integrity warning attached to a specific memory.
@@ -146,21 +147,22 @@ export async function runConsolidationProvenanceCheck(options: {
     const derivedFrom = fm.derived_from;
     const derivedVia = fm.derived_via;
 
-    // Raw `derived_via` from disk — the read-path parser coerces unknown
-    // values to `undefined`, so we re-extract from the raw YAML to flag
-    // corrupted or future operator values that would otherwise be hidden
-    // (PR #634 review feedback, codex P2).  Best-effort: if the file
-    // can't be read, we fall through to the parsed value and silently
-    // accept that we may miss a rare corruption case.
+    // Raw frontmatter values from disk — the read-path parser coerces
+    // malformed `derived_from` and unknown `derived_via` back to
+    // `undefined`, which would silently hide on-disk corruption from
+    // the doctor scan (PR #634 review feedback, codex P2).  We
+    // re-extract both via regex so integrity issues are reported even
+    // when the parser normalized them away.  Best-effort: if the file
+    // can't be read, we fall through to the parsed values.
     let rawDerivedVia: string | undefined;
+    let rawDerivedFrom: string | undefined;
     try {
       const raw = await readFile(memory.path, "utf-8");
       const frontmatterEnd = raw.indexOf("\n---", raw.indexOf("---") + 3);
       const fmSlice = frontmatterEnd > 0 ? raw.slice(0, frontmatterEnd) : raw;
-      const match = fmSlice.match(DERIVED_VIA_RAW_RE);
-      if (match) {
-        // Strip surrounding quotes (single or double) and whitespace.
-        let val = match[1].trim();
+      const viaMatch = fmSlice.match(DERIVED_VIA_RAW_RE);
+      if (viaMatch) {
+        let val = viaMatch[1].trim();
         if (
           (val.startsWith('"') && val.endsWith('"')) ||
           (val.startsWith("'") && val.endsWith("'"))
@@ -169,15 +171,38 @@ export async function runConsolidationProvenanceCheck(options: {
         }
         rawDerivedVia = val;
       }
+      const fromMatch = fmSlice.match(DERIVED_FROM_RAW_RE);
+      if (fromMatch) {
+        rawDerivedFrom = fromMatch[1].trim();
+      }
     } catch {
-      // Fall through to the parsed value.
+      // Fall through to the parsed values.
     }
 
     const hasFrom = Array.isArray(derivedFrom) && derivedFrom.length > 0;
     const hasVia = derivedVia !== undefined && derivedVia !== null;
     const hasRawVia = rawDerivedVia !== undefined && rawDerivedVia.length > 0;
-    if (!hasFrom && !hasVia && !hasRawVia) continue;
+    // A raw `derived_from` that the parser dropped indicates on-disk
+    // corruption we must surface.  We detect this by: (a) the raw YAML
+    // contains a `derived_from:` key with a non-empty value, AND (b)
+    // the parsed frontmatter has no valid array.  A scalar like
+    // `derived_from: facts/a.md:7` (list brackets omitted) hits this
+    // branch because the parser requires flow or block list syntax.
+    const hasRawMalformedFrom =
+      rawDerivedFrom !== undefined &&
+      rawDerivedFrom.length > 0 &&
+      !hasFrom;
+    if (!hasFrom && !hasVia && !hasRawVia && !hasRawMalformedFrom) continue;
     report.withProvenance += 1;
+
+    if (hasRawMalformedFrom) {
+      report.issues.push({
+        memoryPath: memory.path,
+        memoryId: fm.id,
+        kind: "derived_from_malformed_entry",
+        detail: `raw YAML "derived_from: ${rawDerivedFrom}" could not be parsed as a list`,
+      });
+    }
 
     if (hasFrom) {
       for (const entry of derivedFrom!) {
