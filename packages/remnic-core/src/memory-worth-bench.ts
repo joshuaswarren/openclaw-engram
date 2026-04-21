@@ -240,7 +240,26 @@ export function runMemoryWorthBenchCli(): void {
 }
 
 // When this file is invoked directly (e.g. `tsx memory-worth-bench.ts`),
-// run the CLI.
-if (import.meta.url === `file://${process.argv[1]}`) {
-  runMemoryWorthBenchCli();
+// run the CLI. Use url.pathToFileURL to produce a normalized file:// URL
+// from `process.argv[1]` — that handles Windows drive letters,
+// URL-encoded characters (spaces, etc.), and symlinked entrypoints. A
+// naïve `file://${process.argv[1]}` comparison fails on all three and
+// would silently skip runMemoryWorthBenchCli() on those platforms.
+if (process.argv[1]) {
+  try {
+    // Lazy import so this file can still be loaded in environments that
+    // don't have node:url (browsers, Deno test runners in some modes).
+    const { pathToFileURL } = await import("node:url");
+    if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+      runMemoryWorthBenchCli();
+    }
+  } catch {
+    // If the normalization fails for any reason, fall back to the naive
+    // comparison. Worse case: the bench doesn't auto-run; callers can
+    // always invoke `runMemoryWorthBenchCli()` or `runMemoryWorthBench()`
+    // explicitly.
+    if (import.meta.url === `file://${process.argv[1]}`) {
+      runMemoryWorthBenchCli();
+    }
+  }
 }
