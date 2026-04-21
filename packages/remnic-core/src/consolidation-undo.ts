@@ -21,7 +21,7 @@
  */
 
 import path from "node:path";
-import { mkdir, writeFile, access } from "node:fs/promises";
+import { mkdir, writeFile, access, realpath } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import type { StorageManager } from "./storage.js";
 import type { VersioningConfig } from "./page-versioning.js";
@@ -75,10 +75,10 @@ function parseEntry(entry: string): { pagePath: string; versionId: string } | nu
 /**
  * Verify that `candidate` resolves inside `root` (defense against
  * path-traversal in `derived_from` entries and user-facing target
- * paths).  Both paths are resolved to absolute form before comparison
- * so `..` segments, symlinks-as-strings, and relative prefixes are
- * normalized.  Returns true when the candidate is `root` itself or a
- * descendant.
+ * paths).  Path-string normalization only; for symlink-aware checks
+ * use `isInsideDirectoryRealpath`.  Both paths are resolved to
+ * absolute form before comparison so `..` segments, symlinks-as-
+ * strings, and relative prefixes are normalized.
  */
 export function isInsideDirectory(candidate: string, root: string): boolean {
   const normRoot = path.resolve(root);
@@ -88,6 +88,59 @@ export function isInsideDirectory(candidate: string, root: string): boolean {
   if (rel.startsWith("..")) return false;
   if (path.isAbsolute(rel)) return false;
   return true;
+}
+
+/**
+ * Symlink-aware containment check (PR #637 round-2 review, codex P1).
+ *
+ * `isInsideDirectory` only normalizes path strings — if a `derived_from`
+ * entry resolves through a symlink inside `memoryDir` that points
+ * outside, the string check passes but the subsequent `writeFile` would
+ * land outside the memory tree.  Use this guard for any path that is
+ * about to be written.
+ *
+ * Walks every parent directory between `candidate` and `root`,
+ * `realpath`-ing each segment that exists and rejecting when any
+ * segment escapes `root`.  Non-existent parents are resolved as the
+ * canonicalized deepest-existing ancestor plus the trailing segments,
+ * so a not-yet-created target file still gets the symlink check on its
+ * existing parent directories.
+ */
+export async function isInsideDirectoryRealpath(
+  candidate: string,
+  root: string,
+): Promise<boolean> {
+  if (!isInsideDirectory(candidate, root)) return false;
+  let resolvedRoot: string;
+  try {
+    resolvedRoot = await realpath(path.resolve(root));
+  } catch {
+    return false;
+  }
+  // Walk up from the candidate until we hit a path that exists, then
+  // realpath THAT and re-apply the trailing segments textually.
+  const normCandidate = path.resolve(candidate);
+  const parts = normCandidate.split(path.sep);
+  for (let i = parts.length; i > 0; i--) {
+    const probe = parts.slice(0, i).join(path.sep) || path.sep;
+    try {
+      const resolved = await realpath(probe);
+      // Re-join any trailing segments that didn't exist yet.
+      const trailing = parts.slice(i).join(path.sep);
+      const final = trailing.length > 0 ? path.join(resolved, trailing) : resolved;
+      // Now apply the textual containment check against the canonical
+      // `resolvedRoot`.
+      const rel = path.relative(resolvedRoot, final);
+      if (rel.length === 0) return true;
+      if (rel.startsWith("..")) return false;
+      if (path.isAbsolute(rel)) return false;
+      return true;
+    } catch {
+      continue;
+    }
+  }
+  // Nothing along the path resolvable — treat as outside by default.
+  return false;
 }
 
 async function fileExists(p: string): Promise<boolean> {
@@ -132,8 +185,9 @@ export async function runConsolidationUndo(options: {
   // to operate on a target outside the configured memory directory.
   // Archive moves and eventual unlink would otherwise let an operator
   // accidentally destroy an unrelated file with memory-like
-  // frontmatter.
-  if (!isInsideDirectory(targetPath, memoryDir)) {
+  // frontmatter.  Uses the realpath-aware check so a symlinked
+  // directory inside `memoryDir` can't tunnel a target past the guard.
+  if (!(await isInsideDirectoryRealpath(targetPath, memoryDir))) {
     result.error = `target path ${targetPath} is outside memory directory ${memoryDir}`;
     return result;
   }
@@ -170,12 +224,12 @@ export async function runConsolidationUndo(options: {
     const sourcePath = path.join(memoryDir, parsed.pagePath);
 
     // Defense against crafted `derived_from` entries (PR #637 review,
-    // codex P1): `path.join(memoryDir, "../outside.md")` resolves
-    // outside the memory directory.  Refuse to write there.  Malformed
-    // provenance is explicitly tolerated elsewhere in this pipeline,
-    // so containment must be enforced here rather than trusted up the
-    // stack.
-    if (!isInsideDirectory(sourcePath, memoryDir)) {
+    // codex P1 r1 + r2): `path.join(memoryDir, "../outside.md")`
+    // resolves outside the memory directory, and a symlinked
+    // directory within memoryDir that points outside would tunnel the
+    // textual check.  Both cases are rejected via the realpath-aware
+    // containment guard.
+    if (!(await isInsideDirectoryRealpath(sourcePath, memoryDir))) {
       result.restores.push({
         entry,
         sourcePath,
@@ -285,12 +339,20 @@ export async function runConsolidationUndo(options: {
 export function formatConsolidationUndoResult(result: ConsolidationUndoResult): string {
   const lines: string[] = [];
   lines.push(`consolidate undo ${result.dryRun ? "(dry run) " : ""}→ ${result.targetPath}`);
+  // Emit per-restore details BEFORE the error (PR #637 review, cursor
+  // Medium): the "no sources could be recovered" error is set after
+  // the restore loop ran, so operators need the per-source skip
+  // reasons to diagnose which snapshots were missing / outside
+  // memoryDir / malformed.  Early-bail errors (unloadable target,
+  // target outside memoryDir, no derived_from) run before the loop,
+  // so `result.restores` is empty in those cases and this block is a
+  // no-op.
+  for (const r of result.restores) {
+    lines.push(`  - ${r.entry} → ${r.outcome}${r.detail ? ` (${r.detail})` : ""}`);
+  }
   if (result.error) {
     lines.push(`  ERROR: ${result.error}`);
     return lines.join("\n");
-  }
-  for (const r of result.restores) {
-    lines.push(`  - ${r.entry} → ${r.outcome}${r.detail ? ` (${r.detail})` : ""}`);
   }
   lines.push(
     result.dryRun
