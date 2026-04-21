@@ -4695,7 +4695,7 @@ async function cmdBench(rest: string[]): Promise<void> {
   }
 
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
-  const failures: string[] = [];
+  const failures = new Set<string>();
   for (const benchmarkId of selectedBenchmarks) {
     for (const runtimeProfile of runtimeProfiles) {
       try {
@@ -4710,13 +4710,13 @@ async function cmdBench(rest: string[]): Promise<void> {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         console.error(`  [ERROR] benchmark "${benchmarkId}" failed: ${message}`);
-        failures.push(benchmarkId);
+        failures.add(benchmarkId);
       }
     }
   }
-  if (failures.length > 0) {
-    console.error(`\nFailed benchmarks: ${failures.join(", ")}`);
-    if (failures.length === selectedBenchmarks.length) {
+  if (failures.size > 0) {
+    console.error(`\nFailed benchmarks: ${[...failures].join(", ")}`);
+    if (failures.size === selectedBenchmarks.length) {
       process.exit(1);
     }
   }
