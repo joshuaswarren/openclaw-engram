@@ -2088,6 +2088,29 @@
         ],
         "description": "Taxonomy category IDs eligible for direct-answer routing."
       },
+      "recallCrossNamespaceBudgetEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Cross-namespace query-budget limiter (issue #565). When true, a principal that issues a burst of recalls against namespaces other than their own is throttled once its per-window count crosses the hard limit. Ships disabled."
+      },
+      "recallCrossNamespaceBudgetWindowMs": {
+        "type": "number",
+        "minimum": 1,
+        "default": 60000,
+        "description": "Rolling window in ms over which cross-namespace reads are counted for the per-principal budget."
+      },
+      "recallCrossNamespaceBudgetSoftLimit": {
+        "type": "number",
+        "minimum": 0,
+        "default": 10,
+        "description": "Soft threshold for the cross-namespace budget: calls past this count are flagged but still allowed."
+      },
+      "recallCrossNamespaceBudgetHardLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 30,
+        "description": "Hard threshold for the cross-namespace budget: calls past this count are denied until the window advances."
+      },
       "recallMemoryWorthFilterEnabled": {
         "type": "boolean",
         "default": true,
