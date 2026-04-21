@@ -200,6 +200,8 @@ import { convertMemoriesToRecords } from "./training-export/converter.js";
 import { parseStrictCliDate as parseStrictCliDateShared } from "./training-export/date-parse.js";
 import { getTrainingExportAdapter, listTrainingExportAdapters } from "./training-export/registry.js";
 import { renderRecallExplain, parseRecallExplainFormat } from "./recall-explain-renderer.js";
+import { renderXray } from "./recall-xray-renderer.js";
+import { parseXrayCliOptions } from "./recall-xray-cli.js";
 
 interface CliApi {
   registerCli(
@@ -4008,6 +4010,69 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             snapshot = null;
           }
           console.log(renderRecallExplain(snapshot, format));
+        });
+
+      cmd
+        .command("xray")
+        .description(
+          "Run a recall with X-ray capture and print the unified snapshot (tier + audit + MMR + filters).  Part of #570.",
+        )
+        .argument("<query>", "Query to recall against")
+        .option(
+          "--format <fmt>",
+          "Output format: text (default), markdown, or json",
+          "text",
+        )
+        .option(
+          "--budget <chars>",
+          "Override recall character budget for this call (positive integer)",
+        )
+        .option(
+          "--namespace <ns>",
+          "Namespace to scope the recall to (defaults to configured namespace)",
+        )
+        .option(
+          "--out <path>",
+          "Write the rendered snapshot to a file instead of stdout",
+        )
+        .action(async (...args: unknown[]) => {
+          // Commander passes positional args first, then the options
+          // object as the last argument.  `parseXrayCliOptions` is a
+          // pure helper that throws listed-options errors for invalid
+          // --format / --budget / --namespace / --out values — it's
+          // imported from `recall-xray-cli.ts` so the validation path
+          // can be unit-tested without booting an orchestrator
+          // (CLAUDE.md rules 14 + 51).
+          const parsed = parseXrayCliOptions(
+            args[0],
+            (args[1] ?? {}) as Record<string, unknown>,
+          );
+          // Route the xray capture through `EngramAccessService` so
+          // the CLI shares the same `xrayQueue` mutex that the HTTP
+          // and MCP surfaces use — otherwise the
+          // `clearLastXraySnapshot() → recall() → getLastXraySnapshot()`
+          // sequence races with concurrent callers (e.g., a gateway
+          // agent hitting the same orchestrator) and could swap in
+          // their snapshot mid-flight, or our capture could overwrite
+          // theirs (cursor Medium + codex P1 review on #597).  The
+          // service enforces CLAUDE.md rules 40 (serialized state) and
+          // 47 (no shared mutable state across async boundaries).
+          const xrayService = new EngramAccessService(orchestrator);
+          const response = await xrayService.recallXray({
+            query: parsed.query,
+            ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+            ...(parsed.budget !== undefined ? { budget: parsed.budget } : {}),
+          });
+          const snapshot = response.snapshotFound
+            ? response.snapshot ?? null
+            : null;
+          const rendered = renderXray(snapshot, parsed.format);
+          if (parsed.outPath) {
+            const { writeFile: fsWriteFile } = await import("node:fs/promises");
+            await fsWriteFile(expandTildePath(parsed.outPath), rendered, "utf8");
+          } else {
+            console.log(rendered);
+          }
         });
 
       cmd
