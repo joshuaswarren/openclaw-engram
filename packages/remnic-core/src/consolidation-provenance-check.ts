@@ -383,14 +383,23 @@ export async function runConsolidationProvenanceCheck(options: {
           });
           continue;
         }
+        // Require a regular file at the snapshot path (PR #634
+        // round-8 review, codex P2) — a directory or device node at
+        // that path means the sidecar was corrupted and the snapshot
+        // is effectively missing.
+        let snapshotOk = false;
         try {
-          await access(resolved.snapshotPath, fsConstants.F_OK);
+          const st = await stat(resolved.snapshotPath);
+          snapshotOk = st.isFile();
         } catch {
+          snapshotOk = false;
+        }
+        if (!snapshotOk) {
           report.issues.push({
             memoryPath: memory.path,
             memoryId: fm.id,
             kind: "derived_from_missing_snapshot",
-            detail: `${entry} → ${resolved.snapshotPath} (not found)`,
+            detail: `${entry} → ${resolved.snapshotPath} (not a regular file)`,
           });
         }
       }
