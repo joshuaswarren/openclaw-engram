@@ -262,8 +262,11 @@ export class SmartBuffer {
     try {
       await storage.appendBufferSurpriseEvents([event]);
     } catch (err) {
+      // Same guard as `computeSurpriseSafe`: non-Error rejections must
+      // not crash the telemetry helper, which would defeat the whole
+      // point of isolating the ledger write from the hot path.
       log.debug(
-        `buffer[${params.bufferKey}]: surprise telemetry write failed, continuing: ${(err as Error).message}`,
+        `buffer[${params.bufferKey}]: surprise telemetry write failed, continuing: ${describeError(err)}`,
       );
     }
   }
