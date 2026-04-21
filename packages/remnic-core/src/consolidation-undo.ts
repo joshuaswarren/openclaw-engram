@@ -43,6 +43,7 @@ export interface ConsolidationUndoRestore {
     | "skipped_snapshot_missing"
     | "skipped_malformed_entry"
     | "skipped_outside_memory_dir"
+    | "skipped_non_active_path"
     | "skipped_write_failed"
     | "skipped_blocked_by_other_failures"
     | "skipped_dry_run";
@@ -183,6 +184,29 @@ export async function isInsideDirectoryRealpath(
   return false;
 }
 
+/**
+ * Directories under memoryDir that are NOT active memory locations.
+ * A `derived_from` entry pointing into one of these should not be
+ * counted as "recovered_existing" (PR #637 round-7 review, codex P2).
+ */
+const NON_ACTIVE_PREFIXES = ["archive/", "state/", ".remnic-versions/"];
+
+/**
+ * Check that a relative path (relative to memoryDir) points to an
+ * active memory location rather than an internal/archive directory.
+ * Returns `true` when `pagePath` does NOT start with a known
+ * non-active prefix.
+ */
+export function isActiveMemoryRelativePath(pagePath: string): boolean {
+  const normalized = pagePath.replace(/\\/g, "/");
+  for (const prefix of NON_ACTIVE_PREFIXES) {
+    if (normalized === prefix.slice(0, -1) || normalized.startsWith(prefix)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 async function isRegularFile(p: string): Promise<boolean> {
   try {
     const st = await lstat(p);
@@ -295,6 +319,24 @@ export async function runConsolidationUndo(options: {
           sourcePath,
           outcome: "skipped_outside_memory_dir",
           detail: `resolved path escapes memory directory ${memoryDir}`,
+        },
+      });
+      continue;
+    }
+
+    // Reject source paths inside non-active directories (archive/,
+    // state/, .remnic-versions/).  A crafted or corrupted derived_from
+    // entry like "archive/2024-01-01/x.md:1" would otherwise be counted
+    // as "recovered_existing" even though no active memory was restored
+    // (PR #637 round-7 review, codex P2).
+    if (!isActiveMemoryRelativePath(parsed.pagePath)) {
+      plans.push({
+        kind: "skip",
+        restore: {
+          entry,
+          sourcePath,
+          outcome: "skipped_non_active_path",
+          detail: `source path "${parsed.pagePath}" is inside a non-active directory (archive/state/versions)`,
         },
       });
       continue;

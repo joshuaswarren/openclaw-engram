@@ -23,6 +23,7 @@ import {
   runConsolidationUndo,
   isInsideDirectory,
   isInsideDirectoryRealpath,
+  isActiveMemoryRelativePath,
   formatConsolidationUndoResult,
 } from "../src/consolidation-undo.ts";
 import { symlink } from "node:fs/promises";
@@ -296,6 +297,21 @@ test("isInsideDirectory returns true for descendants and false for traversal att
   assert.equal(isInsideDirectory("/other-root/memory.md", "/memory"), false);
 });
 
+test("isActiveMemoryRelativePath rejects archive/state/version paths and accepts active paths", () => {
+  // Active paths — should return true
+  assert.equal(isActiveMemoryRelativePath("facts/2024-01-01/a.md"), true);
+  assert.equal(isActiveMemoryRelativePath("corrections/2024-01-01/b.md"), true);
+  assert.equal(isActiveMemoryRelativePath("entities/person.md"), true);
+  assert.equal(isActiveMemoryRelativePath("decisions/2024-01-01/c.md"), true);
+
+  // Non-active paths — should return false
+  assert.equal(isActiveMemoryRelativePath("archive/2024-01-01/x.md"), false);
+  assert.equal(isActiveMemoryRelativePath("archive/x.md"), false);
+  assert.equal(isActiveMemoryRelativePath("state/calibration/foo.json"), false);
+  assert.equal(isActiveMemoryRelativePath("state/foo"), false);
+  assert.equal(isActiveMemoryRelativePath(".remnic-versions/facts/2024-01-01/a.md"), false);
+});
+
 test("runConsolidationUndo rejects target paths outside memoryDir (path-traversal guard)", async () => {
   // Regression for PR #637 review (codex P1): pointing the CLI at an
   // external markdown file with memory-like frontmatter must NOT let
@@ -398,6 +414,74 @@ test("runConsolidationUndo refuses to restore sources whose derived_from escapes
     assert.ok(result.error, "no-recovery guard should surface an error");
   } finally {
     await rm(rootDir, { recursive: true, force: true });
+  }
+});
+
+test("runConsolidationUndo skips derived_from entries pointing inside archive/ or state/", async () => {
+  // Regression for PR #637 round-7 review (codex P2): a crafted or
+  // corrupted derived_from entry like "archive/2024-01-01/x.md:1"
+  // resolves inside memoryDir but is NOT an active memory location.
+  // Without the guard the undo counts it as "recovered_existing" and
+  // archives the target, silently dropping the active memory.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-undo-non-active-"));
+  try {
+    const storage = new StorageManager(dir);
+    storage.setVersioningConfig({
+      enabled: true,
+      maxVersionsPerPage: 10,
+      sidecarDir: ".versions",
+    });
+    await storage.ensureDirectories();
+
+    // Create an archive directory with a stale memory file to simulate
+    // a real file at a non-active path.
+    const archiveSub = path.join(dir, "archive", "2026-04-20");
+    await mkdir(archiveSub, { recursive: true });
+    await writeFile(path.join(archiveSub, "stale.md"), "---\nid: stale\ncategory: fact\n---\n\nstale body\n", "utf-8");
+
+    // Hand-build a target memory with derived_from pointing at the
+    // archive path.  writeMemory's validator would reject it, so we
+    // bypass to simulate on-disk corruption.
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+    const targetPath = path.join(factDir, "fact-non-active.md");
+    const raw = [
+      "---",
+      "id: fact-non-active",
+      "category: fact",
+      "created: 2026-04-20T00:00:00.000Z",
+      "updated: 2026-04-20T00:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      'derived_from: ["archive/2026-04-20/stale.md:1"]',
+      "derived_via: merge",
+      "---",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    await writeFile(targetPath, raw, "utf-8");
+
+    const result = await runConsolidationUndo({
+      storage,
+      memoryDir: dir,
+      targetPath,
+      versioning: {
+        enabled: true,
+        maxVersionsPerPage: 10,
+        sidecarDir: ".versions",
+      },
+    });
+
+    assert.equal(result.restores.length, 1);
+    assert.equal(result.restores[0].outcome, "skipped_non_active_path");
+    // Target NOT archived because no active source was recovered.
+    assert.equal(result.targetArchived, false);
+    assert.ok(result.error, "no-recovery guard should surface an error");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
 });
 
