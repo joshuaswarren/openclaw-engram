@@ -22,6 +22,8 @@ import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   judgeFactDurability,
   createVerdictCache,
+  createDeferCountMap,
+  getVerdictKind,
   validateProcedureExtraction,
   type JudgeBatchResult,
   type JudgeCandidate,
@@ -1200,6 +1202,20 @@ export class Orchestrator {
   readonly localLlm: LocalLlmClient;
   readonly fastLlm: LocalLlmClient;
   private readonly judgeVerdictCache: Map<string, JudgeVerdict>;
+  /**
+   * Per-orchestrator defer-counter map (issue #562, PR 2). Tracks how many
+   * times the judge has returned `"defer"` for a given candidate content
+   * hash so the defer cap can be enforced.
+   */
+  private readonly judgeDeferCounts: Map<string, number>;
+  /**
+   * Side-channel: number of facts deferred in the most recent
+   * `persistExtraction` call (issue #562, PR 2). The caller reads this after
+   * `persistExtraction` returns to decide whether to retain buffer turns for
+   * the next extraction pass. Not part of the return signature because many
+   * callers already destructure `persistedIds` by position.
+   */
+  private lastPersistExtractionDeferredCount: number = 0;
   private readonly _fastGatewayLlm: FallbackLlmClient | null;
 
   get fastGatewayLlm(): FallbackLlmClient | null {
@@ -1649,6 +1665,7 @@ export class Orchestrator {
       this.transcript,
     );
     this.judgeVerdictCache = createVerdictCache();
+    this.judgeDeferCounts = createDeferCountMap();
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     // Issue #548: the main local-LLM client is used by extraction,
     // consolidation, and other structured-output tasks that gain
@@ -9791,6 +9808,46 @@ export class Orchestrator {
     } catch (error) {
       postPersistMetaError = error;
     }
+
+    // Buffer retention for defer verdicts (issue #562, PR 2). When the judge
+    // deferred at least one candidate, retain the tail of the current turn
+    // window so the next extraction pass has the surrounding context that
+    // may disambiguate the deferred fact. Non-defer runs clear the slot.
+    //
+    // Gated on:
+    //   - `clearBufferAfterExtraction` — replay / bulk-import paths call
+    //     `runExtraction` with this false and do not operate on live buffer
+    //     state. Writing retention there would create synthetic buffer
+    //     entries and cross-contaminate future live extractions.
+    //   - NOT `extractionJudgeShadow` — in shadow mode the judge is only
+    //     advisory; facts are still persisted regardless of verdict, so
+    //     retaining the turn window on top of a persisted write would both
+    //     waste buffer space and cause the same facts to re-enter the
+    //     pipeline on the next pass.
+    try {
+      if (
+        clearBufferAfterExtraction &&
+        !this.config.extractionJudgeShadow
+      ) {
+        const deferredCount = this.lastPersistExtractionDeferredCount;
+        if (deferredCount > 0 && normalizedTurns.length > 0) {
+          await this.buffer.retainDeferredTurns(
+            bufferKey,
+            normalizedTurns as BufferTurn[],
+            10,
+          );
+        } else {
+          await this.buffer.retainDeferredTurns(bufferKey, [], 0);
+        }
+      }
+    } catch (err) {
+      // Fail-open: retention is a nice-to-have. If it fails the judge will
+      // still cap deferrals and convert to reject on the next pass.
+      log.debug(
+        `extraction-judge: defer retention failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     await clearBuffer({ ignoreAbort: true });
 
     // Build memory box from this extraction (v8.0 Phase 2A)
@@ -10734,6 +10791,10 @@ export class Orchestrator {
     // be persisted, not the raw extraction-time category.
     let judgeVerdictsByFactIndex: Map<number, import("./extraction-judge.js").JudgeVerdict> | null = null;
     let judgeGatedCount = 0;
+    // Reset the side-channel defer count at the start of every
+    // persistExtraction call so stale state from a prior call cannot leak
+    // into the caller's buffer-retention decision.
+    this.lastPersistExtractionDeferredCount = 0;
     if (this.config.extractionJudgeEnabled) {
       try {
         const judgeCandidates: JudgeCandidate[] = [];
@@ -10790,6 +10851,7 @@ export class Orchestrator {
           this.localLlm,
           new FallbackLlmClient(this.config.gatewayConfig),
           this.judgeVerdictCache,
+          this.judgeDeferCounts,
         );
         // Remap candidate-indexed verdicts to original fact indexes
         judgeVerdictsByFactIndex = new Map();
@@ -10801,8 +10863,16 @@ export class Orchestrator {
         }
         log.info(
           `extraction-judge: ${judgeResult.verdicts.size}/${judgeCandidates.length} facts evaluated, ` +
-            `${judgeResult.cached} cached, ${judgeResult.judged} judged, ${judgeResult.elapsed}ms`,
+            `${judgeResult.cached} cached, ${judgeResult.judged} judged, ` +
+            `${judgeResult.deferred} deferred` +
+            (judgeResult.deferredCappedToReject > 0
+              ? ` (${judgeResult.deferredCappedToReject} cap-rejected)`
+              : "") +
+            `, ${judgeResult.elapsed}ms`,
         );
+        // Expose defer count to the caller (issue #562 PR 2) so it can decide
+        // whether to retain buffer turns for the next extraction pass.
+        this.lastPersistExtractionDeferredCount = judgeResult.deferred;
       } catch (err) {
         // Fail-open: if the entire judge pipeline errors, proceed without filtering
         log.warn(
@@ -10934,17 +11004,30 @@ export class Orchestrator {
         continue;
       }
 
-      // Extraction judge gate (issue #376). After the local importance gate
-      // passes, consult the judge verdict (computed before the loop). In
-      // active mode, non-durable facts are dropped. In shadow mode, verdicts
-      // are logged but all facts proceed to write.
+      // Extraction judge gate (issue #376 + #562 PR 2). After the local
+      // importance gate passes, consult the judge verdict (computed before
+      // the loop). In active mode, non-durable facts are dropped. In shadow
+      // mode, verdicts are logged but all facts proceed to write.
+      //
+      // Defer verdicts (issue #562): do not persist now, but also do not
+      // cache the outcome so the candidate is re-evaluated on a later
+      // extraction pass. The judge module tracks how many times the same
+      // content has been deferred and converts to reject at the configured
+      // cap, so the orchestrator only needs to skip the write here.
       if (judgeVerdictsByFactIndex) {
         const verdict = judgeVerdictsByFactIndex.get(factLoopIndex);
         if (verdict && !verdict.durable) {
+          const verdictKind = getVerdictKind(verdict);
           if (this.config.extractionJudgeShadow) {
             log.info(
-              `extraction-judge[shadow]: would reject "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
+              `extraction-judge[shadow]: would ${verdictKind} "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
             );
+          } else if (verdictKind === "defer") {
+            judgeGatedCount++;
+            log.debug(
+              `extraction-judge: deferred "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
+            );
+            continue;
           } else {
             judgeGatedCount++;
             log.debug(

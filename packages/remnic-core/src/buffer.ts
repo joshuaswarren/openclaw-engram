@@ -310,7 +310,77 @@ export class SmartBuffer {
   getTurns(bufferKey = "default"): BufferTurn[] {
     const entry = this.peekEntry(bufferKey);
     if (!entry) return [];
-    return [...entry.turns];
+    const retained = entry.retainedTurns ?? [];
+    // Retained turns (from a previous defer verdict, issue #562 PR 2) are
+    // prepended so the chronological order — oldest context first — is
+    // preserved for the next extraction pass.
+    return [...retained, ...entry.turns];
+  }
+
+  /**
+   * Retain a subset of the current turns across `clearAfterExtraction` so a
+   * future extraction pass sees the context behind a deferred candidate
+   * (issue #562, PR 2). Callers pass the turns that were seen during the
+   * current extraction; the buffer keeps the tail (latest `max` turns) as
+   * the retention window. Passing an empty array or `max <= 0` clears the
+   * retention slot instead.
+   */
+  async retainDeferredTurns(
+    bufferKey: string,
+    turns: BufferTurn[],
+    max = 10,
+  ): Promise<void> {
+    await this.load();
+    const entry = this.entryFor(bufferKey);
+    if (!Array.isArray(turns) || turns.length === 0 || max <= 0) {
+      delete entry.retainedTurns;
+    } else {
+      // Guard `slice(-max)` against `max === 0` (CLAUDE.md gotcha 27):
+      // `slice(-0)` equals `slice(0)` and would return ALL entries. We
+      // already early-return above when max <= 0.
+      const tail = turns.slice(-max);
+      // Copy explicit fields only — never spread an external object into a
+      // plain object because spread preserves any own `__proto__` /
+      // `constructor` keys that may have arrived via JSON deserialization
+      // of untrusted input (CodeQL js/prototype-polluting-assignment).
+      entry.retainedTurns = tail.map<BufferTurn>((t) => {
+        const copy: BufferTurn = {
+          role: t.role,
+          content: typeof t.content === "string" ? t.content : "",
+          timestamp:
+            typeof t.timestamp === "string"
+              ? t.timestamp
+              : new Date().toISOString(),
+        };
+        if (typeof t.sessionKey === "string") copy.sessionKey = t.sessionKey;
+        if (typeof t.logicalSessionKey === "string") {
+          copy.logicalSessionKey = t.logicalSessionKey;
+        }
+        if (
+          t.providerThreadId === null ||
+          typeof t.providerThreadId === "string"
+        ) {
+          copy.providerThreadId = t.providerThreadId;
+        }
+        if (typeof t.turnFingerprint === "string") {
+          copy.turnFingerprint = t.turnFingerprint;
+        }
+        if (typeof t.persistProcessedFingerprint === "boolean") {
+          copy.persistProcessedFingerprint = t.persistProcessedFingerprint;
+        }
+        return copy;
+      });
+    }
+    await this.save();
+  }
+
+  /**
+   * Return the current retention window (issue #562, PR 2). Primarily for
+   * tests and diagnostics.
+   */
+  getRetainedDeferredTurns(bufferKey = "default"): BufferTurn[] {
+    const entry = this.peekEntry(bufferKey);
+    return entry?.retainedTurns ? [...entry.retainedTurns] : [];
   }
 
   async findBufferKeyForSession(sessionKey: string): Promise<string | null> {
