@@ -43,6 +43,7 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "assistant-next-best-action",
       "assistant-synthesis",
       "buffer-surprise-trigger",
+      "contradiction-detection",
     ],
   );
   assert.deepEqual(
@@ -79,11 +80,12 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "remnic",
       "remnic",
       "remnic",
+      "remnic",
     ],
   );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,retrieval-temporal,retrieval-direct-answer,retrieval-graph,retrieval-reasoning-trace,coding-recall,procedural-recall,ingestion-entity-recall,ingestion-backlink-f1,ingestion-setup-friction,assistant-morning-brief,assistant-meeting-prep,assistant-next-best-action,assistant-synthesis,buffer-surprise-trigger",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,retrieval-temporal,retrieval-direct-answer,retrieval-graph,retrieval-reasoning-trace,coding-recall,procedural-recall,ingestion-entity-recall,ingestion-backlink-f1,ingestion-setup-friction,assistant-morning-brief,assistant-meeting-prep,assistant-next-best-action,assistant-synthesis,buffer-surprise-trigger,contradiction-detection",
   );
   // Schema completeness and citation accuracy remain gated off until their adapter contracts are wired.
   // Setup friction was wired up in PR #498 and is now runner-available.

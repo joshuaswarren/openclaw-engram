@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Contradiction-detection bench scenario** (issue #647). Synthetic
+  benchmark at `packages/bench/src/benchmarks/remnic/contradiction-detection/`
+  with 4 fixture classes (true-contradiction, near-paraphrase,
+  independent-similar, independent-dissimilar). Reports per-verdict
+  precision, recall, F1, and overall accuracy. Deterministic — no LLM
+  calls.
 - **Memory importers for ChatGPT, Claude, Gemini, Mem0** (issue #568).
   Ship as optional peer-dep packages: `@remnic/import-chatgpt`,
   `@remnic/import-claude`, `@remnic/import-gemini`, `@remnic/import-mem0`.

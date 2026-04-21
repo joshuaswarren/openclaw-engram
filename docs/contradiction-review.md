@@ -18,7 +18,7 @@ The contradiction scan closes this gap by:
 ```json
 {
   "contradictionScan": {
-    "enabled": true,
+    "enabled": false,
     "similarityFloor": 0.82,
     "topicOverlapFloor": 0.4,
     "maxPairsPerRun": 500,
@@ -30,7 +30,7 @@ The contradiction scan closes this gap by:
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `enabled` | `true` | Master switch for the nightly cron. Set `false` to disable. |
+| `enabled` | `false` | Master switch for the nightly cron. Operators must explicitly set `true` to enable (least-privileged default per rule 48). |
 | `similarityFloor` | `0.82` | Embedding cosine similarity threshold for candidate pair generation |
 | `topicOverlapFloor` | `0.4` | Minimum Jaccard overlap of topic tokens for unstructured pairs |
 | `maxPairsPerRun` | `500` | Cap on pairs evaluated per cron run |
