@@ -1545,8 +1545,11 @@ export function parseConfig(raw: unknown): PluginConfig {
         : 2,
     // Judge telemetry (issue #562 PR 3): opt-in structured emit to the
     // observation ledger for defer-rate / latency metrics.
+    // Uses `coerceBool` so CLI-style string inputs (`"true"`, `"false"`,
+    // `"1"`, `"0"`) are accepted consistently with the rest of the
+    // codebase (CLAUDE.md gotcha 36).
     extractionJudgeTelemetryEnabled:
-      cfg.extractionJudgeTelemetryEnabled === true,
+      coerceBool(cfg.extractionJudgeTelemetryEnabled) === true,
     // Inline source attribution (issue #369). Opt-in to preserve
     // backwards compatibility with existing downstream consumers.
     inlineSourceAttributionEnabled: cfg.inlineSourceAttributionEnabled === true,
