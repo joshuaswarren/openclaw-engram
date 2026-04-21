@@ -37,9 +37,11 @@ import { sidecarKey } from "./page-versioning.js";
  */
 // Allow empty capture groups so truncated/blank `derived_via:` and
 // `derived_from:` lines (key present, no value) are distinguishable
-// from "key missing entirely" (regex returns null).
-const DERIVED_VIA_RAW_RE = /^derived_via:[\t ]*(.*)$/mu;
-const DERIVED_FROM_RAW_RE = /^derived_from:[\t ]*(.*)$/mu;
+// from "key missing entirely" (regex returns null).  Optional
+// leading whitespace accepts indented keys which `parseFrontmatter`
+// also accepts (PR #634 round-6 review, codex P2).
+const DERIVED_VIA_RAW_RE = /^[\t ]*derived_via:[\t ]*(.*)$/mu;
+const DERIVED_FROM_RAW_RE = /^[\t ]*derived_from:[\t ]*(.*)$/mu;
 
 /**
  * Tokenize a YAML-block-style list under `key:` in the given
