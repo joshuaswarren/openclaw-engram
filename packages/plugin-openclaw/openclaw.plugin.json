@@ -2329,6 +2329,11 @@
         "minimum": 1,
         "description": "Maximum number of times the same candidate text may be deferred by the extraction judge before the verdict is forcibly converted to 'reject'. Prevents pathological LLM responses from looping forever on ambiguous facts (issue #562)."
       },
+      "extractionJudgeTelemetryEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Emit structured telemetry rows to state/observation-ledger/extraction-judge-verdicts.jsonl on every judge verdict. Off by default; enable to collect defer-rate and latency metrics for operator dashboards (issue #562)."
+      },
       "inlineSourceAttributionEnabled": {
         "type": "boolean",
         "default": false,
