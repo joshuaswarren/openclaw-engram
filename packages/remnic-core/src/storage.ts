@@ -3946,10 +3946,18 @@ export class StorageManager {
   }
 
   /**
-   * Read the buffer-surprise ledger, most recent rows last. `limit` bounds
-   * the number of rows parsed from the tail of the file — reports typically
-   * need a recent window rather than the entire history. Malformed rows
-   * are skipped silently (same policy as other ledger readers).
+   * Read the buffer-surprise ledger, most recent rows last.
+   *
+   * `limit` bounds the number of **valid rows** returned (not the
+   * number of raw lines parsed). We parse every row, discard malformed
+   * ones, then take the tail — so a partial/truncated trailing line
+   * (the common failure mode after an interrupted append) cannot hide
+   * otherwise-valid recent data above it.
+   *
+   * Non-positive / non-integer / non-finite limits return `[]` rather
+   * than the entire file, matching the other ledger readers in this
+   * class and protecting against `slice(-0.5)` → `slice(-0)` silently
+   * devolving into an unbounded parse.
    */
   async readBufferSurpriseEvents(
     options: { limit?: number } = {},
@@ -3962,17 +3970,33 @@ export class StorageManager {
       if (code === "ENOENT") return [];
       throw err;
     }
-    const lines = raw.split("\n").filter((line) => line.trim().length > 0);
-    // Take from the tail when a limit is supplied — the Doctor surface
-    // wants a recent-window summary, not the full history.
-    const slice =
-      typeof options.limit === "number" && options.limit > 0
-        ? lines.slice(-options.limit)
-        : lines;
+
+    // Resolve the effective limit up front. Any non-finite / non-positive
+    // value returns no rows — callers who want "everything" can pass
+    // Number.POSITIVE_INFINITY or simply omit the key (treated as "no
+    // bound" below). Fractional values <1 floor to 0, which would make
+    // `slice(-0)` return the entire file — guard against that too.
+    let effectiveLimit: number | null = null;
+    if (options.limit !== undefined) {
+      if (
+        typeof options.limit !== "number" ||
+        !Number.isFinite(options.limit) ||
+        options.limit <= 0
+      ) {
+        return [];
+      }
+      const floored = Math.floor(options.limit);
+      if (floored <= 0) return [];
+      effectiveLimit = floored;
+    }
+
+    const lines = raw.split("\n");
     const events: BufferSurpriseEvent[] = [];
-    for (const line of slice) {
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
       try {
-        const parsed = JSON.parse(line) as Partial<BufferSurpriseEvent>;
+        const parsed = JSON.parse(trimmed) as Partial<BufferSurpriseEvent>;
         if (
           parsed &&
           typeof parsed === "object" &&
@@ -3985,7 +4009,11 @@ export class StorageManager {
         // Malformed row — fail open, skip.
       }
     }
-    return events;
+
+    if (effectiveLimit === null) return events;
+    // Slice over VALID rows, not raw lines, so malformed tails cannot
+    // mask good data above them.
+    return events.slice(-effectiveLimit);
   }
 
   async appendBehaviorSignals(events: BehaviorSignalEvent[]): Promise<number> {

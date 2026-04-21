@@ -202,15 +202,22 @@ export class SmartBuffer {
         }
         // Emit telemetry on every scored turn — both triggering and
         // non-triggering — so operators can fit the threshold to real
-        // traffic distributions. Fire-and-forget: if the ledger write
-        // throws, we must not crash the hot path.
-        await this.emitSurpriseEventSafe({
-          bufferKey,
-          turn,
-          surpriseScore: surprise,
-          triggered,
-          turnCountInWindow: entry.turns.length,
-        });
+        // traffic distributions. True fire-and-forget: we do NOT await
+        // the ledger append. A slow or contended filesystem would
+        // otherwise add JSONL-append latency to every `processTurn`,
+        // which defeats the purpose of keeping the telemetry path
+        // cheap. The helper already swallows its own rejections, so
+        // there is no unhandled-rejection risk from dropping the
+        // promise; we attach a `.catch` as a belt-and-braces guard.
+        void this
+          .emitSurpriseEventSafe({
+            bufferKey,
+            turn,
+            surpriseScore: surprise,
+            triggered,
+            turnCountInWindow: entry.turns.length,
+          })
+          .catch(() => {});
       }
     }
 

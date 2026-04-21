@@ -91,6 +91,12 @@ export async function reportBufferSurpriseDistribution(
     if (typeof row.surpriseScore !== "number") return false;
     if (!Number.isFinite(row.surpriseScore)) return false;
     if (row.surpriseScore < 0 || row.surpriseScore > 1) return false;
+    // `triggeredFlush` must be a real boolean — not a string or other
+    // truthy value. A row with `triggeredFlush: "false"` (string from a
+    // JSON-parsing bug upstream) would otherwise be counted as
+    // triggered, inflating the rate and misleading operators tuning the
+    // threshold from real traffic.
+    if (typeof row.triggeredFlush !== "boolean") return false;
     if (Number.isFinite(sinceMs)) {
       const ts = Date.parse(row.timestamp);
       if (!Number.isFinite(ts) || ts <= sinceMs) return false;

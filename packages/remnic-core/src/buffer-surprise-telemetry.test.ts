@@ -241,6 +241,80 @@ test("works with legacy StorageManager lacking appendBufferSurpriseEvents", asyn
 });
 
 // ---------------------------------------------------------------------------
+// StorageManager read-ledger behavior
+// ---------------------------------------------------------------------------
+
+test("StorageManager.readBufferSurpriseEvents: limit over valid rows, not raw lines", async () => {
+  // A malformed tail row must not hide valid data above it when
+  // `limit: 1` is requested. Simulate an interrupted append by writing
+  // a valid row then a partial one, ask for limit=1, and expect the
+  // valid row back.
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { StorageManager } = await import("./storage.js");
+
+  const dir = mkdtempSync(join(tmpdir(), "remnic-buffer-surprise-"));
+  const stateDir = join(dir, "state");
+  const { mkdirSync } = await import("node:fs");
+  mkdirSync(stateDir, { recursive: true });
+  const ledgerPath = join(stateDir, "buffer-surprise-ledger.jsonl");
+  const valid =
+    JSON.stringify({
+      event: "BUFFER_SURPRISE",
+      timestamp: "2026-04-20T12:00:00.000Z",
+      bufferKey: "a",
+      sessionKey: "a",
+      turnRole: "user",
+      surpriseScore: 0.5,
+      threshold: 0.35,
+      triggeredFlush: true,
+      turnCountInWindow: 1,
+    }) + "\n";
+  const truncated = '{"event":"BUFFER_SURPRISE","timestam'; // no newline, broken JSON
+  writeFileSync(ledgerPath, valid + truncated);
+
+  const storage = new StorageManager(dir);
+  const rows = await storage.readBufferSurpriseEvents({ limit: 1 });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0]!.surpriseScore, 0.5);
+});
+
+test("StorageManager.readBufferSurpriseEvents: non-positive limit returns empty", async () => {
+  const { mkdtempSync, writeFileSync, mkdirSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { StorageManager } = await import("./storage.js");
+
+  const dir = mkdtempSync(join(tmpdir(), "remnic-buffer-surprise-lim-"));
+  const stateDir = join(dir, "state");
+  mkdirSync(stateDir, { recursive: true });
+  const ledgerPath = join(stateDir, "buffer-surprise-ledger.jsonl");
+  writeFileSync(
+    ledgerPath,
+    JSON.stringify({
+      event: "BUFFER_SURPRISE",
+      timestamp: "2026-04-20T12:00:00.000Z",
+      bufferKey: "a",
+      sessionKey: "a",
+      turnRole: "user",
+      surpriseScore: 0.5,
+      threshold: 0.35,
+      triggeredFlush: true,
+      turnCountInWindow: 1,
+    }) + "\n",
+  );
+  const storage = new StorageManager(dir);
+
+  // 0, negative, fractional < 1 all return empty rather than silently
+  // devolving into "entire file".
+  for (const limit of [0, -1, 0.5]) {
+    const rows = await storage.readBufferSurpriseEvents({ limit });
+    assert.equal(rows.length, 0, `limit=${limit} should return empty`);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // reportBufferSurpriseDistribution
 // ---------------------------------------------------------------------------
 
@@ -357,4 +431,39 @@ test("report: single-row ledger reports that row in every percentile", async () 
   assert.equal(dist.p90, 0.42);
   assert.equal(dist.mean, 0.42);
   assert.equal(dist.triggeredRate, 1);
+});
+
+test("report: non-boolean triggeredFlush is rejected, not coerced", async () => {
+  // A row with `triggeredFlush: "false"` (string) is truthy in
+  // JavaScript. Without strict type-checking, it would be counted as
+  // triggered and silently inflate the rate reported to operators.
+  const rows: any[] = [
+    syntheticRow(0.5, false),
+    {
+      event: "BUFFER_SURPRISE",
+      timestamp: "2026-04-20T12:00:00.000Z",
+      bufferKey: "x",
+      sessionKey: "x",
+      turnRole: "user",
+      surpriseScore: 0.9,
+      threshold: 0.35,
+      triggeredFlush: "false",
+      turnCountInWindow: 1,
+    },
+    {
+      event: "BUFFER_SURPRISE",
+      timestamp: "2026-04-20T12:00:00.000Z",
+      bufferKey: "x",
+      sessionKey: "x",
+      turnRole: "user",
+      surpriseScore: 0.8,
+      threshold: 0.35,
+      triggeredFlush: 1,
+      turnCountInWindow: 1,
+    },
+  ];
+  const dist = await reportBufferSurpriseDistribution(async () => rows);
+  assert.equal(dist.count, 1);
+  assert.equal(dist.triggeredCount, 0);
+  assert.equal(dist.triggeredRate, 0);
 });
