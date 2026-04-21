@@ -50,6 +50,20 @@ test("memory-worth bench: result object shape is stable", () => {
   ]);
 });
 
+test("memory-worth bench: rejects non-positive-integer case counts", () => {
+  // Codex P2: 0 would divide by zero and return NaN; fractional inputs
+  // inflate the average. Both would produce misleading default-flip
+  // justification — fail loudly instead.
+  assert.throws(() => runMemoryWorthBench({ cases: 0 }), /positive integer/);
+  assert.throws(() => runMemoryWorthBench({ cases: -5 }), /positive integer/);
+  assert.throws(() => runMemoryWorthBench({ cases: 2.5 }), /positive integer/);
+  assert.throws(() => runMemoryWorthBench({ cases: Number.NaN }), /positive integer/);
+  assert.throws(
+    () => runMemoryWorthBench({ cases: Number.POSITIVE_INFINITY }),
+    /positive integer/,
+  );
+});
+
 test("memory-worth bench: deterministic under fixed seed", () => {
   const a = runMemoryWorthBench({ cases: 20, seed: 42 });
   const b = runMemoryWorthBench({ cases: 20, seed: 42 });

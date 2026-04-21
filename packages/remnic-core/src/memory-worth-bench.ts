@@ -158,7 +158,23 @@ export function runMemoryWorthBench(options?: {
   seed?: number;
   now?: Date;
 }): MemoryWorthBenchResult {
-  const numCases = options?.cases ?? 50;
+  const requestedCases = options?.cases ?? 50;
+  // Reject non-positive-integer case counts. Passing 0 would divide by zero
+  // and produce a NaN precision that the `filterWinsOrTies` boolean would
+  // still mark as `true` — dangerously misleading since this result is used
+  // to justify the default flip. Fractional values would inflate precision
+  // because the loop rounds up (Array.from ceil) but the average divides
+  // by the fractional input.
+  if (
+    !Number.isFinite(requestedCases) ||
+    !Number.isInteger(requestedCases) ||
+    requestedCases < 1
+  ) {
+    throw new Error(
+      `runMemoryWorthBench: cases must be a positive integer; got ${requestedCases}`,
+    );
+  }
+  const numCases = requestedCases;
   const rng = mulberry32(options?.seed ?? 0xdeadbeef);
   const now = options?.now ?? new Date("2026-01-01T00:00:00.000Z");
 
