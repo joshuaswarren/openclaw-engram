@@ -112,13 +112,32 @@ export interface ApplyReasoningTraceBoostOptions {
 
 /**
  * Apply a score boost to results whose path sits under reasoning-traces/
- * when the query looks like a problem-solving ask. Returns a new array
- * re-sorted by descending score; the input array is not mutated.
+ * when the query looks like a problem-solving ask. Returns a new array;
+ * the input array is not mutated.
  *
- * No-ops (returns the input unchanged) when:
+ * Ordering policy: the helper walks the results in order, boosts every
+ * matching reasoning trace in place, then promotes each boosted trace
+ * upward PAST any non-boosted neighbor whose score is strictly lower
+ * than the trace's boosted score. Non-matching results keep their
+ * incoming relative order — so reranker-driven path ordering and any
+ * other upstream nudges on non-trace items are preserved. We do NOT
+ * re-sort the full list, which would wipe out rerank priority on
+ * non-trace items (whose numeric scores may have been left stale by the
+ * rerank pass). This matters because MMR runs immediately after and
+ * truncates to a topN window — globally re-sorting would silently drop
+ * reranker-promoted items below the cutoff.
+ *
+ * No-ops (returns a copy of the input unchanged) when:
  *  - `enabled` is false,
  *  - `query` is empty / not a problem-solving ask,
  *  - the result list contains no reasoning-trace paths.
+ *
+ * Note on legacy paths: this helper intentionally only matches paths
+ * under the dedicated `reasoning-traces/` subtree introduced by PR 3.
+ * Historical reasoning_trace memories (if any) written before that
+ * subtree existed were routed to `facts/<date>/` and are NOT
+ * boost-eligible. Operators upgrading across that boundary should run
+ * the migration CLI or rewrite old paths before enabling the boost.
  */
 export function applyReasoningTraceBoost<R extends BoostableResult>(
   results: readonly R[],
@@ -133,28 +152,42 @@ export function applyReasoningTraceBoost<R extends BoostableResult>(
       ? options.boost
       : DEFAULT_REASONING_TRACE_BOOST;
 
+  // Step 1: boost the scores of matching traces, preserving positions.
+  const boosted: R[] = [];
   let changed = false;
-  const annotated = results.map((r, originalIndex) => {
+  for (const r of results) {
     if (isReasoningTracePath(r.path)) {
       changed = true;
       const baseScore = typeof r.score === "number" && Number.isFinite(r.score) ? r.score : 0;
-      return {
-        result: { ...r, score: baseScore + boostAmount } as R,
-        originalIndex,
-      };
+      boosted.push({ ...r, score: baseScore + boostAmount } as R);
+    } else {
+      boosted.push(r);
     }
-    return { result: r, originalIndex };
-  });
+  }
+  if (!changed) return boosted;
 
-  if (!changed) return [...results];
+  // Step 2: promote each boosted trace upward past any non-trace neighbor
+  // whose score is strictly lower than the boosted score. Non-trace items
+  // never move past each other, so reranker-driven ordering on non-trace
+  // items is preserved.
+  const out = boosted.slice();
+  for (let i = 0; i < out.length; i++) {
+    if (!isReasoningTracePath(out[i].path)) continue;
+    const trace = out[i];
+    const traceScore =
+      typeof trace.score === "number" && Number.isFinite(trace.score) ? trace.score : 0;
+    let j = i;
+    while (j > 0) {
+      const prev = out[j - 1];
+      if (isReasoningTracePath(prev.path)) break; // don't reorder traces vs each other
+      const prevScore =
+        typeof prev.score === "number" && Number.isFinite(prev.score) ? prev.score : 0;
+      if (prevScore >= traceScore) break;
+      out[j] = prev;
+      j -= 1;
+    }
+    if (j !== i) out[j] = trace;
+  }
 
-  annotated.sort((a, b) => {
-    const as = typeof a.result.score === "number" ? a.result.score : 0;
-    const bs = typeof b.result.score === "number" ? b.result.score : 0;
-    if (bs !== as) return bs - as;
-    // Stable tie-break: original order.
-    return a.originalIndex - b.originalIndex;
-  });
-
-  return annotated.map((a) => a.result);
+  return out;
 }

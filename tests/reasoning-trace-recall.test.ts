@@ -116,30 +116,65 @@ describe("applyReasoningTraceBoost", () => {
     );
   });
 
-  it("re-sorts traces to the top on a matching query", () => {
+  it("promotes traces past lower-scored neighbors without re-sorting the full list", () => {
+    // Lower-boost case: default 0.15 boost bumps b to 0.75 and d to 0.65,
+    // but fact-a (0.9) and fact-c (0.8) both still outscore them, so the
+    // order shouldn't change — critically, we do NOT globally re-sort
+    // (which would move b ahead of c by pure score). Non-trace items keep
+    // their incoming relative order so reranker-driven ordering survives.
     const out = applyReasoningTraceBoost(fixture, {
       enabled: true,
       query: "how do I debug the latency spike?",
     });
-    // With default boost 0.15, b: 0.6+0.15=0.75, d: 0.5+0.15=0.65
-    // Expected order: a(0.9) > b(0.75) > c(0.8) → actually a(0.9) > c(0.8) > b(0.75) > d(0.65)
-    // Wait: a=0.9, c=0.8, b=0.75, d=0.65
     assert.deepEqual(
       out.map((r) => r.docid),
-      ["a", "c", "b", "d"],
+      ["a", "b", "c", "d"],
     );
     const b = out.find((r) => r.docid === "b");
     assert.equal(b?.score, 0.6 + DEFAULT_REASONING_TRACE_BOOST);
   });
 
-  it("honors a custom boost amount", () => {
+  it("honors a custom boost amount and promotes traces past lower-scored facts", () => {
     const out = applyReasoningTraceBoost(fixture, {
       enabled: true,
       query: "walk me through the debug",
-      boost: 1.0, // enormous — pushes traces to the top
+      boost: 1.0, // enormous — trace scores beat every fact
     });
-    assert.equal(out[0].docid, "b");
-    assert.equal(out[1].docid, "d");
+    // b (trace, 0.6+1.0=1.6) promotes past a (0.9). d (trace, 0.5+1.0=1.5)
+    // promotes past c (0.8). Trace-vs-trace order preserved (b before d
+    // since it appeared earlier in the input).
+    assert.deepEqual(
+      out.map((r) => r.docid),
+      ["b", "d", "a", "c"],
+    );
+  });
+
+  it("preserves rerank order on non-trace items when traces move up", () => {
+    // Input simulates a reranker output: fact-a has stale low score but
+    // higher position, fact-b has a higher numeric score but lower
+    // position (classic rerank-rewrites-order-not-scores shape). The
+    // boost must promote the trace past fact-b (whose score is lower
+    // than the boosted trace) without globally re-sorting, so the
+    // reranker-preferred order [fact-a, fact-b] is kept.
+    const rerankShape = [
+      { docid: "fact-a-reranked", path: "facts/a.md", score: 0.40 },
+      { docid: "fact-b-lower-rank", path: "facts/b.md", score: 0.60 },
+      { docid: "the-trace", path: "reasoning-traces/t.md", score: 0.50 },
+    ];
+    const out = applyReasoningTraceBoost(rerankShape, {
+      enabled: true,
+      query: "how do I debug",
+    });
+    // trace: 0.50+0.15=0.65. Walk back: prev=fact-b-lower-rank(0.60)
+    // which is strictly less than 0.65 → promote past. prev=fact-a
+    // -reranked(0.40) which is also strictly less → promote past. Final
+    // order puts trace first. Critically, fact-a-reranked stays ahead
+    // of fact-b-lower-rank (the reranker's intended order) rather than
+    // being re-sorted by score.
+    assert.deepEqual(
+      out.map((r) => r.docid),
+      ["the-trace", "fact-a-reranked", "fact-b-lower-rank"],
+    );
   });
 
   it("preserves stable tie-break on equal scores", () => {
