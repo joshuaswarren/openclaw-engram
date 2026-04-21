@@ -81,6 +81,11 @@ import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
 import type { SemanticDedupLookup } from "./dedup/semantic.js";
 import { toRecallExplainJson } from "./recall-explain-renderer.js";
+import {
+  recordMemoryOutcome,
+  type MemoryOutcomeKind,
+  type RecordMemoryOutcomeResult,
+} from "./memory-worth-outcomes.js";
 
 export class EngramAccessInputError extends Error {}
 
@@ -2963,6 +2968,46 @@ export class EngramAccessService {
       request.note,
     );
     return { recorded: true };
+  }
+
+  /**
+   * Record a Memory Worth outcome observation (issue #560 PR 3).
+   *
+   * This is distinct from `memoryFeedback` — feedback is a human thumbs
+   * up/down on whether a recalled memory was relevant; outcome is an
+   * automated signal about whether the session that consumed the memory
+   * ultimately succeeded or failed. Outcomes feed the Laplace-smoothed
+   * worth score (`computeMemoryWorth`, PR 2) that PR 4 will use to
+   * downweight memories correlated with bad sessions.
+   *
+   * The underlying writer only touches fact-category memories. Corrections,
+   * procedures, and other kinds return `{ ok: false, reason:
+   * "ineligible_category" }` so a ledger drainer doesn't need to pre-filter.
+   */
+  async memoryOutcome(request: {
+    memoryId: string;
+    outcome: MemoryOutcomeKind;
+    namespace?: string;
+    principal?: string;
+    sessionKey?: string;
+    timestamp?: string;
+  }): Promise<RecordMemoryOutcomeResult> {
+    const resolvedNs = this.resolveWritableNamespace(
+      request.namespace,
+      request.sessionKey,
+      request.principal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    // We only have the ID at the access surface, but `recordMemoryOutcome`
+    // accepts a path for the benefit of ledger-driven callers that already
+    // have the path in hand. Build the conventional `<id>.md` shape —
+    // `memoryIdFromPath` extracts the basename so the intermediate
+    // directory layout doesn't matter.
+    return recordMemoryOutcome(storage, {
+      memoryPath: `${request.memoryId}.md`,
+      outcome: request.outcome,
+      timestamp: request.timestamp,
+    });
   }
 
   async memoryPromote(request: {

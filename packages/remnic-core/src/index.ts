@@ -693,6 +693,18 @@ export {
 } from "./memory-worth.js";
 
 // ---------------------------------------------------------------------------
+// Memory Worth outcome pipeline (issue #560 PR 3 of 5)
+// ---------------------------------------------------------------------------
+
+export {
+  recordMemoryOutcome,
+  memoryWorthOutcomeEligibleCategories,
+  type MemoryOutcomeKind,
+  type RecordMemoryOutcomeInput,
+  type RecordMemoryOutcomeResult,
+} from "./memory-worth-outcomes.js";
+
+// ---------------------------------------------------------------------------
 // Graph retrieval types (issue #559, PR 1 of 5)
 // ---------------------------------------------------------------------------
 
