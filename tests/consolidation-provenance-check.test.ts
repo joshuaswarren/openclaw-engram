@@ -445,3 +445,54 @@ test("runConsolidationProvenanceCheck flags blank derived_via key (truncated fro
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("runConsolidationProvenanceCheck uses last derived_via when key appears multiple times", async () => {
+  // Regression for PR #634 review (codex P2): when `derived_via` appears
+  // multiple times in the raw YAML, `parseFrontmatter` keeps the last
+  // one.  The doctor must read the last occurrence (not the first) so
+  // that integrity warnings match the value the storage reader actually
+  // uses.  A file with `derived_via: merge` then `derived_via: annihilate`
+  // should flag "annihilate" (the effective value) as unknown, not report
+  // clean based on the first "merge" occurrence.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-dup-via-"));
+  try {
+    const storage = await seedStorage(dir);
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+    const id = "fact-dup-via";
+    const filePath = path.join(factDir, `${id}.md`);
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-04-20T01:00:00.000Z",
+      "updated: 2026-04-20T01:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      "derived_via: merge",
+      "derived_via: annihilate",
+      "---",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    // Should flag the duplicate key AND the unknown operator "annihilate".
+    const dupIssues = report.issues.filter(
+      (i) => i.detail.includes("2") && i.detail.includes("derived_via"),
+    );
+    assert.ok(dupIssues.length >= 1, `expected duplicate-key issue; got ${JSON.stringify(report.issues)}`);
+    // The unknown-operator check must use the LAST occurrence ("annihilate"),
+    // not the first ("merge").
+    const unknownOps = report.issues.filter(
+      (i) => i.kind === "derived_via_unknown_operator" && i.detail.includes("annihilate"),
+    );
+    assert.ok(unknownOps.length >= 1, `expected unknown operator "annihilate"; got ${JSON.stringify(report.issues)}`);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

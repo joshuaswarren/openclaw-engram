@@ -263,15 +263,32 @@ export async function runConsolidationProvenanceCheck(options: {
     let rawDerivedFrom: string | undefined;
     let rawDerivedViaKeyPresent = false;
     let rawDerivedFromKeyPresent = false;
+    let duplicateViaKeys = false;
+    let duplicateFromKeys = false;
+    let viaMatchCount = 0;
+    let fromMatchCount = 0;
     let fmSlice = "";
     try {
       const raw = await readFile(memory.path, "utf-8");
       const frontmatterEnd = raw.indexOf("\n---", raw.indexOf("---") + 3);
       fmSlice = frontmatterEnd > 0 ? raw.slice(0, frontmatterEnd) : raw;
-      const viaMatch = fmSlice.match(DERIVED_VIA_RAW_RE);
-      if (viaMatch) {
+      // Use matchAll to find ALL occurrences of `derived_via` / `derived_from`
+      // in the raw YAML.  `parseFrontmatter` keeps the LAST assignment when
+      // duplicate keys appear, so the doctor must read the last occurrence
+      // to match what the storage reader actually uses (PR #634 review,
+      // codex P2 — duplicate `derived_via` keys caused false-clean or
+      // false-unknown-operator warnings depending on order).
+      const viaMatches = [...fmSlice.matchAll(new RegExp(DERIVED_VIA_RAW_RE.source, DERIVED_VIA_RAW_RE.flags + "g"))];
+      viaMatchCount = viaMatches.length;
+      duplicateViaKeys = viaMatches.length > 1;
+      if (viaMatches.length > 0) {
         rawDerivedViaKeyPresent = true;
-        let val = viaMatch[1].trim();
+        // Use the last occurrence — `parseFrontmatter` keeps the last
+        // assignment when duplicate keys appear, so the doctor must
+        // match that behavior to produce accurate warnings (PR #634
+        // review, codex P2).
+        const lastVia = viaMatches[viaMatches.length - 1];
+        let val = lastVia[1].trim();
         if (
           (val.startsWith('"') && val.endsWith('"')) ||
           (val.startsWith("'") && val.endsWith("'"))
@@ -280,10 +297,13 @@ export async function runConsolidationProvenanceCheck(options: {
         }
         rawDerivedVia = val;
       }
-      const fromMatch = fmSlice.match(DERIVED_FROM_RAW_RE);
-      if (fromMatch) {
+      const fromMatches = [...fmSlice.matchAll(new RegExp(DERIVED_FROM_RAW_RE.source, DERIVED_FROM_RAW_RE.flags + "g"))];
+      fromMatchCount = fromMatches.length;
+      duplicateFromKeys = fromMatches.length > 1;
+      if (fromMatches.length > 0) {
         rawDerivedFromKeyPresent = true;
-        rawDerivedFrom = fromMatch[1].trim();
+        const lastFrom = fromMatches[fromMatches.length - 1];
+        rawDerivedFrom = lastFrom[1].trim();
       }
     } catch {
       // Fall through to the parsed values.
@@ -311,6 +331,27 @@ export async function runConsolidationProvenanceCheck(options: {
       !hasRawMalformedFrom && !hasBlankRawVia
     ) continue;
     report.withProvenance += 1;
+
+    // Duplicate-key detection (PR #634 review, codex P2): when the raw
+    // YAML contains multiple `derived_via` or `derived_from` lines,
+    // `parseFrontmatter` silently uses the last one.  Flag this as a
+    // malformed entry so operators can inspect and fix the file.
+    if (duplicateViaKeys) {
+      report.issues.push({
+        memoryPath: memory.path,
+        memoryId: fm.id,
+        kind: "derived_via_unknown_operator",
+        detail: `raw YAML contains ${viaMatchCount} "derived_via" keys; parseFrontmatter uses the last occurrence`,
+      });
+    }
+    if (duplicateFromKeys) {
+      report.issues.push({
+        memoryPath: memory.path,
+        memoryId: fm.id,
+        kind: "derived_from_malformed_entry",
+        detail: `raw YAML contains ${fromMatchCount} "derived_from" keys; parseFrontmatter uses the last occurrence`,
+      });
+    }
 
     if (hasRawMalformedFrom) {
       const display = rawDerivedFrom ?? "(blank)";
