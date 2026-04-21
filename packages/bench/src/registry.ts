@@ -123,6 +123,10 @@ import {
   assistantSynthesisDefinition,
   runAssistantSynthesisBenchmark,
 } from "./benchmarks/remnic/assistant-synthesis/runner.js";
+import {
+  bufferSurpriseTriggerDefinition,
+  runBufferSurpriseTriggerBenchmark,
+} from "./benchmarks/remnic/buffer-surprise-trigger/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -250,6 +254,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...assistantSynthesisDefinition,
     run: runAssistantSynthesisBenchmark,
+  },
+  {
+    ...bufferSurpriseTriggerDefinition,
+    run: runBufferSurpriseTriggerBenchmark,
   },
 ];
 
