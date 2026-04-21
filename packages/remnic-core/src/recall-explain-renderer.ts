@@ -221,14 +221,20 @@ export function toRecallExplainText(
  * renderer handles missing fields gracefully.
  */
 /**
- * Strip backticks, pipes, and newlines from a host-provided string so it
+ * Strip backticks, pipes, and newlines from a host-provided value so it
  * cannot escape its enclosing markdown code span, break the surrounding
  * table row, or inject extra rows when it lands in
  * `renderXrayMarkdown`.  Applied at the adapter boundary because
  * `LastRecallSnapshot` is hydrated from on-disk JSON without schema
  * validation (codex P2 review on #605).
+ *
+ * Accepts `unknown` so non-string truthy values (numbers, objects,
+ * booleans, arrays) coming from a corrupted snapshot are coerced to
+ * the empty string rather than crashing on `.replace(...)`.  Callers
+ * should treat an empty return as "drop this field."
  */
-function sanitizeForMarkdownInline(value: string): string {
+function sanitizeForMarkdownInline(value: unknown): string {
+  if (typeof value !== "string") return "";
   return value.replace(/[`|\r\n]/g, " ").trim();
 }
 
