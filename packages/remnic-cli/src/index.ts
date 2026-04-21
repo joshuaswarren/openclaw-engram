@@ -2957,12 +2957,25 @@ export async function runXrayCommand(
 }
 
 /**
- * `remnic xray <query>` handler.  Bootstraps an orchestrator from the
- * on-disk config the same way `cmdQuery` does, then delegates to
- * `runXrayCommand` so the rendering and flag-parsing paths stay
- * testable without a real memory directory.
+ * `remnic xray <query>` handler.  Validates CLI arguments *before*
+ * booting the orchestrator so invalid invocations (empty query,
+ * unknown --format, bare --budget, etc.) fail fast with the intended
+ * CLI validation error rather than an unrelated initialization error,
+ * and without paying the config-load / QMD-probe / deferred-ready
+ * startup cost (Codex P2 on PR #643 — CLAUDE.md rules 14 + 51 require
+ * explicit, fail-fast validation).
+ *
+ * Once the arg bag is validated, bootstraps the orchestrator the same
+ * way `cmdQuery` does and delegates to `runXrayCommand` for the
+ * recall + render + emit flow.
  */
 async function cmdXray(rest: string[]): Promise<void> {
+  // Parse and validate flags FIRST — `parseXrayCliOptions` throws
+  // listed-options errors for bad input.  Keep this before any IO so
+  // a bad invocation surfaces the right error without touching disk.
+  const { rawQuery, options } = extractXrayRawArgs(rest);
+  const parsed = parseXrayCliOptions(rawQuery, options);
+
   initLogger();
   const configPath = resolveConfigPath();
   const raw = fs.existsSync(configPath)
@@ -2975,14 +2988,19 @@ async function cmdXray(rest: string[]): Promise<void> {
   await orchestrator.deferredReady;
   const service = new EngramAccessService(orchestrator);
 
-  await runXrayCommand(rest, {
-    recallXray: (request) => service.recallXray(request),
-    writeFile: async (filePath, data) => {
-      const { writeFile: fsWriteFile } = await import("node:fs/promises");
-      await fsWriteFile(filePath, data, "utf8");
-    },
-    stdout: (line) => console.log(line),
+  const response = await service.recallXray({
+    query: parsed.query,
+    ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+    ...(parsed.budget !== undefined ? { budget: parsed.budget } : {}),
   });
+  const snapshot = response.snapshotFound ? response.snapshot ?? null : null;
+  const rendered = renderXray(snapshot, parsed.format);
+  if (parsed.outPath) {
+    const { writeFile: fsWriteFile } = await import("node:fs/promises");
+    await fsWriteFile(expandTildePath(parsed.outPath), rendered, "utf8");
+  } else {
+    console.log(rendered);
+  }
 }
 
 // ── Page-level versioning (issue #371) ─────────────────────────────────────

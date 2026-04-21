@@ -156,6 +156,23 @@ describe("runXrayCommand", () => {
     );
   });
 
+  it("fail-fast: validation errors throw before recallXray is called (Codex P2 on #643)", async () => {
+    const { io, mock } = makeIo(() => ({ snapshotFound: false }));
+    // All four failure modes must short-circuit BEFORE the recall IO
+    // fires, so `cmdXray`'s fail-fast guard (which calls the same
+    // validators ahead of orchestrator bootstrap) is protected by
+    // parity with this test.
+    await assert.rejects(() => runXrayCommand([], io));
+    await assert.rejects(() => runXrayCommand(["q", "--format", "xml"], io));
+    await assert.rejects(() => runXrayCommand(["q", "--budget", "0"], io));
+    await assert.rejects(() => runXrayCommand(["q", "--format"], io));
+    assert.equal(
+      mock.recallCalls.length,
+      0,
+      "recallXray must not be invoked when arg validation fails",
+    );
+  });
+
   it("rejects an unknown --format value", async () => {
     const { io } = makeIo(() => ({ snapshotFound: false }));
     await assert.rejects(
