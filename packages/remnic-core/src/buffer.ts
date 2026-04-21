@@ -107,8 +107,13 @@ export class SmartBuffer {
 
   private entryFor(key: string): BufferEntryState {
     this.state.entries ??= {};
-    const existing = this.state.entries[key];
-    if (existing) return existing;
+    // Use Object.hasOwn to guard against prototype-polluting keys like
+    // "__proto__" — a plain property lookup would return Object.prototype
+    // (truthy) for that key, causing subsequent delete/assignment to
+    // target the prototype chain (CodeQL js/prototype-polluting-assignment).
+    if (Object.hasOwn(this.state.entries, key)) {
+      return this.state.entries[key];
+    }
     const created: BufferEntryState = {
       turns: [],
       lastExtractionAt: null,
