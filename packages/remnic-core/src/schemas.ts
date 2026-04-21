@@ -98,6 +98,30 @@ export const ExtractedFactSchema = z.object({
     .describe(
       'For category "procedure" only: ordered steps (intent per step). At least two steps; include explicit trigger phrasing in content (e.g. "When you deploy…").',
     ),
+  reasoningTrace: z
+    .object({
+      steps: z
+        .array(
+          z.object({
+            order: z.number(),
+            description: z.string(),
+          }),
+        )
+        .describe("Ordered reasoning steps the user walked through."),
+      finalAnswer: z
+        .string()
+        .describe("The conclusion, decision, or answer the chain arrived at."),
+      observedOutcome: z
+        .string()
+        .optional()
+        .nullable()
+        .describe("Optional note about how the answer actually played out."),
+    })
+    .optional()
+    .nullable()
+    .describe(
+      'For category "reasoning_trace" only: a stored solution chain with ordered steps, a final answer, and an optional observed outcome. Require at least two steps.',
+    ),
 });
 
 export const EntityMentionSchema = z.object({

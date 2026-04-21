@@ -1,0 +1,290 @@
+/**
+ * Tests for reasoning_trace extraction recognition (issue #564 PR 2).
+ *
+ * Covers:
+ * - ExtractedFactSchema accepts a reasoningTrace payload with steps[],
+ *   finalAnswer, and optional observedOutcome.
+ * - normalizeReasoningTrace handles both camelCase (finalAnswer,
+ *   observedOutcome) and snake_case (final_answer, observed_outcome) keys
+ *   coming from loose LLM output.
+ * - normalizeReasoningTrace rejects payloads without steps or without a
+ *   final answer (conservative gate).
+ * - buildReasoningTraceMarkdownBody + parseReasoningTraceFromBody round-trip.
+ * - looksLikeReasoningTrace heuristic recognizes ordered multi-step traces
+ *   with a final answer, and rejects short / unstructured prose.
+ * - The gateway + local-LLM extraction prompts mention reasoning_trace so
+ *   the model actually emits it.
+ */
+
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import { ExtractedFactSchema } from "../packages/remnic-core/src/schemas.js";
+import {
+  buildReasoningTraceMarkdownBody,
+  buildReasoningTracePersistBody,
+  looksLikeReasoningTrace,
+  normalizeReasoningTrace,
+  normalizeReasoningTraceSteps,
+  parseReasoningTraceFromBody,
+} from "../packages/remnic-core/src/reasoning-trace-types.js";
+
+describe("ExtractedFactSchema reasoningTrace", () => {
+  it("accepts a reasoningTrace with steps and finalAnswer", () => {
+    const parsed = ExtractedFactSchema.safeParse({
+      category: "reasoning_trace",
+      content: "How I picked route-b for the low-latency path",
+      confidence: 0.9,
+      tags: ["routing"],
+      reasoningTrace: {
+        steps: [
+          { order: 1, description: "Enumerated candidate routes" },
+          { order: 2, description: "Measured round-trip times" },
+          { order: 3, description: "Picked the lowest p95 under SLO" },
+        ],
+        finalAnswer: "route-b wins and was pinned",
+      },
+    });
+    assert.equal(parsed.success, true);
+  });
+
+  it("accepts reasoningTrace with observedOutcome", () => {
+    const parsed = ExtractedFactSchema.safeParse({
+      category: "reasoning_trace",
+      content: "How I debugged the latency spike",
+      confidence: 0.85,
+      tags: [],
+      reasoningTrace: {
+        steps: [
+          { order: 1, description: "Checked dashboards" },
+          { order: 2, description: "Tailed cache logs" },
+        ],
+        finalAnswer: "Root cause was undersized cache eviction policy",
+        observedOutcome: "Bumped cache size; p95 dropped back within 10m",
+      },
+    });
+    assert.equal(parsed.success, true);
+  });
+
+  it("also accepts facts without reasoningTrace (optional field)", () => {
+    const parsed = ExtractedFactSchema.safeParse({
+      category: "fact",
+      content: "The user runs Postgres 15",
+      confidence: 0.95,
+      tags: [],
+    });
+    assert.equal(parsed.success, true);
+  });
+});
+
+describe("normalizeReasoningTraceSteps", () => {
+  it("normalizes string-array steps into numbered step records", () => {
+    const steps = normalizeReasoningTraceSteps([
+      "First I listed the constraints",
+      "Then I ran the spike",
+      "Finally I picked React",
+    ]);
+    assert.equal(steps.length, 3);
+    assert.deepEqual(steps.map((s) => s.order), [1, 2, 3]);
+    assert.equal(steps[2].description, "Finally I picked React");
+  });
+
+  it("accepts object steps with intent / step / text aliases", () => {
+    const steps = normalizeReasoningTraceSteps([
+      { order: 1, description: "checked dashboards" },
+      { intent: "tailed logs" },
+      { step: "found the issue" },
+    ]);
+    assert.equal(steps.length, 3);
+    assert.equal(steps[1].description, "tailed logs");
+    assert.equal(steps[1].order, 2);
+    assert.equal(steps[2].description, "found the issue");
+  });
+
+  it("filters out empty / malformed entries", () => {
+    const steps = normalizeReasoningTraceSteps([
+      { order: 1, description: "" },
+      { order: 2, description: "real step" },
+      null,
+      42,
+    ] as unknown as unknown[]);
+    assert.equal(steps.length, 1);
+    assert.equal(steps[0].description, "real step");
+  });
+});
+
+describe("normalizeReasoningTrace", () => {
+  it("accepts camelCase keys", () => {
+    const trace = normalizeReasoningTrace({
+      steps: [
+        { order: 1, description: "Checked metrics" },
+        { order: 2, description: "Rolled back" },
+      ],
+      finalAnswer: "Deploy had a regression",
+      observedOutcome: "Rollback restored service",
+    });
+    assert.ok(trace);
+    assert.equal(trace?.steps.length, 2);
+    assert.equal(trace?.finalAnswer, "Deploy had a regression");
+    assert.equal(trace?.observedOutcome, "Rollback restored service");
+  });
+
+  it("accepts snake_case keys from loose LLM output", () => {
+    const trace = normalizeReasoningTrace({
+      steps: ["ran tests", "saw failure"],
+      final_answer: "Tests flaked because of shared fixtures",
+      observed_outcome: "Isolating the fixture fixed it",
+    });
+    assert.ok(trace);
+    assert.equal(trace?.finalAnswer, "Tests flaked because of shared fixtures");
+    assert.equal(trace?.observedOutcome, "Isolating the fixture fixed it");
+  });
+
+  it("returns null when steps are missing", () => {
+    const trace = normalizeReasoningTrace({
+      finalAnswer: "yes",
+    });
+    assert.equal(trace, null);
+  });
+
+  it("returns null when finalAnswer is missing", () => {
+    const trace = normalizeReasoningTrace({
+      steps: [{ order: 1, description: "step" }],
+    });
+    assert.equal(trace, null);
+  });
+
+  it("returns null for non-objects", () => {
+    assert.equal(normalizeReasoningTrace(null), null);
+    assert.equal(normalizeReasoningTrace("string"), null);
+    assert.equal(normalizeReasoningTrace([1, 2, 3]), null);
+  });
+});
+
+describe("buildReasoningTraceMarkdownBody / parseReasoningTraceFromBody", () => {
+  it("round-trips a normalized trace", () => {
+    const trace = {
+      steps: [
+        { order: 1, description: "Enumerated candidate routes" },
+        { order: 2, description: "Measured round-trip times" },
+        { order: 3, description: "Picked the lowest p95 under SLO" },
+      ],
+      finalAnswer: "route-b wins and was pinned",
+      observedOutcome: "Latency-budget alarm cleared within the hour",
+    };
+    const body = buildReasoningTraceMarkdownBody(trace);
+    const parsed = parseReasoningTraceFromBody(body);
+    assert.ok(parsed);
+    assert.equal(parsed?.steps.length, 3);
+    assert.equal(parsed?.steps[0].order, 1);
+    assert.equal(parsed?.finalAnswer, "route-b wins and was pinned");
+    assert.equal(parsed?.observedOutcome, "Latency-budget alarm cleared within the hour");
+  });
+
+  it("round-trips a trace without observed outcome", () => {
+    const trace = {
+      steps: [
+        { order: 1, description: "A" },
+        { order: 2, description: "B" },
+      ],
+      finalAnswer: "answer",
+    };
+    const body = buildReasoningTraceMarkdownBody(trace);
+    const parsed = parseReasoningTraceFromBody(body);
+    assert.ok(parsed);
+    assert.equal(parsed?.observedOutcome, undefined);
+  });
+
+  it("parseReasoningTraceFromBody returns null for unrelated markdown", () => {
+    assert.equal(parseReasoningTraceFromBody(""), null);
+    assert.equal(
+      parseReasoningTraceFromBody("Just a random paragraph with no structure."),
+      null,
+    );
+  });
+
+  it("buildReasoningTracePersistBody prepends a title", () => {
+    const body = buildReasoningTracePersistBody("How I picked route-b", {
+      steps: [
+        { order: 1, description: "A" },
+        { order: 2, description: "B" },
+      ],
+      finalAnswer: "route-b",
+    });
+    assert.ok(body.startsWith("How I picked route-b"));
+    assert.ok(body.includes("## Step 1"));
+    assert.ok(body.includes("## Final Answer"));
+  });
+});
+
+describe("looksLikeReasoningTrace heuristic", () => {
+  it("recognizes explicit numbered steps with a final answer", () => {
+    const msg = [
+      "Here's how I debugged the latency spike:",
+      "Step 1: I checked the dashboards and CPU was flat.",
+      "Step 2: I tailed the cache logs.",
+      "Step 3: I saw eviction storms.",
+      "Final answer: the cache was undersized.",
+    ].join("\n");
+    assert.equal(looksLikeReasoningTrace(msg), true);
+  });
+
+  it("recognizes first/second/finally ordinal markers", () => {
+    const msg = [
+      "Let me walk through what I did.",
+      "First, I looked at the metrics panel to get a baseline.",
+      "Then, I ran a traceroute through the cache tier.",
+      "Finally, I verified eviction counters and confirmed the spike.",
+      "So the answer is: we had an undersized cache.",
+    ].join("\n");
+    assert.equal(looksLikeReasoningTrace(msg), true);
+  });
+
+  it("rejects short one-liners", () => {
+    assert.equal(looksLikeReasoningTrace("Just a single sentence."), false);
+  });
+
+  it("rejects prose without ordered steps", () => {
+    const msg =
+      "I thought about it for a while and decided to switch to Postgres. It felt like the right call.";
+    assert.equal(looksLikeReasoningTrace(msg), false);
+  });
+
+  it("rejects ordered steps with no resolution marker", () => {
+    const msg = [
+      "I did a few things:",
+      "1. ran the tests",
+      "2. reviewed the diff",
+      "3. opened a PR",
+    ].join("\n");
+    assert.equal(looksLikeReasoningTrace(msg), false);
+  });
+});
+
+describe("extraction prompt includes reasoning_trace guidance", () => {
+  it("gateway and local prompts mention reasoning_trace with schema hints", async () => {
+    const src = await (await import("node:fs/promises")).readFile(
+      new URL("../packages/remnic-core/src/extraction.ts", import.meta.url),
+      "utf-8",
+    );
+    // Local prompt branch
+    assert.ok(
+      /reasoning_trace: Stored solution chains/.test(src),
+      "local LLM prompt should describe reasoning_trace",
+    );
+    // Gateway prompt branch
+    assert.ok(
+      /reasoning_trace: A stored solution chain/.test(src),
+      "gateway prompt should describe reasoning_trace",
+    );
+    // Both prompt JSON examples must reference reasoningTrace
+    assert.ok(
+      src.includes('"category": "reasoning_trace"'),
+      "prompt JSON example should include a reasoning_trace fact",
+    );
+    assert.ok(
+      src.includes('"reasoningTrace"'),
+      "prompt JSON example should include a reasoningTrace field",
+    );
+  });
+});
