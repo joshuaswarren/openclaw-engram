@@ -3972,10 +3972,12 @@ export class StorageManager {
     }
 
     // Resolve the effective limit up front. Any non-finite / non-positive
-    // value returns no rows — callers who want "everything" can pass
-    // Number.POSITIVE_INFINITY or simply omit the key (treated as "no
-    // bound" below). Fractional values <1 floor to 0, which would make
-    // `slice(-0)` return the entire file — guard against that too.
+    // value returns no rows — callers who want "everything" should OMIT
+    // the `limit` key (treated as "no bound" below). We intentionally
+    // reject `Infinity` too, because the slice math `events.slice(-Inf)`
+    // is surprising and ambiguous; omit the key instead. Fractional
+    // values <1 floor to 0, which would make `slice(-0)` return the
+    // entire file — guard against that too.
     let effectiveLimit: number | null = null;
     if (options.limit !== undefined) {
       if (
