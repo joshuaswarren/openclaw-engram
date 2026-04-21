@@ -147,6 +147,15 @@ import {
   parseBenchArgs,
 } from "./bench-args.js";
 import {
+  initBenchStatus,
+  updateBenchmarkStarted,
+  updateBenchmarkCompleted,
+  updateBenchmarkFailed,
+  updateTaskProgress as updateBenchStatusTaskProgress,
+  finalizeBenchStatus,
+  removeBenchStatus,
+} from "./bench-status.js";
+import {
   cleanupRollbackDirectoryBestEffort,
   createOpenclawUpgradeRollbackFailure,
   runBestEffortGatewayRestart,
@@ -659,6 +668,7 @@ export function buildBenchRuntimeProfileRequest(
     judgeProvider: parsed.judgeProvider,
     judgeModel: parsed.judgeModel,
     judgeBaseUrl: parsed.judgeBaseUrl,
+    requestTimeout: parsed.requestTimeout,
   };
 }
 
@@ -2085,6 +2095,11 @@ async function runBenchViaPackage(
       system,
       onTaskComplete: (task, completed, total) => {
         partialTasks.push(task);
+        updateBenchStatusTaskProgress(
+          path.join(outputDir, "bench-status.json"),
+          completed,
+          total ?? undefined,
+        ).catch(() => {});
         if (completed % 50 === 0 || completed === total) {
           const elapsed = Math.round((Date.now() - benchStartTime) / 1000);
           const remaining = total && elapsed > 0 ? Math.round((total - completed) / (completed / elapsed)) : "?";
@@ -4696,23 +4711,37 @@ async function cmdBench(rest: string[]): Promise<void> {
 
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
   const failures = new Set<string>();
-  for (const benchmarkId of selectedBenchmarks) {
-    for (const runtimeProfile of runtimeProfiles) {
-      try {
-        const handledByPackage = await runBenchViaPackage(
-          parsed,
-          benchmarkId,
-          runtimeProfile,
-        );
-        if (!handledByPackage.ok) {
-          await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
+  const benchStatusPath = path.join(
+    parsed.resultsDir ?? resolveBenchOutputDir(),
+    "bench-status.json",
+  );
+  await initBenchStatus(benchStatusPath, selectedBenchmarks, process.pid);
+  try {
+    for (const benchmarkId of selectedBenchmarks) {
+      for (const runtimeProfile of runtimeProfiles) {
+        await updateBenchmarkStarted(benchStatusPath, benchmarkId);
+        try {
+          const handledByPackage = await runBenchViaPackage(
+            parsed,
+            benchmarkId,
+            runtimeProfile,
+          );
+          if (!handledByPackage.ok) {
+            await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
+          }
+          if (handledByPackage.writtenPath) {
+            await updateBenchmarkCompleted(benchStatusPath, benchmarkId, handledByPackage.writtenPath);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`  [ERROR] benchmark "${benchmarkId}" failed: ${message}`);
+          failures.add(benchmarkId);
+          await updateBenchmarkFailed(benchStatusPath, benchmarkId, message);
         }
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        console.error(`  [ERROR] benchmark "${benchmarkId}" failed: ${message}`);
-        failures.add(benchmarkId);
       }
     }
+  } finally {
+    await finalizeBenchStatus(benchStatusPath);
   }
   if (failures.size > 0) {
     console.error(`\nFailed benchmarks: ${[...failures].join(", ")}`);

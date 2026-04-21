@@ -1,0 +1,151 @@
+/**
+ * Agent-readable benchmark status file.
+ *
+ * Writes a `bench-status.json` to the results directory that AI agents
+ * (or humans) can poll to track benchmark progress without relying on
+ * Node.js stdout (which is invisible when piped/nohup'd).
+ *
+ * All writes use atomic temp-file + rename so readers never see
+ * partially-written JSON.
+ */
+
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import path from "node:path";
+
+export interface BenchmarkStatusEntry {
+  id: string;
+  status: "pending" | "running" | "complete" | "failed";
+  startedAt?: string;
+  completedAt?: string;
+  resultPath?: string;
+  error?: string;
+}
+
+export interface BenchStatus {
+  pid: number;
+  startedAt: string;
+  updatedAt: string;
+  currentBenchmark?: string;
+  currentTaskProgress?: { completed: number; total?: number };
+  benchmarks: BenchmarkStatusEntry[];
+  completedResults: string[];
+}
+
+async function atomicWriteJSON(filePath: string, data: unknown): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp`;
+  await writeFile(tmp, JSON.stringify(data, null, 2) + "\n");
+  await rename(tmp, filePath);
+}
+
+async function readStatusFile(filePath: string): Promise<BenchStatus | null> {
+  try {
+    const raw = await readFile(filePath, "utf-8");
+    return JSON.parse(raw) as BenchStatus;
+  } catch {
+    return null;
+  }
+}
+
+export async function initBenchStatus(
+  filePath: string,
+  benchmarks: string[],
+  pid: number,
+): Promise<void> {
+  const now = new Date().toISOString();
+  const status: BenchStatus = {
+    pid,
+    startedAt: now,
+    updatedAt: now,
+    benchmarks: benchmarks.map((id) => ({ id, status: "pending" as const })),
+    completedResults: [],
+  };
+  await atomicWriteJSON(filePath, status);
+}
+
+export async function updateBenchmarkStarted(
+  filePath: string,
+  benchmarkId: string,
+): Promise<void> {
+  const status = await readStatusFile(filePath);
+  if (!status) return;
+  status.updatedAt = new Date().toISOString();
+  status.currentBenchmark = benchmarkId;
+  status.currentTaskProgress = { completed: 0 };
+  const entry = status.benchmarks.find((b) => b.id === benchmarkId);
+  if (entry) {
+    entry.status = "running";
+    entry.startedAt = new Date().toISOString();
+  }
+  await atomicWriteJSON(filePath, status);
+}
+
+export async function updateBenchmarkCompleted(
+  filePath: string,
+  benchmarkId: string,
+  resultPath: string,
+): Promise<void> {
+  const status = await readStatusFile(filePath);
+  if (!status) return;
+  status.updatedAt = new Date().toISOString();
+  const entry = status.benchmarks.find((b) => b.id === benchmarkId);
+  if (entry) {
+    entry.status = "complete";
+    entry.completedAt = new Date().toISOString();
+    entry.resultPath = resultPath;
+  }
+  status.completedResults.push(resultPath);
+  delete status.currentTaskProgress;
+  await atomicWriteJSON(filePath, status);
+}
+
+export async function updateBenchmarkFailed(
+  filePath: string,
+  benchmarkId: string,
+  error: string,
+): Promise<void> {
+  const status = await readStatusFile(filePath);
+  if (!status) return;
+  status.updatedAt = new Date().toISOString();
+  const entry = status.benchmarks.find((b) => b.id === benchmarkId);
+  if (entry) {
+    entry.status = "failed";
+    entry.completedAt = new Date().toISOString();
+    entry.error = error;
+  }
+  delete status.currentTaskProgress;
+  await atomicWriteJSON(filePath, status);
+}
+
+export async function updateTaskProgress(
+  filePath: string,
+  completed: number,
+  total?: number,
+): Promise<void> {
+  const status = await readStatusFile(filePath);
+  if (!status) return;
+  status.updatedAt = new Date().toISOString();
+  status.currentTaskProgress = { completed, ...(total ? { total } : {}) };
+  await atomicWriteJSON(filePath, status);
+}
+
+export async function finalizeBenchStatus(
+  filePath: string,
+): Promise<void> {
+  const status = await readStatusFile(filePath);
+  if (!status) return;
+  status.updatedAt = new Date().toISOString();
+  delete status.currentBenchmark;
+  delete status.currentTaskProgress;
+  await atomicWriteJSON(filePath, status);
+}
+
+export async function removeBenchStatus(
+  filePath: string,
+): Promise<void> {
+  try {
+    await unlink(filePath);
+  } catch {
+    // already gone is fine
+  }
+}

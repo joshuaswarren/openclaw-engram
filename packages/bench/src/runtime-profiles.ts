@@ -40,6 +40,7 @@ export interface ResolveBenchRuntimeProfileOptions {
   judgeProvider?: BuiltInProvider;
   judgeModel?: string;
   judgeBaseUrl?: string;
+  requestTimeout?: number;
 }
 
 export interface ResolvedBenchRuntimeProfile {
@@ -87,12 +88,14 @@ export async function resolveBenchRuntimeProfile(
       options.systemProvider,
       options.systemModel,
       options.systemBaseUrl,
+      options.requestTimeout,
     );
   const judgeProvider = resolveProviderConfig(
     "judge",
     options.judgeProvider,
     options.judgeModel,
     options.judgeBaseUrl,
+    options.requestTimeout,
   );
   const responderFactoryConfig = systemProvider
     ? asProviderFactoryConfig(systemProvider)
@@ -313,6 +316,7 @@ function resolveProviderConfig(
   provider: BuiltInProvider | undefined,
   model: string | undefined,
   baseUrl: string | undefined,
+  requestTimeout?: number,
 ): ProviderConfig | null {
   const hasProvider = typeof provider === "string";
   const hasModel = typeof model === "string" && model.trim().length > 0;
@@ -342,6 +346,7 @@ function resolveProviderConfig(
     provider,
     model: model.trim(),
     ...(hasBaseUrl ? { baseUrl: baseUrl!.trim() } : {}),
+    ...(requestTimeout ? { retryOptions: { timeoutMs: requestTimeout } } : {}),
   };
 }
 
@@ -378,6 +383,7 @@ function asProviderFactoryConfig(config: ProviderConfig): ProviderFactoryConfig 
     provider: config.provider,
     model: config.model,
     ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+    ...(config.retryOptions ? { retryOptions: config.retryOptions } : {}),
   } as ProviderFactoryConfig;
 }
 

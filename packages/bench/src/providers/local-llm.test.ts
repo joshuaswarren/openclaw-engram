@@ -94,7 +94,7 @@ test("local-llm provider surfaces non-2xx errors with base-url + model in the me
 
     await assert.rejects(
       provider.complete("hello"),
-      /local-llm completion failed: 503 Service Unavailable — model not loaded \(base-url=http:\/\/127\.0\.0\.1:9876\/v1, model=my-local-model\)/,
+      /local-llm completion failed:.*503.*model not loaded.*base-url=http:\/\/127\.0\.0\.1:9876\/v1, model=my-local-model/,
     );
   } finally {
     globalThis.fetch = originalFetch;

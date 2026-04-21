@@ -32,6 +32,7 @@ export interface ProviderConfig {
   provider: BuiltInProvider;
   model: string;
   baseUrl?: string;
+  retryOptions?: { maxAttempts?: number; baseBackoffMs?: number; timeoutMs?: number };
 }
 
 export interface TaskTokenUsage {

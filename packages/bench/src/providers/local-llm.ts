@@ -36,6 +36,7 @@ import type {
   LocalLlmProviderConfig,
   TokenUsage,
 } from "./types.js";
+import { retryFetch } from "./retry-fetch.js";
 
 interface ChatCompletionResponse {
   model?: string;
@@ -93,21 +94,33 @@ class LocalLlmProvider implements LlmProvider {
     opts: CompletionOpts = {},
   ): Promise<CompletionResult> {
     const startedAt = performance.now();
-    const response = await fetch(this.urlFor("chat/completions"), {
-      method: "POST",
-      headers: this.headers(opts.headers),
-      body: JSON.stringify({
-        model: this.config.model,
-        messages: [
-          ...(opts.systemPrompt
-            ? [{ role: "system", content: opts.systemPrompt }]
-            : []),
-          { role: "user", content: prompt },
-        ],
-        temperature: opts.temperature,
-        max_tokens: opts.maxTokens,
-      }),
-    });
+    let response: Response;
+    try {
+      response = await retryFetch(
+        this.urlFor("chat/completions"),
+        {
+          method: "POST",
+          headers: this.headers(opts.headers),
+          body: JSON.stringify({
+            model: this.config.model,
+            messages: [
+              ...(opts.systemPrompt
+                ? [{ role: "system", content: opts.systemPrompt }]
+                : []),
+              { role: "user", content: prompt },
+            ],
+            temperature: opts.temperature,
+            max_tokens: opts.maxTokens,
+          }),
+        },
+        this.config.retryOptions,
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `local-llm completion failed: ${msg} (base-url=${this.config.baseUrl}, model=${this.config.model})`,
+      );
+    }
 
     if (!response.ok) {
       const errorBody = await readErrorBody(response);
@@ -135,10 +148,14 @@ class LocalLlmProvider implements LlmProvider {
   }
 
   async discover(): Promise<DiscoveredModel[]> {
-    const response = await fetch(this.urlFor("models"), {
-      method: "GET",
-      headers: this.headers(),
-    });
+    const response = await retryFetch(
+      this.urlFor("models"),
+      {
+        method: "GET",
+        headers: this.headers(),
+      },
+      this.config.retryOptions,
+    );
 
     if (!response.ok) {
       throw new Error(
