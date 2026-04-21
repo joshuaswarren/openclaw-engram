@@ -2797,7 +2797,7 @@ export class Orchestrator {
           {
             role: "system" as const,
             content: operatorAwareEnabled
-              ? 'You are a memory consolidation system. Return ONLY a JSON object: {"operator":"merge|update|split","output":"..."}.'
+              ? 'You are a memory consolidation system. Return ONLY a JSON object with two keys, "operator" and "output". The "operator" value MUST be one of the exact strings "merge", "update", or "split" — never a pipe-separated placeholder, never prose. The "output" value is the canonical memory text.'
               : "You are a memory consolidation system. Output only the consolidated memory text.",
           },
           { role: "user" as const, content: prompt },

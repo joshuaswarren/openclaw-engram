@@ -1352,16 +1352,18 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.semanticConsolidationMaxPerRun === "number"
         ? Math.max(0, Math.floor(cfg.semanticConsolidationMaxPerRun))
         : 100,
-    // Operator-aware consolidation prompt (issue #561 PR 3).  Defaults to
-    // true so new installs get SPLIT/MERGE/UPDATE operator selection on
-    // the `derived_via` frontmatter field.  Operators set the value to a
-    // falsey coercion ("false", "0", "no", "off", boolean `false`) to
-    // fall back to the legacy plain-text prompt (useful for older models
-    // that don't reliably return JSON).  Uses `coerceBool` per Gotcha #36
-    // so CLI `--config operatorAwareConsolidationEnabled=false` and
-    // env-substituted string values actually disable the feature.
+    // Operator-aware consolidation prompt (issue #561 PR 3).  Defaults
+    // to `false` to match sibling `*Enabled` flags' least-privileged
+    // convention.  Operators opt in by setting `true` (or truthy
+    // coercions like "true", "1", "yes", "on") when they want the
+    // consolidation LLM to emit SPLIT/MERGE/UPDATE operator selection
+    // on the `derived_via` frontmatter field.  Uses `coerceBool` per
+    // Gotcha #36 so CLI / env-string inputs coerce correctly.  When
+    // disabled, `derived_via` is still populated via the cluster-shape
+    // heuristic (chooseConsolidationOperator) so PR 2's provenance
+    // wiring keeps working without operator-aware prompts.
     operatorAwareConsolidationEnabled:
-      coerceBool(cfg.operatorAwareConsolidationEnabled) ?? true,
+      coerceBool(cfg.operatorAwareConsolidationEnabled) ?? false,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,

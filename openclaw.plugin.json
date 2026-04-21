@@ -2740,8 +2740,8 @@
       },
       "operatorAwareConsolidationEnabled": {
         "type": "boolean",
-        "default": true,
-        "description": "Ask the consolidation LLM to return a structured {operator, output} JSON object so SPLIT/MERGE/UPDATE is recorded on derived_via. Disable to fall back to the legacy plain-text prompt."
+        "default": false,
+        "description": "Opt in to operator-aware consolidation prompts so the LLM returns structured {operator, output} JSON and SPLIT/MERGE/UPDATE is recorded on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
       },
       "creationMemoryEnabled": {
         "type": "boolean",

@@ -73,6 +73,23 @@ test("buildOperatorAwareConsolidationPrompt asks for JSON-only output", () => {
   assert.ok(prompt.toLowerCase().includes("json"));
 });
 
+test("parseOperatorAwareConsolidationResponse falls back when LLM returns the pipe-delimited placeholder", () => {
+  // Regression for PR #632 review feedback (codex P2): if a model
+  // follows the system prompt literally and emits the
+  // `"merge|update|split"` placeholder string as the operator value,
+  // the parser must fall back to the heuristic rather than accept the
+  // malformed value.  The orchestrator now emits a system prompt that
+  // explicitly forbids the placeholder, but defense-in-depth demands
+  // the parser still reject it.
+  const cluster = makeCluster(3);
+  const res = parseOperatorAwareConsolidationResponse(
+    '{"operator":"merge|update|split","output":"placeholder body"}',
+    cluster,
+  );
+  assert.equal(res.operator, "merge"); // heuristic for multi-memory cluster
+  assert.equal(res.output, "placeholder body");
+});
+
 test("buildOperatorAwareConsolidationPrompt embeds every source memory", () => {
   const cluster = makeCluster(3);
   const prompt = buildOperatorAwareConsolidationPrompt(cluster);
@@ -201,10 +218,14 @@ test("operatorAwareConsolidationEnabled coerces string 'false' to disabled", asy
   assert.equal(parsed.operatorAwareConsolidationEnabled, false);
 });
 
-test("operatorAwareConsolidationEnabled defaults to true when unset", async () => {
+test("operatorAwareConsolidationEnabled defaults to false when unset", async () => {
+  // Least-privileged default per PR #632 review (cursor): the operator-
+  // aware prompt is opt-in so installs using older models don't hit
+  // the JSON-format prompt by default.  When disabled, `derived_via`
+  // still populates via the cluster-shape heuristic.
   const { parseConfig } = await import("../src/config.ts");
   const parsed = parseConfig({});
-  assert.equal(parsed.operatorAwareConsolidationEnabled, true);
+  assert.equal(parsed.operatorAwareConsolidationEnabled, false);
 });
 
 test("operatorAwareConsolidationEnabled honors boolean false", async () => {
