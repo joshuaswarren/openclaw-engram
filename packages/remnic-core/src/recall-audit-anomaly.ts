@@ -139,7 +139,10 @@ function effectiveConfig(
   ] as const) {
     const v = raw[key];
     if (typeof v === "number" && Number.isFinite(v) && v > 0) {
-      out[key] = Math.floor(v);
+      const floored = Math.floor(v);
+      // Guard against fractional inputs (e.g. 0.5) that floor to 0 and
+      // turn every detector into a flood-on-anything trigger.
+      out[key] = floored >= 1 ? floored : base[key];
     }
   }
   return out;
