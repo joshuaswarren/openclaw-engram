@@ -718,12 +718,3 @@ export function createVerdictCache(): Map<string, JudgeVerdict> {
 export function createDeferCountMap(): Map<string, number> {
   return new Map();
 }
-
-/**
- * Compute the cache/defer-counter key for a (text, category) pair. Exported
- * so orchestrators and tests can inspect counter state for the same key the
- * judge uses internally.
- */
-export function deferCounterKey(text: string, category: string): string {
-  return cacheKey(text, category);
-}

@@ -9780,16 +9780,24 @@ export class Orchestrator {
     // deferred at least one candidate, retain the tail of the current turn
     // window so the next extraction pass has the surrounding context that
     // may disambiguate the deferred fact. Non-defer runs clear the slot.
+    //
+    // Gated on `clearBufferAfterExtraction` — replay / bulk-import paths
+    // call `runExtraction` with `clearBufferAfterExtraction: false` and do
+    // not operate on live buffer state. Writing retention there would
+    // create synthetic buffer entries and cross-contaminate future live
+    // extraction runs for the same bufferKey.
     try {
-      const deferredCount = this.lastPersistExtractionDeferredCount;
-      if (deferredCount > 0 && normalizedTurns.length > 0) {
-        await this.buffer.retainDeferredTurns(
-          bufferKey,
-          normalizedTurns as BufferTurn[],
-          10,
-        );
-      } else {
-        await this.buffer.retainDeferredTurns(bufferKey, [], 0);
+      if (clearBufferAfterExtraction) {
+        const deferredCount = this.lastPersistExtractionDeferredCount;
+        if (deferredCount > 0 && normalizedTurns.length > 0) {
+          await this.buffer.retainDeferredTurns(
+            bufferKey,
+            normalizedTurns as BufferTurn[],
+            10,
+          );
+        } else {
+          await this.buffer.retainDeferredTurns(bufferKey, [], 0);
+        }
       }
     } catch (err) {
       // Fail-open: retention is a nice-to-have. If it fails the judge will
