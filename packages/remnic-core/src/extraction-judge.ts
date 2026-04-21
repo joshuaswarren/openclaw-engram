@@ -594,10 +594,14 @@ export async function judgeFactDurability(
       );
     }
 
-    // Fill in any missing verdicts from this batch (fail-open: approve)
+    // Fill in any missing verdicts from this batch (fail-open: approve).
+    // Clear defer counts so a transient outage doesn't leave stale state
+    // that causes later defers to hit the cap early.
     for (const idx of batchIndices) {
       if (!verdicts.has(idx)) {
         const c = candidates[idx];
+        const hash = cacheKey(c.text, c.category);
+        deferCountMap.delete(hash);
         const v: JudgeVerdict = {
           durable: true,
           reason: "Approved by default (judge unavailable or parse error)",

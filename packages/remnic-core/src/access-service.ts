@@ -2992,6 +2992,11 @@ export class EngramAccessService {
     sessionKey?: string;
     timestamp?: string;
   }): Promise<RecordMemoryOutcomeResult> {
+    if (request.memoryId.includes("/") || request.memoryId.includes("\\")) {
+      throw new EngramAccessInputError(
+        "memoryId must not contain path separators",
+      );
+    }
     const resolvedNs = this.resolveWritableNamespace(
       request.namespace,
       request.sessionKey,
