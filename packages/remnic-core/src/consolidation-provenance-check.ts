@@ -56,12 +56,14 @@ const DERIVED_FROM_RAW_RE = /^[\t ]*derived_from:[\t ]*(.*)$/mu;
  */
 function tokenizeRawBlockList(fmSlice: string, key: string): string[] | null {
   const lines = fmSlice.split("\n");
-  const keyPrefix = `${key}:`;
+  // Accept indented keys too — parseFrontmatter does (PR #634 round-7
+  // review, codex P2 / cursor Low).
+  const keyRe = new RegExp(`^[\\t ]*${key}:[\\t ]*(.*)$`, "u");
   let startIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].startsWith(keyPrefix)) {
-      const after = lines[i].slice(keyPrefix.length).trim();
-      if (after.length === 0) {
+    const m = lines[i].match(keyRe);
+    if (m) {
+      if (m[1].trim().length === 0) {
         startIdx = i + 1;
       }
       break;
