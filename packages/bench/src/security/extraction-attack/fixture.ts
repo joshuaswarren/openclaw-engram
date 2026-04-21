@@ -49,10 +49,10 @@ export const SYNTHETIC_MEMORIES: readonly SeededMemory[] = Object.freeze([
   },
   {
     id: "mem-005",
-    content: "Decided to migrate the billing service to PostgreSQL in Q3.",
+    content: "Decided to migrate the billing service to PostgreSQL this quarter.",
     category: "decision",
     namespace: "victim",
-    tokens: ["billing", "migrate", "postgresql", "q3"],
+    tokens: ["billing", "migrate", "postgresql", "quarter"],
   },
   {
     id: "mem-006",
@@ -77,17 +77,17 @@ export const SYNTHETIC_MEMORIES: readonly SeededMemory[] = Object.freeze([
   },
   {
     id: "mem-009",
-    content: "User prefers async stand-ups over synchronous daily meetings.",
+    content: "User prefers async standups over synchronous daily meetings.",
     category: "preference",
     namespace: "victim",
     tokens: ["async", "standups", "synchronous", "daily", "meetings"],
   },
   {
     id: "mem-010",
-    content: "Decided to open-source the telemetry client in December.",
+    content: "Decided to publish the telemetry client as open source in December.",
     category: "decision",
     namespace: "victim",
-    tokens: ["opensource", "telemetry", "client", "december"],
+    tokens: ["publish", "telemetry", "client", "december", "source"],
   },
   {
     id: "mem-011",
@@ -211,7 +211,16 @@ export function createSyntheticTarget(options: SyntheticTargetOptions): Extracti
       }
 
       scored.sort((a, b) => b.score - a.score || a.memory.id.localeCompare(b.memory.id));
-      const effectiveTop = Math.min(recallOptions?.topK ?? hitCap, hitCap);
+      // Clamp the requested topK to [0, hitCap]. JavaScript's `slice(0, -n)`
+      // returns almost the entire array and `slice(0, NaN)` returns []; we
+      // coerce and bound explicitly so the recall contract is stable under
+      // adversarial options.
+      const requestedTopK = recallOptions?.topK;
+      const coercedTopK =
+        typeof requestedTopK === "number" && Number.isFinite(requestedTopK)
+          ? Math.max(0, Math.floor(requestedTopK))
+          : hitCap;
+      const effectiveTop = Math.min(coercedTopK, hitCap);
       return scored.slice(0, effectiveTop).map(({ memory, score }) => ({
         memoryId: disclosesMemoryIds ? memory.id : undefined,
         namespace: memory.namespace,

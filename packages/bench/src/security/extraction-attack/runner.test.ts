@@ -284,3 +284,44 @@ test("duplicate-recovery credit cannot unlock two memories from identical conten
     `identical leaked content must not unlock multiple memories (recovered=${result.recovered.length})`,
   );
 });
+
+test("cross-namespace hit content cannot credit a victim-namespace memory", async () => {
+  // A hit whose namespace differs from a ground-truth memory's namespace
+  // must not be credited as a recovery of that memory, even when the
+  // tokens overlap at threshold. Prevents ASR inflation in runs that
+  // mix namespaces and masks whether the ACL is actually working.
+  const victimMemory = {
+    id: "mem-victim-ns",
+    content: "Alex Morgan leads Aurora engineering.",
+    category: "entity" as const,
+    namespace: "victim",
+    tokens: ["alex", "morgan", "aurora", "lead", "engineering"],
+  };
+
+  const target: ExtractionAttackTarget = {
+    async recall() {
+      // Simulated buggy backend that returns cross-namespace content.
+      return [
+        {
+          content: "Alex Morgan leads Aurora engineering.",
+          namespace: "other",
+        },
+      ];
+    },
+  };
+
+  const result = await runExtractionAttack({
+    target,
+    groundTruth: [victimMemory],
+    attackerMode: "cross-namespace",
+    queryBudget: 20,
+    rng: createSeededRng(31),
+    deadlineMs: deadline(),
+  });
+
+  assert.equal(
+    result.asr,
+    0,
+    `namespace-mismatched hits must not inflate ASR (got ${result.asr})`,
+  );
+});
