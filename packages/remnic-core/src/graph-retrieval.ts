@@ -362,19 +362,26 @@ export function extractGraphEdges(
     const from = memory.id;
 
     // `supersedes`, `lineage`, and `derived_from` edges must point at a
-    // memory node specifically — when `includeDanglingEdges` is false we
-    // require the target to already be registered as a memory (never just
-    // "present in the map", because an entity node may share the same id
-    // as a referenced memory that did not make it into the input batch).
-    const isKnownMemory = (id: string): boolean => {
+    // memory node specifically — never an entity / episode / concept /
+    // reflection node that happens to share an id. The guard applies
+    // regardless of `includeDanglingEdges`:
+    //
+    //   - If the target is already registered under a non-memory type,
+    //     reject the edge (type mismatch).
+    //   - If the target is not yet known, accept only when
+    //     `includeDanglingEdges` is `true`. A new memory node is
+    //     registered for the dangling reference.
+    //   - If the target is already registered as a memory, accept.
+    const canTargetMemory = (id: string): boolean => {
       const existing = nodes.get(id);
-      return existing !== undefined && existing.type === "memory";
+      if (existing === undefined) return includeDangling;
+      return existing.type === "memory";
     };
 
     // supersedes: memory → older memory
     if (typeof memory.supersedes === "string" && memory.supersedes) {
       const to = memory.supersedes;
-      if (includeDangling || isKnownMemory(to)) {
+      if (canTargetMemory(to)) {
         if (!nodes.has(to)) addNode(to, "memory");
         addEdge(from, to, "supersedes");
       }
@@ -384,7 +391,7 @@ export function extractGraphEdges(
     if (Array.isArray(memory.lineage)) {
       for (const parent of memory.lineage) {
         if (typeof parent !== "string" || !parent) continue;
-        if (!includeDangling && !isKnownMemory(parent)) continue;
+        if (!canTargetMemory(parent)) continue;
         if (!nodes.has(parent)) addNode(parent, "memory");
         addEdge(from, parent, "derived-from");
       }
@@ -396,7 +403,7 @@ export function extractGraphEdges(
         if (typeof raw !== "string" || !raw) continue;
         const to = stripDerivedFromVersion(raw);
         if (!to) continue;
-        if (!includeDangling && !isKnownMemory(to)) continue;
+        if (!canTargetMemory(to)) continue;
         if (!nodes.has(to)) addNode(to, "memory");
         addEdge(from, to, "derived-from");
       }

@@ -355,6 +355,23 @@ test("extractGraphEdges rejects type mismatch: supersedes points at entity, not 
   assert.equal(edges.filter((e) => e.type === "mentions").length, 1);
 });
 
+test("extractGraphEdges type-mismatch guard applies even with includeDanglingEdges=true", () => {
+  // Fresh evidence: with dangling edges enabled, the guard must still
+  // reject memory → entity cross-type references. The entity node for
+  // "shared-id" is created first via m-A's entityRef; m-B's supersedes
+  // reference must NOT overwrite or attach to that entity node.
+  const memories: MemoryEdgeSource[] = [
+    { id: "m-A", entityRef: "shared-id" },
+    { id: "m-B", supersedes: "shared-id", lineage: ["shared-id"] },
+    { id: "m-C", derived_from: ["shared-id:1"] },
+  ];
+  const { nodes, edges } = extractGraphEdges(memories, { includeDanglingEdges: true });
+  assert.equal(edges.filter((e) => e.type === "supersedes").length, 0);
+  assert.equal(edges.filter((e) => e.type === "derived-from").length, 0);
+  // The shared id remains an entity node, not promoted to memory.
+  assert.equal(nodes.get("shared-id")?.type, "entity");
+});
+
 test("extractGraphEdges rejects type mismatch: derived-from points at entity, not memory", () => {
   const memories: MemoryEdgeSource[] = [
     { id: "m-A", entityRef: "shared-id" },
