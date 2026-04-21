@@ -73,6 +73,48 @@ test("buildOperatorAwareConsolidationPrompt asks for JSON-only output", () => {
   assert.ok(prompt.toLowerCase().includes("json"));
 });
 
+test("buildOperatorAwareConsolidationPrompt example uses a concrete operator, not the pipe placeholder", () => {
+  // PR #632 round-4 review (codex P2): the example JSON in the user
+  // prompt previously contained the literal `"operator": "merge" |
+  // "update" | "split"` placeholder, which some models would echo back
+  // verbatim.  The example must show a concrete value like "merge".
+  const prompt = buildOperatorAwareConsolidationPrompt(makeCluster(2));
+  // The schema example block must include `"operator": "merge"` (a
+  // concrete assignment).
+  assert.match(prompt, /"operator":\s*"merge"/u);
+  // Any mention of the pipe placeholder must be in a negative
+  // instruction (i.e. context that tells the model NOT to use it).
+  const pipeIdx = prompt.indexOf("merge|update|split");
+  if (pipeIdx >= 0) {
+    const context = prompt.slice(Math.max(0, pipeIdx - 100), pipeIdx);
+    assert.match(
+      context,
+      /never|not|forbidden|do not/iu,
+      "any pipe-placeholder mention must be framed negatively",
+    );
+  }
+});
+
+test("parseOperatorAwareConsolidationResponse tolerates JSON example blocks prepended by the model", () => {
+  // Regression for PR #632 round-4 review (codex P1): previously the
+  // parser sliced from first `{` to last `}`, which breaks when the
+  // model includes an earlier brace block.  Switched to balanced-brace
+  // scanning, so earlier blocks are skipped and the actual payload
+  // parses correctly.
+  const cluster = makeCluster(3);
+  const prefixed = [
+    "Here's what I'll emit:",
+    '```',
+    '{"note": "this is a per-operator example"}',
+    '```',
+    "Actual answer:",
+    '{"operator":"merge","output":"actual canonical body"}',
+  ].join("\n");
+  const res = parseOperatorAwareConsolidationResponse(prefixed, cluster);
+  assert.equal(res.operator, "merge");
+  assert.equal(res.output, "actual canonical body");
+});
+
 test("parseOperatorAwareConsolidationResponse falls back when LLM returns the pipe-delimited placeholder", () => {
   // Regression for PR #632 review feedback (codex P2): if a model
   // follows the system prompt literally and emits the

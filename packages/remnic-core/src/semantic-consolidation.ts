@@ -237,9 +237,9 @@ Operator vocabulary:
   - "update" — one source memory carries a stale value that a newer source supersedes within the same logical fact.
   - "split"  — a single logical source really encodes multiple distinct facts that should be separated (rare; if you pick split, still emit ONE canonical body — the write path will chunk it later).
 
-Output JSON ONLY, no prose before or after.  Schema:
+Output JSON ONLY, no prose before or after.  The "operator" key MUST be set to exactly one of the three strings "merge", "update", or "split" — never a pipe-separated placeholder like "merge|update|split".  Example shape:
   {
-    "operator": "merge" | "update" | "split",
+    "operator": "merge",
     "output": "<the canonical memory text>"
   }
 
@@ -285,20 +285,14 @@ export function parseOperatorAwareConsolidationResponse(
   const fenced = /^```(?:json)?\s*([\s\S]*?)```\s*$/u.exec(trimmed);
   const payload = fenced ? fenced[1].trim() : trimmed;
 
-  // Find the first "{" — models sometimes prepend a sentence despite the
-  // instruction.  Parse from there to the matching outermost "}".
-  const firstBrace = payload.indexOf("{");
-  if (firstBrace < 0) return fallback;
-  const lastBrace = payload.lastIndexOf("}");
-  if (lastBrace <= firstBrace) return fallback;
-  const jsonSlice = payload.slice(firstBrace, lastBrace + 1);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonSlice);
-  } catch {
-    return fallback;
-  }
+  // Find a balanced brace-delimited JSON object that has an `operator`
+  // key (PR #632 round-4 review, codex P1).  A first/last-brace slice
+  // breaks when the model prepends an earlier brace block (e.g.
+  // `Example: {"note":"..."} ... {"operator":"merge",...}`).  Walk the
+  // payload tracking nesting + string/escape state and skip past
+  // objects that don't look like our target shape.
+  const parsed = findFirstJsonObjectWithOperator(payload);
+  if (parsed === undefined) return fallback;
   if (typeof parsed !== "object" || parsed === null) return fallback;
 
   const obj = parsed as Record<string, unknown>;
@@ -311,6 +305,73 @@ export function parseOperatorAwareConsolidationResponse(
   const output = rawOutput.trim().length > 0 ? rawOutput.trim() : response.trim();
 
   return { operator, output };
+}
+
+/**
+ * Walk `text`, find the first balanced top-level `{ ... }` block whose
+ * JSON.parse result is an object with an `operator` key, and return it.
+ * Returns `undefined` when nothing matches.  Tracks string state +
+ * escape sequences so braces inside string values don't throw off the
+ * depth counter.
+ *
+ * Used by `parseOperatorAwareConsolidationResponse` to tolerate models
+ * that prepend an explanatory JSON example block before the real
+ * payload (PR #632 round-4 review, codex P1).  Requiring the
+ * `operator` key lets us skip past unrelated brace blocks even when
+ * they parse successfully as JSON.
+ */
+function findFirstJsonObjectWithOperator(text: string): unknown {
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    const start = text.indexOf("{", searchFrom);
+    if (start < 0) return undefined;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    let closed = false;
+    let endIdx = -1;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (inString) {
+        if (escape) {
+          escape = false;
+        } else if (ch === "\\") {
+          escape = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+      } else if (ch === "{") {
+        depth += 1;
+      } else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          closed = true;
+          endIdx = i;
+          break;
+        }
+      }
+    }
+    if (!closed) return undefined;
+    const slice = text.slice(start, endIdx + 1);
+    try {
+      const parsed = JSON.parse(slice);
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "operator" in (parsed as Record<string, unknown>)
+      ) {
+        return parsed;
+      }
+    } catch {
+      // Fall through to the next candidate.
+    }
+    searchFrom = endIdx + 1;
+  }
+  return undefined;
 }
 
 // Silence unused-import warnings when tsup tree-shakes: these are used
