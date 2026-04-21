@@ -319,7 +319,11 @@ async function runSingleCase(
     bufferMaxMinutes: 60,
     triggerMode: "smart",
     // Deliberately empty — we want surprise, not signal-word matches,
-    // to drive the candidate's decisions.
+    // to drive the candidate's decisions. The fixture texts are also
+    // verified to not match any BUILTIN_HIGH_PATTERNS (see signal.ts)
+    // so that both control and candidate runs are only ever flushed by
+    // the surprise gate or the count/timeout guards — never by a
+    // lexical signal pattern. This ensures the A/B delta is clean.
     highSignalPatterns: [],
   });
 
@@ -365,10 +369,14 @@ async function runSingleCase(
   // Only count intervals between CONSECUTIVE flushes. The previous
   // implementation seeded `prev` to `-1`, which mixed the "start of
   // conversation → first flush" distance into the mean and silently
-  // skewed it downward. When there is 0 or 1 flush there is no
-  // consecutive-pair interval to average — fall back to the full
-  // conversation length as a "never-flushed / flushed-once" proxy so
-  // the CSV column stays numeric.
+  // skewed it downward.
+  //
+  // When there are 0 or 1 flushes there are no consecutive-pair intervals
+  // to average. We emit 0 rather than reusing `caseDef.turns.length` so
+  // that "no flushes" and "one flush anywhere" are both reported as "no
+  // measurable cadence" instead of being conflated with a real interval.
+  // Downstream consumers should check `flush_count` before interpreting
+  // this metric: values are meaningful only when flush_count >= 2.
   const turnsBetween: number[] = [];
   for (let i = 1; i < flushTurnIndices.length; i += 1) {
     turnsBetween.push(flushTurnIndices[i]! - flushTurnIndices[i - 1]!);
@@ -376,7 +384,7 @@ async function runSingleCase(
   const mean =
     turnsBetween.length > 0
       ? turnsBetween.reduce((acc, v) => acc + v, 0) / turnsBetween.length
-      : caseDef.turns.length;
+      : 0;
 
   return {
     flushTurnIndices,

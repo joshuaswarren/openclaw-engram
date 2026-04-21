@@ -80,7 +80,7 @@ export const BUFFER_SURPRISE_TRIGGER_FIXTURE: BufferSurpriseTriggerCase[] = [
       "Should I side-dress with compost or use a liquid fertilizer?",
       "My soil pH tested at 6.8 last month, which seems okay.",
       // Topic shift 2: gardening → finance
-      "Actually I wanted to ask about Treasury I-bonds.",
+      "On another note, I wanted to ask about Treasury I-bonds.",
       "How does the inflation adjustment compound over time?",
       "What's the annual purchase limit per person?",
       "Are they a better deal than TIPS right now?",
@@ -108,7 +108,7 @@ export const BUFFER_SURPRISE_TRIGGER_FIXTURE: BufferSurpriseTriggerCase[] = [
       "Token bucket vs leaky bucket — which fits bursty traffic better?",
       "I was leaning toward a sliding-window counter with Redis.",
       // Shift 1: engineering → cooking
-      "Unrelated — I want to try making sourdough this weekend.",
+      "Unrelated — thinking about making sourdough this weekend.",
       "My starter has been in the fridge for two weeks, is it still alive?",
       "Should I refresh it twice before baking?",
       // Shift 2: cooking → history
