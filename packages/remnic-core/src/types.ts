@@ -1566,6 +1566,22 @@ export interface ExtractedFact {
   structuredAttributes?: Record<string, string>;
   /** When category is `procedure`, ordered steps with intents (persisted under procedures/). */
   procedureSteps?: ExtractedProcedureStep[];
+  /**
+   * When category is `reasoning_trace`, the stored solution chain the user
+   * walked through. Persisted under reasoning-traces/.
+   */
+  reasoningTrace?: ExtractedReasoningTrace;
+}
+
+export interface ExtractedReasoningTraceStep {
+  order: number;
+  description: string;
+}
+
+export interface ExtractedReasoningTrace {
+  steps: ExtractedReasoningTraceStep[];
+  finalAnswer: string;
+  observedOutcome?: string;
 }
 
 export interface MemoryIntent {

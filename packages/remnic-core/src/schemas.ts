@@ -98,6 +98,60 @@ export const ExtractedFactSchema = z.object({
     .describe(
       'For category "procedure" only: ordered steps (intent per step). At least two steps; include explicit trigger phrasing in content (e.g. "When you deploy…").',
     ),
+  reasoningTrace: z
+    .object({
+      steps: z
+        .array(
+          z.object({
+            order: z.number(),
+            description: z.string(),
+          }),
+        )
+        // Prompts and normalizer require >=2 ordered steps; enforce it at
+        // the schema layer so gateway-path parsing rejects malformed traces
+        // rather than persisting them (local/direct-client normalization
+        // already enforces this, keeping the two paths symmetric).
+        .min(2)
+        .describe("Ordered reasoning steps the user walked through (require >=2)."),
+      // Accept snake_case aliases so a loose gateway model using
+      // `final_answer` / `observed_outcome` does not fail schema parsing
+      // and drop the entire extraction result. Local/direct-client
+      // normalization already tolerates these keys; the gateway path must
+      // too. Zod's `union` keeps the parse successful either way.
+      finalAnswer: z
+        .string()
+        .optional()
+        .nullable()
+        .describe("The conclusion, decision, or answer the chain arrived at."),
+      final_answer: z
+        .string()
+        .optional()
+        .nullable()
+        .describe("Alias for finalAnswer (snake_case). Gateway-tolerance shim."),
+      observedOutcome: z
+        .string()
+        .optional()
+        .nullable()
+        .describe("Optional note about how the answer actually played out."),
+      observed_outcome: z
+        .string()
+        .optional()
+        .nullable()
+        .describe("Alias for observedOutcome (snake_case). Gateway-tolerance shim."),
+    })
+    // Either finalAnswer OR final_answer must be present — enforce here so
+    // the rest of the pipeline can assume a usable string downstream.
+    .refine(
+      (v) =>
+        (typeof v.finalAnswer === "string" && v.finalAnswer.trim().length > 0) ||
+        (typeof v.final_answer === "string" && v.final_answer.trim().length > 0),
+      { message: "reasoningTrace requires finalAnswer (or final_answer)" },
+    )
+    .optional()
+    .nullable()
+    .describe(
+      'For category "reasoning_trace" only: a stored solution chain with ordered steps, a final answer, and an optional observed outcome. Require at least two steps.',
+    ),
 });
 
 export const EntityMentionSchema = z.object({
