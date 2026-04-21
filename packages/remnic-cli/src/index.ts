@@ -4744,21 +4744,10 @@ async function cmdBench(rest: string[]): Promise<void> {
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath); } catch { /* non-fatal */ }
           } else if (!handledByPackage.ok) {
             await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
-            // Scan for the real result file — fallback writes a timestamped
-            // filename (${name}-v${version}-${ts}.json) so we glob for the
-            // latest match by mtime rather than fabricating a path.
-            let fallbackResultPath: string | undefined;
-            try {
-              const fallbackDir = resolveBenchOutputDir();
-              const files = fs.readdirSync(fallbackDir)
-                .filter((f) => f.startsWith(benchmarkId) && f.endsWith(".json"))
-                .map((f) => ({ name: f, mtime: fs.statSync(path.join(fallbackDir, f)).mtimeMs }))
-                .sort((a, b) => b.mtime - a.mtime);
-              if (files.length > 0) {
-                fallbackResultPath = path.join(fallbackDir, files[0].name);
-              }
-            } catch { /* scan failure is non-fatal */ }
-            try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath ?? ""); } catch { /* non-fatal */ }
+            // Fallback runner writes to evals/results (not
+            // resolveBenchOutputDir()), so we cannot reliably determine the
+            // result path.  Mark complete without a resultPath.
+            try { await updateBenchmarkCompleted(benchStatusPath, statusId, ""); } catch { /* non-fatal */ }
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);

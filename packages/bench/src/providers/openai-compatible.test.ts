@@ -2,21 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createOpenAiCompatibleProvider } from "./openai-compatible.ts";
 
-function mockFetchSuccess() {
-  return async () =>
-    new Response(
-      JSON.stringify({
-        choices: [{ message: { content: "ok" } }],
-        usage: { prompt_tokens: 1, completion_tokens: 1 },
-        model: "test",
-      }),
-      {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      },
-    );
-}
-
 test("OpenAI-compatible provider adds an LM Studio context hint for context window errors", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () =>
