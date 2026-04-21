@@ -523,12 +523,6 @@ export interface PluginConfig {
    */
   recallMemoryWorthFilterEnabled: boolean;
   /**
-   * Optional half-life for Memory Worth decay, in milliseconds. When
-   * positive, older outcome observations are exponentially decayed toward
-   * the uniform prior. Set to 0 (default) to disable decay and use raw
-   * counter values.
-   */
-  /**
    * Recall-audit anomaly detector (issue #565 PR 5/5). When true,
    * access surfaces run the anomaly detector over a tail of the audit
    * trail after each recall and surface any flags via logs / metrics.
@@ -545,6 +539,12 @@ export interface PluginConfig {
   recallAuditAnomalyHighCardinalityLimit: number;
   /** Threshold for the `rapid-fire` flag. */
   recallAuditAnomalyRapidFireLimit: number;
+  /**
+   * Optional half-life for Memory Worth decay, in milliseconds. When
+   * positive, older outcome observations are exponentially decayed toward
+   * the uniform prior. Set to 0 (default) to disable decay and use raw
+   * counter values.
+   */
   recallMemoryWorthHalfLifeMs: number;
   // Memory Linking (Phase 3A)
   memoryLinkingEnabled: boolean;

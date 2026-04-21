@@ -399,14 +399,32 @@ export async function runConsolidationUndo(options: {
     // must be caught (PR #637 round-8 review, cursor+codex).
     let resolvedRelative = parsed.pagePath;
     try {
-      const realSource = await realpath(sourcePath);
       const realBase = await realpath(memoryDir);
-      const rel = path.relative(realBase, realSource);
-      if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
-        resolvedRelative = rel.replace(/\\/g, "/");
+      try {
+        const realSource = await realpath(sourcePath);
+        const rel = path.relative(realBase, realSource);
+        if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
+          resolvedRelative = rel.replace(/\\/g, "/");
+        }
+      } catch {
+        // realpath on the leaf failed (file doesn't exist yet).  Try
+        // resolving the parent directory instead — if the parent is a
+        // symlink into archive/state, the leaf would be written there
+        // too (PR #637 round-12 review, codex P1).
+        const parentDir = path.dirname(sourcePath);
+        try {
+          const realParent = await realpath(parentDir);
+          const parentRel = path.relative(realBase, realParent);
+          if (!parentRel.startsWith("..") && !path.isAbsolute(parentRel)) {
+            const leafName = path.basename(sourcePath);
+            resolvedRelative = path.join(parentRel, leafName).replace(/\\/g, "/");
+          }
+        } catch {
+          // Parent also doesn't exist — fall through to text path check
+        }
       }
     } catch {
-      // realpath failed (file doesn't exist yet) — use the text path
+      // memoryDir realpath failed — use the text path
     }
     if (!isActiveMemoryRelativePath(parsed.pagePath, versioning.sidecarDir) ||
         !isActiveMemoryRelativePath(resolvedRelative, versioning.sidecarDir)) {
@@ -588,6 +606,11 @@ export async function runConsolidationUndo(options: {
 
   let writeFailed = false;
   for (const p of dedupedPlans) {
+    if (p.kind === "skip") {
+      // Dedup-generated skip entries and other pre-write skips.
+      if (p.restore) result.restores.push(p.restore);
+      continue;
+    }
     if (p.kind === "recovered_existing") {
       result.restores.push({
         entry: p.entry,
