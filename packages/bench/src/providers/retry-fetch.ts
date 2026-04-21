@@ -16,6 +16,15 @@ const DEFAULTS: Required<RetryFetchOptions> = {
   timeoutMs: 120_000,
 };
 
+async function readBodyPreview(response: Response, maxBytes: number): Promise<string> {
+  try {
+    const text = await response.text();
+    return text.slice(0, maxBytes);
+  } catch {
+    return "";
+  }
+}
+
 function isTransientError(err: unknown): boolean {
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();
@@ -57,9 +66,9 @@ export async function retryFetch(
         return response;
       }
 
-      await response.body?.cancel().catch(() => {});
+      const bodyPreview = await readBodyPreview(response, 512);
       lastError = new Error(
-        `HTTP ${response.status} ${response.statusText} (attempt ${attempt}/${opts.maxAttempts})`,
+        `HTTP ${response.status} ${response.statusText} (attempt ${attempt}/${opts.maxAttempts}): ${bodyPreview}`,
       );
     } catch (err) {
       clearTimeout(timeout);
