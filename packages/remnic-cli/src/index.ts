@@ -776,7 +776,7 @@ async function runBenchViaFallback(
     parsed.judgeProvider !== undefined ||
     parsed.judgeModel !== undefined ||
     parsed.judgeBaseUrl !== undefined ||
-    parsed.disableThinking !== undefined ||
+    parsed.disableThinking === true ||
     parsed.requestTimeout !== undefined
   ) {
     throw new Error(
