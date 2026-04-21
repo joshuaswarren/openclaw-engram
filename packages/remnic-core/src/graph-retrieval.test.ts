@@ -382,6 +382,30 @@ test("extractGraphEdges rejects type mismatch: derived-from points at entity, no
   assert.equal(edges.filter((e) => e.type === "derived-from").length, 0);
 });
 
+test("extractGraphEdges drops mentions edge when target id collides with an existing memory", () => {
+  // A memory with id "person:Jane" collides with a downstream entityRef
+  // "person:Jane". The existing node stays a memory; the mentions edge
+  // is dropped rather than retyping the node. This preserves the
+  // extractor's typed-node contract.
+  const memories: MemoryEdgeSource[] = [
+    { id: "person:Jane" },
+    { id: "m-A", entityRef: "person:Jane" },
+  ];
+  const { nodes, edges } = extractGraphEdges(memories);
+  assert.equal(nodes.get("person:Jane")?.type, "memory");
+  assert.equal(edges.filter((e) => e.type === "mentions").length, 0);
+});
+
+test("extractGraphEdges drops authored-by edge when agent id collides with an existing memory", () => {
+  const memories: MemoryEdgeSource[] = [
+    { id: "agent:planner" },
+    { id: "m-A", content: "[Source: agent=planner]" },
+  ];
+  const { nodes, edges } = extractGraphEdges(memories);
+  assert.equal(nodes.get("agent:planner")?.type, "memory");
+  assert.equal(edges.filter((e) => e.type === "authored-by").length, 0);
+});
+
 test("extractGraphEdges lowercases citation keys (case-insensitive match)", () => {
   const memories: MemoryEdgeSource[] = [
     { id: "m1", content: "[Source: Agent=Planner, SESSION=abc]" },

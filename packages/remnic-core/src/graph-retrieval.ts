@@ -409,7 +409,11 @@ export function extractGraphEdges(
       }
     }
 
-    // entityRef / entityRefs: memory → entity (always register entity node)
+    // entityRef / entityRefs: memory → entity. The target must either be
+    // absent (we register a new entity node) or already an entity node
+    // (no type conflict). If the id is already a memory node, drop the
+    // edge rather than mis-typing it — the extractor never mutates an
+    // existing node's type.
     const entitySet = new Set<string>();
     if (typeof memory.entityRef === "string" && memory.entityRef) {
       entitySet.add(memory.entityRef);
@@ -420,11 +424,14 @@ export function extractGraphEdges(
       }
     }
     for (const ref of entitySet) {
-      addNode(ref, "entity");
+      const existing = nodes.get(ref);
+      if (existing !== undefined && existing.type !== "entity") continue;
+      if (!existing) addNode(ref, "entity");
       addEdge(from, ref, "mentions");
     }
 
     // Inline [Source: agent=..., ...] citations → authored-by edge.
+    // Same type-collision guard as the entity block above.
     if (typeof memory.content === "string" && memory.content.length > 0) {
       // Reset the regex's lastIndex on each memory since it is a global regex.
       CITATION_REGEX.lastIndex = 0;
@@ -436,7 +443,9 @@ export function extractGraphEdges(
         const agent = fields.agent;
         if (!agent) continue;
         const agentId = `agent:${agent}`;
-        addNode(agentId, "entity");
+        const existing = nodes.get(agentId);
+        if (existing !== undefined && existing.type !== "entity") continue;
+        if (!existing) addNode(agentId, "entity");
         addEdge(from, agentId, "authored-by");
       }
     }
