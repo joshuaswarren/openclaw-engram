@@ -54,7 +54,8 @@ export async function retryFetch(
 
     const controller = new AbortController();
     const callerSignal = init.signal as AbortSignal | undefined;
-    callerSignal?.addEventListener("abort", () => controller.abort(), { once: true });
+    const onCallerAbort = () => controller.abort();
+    callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
     const timeout = setTimeout(() => controller.abort(), opts.timeoutMs);
 
     try {
@@ -63,6 +64,7 @@ export async function retryFetch(
       clearTimeout(timeout);
 
       if (response.ok || response.status < 500) {
+        callerSignal?.removeEventListener("abort", onCallerAbort);
         return response;
       }
 
@@ -72,8 +74,14 @@ export async function retryFetch(
       );
     } catch (err) {
       clearTimeout(timeout);
-      if (callerSignal?.aborted) throw err;
-      if (!isTransientError(err)) throw err;
+      if (callerSignal?.aborted) {
+        callerSignal?.removeEventListener("abort", onCallerAbort);
+        throw err;
+      }
+      if (!isTransientError(err)) {
+        callerSignal?.removeEventListener("abort", onCallerAbort);
+        throw err;
+      }
       lastError = err instanceof Error ? err : new Error(String(err));
     }
 

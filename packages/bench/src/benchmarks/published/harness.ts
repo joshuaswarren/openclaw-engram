@@ -181,6 +181,7 @@ export async function runPublishedHarness(
       }
     }
     const planIndex = tasks.length;
+    const totalInPlan = plan.trials.length;
     for (const trial of plan.trials) {
       const trialId = trial.taskId ?? trial.question.slice(0, 60);
       try {
@@ -199,7 +200,7 @@ export async function runPublishedHarness(
           details: { error: message },
         });
       }
-      ctx.options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length);
+      ctx.options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalInPlan);
     }
   }
 
