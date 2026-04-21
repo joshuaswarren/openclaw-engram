@@ -559,8 +559,35 @@ export async function runConsolidationUndo(options: {
   // All validations passed — execute writes.  A write failure here
   // is a filesystem problem rather than a provenance problem, but
   // any failure still aborts the archive.
-  let writeFailed = false;
+  //
+  // Deduplicate plans by sourcePath first: duplicate derived_from
+  // entries for the same source would cause the second wx-flagged
+  // write to fail with EEXIST after the first succeeds.  The first
+  // plan for each source wins; subsequent duplicates are recorded as
+  // skipped (PR #637 round-12 review, cursor medium).
+  const seenSourcePaths = new Set<string>();
+  const dedupedPlans: RestorePlan[] = [];
   for (const p of plans) {
+    if (p.kind === "write" || p.kind === "recovered_existing") {
+      if (seenSourcePaths.has(p.sourcePath)) {
+        dedupedPlans.push({
+          kind: "skip",
+          restore: {
+            entry: p.kind === "write" ? p.entry : p.entry,
+            sourcePath: p.sourcePath,
+            outcome: "skipped_file_exists",
+            detail: "duplicate derived_from entry — source already processed",
+          },
+        });
+        continue;
+      }
+      seenSourcePaths.add(p.sourcePath);
+    }
+    dedupedPlans.push(p);
+  }
+
+  let writeFailed = false;
+  for (const p of dedupedPlans) {
     if (p.kind === "recovered_existing") {
       result.restores.push({
         entry: p.entry,
