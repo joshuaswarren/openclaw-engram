@@ -2832,10 +2832,13 @@ export class Orchestrator {
         // memory BEFORE archiving it, collecting "<relpath>:<versionId>"
         // pointers for the new canonical memory's `derived_from` frontmatter
         // field.  Snapshots are best-effort — if page-versioning is disabled
-        // or a single source fails to snapshot we simply omit that entry
-        // rather than abort the consolidation.  `derived_via` is hardcoded
-        // to `"merge"` here; operator selection (SPLIT/MERGE/UPDATE) lands
-        // in PR 3.
+        // (the default in `config.ts`) or a single source fails to snapshot
+        // we omit that entry rather than abort the consolidation.  Review
+        // feedback (codex): `derived_via` is emitted unconditionally so
+        // downstream logic can still identify consolidation outputs by
+        // operator even when no `derived_from` snapshots could be
+        // captured.  PR 3 selects SPLIT/MERGE/UPDATE dynamically; here we
+        // hardcode `"merge"`.
         const derivedFromEntries: string[] = [];
         for (const m of cluster.memories) {
           if (!m.path) continue;
@@ -2858,7 +2861,7 @@ export class Orchestrator {
             source: "semantic-consolidation",
             lineage: lineageIds,
             derivedFrom: derivedFromEntries.length > 0 ? derivedFromEntries : undefined,
-            derivedVia: derivedFromEntries.length > 0 ? "merge" : undefined,
+            derivedVia: "merge",
           },
         );
 

@@ -2447,10 +2447,16 @@ export class StorageManager {
     if (options.status !== undefined) {
       fm.status = options.status;
     }
-    // Consolidation provenance (issue #561 PR 2).  We filter empty arrays to
-    // avoid serializing a no-op `derived_from: []` on legacy write paths that
-    // pass an explicit empty array.  Missing values survive the roundtrip as
-    // undefined.
+    // Consolidation provenance (issue #561 PR 2).  Fields are independent
+    // at the storage layer:
+    //   - `derivedFrom: []` → coerced to undefined so we never emit the
+    //     invalid `derived_from: []` form the write validator rejects.
+    //   - `derivedVia` may stand alone: an orphan operator marker (e.g.
+    //     `derived_via: merge` with no `derived_from`) is the correct
+    //     serialization when page-versioning is disabled and snapshots
+    //     can't be captured.  Downstream logic still needs to identify
+    //     the memory as a consolidation output.  Review feedback: PR #624
+    //     codex / cursor threads.
     if (options.derivedFrom !== undefined && options.derivedFrom.length > 0) {
       fm.derived_from = options.derivedFrom;
     }

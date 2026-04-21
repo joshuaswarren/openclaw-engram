@@ -74,6 +74,33 @@ test("writeMemory omits derived_from when the array is empty", async () => {
   }
 });
 
+test("writeMemory emits derived_via alone when page-versioning is unavailable", async () => {
+  // Review feedback (PR #624 codex): `derived_via` must stand alone so
+  // downstream logic can still identify consolidation outputs by operator
+  // even when page-versioning is disabled and no `derived_from` entries
+  // could be captured.  The storage layer intentionally does NOT enforce
+  // a `derived_via requires derived_from` invariant.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-derived-orphan-via-"));
+  try {
+    const storage = new StorageManager(dir);
+    await storage.ensureDirectories();
+
+    const id = await storage.writeMemory("fact", "orphan consolidation output", {
+      source: "semantic-consolidation",
+      derivedVia: "merge",
+      // deliberately omit derivedFrom to simulate versioning-disabled case
+    });
+
+    const all = await storage.readAllMemories();
+    const memory = all.find((m) => m.frontmatter.id === id);
+    assert.ok(memory);
+    assert.equal(memory.frontmatter.derived_from, undefined);
+    assert.equal(memory.frontmatter.derived_via, "merge");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("writeMemory accepts all three ConsolidationOperator values via derivedVia", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-derived-ops-write-"));
   try {
