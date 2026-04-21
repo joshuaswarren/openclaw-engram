@@ -238,6 +238,21 @@ function sanitizeForMarkdownInline(value: unknown): string {
   return value.replace(/[`|\r\n]/g, " ").trim();
 }
 
+/**
+ * Map the legacy `LastRecallSnapshot.source` field to the
+ * `RecallXrayServedBy` union used by the unified x-ray renderer.
+ * Mirrors the `mapRecallSourceToXrayServedBy` helper inside
+ * `orchestrator.ts` (which is private).  Keep the two in sync when a
+ * new source lands — unknown values collapse to `"hybrid"` to preserve
+ * backwards compatibility with older on-disk snapshots.
+ */
+function mapLegacySourceToServedBy(
+  source: unknown,
+): "hybrid" | "recent-scan" {
+  if (source === "recent_scan") return "recent-scan";
+  return "hybrid";
+}
+
 export function toRecallXraySnapshotFromLegacy(
   snapshot: LastRecallSnapshot | null,
 ): RecallXraySnapshot | null {
@@ -250,10 +265,17 @@ export function toRecallXraySnapshotFromLegacy(
   const memoryIds = Array.isArray(snapshot.memoryIds)
     ? snapshot.memoryIds.filter((x): x is string => typeof x === "string")
     : [];
+  // Codex P2 + Cursor Medium on #605: every converted result used to
+  // be stamped with `servedBy: "hybrid"`, misattributing legacy
+  // snapshots that came from `recent_scan` (or any future source).
+  // Propagate the recorded `source` so markdown `recall-explain`
+  // output matches the `served-by=` string the native x-ray capture
+  // would emit for the same recall.
+  const servedBy = mapLegacySourceToServedBy(snapshot.source);
   const results: RecallXrayResult[] = memoryIds.map((memoryId) => ({
     memoryId,
     path: "",
-    servedBy: "hybrid",
+    servedBy,
     scoreDecomposition: { final: 0 },
     admittedBy: [],
   }));

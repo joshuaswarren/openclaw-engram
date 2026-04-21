@@ -117,3 +117,24 @@ test("toRecallXraySnapshotFromLegacy copes with malformed recordedAt", () => {
   );
   assert.equal(xray?.capturedAt, 0);
 });
+
+test("toRecallXraySnapshotFromLegacy propagates snapshot.source to servedBy", () => {
+  // Codex P2 + Cursor Medium on #605: every converted result used to
+  // be stamped with `servedBy: "hybrid"`, misattributing legacy
+  // snapshots from a non-hybrid source (notably `recent_scan`).
+  const recent = toRecallXraySnapshotFromLegacy(
+    legacySnapshot({ source: "recent_scan" }),
+  );
+  assert.equal(recent?.results[0]?.servedBy, "recent-scan");
+  assert.equal(recent?.results[1]?.servedBy, "recent-scan");
+
+  for (const source of ["hot_qmd", "hot_embedding", "cold_fallback", "none"]) {
+    const xray = toRecallXraySnapshotFromLegacy(legacySnapshot({ source }));
+    assert.equal(xray?.results[0]?.servedBy, "hybrid", `source=${source}`);
+  }
+  const unknown = toRecallXraySnapshotFromLegacy(
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    legacySnapshot({ source: "future_tier" as any }),
+  );
+  assert.equal(unknown?.results[0]?.servedBy, "hybrid");
+});
