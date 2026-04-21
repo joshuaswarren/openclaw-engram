@@ -81,6 +81,11 @@ import {
   type ParallelSearchResult,
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
+import {
+  applyMemoryWorthFilter,
+  buildMemoryWorthCounterMap,
+  type MemoryWorthCounters,
+} from "./memory-worth-filter.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
 import {
   applyTemporalSupersession,
@@ -1230,6 +1235,20 @@ export class Orchestrator {
   /** Lossless Context Management engine — proactive session archive + DAG summarization. */
   readonly lcmEngine: LcmEngine | null = null;
   private readonly rerankCache = new RerankCache();
+
+  /**
+   * Short-TTL cache for Memory Worth counter lookups so interactive recall
+   * doesn't trigger a full `readAllMemories` scan per query. Keyed by
+   * namespace; the filter unions across namespaces at query time. The TTL
+   * is intentionally short (seconds, not minutes) because counters are
+   * mutated by `recordMemoryOutcome` asynchronously and we'd rather serve
+   * a 30-second-stale worth score than a stable-but-wrong one.
+   */
+  private readonly memoryWorthCounterCache = new Map<
+    string,
+    { at: number; counters: ReadonlyMap<string, MemoryWorthCounters> }
+  >();
+  private static readonly MEMORY_WORTH_CACHE_TTL_MS = 30_000;
   /**
    * Per-session workspace overrides keyed by sessionKey.
    * Set by the before_agent_start hook so recall() uses the correct
@@ -8122,6 +8141,20 @@ export class Orchestrator {
         );
       }
 
+      // Memory Worth recall filter (issue #560 PR 4). When enabled, multiply
+      // each candidate's score by its Memory Worth factor so memories with
+      // a history of failed outcomes sink. Default off in this PR; PR 5
+      // flips the default once bench shows tie-or-win. Fail-open: any
+      // lookup error leaves the original scores untouched rather than
+      // breaking recall for the whole namespace.
+      if (this.config.recallMemoryWorthFilterEnabled && memoryResults.length > 0) {
+        try {
+          memoryResults = await this.applyMemoryWorthRerank(memoryResults, recallNamespaces);
+        } catch (err) {
+          log.debug("memory-worth filter failed open", { error: (err as Error).message });
+        }
+      }
+
       // Synapse-inspired confidence gate: check scores BEFORE slicing so
       // reranking doesn't affect which score the gate evaluates.
       //
@@ -13489,6 +13522,142 @@ export class Orchestrator {
    *
    * Callers must pass the full candidate pool (post-rerank, pre-slice).
    */
+  private async applyMemoryWorthRerank(
+    results: QmdSearchResult[],
+    namespaces: string[],
+  ): Promise<QmdSearchResult[]> {
+    // Build the counter lookup. We union frontmatter counters across every
+    // namespace the recall spans — the recall path itself already
+    // aggregates candidates from multiple namespaces, so we must do the
+    // same when looking up counters. Per-namespace results are cached with
+    // a short TTL so interactive recall doesn't trigger a full
+    // `readAllMemories` scan per query (addresses codex P2 on PR 4).
+    const counters = new Map<string, MemoryWorthCounters>();
+    const seenNamespaces = new Set<string>();
+    const nowMs = Date.now();
+
+    // Evict all expired entries on every call so long-running processes
+    // touching a high-cardinality namespace set (coding/project overlays,
+    // per-branch) don't grow the cache unboundedly. Without this, an entry
+    // for a namespace that's never looked up again would pin its full
+    // counter map forever.
+    for (const [key, entry] of this.memoryWorthCounterCache) {
+      if (nowMs - entry.at >= Orchestrator.MEMORY_WORTH_CACHE_TTL_MS) {
+        this.memoryWorthCounterCache.delete(key);
+      }
+    }
+
+    for (const ns of namespaces) {
+      if (seenNamespaces.has(ns)) continue;
+      seenNamespaces.add(ns);
+      try {
+        const cached = this.memoryWorthCounterCache.get(ns);
+        let nsMap: ReadonlyMap<string, MemoryWorthCounters> | undefined;
+        if (
+          cached &&
+          nowMs - cached.at < Orchestrator.MEMORY_WORTH_CACHE_TTL_MS
+        ) {
+          nsMap = cached.counters;
+        } else {
+          const storage = await this.getStorage(ns);
+          const memories = await storage.readAllMemories();
+          nsMap = buildMemoryWorthCounterMap(memories);
+          this.memoryWorthCounterCache.set(ns, { at: nowMs, counters: nsMap });
+        }
+        for (const [path, c] of nsMap) counters.set(path, c);
+      } catch (err) {
+        log.debug("memory-worth: failed to read namespace, skipping", {
+          namespace: ns,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    // For candidates whose path didn't show up in any hot-tier namespace
+    // scan (typical of cold-tier / archive fallback), try a direct
+    // per-path read. Without this, cold-tier candidates always stay at
+    // multiplier 1.0 even when they have outcome history. Errors are
+    // swallowed so a single unreadable archive entry can't break the
+    // whole recall.
+    const missing = results.filter((r) => !counters.has(r.path));
+    if (missing.length > 0) {
+      // Use the first-seen namespace's storage as the reader — all
+      // StorageManagers share the same on-disk format, and
+      // `readMemoryByPath` takes an absolute path so the baseDir doesn't
+      // have to match.
+      let reader: StorageManager | null = null;
+      for (const ns of namespaces) {
+        try {
+          reader = await this.getStorage(ns);
+          break;
+        } catch {
+          // try next namespace
+        }
+      }
+      if (reader) {
+        for (const r of missing) {
+          try {
+            const memory = await reader.readMemoryByPath(r.path);
+            if (!memory) continue;
+            const fm = memory.frontmatter;
+            if (fm.mw_success === undefined && fm.mw_fail === undefined) continue;
+            counters.set(r.path, {
+              mw_success: fm.mw_success,
+              mw_fail: fm.mw_fail,
+              lastAccessed: fm.lastAccessed,
+            });
+          } catch (err) {
+            log.debug("memory-worth: direct path lookup failed", {
+              path: r.path,
+              error: (err as Error).message,
+            });
+          }
+        }
+      }
+    }
+
+    // If no memory in the candidate set has any counter data, the filter
+    // would be a no-op — skip the reorder to avoid spurious log spam.
+    if (counters.size === 0) return results;
+
+    // Preserve upstream ordering (reranker, specialized tiers, etc.) for
+    // neutral candidates. The upstream stages set `memoryResults` in their
+    // intended order but often leave `r.score` as the raw QMD score. If we
+    // sorted by `r.score * multiplier` directly, neutral candidates
+    // (multiplier 1.0) would snap back to raw-QMD order and silently undo
+    // the reranker. Feed the filter a synthetic monotone-decreasing rank
+    // score so it uses input position as the baseline, then applies the
+    // multiplier on top. Ties fall back to the stable secondary key in
+    // `applyMemoryWorthFilter`.
+    const rankedInputs = results.map((r, i) => ({
+      path: r.path,
+      // Large positive rank score so multiplier math stays well-scaled and
+      // we never hit zero; descending so earlier items rank higher.
+      score: results.length - i,
+    }));
+    const filtered = applyMemoryWorthFilter(rankedInputs, {
+      counters,
+      now: new Date(),
+      halfLifeMs:
+        this.config.recallMemoryWorthHalfLifeMs > 0
+          ? this.config.recallMemoryWorthHalfLifeMs
+          : undefined,
+    });
+
+    // Reconstruct the QmdSearchResult list in the new order. `.score` is
+    // preserved from the upstream pipeline (rerank, tier scoring, etc.) —
+    // we only reorder. Writing the synthetic rank-weighted score back
+    // would contaminate downstream logic (telemetry, confidence gates)
+    // that expects the original QMD/rerank score semantics.
+    const byPath = new Map(results.map((r) => [r.path, r]));
+    const reordered: QmdSearchResult[] = [];
+    for (const item of filtered) {
+      const original = byPath.get(item.path);
+      if (original) reordered.push(original);
+    }
+    return reordered;
+  }
+
   private diversifyAndLimitRecallResults(
     sectionId: string,
     results: QmdSearchResult[],
@@ -13955,6 +14124,19 @@ export class Orchestrator {
       log.debug(
         "rerankProvider=cloud is reserved/experimental in v2.2.0; skipping rerank",
       );
+    }
+
+    // Memory Worth filter — must fire on the cold fallback path too, or the
+    // feature flag produces divergent behavior by retrieval path (CLAUDE.md
+    // rule 39). Fail-open on lookup errors.
+    if (this.config.recallMemoryWorthFilterEnabled && results.length > 0) {
+      try {
+        results = await this.applyMemoryWorthRerank(results, options.recallNamespaces);
+      } catch (err) {
+        log.debug("memory-worth filter (cold) failed open", {
+          error: (err as Error).message,
+        });
+      }
     }
 
     // Apply MMR before final truncation so the cold fallback path mirrors

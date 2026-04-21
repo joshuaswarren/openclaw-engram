@@ -722,6 +722,19 @@ export {
 } from "./memory-worth-outcomes.js";
 
 // ---------------------------------------------------------------------------
+// Memory Worth recall filter (issue #560 PR 4 of 5)
+// ---------------------------------------------------------------------------
+
+export {
+  applyMemoryWorthFilter,
+  buildMemoryWorthCounterMap,
+  type MemoryWorthCounters,
+  type MemoryWorthFilterCandidate,
+  type MemoryWorthFilterOptions,
+  type MemoryWorthFilterResultItem,
+} from "./memory-worth-filter.js";
+
+// ---------------------------------------------------------------------------
 // Graph retrieval types (issue #559, PR 1 of 5)
 // ---------------------------------------------------------------------------
 

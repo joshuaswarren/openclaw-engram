@@ -1071,6 +1071,14 @@ export function parseConfig(raw: unknown): PluginConfig {
           (v): v is string => typeof v === "string" && v.length > 0,
         )
       : ["decisions", "principles", "conventions", "runbooks", "entities"],
+    // Memory Worth recall filter (issue #560 PR 4). Default off — PR 5
+    // flips the default after bench validation.
+    recallMemoryWorthFilterEnabled:
+      coerceBool(cfg.recallMemoryWorthFilterEnabled) ?? false,
+    recallMemoryWorthHalfLifeMs: (() => {
+      const n = coerceNumber(cfg.recallMemoryWorthHalfLifeMs);
+      return n !== undefined && n >= 0 ? n : 0;
+    })(),
     // Memory Linking (Phase 3A)
     memoryLinkingEnabled: cfg.memoryLinkingEnabled === true, // Off by default initially
     // Conversation Threading (Phase 3B)

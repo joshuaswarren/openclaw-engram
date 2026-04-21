@@ -2020,6 +2020,17 @@
         "default": ["decisions", "principles", "conventions", "runbooks", "entities"],
         "description": "Taxonomy category IDs eligible for direct-answer routing."
       },
+      "recallMemoryWorthFilterEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, recall multiplies candidate scores by the Memory Worth factor (mw_success / mw_fail counters, see issue #560). Memories with a history of failed sessions sink; neutral memories are untouched. Default off until PR 5 validates the lift."
+      },
+      "recallMemoryWorthHalfLifeMs": {
+        "type": "number",
+        "minimum": 0,
+        "default": 0,
+        "description": "Half-life (ms) for Memory Worth decay. Positive values exponentially decay older outcomes toward the neutral prior; 0 disables decay."
+      },
       "memoryLinkingEnabled": {
         "type": "boolean",
         "default": false,
