@@ -555,6 +555,17 @@ export async function runConsolidationUndo(options: {
       continue;
     }
     if (p.kind === "write") {
+      if (writeFailed) {
+        // All-or-nothing: once a write fails, skip all remaining writes
+        // so the target is not archived with partial source coverage.
+        result.restores.push({
+          entry: p.entry,
+          sourcePath: p.sourcePath,
+          outcome: "skipped_blocked_by_other_failures",
+          detail: "a prior source write failed; skipping remaining writes to honor all-or-nothing contract",
+        });
+        continue;
+      }
       try {
         await mkdir(path.dirname(p.sourcePath), { recursive: true });
         await writeFile(p.sourcePath, p.content, "utf-8");
