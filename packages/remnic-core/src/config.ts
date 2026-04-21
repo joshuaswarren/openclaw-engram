@@ -1060,17 +1060,41 @@ export function parseConfig(raw: unknown): PluginConfig {
       const n = coerceNumber(cfg.recallGraphDamping);
       return n !== undefined && n >= 0 && n < 1 ? n : 0.85;
     })(),
+    // Fractional integer values (e.g. `0.5`) are REJECTED rather than
+    // silently floored to zero — CLAUDE.md rule 51 ("Reject invalid
+    // user input instead of silently defaulting"). Users who set a
+    // fractional iteration cap almost certainly meant an integer and
+    // quietly flooring their value to 0 turns off the tier without
+    // warning.
     recallGraphIterations: (() => {
+      if (cfg.recallGraphIterations === undefined) return 20;
       const n = coerceNumber(cfg.recallGraphIterations);
-      return n !== undefined && Number.isFinite(n) && n >= 0 && n <= 500
-        ? Math.floor(n)
-        : 20;
+      if (n === undefined || !Number.isFinite(n) || n < 0 || n > 500) {
+        throw new Error(
+          `recallGraphIterations must be an integer in [0, 500] (got ${JSON.stringify(cfg.recallGraphIterations)}).`,
+        );
+      }
+      if (!Number.isInteger(n)) {
+        throw new Error(
+          `recallGraphIterations must be an integer (got fractional value ${n}).`,
+        );
+      }
+      return n;
     })(),
     recallGraphTopK: (() => {
+      if (cfg.recallGraphTopK === undefined) return 50;
       const n = coerceNumber(cfg.recallGraphTopK);
-      return n !== undefined && Number.isFinite(n) && n >= 0 && n <= 10000
-        ? Math.floor(n)
-        : 50;
+      if (n === undefined || !Number.isFinite(n) || n < 0 || n > 10000) {
+        throw new Error(
+          `recallGraphTopK must be an integer in [0, 10000] (got ${JSON.stringify(cfg.recallGraphTopK)}).`,
+        );
+      }
+      if (!Number.isInteger(n)) {
+        throw new Error(
+          `recallGraphTopK must be an integer (got fractional value ${n}).`,
+        );
+      }
+      return n;
     })(),
     recallDirectAnswerTokenOverlapFloor: (() => {
       const n = coerceNumber(cfg.recallDirectAnswerTokenOverlapFloor);
