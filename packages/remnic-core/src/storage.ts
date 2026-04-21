@@ -3369,6 +3369,13 @@ export class StorageManager {
     if (memory.frontmatter.category === "procedure") {
       return path.join(root, "procedures", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
     }
+    if (memory.frontmatter.category === "reasoning_trace") {
+      // Issue #564 PR 3: preserve the dedicated reasoning-traces/ subtree
+      // across tier moves. Without this branch, hot→cold migration would
+      // funnel the memory into facts/, breaking isReasoningTracePath() and
+      // silently disabling the recall boost for migrated traces.
+      return path.join(root, "reasoning-traces", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
+    }
     return path.join(root, "facts", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
   }
 

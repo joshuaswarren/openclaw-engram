@@ -246,4 +246,56 @@ describe("StorageManager reasoning_trace routing", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+
+  it("buildTierMemoryPath preserves the reasoning-traces/ subtree across tier moves", async () => {
+    const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-reasoning-trace-tier-"));
+    try {
+      const storage = new StorageManager(dir);
+      const body = [
+        "How I picked route-b",
+        "",
+        "## Step 1",
+        "",
+        "Enumerated candidate routes.",
+        "",
+        "## Step 2",
+        "",
+        "Measured round-trip times.",
+        "",
+        "## Final Answer",
+        "",
+        "route-b pinned.",
+      ].join("\n");
+      const id = await storage.writeMemory("reasoning_trace", body, {
+        source: "test",
+      });
+      const memories = await storage.readAllMemories();
+      const found = memories.find((m) => m.frontmatter.id === id);
+      assert.ok(found, "stored reasoning_trace should be readable");
+
+      // Both hot and cold migration targets must live under reasoning-traces/.
+      const hot = storage.buildTierMemoryPath(found, "hot");
+      const cold = storage.buildTierMemoryPath(found, "cold");
+      assert.ok(
+        hot.includes(`${path.sep}reasoning-traces${path.sep}`),
+        `hot tier path should remain under reasoning-traces/, got: ${hot}`,
+      );
+      assert.ok(
+        cold.includes(`${path.sep}reasoning-traces${path.sep}`),
+        `cold tier path should remain under reasoning-traces/, got: ${cold}`,
+      );
+      // And it must NOT be funneled into facts/ — that would break
+      // isReasoningTracePath() and silently disable the recall boost.
+      assert.ok(
+        !/[\\/]facts[\\/]/.test(hot),
+        `reasoning_trace must not be migrated into facts/: ${hot}`,
+      );
+      assert.ok(
+        !/[\\/]facts[\\/]/.test(cold),
+        `reasoning_trace must not be migrated into facts/: ${cold}`,
+      );
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
 });
