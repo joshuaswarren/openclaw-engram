@@ -153,7 +153,6 @@ import {
   updateBenchmarkFailed,
   updateTaskProgress as updateBenchStatusTaskProgress,
   finalizeBenchStatus,
-  removeBenchStatus,
 } from "./bench-status.js";
 import {
   cleanupRollbackDirectoryBestEffort,
@@ -2030,6 +2029,7 @@ async function runBenchViaPackage(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
   runtimeProfile: BenchRuntimeProfile,
+  benchStatusPath?: string,
 ): Promise<{ ok: boolean; writtenPath?: string }> {
   const loaded = await tryLoadBenchModule();
   if (!loaded) return { ok: false };
@@ -2096,11 +2096,13 @@ async function runBenchViaPackage(
       system,
       onTaskComplete: (task, completed, total) => {
         partialTasks.push(task);
-        updateBenchStatusTaskProgress(
-          path.join(outputDir, "bench-status.json"),
-          completed,
-          total ?? undefined,
-        ).catch(() => {});
+        if (benchStatusPath) {
+          updateBenchStatusTaskProgress(
+            benchStatusPath,
+            completed,
+            total ?? undefined,
+          ).catch(() => {});
+        }
         if (completed % 50 === 0 || completed === total) {
           const elapsed = Math.round((Date.now() - benchStartTime) / 1000);
           const remaining = total && elapsed > 0 ? Math.round((total - completed) / (completed / elapsed)) : "?";
@@ -4716,28 +4718,47 @@ async function cmdBench(rest: string[]): Promise<void> {
     parsed.resultsDir ?? resolveBenchOutputDir(),
     "bench-status.json",
   );
-  await initBenchStatus(benchStatusPath, selectedBenchmarks, process.pid);
+  // When running a matrix (multiple profiles), create profile-specific status
+  // entries so that a failed profile doesn't get overwritten by a later success.
+  const statusEntryIds = runtimeProfiles.length > 1
+    ? selectedBenchmarks.flatMap((benchmarkId) =>
+        runtimeProfiles.map((profile) => `${benchmarkId} [${profile}]`),
+      )
+    : selectedBenchmarks;
+  await initBenchStatus(benchStatusPath, statusEntryIds, process.pid);
   try {
     for (const benchmarkId of selectedBenchmarks) {
       for (const runtimeProfile of runtimeProfiles) {
-        await updateBenchmarkStarted(benchStatusPath, benchmarkId);
+        const statusId = runtimeProfiles.length > 1
+          ? `${benchmarkId} [${runtimeProfile}]`
+          : benchmarkId;
+        await updateBenchmarkStarted(benchStatusPath, statusId);
         try {
           const handledByPackage = await runBenchViaPackage(
             parsed,
             benchmarkId,
             runtimeProfile,
+            benchStatusPath,
           );
-          if (!handledByPackage.ok) {
+          if (handledByPackage.ok && handledByPackage.writtenPath) {
+            await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath);
+          } else if (!handledByPackage.ok) {
+            // Fallback runner doesn't return a writtenPath — look for the
+            // result file in the default output directory after completion.
             await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
-          }
-          if (handledByPackage.writtenPath) {
-            await updateBenchmarkCompleted(benchStatusPath, benchmarkId, handledByPackage.writtenPath);
+            // Mark fallback runs complete using the default output dir path
+            // (fallback always writes to resolveBenchOutputDir).
+            const fallbackResultPath = path.join(
+              resolveBenchOutputDir(),
+              `${benchmarkId}-result.json`,
+            );
+            await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.error(`  [ERROR] benchmark "${benchmarkId}" failed: ${message}`);
           failures.add(benchmarkId);
-          await updateBenchmarkFailed(benchStatusPath, benchmarkId, message);
+          await updateBenchmarkFailed(benchStatusPath, statusId, message);
         }
       }
     }

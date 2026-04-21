@@ -33,7 +33,7 @@ export interface BenchStatus {
 
 async function atomicWriteJSON(filePath: string, data: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
-  const tmp = `${filePath}.tmp`;
+  const tmp = `${filePath}.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
   await writeFile(tmp, JSON.stringify(data, null, 2) + "\n");
   await rename(tmp, filePath);
 }
