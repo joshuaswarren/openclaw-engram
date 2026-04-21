@@ -308,23 +308,25 @@ export function parseOperatorAwareConsolidationResponse(
 }
 
 /**
- * Walk `text`, find the first balanced top-level `{ ... }` block whose
- * JSON.parse result is an object with an `operator` key, and return it.
- * Returns `undefined` when nothing matches.  Tracks string state +
- * escape sequences so braces inside string values don't throw off the
- * depth counter.
+ * Walk `text`, find all balanced top-level `{ ... }` blocks whose
+ * JSON.parse result is an object with an `operator` key, and return
+ * the LAST one.  Returns `undefined` when nothing matches.  Tracks
+ * string state + escape sequences so braces inside string values
+ * don't throw off the depth counter.
  *
  * Used by `parseOperatorAwareConsolidationResponse` to tolerate models
  * that prepend an explanatory JSON example block before the real
- * payload (PR #632 round-4 review, codex P1).  Requiring the
- * `operator` key lets us skip past unrelated brace blocks even when
- * they parse successfully as JSON.
+ * payload (PR #632 round-4 + round-5 review, codex P1).  We take the
+ * LAST candidate so that an instructional example with an `operator`
+ * key ahead of the real answer doesn't steal precedence — models
+ * typically write the example first and the real answer last.
  */
 function findFirstJsonObjectWithOperator(text: string): unknown {
   let searchFrom = 0;
+  let last: unknown = undefined;
   while (searchFrom < text.length) {
     const start = text.indexOf("{", searchFrom);
-    if (start < 0) return undefined;
+    if (start < 0) return last;
     let depth = 0;
     let inString = false;
     let escape = false;
@@ -355,7 +357,7 @@ function findFirstJsonObjectWithOperator(text: string): unknown {
         }
       }
     }
-    if (!closed) return undefined;
+    if (!closed) return last;
     const slice = text.slice(start, endIdx + 1);
     try {
       const parsed = JSON.parse(slice);
@@ -364,14 +366,14 @@ function findFirstJsonObjectWithOperator(text: string): unknown {
         parsed !== null &&
         "operator" in (parsed as Record<string, unknown>)
       ) {
-        return parsed;
+        last = parsed;
       }
     } catch {
       // Fall through to the next candidate.
     }
     searchFrom = endIdx + 1;
   }
-  return undefined;
+  return last;
 }
 
 // Silence unused-import warnings when tsup tree-shakes: these are used
