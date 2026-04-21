@@ -39,6 +39,7 @@ export interface ConsolidationUndoRestore {
   outcome:
     | "restored"
     | "skipped_file_exists"
+    | "skipped_non_regular_file"
     | "skipped_snapshot_missing"
     | "skipped_malformed_entry"
     | "skipped_outside_memory_dir"
@@ -181,6 +182,15 @@ export async function isInsideDirectoryRealpath(
   return false;
 }
 
+async function isRegularFile(p: string): Promise<boolean> {
+  try {
+    const st = await lstat(p);
+    return st.isFile();
+  } catch {
+    return false;
+  }
+}
+
 async function fileExists(p: string): Promise<boolean> {
   try {
     await access(p, fsConstants.F_OK);
@@ -289,10 +299,31 @@ export async function runConsolidationUndo(options: {
       continue;
     }
 
-    if (await fileExists(sourcePath)) {
-      // Source is still active — nothing to restore but this counts
-      // as "recovered" for the archive decision.
+    if (await isRegularFile(sourcePath)) {
+      // Source is still active (regular file present) — nothing to
+      // restore but this counts as "recovered" for the archive
+      // decision.  We require a regular file specifically (PR #637
+      // round-5 review, codex P2): a directory, device node, or
+      // symlink at the source path should not count as "recovered"
+      // because a later read won't find the expected memory content.
       plans.push({ kind: "recovered_existing", entry, sourcePath });
+      continue;
+    }
+    if (await fileExists(sourcePath)) {
+      // Something other than a regular file is at the source path
+      // (directory, device node, symlink).  Refuse to overwrite AND
+      // refuse to count as recovered (PR #637 round-5 review, codex
+      // P2) — the operator needs to clean up manually.  This is a
+      // blocking skip: no source writes happen, target stays active.
+      plans.push({
+        kind: "skip",
+        restore: {
+          entry,
+          sourcePath,
+          outcome: "skipped_non_regular_file",
+          detail: "source path is occupied by a non-regular-file; refusing to proceed",
+        },
+      });
       continue;
     }
 
@@ -425,14 +456,20 @@ export async function runConsolidationUndo(options: {
     return result;
   }
 
-  // Archive the target memory.  archiveMemory returns null on failure —
-  // we surface that as a non-fatal flag rather than throwing so the
-  // already-completed restores still roll forward.
+  // Archive the target memory.  archiveMemory returns null on
+  // failure — surface that as a fatal error (PR #637 round-5 review,
+  // codex P2) so automation doesn't mistake a half-undo for a clean
+  // run.  The already-completed restores still roll forward; the
+  // result.restores list records what was written.
   const archivedAt = await storage.archiveMemory(target, {
     actor: "consolidate-undo",
     reasonCode: "consolidation-undo",
   });
   result.targetArchived = archivedAt !== null;
+  if (!result.targetArchived) {
+    result.error =
+      "sources restored successfully but archiving the consolidated target failed; inspect storage for manual cleanup";
+  }
   return result;
 }
 
