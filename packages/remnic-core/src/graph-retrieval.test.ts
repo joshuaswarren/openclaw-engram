@@ -355,6 +355,36 @@ test("extractGraphEdges rejects type mismatch: supersedes points at entity, not 
   assert.equal(edges.filter((e) => e.type === "mentions").length, 1);
 });
 
+test("extractGraphEdges is order-independent with includeDanglingEdges=true (Codex P2)", () => {
+  // With dangling edges enabled, the order in which the extractor
+  // encounters `{supersedes: "shared"}` vs `{entityRef: "shared"}`
+  // must NOT change the output. In both orderings, the entity mention
+  // claims the id so the supersedes edge is rejected and the mentions
+  // edge fires.
+  const forward: MemoryEdgeSource[] = [
+    { id: "m-A", supersedes: "shared" },
+    { id: "m-B", entityRef: "shared" },
+  ];
+  const reverse: MemoryEdgeSource[] = [
+    { id: "m-B", entityRef: "shared" },
+    { id: "m-A", supersedes: "shared" },
+  ];
+
+  const fwd = extractGraphEdges(forward, { includeDanglingEdges: true });
+  const rev = extractGraphEdges(reverse, { includeDanglingEdges: true });
+
+  const count = (edges: typeof fwd.edges) =>
+    edges.reduce<Record<string, number>>((acc, e) => {
+      acc[e.type] = (acc[e.type] ?? 0) + 1;
+      return acc;
+    }, {});
+  assert.deepEqual(count(fwd.edges), count(rev.edges));
+  assert.equal(fwd.edges.filter((e) => e.type === "supersedes").length, 0);
+  assert.equal(rev.edges.filter((e) => e.type === "supersedes").length, 0);
+  assert.equal(fwd.nodes.get("shared")?.type, "entity");
+  assert.equal(rev.nodes.get("shared")?.type, "entity");
+});
+
 test("extractGraphEdges type-mismatch guard applies even with includeDanglingEdges=true", () => {
   // Fresh evidence: with dangling edges enabled, the guard must still
   // reject memory → entity cross-type references. The entity node for

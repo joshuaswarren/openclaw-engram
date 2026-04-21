@@ -356,6 +356,49 @@ export function extractGraphEdges(
     addNode(memory.id, "memory");
   }
 
+  // Pre-scan every memory for entity / agent references so the
+  // memory-target guard can reject ids that are "claimed" by entity
+  // mentions in the same batch — regardless of iteration order.
+  // Without this, with `includeDanglingEdges: true`, processing
+  // `{supersedes: "shared"}` before `{entityRef: "shared"}` would
+  // materialize a memory node for "shared" and then the later entity
+  // mention would be silently dropped (and vice versa), producing
+  // order-dependent output.
+  const entityClaimed = new Set<string>();
+  for (const memory of memories) {
+    if (!memory?.id) continue;
+    if (typeof memory.entityRef === "string" && memory.entityRef) {
+      if (memory.entityRef !== memory.id) entityClaimed.add(memory.entityRef);
+    }
+    if (Array.isArray(memory.entityRefs)) {
+      for (const ref of memory.entityRefs) {
+        if (typeof ref === "string" && ref && ref !== memory.id) {
+          entityClaimed.add(ref);
+        }
+      }
+    }
+    if (typeof memory.content === "string" && memory.content.length > 0) {
+      CITATION_REGEX.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = CITATION_REGEX.exec(memory.content)) !== null) {
+        const body = match[1];
+        if (!body) continue;
+        const agent = parseCitationFields(body).agent;
+        if (!agent) continue;
+        const agentId = `agent:${agent}`;
+        if (agentId !== memory.id) entityClaimed.add(agentId);
+      }
+    }
+  }
+  // Ids claimed by both roles (memory + entity) stay memory — an
+  // explicit memory node with a given id always wins over an entity
+  // mention of the same id in a different memory. Drop any memory ids
+  // out of `entityClaimed` so the memory-target guard does not reject
+  // cross-memory supersedes / lineage references to them.
+  for (const memory of memories) {
+    if (memory?.id) entityClaimed.delete(memory.id);
+  }
+
   // Second pass — walk each memory's relationship fields.
   for (const memory of memories) {
     if (!memory?.id) continue;
@@ -368,14 +411,17 @@ export function extractGraphEdges(
     //
     //   - If the target is already registered under a non-memory type,
     //     reject the edge (type mismatch).
-    //   - If the target is not yet known, accept only when
-    //     `includeDanglingEdges` is `true`. A new memory node is
-    //     registered for the dangling reference.
+    //   - If the target will be claimed by an entity mention in this
+    //     batch (pre-scan above), reject the edge.
+    //   - If the target is not yet known and is not entity-claimed,
+    //     accept only when `includeDanglingEdges` is `true`. A new
+    //     memory node is registered for the dangling reference.
     //   - If the target is already registered as a memory, accept.
     const canTargetMemory = (id: string): boolean => {
       const existing = nodes.get(id);
-      if (existing === undefined) return includeDangling;
-      return existing.type === "memory";
+      if (existing !== undefined) return existing.type === "memory";
+      if (entityClaimed.has(id)) return false;
+      return includeDangling;
     };
 
     // supersedes: memory → older memory
