@@ -460,6 +460,22 @@ export interface PluginConfig {
    */
   recallDirectAnswerEnabled: boolean;
   /**
+   * Graph-based retrieval tier via Personalized PageRank (issue #559 PR 4).
+   * When true, recall builds a retrieval graph from memory frontmatter
+   * and runs PPR, merging the result with QMD via MMR.  Default false —
+   * ships off pending the retrieval-graph bench in PR 5.
+   */
+  recallGraphEnabled: boolean;
+  /** PPR damping factor used when `recallGraphEnabled` is true. */
+  recallGraphDamping: number;
+  /** PPR power-iteration cap used when `recallGraphEnabled` is true. */
+  recallGraphIterations: number;
+  /**
+   * Max memories returned by the graph tier before MMR.  Set to 0 to
+   * disable the graph tier's contribution without flipping the flag.
+   */
+  recallGraphTopK: number;
+  /**
    * Minimum token-overlap ratio (query tokens ∩ memory tokens / query tokens)
    * required for direct-answer eligibility.  Set to 0 to disable the gate.
    */

@@ -1052,6 +1052,26 @@ export function parseConfig(raw: unknown): PluginConfig {
     // recallDirectAnswerEnabled=false.
     recallDirectAnswerEnabled:
       coerceBool(cfg.recallDirectAnswerEnabled) ?? true,
+    // Graph-based retrieval tier (issue #559 PR 4).  Default `false` —
+    // the tier ships off pending the `retrieval-graph` bench in PR 5.
+    recallGraphEnabled:
+      coerceBool(cfg.recallGraphEnabled) ?? false,
+    recallGraphDamping: (() => {
+      const n = coerceNumber(cfg.recallGraphDamping);
+      return n !== undefined && n >= 0 && n < 1 ? n : 0.85;
+    })(),
+    recallGraphIterations: (() => {
+      const n = coerceNumber(cfg.recallGraphIterations);
+      return n !== undefined && Number.isFinite(n) && n >= 0 && n <= 500
+        ? Math.floor(n)
+        : 20;
+    })(),
+    recallGraphTopK: (() => {
+      const n = coerceNumber(cfg.recallGraphTopK);
+      return n !== undefined && Number.isFinite(n) && n >= 0 && n <= 10000
+        ? Math.floor(n)
+        : 50;
+    })(),
     recallDirectAnswerTokenOverlapFloor: (() => {
       const n = coerceNumber(cfg.recallDirectAnswerTokenOverlapFloor);
       return n !== undefined && n >= 0 && n <= 1 ? n : 0.55;
