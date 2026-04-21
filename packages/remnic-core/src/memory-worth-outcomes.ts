@@ -72,10 +72,24 @@ function runSerialized<T>(key: string, task: () => Promise<T>): Promise<T> {
   // result/errors to the caller.
   const next = prev.catch(() => undefined).then(task);
   outcomeLocks.set(key, next);
-  // Clean up once this task completes, as long as nothing newer chained on.
-  void next.finally(() => {
-    if (outcomeLocks.get(key) === next) outcomeLocks.delete(key);
-  });
+  // Chain the cleanup off `next` BUT attach a `.catch` so the cleanup
+  // promise itself never surfaces as an unhandled rejection. The caller
+  // gets `next` back and handles it their own way; this detached cleanup
+  // chain has no observer, so without the .catch Node would crash the
+  // process on a task rejection even when the caller awaited `next` and
+  // handled the error correctly.
+  next
+    .then(
+      () => {
+        if (outcomeLocks.get(key) === next) outcomeLocks.delete(key);
+      },
+      () => {
+        if (outcomeLocks.get(key) === next) outcomeLocks.delete(key);
+      },
+    )
+    .catch(() => {
+      // Defensive no-op in case a hook inside the cleanup branches throws.
+    });
   return next;
 }
 
@@ -244,10 +258,23 @@ export async function recordMemoryOutcome(
     // pre-existing float) would be rejected here. That is intentional: we
     // refuse to layer a fresh increment on top of garbage. Operators should
     // use `remnic doctor` to find and fix those rows before PR 4 ships.
-    await storage.updateMemoryFrontmatter(memoryId, {
+    //
+    // `updateMemoryFrontmatter` returns `false` when the memory is no
+    // longer present (archived / deleted between `getMemoryById` and the
+    // write). Surface that as `not_found` so callers see an honest result
+    // — silently returning `ok: true` with a counter that never landed
+    // would skew downstream worth scoring.
+    const updated = await storage.updateMemoryFrontmatter(memoryId, {
       mw_success: nextSuccess,
       mw_fail: nextFail,
     });
+    if (!updated) {
+      return {
+        ok: false,
+        reason: "not_found",
+        message: `memory ${memoryId} disappeared between read and write`,
+      };
+    }
 
     return {
       ok: true,
