@@ -60,9 +60,31 @@ export interface JudgeTrainingOptions {
   directory?: string;
 }
 
+/**
+ * Expand a leading `~` / `~/` / `$HOME/` / `${HOME}/` to the process home
+ * directory. Node's `fs` APIs do not expand `~` themselves (CLAUDE.md
+ * gotcha 17), so every user-facing path input must be funnelled through
+ * this helper before it reaches the filesystem.
+ */
+function expandTilde(p: string): string {
+  const home = homedir();
+  if (p === "~" || p.startsWith("~/") || p.startsWith("~\\")) {
+    return home + p.slice(1);
+  }
+  if (p === "$HOME" || p.startsWith("$HOME/") || p.startsWith("$HOME\\")) {
+    return home + p.slice(5);
+  }
+  if (p === "${HOME}" || p.startsWith("${HOME}/") || p.startsWith("${HOME}\\")) {
+    return home + p.slice(7);
+  }
+  return p;
+}
+
 export function resolveTrainingDir(options: JudgeTrainingOptions): string {
   if (options.directory && options.directory.length > 0) {
-    return options.directory;
+    // Expand `~` / `$HOME` in the override so operators can write the
+    // config as the user sees it (CLAUDE.md gotcha 17).
+    return expandTilde(options.directory);
   }
   return path.join(homedir(), ".remnic", "judge-training");
 }

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile, mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import {
   recordJudgeTrainingPair,
   readJudgeTrainingPairs,
@@ -97,6 +97,31 @@ test("PR 4: resolveTrainingDir defaults to ~/.remnic/judge-training", () => {
   assert.ok(
     p.endsWith(path.join(".remnic", "judge-training")),
     `default path should end with .remnic/judge-training, got ${p}`,
+  );
+});
+
+test("PR 4: resolveTrainingDir expands leading ~ in directory override (CLAUDE.md gotcha 17)", () => {
+  const home = homedir();
+  const expanded = resolveTrainingDir({
+    enabled: true,
+    directory: "~/custom-training-dir",
+  });
+  assert.ok(
+    expanded.startsWith(home + "/"),
+    `~/ should expand to ${home}, got ${expanded}`,
+  );
+  assert.ok(expanded.endsWith("custom-training-dir"));
+});
+
+test("PR 4: resolveTrainingDir expands $HOME prefix in directory override", () => {
+  const home = homedir();
+  const expanded = resolveTrainingDir({
+    enabled: true,
+    directory: "$HOME/custom",
+  });
+  assert.ok(
+    expanded.startsWith(home + "/"),
+    `$HOME/ should expand to ${home}, got ${expanded}`,
   );
 });
 
