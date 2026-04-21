@@ -151,14 +151,21 @@ class LocalLlmProvider implements LlmProvider {
   }
 
   async discover(): Promise<DiscoveredModel[]> {
-    const response = await retryFetch(
-      this.urlFor("models"),
-      {
-        method: "GET",
-        headers: this.headers(),
-      },
-      this.config.retryOptions,
-    );
+    let response: Response;
+    try {
+      response = await retryFetch(
+        this.urlFor("models"),
+        {
+          method: "GET",
+          headers: this.headers(),
+        },
+        this.config.retryOptions,
+      );
+    } catch (err) {
+      throw new Error(
+        `local-llm model discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
 
     if (!response.ok) {
       throw new Error(

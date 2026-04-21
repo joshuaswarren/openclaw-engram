@@ -350,7 +350,7 @@ function resolveProviderConfig(
     provider,
     model: model.trim(),
     ...(hasBaseUrl ? { baseUrl: baseUrl!.trim() } : {}),
-    ...(requestTimeout ? { retryOptions: { timeoutMs: requestTimeout } } : {}),
+    ...(requestTimeout != null ? { retryOptions: { timeoutMs: requestTimeout } } : {}),
     ...(disableThinking ? { disableThinking: true } : {}),
   };
 }

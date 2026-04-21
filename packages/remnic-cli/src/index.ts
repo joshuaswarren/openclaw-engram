@@ -775,10 +775,12 @@ async function runBenchViaFallback(
     parsed.systemBaseUrl !== undefined ||
     parsed.judgeProvider !== undefined ||
     parsed.judgeModel !== undefined ||
-    parsed.judgeBaseUrl !== undefined
+    parsed.judgeBaseUrl !== undefined ||
+    parsed.disableThinking !== undefined ||
+    parsed.requestTimeout !== undefined
   ) {
     throw new Error(
-      "Fallback benchmark runner does not support provider-backed or gateway runtime flags. Build/install @remnic/bench to use those options.",
+      "Fallback benchmark runner does not support provider-backed, gateway, or thinking/timeout flags. Build/install @remnic/bench to use those options.",
     );
   }
   if (!fs.existsSync(EVAL_RUNNER_PATH)) {
