@@ -309,7 +309,13 @@ test("isActiveMemoryRelativePath rejects archive/state/version paths and accepts
   assert.equal(isActiveMemoryRelativePath("archive/x.md"), false);
   assert.equal(isActiveMemoryRelativePath("state/calibration/foo.json"), false);
   assert.equal(isActiveMemoryRelativePath("state/foo"), false);
-  assert.equal(isActiveMemoryRelativePath(".remnic-versions/facts/2024-01-01/a.md"), false);
+  assert.equal(isActiveMemoryRelativePath(".versions/facts/2024-01-01/a.md"), false);
+
+  // Path-normalization bypass attempts (PR #637 round-8 review, codex P1):
+  // `..` segments must be collapsed before the prefix check.
+  assert.equal(isActiveMemoryRelativePath("facts/../archive/2024-01-01/x.md"), false);
+  assert.equal(isActiveMemoryRelativePath("./state/foo"), false);
+  assert.equal(isActiveMemoryRelativePath("entities/../../archive/x.md"), false);
 });
 
 test("runConsolidationUndo rejects target paths outside memoryDir (path-traversal guard)", async () => {

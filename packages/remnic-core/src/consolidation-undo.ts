@@ -188,17 +188,41 @@ export async function isInsideDirectoryRealpath(
  * Directories under memoryDir that are NOT active memory locations.
  * A `derived_from` entry pointing into one of these should not be
  * counted as "recovered_existing" (PR #637 round-7 review, codex P2).
+ * `.versions` is the default versioning sidecar directory (see
+ * `page-versioning.ts` and `config.ts`).
  */
-const NON_ACTIVE_PREFIXES = ["archive/", "state/", ".remnic-versions/"];
+const NON_ACTIVE_PREFIXES = ["archive/", "state/", ".versions/"];
+
+/**
+ * Normalize a relative path by collapsing `.` and `..` segments so
+ * that crafted entries like `"facts/../archive/x.md"` are reduced to
+ * `"archive/x.md"` before the non-active-prefix check.
+ */
+function normalizeRelativePath(p: string): string {
+  // Normalize separators, split into segments, then resolve.
+  const parts = p.replace(/\\/g, "/").split("/");
+  const resolved: string[] = [];
+  for (const seg of parts) {
+    if (seg === "" || seg === ".") continue;
+    if (seg === "..") {
+      if (resolved.length > 0) resolved.pop();
+      // If ".." pops past the root, we let the caller's containment
+      // check catch it — don't silently drop.
+    } else {
+      resolved.push(seg);
+    }
+  }
+  return resolved.join("/");
+}
 
 /**
  * Check that a relative path (relative to memoryDir) points to an
  * active memory location rather than an internal/archive directory.
- * Returns `true` when `pagePath` does NOT start with a known
- * non-active prefix.
+ * Returns `true` when the normalised `pagePath` does NOT start with
+ * a known non-active prefix.
  */
 export function isActiveMemoryRelativePath(pagePath: string): boolean {
-  const normalized = pagePath.replace(/\\/g, "/");
+  const normalized = normalizeRelativePath(pagePath);
   for (const prefix of NON_ACTIVE_PREFIXES) {
     if (normalized === prefix.slice(0, -1) || normalized.startsWith(prefix)) {
       return false;
