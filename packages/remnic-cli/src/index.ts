@@ -4746,15 +4746,16 @@ async function cmdBench(rest: string[]): Promise<void> {
             await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
             // Scan for the real result file — fallback writes a timestamped
             // filename (${name}-v${version}-${ts}.json) so we glob for the
-            // latest match rather than fabricating a path.
+            // latest match by mtime rather than fabricating a path.
             let fallbackResultPath: string | undefined;
             try {
               const fallbackDir = resolveBenchOutputDir();
               const files = fs.readdirSync(fallbackDir)
                 .filter((f) => f.startsWith(benchmarkId) && f.endsWith(".json"))
-                .sort();
+                .map((f) => ({ name: f, mtime: fs.statSync(path.join(fallbackDir, f)).mtimeMs }))
+                .sort((a, b) => b.mtime - a.mtime);
               if (files.length > 0) {
-                fallbackResultPath = path.join(fallbackDir, files[files.length - 1]);
+                fallbackResultPath = path.join(fallbackDir, files[0].name);
               }
             } catch { /* scan failure is non-fatal */ }
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath ?? ""); } catch { /* non-fatal */ }

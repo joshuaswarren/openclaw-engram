@@ -154,7 +154,7 @@ export function updateTaskProgress(
 ): Promise<void> {
   return serializedWrite(filePath, (status) => {
     status.updatedAt = new Date().toISOString();
-    status.currentTaskProgress = { completed, ...(total ? { total } : {}) };
+    status.currentTaskProgress = { completed, ...(total != null ? { total } : {}) };
     return status;
   });
 }

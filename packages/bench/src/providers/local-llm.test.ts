@@ -90,6 +90,7 @@ test("local-llm provider surfaces non-2xx errors with base-url + model in the me
       provider: "local-llm",
       model: "my-local-model",
       baseUrl: "http://127.0.0.1:9876/v1",
+      retryOptions: { maxAttempts: 1, baseBackoffMs: 0 },
     });
 
     await assert.rejects(
