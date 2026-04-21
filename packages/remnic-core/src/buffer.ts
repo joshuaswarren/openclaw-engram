@@ -113,7 +113,13 @@ export class SmartBuffer {
       key = `__safe_${key}`;
     }
     if (Object.hasOwn(this.state.entries, key)) {
-      return this.state.entries[key];
+      const stored = this.state.entries[key];
+      // Guard against corrupted state/buffer.json — if the stored entry
+      // is not a valid object shape, discard it and recreate.
+      if (stored && typeof stored === "object" && Array.isArray(stored.turns)) {
+        return stored;
+      }
+      // Corrupted — fall through to recreate.
     }
     const created: BufferEntryState = {
       turns: [],
