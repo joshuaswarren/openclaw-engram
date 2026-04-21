@@ -215,6 +215,31 @@ test("decay: unparseable lastAccessed is ignored, not fatal", () => {
   assert.equal(result.confidence, 3);
 });
 
+test("overflow-prone counters fail safely to the neutral prior", () => {
+  // 1e308 + 1e308 + 2 overflows to Infinity in IEEE-754, which would drive
+  // the ratio to 0 instead of the neutral 0.5. The helper must detect the
+  // corruption and collapse to the prior.
+  const huge = computeMemoryWorth({
+    mw_success: 1e308,
+    mw_fail: 1e308,
+    now: NOW,
+  });
+  assert.equal(huge.score, 0.5);
+  assert.equal(huge.confidence, 0);
+  assert.ok(Number.isFinite(huge.score));
+  assert.ok(Number.isFinite(huge.confidence));
+
+  // Merely-very-large but still safe-integer counts should pass through
+  // without collapsing. Laplace of (1000, 1000) is exactly 0.5.
+  const large = computeMemoryWorth({
+    mw_success: 1000,
+    mw_fail: 1000,
+    now: NOW,
+  });
+  assert.ok(Math.abs(large.score - 0.5) < 1e-9);
+  assert.equal(large.confidence, 2000);
+});
+
 test("invalid `now` Date does not poison output with NaN", () => {
   // If a caller mis-constructs `now` (e.g., `new Date("bad")`), the helper
   // must still return finite, well-clamped numbers rather than NaN — a NaN

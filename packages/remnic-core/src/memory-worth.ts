@@ -98,6 +98,16 @@ export interface MemoryWorthResult {
  * PR 1 already reject these, but this helper is also called from tests and
  * benchmark seeders that build inputs by hand, so we defend here too.
  */
+/**
+ * Upper bound for a plausible counter. `Number.MAX_SAFE_INTEGER` would
+ * be technically correct but still overflows the sum `sEff + fEff + 2`
+ * when both counters are near the max. A more conservative cap also
+ * doubles as a sanity check against clearly-corrupt frontmatter (no
+ * single memory should have 10B recorded outcomes), and leaves plenty
+ * of headroom for the sum.
+ */
+const MAX_COUNTER = 1e12;
+
 function sanitizeCounter(value: number | undefined): number {
   if (typeof value !== "number") return 0;
   if (!Number.isFinite(value)) return 0;
@@ -108,6 +118,12 @@ function sanitizeCounter(value: number | undefined): number {
   // `1.9` as `1` would give obviously-corrupt data non-zero confidence and
   // shift the score away from the neutral prior. Fail to 0 instead.
   if (!Number.isInteger(value)) return 0;
+  // Overflow guard. `mw_success: 1e308` (or anything past `MAX_COUNTER`)
+  // would let `sEff + fEff + 2` overflow to `Infinity` and drive the
+  // computed score to 0 for symmetric counts — exactly the opposite of
+  // the neutral-prior fail-safe contract. Treat absurd counter magnitudes
+  // as corruption and fall back to the prior.
+  if (value > MAX_COUNTER) return 0;
   return value;
 }
 
