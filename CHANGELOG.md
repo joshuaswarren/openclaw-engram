@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [v9.3.125] — 2026-04-21
+
 ### Changed
 
 - **Procedural memory is now enabled by default** (issue #567 PR 4/5;
