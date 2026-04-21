@@ -336,3 +336,87 @@ test("flag on: probe score >1 is clamped, >threshold still flushes", async () =>
   );
   assert.equal(decision, "extract_now");
 });
+
+// ---------------------------------------------------------------------------
+// Defensive: non-Error throw values in the probe
+// ---------------------------------------------------------------------------
+
+async function assertProbeRejectionHandled(
+  rejection: unknown,
+): Promise<void> {
+  const storage = new FakeStorage(emptyBuffer());
+  const probe: BufferSurpriseProbe = {
+    async scoreTurn() {
+      throw rejection;
+    },
+  };
+  const config = parseConfig({
+    bufferSurpriseTriggerEnabled: true,
+    bufferSurpriseThreshold: 0.35,
+    bufferMaxTurns: 5,
+    triggerMode: "smart",
+  });
+  const buffer = new SmartBuffer(config, storage as any, probe);
+
+  // Must NOT itself throw when logging the failure. The decision falls
+  // through to the existing triggers and the turn is still saved. The
+  // "sess-1" buffer key lives under `entries`, not the default bucket.
+  const decision = await buffer.addTurn(
+    "sess-1",
+    makeTurn("sess-1", "turn content"),
+  );
+  assert.equal(decision, "keep_buffering");
+  const entry = storage.saved?.entries?.["sess-1"];
+  assert.ok(
+    entry && entry.turns.length === 1,
+    "turn must still be persisted despite probe failure",
+  );
+}
+
+test("flag on: non-Error probe rejections do not crash addTurn (null)", async () => {
+  await assertProbeRejectionHandled(null);
+});
+
+test("flag on: non-Error probe rejections do not crash addTurn (undefined)", async () => {
+  await assertProbeRejectionHandled(undefined);
+});
+
+test("flag on: non-Error probe rejections do not crash addTurn (string)", async () => {
+  await assertProbeRejectionHandled("embedder offline");
+});
+
+test("flag on: non-Error probe rejections do not crash addTurn (plain object)", async () => {
+  await assertProbeRejectionHandled({ reason: "timeout", code: 504 });
+});
+
+// ---------------------------------------------------------------------------
+// Boolean config coercion
+// ---------------------------------------------------------------------------
+
+test("config: string 'true' for bufferSurpriseTriggerEnabled enables the flag", async () => {
+  // `--config bufferSurpriseTriggerEnabled=true` passes the literal
+  // string "true" through parseConfig. The strict `=== true` form would
+  // leave the flag off and silently drop the operator's intent.
+  const storage = new FakeStorage(emptyBuffer());
+  const probe = fixedScoreProbe(0.9);
+  const config = parseConfig({
+    bufferSurpriseTriggerEnabled: "true" as unknown as boolean,
+    bufferMaxTurns: 5,
+    triggerMode: "smart",
+  });
+  assert.equal(config.bufferSurpriseTriggerEnabled, true);
+
+  const buffer = new SmartBuffer(config, storage as any, probe);
+  const decision = await buffer.addTurn(
+    "sess-1",
+    makeTurn("sess-1", "novel"),
+  );
+  assert.equal(decision, "extract_now");
+});
+
+test("config: string 'false' for bufferSurpriseTriggerEnabled disables the flag", async () => {
+  const config = parseConfig({
+    bufferSurpriseTriggerEnabled: "false" as unknown as boolean,
+  });
+  assert.equal(config.bufferSurpriseTriggerEnabled, false);
+});

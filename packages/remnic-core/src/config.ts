@@ -867,7 +867,14 @@ export function parseConfig(raw: unknown): PluginConfig {
     // Surprise-gated buffer flush (issue #563, D-MEM). See types.ts for
     // semantics. Default off so PR 2 ships as a pure no-op until an operator
     // opts in. PR 4 benchmarks the flag and may flip the default.
-    bufferSurpriseTriggerEnabled: cfg.bufferSurpriseTriggerEnabled === true,
+    //
+    // Use `coerceBool` rather than a strict `=== true` check: CLI operators
+    // set booleans via `--config bufferSurpriseTriggerEnabled=true` which
+    // arrives as the string `"true"` — the strict form would silently
+    // leave the flag off. Matches the coercion contract established for
+    // other boolean config keys (CLAUDE.md rule #36).
+    bufferSurpriseTriggerEnabled:
+      coerceBool(cfg.bufferSurpriseTriggerEnabled) === true,
     bufferSurpriseThreshold:
       typeof cfg.bufferSurpriseThreshold === "number" &&
       Number.isFinite(cfg.bufferSurpriseThreshold)

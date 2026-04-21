@@ -245,8 +245,12 @@ export class SmartBuffer {
       if (score > 1) return 1;
       return score;
     } catch (err) {
+      // `err` may be any thrown value — `throw null` and
+      // `Promise.reject("x")` are both legal. Accessing `.message` on a
+      // non-Error would itself throw and defeat the failure-isolation
+      // contract, so describe the value safely.
       log.debug(
-        `buffer[${bufferKey}]: surprise probe failed, falling back to existing triggers: ${(err as Error).message}`,
+        `buffer[${bufferKey}]: surprise probe failed, falling back to existing triggers: ${describeError(err)}`,
       );
       return null;
     }
@@ -347,5 +351,27 @@ export class SmartBuffer {
 
   getExtractionCount(bufferKey = "default"): number {
     return this.peekEntry(bufferKey)?.extractionCount ?? 0;
+  }
+}
+
+/**
+ * Render an arbitrary thrown value as a short string for debug logging.
+ *
+ * JavaScript permits throwing *any* value (`throw null`,
+ * `Promise.reject("x")`, `throw { reason: "timeout" }`) — not just
+ * `Error` instances. The defensive catch blocks in `SmartBuffer` must
+ * never themselves throw while trying to log the failure, or they
+ * would defeat the whole point of isolating the surprise path from the
+ * core extraction decision.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err === null) return "null";
+  if (err === undefined) return "undefined";
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
   }
 }
