@@ -188,10 +188,10 @@ export async function isInsideDirectoryRealpath(
  * Directories under memoryDir that are NOT active memory locations.
  * A `derived_from` entry pointing into one of these should not be
  * counted as "recovered_existing" (PR #637 round-7 review, codex P2).
- * `.versions` is the default versioning sidecar directory (see
- * `page-versioning.ts` and `config.ts`).
+ * The versioning sidecar directory is included dynamically via the
+ * `sidecarDir` parameter (PR #637 round-8 review, codex P2).
  */
-const NON_ACTIVE_PREFIXES = ["archive/", "state/", ".versions/"];
+const NON_ACTIVE_PREFIXES = ["archive/", "state/"];
 
 /**
  * Normalize a relative path by collapsing `.` and `..` segments so
@@ -220,10 +220,24 @@ function normalizeRelativePath(p: string): string {
  * active memory location rather than an internal/archive directory.
  * Returns `true` when the normalised `pagePath` does NOT start with
  * a known non-active prefix.
+ *
+ * @param pagePath   Relative path from `derived_from` entry.
+ * @param sidecarDir Optional versioning sidecar directory name
+ *                   (e.g. `".versions"`).  When provided, paths
+ *                   under this directory are also rejected as
+ *                   non-active.
  */
-export function isActiveMemoryRelativePath(pagePath: string): boolean {
+export function isActiveMemoryRelativePath(
+  pagePath: string,
+  sidecarDir?: string,
+): boolean {
   const normalized = normalizeRelativePath(pagePath);
-  for (const prefix of NON_ACTIVE_PREFIXES) {
+  const prefixes = [...NON_ACTIVE_PREFIXES];
+  if (sidecarDir) {
+    const normSidecar = sidecarDir.replace(/\\/g, "/");
+    prefixes.push(normSidecar.endsWith("/") ? normSidecar : normSidecar + "/");
+  }
+  for (const prefix of prefixes) {
     if (normalized === prefix.slice(0, -1) || normalized.startsWith(prefix)) {
       return false;
     }
@@ -289,6 +303,17 @@ export async function runConsolidationUndo(options: {
     return result;
   }
 
+  // Reject targets in non-active directories (archive/, state/,
+  // versioning sidecar).  A target inside `.versions/...` would be
+  // a sidecar snapshot, not a real consolidated memory; archiving
+  // it would silently delete version history (PR #637 round-8
+  // review, codex P2).
+  const targetRel = path.relative(memoryDir, targetPath);
+  if (!isActiveMemoryRelativePath(targetRel, versioning.sidecarDir)) {
+    result.error = `target path "${targetRel}" is inside a non-active directory — refusing to operate`;
+    return result;
+  }
+
   // Load the target memory.  readMemoryByPath returns null when the file
   // is absent or unparseable — surface that as a fatal error because the
   // caller cannot continue without a derived_from list.
@@ -349,11 +374,11 @@ export async function runConsolidationUndo(options: {
     }
 
     // Reject source paths inside non-active directories (archive/,
-    // state/, .remnic-versions/).  A crafted or corrupted derived_from
+    // state/, versioning sidecar).  A crafted or corrupted derived_from
     // entry like "archive/2024-01-01/x.md:1" would otherwise be counted
     // as "recovered_existing" even though no active memory was restored
     // (PR #637 round-7 review, codex P2).
-    if (!isActiveMemoryRelativePath(parsed.pagePath)) {
+    if (!isActiveMemoryRelativePath(parsed.pagePath, versioning.sidecarDir)) {
       plans.push({
         kind: "skip",
         restore: {

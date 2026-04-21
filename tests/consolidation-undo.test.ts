@@ -304,12 +304,20 @@ test("isActiveMemoryRelativePath rejects archive/state/version paths and accepts
   assert.equal(isActiveMemoryRelativePath("entities/person.md"), true);
   assert.equal(isActiveMemoryRelativePath("decisions/2024-01-01/c.md"), true);
 
-  // Non-active paths — should return false
+  // Non-active paths (static prefixes) — should return false
   assert.equal(isActiveMemoryRelativePath("archive/2024-01-01/x.md"), false);
   assert.equal(isActiveMemoryRelativePath("archive/x.md"), false);
   assert.equal(isActiveMemoryRelativePath("state/calibration/foo.json"), false);
   assert.equal(isActiveMemoryRelativePath("state/foo"), false);
-  assert.equal(isActiveMemoryRelativePath(".versions/facts/2024-01-01/a.md"), false);
+
+  // Non-active paths (sidecar dir) — should return false when sidecar
+  // is passed (PR #637 round-8 review, codex P2).
+  assert.equal(isActiveMemoryRelativePath(".versions/facts/2024-01-01/a.md", ".versions"), false);
+  assert.equal(isActiveMemoryRelativePath(".versions/foo.md", ".versions"), false);
+  // Without sidecar, .versions is NOT rejected (dynamic prefix not applied).
+  assert.equal(isActiveMemoryRelativePath(".versions/foo.md"), true);
+  // Custom sidecar dir name.
+  assert.equal(isActiveMemoryRelativePath("custom-sidecar/foo.md", "custom-sidecar"), false);
 
   // Path-normalization bypass attempts (PR #637 round-8 review, codex P1):
   // `..` segments must be collapsed before the prefix check.
