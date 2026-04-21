@@ -291,7 +291,7 @@ export function parseOperatorAwareConsolidationResponse(
   // `Example: {"note":"..."} ... {"operator":"merge",...}`).  Walk the
   // payload tracking nesting + string/escape state and skip past
   // objects that don't look like our target shape.
-  const parsed = findFirstJsonObjectWithOperator(payload);
+  const parsed = findLastJsonObjectWithOperator(payload);
   if (parsed === undefined) return fallback;
   if (typeof parsed !== "object" || parsed === null) return fallback;
 
@@ -310,7 +310,8 @@ export function parseOperatorAwareConsolidationResponse(
 /**
  * Walk `text`, find all balanced top-level `{ ... }` blocks whose
  * JSON.parse result is an object with an `operator` key, and return
- * the LAST one.  Returns `undefined` when nothing matches.  Tracks
+ * the LAST one (function name reflects this — PR #632 review,
+ * cursor Low).  Returns `undefined` when nothing matches.  Tracks
  * string state + escape sequences so braces inside string values
  * don't throw off the depth counter.
  *
@@ -321,7 +322,7 @@ export function parseOperatorAwareConsolidationResponse(
  * key ahead of the real answer doesn't steal precedence — models
  * typically write the example first and the real answer last.
  */
-function findFirstJsonObjectWithOperator(text: string): unknown {
+function findLastJsonObjectWithOperator(text: string): unknown {
   let searchFrom = 0;
   let last: unknown = undefined;
   while (searchFrom < text.length) {
