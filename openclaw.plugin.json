@@ -4519,7 +4519,7 @@
     "operatorAwareConsolidationEnabled": {
       "label": "Operator-Aware Consolidation Prompt",
       "advanced": true,
-      "help": "When enabled (default), the consolidation LLM picks SPLIT/MERGE/UPDATE per cluster and we record it on derived_via. Disable to use the legacy plain-text prompt."
+      "help": "Opt in to operator-aware consolidation prompts (default off). When enabled, the LLM returns structured {operator, output} JSON and we record SPLIT/MERGE/UPDATE on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
     },
     "creationMemoryEnabled": {
       "label": "Creation Memory",
