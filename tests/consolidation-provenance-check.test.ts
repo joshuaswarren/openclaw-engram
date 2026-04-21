@@ -290,3 +290,82 @@ test("summarizeConsolidationProvenance honors versioningSidecarDir from config",
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+test("runConsolidationProvenanceCheck flags blank derived_from key (truncated frontmatter)", async () => {
+  // Regression for PR #634 round-3 review (codex P2): a truncated
+  // frontmatter that ends with `derived_from:` (key present, no
+  // value) should surface as a malformed entry.  Previously the
+  // `rawDerivedFrom.length > 0` guard dropped this case.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-blank-from-"));
+  try {
+    const storage = await seedStorage(dir);
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+    const id = "fact-blank-from";
+    const filePath = path.join(factDir, `${id}.md`);
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-04-20T01:00:00.000Z",
+      "updated: 2026-04-20T01:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      "derived_from:", // blank value
+      "---",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    const malformed = report.issues.filter(
+      (i) => i.kind === "derived_from_malformed_entry",
+    );
+    assert.equal(malformed.length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("runConsolidationProvenanceCheck flags blank derived_via key (truncated frontmatter)", async () => {
+  // Regression for PR #634 round-3 review (codex P2): a truncated
+  // frontmatter that ends with `derived_via:` (key present, no
+  // value) should surface as an unknown-operator issue.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-blank-via-"));
+  try {
+    const storage = await seedStorage(dir);
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+    const id = "fact-blank-via";
+    const filePath = path.join(factDir, `${id}.md`);
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-04-20T01:00:00.000Z",
+      "updated: 2026-04-20T01:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      "derived_via:", // blank
+      "---",
+      "",
+      "body",
+      "",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    const unknown = report.issues.filter(
+      (i) => i.kind === "derived_via_unknown_operator",
+    );
+    assert.equal(unknown.length, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

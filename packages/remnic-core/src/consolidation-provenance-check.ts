@@ -35,8 +35,11 @@ import { sidecarKey } from "./page-versioning.js";
  * would silently hide corrupted-or-future operators from the doctor scan
  * (PR #634 review feedback, codex P2).
  */
-const DERIVED_VIA_RAW_RE = /^derived_via:\s*(.+)$/mu;
-const DERIVED_FROM_RAW_RE = /^derived_from:\s*(.+)$/mu;
+// Allow empty capture groups so truncated/blank `derived_via:` and
+// `derived_from:` lines (key present, no value) are distinguishable
+// from "key missing entirely" (regex returns null).
+const DERIVED_VIA_RAW_RE = /^derived_via:[\t ]*(.*)$/mu;
+const DERIVED_FROM_RAW_RE = /^derived_from:[\t ]*(.*)$/mu;
 
 /**
  * One integrity warning attached to a specific memory.
@@ -151,16 +154,21 @@ export async function runConsolidationProvenanceCheck(options: {
     // `undefined`, which would silently hide on-disk corruption from
     // the doctor scan (PR #634 review feedback, codex P2).  We
     // re-extract both via regex so integrity issues are reported even
-    // when the parser normalized them away.  Best-effort: if the file
-    // can't be read, we fall through to the parsed values.
+    // when the parser normalized them away.  `rawDerivedVia` /
+    // `rawDerivedFrom` being `""` (empty string) represents a
+    // corrupted file with the key present but the value truncated —
+    // that's distinct from "key missing entirely" (undefined).
     let rawDerivedVia: string | undefined;
     let rawDerivedFrom: string | undefined;
+    let rawDerivedViaKeyPresent = false;
+    let rawDerivedFromKeyPresent = false;
     try {
       const raw = await readFile(memory.path, "utf-8");
       const frontmatterEnd = raw.indexOf("\n---", raw.indexOf("---") + 3);
       const fmSlice = frontmatterEnd > 0 ? raw.slice(0, frontmatterEnd) : raw;
       const viaMatch = fmSlice.match(DERIVED_VIA_RAW_RE);
       if (viaMatch) {
+        rawDerivedViaKeyPresent = true;
         let val = viaMatch[1].trim();
         if (
           (val.startsWith('"') && val.endsWith('"')) ||
@@ -172,6 +180,7 @@ export async function runConsolidationProvenanceCheck(options: {
       }
       const fromMatch = fmSlice.match(DERIVED_FROM_RAW_RE);
       if (fromMatch) {
+        rawDerivedFromKeyPresent = true;
         rawDerivedFrom = fromMatch[1].trim();
       }
     } catch {
@@ -183,23 +192,39 @@ export async function runConsolidationProvenanceCheck(options: {
     const hasRawVia = rawDerivedVia !== undefined && rawDerivedVia.length > 0;
     // A raw `derived_from` that the parser dropped indicates on-disk
     // corruption we must surface.  We detect this by: (a) the raw YAML
-    // contains a `derived_from:` key with a non-empty value, AND (b)
-    // the parsed frontmatter has no valid array.  A scalar like
-    // `derived_from: facts/a.md:7` (list brackets omitted) hits this
-    // branch because the parser requires flow or block list syntax.
-    const hasRawMalformedFrom =
-      rawDerivedFrom !== undefined &&
-      rawDerivedFrom.length > 0 &&
-      !hasFrom;
-    if (!hasFrom && !hasVia && !hasRawVia && !hasRawMalformedFrom) continue;
+    // contains a `derived_from:` key, AND (b) the parsed frontmatter
+    // has no valid array.  A scalar like `derived_from: facts/a.md:7`
+    // (list brackets omitted) or a blank `derived_from:` both hit this
+    // branch.
+    const hasRawMalformedFrom = rawDerivedFromKeyPresent && !hasFrom;
+    // A blank `derived_via:` with no value is also corrupt — the
+    // parser drops it to undefined, but the raw key is still present
+    // on disk (PR #634 round-3 review, codex P2).
+    const hasBlankRawVia =
+      rawDerivedViaKeyPresent &&
+      (rawDerivedVia === undefined || rawDerivedVia.length === 0) &&
+      !hasVia;
+    if (
+      !hasFrom && !hasVia && !hasRawVia &&
+      !hasRawMalformedFrom && !hasBlankRawVia
+    ) continue;
     report.withProvenance += 1;
 
     if (hasRawMalformedFrom) {
+      const display = rawDerivedFrom ?? "(blank)";
       report.issues.push({
         memoryPath: memory.path,
         memoryId: fm.id,
         kind: "derived_from_malformed_entry",
-        detail: `raw YAML "derived_from: ${rawDerivedFrom}" could not be parsed as a list`,
+        detail: `raw YAML "derived_from: ${display}" could not be parsed as a list`,
+      });
+    }
+    if (hasBlankRawVia) {
+      report.issues.push({
+        memoryPath: memory.path,
+        memoryId: fm.id,
+        kind: "derived_via_unknown_operator",
+        detail: "raw YAML has `derived_via:` key with empty value",
       });
     }
 
