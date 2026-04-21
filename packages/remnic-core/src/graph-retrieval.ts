@@ -128,17 +128,37 @@ export interface RemnicGraph {
 /**
  * Options for `queryGraph()`.
  *
- * All fields are optional in PR 1. They are declared here so later
- * slices can add the real PPR parameters (`damping`, `iterations`,
- * `topK`, `seedWeights`, etc.) without breaking the public signature.
+ * Defaults (applied when undefined):
+ *   - `damping`:    0.85 (standard PageRank value — higher values make the
+ *                   random walk follow edges longer before teleporting back
+ *                   to the seed distribution).
+ *   - `iterations`: 20 (power-iteration cap).
+ *   - `tolerance`:  1e-6 (L1 convergence threshold; iteration stops early
+ *                   when the L1 norm of the delta between successive
+ *                   rank vectors falls below this).
+ *   - `topK`:       unbounded — all nodes with positive score are returned,
+ *                   ordered by descending score.
  */
 export interface QueryGraphOptions {
-  /** Number of top-ranked nodes to return. */
+  /** Number of top-ranked nodes to return. Defaults to unbounded. */
   topK?: number;
-  /** PPR damping factor (typical range 0.1 – 0.3). */
+  /**
+   * PPR damping factor in (0, 1). The probability of following an outgoing
+   * edge at each step (vs. teleporting back to the seed distribution).
+   * Defaults to 0.85.
+   */
   damping?: number;
-  /** Maximum PPR iterations before convergence fallback. */
+  /** Maximum PPR iterations before falling back to current rank vector. */
   iterations?: number;
+  /** L1 convergence threshold. Defaults to 1e-6. */
+  tolerance?: number;
+  /**
+   * Optional per-seed weights. Keys must appear in `seedIds` or (if empty)
+   * in the graph. Values must be non-negative. Weights are normalized so
+   * they sum to 1 before seeding. If omitted, seed mass is distributed
+   * uniformly across `seedIds`.
+   */
+  seedWeights?: ReadonlyMap<string, number> | Readonly<Record<string, number>>;
 }
 
 /**
@@ -154,24 +174,296 @@ export interface RankedGraphNode {
  */
 export interface QueryGraphResult {
   rankedNodes: RankedGraphNode[];
+  /** Number of power-iteration rounds actually executed. */
+  iterations: number;
+  /** L1 delta at the last iteration. */
+  converged: boolean;
+}
+
+/** PPR damping factor default. */
+export const DEFAULT_PPR_DAMPING = 0.85;
+/** Power-iteration cap default. */
+export const DEFAULT_PPR_ITERATIONS = 20;
+/** L1 convergence threshold default. */
+export const DEFAULT_PPR_TOLERANCE = 1e-6;
+
+/**
+ * Normalize a `seedWeights` option (Map or plain object) to a plain Map.
+ * Silently drops non-finite / negative / non-numeric values. Returns an
+ * empty map if the input is undefined.
+ */
+function normalizeSeedWeights(
+  input: QueryGraphOptions["seedWeights"],
+): Map<string, number> {
+  const out = new Map<string, number>();
+  if (!input) return out;
+  const entries: Iterable<[string, unknown]> =
+    input instanceof Map
+      ? input.entries()
+      : Object.entries(input as Record<string, unknown>);
+  for (const [k, v] of entries) {
+    if (typeof k !== "string" || !k) continue;
+    if (typeof v !== "number" || !Number.isFinite(v) || v < 0) continue;
+    out.set(k, v);
+  }
+  return out;
 }
 
 /**
- * No-op stub. Returns an empty `rankedNodes` list for every input.
+ * Build the seed probability vector.
  *
- * The real implementation lands in PR 3 (Personalized PageRank). This
- * stub exists so downstream type-checked code can reference the final
- * signature starting in PR 1 without any behavior change.
+ * Strategy:
+ *   1. If the caller supplied `seedWeights`, restrict to keys present in
+ *      the graph, sum, and normalize.
+ *   2. Otherwise, take the subset of `seedIds` present in the graph and
+ *      assign each an equal 1/n share.
+ *   3. If neither produces any in-graph mass, fall back to a uniform
+ *      distribution over all graph nodes (matches standard PageRank).
+ */
+function buildSeedVector(
+  graph: RemnicGraph,
+  seedIds: readonly string[],
+  options: QueryGraphOptions,
+): Map<string, number> {
+  const seed = new Map<string, number>();
+
+  const explicitWeights = normalizeSeedWeights(options.seedWeights);
+  if (explicitWeights.size > 0) {
+    let total = 0;
+    for (const [id, w] of explicitWeights) {
+      if (!graph.nodes.has(id)) continue;
+      seed.set(id, (seed.get(id) ?? 0) + w);
+      total += w;
+    }
+    if (total > 0) {
+      for (const [id, v] of seed) seed.set(id, v / total);
+      return seed;
+    }
+    seed.clear();
+  }
+
+  // Deduplicate before computing shares — `["a", "a", "b"]` must behave
+  // identically to `["a", "b"]`. Computing `share` against a de-duped set
+  // is the only way to guarantee that; renormalizing after the fact is
+  // a no-op because the pre-dedup shares already sum to 1.
+  const validSeeds = new Set<string>();
+  for (const id of seedIds) {
+    if (typeof id === "string" && graph.nodes.has(id)) validSeeds.add(id);
+  }
+  if (validSeeds.size > 0) {
+    const share = 1 / validSeeds.size;
+    for (const id of validSeeds) seed.set(id, share);
+    return seed;
+  }
+
+  // Uniform fallback over all graph nodes.
+  if (graph.nodes.size > 0) {
+    const share = 1 / graph.nodes.size;
+    for (const id of graph.nodes.keys()) seed.set(id, share);
+  }
+  return seed;
+}
+
+/**
+ * Build an out-adjacency index with summed outgoing edge weights per source.
  *
- * Parameters are intentionally unused; arguments are accepted only to
- * lock the public signature.
+ * Missing `weight` on an edge defaults to `1`. Edges referencing nodes that
+ * are not in `graph.nodes` are skipped (dangling edges cannot propagate
+ * mass). The returned `outSum` map lets the PPR loop divide once per source
+ * instead of re-summing per iteration.
+ */
+function buildAdjacency(graph: RemnicGraph): {
+  outgoing: Map<string, { to: string; weight: number }[]>;
+  outSum: Map<string, number>;
+} {
+  const outgoing = new Map<string, { to: string; weight: number }[]>();
+  const outSum = new Map<string, number>();
+  for (const edge of graph.edges) {
+    if (!edge || typeof edge.from !== "string" || typeof edge.to !== "string") continue;
+    if (!graph.nodes.has(edge.from) || !graph.nodes.has(edge.to)) continue;
+    const weight =
+      typeof edge.weight === "number" && Number.isFinite(edge.weight) && edge.weight > 0
+        ? edge.weight
+        : 1;
+    let bucket = outgoing.get(edge.from);
+    if (!bucket) {
+      bucket = [];
+      outgoing.set(edge.from, bucket);
+    }
+    bucket.push({ to: edge.to, weight });
+    outSum.set(edge.from, (outSum.get(edge.from) ?? 0) + weight);
+  }
+  return { outgoing, outSum };
+}
+
+/**
+ * Personalized PageRank via power iteration.
+ *
+ * Pure function — no I/O. Deterministic given the same graph and options.
+ *
+ * Algorithm:
+ *
+ *   r_{t+1}(v) = (1 - d) * s(v)
+ *              + d * Σ_{u → v} r_t(u) * w(u,v) / Σ_w w(u,·)
+ *              + d * (dangling mass) * s(v)
+ *
+ * where:
+ *   - `d` is the damping factor (default 0.85).
+ *   - `s` is the seed vector (normalized personalization distribution).
+ *   - dangling mass is the total rank on nodes with no outgoing edges,
+ *     redistributed over the seed vector so probability mass is conserved.
+ *
+ * The loop stops early when `|r_{t+1} - r_t|_1 < tolerance` or after
+ * `iterations` rounds, whichever comes first.
+ *
+ * Edge cases:
+ *   - Empty graph → `{ rankedNodes: [], iterations: 0, converged: true }`.
+ *   - Seed ids that are not in the graph are silently dropped.
+ *   - If no in-graph seed mass remains (empty seed or all seeds missing),
+ *     the uniform distribution over graph nodes is used — matching
+ *     standard PageRank semantics.
+ *   - `damping` is clamped to `[0, 1)` (a damping of exactly 1 would make
+ *     the chain non-ergodic; damping of exactly 0 reduces to the seed
+ *     distribution).
+ *   - `topK <= 0` returns an empty ranked list (but the `iterations` and
+ *     `converged` fields still reflect the actual computation).
  */
 export function queryGraph(
-  _graph: RemnicGraph,
-  _seedIds: readonly string[],
-  _options?: QueryGraphOptions,
+  graph: RemnicGraph,
+  seedIds: readonly string[],
+  options: QueryGraphOptions = {},
 ): QueryGraphResult {
-  return { rankedNodes: [] };
+  const n = graph.nodes.size;
+  if (n === 0) {
+    return { rankedNodes: [], iterations: 0, converged: true };
+  }
+
+  // Clamp options.
+  let damping = typeof options.damping === "number" ? options.damping : DEFAULT_PPR_DAMPING;
+  if (!Number.isFinite(damping) || damping < 0) damping = 0;
+  if (damping >= 1) damping = 1 - 1e-9;
+
+  let maxIter = typeof options.iterations === "number" ? Math.floor(options.iterations) : DEFAULT_PPR_ITERATIONS;
+  if (!Number.isFinite(maxIter) || maxIter < 0) maxIter = 0;
+
+  let tolerance = typeof options.tolerance === "number" ? options.tolerance : DEFAULT_PPR_TOLERANCE;
+  if (!Number.isFinite(tolerance) || tolerance < 0) tolerance = 0;
+
+  const seed = buildSeedVector(graph, seedIds, options);
+
+  // Apply `RemnicGraphNode.weight` as a starting-rank prior — BUT only
+  // when the caller did not supply explicit `seedWeights`. Explicit
+  // caller-supplied weights must not be silently re-biased by node
+  // priors (would double-count and contradict the documented contract
+  // for `seedWeights`). When no explicit weights are given, multiply
+  // each seed entry by its node weight (defaulting missing / non-
+  // positive / non-finite weights to 1) and renormalize.
+  const hasExplicitWeights =
+    options.seedWeights !== undefined && options.seedWeights !== null;
+  if (!hasExplicitWeights) {
+    let priorTotal = 0;
+    for (const [id, s] of seed) {
+      const node = graph.nodes.get(id);
+      const w =
+        node !== undefined &&
+        typeof node.weight === "number" &&
+        Number.isFinite(node.weight) &&
+        node.weight > 0
+          ? node.weight
+          : 1;
+      const biased = s * w;
+      seed.set(id, biased);
+      priorTotal += biased;
+    }
+    if (priorTotal > 0) {
+      for (const [id, s] of seed) seed.set(id, s / priorTotal);
+    }
+  }
+
+  const { outgoing, outSum } = buildAdjacency(graph);
+
+  // Initialize rank vector = seed.
+  let rank = new Map<string, number>();
+  for (const id of graph.nodes.keys()) rank.set(id, seed.get(id) ?? 0);
+  // If the seed vector is empty (e.g. graph has no nodes matching seeds
+  // AND the uniform fallback was somehow empty — shouldn't happen when
+  // n > 0, but defensively): return empty ranking.
+  let seedTotal = 0;
+  for (const v of seed.values()) seedTotal += v;
+  if (seedTotal === 0) {
+    return { rankedNodes: [], iterations: 0, converged: true };
+  }
+
+  let converged = false;
+  let iter = 0;
+  for (; iter < maxIter; iter++) {
+    const next = new Map<string, number>();
+
+    // Sum of rank on dangling nodes (no outgoing edges) — redistribute
+    // proportional to the seed vector to conserve probability mass.
+    let danglingMass = 0;
+    for (const [id, r] of rank) {
+      if ((outSum.get(id) ?? 0) === 0) danglingMass += r;
+    }
+
+    // Teleport contribution: (1 - d) * s(v) + d * danglingMass * s(v).
+    const teleportScale = 1 - damping + damping * danglingMass;
+    for (const [id, s] of seed) {
+      next.set(id, (next.get(id) ?? 0) + teleportScale * s);
+    }
+
+    // Edge contribution: d * r(u) * w(u,v) / Σ w(u,·).
+    for (const [from, edges] of outgoing) {
+      const r = rank.get(from) ?? 0;
+      if (r === 0) continue;
+      const total = outSum.get(from) ?? 0;
+      if (total === 0) continue;
+      const share = (damping * r) / total;
+      for (const { to, weight } of edges) {
+        next.set(to, (next.get(to) ?? 0) + share * weight);
+      }
+    }
+
+    // Compute L1 delta.
+    let delta = 0;
+    for (const id of graph.nodes.keys()) {
+      delta += Math.abs((next.get(id) ?? 0) - (rank.get(id) ?? 0));
+    }
+
+    rank = next;
+    if (delta < tolerance) {
+      converged = true;
+      iter += 1; // record that this iteration completed
+      break;
+    }
+  }
+
+  // Rank and trim.
+  const ranked: RankedGraphNode[] = [];
+  for (const [id, score] of rank) {
+    if (score > 0) ranked.push({ id, score });
+  }
+  // Sort by descending score, ties broken by id for determinism.
+  ranked.sort((a, b) => {
+    if (b.score !== a.score) return b.score - a.score;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
+
+  const topK = options.topK;
+  let trimmed: RankedGraphNode[];
+  if (typeof topK === "number") {
+    if (topK <= 0) {
+      trimmed = [];
+    } else if (topK < ranked.length) {
+      trimmed = ranked.slice(0, topK);
+    } else {
+      trimmed = ranked;
+    }
+  } else {
+    trimmed = ranked;
+  }
+
+  return { rankedNodes: trimmed, iterations: iter, converged };
 }
 
 // ---------------------------------------------------------------------------
@@ -255,15 +547,11 @@ export interface ExtractGraphEdgesOptions {
  * template configuration — it only recognizes the default shape plus minor
  * whitespace / ordering variants.
  */
-// Match the `[Source: ...]` citation block without ambiguous whitespace
-// quantifiers (CodeQL rule js/polynomial-redos). Keeping `[^\]\n[]+` as
-// the only quantified group — a negated class excluding `]`, `[`, and
-// newline — means every character in the body is consumed in a single,
-// non-backtracking pass. The preceding `[ \t]*` was flagged as
-// polynomial-redos too, so we accept any whitespace as the first char
-// of the body instead of pre-consuming it; `parseCitationFields` trims
-// each key/value pair anyway, so leading whitespace inside the body is
-// harmless.
+// Non-greedy quantifiers on classes like `[^\]\n]+?` can be polynomial on
+// pathological inputs (CodeQL rule js/polynomial-redos). Using a greedy
+// quantifier with a negated character class that also excludes `[` prevents
+// nested-bracket inputs from forcing catastrophic backtracking, and the `\s*`
+// after `Source:` is bounded by the terminal `]`.
 const CITATION_REGEX = /\[Source:([^\]\n[]+)\]/gi;
 
 /**
@@ -371,6 +659,10 @@ export function extractGraphEdges(
   const entityClaimed = new Set<string>();
   for (const memory of memories) {
     if (!memory?.id) continue;
+    // Do not mark the memory's own id as entity-claimed just because it
+    // carries an entityRef — the memory node takes precedence over its
+    // own mention (which is impossible anyway; the edge would be a
+    // self-loop and is dropped).
     if (typeof memory.entityRef === "string" && memory.entityRef) {
       if (memory.entityRef !== memory.id) entityClaimed.add(memory.entityRef);
     }
