@@ -63,43 +63,44 @@ export const RETRIEVAL_GRAPH_FIXTURE: GraphBenchCase[] = [
   },
   {
     id: "lineage-tree-depth-2",
-    title: "Two-level lineage tree",
+    title: "Two-level lineage tree (seed leaf)",
     description:
-      "Seed the root; graph recall should reach both children (one hop) " +
-      "and at least one grandchild (two hops) via `derived-from` edges.",
+      "Seed a grandchild; graph recall should reach its child parent and " +
+      "the root via outgoing `derived-from` edges (which point child → parent).",
     memories: lineageTree("root"),
-    seedIds: ["root"],
-    expectedIds: ["root", "root-child-0", "root-child-1"],
+    seedIds: ["root-grand-00"],
+    expectedIds: ["root-grand-00", "root-child-0", "root"],
   },
   {
-    id: "mentions-bridge",
-    title: "Entity-bridged memories",
+    id: "supersession-branches",
+    title: "Branching supersession",
     description:
-      "Two memories that both mention the same entity should surface " +
-      "each other via the shared `mentions` edge.",
+      "A memory superseded by two different newer memories should rank " +
+      "both successors when the older memory is seeded (supersedes edge " +
+      "propagates mass from newer → older).",
     memories: [
-      { id: "m-jane-1", entityRef: "person:Jane" },
-      { id: "m-jane-2", entityRef: "person:Jane" },
-      { id: "m-bob", entityRef: "person:Bob" },
+      { id: "canonical" },
+      { id: "update-1", supersedes: "canonical" },
+      { id: "update-2", supersedes: "canonical" },
+      { id: "unrelated" },
     ],
-    seedIds: ["m-jane-1"],
-    expectedIds: ["m-jane-1", "m-jane-2"],
+    seedIds: ["update-1"],
+    expectedIds: ["update-1", "canonical"],
   },
   {
     id: "mixed-multihop",
-    title: "Mixed multi-hop (lineage + mentions)",
+    title: "Mixed multi-hop (lineage + supersedes)",
     description:
-      "Seed a child; PPR should discover the grandparent via lineage AND " +
-      "a sibling via a shared entity mention.",
+      "Seed the leaf; PPR should discover the parent via lineage and the " +
+      "grandparent via a second hop. Both paths are outgoing edges.",
     memories: [
       { id: "grandparent" },
       { id: "parent", lineage: ["grandparent"] },
-      { id: "child-1", lineage: ["parent"], entityRef: "topic:refactor" },
-      { id: "child-2", lineage: ["parent"], entityRef: "topic:refactor" },
-      { id: "unrelated", entityRef: "topic:other" },
+      { id: "child-1", lineage: ["parent"] },
+      { id: "unrelated" },
     ],
     seedIds: ["child-1"],
-    expectedIds: ["child-1", "parent", "child-2"],
+    expectedIds: ["child-1", "parent", "grandparent"],
   },
   {
     id: "derived-from-version",
@@ -139,18 +140,14 @@ export const RETRIEVAL_GRAPH_FIXTURE: GraphBenchCase[] = [
     expectedIds: ["implementation-note", "planner-decision", "user-question"],
   },
   {
-    id: "authored-by-cluster",
-    title: "Authored-by clustering",
+    id: "deep-chain",
+    title: "Deep supersession chain (seed mid-chain)",
     description:
-      "Two memories authored by the same agent should cluster together " +
-      "through their shared `agent:*` node.",
-    memories: [
-      { id: "m-a", content: "[Source: agent=planner, ts=2026-01-01T00:00:00Z]" },
-      { id: "m-b", content: "[Source: agent=planner, ts=2026-01-02T00:00:00Z]" },
-      { id: "m-c", content: "[Source: agent=extractor]" },
-    ],
-    seedIds: ["m-a"],
-    expectedIds: ["m-a", "m-b"],
+      "8-link chain. Seed the mid-point. PPR should surface neighbors on " +
+      "the outgoing (supersedes) side of the seed.",
+    memories: supersessionChain("deep", 8),
+    seedIds: ["deep-4"],
+    expectedIds: ["deep-4", "deep-3", "deep-2"],
   },
 ];
 

@@ -18,7 +18,7 @@ import type {
   ResolvedRunBenchmarkOptions,
   TaskResult,
 } from "../../../types.js";
-import { precisionAtK } from "../../../scorer.js";
+import { aggregateTaskScores, precisionAtK } from "../../../scorer.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
 import {
   buildGraphFromMemories,
@@ -77,6 +77,7 @@ export async function runRetrievalGraphBenchmark(
 
     const latencyMs = Math.round(performance.now() - startedAt);
 
+    const delta_p_at_3 = pOn - pOff;
     tasks.push({
       taskId: sample.id,
       question: sample.title,
@@ -89,6 +90,9 @@ export async function runRetrievalGraphBenchmark(
         p_at_1_off: precisionAtK(off, sample.expectedIds, 1),
         p_at_3_off: pOff,
         p_at_5_off: precisionAtK(off, sample.expectedIds, 5),
+        delta_p_at_3,
+        // 1 for graph-on win, 0 for tie, -1 for graph-on loss.
+        graph_on_win: pOn > pOff ? 1 : pOn < pOff ? -1 : 0,
       },
       latencyMs,
       tokens: { input: 0, output: 0 },
@@ -97,7 +101,6 @@ export async function runRetrievalGraphBenchmark(
         seedIds: sample.seedIds,
         graphOnTop5: on.slice(0, 5),
         graphOffTop5: off.slice(0, 5),
-        delta_p_at_3: pOn - pOff,
       },
     });
   }
@@ -137,15 +140,7 @@ export async function runRetrievalGraphBenchmark(
     },
     results: {
       tasks,
-      aggregates: {
-        cases: tasks.length,
-        mean_p_at_3_on: meanOn,
-        mean_p_at_3_off: meanOff,
-        delta_mean_p_at_3: meanOn - meanOff,
-        wins,
-        losses,
-        ties,
-      },
+      aggregates: aggregateTaskScores(tasks.map((task) => task.scores)),
     },
     environment: {
       os: process.platform,

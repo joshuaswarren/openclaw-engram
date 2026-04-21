@@ -35,29 +35,21 @@ test("runRetrievalGraphBenchmark produces a task per fixture case", async () => 
 
 test("runRetrievalGraphBenchmark aggregates report graph-on vs graph-off", async () => {
   const result = await runRetrievalGraphBenchmark(buildOptions({ mode: "full" }));
-  const agg = result.results.aggregates as Record<string, unknown>;
-  assert.ok(typeof agg.mean_p_at_3_on === "number");
-  assert.ok(typeof agg.mean_p_at_3_off === "number");
-  assert.ok(typeof agg.delta_mean_p_at_3 === "number");
-  assert.equal(
-    (agg.mean_p_at_3_on as number) - (agg.mean_p_at_3_off as number),
-    agg.delta_mean_p_at_3,
-  );
-  assert.ok(typeof agg.wins === "number");
-  assert.ok(typeof agg.losses === "number");
-  assert.ok(typeof agg.ties === "number");
-  assert.equal(
-    (agg.wins as number) + (agg.losses as number) + (agg.ties as number),
-    RETRIEVAL_GRAPH_FIXTURE.length,
-  );
+  const agg = result.results.aggregates;
+  // Each metric is a MetricAggregate { mean, median, stdDev, min, max }.
+  assert.ok(agg.p_at_3_on && typeof agg.p_at_3_on.mean === "number");
+  assert.ok(agg.p_at_3_off && typeof agg.p_at_3_off.mean === "number");
+  assert.ok(agg.delta_p_at_3 && typeof agg.delta_p_at_3.mean === "number");
+  assert.ok(agg.graph_on_win && typeof agg.graph_on_win.mean === "number");
 });
 
 test("runRetrievalGraphBenchmark graph-on beats or ties graph-off on the fixture", async () => {
   const result = await runRetrievalGraphBenchmark(buildOptions({ mode: "full" }));
-  const agg = result.results.aggregates as Record<string, unknown>;
+  const agg = result.results.aggregates;
+  // Primary ship criterion: mean of delta_p_at_3 >= 0.
   assert.ok(
-    (agg.mean_p_at_3_on as number) >= (agg.mean_p_at_3_off as number),
-    `graph-on precision (${agg.mean_p_at_3_on}) regressed below graph-off (${agg.mean_p_at_3_off})`,
+    agg.p_at_3_on.mean >= agg.p_at_3_off.mean,
+    `graph-on precision (${agg.p_at_3_on.mean}) regressed below graph-off (${agg.p_at_3_off.mean})`,
   );
 });
 
