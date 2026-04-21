@@ -919,6 +919,13 @@ export interface PluginConfig {
   recallMmrLambda: number;
   /** MMR is applied over the top N candidates per section. Default 40. */
   recallMmrTopN: number;
+  /**
+   * Boost stored `reasoning_trace` memories in recall results when the
+   * incoming query reads like a problem-solving ask (e.g. "how do I…",
+   * "step by step", "walk me through…"). Default false — opt in after
+   * benchmarking (issue #564 PR 3).
+   */
+  recallReasoningTraceBoostEnabled: boolean;
   qmdRecallCacheTtlMs: number;
   qmdRecallCacheStaleTtlMs: number;
   qmdRecallCacheMaxEntries: number;

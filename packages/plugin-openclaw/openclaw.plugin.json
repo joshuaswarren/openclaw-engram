@@ -3526,6 +3526,11 @@
         "minimum": 0,
         "description": "Number of top candidates per section to run MMR over. Candidates past this remain in original order."
       },
+      "recallReasoningTraceBoostEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Boost stored reasoning_trace memories in recall results when the incoming query reads like a problem-solving ask (e.g. 'how do I...', 'step by step', 'walk me through...'). Default false - opt in after benchmarking (issue #564)."
+      },
       "recallPipeline": {
         "type": "array",
         "description": "Ordered recall sections with per-section budgets and feature knobs.",
@@ -4831,6 +4836,11 @@
       "advanced": true,
       "placeholder": "40",
       "help": "Number of top candidates per section over which MMR is applied"
+    },
+    "recallReasoningTraceBoostEnabled": {
+      "label": "Boost Reasoning Traces on Problem-Solving Queries",
+      "advanced": true,
+      "help": "Promote stored reasoning_trace memories to the top of recall results when the incoming query reads like a problem-solving ask. Default off; enable after benchmarking (issue #564)."
     }
   }
 }

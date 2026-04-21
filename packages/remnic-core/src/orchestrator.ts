@@ -93,6 +93,7 @@ import {
   type MemoryWorthCounters,
 } from "./memory-worth-filter.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
+import { applyReasoningTraceBoost } from "./reasoning-trace-recall.js";
 import {
   applyTemporalSupersession,
   normalizeSupersessionKey,
@@ -1178,13 +1179,25 @@ export function resolvePersistedMemoryRelativePath(options: {
   if (options.category === "correction") {
     return path.join("corrections", `${options.memoryId}.md`);
   }
+  // Pick the subtree that matches the StorageManager.writeMemory routing
+  // so fallback paths (used before memoryPathById has seen the fresh
+  // write) agree with where the file actually lives. Without this branch,
+  // reasoning_trace graph edges point at facts/<date>/, and subsequent
+  // graph expansion silently drops those nodes when readMemoryByPath
+  // cannot resolve them (issue #564 PR 3 review).
+  const subtree =
+    options.category === "procedure"
+      ? "procedures"
+      : options.category === "reasoning_trace"
+        ? "reasoning-traces"
+        : "facts";
   const idParts = options.memoryId.split("-");
   const maybeTimestamp = Number(idParts[1]);
   if (Number.isFinite(maybeTimestamp) && maybeTimestamp > 0) {
     const day = new Date(maybeTimestamp).toISOString().slice(0, 10);
-    return path.join("facts", day, `${options.memoryId}.md`);
+    return path.join(subtree, day, `${options.memoryId}.md`);
   }
-  return path.join("facts", `${options.memoryId}.md`);
+  return path.join(subtree, `${options.memoryId}.md`);
 }
 
 export class Orchestrator {
@@ -8223,6 +8236,7 @@ export class Orchestrator {
         "memories",
         memoryResults,
         recallResultLimit,
+        retrievalQuery,
       );
 
       // E-Mem-inspired memory reconstruction: fill gaps for referenced entities
@@ -8331,6 +8345,7 @@ export class Orchestrator {
           "memories",
           boostedScoped,
           recallResultLimit,
+          retrievalQuery,
         );
         if (scoped.length > 0) {
           if (shouldPersistGraphSnapshot) {
@@ -8469,6 +8484,7 @@ export class Orchestrator {
         "memories",
         boostedScoped,
         recallResultLimit,
+        retrievalQuery,
       );
       if (scoped.length > 0) {
         if (shouldPersistGraphSnapshot) {
@@ -8615,6 +8631,7 @@ export class Orchestrator {
               "memories",
               boostedRecent,
               recallResultLimit,
+              retrievalQuery,
             );
 
             if (recent.length > 0) {
@@ -13782,6 +13799,7 @@ export class Orchestrator {
     sectionId: string,
     results: QmdSearchResult[],
     limit: number,
+    retrievalQuery?: string,
   ): QmdSearchResult[] {
     const safeLimit =
       typeof limit === "number" && Number.isFinite(limit)
@@ -13793,7 +13811,18 @@ export class Orchestrator {
     // the memories section is genuinely skipped. This mirrors the
     // `slice(0, 0)` semantics of every call site this helper replaced.
     if (safeLimit === 0) return [];
-    const diversified = this.applyMmrToQmdResults(sectionId, results);
+    // Issue #564 PR 3: when the feature flag is on, boost reasoning_trace
+    // memories for problem-solving asks so they bubble up ahead of ordinary
+    // facts/decisions before MMR picks the final section. No-op when the
+    // flag is off or the query is not a problem-solving ask.
+    const boosted =
+      this.config.recallReasoningTraceBoostEnabled && typeof retrievalQuery === "string"
+        ? applyReasoningTraceBoost(results, {
+            enabled: true,
+            query: retrievalQuery,
+          })
+        : results;
+    const diversified = this.applyMmrToQmdResults(sectionId, boosted);
     return diversified.slice(0, safeLimit);
   }
 
@@ -14273,6 +14302,7 @@ export class Orchestrator {
       "memories",
       results,
       options.recallResultLimit,
+      options.prompt,
     );
   }
 
