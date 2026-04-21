@@ -72,6 +72,10 @@ import {
   runRetrievalDirectAnswerBenchmark,
 } from "./benchmarks/remnic/retrieval-direct-answer/runner.js";
 import {
+  retrievalReasoningTraceDefinition,
+  runRetrievalReasoningTraceBenchmark,
+} from "./benchmarks/remnic/retrieval-reasoning-trace/runner.js";
+import {
   codingRecallDefinition,
   runCodingRecallBenchmark,
 } from "./benchmarks/remnic/coding-recall/runner.js";
@@ -188,6 +192,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...retrievalDirectAnswerDefinition,
     run: runRetrievalDirectAnswerBenchmark,
+  },
+  {
+    ...retrievalReasoningTraceDefinition,
+    run: runRetrievalReasoningTraceBenchmark,
   },
   {
     ...codingRecallDefinition,
