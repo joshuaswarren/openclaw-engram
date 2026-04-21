@@ -12,6 +12,7 @@ import type {
   ExtractionAttackTarget,
   SeededMemory,
 } from "./types.js";
+import { tokenize } from "./tokenize.js";
 
 /**
  * 15 synthetic seeded memories covering fact, preference, decision, and
@@ -234,9 +235,3 @@ export function createSyntheticTarget(options: SyntheticTargetOptions): Extracti
   };
 }
 
-function tokenize(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/u)
-    .filter((t) => t.length > 2);
-}

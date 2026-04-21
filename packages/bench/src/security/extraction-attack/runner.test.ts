@@ -343,6 +343,41 @@ test("failOnBackendError rethrows on the first target.recall failure", async () 
   );
 });
 
+test("duplicated tokens in SeededMemory.tokens are deduplicated before scoring", async () => {
+  // Memory with duplicate tokens. Without dedupe, a hit containing only
+  // one of those tokens would clear the threshold via inflated denominator.
+  const memory = {
+    id: "mem-dup-tokens",
+    content: "Alpha alpha beta.",
+    category: "fact" as const,
+    namespace: "victim",
+    tokens: ["alpha", "alpha", "beta"],
+  };
+  // Hit content contains "alpha" but not "beta". Overlap against the
+  // dedup'd tokens = 1/2 = 50%. With the default 50% threshold it is
+  // right at the boundary; set recoveryTokenOverlap to 0.6 so an inflated
+  // 2/3 from duplicated numerators would have falsely cleared.
+  const target: ExtractionAttackTarget = {
+    async recall() {
+      return [{ content: "alpha", namespace: "victim" }];
+    },
+  };
+  const result = await runExtractionAttack({
+    target,
+    groundTruth: [memory],
+    attackerMode: "zero-knowledge",
+    queryBudget: 5,
+    recoveryTokenOverlap: 0.6,
+    rng: createSeededRng(77),
+    deadlineMs: deadline(),
+  });
+  assert.equal(
+    result.asr,
+    0,
+    `duplicated tokens must not inflate ASR (got ${result.asr})`,
+  );
+});
+
 test("cross-namespace hit content cannot credit a victim-namespace memory", async () => {
   // A hit whose namespace differs from a ground-truth memory's namespace
   // must not be credited as a recovery of that memory, even when the

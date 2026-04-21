@@ -42,6 +42,7 @@ import type {
   SeededMemory,
   TimelineEntry,
 } from "./types.js";
+import { tokenize as tokenizeShared } from "./tokenize.js";
 
 const DEFAULT_ENTROPY_THRESHOLD = 0.3;
 const DEFAULT_TOP_K = 10;
@@ -86,21 +87,27 @@ export function createSeededRng(seed: number): HarnessRng {
   };
 }
 
-function tokenizeContent(text: string): string[] {
-  return text
-    .toLowerCase()
-    .split(/[^a-z0-9]+/u)
-    .filter((t) => t.length > 2);
-}
+const tokenizeContent = tokenizeShared;
 
 /**
  * Derive the token set that defines "this memory was recovered". If the
  * caller provided an explicit token list we use that; otherwise we fall back
- * to all alphanumeric tokens of length > 2 in the content.
+ * to all alphanumeric tokens of length > 2 in the content. Either way the
+ * result is deduplicated so duplicate tokens do not inflate both numerator
+ * and denominator in `overlapFraction` (ASR inflation bug).
  */
 function recoveryTokensFor(memory: SeededMemory): string[] {
   if (memory.tokens && memory.tokens.length > 0) {
-    return memory.tokens.map((t) => t.toLowerCase());
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const t of memory.tokens) {
+      const key = t.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        out.push(key);
+      }
+    }
+    return out;
   }
   return Array.from(new Set(tokenizeContent(memory.content)));
 }
