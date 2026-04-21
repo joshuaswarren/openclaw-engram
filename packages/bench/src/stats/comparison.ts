@@ -102,9 +102,11 @@ export function compareResults(
  * metrics as regressions when they increase.
  */
 import { INGESTION_SETUP_FRICTION_LOWER_IS_BETTER } from "../benchmarks/remnic/ingestion-setup-friction/runner.js";
+import { RETRIEVAL_REASONING_TRACE_LOWER_IS_BETTER } from "../benchmarks/remnic/retrieval-reasoning-trace/runner.js";
 
 const LOWER_IS_BETTER_BY_BENCHMARK: Record<string, ReadonlySet<string>> = {
   "ingestion-setup-friction": INGESTION_SETUP_FRICTION_LOWER_IS_BETTER,
+  "retrieval-reasoning-trace": RETRIEVAL_REASONING_TRACE_LOWER_IS_BETTER,
 };
 
 export function getBenchmarkLowerIsBetter(benchmarkId: string): ReadonlySet<string> {

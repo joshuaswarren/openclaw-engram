@@ -58,6 +58,32 @@ export { StorageManager } from "./storage.js";
 export { ExtractionEngine } from "./extraction.js";
 
 // ---------------------------------------------------------------------------
+// Smart buffer (issue #563)
+// ---------------------------------------------------------------------------
+
+export {
+  SmartBuffer,
+  type TriggerDecision,
+  type BufferSurpriseProbe,
+} from "./buffer.js";
+
+export {
+  computeSurprise,
+  DEFAULT_SURPRISE_K,
+  type RecentMemoryLike,
+  type ComputeSurpriseOptions,
+} from "./buffer-surprise.js";
+
+export {
+  reportBufferSurpriseDistribution,
+  type BufferSurpriseDistribution,
+  type BufferSurpriseReader,
+  type BufferSurpriseReportOptions,
+} from "./buffer-surprise-report.js";
+
+export type { BufferSurpriseEvent } from "./types.js";
+
+// ---------------------------------------------------------------------------
 // Extraction Judge (issue #376)
 // ---------------------------------------------------------------------------
 
@@ -121,6 +147,19 @@ export {
 } from "./direct-answer.js";
 
 // ---------------------------------------------------------------------------
+// Reasoning-trace retrieval boost (issue #564)
+// ---------------------------------------------------------------------------
+
+export {
+  applyReasoningTraceBoost,
+  isReasoningTracePath,
+  looksLikeProblemSolvingQuery,
+  DEFAULT_REASONING_TRACE_BOOST,
+  type ApplyReasoningTraceBoostOptions,
+  type BoostableResult,
+} from "./reasoning-trace-recall.js";
+
+// ---------------------------------------------------------------------------
 // Inline source attribution (issue #369)
 // ---------------------------------------------------------------------------
 
@@ -173,6 +212,31 @@ export {
 export { EngramAccessService, EngramAccessInputError } from "./access-service.js";
 export { EngramAccessHttpServer } from "./access-http.js";
 export { EngramMcpServer } from "./access-mcp.js";
+
+// Recall X-ray CLI helpers (issue #570).  Exported so the standalone
+// `@remnic/cli` binary can wire the `remnic xray` command without
+// reimporting core-internal modules by relative path (CLAUDE.md rule 26).
+export {
+  parseXrayCliOptions,
+  parseXrayBudgetFlag,
+  type ParsedXrayCliOptions,
+} from "./recall-xray-cli.js";
+export {
+  renderXray,
+  renderXrayJson,
+  renderXrayText,
+  renderXrayMarkdown,
+  parseXrayFormat,
+  RECALL_XRAY_FORMATS,
+  type RecallXrayFormat,
+} from "./recall-xray-renderer.js";
+export type {
+  RecallXraySnapshot,
+  RecallXrayResult,
+  RecallXrayScoreDecomposition,
+  RecallXrayServedBy,
+  RecallFilterTrace,
+} from "./recall-xray.js";
 
 // Coding-agent subsystem (issue #569)
 export {
@@ -693,6 +757,37 @@ export {
 } from "./memory-worth.js";
 
 // ---------------------------------------------------------------------------
+// Memory Worth outcome pipeline (issue #560 PR 3 of 5)
+// ---------------------------------------------------------------------------
+
+export {
+  recordMemoryOutcome,
+  memoryWorthOutcomeEligibleCategories,
+  type MemoryOutcomeKind,
+  type RecordMemoryOutcomeInput,
+  type RecordMemoryOutcomeResult,
+} from "./memory-worth-outcomes.js";
+
+// ---------------------------------------------------------------------------
+// Memory Worth recall filter (issue #560 PR 4 of 5)
+// ---------------------------------------------------------------------------
+
+export {
+  applyMemoryWorthFilter,
+  buildMemoryWorthCounterMap,
+  type MemoryWorthCounters,
+  type MemoryWorthFilterCandidate,
+  type MemoryWorthFilterOptions,
+  type MemoryWorthFilterResultItem,
+} from "./memory-worth-filter.js";
+
+// Memory Worth recall-precision benchmark (issue #560 PR 5 of 5) is NOT
+// re-exported from the public API surface. The bench is for in-package
+// test/script use only — see packages/remnic-core/src/memory-worth-bench.ts
+// and its companion test. Benchmarks the broader package ecosystem relies
+// on live in packages/bench/.
+
+// ---------------------------------------------------------------------------
 // Graph retrieval types (issue #559, PR 1 of 5)
 // ---------------------------------------------------------------------------
 
@@ -700,6 +795,11 @@ export {
   queryGraph,
   isNodeType,
   isEdgeType,
+  extractGraphEdges,
+  buildGraphFromMemories,
+  DEFAULT_PPR_DAMPING,
+  DEFAULT_PPR_ITERATIONS,
+  DEFAULT_PPR_TOLERANCE,
   type NodeType,
   type EdgeType,
   type RemnicGraphNode,
@@ -708,7 +808,31 @@ export {
   type QueryGraphOptions,
   type QueryGraphResult,
   type RankedGraphNode,
+  type MemoryEdgeSource,
+  type ExtractGraphEdgesOptions,
 } from "./graph-retrieval.js";
+
+export {
+  runGraphRecall,
+  type GraphRecallConfig,
+  type GraphRecallOptions,
+  type GraphRecallResult,
+  type GraphRecallRun,
+} from "./graph-recall.js";
+
+// ---------------------------------------------------------------------------
+// Cross-namespace query-budget limiter (issue #565 PR 4/5)
+// ---------------------------------------------------------------------------
+
+export {
+  CrossNamespaceBudget,
+  DEFAULT_CROSS_NAMESPACE_BUDGET,
+} from "./cross-namespace-budget.js";
+export type {
+  BudgetDecision,
+  BudgetDecisionReason,
+  CrossNamespaceBudgetConfig,
+} from "./cross-namespace-budget.js";
 
 // ---------------------------------------------------------------------------
 // Recall-audit anomaly detector (issue #565 PR 5/5)

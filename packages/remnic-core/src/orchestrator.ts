@@ -22,11 +22,18 @@ import { isAboveImportanceThreshold, scoreImportance } from "./importance.js";
 import {
   judgeFactDurability,
   createVerdictCache,
+  createDeferCountMap,
+  getVerdictKind,
   validateProcedureExtraction,
   type JudgeBatchResult,
   type JudgeCandidate,
   type JudgeVerdict,
 } from "./extraction-judge.js";
+import {
+  EXTRACTION_JUDGE_VERDICT_CATEGORY,
+  recordJudgeVerdict,
+} from "./extraction-judge-telemetry.js";
+import { recordJudgeTrainingPair } from "./extraction-judge-training.js";
 import { buildProcedurePersistBody } from "./procedural/procedure-types.js";
 import { buildProcedureRecallSection } from "./procedural/procedure-recall.js";
 import {
@@ -81,7 +88,13 @@ import {
   type ParallelSearchResult,
 } from "./retrieval-agents.js";
 import { RerankCache, rerankLocalOrNoop } from "./rerank.js";
+import {
+  applyMemoryWorthFilter,
+  buildMemoryWorthCounterMap,
+  type MemoryWorthCounters,
+} from "./memory-worth-filter.js";
 import { reorderRecallResultsWithMmr } from "./recall-mmr.js";
+import { applyReasoningTraceBoost } from "./reasoning-trace-recall.js";
 import {
   applyTemporalSupersession,
   normalizeSupersessionKey,
@@ -224,6 +237,9 @@ import {
   findSimilarClusters,
   buildConsolidationPrompt,
   parseConsolidationResponse,
+  buildOperatorAwareConsolidationPrompt,
+  parseOperatorAwareConsolidationResponse,
+  chooseConsolidationOperator,
   buildExtensionsBlockForConsolidation,
   materializeAfterSemanticConsolidation,
   type SemanticConsolidationResult,
@@ -1167,13 +1183,25 @@ export function resolvePersistedMemoryRelativePath(options: {
   if (options.category === "correction") {
     return path.join("corrections", `${options.memoryId}.md`);
   }
+  // Pick the subtree that matches the StorageManager.writeMemory routing
+  // so fallback paths (used before memoryPathById has seen the fresh
+  // write) agree with where the file actually lives. Without this branch,
+  // reasoning_trace graph edges point at facts/<date>/, and subsequent
+  // graph expansion silently drops those nodes when readMemoryByPath
+  // cannot resolve them (issue #564 PR 3 review).
+  const subtree =
+    options.category === "procedure"
+      ? "procedures"
+      : options.category === "reasoning_trace"
+        ? "reasoning-traces"
+        : "facts";
   const idParts = options.memoryId.split("-");
   const maybeTimestamp = Number(idParts[1]);
   if (Number.isFinite(maybeTimestamp) && maybeTimestamp > 0) {
     const day = new Date(maybeTimestamp).toISOString().slice(0, 10);
-    return path.join("facts", day, `${options.memoryId}.md`);
+    return path.join(subtree, day, `${options.memoryId}.md`);
   }
-  return path.join("facts", `${options.memoryId}.md`);
+  return path.join(subtree, `${options.memoryId}.md`);
 }
 
 export class Orchestrator {
@@ -1195,6 +1223,20 @@ export class Orchestrator {
   readonly localLlm: LocalLlmClient;
   readonly fastLlm: LocalLlmClient;
   private readonly judgeVerdictCache: Map<string, JudgeVerdict>;
+  /**
+   * Per-orchestrator defer-counter map (issue #562, PR 2). Tracks how many
+   * times the judge has returned `"defer"` for a given candidate content
+   * hash so the defer cap can be enforced.
+   */
+  private readonly judgeDeferCounts: Map<string, number>;
+  /**
+   * Side-channel: number of facts deferred in the most recent
+   * `persistExtraction` call (issue #562, PR 2). The caller reads this after
+   * `persistExtraction` returns to decide whether to retain buffer turns for
+   * the next extraction pass. Not part of the return signature because many
+   * callers already destructure `persistedIds` by position.
+   */
+  private lastPersistExtractionDeferredCount: number = 0;
   private readonly _fastGatewayLlm: FallbackLlmClient | null;
 
   get fastGatewayLlm(): FallbackLlmClient | null {
@@ -1230,6 +1272,20 @@ export class Orchestrator {
   /** Lossless Context Management engine — proactive session archive + DAG summarization. */
   readonly lcmEngine: LcmEngine | null = null;
   private readonly rerankCache = new RerankCache();
+
+  /**
+   * Short-TTL cache for Memory Worth counter lookups so interactive recall
+   * doesn't trigger a full `readAllMemories` scan per query. Keyed by
+   * namespace; the filter unions across namespaces at query time. The TTL
+   * is intentionally short (seconds, not minutes) because counters are
+   * mutated by `recordMemoryOutcome` asynchronously and we'd rather serve
+   * a 30-second-stale worth score than a stable-but-wrong one.
+   */
+  private readonly memoryWorthCounterCache = new Map<
+    string,
+    { at: number; counters: ReadonlyMap<string, MemoryWorthCounters> }
+  >();
+  private static readonly MEMORY_WORTH_CACHE_TTL_MS = 30_000;
   /**
    * Per-session workspace overrides keyed by sessionKey.
    * Set by the before_agent_start hook so recall() uses the correct
@@ -1630,6 +1686,7 @@ export class Orchestrator {
       this.transcript,
     );
     this.judgeVerdictCache = createVerdictCache();
+    this.judgeDeferCounts = createDeferCountMap();
     this.localLlm = new LocalLlmClient(config, this.modelRegistry);
     // Issue #548: the main local-LLM client is used by extraction,
     // consolidation, and other structured-output tasks that gain
@@ -2777,15 +2834,29 @@ export class Orchestrator {
 
     for (const cluster of clusters) {
       try {
-        let prompt = buildConsolidationPrompt(cluster);
+        // Operator-aware prompt (issue #561 PR 3): ask the LLM to pick the
+        // SPLIT/MERGE/UPDATE operator alongside the canonical output.  Falls
+        // back to the legacy plain-blob prompt when operator-aware
+        // consolidation is explicitly disabled via config, so rollbacks stay
+        // clean.
+        // Use the `=== true` idiom for default-false flags (PR #632
+        // review, cursor Low): sibling disabled-by-default flags like
+        // `semanticConsolidationEnabled` follow the same convention,
+        // while `!== false` is reserved for default-on flags.
+        const operatorAwareEnabled =
+          this.config.operatorAwareConsolidationEnabled === true;
+        let prompt = operatorAwareEnabled
+          ? buildOperatorAwareConsolidationPrompt(cluster)
+          : buildConsolidationPrompt(cluster);
         if (extensionsBlock.length > 0) {
           prompt += "\n\n" + extensionsBlock;
         }
         const messages = [
           {
             role: "system" as const,
-            content:
-              "You are a memory consolidation system. Output only the consolidated memory text.",
+            content: operatorAwareEnabled
+              ? 'You are a memory consolidation system. Return ONLY a JSON object with two keys, "operator" and "output". The "operator" value MUST be one of the exact strings "merge", "update", or "split" — never a pipe-separated placeholder, never prose. The "output" value is the canonical memory text.'
+              : "You are a memory consolidation system. Output only the consolidated memory text.",
           },
           { role: "user" as const, content: prompt },
         ];
@@ -2816,7 +2887,22 @@ export class Orchestrator {
           continue;
         }
 
-        const canonicalContent = parseConsolidationResponse(response.content);
+        // Operator-aware parse (issue #561 PR 3).  In legacy mode we fall
+        // back to the plain-text parser and derive the operator from the
+        // cluster-shape heuristic so `derived_via` still lands.
+        let canonicalContent: string;
+        let operator: "split" | "merge" | "update";
+        if (operatorAwareEnabled) {
+          const parsed = parseOperatorAwareConsolidationResponse(
+            response.content,
+            cluster,
+          );
+          canonicalContent = parsed.output;
+          operator = parsed.operator;
+        } else {
+          canonicalContent = parseConsolidationResponse(response.content);
+          operator = chooseConsolidationOperator(cluster);
+        }
         cluster.canonicalContent = canonicalContent;
 
         // Pick the most recent memory's metadata as the basis for lineage
@@ -2828,17 +2914,17 @@ export class Orchestrator {
         const newest = sorted[0];
         const lineageIds = cluster.memories.map((m) => m.frontmatter.id);
 
-        // Consolidation provenance (issue #561 PR 2): snapshot each source
-        // memory BEFORE archiving it, collecting "<relpath>:<versionId>"
-        // pointers for the new canonical memory's `derived_from` frontmatter
-        // field.  Snapshots are best-effort — if page-versioning is disabled
-        // (the default in `config.ts`) or a single source fails to snapshot
-        // we omit that entry rather than abort the consolidation.  Review
-        // feedback (codex): `derived_via` is emitted unconditionally so
-        // downstream logic can still identify consolidation outputs by
-        // operator even when no `derived_from` snapshots could be
-        // captured.  PR 3 selects SPLIT/MERGE/UPDATE dynamically; here we
-        // hardcode `"merge"`.
+        // Consolidation provenance (issue #561 PR 2+3): snapshot each
+        // source memory BEFORE archiving it, collecting
+        // "<relpath>:<versionId>" pointers for the new canonical memory's
+        // `derived_from` frontmatter field.  Snapshots are best-effort — if
+        // page-versioning is disabled (default in `config.ts`) or a single
+        // source fails to snapshot we simply omit that entry rather than
+        // abort the consolidation.  The `derived_via` operator is chosen
+        // above (PR 3) from the LLM response or the cluster-shape
+        // heuristic fallback and emitted unconditionally so consolidation
+        // outputs stay identifiable even when no snapshots are captured
+        // (PR #624 review feedback).
         const derivedFromEntries: string[] = [];
         for (const m of cluster.memories) {
           if (!m.path) continue;
@@ -2861,7 +2947,7 @@ export class Orchestrator {
             source: "semantic-consolidation",
             lineage: lineageIds,
             derivedFrom: derivedFromEntries.length > 0 ? derivedFromEntries : undefined,
-            derivedVia: "merge",
+            derivedVia: operator,
           },
         );
 
@@ -8122,6 +8208,20 @@ export class Orchestrator {
         );
       }
 
+      // Memory Worth recall filter (issue #560 PR 4). When enabled, multiply
+      // each candidate's score by its Memory Worth factor so memories with
+      // a history of failed outcomes sink. Default off in this PR; PR 5
+      // flips the default once bench shows tie-or-win. Fail-open: any
+      // lookup error leaves the original scores untouched rather than
+      // breaking recall for the whole namespace.
+      if (this.config.recallMemoryWorthFilterEnabled && memoryResults.length > 0) {
+        try {
+          memoryResults = await this.applyMemoryWorthRerank(memoryResults, recallNamespaces);
+        } catch (err) {
+          log.debug("memory-worth filter failed open", { error: (err as Error).message });
+        }
+      }
+
       // Synapse-inspired confidence gate: check scores BEFORE slicing so
       // reranking doesn't affect which score the gate evaluates.
       //
@@ -8169,6 +8269,7 @@ export class Orchestrator {
         "memories",
         memoryResults,
         recallResultLimit,
+        retrievalQuery,
       );
 
       // E-Mem-inspired memory reconstruction: fill gaps for referenced entities
@@ -8277,6 +8378,7 @@ export class Orchestrator {
           "memories",
           boostedScoped,
           recallResultLimit,
+          retrievalQuery,
         );
         if (scoped.length > 0) {
           if (shouldPersistGraphSnapshot) {
@@ -8415,6 +8517,7 @@ export class Orchestrator {
         "memories",
         boostedScoped,
         recallResultLimit,
+        retrievalQuery,
       );
       if (scoped.length > 0) {
         if (shouldPersistGraphSnapshot) {
@@ -8561,6 +8664,7 @@ export class Orchestrator {
               "memories",
               boostedRecent,
               recallResultLimit,
+              retrievalQuery,
             );
 
             if (recent.length > 0) {
@@ -9758,6 +9862,46 @@ export class Orchestrator {
     } catch (error) {
       postPersistMetaError = error;
     }
+
+    // Buffer retention for defer verdicts (issue #562, PR 2). When the judge
+    // deferred at least one candidate, retain the tail of the current turn
+    // window so the next extraction pass has the surrounding context that
+    // may disambiguate the deferred fact. Non-defer runs clear the slot.
+    //
+    // Gated on:
+    //   - `clearBufferAfterExtraction` — replay / bulk-import paths call
+    //     `runExtraction` with this false and do not operate on live buffer
+    //     state. Writing retention there would create synthetic buffer
+    //     entries and cross-contaminate future live extractions.
+    //   - NOT `extractionJudgeShadow` — in shadow mode the judge is only
+    //     advisory; facts are still persisted regardless of verdict, so
+    //     retaining the turn window on top of a persisted write would both
+    //     waste buffer space and cause the same facts to re-enter the
+    //     pipeline on the next pass.
+    try {
+      if (
+        clearBufferAfterExtraction &&
+        !this.config.extractionJudgeShadow
+      ) {
+        const deferredCount = this.lastPersistExtractionDeferredCount;
+        if (deferredCount > 0 && normalizedTurns.length > 0) {
+          await this.buffer.retainDeferredTurns(
+            bufferKey,
+            normalizedTurns as BufferTurn[],
+            10,
+          );
+        } else {
+          await this.buffer.retainDeferredTurns(bufferKey, [], 0);
+        }
+      }
+    } catch (err) {
+      // Fail-open: retention is a nice-to-have. If it fails the judge will
+      // still cap deferrals and convert to reject on the next pass.
+      log.debug(
+        `extraction-judge: defer retention failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
     await clearBuffer({ ignoreAbort: true });
 
     // Build memory box from this extraction (v8.0 Phase 2A)
@@ -10701,6 +10845,10 @@ export class Orchestrator {
     // be persisted, not the raw extraction-time category.
     let judgeVerdictsByFactIndex: Map<number, import("./extraction-judge.js").JudgeVerdict> | null = null;
     let judgeGatedCount = 0;
+    // Reset the side-channel defer count at the start of every
+    // persistExtraction call so stale state from a prior call cannot leak
+    // into the caller's buffer-retention decision.
+    this.lastPersistExtractionDeferredCount = 0;
     if (this.config.extractionJudgeEnabled) {
       try {
         const judgeCandidates: JudgeCandidate[] = [];
@@ -10751,12 +10899,71 @@ export class Orchestrator {
           });
           candidateToFactIndex.push(fi);
         }
+        // Telemetry + training-pair emit (issue #562 PR 3 + PR 4). The
+        // orchestrator wires two fire-and-forget writers behind a single
+        // callback so `judgeFactDurability` does not need to know about
+        // either ledger. Both handlers are skipped when their flags are
+        // off; the combined callback itself is undefined when both are
+        // disabled so there is zero overhead in the default configuration.
+        const judgeTelemetryOpts = {
+          enabled: this.config.extractionJudgeTelemetryEnabled === true,
+          memoryDir: this.config.memoryDir,
+        };
+        const judgeTrainingOpts = {
+          enabled: this.config.collectJudgeTrainingPairs === true,
+          ...(this.config.judgeTrainingDir
+            ? { directory: this.config.judgeTrainingDir }
+            : {}),
+        };
+        const judgeTelemetryHandler =
+          judgeTelemetryOpts.enabled || judgeTrainingOpts.enabled
+            ? (obs: import("./extraction-judge.js").JudgeVerdictObservation) => {
+                const ts = new Date().toISOString();
+                const verdictKind = getVerdictKind(obs.verdict);
+                if (judgeTelemetryOpts.enabled) {
+                  const event: import("./extraction-judge-telemetry.js").JudgeVerdictEvent = {
+                    version: 1,
+                    category: EXTRACTION_JUDGE_VERDICT_CATEGORY,
+                    ts,
+                    verdictKind,
+                    reason: obs.verdict.reason,
+                    deferrals: obs.priorDeferrals,
+                    elapsedMs: obs.elapsedMs,
+                    candidateCategory: obs.candidate.category,
+                    confidence: obs.candidate.confidence,
+                    contentHash: obs.contentHash,
+                    fromCache: obs.source === "cache",
+                    ...(obs.source === "llm-cap-rejected"
+                      ? { deferCapTriggered: true }
+                      : {}),
+                  };
+                  void recordJudgeVerdict(event, judgeTelemetryOpts);
+                }
+                if (judgeTrainingOpts.enabled) {
+                  const pair: import("./extraction-judge-training.js").JudgeTrainingPair = {
+                    version: 1,
+                    ts,
+                    candidateText: obs.candidate.text,
+                    candidateCategory: obs.candidate.category,
+                    ...(typeof obs.candidate.confidence === "number"
+                      ? { candidateConfidence: obs.candidate.confidence }
+                      : {}),
+                    verdictKind,
+                    reason: obs.verdict.reason,
+                    priorDeferrals: obs.priorDeferrals,
+                  };
+                  void recordJudgeTrainingPair(pair, judgeTrainingOpts);
+                }
+              }
+            : undefined;
         const judgeResult = await judgeFactDurability(
           judgeCandidates,
           this.config,
           this.localLlm,
           new FallbackLlmClient(this.config.gatewayConfig),
           this.judgeVerdictCache,
+          this.judgeDeferCounts,
+          judgeTelemetryHandler,
         );
         // Remap candidate-indexed verdicts to original fact indexes
         judgeVerdictsByFactIndex = new Map();
@@ -10768,8 +10975,16 @@ export class Orchestrator {
         }
         log.info(
           `extraction-judge: ${judgeResult.verdicts.size}/${judgeCandidates.length} facts evaluated, ` +
-            `${judgeResult.cached} cached, ${judgeResult.judged} judged, ${judgeResult.elapsed}ms`,
+            `${judgeResult.cached} cached, ${judgeResult.judged} judged, ` +
+            `${judgeResult.deferred} deferred` +
+            (judgeResult.deferredCappedToReject > 0
+              ? ` (${judgeResult.deferredCappedToReject} cap-rejected)`
+              : "") +
+            `, ${judgeResult.elapsed}ms`,
         );
+        // Expose defer count to the caller (issue #562 PR 2) so it can decide
+        // whether to retain buffer turns for the next extraction pass.
+        this.lastPersistExtractionDeferredCount = judgeResult.deferred;
       } catch (err) {
         // Fail-open: if the entire judge pipeline errors, proceed without filtering
         log.warn(
@@ -10901,17 +11116,30 @@ export class Orchestrator {
         continue;
       }
 
-      // Extraction judge gate (issue #376). After the local importance gate
-      // passes, consult the judge verdict (computed before the loop). In
-      // active mode, non-durable facts are dropped. In shadow mode, verdicts
-      // are logged but all facts proceed to write.
+      // Extraction judge gate (issue #376 + #562 PR 2). After the local
+      // importance gate passes, consult the judge verdict (computed before
+      // the loop). In active mode, non-durable facts are dropped. In shadow
+      // mode, verdicts are logged but all facts proceed to write.
+      //
+      // Defer verdicts (issue #562): do not persist now, but also do not
+      // cache the outcome so the candidate is re-evaluated on a later
+      // extraction pass. The judge module tracks how many times the same
+      // content has been deferred and converts to reject at the configured
+      // cap, so the orchestrator only needs to skip the write here.
       if (judgeVerdictsByFactIndex) {
         const verdict = judgeVerdictsByFactIndex.get(factLoopIndex);
         if (verdict && !verdict.durable) {
+          const verdictKind = getVerdictKind(verdict);
           if (this.config.extractionJudgeShadow) {
             log.info(
-              `extraction-judge[shadow]: would reject "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
+              `extraction-judge[shadow]: would ${verdictKind} "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
             );
+          } else if (verdictKind === "defer") {
+            judgeGatedCount++;
+            log.debug(
+              `extraction-judge: deferred "${fact.content.slice(0, 60)}…" reason="${verdict.reason}"`,
+            );
+            continue;
           } else {
             judgeGatedCount++;
             log.debug(
@@ -13489,10 +13717,147 @@ export class Orchestrator {
    *
    * Callers must pass the full candidate pool (post-rerank, pre-slice).
    */
+  private async applyMemoryWorthRerank(
+    results: QmdSearchResult[],
+    namespaces: string[],
+  ): Promise<QmdSearchResult[]> {
+    // Build the counter lookup. We union frontmatter counters across every
+    // namespace the recall spans — the recall path itself already
+    // aggregates candidates from multiple namespaces, so we must do the
+    // same when looking up counters. Per-namespace results are cached with
+    // a short TTL so interactive recall doesn't trigger a full
+    // `readAllMemories` scan per query (addresses codex P2 on PR 4).
+    const counters = new Map<string, MemoryWorthCounters>();
+    const seenNamespaces = new Set<string>();
+    const nowMs = Date.now();
+
+    // Evict all expired entries on every call so long-running processes
+    // touching a high-cardinality namespace set (coding/project overlays,
+    // per-branch) don't grow the cache unboundedly. Without this, an entry
+    // for a namespace that's never looked up again would pin its full
+    // counter map forever.
+    for (const [key, entry] of this.memoryWorthCounterCache) {
+      if (nowMs - entry.at >= Orchestrator.MEMORY_WORTH_CACHE_TTL_MS) {
+        this.memoryWorthCounterCache.delete(key);
+      }
+    }
+
+    for (const ns of namespaces) {
+      if (seenNamespaces.has(ns)) continue;
+      seenNamespaces.add(ns);
+      try {
+        const cached = this.memoryWorthCounterCache.get(ns);
+        let nsMap: ReadonlyMap<string, MemoryWorthCounters> | undefined;
+        if (
+          cached &&
+          nowMs - cached.at < Orchestrator.MEMORY_WORTH_CACHE_TTL_MS
+        ) {
+          nsMap = cached.counters;
+        } else {
+          const storage = await this.getStorage(ns);
+          const memories = await storage.readAllMemories();
+          nsMap = buildMemoryWorthCounterMap(memories);
+          this.memoryWorthCounterCache.set(ns, { at: nowMs, counters: nsMap });
+        }
+        for (const [path, c] of nsMap) counters.set(path, c);
+      } catch (err) {
+        log.debug("memory-worth: failed to read namespace, skipping", {
+          namespace: ns,
+          error: (err as Error).message,
+        });
+      }
+    }
+
+    // For candidates whose path didn't show up in any hot-tier namespace
+    // scan (typical of cold-tier / archive fallback), try a direct
+    // per-path read. Without this, cold-tier candidates always stay at
+    // multiplier 1.0 even when they have outcome history. Errors are
+    // swallowed so a single unreadable archive entry can't break the
+    // whole recall.
+    const missing = results.filter((r) => !counters.has(r.path));
+    if (missing.length > 0) {
+      // Use the first-seen namespace's storage as the reader — all
+      // StorageManagers share the same on-disk format, and
+      // `readMemoryByPath` takes an absolute path so the baseDir doesn't
+      // have to match.
+      let reader: StorageManager | null = null;
+      for (const ns of namespaces) {
+        try {
+          reader = await this.getStorage(ns);
+          break;
+        } catch {
+          // try next namespace
+        }
+      }
+      if (reader) {
+        for (const r of missing) {
+          try {
+            const memory = await reader.readMemoryByPath(r.path);
+            if (!memory) continue;
+            const fm = memory.frontmatter;
+            if (fm.mw_success === undefined && fm.mw_fail === undefined) continue;
+            counters.set(r.path, {
+              mw_success: fm.mw_success,
+              mw_fail: fm.mw_fail,
+              lastAccessed: fm.lastAccessed,
+            });
+          } catch (err) {
+            log.debug("memory-worth: direct path lookup failed", {
+              path: r.path,
+              error: (err as Error).message,
+            });
+          }
+        }
+      }
+    }
+
+    // If no memory in the candidate set has any counter data, the filter
+    // would be a no-op — skip the reorder to avoid spurious log spam.
+    if (counters.size === 0) return results;
+
+    // Preserve upstream ordering (reranker, specialized tiers, etc.) for
+    // neutral candidates. The upstream stages set `memoryResults` in their
+    // intended order but often leave `r.score` as the raw QMD score. If we
+    // sorted by `r.score * multiplier` directly, neutral candidates
+    // (multiplier 1.0) would snap back to raw-QMD order and silently undo
+    // the reranker. Feed the filter a synthetic monotone-decreasing rank
+    // score so it uses input position as the baseline, then applies the
+    // multiplier on top. Ties fall back to the stable secondary key in
+    // `applyMemoryWorthFilter`.
+    const rankedInputs = results.map((r, i) => ({
+      path: r.path,
+      // Large positive rank score so multiplier math stays well-scaled and
+      // we never hit zero; descending so earlier items rank higher.
+      score: results.length - i,
+    }));
+    const filtered = applyMemoryWorthFilter(rankedInputs, {
+      counters,
+      now: new Date(),
+      halfLifeMs:
+        this.config.recallMemoryWorthHalfLifeMs > 0
+          ? this.config.recallMemoryWorthHalfLifeMs
+          : undefined,
+    });
+
+    // Reconstruct the QmdSearchResult list in the new order. `.score` is
+    // preserved from the upstream pipeline (rerank, tier scoring, etc.) —
+    // we only reorder. Writing the synthetic rank-weighted score back
+    // would contaminate downstream logic (telemetry, confidence gates)
+    // that expects the original QMD/rerank score semantics.
+    const byPath = new Map(results.map((r) => [r.path, r]));
+    const reordered: QmdSearchResult[] = [];
+    for (const item of filtered) {
+      const original = byPath.get(item.path);
+      if (original) reordered.push(original);
+    }
+    return reordered;
+  }
+
   private diversifyAndLimitRecallResults(
     sectionId: string,
     results: QmdSearchResult[],
     limit: number,
+    retrievalQuery?: string,
   ): QmdSearchResult[] {
     const safeLimit =
       typeof limit === "number" && Number.isFinite(limit)
@@ -13504,7 +13869,18 @@ export class Orchestrator {
     // the memories section is genuinely skipped. This mirrors the
     // `slice(0, 0)` semantics of every call site this helper replaced.
     if (safeLimit === 0) return [];
-    const diversified = this.applyMmrToQmdResults(sectionId, results);
+    // Issue #564 PR 3: when the feature flag is on, boost reasoning_trace
+    // memories for problem-solving asks so they bubble up ahead of ordinary
+    // facts/decisions before MMR picks the final section. No-op when the
+    // flag is off or the query is not a problem-solving ask.
+    const boosted =
+      this.config.recallReasoningTraceBoostEnabled && typeof retrievalQuery === "string"
+        ? applyReasoningTraceBoost(results, {
+            enabled: true,
+            query: retrievalQuery,
+          })
+        : results;
+    const diversified = this.applyMmrToQmdResults(sectionId, boosted);
     return diversified.slice(0, safeLimit);
   }
 
@@ -13957,6 +14333,19 @@ export class Orchestrator {
       );
     }
 
+    // Memory Worth filter — must fire on the cold fallback path too, or the
+    // feature flag produces divergent behavior by retrieval path (CLAUDE.md
+    // rule 39). Fail-open on lookup errors.
+    if (this.config.recallMemoryWorthFilterEnabled && results.length > 0) {
+      try {
+        results = await this.applyMemoryWorthRerank(results, options.recallNamespaces);
+      } catch (err) {
+        log.debug("memory-worth filter (cold) failed open", {
+          error: (err as Error).message,
+        });
+      }
+    }
+
     // Apply MMR before final truncation so the cold fallback path mirrors
     // the diversification policy applied in the hot QMD/embedding/recent
     // paths. Running MMR post-slice would be unable to promote diverse
@@ -13971,6 +14360,7 @@ export class Orchestrator {
       "memories",
       results,
       options.recallResultLimit,
+      options.prompt,
     );
   }
 

@@ -215,6 +215,7 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.memory_graph_explain",
     "engram.memory_feedback",
     "engram.memory_promote",
+    "engram.memory_outcome",
     "engram.context_checkpoint",
     "engram.briefing",
     "engram.review_list",

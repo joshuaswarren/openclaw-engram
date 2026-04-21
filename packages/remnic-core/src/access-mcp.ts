@@ -825,6 +825,26 @@ export class EngramMcpServer {
           additionalProperties: false,
         },
       },
+      // Memory Worth outcome signal (issue #560 PR 3). Callers record whether
+      // a session that used a given memory ultimately succeeded or failed;
+      // the counter is persisted in the memory's frontmatter (mw_success /
+      // mw_fail) and will feed the recall-time filter added in PR 4.
+      {
+        name: "engram.memory_outcome",
+        description: "Record a Memory Worth outcome (success/failure) for a memory. Increments mw_success or mw_fail in the memory's frontmatter for use by the recall filter.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            memoryId: { type: "string" },
+            outcome: { type: "string", enum: ["success", "failure"] },
+            namespace: { type: "string" },
+            sessionKey: { type: "string" },
+            timestamp: { type: "string", description: "Optional ISO-8601 timestamp of the observation." },
+          },
+          required: ["memoryId", "outcome"],
+          additionalProperties: false,
+        },
+      },
       {
         name: "engram.context_checkpoint",
         description: "Save a structured context checkpoint for a session (preserves conversation state to disk).",
@@ -1596,6 +1616,25 @@ export class EngramMcpServer {
           principal: effectivePrincipal,
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
         });
+      case "engram.memory_outcome": {
+        // Validate `outcome` up front — silently defaulting unknown values
+        // to "success" or "failure" would poison the counters a downstream
+        // recall filter (PR 4) will trust.
+        const outcome = args.outcome;
+        if (outcome !== "success" && outcome !== "failure") {
+          throw new Error(
+            `engram.memory_outcome: outcome must be "success" or "failure"; got ${JSON.stringify(outcome)}`,
+          );
+        }
+        return this.service.memoryOutcome({
+          memoryId: typeof args.memoryId === "string" ? args.memoryId : "",
+          outcome,
+          namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+          principal: effectivePrincipal,
+          sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
+          timestamp: typeof args.timestamp === "string" ? args.timestamp : undefined,
+        });
+      }
       case "engram.context_checkpoint":
         return this.service.contextCheckpoint({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",

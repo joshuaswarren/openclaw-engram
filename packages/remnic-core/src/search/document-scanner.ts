@@ -73,16 +73,24 @@ async function scanDir(dir: string): Promise<IndexableDocument[]> {
 }
 
 /**
- * Scan `facts/`, `corrections/`, and `procedures/` subdirs of memoryDir for indexable markdown documents.
+ * Scan `facts/`, `corrections/`, `procedures/`, and `reasoning-traces/`
+ * subdirs of memoryDir for indexable markdown documents.
+ *
+ * Note: reasoning-traces live under their own subtree (issue #564 PR 3).
+ * Non-QMD backends (Orama / Meilisearch / LanceDB) build their index
+ * through this helper, so any new category subtree must be listed here
+ * or those backends silently stop seeing the new memories.
  */
 export async function scanMemoryDir(memoryDir: string): Promise<IndexableDocument[]> {
   const factsDir = path.join(memoryDir, "facts");
   const correctionsDir = path.join(memoryDir, "corrections");
   const proceduresDir = path.join(memoryDir, "procedures");
-  const [facts, corrections, procedures] = await Promise.all([
+  const reasoningTracesDir = path.join(memoryDir, "reasoning-traces");
+  const [facts, corrections, procedures, reasoningTraces] = await Promise.all([
     scanDir(factsDir),
     scanDir(correctionsDir),
     scanDir(proceduresDir),
+    scanDir(reasoningTracesDir),
   ]);
-  return [...facts, ...corrections, ...procedures];
+  return [...facts, ...corrections, ...procedures, ...reasoningTraces];
 }

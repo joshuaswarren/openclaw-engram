@@ -365,3 +365,41 @@ export type {
   ProceduralRealScenario,
   ProceduralRealScenarioCategory,
 } from "./benchmarks/remnic/procedural-recall/real-scenarios.js";
+
+// Security — ADAM-style memory-extraction attack harness (issue #565).
+// `createSeededRng` is exported here as `createAdamSeededRng` because
+// `./integrity/index.js` already star-re-exports a differently-validated
+// `createSeededRng`. Keep the names distinct to avoid shadowing (ESM's
+// named re-exports take precedence over star re-exports, so a collision
+// silently replaces the integrity implementation).
+export {
+  createSeededRng as createAdamSeededRng,
+  createSyntheticTarget,
+  OTHER_NAMESPACE_MEMORIES,
+  runExtractionAttack,
+  SYNTHETIC_MEMORIES,
+} from "./security/extraction-attack/index.js";
+export type {
+  AttackerMode,
+  AttackRecallOptions,
+  AttackRetrievalHit,
+  ExtractionAttackOptions,
+  ExtractionAttackResult,
+  ExtractionAttackTarget,
+  HarnessRng,
+  RecoveredMemory,
+  SeededMemory,
+  SyntheticTargetOptions,
+  TimelineEntry,
+} from "./security/extraction-attack/index.js";
+
+// ADAM baseline runner + default scenarios (issue #565 PR 3/5).
+export {
+  DEFAULT_BASELINE_SCENARIOS,
+  renderBaselineMarkdown,
+  runBaseline,
+} from "./security/extraction-attack/index.js";
+export type {
+  BaselineRow,
+  BaselineScenario,
+} from "./security/extraction-attack/index.js";
