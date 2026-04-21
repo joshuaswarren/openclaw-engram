@@ -4725,7 +4725,7 @@ async function cmdBench(rest: string[]): Promise<void> {
         runtimeProfiles.map((profile) => `${benchmarkId} [${profile}]`),
       )
     : selectedBenchmarks;
-  await initBenchStatus(benchStatusPath, statusEntryIds, process.pid);
+  try { await initBenchStatus(benchStatusPath, statusEntryIds, process.pid); } catch { /* non-fatal */ }
   try {
     for (const benchmarkId of selectedBenchmarks) {
       for (const runtimeProfile of runtimeProfiles) {
@@ -4743,16 +4743,21 @@ async function cmdBench(rest: string[]): Promise<void> {
           if (handledByPackage.ok && handledByPackage.writtenPath) {
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath); } catch { /* non-fatal */ }
           } else if (!handledByPackage.ok) {
-            // Fallback runner doesn't return a writtenPath — look for the
-            // result file in the default output directory after completion.
             await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
-            // Mark fallback runs complete using the default output dir path
-            // (fallback always writes to resolveBenchOutputDir).
-            const fallbackResultPath = path.join(
-              resolveBenchOutputDir(),
-              `${benchmarkId}-result.json`,
-            );
-            try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath); } catch { /* non-fatal */ }
+            // Scan for the real result file — fallback writes a timestamped
+            // filename (${name}-v${version}-${ts}.json) so we glob for the
+            // latest match rather than fabricating a path.
+            let fallbackResultPath: string | undefined;
+            try {
+              const fallbackDir = resolveBenchOutputDir();
+              const files = fs.readdirSync(fallbackDir)
+                .filter((f) => f.startsWith(benchmarkId) && f.endsWith(".json"))
+                .sort();
+              if (files.length > 0) {
+                fallbackResultPath = path.join(fallbackDir, files[files.length - 1]);
+              }
+            } catch { /* scan failure is non-fatal */ }
+            try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath ?? ""); } catch { /* non-fatal */ }
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
