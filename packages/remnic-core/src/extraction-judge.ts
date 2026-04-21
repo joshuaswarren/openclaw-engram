@@ -376,8 +376,24 @@ export async function judgeFactDurability(
   const deferCountMap = deferCounts ?? defaultDeferCounts;
   const deferCap = resolveDeferCap(config);
 
-  const emit = (observation: JudgeVerdictObservation): void => {
+  // Lazy emit (Codex P2): when `onVerdict` is undefined (default path —
+  // telemetry off), payload construction is skipped entirely. Callers
+  // pass a factory instead of a pre-built observation so the `sha256`
+  // `contentHash` and surrounding object allocation only run when a
+  // subscriber is present. For large batches with telemetry off this
+  // removes per-verdict overhead that would otherwise fire on every
+  // auto-approved / cache / fail-open path.
+  const emit = (build: () => JudgeVerdictObservation): void => {
     if (!onVerdict) return;
+    let observation: JudgeVerdictObservation;
+    try {
+      observation = build();
+    } catch (err) {
+      log.debug(
+        `extraction-judge: onVerdict builder threw (non-fatal): ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return;
+    }
     try {
       onVerdict(observation);
     } catch (err) {
@@ -412,14 +428,14 @@ export async function judgeFactDurability(
         reason: `Auto-approved: ${c.category} category bypasses judge`,
       };
       verdicts.set(i, v);
-      emit({
+      emit(() => ({
         verdict: v,
         candidate: c,
         contentHash: cacheKey(c.text, c.category),
         source: "auto-approve",
         priorDeferrals: 0,
         elapsedMs: Date.now() - startMs,
-      });
+      }));
       continue;
     }
 
@@ -430,14 +446,14 @@ export async function judgeFactDurability(
         reason: "Auto-approved: critical importance",
       };
       verdicts.set(i, v);
-      emit({
+      emit(() => ({
         verdict: v,
         candidate: c,
         contentHash: cacheKey(c.text, c.category),
         source: "auto-approve",
         priorDeferrals: 0,
         elapsedMs: Date.now() - startMs,
-      });
+      }));
       continue;
     }
 
@@ -447,14 +463,14 @@ export async function judgeFactDurability(
     if (cachedVerdict) {
       verdicts.set(i, cachedVerdict);
       cached++;
-      emit({
+      emit(() => ({
         verdict: cachedVerdict,
         candidate: c,
         contentHash: key,
         source: "cache",
         priorDeferrals: deferCountMap.get(key) ?? 0,
         elapsedMs: Date.now() - startMs,
-      });
+      }));
       continue;
     }
 
@@ -559,14 +575,14 @@ export async function judgeFactDurability(
           if (getVerdictKind(verdict) !== "defer") {
             verdictCache.set(key, verdict);
           }
-          emit({
+          emit(() => ({
             verdict,
             candidate: c,
             contentHash: key,
             source,
             priorDeferrals: priorDefers,
             elapsedMs: Date.now() - startMs,
-          });
+          }));
         }
         // Evict oldest entries if cache exceeds max size
         enforceMaxCacheSize(verdictCache);
@@ -587,13 +603,19 @@ export async function judgeFactDurability(
           reason: "Approved by default (judge unavailable or parse error)",
         };
         verdicts.set(idx, v);
-        emit({
-          verdict: v,
-          candidate: c,
-          contentHash: cacheKey(c.text, c.category),
-          source: "fail-open",
-          priorDeferrals: deferCountMap.get(cacheKey(c.text, c.category)) ?? 0,
-          elapsedMs: Date.now() - startMs,
+        emit(() => {
+          // Compute the content hash once and reuse for both the event
+          // payload and the defer-counter lookup so we do not pay for
+          // sha256 twice on this cold path.
+          const hash = cacheKey(c.text, c.category);
+          return {
+            verdict: v,
+            candidate: c,
+            contentHash: hash,
+            source: "fail-open",
+            priorDeferrals: deferCountMap.get(hash) ?? 0,
+            elapsedMs: Date.now() - startMs,
+          };
         });
       }
     }
