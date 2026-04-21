@@ -92,8 +92,13 @@ function contentHash(content: string): string {
  * Derive a filesystem-safe sidecar key from a page path relative to memoryDir.
  *
  * `facts/2026-01-15/pref-001.md` -> `facts__2026-01-15__pref-001`
+ *
+ * Exported so the `remnic doctor` consolidation-provenance check (issue
+ * #561 PR 4) resolves snapshot locations using the canonical algorithm
+ * without re-implementing it — preventing silent drift if the key
+ * format ever changes.
  */
-function sidecarKey(pagePath: string): string {
+export function sidecarKey(pagePath: string): string {
   const withoutExt = pagePath.replace(/\.md$/i, "");
   return withoutExt.replace(/[\\/]/g, "__");
 }
