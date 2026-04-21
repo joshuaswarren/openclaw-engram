@@ -127,6 +127,7 @@ export function updateBenchmarkCompleted(
     }
     status.completedResults.push(resultPath);
     delete status.currentTaskProgress;
+    delete status.currentBenchmark;
     return status;
   });
 }
@@ -145,6 +146,7 @@ export function updateBenchmarkFailed(
       entry.error = error;
     }
     delete status.currentTaskProgress;
+    delete status.currentBenchmark;
     return status;
   });
 }
