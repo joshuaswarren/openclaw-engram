@@ -2785,8 +2785,12 @@ export class Orchestrator {
         // back to the legacy plain-blob prompt when operator-aware
         // consolidation is explicitly disabled via config, so rollbacks stay
         // clean.
+        // Use the `=== true` idiom for default-false flags (PR #632
+        // review, cursor Low): sibling disabled-by-default flags like
+        // `semanticConsolidationEnabled` follow the same convention,
+        // while `!== false` is reserved for default-on flags.
         const operatorAwareEnabled =
-          this.config.operatorAwareConsolidationEnabled !== false;
+          this.config.operatorAwareConsolidationEnabled === true;
         let prompt = operatorAwareEnabled
           ? buildOperatorAwareConsolidationPrompt(cluster)
           : buildConsolidationPrompt(cluster);
