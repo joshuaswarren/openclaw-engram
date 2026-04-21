@@ -4,6 +4,7 @@ import type { StorageManager } from "./storage.js";
 import type {
   BufferEntryState,
   BufferState,
+  BufferSurpriseEvent,
   BufferTurn,
   PluginConfig,
   SignalLevel,
@@ -40,10 +41,60 @@ export interface BufferSurpriseProbe {
 
 const MAX_BUFFER_ENTRY_COUNT = 200;
 
+/**
+ * Minimal data carried on the serialized telemetry write chain
+ * (issue #563 PR 3).
+ *
+ * We intentionally do NOT capture the full `BufferTurn` here: under
+ * slow filesystem latency the chain can back up, and retaining
+ * `turn.content` for every pending append causes memory pressure on
+ * large conversations. Only the fields the ledger row actually needs
+ * cross the chain boundary.
+ */
+interface SurpriseTelemetryQueueEntry {
+  bufferKey: string;
+  turnRole: "user" | "assistant";
+  sessionKey: string | null;
+  surpriseScore: number;
+  triggered: boolean;
+  turnCountInWindow: number;
+  /**
+   * ISO timestamp captured at the moment the turn was scored, NOT when
+   * the ledger append eventually runs. Backpressure on the serialized
+   * write chain could otherwise shift event timestamps away from the
+   * real decision moment and distort the distribution report (p90
+   * inflated, current-threshold row misidentified).
+   */
+  timestamp: string;
+  /**
+   * Threshold value in force when `triggered` was computed. Must be
+   * snapshot here rather than read from `config` at emit time — a
+   * concurrent config change between queue and write would otherwise
+   * record `triggered=true` against a newer threshold the operator
+   * never set, distorting precision/recall interpretation.
+   */
+  threshold: number;
+}
+
 export class SmartBuffer {
   private state: BufferState;
   private loaded = false;
   private readonly surpriseProbe: BufferSurpriseProbe | null;
+  /**
+   * Serialized write chain for `BUFFER_SURPRISE` telemetry events.
+   *
+   * The telemetry path is fire-and-forget (`addTurn` does not await the
+   * ledger append), but multiple concurrent appends would still settle
+   * out of order under variable filesystem latency. The report path
+   * assumes chronological ordering — it slices the tail of the ledger
+   * and treats the most recent entry as the current threshold in force.
+   * Chaining ensures each append only runs after the previous settles,
+   * preserving wall-clock order.
+   *
+   * We include a `.catch` on every link so a rejected append does not
+   * poison the chain (CLAUDE.md rule #40).
+   */
+  private surpriseTelemetryWriteChain: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly config: PluginConfig,
@@ -191,14 +242,46 @@ export class SmartBuffer {
       signal.level !== "high"
     ) {
       const surprise = await this.computeSurpriseSafe(bufferKey, turn, entry);
-      if (
-        surprise !== null &&
-        surprise > this.config.bufferSurpriseThreshold
-      ) {
-        log.debug(
-          `buffer[${bufferKey}]: surprise=${surprise.toFixed(3)} > threshold=${this.config.bufferSurpriseThreshold} → extract_now`,
-        );
-        decision = "extract_now";
+      if (surprise !== null) {
+        const triggered = surprise > this.config.bufferSurpriseThreshold;
+        if (triggered) {
+          log.debug(
+            `buffer[${bufferKey}]: surprise=${surprise.toFixed(3)} > threshold=${this.config.bufferSurpriseThreshold} → extract_now`,
+          );
+          decision = "extract_now";
+        }
+        // Emit telemetry on every scored turn — both triggering and
+        // non-triggering — so operators can fit the threshold to real
+        // traffic distributions. Fire-and-forget: `addTurn` does NOT
+        // await the ledger append, so slow/contended filesystems cannot
+        // add JSONL-append latency to every `processTurn`. But we DO
+        // serialize writes through a promise chain so concurrent
+        // appends settle in wall-clock order — the report path assumes
+        // chronological tail rows and reads the most recent as the
+        // "current" threshold.
+        //
+        // Project only the fields we need into the queue entry rather
+        // than capturing the full `BufferTurn` — under slow filesystem
+        // latency the chain can back up, and we must not retain the
+        // (potentially large) `turn.content` string for every pending
+        // append.
+        this.queueSurpriseTelemetryWrite({
+          bufferKey,
+          turnRole: turn.role,
+          sessionKey:
+            typeof turn.sessionKey === "string" ? turn.sessionKey : null,
+          surpriseScore: surprise,
+          triggered,
+          turnCountInWindow: entry.turns.length,
+          // Stamp at decision time so backpressure on the write chain
+          // does not shift the event's apparent moment away from when
+          // the turn was actually scored.
+          timestamp: new Date().toISOString(),
+          // Snapshot the threshold used to compute `triggered` so a
+          // concurrent config mutation cannot retroactively change
+          // what the ledger row claims the decision was against.
+          threshold: this.config.bufferSurpriseThreshold,
+        });
       }
     }
 
@@ -209,6 +292,81 @@ export class SmartBuffer {
     this.pruneEntries([bufferKey]);
     await this.save();
     return decision;
+  }
+
+  /**
+   * Enqueue a telemetry append on the serialized write chain.
+   *
+   * The chain is a classic `writeChain = writeChain.then(fn).catch(...)`
+   * — each link waits for the previous to settle before its append
+   * starts, so out-of-order chronology cannot happen even under
+   * variable filesystem latency. We always attach `.catch` so one
+   * rejection does not poison the chain for the rest of the session
+   * (CLAUDE.md rule #40). The error is logged through
+   * `emitSurpriseEventSafe` itself, which swallows its own rejections.
+   *
+   * Public surface is deliberately narrow — only `addTurn` should call
+   * this, so the surprise telemetry path stays centralized.
+   */
+  private queueSurpriseTelemetryWrite(params: SurpriseTelemetryQueueEntry): void {
+    this.surpriseTelemetryWriteChain = this.surpriseTelemetryWriteChain
+      .then(() => this.emitSurpriseEventSafe(params))
+      .catch(() => {
+        // `emitSurpriseEventSafe` already handles the logging. We
+        // swallow here only so one failure does not break the chain
+        // for future writes.
+      });
+  }
+
+  /**
+   * Append a single `BUFFER_SURPRISE` telemetry row (issue #563 PR 3).
+   *
+   * Deliberately swallows write errors: the buffer must never fail to
+   * record a turn because the observation ledger is read-only, out of
+   * disk, or otherwise unhappy. The log line at debug lets operators
+   * confirm the path fired without polluting the error channel.
+   */
+  private async emitSurpriseEventSafe(
+    params: SurpriseTelemetryQueueEntry,
+  ): Promise<void> {
+    const storage = this.storage as StorageManager & {
+      appendBufferSurpriseEvents?: (
+        events: BufferSurpriseEvent[],
+      ) => Promise<number>;
+    };
+    if (typeof storage.appendBufferSurpriseEvents !== "function") {
+      // Older StorageManager / test double without the telemetry sink.
+      // Silently skip — core path is still covered by the log line above.
+      return;
+    }
+    const event: BufferSurpriseEvent = {
+      event: "BUFFER_SURPRISE",
+      // Use the decision-time stamp captured when the event was
+      // queued, NOT `Date.now()` here — backpressure on the write
+      // chain could otherwise shift timestamps into the future relative
+      // to when the turn was scored.
+      timestamp: params.timestamp,
+      bufferKey: params.bufferKey,
+      sessionKey: params.sessionKey,
+      turnRole: params.turnRole,
+      surpriseScore: params.surpriseScore,
+      // Use the snapshotted threshold from the queue entry, not the
+      // live config — see `SurpriseTelemetryQueueEntry.threshold`
+      // doc for the rationale.
+      threshold: params.threshold,
+      triggeredFlush: params.triggered,
+      turnCountInWindow: params.turnCountInWindow,
+    };
+    try {
+      await storage.appendBufferSurpriseEvents([event]);
+    } catch (err) {
+      // Same guard as `computeSurpriseSafe`: non-Error rejections must
+      // not crash the telemetry helper, which would defeat the whole
+      // point of isolating the ledger write from the hot path.
+      log.debug(
+        `buffer[${params.bufferKey}]: surprise telemetry write failed, continuing: ${describeError(err)}`,
+      );
+    }
   }
 
   /**
@@ -431,6 +589,22 @@ export class SmartBuffer {
 
   getExtractionCount(bufferKey = "default"): number {
     return this.peekEntry(bufferKey)?.extractionCount ?? 0;
+  }
+
+  /**
+   * Await any pending `BUFFER_SURPRISE` telemetry writes.
+   *
+   * The telemetry path is fire-and-forget from the hot path's point of
+   * view, but tests and before-exit hooks sometimes need to make sure
+   * the ledger has been flushed before they assert on its contents or
+   * close the process. This method resolves once the current chain
+   * head has settled; new writes scheduled after this call return a
+   * separate, later settlement.
+   *
+   * Never throws — the chain already catches its own rejections.
+   */
+  async flushSurpriseTelemetry(): Promise<void> {
+    await this.surpriseTelemetryWriteChain;
   }
 }
 

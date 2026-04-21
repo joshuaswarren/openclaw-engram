@@ -1459,6 +1459,41 @@ export interface BehaviorSignalEvent {
   source: "extraction" | "correction";
 }
 
+/**
+ * One row of the buffer-surprise telemetry ledger (issue #563 PR 3).
+ *
+ * Emitted by `SmartBuffer` each time the surprise probe produces a score
+ * for an incoming turn (i.e. the feature flag is on and the existing
+ * trigger-logic path called through to the probe). Not written when the
+ * probe is skipped — the absence of a row is meaningful and matches the
+ * "probe was not consulted" state.
+ *
+ * The ledger is intentionally lean: we record the score, the threshold in
+ * force, whether the turn caused a flush, and the turn count so operators
+ * can re-derive precision/recall without replaying traffic. Turn content
+ * is never persisted — this ledger is safe to commit to shared storage.
+ */
+export interface BufferSurpriseEvent {
+  /** Literal tag to simplify multiplexed log consumers. */
+  event: "BUFFER_SURPRISE";
+  /** ISO timestamp when the decision was made. Server-side, not turn ts. */
+  timestamp: string;
+  /** Buffer identifier (session / thread). Opaque string. */
+  bufferKey: string;
+  /** Session key if available; null when the turn has no session binding. */
+  sessionKey: string | null;
+  /** Role of the scored turn. */
+  turnRole: "user" | "assistant";
+  /** Surprise score in `[0, 1]`, already clamped. */
+  surpriseScore: number;
+  /** Threshold in force when the decision was made. */
+  threshold: number;
+  /** Whether this turn upgraded `keep_buffering` → `extract_now`. */
+  triggeredFlush: boolean;
+  /** Number of turns in the buffer (including the current turn). */
+  turnCountInWindow: number;
+}
+
 /** Memory status for lifecycle management */
 export type MemoryStatus = "active" | "pending_review" | "rejected" | "quarantined" | "superseded" | "archived";
 export type LifecycleState = "candidate" | "validated" | "active" | "stale" | "archived";
