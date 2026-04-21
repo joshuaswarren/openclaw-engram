@@ -83,25 +83,9 @@ export class AccessAuditAdapter {
   ): Promise<AccessAuditResult> {
     const result: AccessAuditResult = {};
 
-    if (this.config.audit.enabled) {
-      try {
-        result.appendedAt = await appendRecallAuditEntry(
-          this.config.audit.rootDir,
-          entry,
-        );
-      } catch {
-        // Audit write failures must never crash the enclosing recall.
-        // Swallow — operators can surface the ENOSPC / permission error
-        // via the usual filesystem monitoring.
-      }
-    }
-
-    // Only maintain the in-memory tail when detection is actually
-    // enabled — otherwise a long-lived MCP/HTTP service with many
-    // transient session keys accumulates unbounded `trails` state with
-    // no corresponding detector output to use it. This also keeps the
-    // adapter's default (detection off) a true no-op beyond the audit
-    // write.
+    // Update the in-memory tail BEFORE the async audit write so a failed
+    // append never leaves the tail in a stale state. The detector must see
+    // every record regardless of whether the JSONL shard accepted it.
     if (this.config.detection.enabled) {
       const key = principalKey.length > 0 ? principalKey : "__anonymous__";
       const tail = this.trails.get(key) ?? { entries: [] };
@@ -116,6 +100,19 @@ export class AccessAuditAdapter {
         now,
         config: this.config.detection,
       });
+    }
+
+    if (this.config.audit.enabled) {
+      try {
+        result.appendedAt = await appendRecallAuditEntry(
+          this.config.audit.rootDir,
+          entry,
+        );
+      } catch {
+        // Audit write failures must never crash the enclosing recall.
+        // Swallow — operators can surface the ENOSPC / permission error
+        // via the usual filesystem monitoring.
+      }
     }
 
     return result;

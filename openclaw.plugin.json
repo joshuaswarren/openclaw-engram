@@ -2111,6 +2111,41 @@
         "default": 30,
         "description": "Hard threshold for the cross-namespace budget: calls past this count are denied until the window advances."
       },
+      "recallAuditAnomalyDetectionEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, access surfaces (MCP, HTTP) run the anomaly detector over a tail of the audit trail after each recall and surface flags via logs/metrics. Ships disabled — enable explicitly."
+      },
+      "recallAuditAnomalyWindowMs": {
+        "type": "number",
+        "minimum": 1,
+        "default": 300000,
+        "description": "Rolling window (ms) over which audit entries are analyzed by the anomaly detector. Default 5 minutes."
+      },
+      "recallAuditAnomalyRepeatQueryLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 5,
+        "description": "Threshold for the repeat-query anomaly flag: number of identical queries within the window before flagging."
+      },
+      "recallAuditAnomalyNamespaceWalkLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 3,
+        "description": "Threshold for the namespace-walk anomaly flag: number of distinct namespaces queried within the window before flagging."
+      },
+      "recallAuditAnomalyHighCardinalityLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 50,
+        "description": "Threshold for the high-cardinality-return anomaly flag: number of distinct results returned within the window before flagging."
+      },
+      "recallAuditAnomalyRapidFireLimit": {
+        "type": "number",
+        "minimum": 1,
+        "default": 30,
+        "description": "Threshold for the rapid-fire anomaly flag: number of recall requests within the window before flagging."
+      },
       "recallMemoryWorthFilterEnabled": {
         "type": "boolean",
         "default": true,
