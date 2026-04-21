@@ -1946,7 +1946,11 @@ function isValidBufferSurpriseEvent(value: unknown): value is BufferSurpriseEven
   if (typeof v.surpriseScore !== "number" || !Number.isFinite(v.surpriseScore)) {
     return false;
   }
+  // Surprise is documented as a value in [0, 1] — reject out-of-range
+  // rows at read time so they do not consume the caller's `limit`.
+  if (v.surpriseScore < 0 || v.surpriseScore > 1) return false;
   if (typeof v.threshold !== "number" || !Number.isFinite(v.threshold)) return false;
+  if (v.threshold < 0 || v.threshold > 1) return false;
   if (typeof v.triggeredFlush !== "boolean") return false;
   if (typeof v.turnCountInWindow !== "number" || !Number.isFinite(v.turnCountInWindow)) {
     return false;

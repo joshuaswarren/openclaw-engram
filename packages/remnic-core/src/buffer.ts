@@ -66,6 +66,14 @@ interface SurpriseTelemetryQueueEntry {
    * inflated, current-threshold row misidentified).
    */
   timestamp: string;
+  /**
+   * Threshold value in force when `triggered` was computed. Must be
+   * snapshot here rather than read from `config` at emit time — a
+   * concurrent config change between queue and write would otherwise
+   * record `triggered=true` against a newer threshold the operator
+   * never set, distorting precision/recall interpretation.
+   */
+  threshold: number;
 }
 
 export class SmartBuffer {
@@ -269,6 +277,10 @@ export class SmartBuffer {
           // does not shift the event's apparent moment away from when
           // the turn was actually scored.
           timestamp: new Date().toISOString(),
+          // Snapshot the threshold used to compute `triggered` so a
+          // concurrent config mutation cannot retroactively change
+          // what the ledger row claims the decision was against.
+          threshold: this.config.bufferSurpriseThreshold,
         });
       }
     }
@@ -338,7 +350,10 @@ export class SmartBuffer {
       sessionKey: params.sessionKey,
       turnRole: params.turnRole,
       surpriseScore: params.surpriseScore,
-      threshold: this.config.bufferSurpriseThreshold,
+      // Use the snapshotted threshold from the queue entry, not the
+      // live config — see `SurpriseTelemetryQueueEntry.threshold`
+      // doc for the rationale.
+      threshold: params.threshold,
       triggeredFlush: params.triggered,
       turnCountInWindow: params.turnCountInWindow,
     };
