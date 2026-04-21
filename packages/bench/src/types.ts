@@ -123,6 +123,10 @@ export interface BenchmarkResult {
      * Must stay below the benchmark's canary floor.
      */
     canaryScore?: number;
+    /** "partial" if the benchmark was interrupted; absent or "complete" otherwise. */
+    status?: "complete" | "partial";
+    /** If partial, the error that caused interruption. */
+    failureReason?: string;
   };
   config: {
     runtimeProfile?: BenchRuntimeProfile | null;
@@ -194,6 +198,8 @@ export interface RunBenchmarkOptions {
 export interface ResolvedRunBenchmarkOptions extends RunBenchmarkOptions {
   mode: BenchmarkMode;
   benchmark: BenchmarkDefinition;
+  /** Called after each task completes for progress logging and partial result tracking. */
+  onTaskComplete?: (task: TaskResult, completedCount: number, totalCount?: number) => void;
 }
 
 // Legacy latency-benchmark surface retained for CLI compatibility while the

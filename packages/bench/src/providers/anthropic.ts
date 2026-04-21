@@ -5,6 +5,7 @@ import type {
   LlmProvider,
   TokenUsage,
 } from "./types.js";
+import { retryFetch } from "./retry-fetch.js";
 
 interface AnthropicMessageResponse {
   model?: string;
@@ -38,17 +39,21 @@ class AnthropicProvider implements LlmProvider {
     opts: CompletionOpts = {},
   ): Promise<CompletionResult> {
     const startedAt = performance.now();
-    const response = await fetch(this.urlFor("messages"), {
-      method: "POST",
-      headers: this.headers(opts.headers),
-      body: JSON.stringify({
-        model: this.config.model,
-        system: opts.systemPrompt,
-        max_tokens: opts.maxTokens ?? 1_024,
-        temperature: opts.temperature,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
+    const response = await retryFetch(
+      this.urlFor("messages"),
+      {
+        method: "POST",
+        headers: this.headers(opts.headers),
+        body: JSON.stringify({
+          model: this.config.model,
+          system: opts.systemPrompt,
+          max_tokens: opts.maxTokens ?? 1_024,
+          temperature: opts.temperature,
+          messages: [{ role: "user", content: prompt }],
+        }),
+      },
+      this.config.retryOptions,
+    );
 
     if (!response.ok) {
       throw new Error(

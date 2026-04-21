@@ -107,6 +107,11 @@ export async function runMemoryAgentBenchBenchmark(
   const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
 
+  const totalQuestions = dataset.reduce(
+    (sum, item) => sum + item.questions.length,
+    0,
+  );
+
   for (const [itemIndex, item] of dataset.entries()) {
     await options.system.reset();
 
@@ -120,71 +125,90 @@ export async function runMemoryAgentBenchBenchmark(
         );
       }
 
-      const { result: recalledText, durationMs } = await timed(async () => {
-        const recalledSessions = await Promise.all(
-          sessionIds.map((sessionId) => options.system.recall(sessionId, question)),
-        );
-        return recalledSessions.filter(Boolean).join("\n\n");
-      });
-      const answered = await answerBenchmarkQuestion({
-        question,
-        recalledText,
-        responder: options.system.responder,
-      });
-      const bestExpectedAnswer = selectBestMatchingAnswer(answered.finalAnswer, answerVariants);
-      const judgeResult = await llmJudgeScoreDetailed(
-        options.system.judge,
-        question,
-        answered.finalAnswer,
-        bestExpectedAnswer,
-      );
+      const taskResultId =
+        item.metadata.qa_pair_ids?.[questionIndex] ??
+        `${item.metadata.source}-q${questionIndex}`;
 
-      const scores: Record<string, number> = {
-        f1: scoreAgainstVariants(answered.finalAnswer, answerVariants, f1Score),
-        contains_answer: answerVariants.some((variant) =>
-          containsAnswer(answered.finalAnswer, variant),
-        )
-          ? 1
-          : 0,
-        rouge_l: scoreAgainstVariants(answered.finalAnswer, answerVariants, rougeL),
-      };
-      if (judgeResult.score >= 0) {
-        scores.llm_judge = judgeResult.score;
+      try {
+        const { result: recalledText, durationMs } = await timed(async () => {
+          const recalledSessions = await Promise.all(
+            sessionIds.map((sessionId) => options.system.recall(sessionId, question)),
+          );
+          return recalledSessions.filter(Boolean).join("\n\n");
+        });
+        const answered = await answerBenchmarkQuestion({
+          question,
+          recalledText,
+          responder: options.system.responder,
+        });
+        const bestExpectedAnswer = selectBestMatchingAnswer(answered.finalAnswer, answerVariants);
+        const judgeResult = await llmJudgeScoreDetailed(
+          options.system.judge,
+          question,
+          answered.finalAnswer,
+          bestExpectedAnswer,
+        );
+
+        const scores: Record<string, number> = {
+          f1: scoreAgainstVariants(answered.finalAnswer, answerVariants, f1Score),
+          contains_answer: answerVariants.some((variant) =>
+            containsAnswer(answered.finalAnswer, variant),
+          )
+            ? 1
+            : 0,
+          rouge_l: scoreAgainstVariants(answered.finalAnswer, answerVariants, rougeL),
+        };
+        if (judgeResult.score >= 0) {
+          scores.llm_judge = judgeResult.score;
+        }
+
+        tasks.push({
+          taskId: taskResultId,
+          question,
+          expected: answerVariants[0]!,
+          actual: answered.finalAnswer,
+          scores,
+          latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+          tokens: {
+            input: answered.tokens.input + judgeResult.tokens.input,
+            output: answered.tokens.output + judgeResult.tokens.output,
+          },
+          details: {
+            competency: item.metadata.competency,
+            source: item.metadata.source,
+            questionType: item.metadata.question_types?.[questionIndex],
+            questionId: item.metadata.question_ids?.[questionIndex],
+            questionDate: item.metadata.question_dates?.[questionIndex],
+            previousEvent: item.metadata.previous_events?.[questionIndex],
+            keypoints: item.metadata.keypoints ?? [],
+            answerVariants,
+            bestExpectedAnswer,
+            sessionIds,
+            storedSessionCount: sessionIds.length,
+            recalledLength: recalledText.length,
+            answeredLength: answered.finalAnswer.length,
+            recalledText,
+            answeredText: answered.finalAnswer,
+            responderModel: answered.model,
+            judgeModel: judgeResult.model,
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`  [WARN] memoryagentbench task ${taskResultId} failed: ${message}`);
+        tasks.push({
+          taskId: taskResultId,
+          question,
+          expected: answerVariants[0]!,
+          actual: `(error: ${message})`,
+          scores: { f1: -1, contains_answer: -1, rouge_l: -1, llm_judge: -1 },
+          latencyMs: 0,
+          tokens: { input: 0, output: 0 },
+          details: { error: message },
+        });
       }
 
-      tasks.push({
-        taskId:
-          item.metadata.qa_pair_ids?.[questionIndex] ??
-          `${item.metadata.source}-q${questionIndex}`,
-        question,
-        expected: answerVariants[0]!,
-        actual: answered.finalAnswer,
-        scores,
-        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
-        tokens: {
-          input: answered.tokens.input + judgeResult.tokens.input,
-          output: answered.tokens.output + judgeResult.tokens.output,
-        },
-        details: {
-          competency: item.metadata.competency,
-          source: item.metadata.source,
-          questionType: item.metadata.question_types?.[questionIndex],
-          questionId: item.metadata.question_ids?.[questionIndex],
-          questionDate: item.metadata.question_dates?.[questionIndex],
-          previousEvent: item.metadata.previous_events?.[questionIndex],
-          keypoints: item.metadata.keypoints ?? [],
-          answerVariants,
-          bestExpectedAnswer,
-          sessionIds,
-          storedSessionCount: sessionIds.length,
-          recalledLength: recalledText.length,
-          answeredLength: answered.finalAnswer.length,
-          recalledText,
-          answeredText: answered.finalAnswer,
-          responderModel: answered.model,
-          judgeModel: judgeResult.model,
-        },
-      });
+      options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalQuestions);
     }
   }
 

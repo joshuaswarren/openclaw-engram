@@ -32,6 +32,7 @@ export interface ProviderBaseConfig {
   baseUrl?: string;
   apiKey?: string;
   headers?: Record<string, string>;
+  retryOptions?: { maxAttempts?: number; baseBackoffMs?: number; timeoutMs?: number };
 }
 
 export interface OpenAiCompatibleProviderConfig extends ProviderBaseConfig {

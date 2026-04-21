@@ -74,6 +74,8 @@ export async function runAMemGymBenchmark(
   const profiles = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
 
+  const totalTasks = profiles.reduce((sum, profile) => sum + profile.qas.length, 0);
+
   for (let profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) {
     const profile = profiles[profileIndex]!;
     await options.system.reset();
@@ -98,56 +100,74 @@ export async function runAMemGymBenchmark(
       questionIndex += 1
     ) {
       const qa = profile.qas[questionIndex]!;
+      const taskResultId = `${profile.id}-q${questionIndex}`;
       const expectedAnswer = findBestAnswer(qa, finalState);
 
-      const { result: recallText, durationMs } = await timed(async () => {
-        return options.system.recall(sessionId, qa.query);
-      });
-      const answered = await answerBenchmarkQuestion({
-        question: qa.query,
-        recalledText: recallText,
-        responder: options.system.responder,
-      });
+      try {
+        const { result: recallText, durationMs } = await timed(async () => {
+          return options.system.recall(sessionId, qa.query);
+        });
+        const answered = await answerBenchmarkQuestion({
+          question: qa.query,
+          recalledText: recallText,
+          responder: options.system.responder,
+        });
 
-      const scores: Record<string, number> = {
-        f1: f1Score(answered.finalAnswer, expectedAnswer),
-        contains_answer: containsAnswer(answered.finalAnswer, expectedAnswer),
-      };
-      const judgeResult = await llmJudgeScoreDetailed(
-        options.system.judge,
-        qa.query,
-        answered.finalAnswer,
-        expectedAnswer,
-      );
-      if (judgeResult.score >= 0) {
-        scores.llm_judge = judgeResult.score;
+        const scores: Record<string, number> = {
+          f1: f1Score(answered.finalAnswer, expectedAnswer),
+          contains_answer: containsAnswer(answered.finalAnswer, expectedAnswer),
+        };
+        const judgeResult = await llmJudgeScoreDetailed(
+          options.system.judge,
+          qa.query,
+          answered.finalAnswer,
+          expectedAnswer,
+        );
+        if (judgeResult.score >= 0) {
+          scores.llm_judge = judgeResult.score;
+        }
+
+        tasks.push({
+          taskId: taskResultId,
+          question: qa.query,
+          expected: expectedAnswer,
+          actual: answered.finalAnswer,
+          scores,
+          latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+          tokens: {
+            input: answered.tokens.input + judgeResult.tokens.input,
+            output: answered.tokens.output + judgeResult.tokens.output,
+          },
+          details: {
+            profileId: profile.id,
+            profileName: profile.user_profile.name,
+            questionIndex,
+            periodCount: profile.periods.length,
+            requiredInfo: qa.required_info,
+            recalledLength: recallText.length,
+            answeredLength: answered.finalAnswer.length,
+            recalledText: recallText,
+            answeredText: answered.finalAnswer,
+            responderModel: answered.model,
+            judgeModel: judgeResult.model,
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`  [WARN] amemgym task ${taskResultId} failed: ${message}`);
+        tasks.push({
+          taskId: taskResultId,
+          question: qa.query,
+          expected: expectedAnswer,
+          actual: `(error: ${message})`,
+          scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+          latencyMs: 0,
+          tokens: { input: 0, output: 0 },
+          details: { error: message },
+        });
       }
 
-      tasks.push({
-        taskId: `${profile.id}-q${questionIndex}`,
-        question: qa.query,
-        expected: expectedAnswer,
-        actual: answered.finalAnswer,
-        scores,
-        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
-        tokens: {
-          input: answered.tokens.input + judgeResult.tokens.input,
-          output: answered.tokens.output + judgeResult.tokens.output,
-        },
-        details: {
-          profileId: profile.id,
-          profileName: profile.user_profile.name,
-          questionIndex,
-          periodCount: profile.periods.length,
-          requiredInfo: qa.required_info,
-          recalledLength: recallText.length,
-          answeredLength: answered.finalAnswer.length,
-          recalledText: recallText,
-          answeredText: answered.finalAnswer,
-          responderModel: answered.model,
-          judgeModel: judgeResult.model,
-        },
-      });
+      options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalTasks);
     }
   }
 

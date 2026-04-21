@@ -71,6 +71,16 @@ export async function runBeamBenchmark(
   const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
 
+  const totalTasks = dataset.reduce(
+    (sum, entry) =>
+      sum +
+      Object.values(normalizeQuestionMap(entry.conversation.probing_questions)).reduce(
+        (qSum, questions) => qSum + questions.length,
+        0,
+      ),
+    0,
+  );
+
   for (const entry of dataset) {
     await options.system.reset();
 
@@ -89,73 +99,91 @@ export async function runBeamBenchmark(
     let taskIndex = 0;
     for (const [ability, questions] of Object.entries(questionMap)) {
       for (const probe of questions) {
+        const taskResultId = `${entry.scale}-${entry.conversation.conversation_id}-${ability}-${taskIndex}`;
         const expected = buildExpectedAnswer(probe);
-        const rubricTargets = normalizeRubricTargets(probe.rubric);
-        const { result: recalledText, durationMs } = await timed(async () => {
-          const recalledSessions = await Promise.all(
-            sessionIds.map((sessionId) =>
-              options.system.recall(sessionId, probe.question),
-            ),
-          );
-          return recalledSessions.filter(Boolean).join("\n\n");
-        });
-        const answered = await answerBenchmarkQuestion({
-          question: probe.question,
-          recalledText,
-          responder: options.system.responder,
-        });
-        const searchResults = await options.system.search(probe.question, 10);
-        const judgeResult = await llmJudgeScoreDetailed(
-          options.system.judge,
-          probe.question,
-          answered.finalAnswer,
-          expected,
-        );
-
-        const scores: Record<string, number> = {
-          f1: f1Score(answered.finalAnswer, expected),
-          contains_answer: containsAnswer(answered.finalAnswer, expected),
-          rouge_l: rougeL(answered.finalAnswer, expected),
-          search_hits: searchResults.length,
-        };
-        if (rubricTargets.length > 0) {
-          scores.rubric_coverage = computeRubricCoverage(
-            answered.finalAnswer,
-            rubricTargets,
-          );
-        }
-        if (judgeResult.score >= 0) {
-          scores.llm_judge = judgeResult.score;
-        }
-
-        tasks.push({
-          taskId: `${entry.scale}-${entry.conversation.conversation_id}-${ability}-${taskIndex}`,
-          question: probe.question,
-          expected,
-          actual: answered.finalAnswer,
-          scores,
-          latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
-          tokens: {
-            input: answered.tokens.input + judgeResult.tokens.input,
-            output: answered.tokens.output + judgeResult.tokens.output,
-          },
-          details: {
-            ability,
-            scale: entry.scale,
-            difficulty: probe.difficulty,
-            conversationId: entry.conversation.conversation_id,
-            sessionCount: sessionIds.length,
-            planReference: probe.plan_reference,
-            sourceChatIds: probe.source_chat_ids,
-            rubric: probe.rubric,
-            recalledLength: recalledText.length,
-            answeredLength: answered.finalAnswer.length,
+        try {
+          const rubricTargets = normalizeRubricTargets(probe.rubric);
+          const { result: recalledText, durationMs } = await timed(async () => {
+            const recalledSessions = await Promise.all(
+              sessionIds.map((sessionId) =>
+                options.system.recall(sessionId, probe.question),
+              ),
+            );
+            return recalledSessions.filter(Boolean).join("\n\n");
+          });
+          const answered = await answerBenchmarkQuestion({
+            question: probe.question,
             recalledText,
-            answeredText: answered.finalAnswer,
-            responderModel: answered.model,
-            judgeModel: judgeResult.model,
-          },
-        });
+            responder: options.system.responder,
+          });
+          const searchResults = await options.system.search(probe.question, 10);
+          const judgeResult = await llmJudgeScoreDetailed(
+            options.system.judge,
+            probe.question,
+            answered.finalAnswer,
+            expected,
+          );
+
+          const scores: Record<string, number> = {
+            f1: f1Score(answered.finalAnswer, expected),
+            contains_answer: containsAnswer(answered.finalAnswer, expected),
+            rouge_l: rougeL(answered.finalAnswer, expected),
+            search_hits: searchResults.length,
+          };
+          if (rubricTargets.length > 0) {
+            scores.rubric_coverage = computeRubricCoverage(
+              answered.finalAnswer,
+              rubricTargets,
+            );
+          }
+          if (judgeResult.score >= 0) {
+            scores.llm_judge = judgeResult.score;
+          }
+
+          tasks.push({
+            taskId: taskResultId,
+            question: probe.question,
+            expected,
+            actual: answered.finalAnswer,
+            scores,
+            latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+            tokens: {
+              input: answered.tokens.input + judgeResult.tokens.input,
+              output: answered.tokens.output + judgeResult.tokens.output,
+            },
+            details: {
+              ability,
+              scale: entry.scale,
+              difficulty: probe.difficulty,
+              conversationId: entry.conversation.conversation_id,
+              sessionCount: sessionIds.length,
+              planReference: probe.plan_reference,
+              sourceChatIds: probe.source_chat_ids,
+              rubric: probe.rubric,
+              recalledLength: recalledText.length,
+              answeredLength: answered.finalAnswer.length,
+              recalledText,
+              answeredText: answered.finalAnswer,
+              responderModel: answered.model,
+              judgeModel: judgeResult.model,
+            },
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`  [WARN] beam task ${taskResultId} failed: ${message}`);
+          tasks.push({
+            taskId: taskResultId,
+            question: probe.question,
+            expected,
+            actual: `(error: ${message})`,
+            scores: { f1: -1, contains_answer: -1, rouge_l: -1, search_hits: -1, llm_judge: -1 },
+            latencyMs: 0,
+            tokens: { input: 0, output: 0 },
+            details: { error: message },
+          });
+        }
+
+        options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalTasks);
         taskIndex += 1;
       }
     }

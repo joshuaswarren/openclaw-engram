@@ -47,6 +47,7 @@ export async function runAmaBenchBenchmark(
 ): Promise<BenchmarkResult> {
   const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
+  const totalQaPairs = dataset.reduce((sum, ep) => sum + ep.qa_pairs.length, 0);
 
   for (const episode of dataset) {
     await options.system.reset();
@@ -65,56 +66,73 @@ export async function runAmaBenchBenchmark(
     }
 
     for (const qa of episode.qa_pairs) {
-      const { result: recalledText, durationMs } = await timed(async () =>
-        options.system.recall(sessionId, qa.question),
-      );
-      const answered = await answerBenchmarkQuestion({
-        question: qa.question,
-        recalledText,
-        responder: options.system.responder,
-      });
-      const judgeResult = await llmJudgeScoreDetailed(
-        options.system.judge,
-        qa.question,
-        answered.finalAnswer,
-        qa.answer,
-      );
+      try {
+        const { result: recalledText, durationMs } = await timed(async () =>
+          options.system.recall(sessionId, qa.question),
+        );
+        const answered = await answerBenchmarkQuestion({
+          question: qa.question,
+          recalledText,
+          responder: options.system.responder,
+        });
+        const judgeResult = await llmJudgeScoreDetailed(
+          options.system.judge,
+          qa.question,
+          answered.finalAnswer,
+          qa.answer,
+        );
 
-      const scores: Record<string, number> = {
-        f1: f1Score(answered.finalAnswer, qa.answer),
-        contains_answer: containsAnswer(answered.finalAnswer, qa.answer),
-      };
-      if (judgeResult.score >= 0) {
-        scores.llm_judge = judgeResult.score;
+        const scores: Record<string, number> = {
+          f1: f1Score(answered.finalAnswer, qa.answer),
+          contains_answer: containsAnswer(answered.finalAnswer, qa.answer),
+        };
+        if (judgeResult.score >= 0) {
+          scores.llm_judge = judgeResult.score;
+        }
+
+        tasks.push({
+          taskId: qa.question_uuid,
+          question: qa.question,
+          expected: qa.answer,
+          actual: answered.finalAnswer,
+          scores,
+          latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+          tokens: {
+            input: answered.tokens.input + judgeResult.tokens.input,
+            output: answered.tokens.output + judgeResult.tokens.output,
+          },
+          details: {
+            qaType: qa.type,
+            domain: episode.domain,
+            episodeId: episode.episode_id,
+            task: episode.task,
+            taskType: episode.task_type,
+            numTurns: episode.num_turns,
+            totalTokens: episode.total_tokens,
+            recalledLength: recalledText.length,
+            answeredLength: answered.finalAnswer.length,
+            recalledText,
+            answeredText: answered.finalAnswer,
+            responderModel: answered.model,
+            judgeModel: judgeResult.model,
+          },
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`  [WARN] ama-bench task ${qa.question_uuid} failed: ${message}`);
+        tasks.push({
+          taskId: qa.question_uuid,
+          question: qa.question,
+          expected: qa.answer,
+          actual: `(error: ${message})`,
+          scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+          latencyMs: 0,
+          tokens: { input: 0, output: 0 },
+          details: { error: message },
+        });
       }
 
-      tasks.push({
-        taskId: qa.question_uuid,
-        question: qa.question,
-        expected: qa.answer,
-        actual: answered.finalAnswer,
-        scores,
-        latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
-        tokens: {
-          input: answered.tokens.input + judgeResult.tokens.input,
-          output: answered.tokens.output + judgeResult.tokens.output,
-        },
-        details: {
-          qaType: qa.type,
-          domain: episode.domain,
-          episodeId: episode.episode_id,
-          task: episode.task,
-          taskType: episode.task_type,
-          numTurns: episode.num_turns,
-          totalTokens: episode.total_tokens,
-          recalledLength: recalledText.length,
-          answeredLength: answered.finalAnswer.length,
-          recalledText,
-          answeredText: answered.finalAnswer,
-          responderModel: answered.model,
-          judgeModel: judgeResult.model,
-        },
-      });
+      options.onTaskComplete?.(tasks[tasks.length - 1], tasks.length, totalQaPairs);
     }
   }
 
