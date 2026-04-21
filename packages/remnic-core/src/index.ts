@@ -204,6 +204,31 @@ export { EngramAccessService, EngramAccessInputError } from "./access-service.js
 export { EngramAccessHttpServer } from "./access-http.js";
 export { EngramMcpServer } from "./access-mcp.js";
 
+// Recall X-ray CLI helpers (issue #570).  Exported so the standalone
+// `@remnic/cli` binary can wire the `remnic xray` command without
+// reimporting core-internal modules by relative path (CLAUDE.md rule 26).
+export {
+  parseXrayCliOptions,
+  parseXrayBudgetFlag,
+  type ParsedXrayCliOptions,
+} from "./recall-xray-cli.js";
+export {
+  renderXray,
+  renderXrayJson,
+  renderXrayText,
+  renderXrayMarkdown,
+  parseXrayFormat,
+  RECALL_XRAY_FORMATS,
+  type RecallXrayFormat,
+} from "./recall-xray-renderer.js";
+export type {
+  RecallXraySnapshot,
+  RecallXrayResult,
+  RecallXrayScoreDecomposition,
+  RecallXrayServedBy,
+  RecallFilterTrace,
+} from "./recall-xray.js";
+
 // Coding-agent subsystem (issue #569)
 export {
   resolveGitContext,
