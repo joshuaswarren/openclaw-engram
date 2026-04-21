@@ -229,9 +229,18 @@ function buildSeedVector(
 
   const explicitWeights = normalizeSeedWeights(options.seedWeights);
   if (explicitWeights.size > 0) {
+    // Restrict weight keys to the declared seed set (or, if empty, to
+    // graph nodes). Documented contract in `QueryGraphOptions.seedWeights`:
+    // keys must appear in `seedIds` — unrelated / stale weight entries
+    // must not silently override the requested personalization.
+    const allowedKeys =
+      seedIds.length > 0
+        ? new Set(seedIds.filter((id) => typeof id === "string"))
+        : null;
     let total = 0;
     for (const [id, w] of explicitWeights) {
       if (!graph.nodes.has(id)) continue;
+      if (allowedKeys !== null && !allowedKeys.has(id)) continue;
       seed.set(id, (seed.get(id) ?? 0) + w);
       total += w;
     }
