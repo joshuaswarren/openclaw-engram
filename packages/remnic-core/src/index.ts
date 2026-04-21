@@ -683,6 +683,16 @@ export {
 export * from "./training-export/index.js";
 
 // ---------------------------------------------------------------------------
+// Memory Worth scoring helper (issue #560 PR 2 of 5)
+// ---------------------------------------------------------------------------
+
+export {
+  computeMemoryWorth,
+  type ComputeMemoryWorthInput,
+  type MemoryWorthResult,
+} from "./memory-worth.js";
+
+// ---------------------------------------------------------------------------
 // Graph retrieval types (issue #559, PR 1 of 5)
 // ---------------------------------------------------------------------------
 
