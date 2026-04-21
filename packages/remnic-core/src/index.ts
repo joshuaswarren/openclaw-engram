@@ -58,6 +58,23 @@ export { StorageManager } from "./storage.js";
 export { ExtractionEngine } from "./extraction.js";
 
 // ---------------------------------------------------------------------------
+// Smart buffer (issue #563)
+// ---------------------------------------------------------------------------
+
+export {
+  SmartBuffer,
+  type TriggerDecision,
+  type BufferSurpriseProbe,
+} from "./buffer.js";
+
+export {
+  computeSurprise,
+  DEFAULT_SURPRISE_K,
+  type RecentMemoryLike,
+  type ComputeSurpriseOptions,
+} from "./buffer-surprise.js";
+
+// ---------------------------------------------------------------------------
 // Extraction Judge (issue #376)
 // ---------------------------------------------------------------------------
 
