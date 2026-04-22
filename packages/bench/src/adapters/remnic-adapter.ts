@@ -315,6 +315,30 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
         await rebuild();
       },
 
+      async drain(): Promise<void> {
+        const DRAIN_TIMEOUT_MS = 5 * 60_000;
+        const engine = getEngine();
+        const abortController = new AbortController();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<void>((_, reject) => {
+          timer = setTimeout(() => {
+            abortController.abort();
+            reject(new Error("drain() timed out after 5 minutes"));
+          }, DRAIN_TIMEOUT_MS);
+        });
+        try {
+          await Promise.race([
+            engine.waitForObserveQueueIdle().catch((err: unknown) => {
+              if (abortController.signal.aborted) return;
+              throw err;
+            }),
+            timeout,
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+      },
+
       async getStats(sessionId?: string): Promise<MemoryStats> {
         return getEngine().getStats(sessionId);
       },

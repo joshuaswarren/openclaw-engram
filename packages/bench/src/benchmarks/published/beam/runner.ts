@@ -96,6 +96,12 @@ export async function runBeamBenchmark(
       }
     }
 
+    try {
+      await options.system.drain?.();
+    } catch (drainErr) {
+      console.error(`  [WARN] beam drain failed for ${entry.conversation.conversation_id}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+    }
+
     let taskIndex = 0;
     for (const [ability, questions] of Object.entries(questionMap)) {
       for (const probe of questions) {

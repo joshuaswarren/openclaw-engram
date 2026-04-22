@@ -116,6 +116,11 @@ export async function runMemoryAgentBenchBenchmark(
     await options.system.reset();
 
     const sessionIds = await storeBenchmarkContext(options, item, itemIndex);
+    try {
+      await options.system.drain?.();
+    } catch (drainErr) {
+      console.error(`  [WARN] memoryagentbench drain failed for sample ${item.metadata.source}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+    }
     for (let questionIndex = 0; questionIndex < item.questions.length; questionIndex += 1) {
       const question = item.questions[questionIndex]!;
       const answerVariants = item.answers[questionIndex];

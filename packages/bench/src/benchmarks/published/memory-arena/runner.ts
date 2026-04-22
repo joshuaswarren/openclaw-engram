@@ -87,6 +87,12 @@ export async function runMemoryArenaBenchmark(
             },
           ]);
 
+          try {
+            await options.system.drain?.();
+          } catch (drainErr) {
+            console.error(`  [WARN] memory-arena drain failed for ${taskResultId}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+          }
+
           const { result: recalledText, durationMs } = await timed(async () =>
             options.system.recall(sessionId, question),
           );
@@ -144,6 +150,12 @@ export async function runMemoryArenaBenchmark(
             ]);
           } catch (storeErr) {
             console.error(`  [WARN] memory-arena store failed for ${taskResultId}: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`);
+          }
+
+          try {
+            await options.system.drain?.();
+          } catch (drainErr) {
+            console.error(`  [WARN] memory-arena drain failed for ${taskResultId}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
