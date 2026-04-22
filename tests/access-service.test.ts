@@ -35,6 +35,10 @@ function createService() {
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
     },
     recall: async () => "ctx",
     lastRecall: {
@@ -120,6 +124,10 @@ test("access service allows readable namespace overrides outside default recall 
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
     },
     recall: async (_query: string, _sessionKey?: string, options?: unknown) => {
       capturedOptions = options;
@@ -189,6 +197,10 @@ test("access service allows readable explicit namespace overrides outside defaul
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
     },
     recall: async () => "ctx",
     lastRecall: { get: () => null, getMostRecent: () => null },
@@ -619,6 +631,10 @@ test("access service recallExplain omits mismatched most-recent snapshot when na
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
     },
     recall: async () => "ctx",
     lastRecall: {
@@ -666,6 +682,10 @@ test("access service recallExplain omits most-recent snapshots without a namespa
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
     },
     recall: async () => "ctx",
     lastRecall: {
@@ -712,6 +732,10 @@ test("access service recallExplain without a namespace preserves the most recent
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
     },
     recall: async () => "ctx",
     lastRecall: {
@@ -762,6 +786,10 @@ test("access service recallExplain filters session snapshots by the requested na
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
     },
     recall: async () => "ctx",
     lastRecall: {
@@ -923,6 +951,10 @@ test("access service acquires a shared idempotency key lock before executing wri
       searchBackend: "qmd",
       qmdEnabled: true,
       nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: false,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 10,
+      recallCrossNamespaceBudgetHardLimit: 30,
     };
     const orchestrator = {
       config,
@@ -2567,4 +2599,203 @@ test("briefing() accepts absent format (undefined) without error and uses defaul
     result.format === "markdown" || result.format === "json",
     "absent format must resolve to the configured default",
   );
+});
+
+test("access service recall records audit entries and detects anomalies when enabled", async () => {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallAuditAnomalyDetectionEnabled: true,
+      recallAuditAnomalyWindowMs: 60_000,
+      recallAuditAnomalyRepeatQueryLimit: 2,
+      recallAuditAnomalyNamespaceWalkLimit: 3,
+      recallAuditAnomalyHighCardinalityLimit: 50,
+      recallAuditAnomalyRapidFireLimit: 30,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  };
+  const service = new EngramAccessService(orchestrator as any);
+
+  // First recall — no anomalies expected
+  const res1 = await service.recall({
+    query: "test query",
+    sessionKey: "agent:test:chat",
+  });
+  assert.ok(res1, "first recall should succeed");
+
+  // Repeat the same query to trigger repeat-query anomaly
+  const res2 = await service.recall({
+    query: "test query",
+    sessionKey: "agent:test:chat",
+  });
+  assert.ok(res2, "second recall should succeed");
+
+  // Third repeat should trigger the anomaly detector
+  const res3 = await service.recall({
+    query: "test query",
+    sessionKey: "agent:test:chat",
+  });
+  assert.ok(res3, "third recall should succeed");
+  assert.ok(res3.auditAnomalies, "should have audit anomalies after repeat queries");
+  assert.ok(res3.auditAnomalies!.flags.length > 0, "should have at least one anomaly flag");
+});
+
+test("access service recall has no audit anomalies when detection is disabled", async () => {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallAuditAnomalyDetectionEnabled: false,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  };
+  const service = new EngramAccessService(orchestrator as any);
+
+  const res = await service.recall({
+    query: "test query",
+    sessionKey: "agent:test:chat",
+  });
+  assert.equal(res.auditAnomalies, undefined, "no audit anomalies when disabled");
+});
+
+test("access service recall enforces cross-namespace budget when enabled", async () => {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        { name: "project-x", readPrincipals: ["project-x", "attacker"], writePrincipals: ["project-x"] },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: true,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 2,
+      recallCrossNamespaceBudgetHardLimit: 3,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  };
+  const service = new EngramAccessService(orchestrator as any);
+
+  // First 3 cross-namespace recalls should succeed (under hard limit)
+  for (let i = 0; i < 3; i++) {
+    const res = await service.recall({
+      query: `query ${i}`,
+      sessionKey: "agent:attacker:chat",
+      namespace: "project-x",
+    });
+    assert.ok(res, `recall ${i} should succeed`);
+  }
+
+  // 4th cross-namespace recall should be denied
+  await assert.rejects(
+    () => service.recall({
+      query: "one more",
+      sessionKey: "agent:attacker:chat",
+      namespace: "project-x",
+    }),
+    (err: unknown) =>
+      err instanceof EngramAccessInputError &&
+      err.message.includes("cross-namespace budget exceeded"),
+  );
+});
+
+test("access service recall surfaces budgetWarning when over soft limit", async () => {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: true,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [
+        { name: "project-x", readPrincipals: ["project-x", "attacker"], writePrincipals: ["project-x"] },
+      ],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallCrossNamespaceBudgetEnabled: true,
+      recallCrossNamespaceBudgetWindowMs: 60_000,
+      recallCrossNamespaceBudgetSoftLimit: 1,
+      recallCrossNamespaceBudgetHardLimit: 10,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  };
+  const service = new EngramAccessService(orchestrator as any);
+
+  // First call — under soft limit, no warning
+  const res1 = await service.recall({
+    query: "first",
+    sessionKey: "agent:attacker:chat",
+    namespace: "project-x",
+  });
+  assert.equal(res1.budgetWarning, undefined);
+
+  // Second call — over soft limit, warning present
+  const res2 = await service.recall({
+    query: "second",
+    sessionKey: "agent:attacker:chat",
+    namespace: "project-x",
+  });
+  assert.ok(res2.budgetWarning, "should have budgetWarning");
+  assert.equal(res2.budgetWarning!.reason, "warn-over-soft");
 });

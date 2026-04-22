@@ -7,6 +7,7 @@
  *   init              Create remnic.config.json in the current directory
  *   status            Show server/daemon status
  *   query <text>      Query memories
+ *   xray <query>      Recall with X-ray capture; renders tier + filters + scores
  *   doctor            Run diagnostics
  *   config            Show current config
  *   daemon start      Start background server
@@ -119,6 +120,9 @@ import {
   StorageManager,
   computeProcedureStats,
   formatProcedureStatsText,
+  parseXrayCliOptions,
+  renderXray,
+  expandTildePath,
 } from "@remnic/core";
 // @remnic/export-weclone is an optional install surface (training:export
 // only uses it). Load lazily so the CLI works without it — see
@@ -221,7 +225,8 @@ type CommandName =
   | "openclaw"
   | "extensions"
   | "training:export"
-  | "import";
+  | "import"
+  | "xray";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
@@ -2881,6 +2886,146 @@ async function cmdQuery(queryText: string, json: boolean, explain: boolean): Pro
   }
 }
 
+// ── Recall X-ray (issue #570) ──────────────────────────────────────────────
+
+/**
+ * Extract the `parseXrayCliOptions` option bag from CLI `rest` tokens.
+ *
+ * Splits `rest` into positional query tokens and `--flag value` pairs.
+ * Validates that every value-taking flag (`--format`, `--budget`,
+ * `--namespace`, `--out`) has a following value — CLAUDE.md rule 14
+ * forbids silently defaulting when the flag is bare.
+ *
+ * Exported for test coverage.  Returns the `{rawQuery, options}` pair
+ * that `parseXrayCliOptions` expects; downstream validation (format /
+ * budget enum checks, empty-query rejection) is delegated to
+ * `parseXrayCliOptions` itself so this function stays a thin tokenizer.
+ */
+export function extractXrayRawArgs(rest: string[]): {
+  rawQuery: string;
+  options: Record<string, unknown>;
+} {
+  const VALUE_FLAGS = new Set(["--format", "--budget", "--namespace", "--out"]);
+  const positional: string[] = [];
+  const options: Record<string, unknown> = {};
+
+  for (let i = 0; i < rest.length; i++) {
+    const token = rest[i];
+    if (token.startsWith("--")) {
+      if (!VALUE_FLAGS.has(token)) {
+        throw new Error(
+          `Unknown flag ${JSON.stringify(token)}. Supported flags: --format, --budget, --namespace, --out.`,
+        );
+      }
+      const next = rest[i + 1];
+      if (next === undefined || next.startsWith("--")) {
+        throw new Error(
+          `${token} requires a value. Provide it as \`${token} <value>\`, not as a bare flag.`,
+        );
+      }
+      // Strip leading "--" from flag to produce the camelCase key
+      // parseXrayCliOptions expects (`format`, `budget`, `namespace`,
+      // `out`).
+      const key = token.slice(2);
+      options[key] = next;
+      i++;
+      continue;
+    }
+    positional.push(token);
+  }
+
+  return { rawQuery: positional.join(" "), options };
+}
+
+/**
+ * Thin dependency-injected runner for `remnic xray`.  Parses flags,
+ * invokes the caller-provided recall function, renders the snapshot via
+ * the shared `renderXray` formatter, and emits the result to stdout or a
+ * file.  Extracted from `cmdXray` so tests can exercise the full flow
+ * with a stubbed recall function (CLAUDE.md rule 33 — test mocks must
+ * match production signatures).
+ */
+export async function runXrayCommand(
+  rest: string[],
+  io: {
+    recallXray: (request: {
+      query: string;
+      namespace?: string;
+      budget?: number;
+    }) => Promise<{
+      snapshotFound: boolean;
+      snapshot?: import("@remnic/core").RecallXraySnapshot;
+    }>;
+    writeFile: (filePath: string, data: string) => Promise<void>;
+    stdout: (line: string) => void;
+  },
+): Promise<void> {
+  const { rawQuery, options } = extractXrayRawArgs(rest);
+  // `parseXrayCliOptions` throws listed-options errors for empty query,
+  // unknown --format, malformed --budget (CLAUDE.md rules 14, 51).
+  const parsed = parseXrayCliOptions(rawQuery, options);
+  const response = await io.recallXray({
+    query: parsed.query,
+    ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
+    ...(parsed.budget !== undefined ? { budget: parsed.budget } : {}),
+  });
+  const snapshot = response.snapshotFound ? response.snapshot ?? null : null;
+  const rendered = renderXray(snapshot, parsed.format);
+  if (parsed.outPath) {
+    await io.writeFile(expandTildePath(parsed.outPath), rendered);
+  } else {
+    io.stdout(rendered);
+  }
+}
+
+/**
+ * `remnic xray <query>` handler.  Validates CLI arguments *before*
+ * booting the orchestrator so invalid invocations (empty query,
+ * unknown --format, bare --budget, etc.) fail fast with the intended
+ * CLI validation error rather than an unrelated initialization error,
+ * and without paying the config-load / QMD-probe / deferred-ready
+ * startup cost (Codex P2 on PR #643 — CLAUDE.md rules 14 + 51 require
+ * explicit, fail-fast validation).
+ *
+ * After the arg bag is validated, bootstraps the orchestrator the
+ * same way `cmdQuery` does and delegates to `runXrayCommand` for the
+ * recall + render + emit flow.  Delegation keeps the production
+ * handler's post-orchestrator path covered by `runXrayCommand`'s
+ * existing unit tests (Cursor Medium on PR #643 — avoid duplicated
+ * code paths that only one surface exercises).
+ */
+async function cmdXray(rest: string[]): Promise<void> {
+  // Parse and validate flags FIRST — `parseXrayCliOptions` throws
+  // listed-options errors for bad input.  Keep this before any IO so
+  // a bad invocation surfaces the right error without touching disk.
+  // `runXrayCommand` re-runs the same validators below; re-parsing is
+  // cheap (pure + no IO) and avoids a second "validated flags" shape
+  // that would drift from the raw-argv contract tests already cover.
+  const { rawQuery, options } = extractXrayRawArgs(rest);
+  parseXrayCliOptions(rawQuery, options);
+
+  initLogger();
+  const configPath = resolveConfigPath();
+  const raw = fs.existsSync(configPath)
+    ? JSON.parse(fs.readFileSync(configPath, "utf8"))
+    : {};
+  const remnicCfg = raw.remnic ?? raw.engram ?? raw;
+  const config = parseConfig(remnicCfg);
+  const orchestrator = new Orchestrator(config);
+  await orchestrator.initialize();
+  await orchestrator.deferredReady;
+  const service = new EngramAccessService(orchestrator);
+
+  await runXrayCommand(rest, {
+    recallXray: (request) => service.recallXray(request),
+    writeFile: async (filePath, data) => {
+      const { writeFile: fsWriteFile } = await import("node:fs/promises");
+      await fsWriteFile(filePath, data, "utf8");
+    },
+    stdout: (line) => console.log(line),
+  });
+}
+
 // ── Page-level versioning (issue #371) ─────────────────────────────────────
 
 async function cmdVersions(rest: string[]): Promise<void> {
@@ -4750,6 +4895,7 @@ async function cmdBench(rest: string[]): Promise<void> {
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath ?? ""); } catch { /* non-fatal */ }
           } else {
             const fallbackResultPath = await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
+            const fallbackResultPath = await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath); } catch { /* non-fatal */ }
           }
         } catch (err) {
@@ -6447,6 +6593,15 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       break;
     }
 
+    case "xray":
+      // `remnic xray "<query>"` — recall with X-ray capture and print
+      // the unified snapshot (issue #570 / PR #636 Codex P2).  The
+      // plugin-runtime path registers the same surface via
+      // `registerCli` in `@remnic/core/cli.ts`; this case wires the
+      // standalone `remnic` binary so documented usage actually works.
+      await cmdXray(rest);
+      break;
+
     case "doctor":
       await cmdDoctor();
       break;
@@ -6861,6 +7016,10 @@ Usage:
   remnic migrate [--rollback] [--json]  Run or undo first-run Engram migration
   remnic status [--json]       Show server status
   remnic query <text> [--json] [--explain] Query memories (use --explain for tier breakdown)
+  remnic xray <query> [--format text|markdown|json] [--budget <chars>] [--namespace <ns>] [--out <path>]
+    Run a recall with X-ray capture and print the unified snapshot
+    (tier + audit + MMR + filters). Part of #570. Defaults to text
+    output on stdout.
 
   remnic doctor                Run diagnostics
   remnic config                Show current config

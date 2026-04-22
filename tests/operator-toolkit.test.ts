@@ -667,3 +667,37 @@ test("operator repair aggregates dry-run session repair and graph guidance", asy
   const after = await readFile(transcriptPath, "utf-8");
   assert.match(after, /not-json/);
 });
+
+test("operator doctor warns when security mitigations are disabled", async () => {
+  const fixture = await makeFixture();
+  const report = await runOperatorDoctor({
+    configPath: fixture.configPath,
+    orchestrator: fixture.orchestrator,
+  });
+  const sec = report.checks.find((c) => c.key === "security_mitigations");
+  assert.ok(sec, "security_mitigations check should exist");
+  assert.equal(sec.status, "warn");
+  assert.match(sec.summary, /disabled/);
+  assert.ok(sec.remediation, "should have remediation guidance");
+});
+
+test("operator doctor reports ok when security mitigations are enabled", async () => {
+  const fixture = await makeFixture({
+    recallCrossNamespaceBudgetEnabled: true,
+    recallAuditAnomalyDetectionEnabled: true,
+  });
+  const report = await runOperatorDoctor({
+    configPath: fixture.configPath,
+    orchestrator: fixture.orchestrator,
+  });
+  const sec = report.checks.find((c) => c.key === "security_mitigations");
+  assert.ok(sec, "security_mitigations check should exist");
+  assert.equal(sec.status, "ok");
+  assert.match(sec.summary, /config enabled/);
+  const details = sec.details as Record<string, unknown>;
+  assert.equal(details.budgetEnabled, true);
+  assert.equal(details.anomalyDetectionEnabled, true);
+  assert.equal(details.configOnly, true, "should indicate this is config-only, not enforcement");
+  assert.ok(details.budgetConfig, "should include budget config");
+  assert.ok(details.anomalyConfig, "should include anomaly config");
+});

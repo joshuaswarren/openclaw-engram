@@ -4,6 +4,7 @@ import type { StorageManager } from "./storage.js";
 import type {
   BufferEntryState,
   BufferState,
+  BufferSurpriseEvent,
   BufferTurn,
   PluginConfig,
   SignalLevel,
@@ -11,23 +12,115 @@ import type {
 
 export type TriggerDecision = "extract_now" | "extract_batch" | "keep_buffering";
 
+/**
+ * Optional surprise probe injected into `SmartBuffer`.
+ *
+ * Computes a D-MEM-style novelty score in `[0, 1]` for an incoming turn.
+ * The buffer treats the probe as purely additive: if it is not provided, if
+ * the feature flag is off, or if the probe throws/times out, the buffer
+ * falls back to the existing signal/turn-count/time triggers unchanged.
+ *
+ * Callers are responsible for sampling recent memories and passing them
+ * through the embedding pipeline — the buffer does not want to know about
+ * storage, embeddings, or QMD.
+ *
+ * @param bufferKey Identifier for the active buffer (session/thread).
+ * @param turn      The incoming turn whose novelty is being scored.
+ * @param recentTurns Turns already buffered for this key (most recent first
+ *                    is NOT guaranteed — treat as unordered corpus).
+ * @returns A surprise score in `[0, 1]`, or `null` if no score could be
+ *          produced (e.g. empty corpus, probe declined to embed).
+ */
+export interface BufferSurpriseProbe {
+  scoreTurn(
+    bufferKey: string,
+    turn: BufferTurn,
+    recentTurns: readonly BufferTurn[],
+  ): Promise<number | null>;
+}
+
 const MAX_BUFFER_ENTRY_COUNT = 200;
+
+/**
+ * Minimal data carried on the serialized telemetry write chain
+ * (issue #563 PR 3).
+ *
+ * We intentionally do NOT capture the full `BufferTurn` here: under
+ * slow filesystem latency the chain can back up, and retaining
+ * `turn.content` for every pending append causes memory pressure on
+ * large conversations. Only the fields the ledger row actually needs
+ * cross the chain boundary.
+ */
+interface SurpriseTelemetryQueueEntry {
+  bufferKey: string;
+  turnRole: "user" | "assistant";
+  sessionKey: string | null;
+  surpriseScore: number;
+  triggered: boolean;
+  turnCountInWindow: number;
+  /**
+   * ISO timestamp captured at the moment the turn was scored, NOT when
+   * the ledger append eventually runs. Backpressure on the serialized
+   * write chain could otherwise shift event timestamps away from the
+   * real decision moment and distort the distribution report (p90
+   * inflated, current-threshold row misidentified).
+   */
+  timestamp: string;
+  /**
+   * Threshold value in force when `triggered` was computed. Must be
+   * snapshot here rather than read from `config` at emit time — a
+   * concurrent config change between queue and write would otherwise
+   * record `triggered=true` against a newer threshold the operator
+   * never set, distorting precision/recall interpretation.
+   */
+  threshold: number;
+}
 
 export class SmartBuffer {
   private state: BufferState;
   private loaded = false;
+  private readonly surpriseProbe: BufferSurpriseProbe | null;
+  /**
+   * Serialized write chain for `BUFFER_SURPRISE` telemetry events.
+   *
+   * The telemetry path is fire-and-forget (`addTurn` does not await the
+   * ledger append), but multiple concurrent appends would still settle
+   * out of order under variable filesystem latency. The report path
+   * assumes chronological ordering — it slices the tail of the ledger
+   * and treats the most recent entry as the current threshold in force.
+   * Chaining ensures each append only runs after the previous settles,
+   * preserving wall-clock order.
+   *
+   * We include a `.catch` on every link so a rejected append does not
+   * poison the chain (CLAUDE.md rule #40).
+   */
+  private surpriseTelemetryWriteChain: Promise<unknown> = Promise.resolve();
 
   constructor(
     private readonly config: PluginConfig,
     private readonly storage: StorageManager,
+    surpriseProbe: BufferSurpriseProbe | null = null,
   ) {
     this.state = { turns: [], lastExtractionAt: null, extractionCount: 0 };
+    this.surpriseProbe = surpriseProbe;
   }
 
   private entryFor(key: string): BufferEntryState {
     this.state.entries ??= {};
-    const existing = this.state.entries[key];
-    if (existing) return existing;
+    // Reject prototype-polluting keys outright so no downstream
+    // assignment can mutate Object.prototype.
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      key = `__safe_${key}`;
+    }
+    if (Object.hasOwn(this.state.entries, key)) {
+      const stored = this.state.entries[key];
+      // Guard against corrupted state/buffer.json — if the stored entry
+      // is not a valid object shape, discard it and recreate.
+      if (stored && typeof stored === "object" && Array.isArray(stored.turns)) {
+        return stored;
+      }
+      // Corrupted — fall through to recreate.
+    }
     const created: BufferEntryState = {
       turns: [],
       lastExtractionAt: null,
@@ -38,6 +131,11 @@ export class SmartBuffer {
   }
 
   private peekEntry(key: string): BufferEntryState | null {
+    // Apply the same prototype-pollution guard as entryFor so reads and
+    // writes use the same key namespace for dangerous keys.
+    if (key === "__proto__" || key === "constructor" || key === "prototype") {
+      key = `__safe_${key}`;
+    }
     const existing = this.state.entries?.[key];
     if (existing) return existing;
     if (key !== "default") return null;
@@ -142,7 +240,67 @@ export class SmartBuffer {
     }
 
     const signal = scanSignals(turn.content, this.config.highSignalPatterns);
-    const decision = this.evaluate(entry, signal.level);
+    let decision = this.evaluate(entry, signal.level);
+
+    // Surprise-gated flush (issue #563). Additive only: if the probe is
+    // disabled, unavailable, or the score is below threshold, the decision
+    // from the existing trigger logic stands. The probe only ever *promotes*
+    // `keep_buffering` → `extract_now`; it never suppresses an existing
+    // flush. This preserves the invariant that enabling surprise cannot
+    // *reduce* extraction frequency.
+    if (
+      decision === "keep_buffering" &&
+      this.config.bufferSurpriseTriggerEnabled &&
+      this.surpriseProbe !== null &&
+      // Matching the existing "smart" branch: surprise is a lower-tier
+      // novelty signal that should not second-guess a high-signal hit
+      // (which already flushes) or fight `every_n` / `time_based` modes.
+      this.config.triggerMode === "smart" &&
+      signal.level !== "high"
+    ) {
+      const surprise = await this.computeSurpriseSafe(bufferKey, turn, entry);
+      if (surprise !== null) {
+        const triggered = surprise > this.config.bufferSurpriseThreshold;
+        if (triggered) {
+          log.debug(
+            `buffer[${bufferKey}]: surprise=${surprise.toFixed(3)} > threshold=${this.config.bufferSurpriseThreshold} → extract_now`,
+          );
+          decision = "extract_now";
+        }
+        // Emit telemetry on every scored turn — both triggering and
+        // non-triggering — so operators can fit the threshold to real
+        // traffic distributions. Fire-and-forget: `addTurn` does NOT
+        // await the ledger append, so slow/contended filesystems cannot
+        // add JSONL-append latency to every `processTurn`. But we DO
+        // serialize writes through a promise chain so concurrent
+        // appends settle in wall-clock order — the report path assumes
+        // chronological tail rows and reads the most recent as the
+        // "current" threshold.
+        //
+        // Project only the fields we need into the queue entry rather
+        // than capturing the full `BufferTurn` — under slow filesystem
+        // latency the chain can back up, and we must not retain the
+        // (potentially large) `turn.content` string for every pending
+        // append.
+        this.queueSurpriseTelemetryWrite({
+          bufferKey,
+          turnRole: turn.role,
+          sessionKey:
+            typeof turn.sessionKey === "string" ? turn.sessionKey : null,
+          surpriseScore: surprise,
+          triggered,
+          turnCountInWindow: entry.turns.length,
+          // Stamp at decision time so backpressure on the write chain
+          // does not shift the event's apparent moment away from when
+          // the turn was actually scored.
+          timestamp: new Date().toISOString(),
+          // Snapshot the threshold used to compute `triggered` so a
+          // concurrent config mutation cannot retroactively change
+          // what the ledger row claims the decision was against.
+          threshold: this.config.bufferSurpriseThreshold,
+        });
+      }
+    }
 
     log.debug(
       `buffer[${bufferKey}]: ${entry.turns.length} turns, signal=${signal.level}, decision=${decision}`,
@@ -151,6 +309,136 @@ export class SmartBuffer {
     this.pruneEntries([bufferKey]);
     await this.save();
     return decision;
+  }
+
+  /**
+   * Enqueue a telemetry append on the serialized write chain.
+   *
+   * The chain is a classic `writeChain = writeChain.then(fn).catch(...)`
+   * — each link waits for the previous to settle before its append
+   * starts, so out-of-order chronology cannot happen even under
+   * variable filesystem latency. We always attach `.catch` so one
+   * rejection does not poison the chain for the rest of the session
+   * (CLAUDE.md rule #40). The error is logged through
+   * `emitSurpriseEventSafe` itself, which swallows its own rejections.
+   *
+   * Public surface is deliberately narrow — only `addTurn` should call
+   * this, so the surprise telemetry path stays centralized.
+   */
+  private queueSurpriseTelemetryWrite(params: SurpriseTelemetryQueueEntry): void {
+    this.surpriseTelemetryWriteChain = this.surpriseTelemetryWriteChain
+      .then(() => this.emitSurpriseEventSafe(params))
+      .catch(() => {
+        // `emitSurpriseEventSafe` already handles the logging. We
+        // swallow here only so one failure does not break the chain
+        // for future writes.
+      });
+  }
+
+  /**
+   * Append a single `BUFFER_SURPRISE` telemetry row (issue #563 PR 3).
+   *
+   * Deliberately swallows write errors: the buffer must never fail to
+   * record a turn because the observation ledger is read-only, out of
+   * disk, or otherwise unhappy. The log line at debug lets operators
+   * confirm the path fired without polluting the error channel.
+   */
+  private async emitSurpriseEventSafe(
+    params: SurpriseTelemetryQueueEntry,
+  ): Promise<void> {
+    const storage = this.storage as StorageManager & {
+      appendBufferSurpriseEvents?: (
+        events: BufferSurpriseEvent[],
+      ) => Promise<number>;
+    };
+    if (typeof storage.appendBufferSurpriseEvents !== "function") {
+      // Older StorageManager / test double without the telemetry sink.
+      // Silently skip — core path is still covered by the log line above.
+      return;
+    }
+    const event: BufferSurpriseEvent = {
+      event: "BUFFER_SURPRISE",
+      // Use the decision-time stamp captured when the event was
+      // queued, NOT `Date.now()` here — backpressure on the write
+      // chain could otherwise shift timestamps into the future relative
+      // to when the turn was scored.
+      timestamp: params.timestamp,
+      bufferKey: params.bufferKey,
+      sessionKey: params.sessionKey,
+      turnRole: params.turnRole,
+      surpriseScore: params.surpriseScore,
+      // Use the snapshotted threshold from the queue entry, not the
+      // live config — see `SurpriseTelemetryQueueEntry.threshold`
+      // doc for the rationale.
+      threshold: params.threshold,
+      triggeredFlush: params.triggered,
+      turnCountInWindow: params.turnCountInWindow,
+    };
+    try {
+      await storage.appendBufferSurpriseEvents([event]);
+    } catch (err) {
+      // Same guard as `computeSurpriseSafe`: non-Error rejections must
+      // not crash the telemetry helper, which would defeat the whole
+      // point of isolating the ledger write from the hot path.
+      log.debug(
+        `buffer[${params.bufferKey}]: surprise telemetry write failed, continuing: ${describeError(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Invoke the injected surprise probe defensively. Any error (probe throws,
+   * embedder unavailable, timeout) is swallowed and logged at debug: the
+   * surprise path must never crash the happy-path trigger evaluation. A
+   * `null` return indicates "no score available, fall through to existing
+   * triggers".
+   */
+  private async computeSurpriseSafe(
+    bufferKey: string,
+    turn: BufferTurn,
+    entry: BufferEntryState,
+  ): Promise<number | null> {
+    if (!this.surpriseProbe) return null;
+    // The current turn was just pushed into entry.turns; exclude it from the
+    // corpus so the probe never compares a turn to itself.
+    const prior = entry.turns.length > 0
+      ? entry.turns.slice(0, -1)
+      : [];
+    try {
+      // Hard timeout around the probe so a hung embedder cannot stall
+      // `addTurn()` before `save()`. A slow probe would otherwise
+      // prevent the just-appended turn from ever being persisted. The
+      // timeout is a soft bound — we race it against the probe, take
+      // whichever settles first, and treat the timeout as
+      // "probe unavailable, fall through" rather than an error that
+      // surfaces to the caller.
+      const score = await probeWithTimeout(
+        this.surpriseProbe.scoreTurn(bufferKey, turn, prior),
+        this.config.bufferSurpriseProbeTimeoutMs,
+      );
+      if (score === null) return null;
+      if (typeof score !== "number" || !Number.isFinite(score)) {
+        log.debug(
+          `buffer[${bufferKey}]: surprise probe returned non-finite score (${String(score)}), ignoring`,
+        );
+        return null;
+      }
+      // Defensive clamp: formula lives in buffer-surprise.ts, but we never
+      // want a misbehaving probe to inject an out-of-range value into the
+      // threshold comparison.
+      if (score < 0) return 0;
+      if (score > 1) return 1;
+      return score;
+    } catch (err) {
+      // `err` may be any thrown value — `throw null` and
+      // `Promise.reject("x")` are both legal. Accessing `.message` on a
+      // non-Error would itself throw and defeat the failure-isolation
+      // contract, so describe the value safely.
+      log.debug(
+        `buffer[${bufferKey}]: surprise probe failed, falling back to existing triggers: ${describeError(err)}`,
+      );
+      return null;
+    }
   }
 
   private evaluate(entry: BufferEntryState, signalLevel: SignalLevel): TriggerDecision {
@@ -197,7 +485,77 @@ export class SmartBuffer {
   getTurns(bufferKey = "default"): BufferTurn[] {
     const entry = this.peekEntry(bufferKey);
     if (!entry) return [];
-    return [...entry.turns];
+    const retained = entry.retainedTurns ?? [];
+    // Retained turns (from a previous defer verdict, issue #562 PR 2) are
+    // prepended so the chronological order — oldest context first — is
+    // preserved for the next extraction pass.
+    return [...retained, ...entry.turns];
+  }
+
+  /**
+   * Retain a subset of the current turns across `clearAfterExtraction` so a
+   * future extraction pass sees the context behind a deferred candidate
+   * (issue #562, PR 2). Callers pass the turns that were seen during the
+   * current extraction; the buffer keeps the tail (latest `max` turns) as
+   * the retention window. Passing an empty array or `max <= 0` clears the
+   * retention slot instead.
+   */
+  async retainDeferredTurns(
+    bufferKey: string,
+    turns: BufferTurn[],
+    max = 10,
+  ): Promise<void> {
+    await this.load();
+    const entry = this.entryFor(bufferKey);
+    if (!Array.isArray(turns) || turns.length === 0 || max <= 0) {
+      delete entry.retainedTurns;
+    } else {
+      // Guard `slice(-max)` against `max === 0` (CLAUDE.md gotcha 27):
+      // `slice(-0)` equals `slice(0)` and would return ALL entries. We
+      // already early-return above when max <= 0.
+      const tail = turns.slice(-max);
+      // Copy explicit fields only — never spread an external object into a
+      // plain object because spread preserves any own `__proto__` /
+      // `constructor` keys that may have arrived via JSON deserialization
+      // of untrusted input (CodeQL js/prototype-polluting-assignment).
+      entry.retainedTurns = tail.map<BufferTurn>((t) => {
+        const copy: BufferTurn = {
+          role: t.role,
+          content: typeof t.content === "string" ? t.content : "",
+          timestamp:
+            typeof t.timestamp === "string"
+              ? t.timestamp
+              : new Date().toISOString(),
+        };
+        if (typeof t.sessionKey === "string") copy.sessionKey = t.sessionKey;
+        if (typeof t.logicalSessionKey === "string") {
+          copy.logicalSessionKey = t.logicalSessionKey;
+        }
+        if (
+          t.providerThreadId === null ||
+          typeof t.providerThreadId === "string"
+        ) {
+          copy.providerThreadId = t.providerThreadId;
+        }
+        if (typeof t.turnFingerprint === "string") {
+          copy.turnFingerprint = t.turnFingerprint;
+        }
+        if (typeof t.persistProcessedFingerprint === "boolean") {
+          copy.persistProcessedFingerprint = t.persistProcessedFingerprint;
+        }
+        return copy;
+      });
+    }
+    await this.save();
+  }
+
+  /**
+   * Return the current retention window (issue #562, PR 2). Primarily for
+   * tests and diagnostics.
+   */
+  getRetainedDeferredTurns(bufferKey = "default"): BufferTurn[] {
+    const entry = this.peekEntry(bufferKey);
+    return entry?.retainedTurns ? [...entry.retainedTurns] : [];
   }
 
   async findBufferKeyForSession(sessionKey: string): Promise<string | null> {
@@ -249,4 +607,79 @@ export class SmartBuffer {
   getExtractionCount(bufferKey = "default"): number {
     return this.peekEntry(bufferKey)?.extractionCount ?? 0;
   }
+
+  /**
+   * Await any pending `BUFFER_SURPRISE` telemetry writes.
+   *
+   * The telemetry path is fire-and-forget from the hot path's point of
+   * view, but tests and before-exit hooks sometimes need to make sure
+   * the ledger has been flushed before they assert on its contents or
+   * close the process. This method resolves once the current chain
+   * head has settled; new writes scheduled after this call return a
+   * separate, later settlement.
+   *
+   * Never throws — the chain already catches its own rejections.
+   */
+  async flushSurpriseTelemetry(): Promise<void> {
+    await this.surpriseTelemetryWriteChain;
+  }
+}
+
+/**
+ * Render an arbitrary thrown value as a short string for debug logging.
+ *
+ * JavaScript permits throwing *any* value (`throw null`,
+ * `Promise.reject("x")`, `throw { reason: "timeout" }`) — not just
+ * `Error` instances. The defensive catch blocks in `SmartBuffer` must
+ * never themselves throw while trying to log the failure, or they
+ * would defeat the whole point of isolating the surprise path from the
+ * core extraction decision.
+ */
+function describeError(err: unknown): string {
+  if (err instanceof Error) return err.message;
+  if (err === null) return "null";
+  if (err === undefined) return "undefined";
+  if (typeof err === "string") return err;
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+/**
+ * Sentinel error class for the probe timeout path. Catching it via
+ * `instanceof` lets the buffer's surprise helper distinguish a timeout
+ * from a probe rejection (which could carry operational context the
+ * operator wants to see).
+ */
+class ProbeTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`probe exceeded ${timeoutMs}ms`);
+    this.name = "ProbeTimeoutError";
+  }
+}
+
+/**
+ * Race `inflight` against a timeout clock. Resolves with `inflight`'s
+ * value if it settles first, otherwise rejects with `ProbeTimeoutError`.
+ * The timer is cleared in both branches so a fast-resolving probe does
+ * not leak a handle that would keep the Node event loop alive.
+ */
+function probeWithTimeout<T>(
+  inflight: Promise<T>,
+  timeoutMs: number,
+): Promise<T> {
+  let timer: NodeJS.Timeout | null = null;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new ProbeTimeoutError(timeoutMs)), timeoutMs);
+    // `.unref()` so the timer does not hold the event loop open if the
+    // caller decides the probe result is no longer interesting.
+    if (typeof (timer as NodeJS.Timeout).unref === "function") {
+      (timer as NodeJS.Timeout).unref();
+    }
+  });
+  return Promise.race([inflight, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }

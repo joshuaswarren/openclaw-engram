@@ -1,5 +1,7 @@
 import { stat } from "node:fs/promises";
 import { AccessIdempotencyStore, hashAccessIdempotencyPayload } from "./access-idempotency.js";
+import { AccessAuditAdapter, type AccessAuditConfig, type AccessAuditResult } from "./access-audit.js";
+import type { AnomalyDetectorResult } from "./recall-audit-anomaly.js";
 import { WorkStorage } from "./work/storage.js";
 import {
   exportWorkBoardMarkdown,
@@ -14,6 +16,7 @@ import {
   type ExplicitCaptureInput,
   type ValidExplicitCapture,
 } from "./explicit-capture.js";
+import { CrossNamespaceBudget, type BudgetDecision } from "./cross-namespace-budget.js";
 import { log } from "./logger.js";
 import {
   buildQualityScore,
@@ -37,7 +40,7 @@ import {
   toMemoryPathRel,
 } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
-import { canReadNamespace, canWriteNamespace, resolvePrincipal } from "./namespaces/principal.js";
+import { canReadNamespace, canWriteNamespace, defaultNamespaceForPrincipal, recallNamespacesForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type {
   GraphRecallSnapshot,
@@ -81,6 +84,11 @@ import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
 import type { SemanticDedupLookup } from "./dedup/semantic.js";
 import { toRecallExplainJson } from "./recall-explain-renderer.js";
+import {
+  recordMemoryOutcome,
+  type MemoryOutcomeKind,
+  type RecordMemoryOutcomeResult,
+} from "./memory-worth-outcomes.js";
 
 export class EngramAccessInputError extends Error {}
 
@@ -169,6 +177,8 @@ export interface EngramAccessRecallResponse {
   fallbackUsed: boolean;
   sourcesUsed: string[];
   budgetsApplied?: LastRecallSnapshot["budgetsApplied"];
+  auditAnomalies?: AnomalyDetectorResult;
+  budgetWarning?: BudgetDecision;
   latencyMs?: number;
   debug?: {
     snapshot?: LastRecallSnapshot;
@@ -650,9 +660,39 @@ function compareBrowseMemory(
 export class EngramAccessService {
   private readonly idempotency: AccessIdempotencyStore;
   private readonly idempotencyLocks = new Map<string, Promise<void>>();
+  private readonly budget: CrossNamespaceBudget;
+  private readonly auditAdapter: AccessAuditAdapter | null;
 
   constructor(private readonly orchestrator: Orchestrator) {
     this.idempotency = new AccessIdempotencyStore(orchestrator.config.memoryDir);
+    this.budget = new CrossNamespaceBudget({
+      enabled: orchestrator.config.recallCrossNamespaceBudgetEnabled,
+      windowMs: orchestrator.config.recallCrossNamespaceBudgetWindowMs,
+      softLimit: orchestrator.config.recallCrossNamespaceBudgetSoftLimit,
+      hardLimit: orchestrator.config.recallCrossNamespaceBudgetHardLimit,
+    });
+
+    const auditEnabled = orchestrator.config.recallAuditAnomalyDetectionEnabled === true;
+    const auditLogEnabled = false; // Audit JSONL logging — off until wired to a directory
+    if (auditEnabled || auditLogEnabled) {
+      const auditConfig: AccessAuditConfig = {
+        audit: {
+          enabled: auditLogEnabled,
+          rootDir: orchestrator.config.memoryDir,
+        },
+        detection: {
+          enabled: auditEnabled,
+          windowMs: orchestrator.config.recallAuditAnomalyWindowMs,
+          repeatQueryLimit: orchestrator.config.recallAuditAnomalyRepeatQueryLimit,
+          namespaceWalkLimit: orchestrator.config.recallAuditAnomalyNamespaceWalkLimit,
+          highCardinalityReturnLimit: orchestrator.config.recallAuditAnomalyHighCardinalityLimit,
+          rapidFireLimit: orchestrator.config.recallAuditAnomalyRapidFireLimit,
+        },
+      };
+      this.auditAdapter = new AccessAuditAdapter(auditConfig);
+    } else {
+      this.auditAdapter = null;
+    }
   }
 
   get briefingEnabled(): boolean {
@@ -1054,7 +1094,87 @@ export class EngramAccessService {
     }
     const namespaceOverride = this.resolveRecallNamespace(request.namespace, request.sessionKey);
     const namespace = namespaceOverride ?? this.orchestrator.config.defaultNamespace;
+    // Normalize mode early so that no_recall / invalid modes skip budget
+    // accounting (Codex P1: budget recorded before mode validation).
     const mode = this.normalizeRecallMode(request.mode);
+    const principal = resolvePrincipal(request.sessionKey, this.orchestrator.config);
+    const principalNamespace = defaultNamespaceForPrincipal(principal, this.orchestrator.config);
+    // Skip budget checks for modes that never perform a cross-namespace read.
+    const modeSkipsBudget = mode === "no_recall";
+    // Derive the full set of namespaces the orchestrator will actually search.
+    // When no explicit override is provided, `recallNamespacesForPrincipal()` may
+    // expand to shared / policy-default namespaces.  Budget must be checked
+    // against every cross-namespace entry in the effective set so that omitting
+    // `namespace` cannot bypass the limiter (Cursor/Codex review feedback).
+    //
+    // NOTE: coding overlays (branch/project scope) are resolved inside
+    // orchestrator.recall() AFTER this check.  The access-service does not
+    // duplicate that resolution here to avoid tight coupling.  Coding-overlay
+    // namespaces are a second-layer defense covered by the anomaly detector
+    // (PR 5/5 of issue #565).
+    const effectiveNamespaces = namespaceOverride
+      ? [namespaceOverride]
+      : recallNamespacesForPrincipal(principal, this.orchestrator.config);
+    let budgetDecision: BudgetDecision;
+    if (modeSkipsBudget) {
+      budgetDecision = {
+        allowed: true as const,
+        reason: "allowed-same-namespace" as const,
+        count: 0,
+        limit: {
+          softLimit: this.orchestrator.config.recallCrossNamespaceBudgetSoftLimit ?? 10,
+          hardLimit: this.orchestrator.config.recallCrossNamespaceBudgetHardLimit ?? 30,
+          windowMs: this.orchestrator.config.recallCrossNamespaceBudgetWindowMs ?? 60_000,
+        },
+      };
+    } else {
+      // Peek at every effective namespace to determine whether ANY would be
+      // cross-namespace WITHOUT recording side effects (Cursor review:
+      // multi-count bug).  Record a single budget event only when at least
+      // one effective namespace differs from the principal's self namespace.
+      let anyCrossNamespace = false;
+      let denied: BudgetDecision | null = null;
+      for (const ns of effectiveNamespaces) {
+        const peek = this.budget.peek({
+          principal,
+          principalNamespace,
+          queryNamespace: ns,
+        });
+        if (peek.reason !== "allowed-same-namespace") {
+          anyCrossNamespace = true;
+        }
+        if (!peek.allowed) {
+          denied = peek;
+          break;
+        }
+      }
+      if (denied) {
+        // The peek projected a denial — deny without recording so the
+        // bucket is not inflated by rejected attempts.
+        budgetDecision = denied;
+      } else if (anyCrossNamespace) {
+        budgetDecision = this.budget.record(principal);
+      } else {
+        budgetDecision = {
+          allowed: true as const,
+          reason: "allowed-same-namespace" as const,
+          count: 0,
+          limit: {
+            softLimit: this.orchestrator.config.recallCrossNamespaceBudgetSoftLimit ?? 10,
+            hardLimit: this.orchestrator.config.recallCrossNamespaceBudgetHardLimit ?? 30,
+            windowMs: this.orchestrator.config.recallCrossNamespaceBudgetWindowMs ?? 60_000,
+          },
+        };
+      }
+      if (!budgetDecision.allowed) {
+        throw new EngramAccessInputError(
+          `recall denied: cross-namespace budget exceeded (${budgetDecision.count}/${budgetDecision.limit.hardLimit} in ${budgetDecision.limit.windowMs}ms window)`,
+        );
+      }
+      // Prune expired principal buckets to prevent unbounded Map growth from
+      // high-cardinality / transient principals (Codex P2 review feedback).
+      this.budget.gc();
+    }
     const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
     const recallOptions: RecallInvocationOptions = {
       namespace: namespaceOverride,
@@ -1077,6 +1197,39 @@ export class EngramAccessService {
       request.sessionKey,
     );
 
+    // Fire-and-forget audit recording. Must never block or crash recall.
+    let auditAnomalies: AccessAuditResult["anomalies"] | undefined;
+    if (this.auditAdapter) {
+      try {
+        const resolvedAgentId = resolvePrincipal(
+          request.sessionKey,
+          this.orchestrator.config,
+        );
+        const auditEntry = {
+          ts: new Date().toISOString(),
+          sessionKey: request.sessionKey ?? "",
+          agentId: resolvedAgentId,
+          trigger: "access-surface",
+          queryText: query,
+          candidateMemoryIds: snapshot?.memoryIds ?? [],
+          summary: context.slice(0, 200) || null,
+          injectedChars: context.length,
+          toggleState: "enabled" as const,
+          latencyMs: Date.now() - startedAt,
+          plannerMode: snapshot?.plannerMode ?? mode,
+          requestedMode: mode,
+          fallbackUsed: snapshot?.fallbackUsed ?? false,
+        };
+        const auditResult = await this.auditAdapter.record(
+          resolvedAgentId || "__anonymous__",
+          auditEntry,
+        );
+        auditAnomalies = auditResult.anomalies;
+      } catch {
+        // Audit failures must never crash the recall path.
+      }
+    }
+
     return {
       query,
       sessionKey: request.sessionKey,
@@ -1091,6 +1244,8 @@ export class EngramAccessService {
       fallbackUsed: snapshot?.fallbackUsed ?? false,
       sourcesUsed: snapshot?.sourcesUsed ?? [],
       budgetsApplied: snapshot?.budgetsApplied,
+      auditAnomalies,
+      budgetWarning: budgetDecision.reason === "warn-over-soft" ? budgetDecision : undefined,
       latencyMs: snapshot?.latencyMs ?? (Date.now() - startedAt),
       debug,
     };
@@ -2963,6 +3118,51 @@ export class EngramAccessService {
       request.note,
     );
     return { recorded: true };
+  }
+
+  /**
+   * Record a Memory Worth outcome observation (issue #560 PR 3).
+   *
+   * This is distinct from `memoryFeedback` — feedback is a human thumbs
+   * up/down on whether a recalled memory was relevant; outcome is an
+   * automated signal about whether the session that consumed the memory
+   * ultimately succeeded or failed. Outcomes feed the Laplace-smoothed
+   * worth score (`computeMemoryWorth`, PR 2) that PR 4 will use to
+   * downweight memories correlated with bad sessions.
+   *
+   * The underlying writer only touches fact-category memories. Corrections,
+   * procedures, and other kinds return `{ ok: false, reason:
+   * "ineligible_category" }` so a ledger drainer doesn't need to pre-filter.
+   */
+  async memoryOutcome(request: {
+    memoryId: string;
+    outcome: MemoryOutcomeKind;
+    namespace?: string;
+    principal?: string;
+    sessionKey?: string;
+    timestamp?: string;
+  }): Promise<RecordMemoryOutcomeResult> {
+    if (request.memoryId.includes("/") || request.memoryId.includes("\\")) {
+      throw new EngramAccessInputError(
+        "memoryId must not contain path separators",
+      );
+    }
+    const resolvedNs = this.resolveWritableNamespace(
+      request.namespace,
+      request.sessionKey,
+      request.principal,
+    );
+    const storage = await this.orchestrator.getStorage(resolvedNs);
+    // We only have the ID at the access surface, but `recordMemoryOutcome`
+    // accepts a path for the benefit of ledger-driven callers that already
+    // have the path in hand. Build the conventional `<id>.md` shape —
+    // `memoryIdFromPath` extracts the basename so the intermediate
+    // directory layout doesn't matter.
+    return recordMemoryOutcome(storage, {
+      memoryPath: `${request.memoryId}.md`,
+      outcome: request.outcome,
+      timestamp: request.timestamp,
+    });
   }
 
   async memoryPromote(request: {

@@ -10,6 +10,7 @@ import { createVersion as createPageVersion, type VersioningConfig, type Version
 import {
   isConsolidationOperator,
   isValidDerivedFromEntry,
+  type ConsolidationOperator,
 } from "./consolidation-operator.js";
 import {
   matchEntitySchemaSection,
@@ -53,6 +54,7 @@ import type {
   MemoryLifecycleStateSummary,
   MemoryProjectionCurrentState,
   BehaviorSignalEvent,
+  BufferSurpriseEvent,
   MemorySummary,
   MetaState,
   CompressionGuidelineOptimizerState,
@@ -1919,6 +1921,43 @@ function buildEntitySchemaCacheKey(entitySchemas?: PluginConfig["entitySchemas"]
   return JSON.stringify(normalized);
 }
 
+/**
+ * Full-schema type guard for a `BUFFER_SURPRISE` telemetry row
+ * (issue #563 PR 3).
+ *
+ * The reader applies `limit` over the count of VALID rows, so
+ * applying only a partial check (e.g. "has a finite surpriseScore")
+ * and then deferring the rest of validation to
+ * `reportBufferSurpriseDistribution` would silently count
+ * schema-incomplete rows toward the limit, pushing genuinely-valid
+ * earlier rows out of the report window. Validate everything the
+ * downstream report requires at read time so the limit semantics and
+ * the distribution semantics stay consistent.
+ */
+function isValidBufferSurpriseEvent(value: unknown): value is BufferSurpriseEvent {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  if (v.event !== "BUFFER_SURPRISE") return false;
+  if (typeof v.timestamp !== "string" || v.timestamp.length === 0) return false;
+  if (!Number.isFinite(Date.parse(v.timestamp))) return false;
+  if (typeof v.bufferKey !== "string" || v.bufferKey.length === 0) return false;
+  if (v.sessionKey !== null && typeof v.sessionKey !== "string") return false;
+  if (v.turnRole !== "user" && v.turnRole !== "assistant") return false;
+  if (typeof v.surpriseScore !== "number" || !Number.isFinite(v.surpriseScore)) {
+    return false;
+  }
+  // Surprise is documented as a value in [0, 1] — reject out-of-range
+  // rows at read time so they do not consume the caller's `limit`.
+  if (v.surpriseScore < 0 || v.surpriseScore > 1) return false;
+  if (typeof v.threshold !== "number" || !Number.isFinite(v.threshold)) return false;
+  if (v.threshold < 0 || v.threshold > 1) return false;
+  if (typeof v.triggeredFlush !== "boolean") return false;
+  if (typeof v.turnCountInWindow !== "number" || !Number.isFinite(v.turnCountInWindow)) {
+    return false;
+  }
+  return true;
+}
+
 export class StorageManager {
   private knowledgeIndexCache: { result: string; builtAt: number } | null = null;
   private static readonly KNOWLEDGE_INDEX_CACHE_TTL_MS = 600_000; // 10 minutes (entity mutations invalidate)
@@ -2013,6 +2052,48 @@ export class StorageManager {
     }
   }
 
+  /**
+   * Consolidation provenance helper (issue #561 PR 2).
+   *
+   * Captures the current on-disk content of a source memory as a
+   * page-version snapshot so the downstream consolidated write can record a
+   * `derived_from` pointer that actually resolves.  Returns the
+   * `"<relative-path>:<versionId>"` entry expected by the `derived_from`
+   * frontmatter field.
+   *
+   * Returns `null` when versioning is disabled (snapshots would not be
+   * created), when the file does not exist (nothing to snapshot), or when
+   * the snapshot write itself fails (best-effort — callers skip the entry
+   * rather than block the consolidation).
+   */
+  async snapshotForProvenance(filePath: string): Promise<string | null> {
+    if (!this._versioningConfig || !this._versioningConfig.enabled) return null;
+    let existing: string;
+    try {
+      existing = await readFile(filePath, "utf-8");
+    } catch {
+      return null;
+    }
+    try {
+      const version = await createPageVersion(
+        filePath,
+        existing,
+        "consolidation",
+        this._versioningConfig,
+        log,
+        undefined,
+        this.baseDir,
+      );
+      const rel = path.relative(this.baseDir, filePath).split(path.sep).join("/");
+      return `${rel}:${version.versionId}`;
+    } catch (err) {
+      log.warn(
+        `storage.snapshotForProvenance: failed to snapshot ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
+  }
+
   constructor(
     private readonly baseDir: string,
     private readonly entitySchemas?: PluginConfig["entitySchemas"],
@@ -2094,6 +2175,9 @@ export class StorageManager {
   }
   private get proceduresDir(): string {
     return path.join(this.baseDir, "procedures");
+  }
+  private get reasoningTracesDir(): string {
+    return path.join(this.baseDir, "reasoning-traces");
   }
   private get entitiesDir(): string {
     return path.join(this.baseDir, "entities");
@@ -2278,6 +2362,19 @@ export class StorageManager {
   private get behaviorSignalsPath(): string {
     return path.join(this.stateDir, "behavior-signals.jsonl");
   }
+  /**
+   * Buffer surprise telemetry ledger (issue #563 PR 3).
+   *
+   * Append-only JSONL of per-turn `BUFFER_SURPRISE` events emitted by
+   * `SmartBuffer` when `bufferSurpriseTriggerEnabled` is on. Each row
+   * captures the score, the threshold in force at the time, whether the
+   * turn caused an extract_now upgrade, and the buffer size. Kept in
+   * `state/` alongside the other append-only ledgers so cleanup and
+   * governance sweeps can treat it uniformly.
+   */
+  private get bufferSurpriseLedgerPath(): string {
+    return path.join(this.stateDir, "buffer-surprise-ledger.jsonl");
+  }
 
   /**
    * Load user-defined entity aliases from config/aliases.json in the memory store.
@@ -2303,6 +2400,7 @@ export class StorageManager {
     const today = new Date().toISOString().slice(0, 10);
     await mkdir(path.join(this.factsDir, today), { recursive: true });
     await mkdir(path.join(this.proceduresDir, today), { recursive: true });
+    await mkdir(path.join(this.reasoningTracesDir, today), { recursive: true });
     await mkdir(this.correctionsDir, { recursive: true });
     await mkdir(this.entitiesDir, { recursive: true });
     await mkdir(this.stateDir, { recursive: true });
@@ -2350,6 +2448,15 @@ export class StorageManager {
        */
       contentHashSource?: string;
       status?: MemoryStatus;
+      /**
+       * Consolidation provenance (issue #561 PR 2).  When the caller is a
+       * consolidation / supersession / dedup-merge path, these fields wire
+       * the page-version snapshots the new memory was derived from and the
+       * operator that produced it.  Persisted onto frontmatter as
+       * `derived_from` + `derived_via`; validated at serialize time.
+       */
+      derivedFrom?: string[];
+      derivedVia?: ConsolidationOperator;
     } = {},
   ): Promise<string> {
     await this.ensureDirectories();
@@ -2395,6 +2502,22 @@ export class StorageManager {
     if (options.status !== undefined) {
       fm.status = options.status;
     }
+    // Consolidation provenance (issue #561 PR 2).  Fields are independent
+    // at the storage layer:
+    //   - `derivedFrom: []` → coerced to undefined so we never emit the
+    //     invalid `derived_from: []` form the write validator rejects.
+    //   - `derivedVia` may stand alone: an orphan operator marker (e.g.
+    //     `derived_via: merge` with no `derived_from`) is the correct
+    //     serialization when page-versioning is disabled and snapshots
+    //     can't be captured.  Downstream logic still needs to identify
+    //     the memory as a consolidation output.  Review feedback: PR #624
+    //     codex / cursor threads.
+    if (options.derivedFrom !== undefined && options.derivedFrom.length > 0) {
+      fm.derived_from = options.derivedFrom;
+    }
+    if (options.derivedVia !== undefined) {
+      fm.derived_via = options.derivedVia;
+    }
 
     // Append structured attributes as searchable suffix so QMD indexes them.
     // normalizeAttributePairs sorts and lowercases keys so the enriched content
@@ -2431,6 +2554,11 @@ export class StorageManager {
     } else if (category === "procedure") {
       await mkdir(path.join(this.proceduresDir, today), { recursive: true });
       filePath = path.join(this.proceduresDir, today, `${id}.md`);
+    } else if (category === "reasoning_trace") {
+      // Issue #564 PR 3: reasoning traces live in their own subtree so recall
+      // can filter on path cheaply without parsing frontmatter.
+      await mkdir(path.join(this.reasoningTracesDir, today), { recursive: true });
+      filePath = path.join(this.reasoningTracesDir, today, `${id}.md`);
     } else {
       filePath = path.join(this.factsDir, today, `${id}.md`);
     }
@@ -2956,6 +3084,7 @@ export class StorageManager {
 
     await collectPaths(this.factsDir);
     await collectPaths(this.proceduresDir);
+    await collectPaths(this.reasoningTracesDir);
     await collectPaths(this.correctionsDir);
     return filePaths;
   }
@@ -3358,6 +3487,13 @@ export class StorageManager {
     }
     if (memory.frontmatter.category === "procedure") {
       return path.join(root, "procedures", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
+    }
+    if (memory.frontmatter.category === "reasoning_trace") {
+      // Issue #564 PR 3: preserve the dedicated reasoning-traces/ subtree
+      // across tier moves. Without this branch, hot→cold migration would
+      // funnel the memory into facts/, breaking isReasoningTracePath() and
+      // silently disabling the recall boost for migrated traces.
+      return path.join(root, "reasoning-traces", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
     }
     return path.join(root, "facts", this.resolveMemoryDateDir(memory), `${memory.frontmatter.id}.md`);
   }
@@ -3827,6 +3963,125 @@ export class StorageManager {
 
     await appendFile(this.memoryLifecycleLedgerPath, payload, "utf-8");
     return events.length;
+  }
+
+  /**
+   * Append a batch of `BUFFER_SURPRISE` telemetry events (issue #563 PR 3).
+   *
+   * Each event records a single buffer flush decision driven by the
+   * surprise gate. The ledger is consumed by
+   * `reportBufferSurpriseDistribution` (Doctor report) and by downstream
+   * benchmark analysis. This method is fire-and-forget by contract:
+   * callers log but do not fail the hot path if the append throws.
+   */
+  async appendBufferSurpriseEvents(
+    events: BufferSurpriseEvent[],
+  ): Promise<number> {
+    if (events.length === 0) return 0;
+    await this.ensureDirectories();
+
+    const nowIso = new Date().toISOString();
+    const payload = events
+      .map((event) => {
+        const normalized: BufferSurpriseEvent = {
+          ...event,
+          event: "BUFFER_SURPRISE",
+          timestamp:
+            event.timestamp && event.timestamp.length > 0
+              ? event.timestamp
+              : nowIso,
+        };
+        return `${JSON.stringify(normalized)}\n`;
+      })
+      .join("");
+
+    await appendFile(this.bufferSurpriseLedgerPath, payload, "utf-8");
+    return events.length;
+  }
+
+  /**
+   * Read the buffer-surprise ledger, most recent rows last.
+   *
+   * `limit` bounds the number of **valid rows** returned (not the
+   * number of raw lines parsed). We parse every row, discard malformed
+   * ones, then take the tail — so a partial/truncated trailing line
+   * (the common failure mode after an interrupted append) cannot hide
+   * otherwise-valid recent data above it.
+   *
+   * Non-positive / non-integer / non-finite limits return `[]` rather
+   * than the entire file, matching the other ledger readers in this
+   * class and protecting against `slice(-0.5)` → `slice(-0)` silently
+   * devolving into an unbounded parse.
+   *
+   * # Performance note
+   *
+   * For very large ledgers (issue #563 follow-up), a tail-first reader
+   * would avoid parsing the full file when only a recent window is
+   * needed. We keep the full-scan implementation here because:
+   *
+   *   - the ledger is opt-in (flag off by default), so early deployments
+   *     accumulate rows slowly;
+   *   - telemetry rows are small (~200 bytes), so even 100k rows parse
+   *     in well under a second;
+   *   - the governance archive/cleanup flow can trim the ledger when
+   *     size becomes a concern, reusing the existing maintenance hooks.
+   *
+   * Swap to a chunked tail-reader if production logs show this is a
+   * hot path — leaving that work for a follow-up keeps this PR scoped
+   * to correctness, not optimization.
+   */
+  async readBufferSurpriseEvents(
+    options: { limit?: number } = {},
+  ): Promise<BufferSurpriseEvent[]> {
+    let raw: string;
+    try {
+      raw = await readFile(this.bufferSurpriseLedgerPath, "utf-8");
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") return [];
+      throw err;
+    }
+
+    // Resolve the effective limit up front. Any non-finite / non-positive
+    // value returns no rows — callers who want "everything" should OMIT
+    // the `limit` key (treated as "no bound" below). We intentionally
+    // reject `Infinity` too, because the slice math `events.slice(-Inf)`
+    // is surprising and ambiguous; omit the key instead. Fractional
+    // values <1 floor to 0, which would make `slice(-0)` return the
+    // entire file — guard against that too.
+    let effectiveLimit: number | null = null;
+    if (options.limit !== undefined) {
+      if (
+        typeof options.limit !== "number" ||
+        !Number.isFinite(options.limit) ||
+        options.limit <= 0
+      ) {
+        return [];
+      }
+      const floored = Math.floor(options.limit);
+      if (floored <= 0) return [];
+      effectiveLimit = floored;
+    }
+
+    const lines = raw.split("\n");
+    const events: BufferSurpriseEvent[] = [];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (isValidBufferSurpriseEvent(parsed)) {
+          events.push(parsed);
+        }
+      } catch {
+        // Malformed row — fail open, skip.
+      }
+    }
+
+    if (effectiveLimit === null) return events;
+    // Slice over VALID rows, not raw lines, so malformed tails cannot
+    // mask good data above them.
+    return events.slice(-effectiveLimit);
   }
 
   async appendBehaviorSignals(events: BehaviorSignalEvent[]): Promise<number> {
@@ -5600,6 +5855,11 @@ export class StorageManager {
     } else if (category === "procedure") {
       await mkdir(path.join(this.proceduresDir, today), { recursive: true });
       filePath = path.join(this.proceduresDir, today, `${id}.md`);
+    } else if (category === "reasoning_trace") {
+      // Issue #564 PR 3: chunks of a reasoning_trace memory live alongside the
+      // parent in reasoning-traces/<date>/.
+      await mkdir(path.join(this.reasoningTracesDir, today), { recursive: true });
+      filePath = path.join(this.reasoningTracesDir, today, `${id}.md`);
     } else {
       filePath = path.join(this.factsDir, today, `${id}.md`);
     }

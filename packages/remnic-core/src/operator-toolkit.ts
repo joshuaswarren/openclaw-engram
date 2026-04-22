@@ -35,7 +35,17 @@ import {
   listMemoryGovernanceRuns,
   readMemoryGovernanceRunArtifact,
 } from "./maintenance/memory-governance.js";
-import type { FileHygieneConfig, MemoryFile, PluginConfig } from "./types.js";
+import {
+  runConsolidationProvenanceCheck,
+  type ConsolidationProvenanceReport,
+} from "./consolidation-provenance-check.js";
+import type {
+  BufferSurpriseEvent,
+  FileHygieneConfig,
+  MemoryFile,
+  PluginConfig,
+} from "./types.js";
+import { reportBufferSurpriseDistribution } from "./buffer-surprise-report.js";
 
 interface QmdRuntimeLike {
   probe(): Promise<boolean>;
@@ -1175,6 +1185,32 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // This is an informational check, never an error.
   checks.push(await summarizeMemoryWorthLegacyCounters(new StorageManager(config.memoryDir)));
 
+  // Buffer surprise telemetry distribution (issue #563 PR 3).
+  // Surfaces recent surprise scores so operators can calibrate the
+  // `bufferSurpriseThreshold` from real traffic. Never an error — an empty
+  // ledger is the expected state until the flag is turned on.
+  checks.push(
+    await summarizeBufferSurpriseDistribution(new StorageManager(config.memoryDir), config),
+  );
+
+  // Consolidation provenance integrity (issue #561 PR 4).
+  // Validates that every `derived_from` entry resolves to an on-disk
+  // page-version snapshot and every `derived_via` is a known operator.
+  // Broken provenance emits warnings with the offending file path — the
+  // check is informational (never an error) because a missing snapshot
+  // can legitimately occur after log pruning or versioning being disabled
+  // retroactively; operators need visibility, not a hard fail.  Review
+  // feedback (PR #634): the summarizer threads the configured
+  // `versioningSidecarDir` into the scan so deployments that override
+  // the default `.versions` directory get accurate results instead of
+  // false-missing warnings.
+  checks.push(await summarizeConsolidationProvenance(new StorageManager(config.memoryDir), config));
+
+  // Security mitigation status (issue #565).
+  // Reports whether the cross-namespace budget and anomaly detection
+  // mitigations are enabled and surfaces config values for operator review.
+  checks.push(summarizeSecurityMitigations(config));
+
   const summary = checks.reduce(
     (acc, check) => {
       acc[check.status] += 1;
@@ -1266,6 +1302,203 @@ export async function summarizeMemoryWorthLegacyCounters(
         ? "No Memory Worth–eligible memories on disk yet — counters will populate as facts are extracted."
         : `${legacy} of ${total} eligible memories have no Memory Worth counters yet (${instrumented} instrumented).`,
     details: { legacy, instrumented, total, ineligible },
+  };
+}
+
+/**
+ * Summarize the recent buffer-surprise telemetry distribution for the
+ * Doctor report (issue #563 PR 3).
+ *
+ * Reports mean/median/p90 surprise scores and the triggered-flush rate
+ * over the most recent window of ledger rows. An empty ledger is the
+ * expected state until `bufferSurpriseTriggerEnabled` is turned on — the
+ * check never escalates beyond `ok` / `warn` (ledger unreadable).
+ *
+ * Exported so tests can exercise the formatting without booting a real
+ * orchestrator.
+ */
+export async function summarizeBufferSurpriseDistribution(
+  storage: StorageManager,
+  config: PluginConfig,
+): Promise<OperatorDoctorCheck> {
+  const storageWithLedger = storage as StorageManager & {
+    readBufferSurpriseEvents?: (
+      opts: { limit?: number },
+    ) => Promise<BufferSurpriseEvent[]>;
+  };
+
+  // Defensive: older StorageManager builds (not yet rebuilt) may lack the
+  // reader. Do not fail the entire Doctor run in that case.
+  if (typeof storageWithLedger.readBufferSurpriseEvents !== "function") {
+    return {
+      key: "buffer_surprise_distribution",
+      status: "ok",
+      summary: "Buffer-surprise telemetry reader unavailable in this build.",
+      details: { available: false },
+    };
+  }
+
+  try {
+    const dist = await reportBufferSurpriseDistribution(
+      async (opts) =>
+        storageWithLedger.readBufferSurpriseEvents!({ limit: opts.limit }),
+      { limit: 200 },
+    );
+
+    if (dist.count === 0) {
+      return {
+        key: "buffer_surprise_distribution",
+        status: "ok",
+        summary: config.bufferSurpriseTriggerEnabled
+          ? "Surprise trigger is enabled but no telemetry has been recorded yet."
+          : "Surprise trigger is disabled; no telemetry expected.",
+        details: {
+          enabled: config.bufferSurpriseTriggerEnabled,
+          distribution: dist,
+        },
+      };
+    }
+
+    const pct = (value: number) => (value * 100).toFixed(1);
+    return {
+      key: "buffer_surprise_distribution",
+      status: "ok",
+      summary: `Recent surprise: mean=${dist.mean.toFixed(3)}, median=${dist.median.toFixed(3)}, p90=${dist.p90.toFixed(3)}, triggered=${pct(dist.triggeredRate)}% over ${dist.count} turns (threshold=${dist.currentThreshold ?? config.bufferSurpriseThreshold}).`,
+      details: {
+        enabled: config.bufferSurpriseTriggerEnabled,
+        distribution: dist,
+      },
+    };
+  } catch (err) {
+    return {
+      key: "buffer_surprise_distribution",
+      status: "warn",
+      summary: "Could not read buffer-surprise telemetry ledger.",
+      remediation:
+        "Retry `remnic doctor` after ensuring the memory state directory is readable.",
+      details: { error: String(err) },
+    };
+  }
+}
+
+/**
+ * Summarize the consolidation-provenance integrity scan for the doctor
+ * report (issue #561 PR 4).  Returns an `ok` check when no issues are
+ * found, `warn` otherwise.  Never returns `error` — a broken provenance
+ * pointer is informational because it can legitimately result from log
+ * pruning, versioning being disabled retroactively, or operator-driven
+ * archive operations.
+ *
+ * Exported so unit tests can exercise the summarization without booting a
+ * full orchestrator.
+ */
+
+function summarizeSecurityMitigations(
+  config: Pick<
+    PluginConfig,
+    | "recallCrossNamespaceBudgetEnabled"
+    | "recallCrossNamespaceBudgetWindowMs"
+    | "recallCrossNamespaceBudgetSoftLimit"
+    | "recallCrossNamespaceBudgetHardLimit"
+    | "recallAuditAnomalyDetectionEnabled"
+    | "recallAuditAnomalyWindowMs"
+    | "recallAuditAnomalyRepeatQueryLimit"
+    | "recallAuditAnomalyNamespaceWalkLimit"
+    | "recallAuditAnomalyHighCardinalityLimit"
+    | "recallAuditAnomalyRapidFireLimit"
+  >,
+): OperatorDoctorCheck {
+  const budgetEnabled = config.recallCrossNamespaceBudgetEnabled === true;
+  const anomalyEnabled = config.recallAuditAnomalyDetectionEnabled === true;
+
+  if (!budgetEnabled && !anomalyEnabled) {
+    return {
+      key: "security_mitigations",
+      status: "warn",
+      summary: "Memory-extraction mitigations are disabled (cross-namespace budget and anomaly detection off).",
+      remediation: "Enable recallCrossNamespaceBudgetEnabled and/or recallAuditAnomalyDetectionEnabled for production deployments. See docs/security/memory-extraction-threat-model.md.",
+      details: {
+        budgetEnabled: false,
+        anomalyDetectionEnabled: false,
+      },
+    };
+  }
+
+  const details: Record<string, unknown> = {
+    budgetEnabled,
+    anomalyDetectionEnabled: anomalyEnabled,
+  };
+
+  if (budgetEnabled) {
+    details.budgetConfig = {
+      windowMs: config.recallCrossNamespaceBudgetWindowMs,
+      softLimit: config.recallCrossNamespaceBudgetSoftLimit,
+      hardLimit: config.recallCrossNamespaceBudgetHardLimit,
+    };
+  }
+
+  if (anomalyEnabled) {
+    details.anomalyConfig = {
+      windowMs: config.recallAuditAnomalyWindowMs,
+      repeatQueryLimit: config.recallAuditAnomalyRepeatQueryLimit,
+      namespaceWalkLimit: config.recallAuditAnomalyNamespaceWalkLimit,
+      highCardinalityLimit: config.recallAuditAnomalyHighCardinalityLimit,
+      rapidFireLimit: config.recallAuditAnomalyRapidFireLimit,
+    };
+  }
+
+  return {
+    key: "security_mitigations",
+    status: "ok",
+    summary: `Memory-extraction mitigation config enabled: ${budgetEnabled ? "budget" : ""}${budgetEnabled && anomalyEnabled ? ", " : ""}${anomalyEnabled ? "anomaly detection" : ""}.`,
+    details: { ...details, configOnly: true },
+  };
+}
+
+export async function summarizeConsolidationProvenance(
+  storage: StorageManager,
+  config: Pick<PluginConfig, "memoryDir"> & { versioningSidecarDir?: string },
+): Promise<OperatorDoctorCheck> {
+  let report: ConsolidationProvenanceReport;
+  try {
+    report = await runConsolidationProvenanceCheck({
+      storage,
+      memoryDir: config.memoryDir,
+      // Honor the configured sidecar directory (PR #634 review): when an
+      // operator overrides `versioningSidecarDir`, the default `.versions`
+      // would point at the wrong location and every entry would report as
+      // missing.  Undefined falls back to the helper's default.
+      sidecarDir: config.versioningSidecarDir,
+    });
+  } catch (err) {
+    return {
+      key: "consolidation_provenance",
+      status: "warn",
+      summary: "Could not run consolidation-provenance integrity check.",
+      remediation: "Ensure the memory directory is readable and rerun `remnic doctor`.",
+      details: { error: String(err) },
+    };
+  }
+
+  if (report.issues.length === 0) {
+    return {
+      key: "consolidation_provenance",
+      status: "ok",
+      summary:
+        report.withProvenance === 0
+          ? "No consolidation-provenance memories on disk yet."
+          : `${report.withProvenance} consolidation-provenance memories verified (no broken references).`,
+      details: report,
+    };
+  }
+
+  return {
+    key: "consolidation_provenance",
+    status: "warn",
+    summary: `${report.issues.length} consolidation-provenance integrity issue(s) detected across ${report.withProvenance} memories with provenance frontmatter.`,
+    remediation:
+      "Broken pointers are informational. Inspect flagged memories, and if they should resolve, re-snapshot via a consolidation pass or accept pruning.",
+    details: report,
   };
 }
 

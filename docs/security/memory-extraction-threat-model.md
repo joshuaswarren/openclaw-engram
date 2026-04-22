@@ -325,7 +325,50 @@ Secondary metrics:
   concern and will be tracked separately if/when it materializes in the
   harness.
 
-## 10. References
+## 10. Mitigation wiring status (PRs #649–#652)
+
+PRs #638 and #639 introduced the `CrossNamespaceBudget` and
+`AccessAuditAdapter` classes, but they were not wired into the actual
+recall paths. PRs #649–#652 close this gap:
+
+| PR | Slice | Change | Status |
+|---|---|---|---|
+| #649 | 6 | Wire `CrossNamespaceBudget` into `EngramAccessService.recall()` | **Open** |
+| #650 | 7 | Wire `AccessAuditAdapter` into `EngramAccessService.recall()` | **Merged** |
+| #651 | 8 | Add `security_mitigations` check to `remnic doctor` | **Merged** |
+| #652 | 9 | Mitigation-aware ADAM target + mitigated baseline | **Open** |
+
+As of this writing, slices 7 and 8 (PRs #650, #651) are merged to
+`main`. Slices 6 and 9 (PRs #649, #652) are still open. Once #649
+lands, `CrossNamespaceBudget` will be invoked inside
+`EngramAccessService.recall()` alongside the already-wired
+`AccessAuditAdapter`.
+
+Both mitigations ship **disabled by default** (rule 48):
+- `recallCrossNamespaceBudgetEnabled: false`
+- `recallAuditAnomalyDetectionEnabled: false`
+
+Operators enable them explicitly in config. The `remnic doctor` command
+(wired in PR #651 via `summarizeSecurityMitigations` in
+`operator-toolkit.ts`) warns when both are disabled.
+
+### Mitigated baseline ASR (PR #652, pending merge)
+
+The mitigated baseline (PR #652, still open as of this writing) re-runs
+the T3 scenario with a cross-namespace budget of 30 queries per 60-second
+window:
+
+| Scenario | Queries | Budget limit | ASR |
+|---|---:|---:|---|
+| T3 unmitigated (baseline) | 200 | none | 0.0% (ACL enforced) |
+| T3 mitigated (budget=30/60s) | 200 | 30/60s | 0.0% (ACL + budget) |
+
+The T3 ASR was already 0.0% in the baseline because the synthetic
+target enforces namespace ACLs. The budget mitigation provides defense
+in depth — it would throttle a regression that accidentally disabled
+the ACL check.
+
+## 11. References
 
 - Issue #565 (this work).
 - ADAM — *Adaptive Data Extraction Attack*, arXiv:2604.09747 (Apr 2026).

@@ -72,6 +72,14 @@ import {
   runRetrievalDirectAnswerBenchmark,
 } from "./benchmarks/remnic/retrieval-direct-answer/runner.js";
 import {
+  retrievalGraphDefinition,
+  runRetrievalGraphBenchmark,
+} from "./benchmarks/remnic/retrieval-graph/runner.js";
+import {
+  retrievalReasoningTraceDefinition,
+  runRetrievalReasoningTraceBenchmark,
+} from "./benchmarks/remnic/retrieval-reasoning-trace/runner.js";
+import {
   codingRecallDefinition,
   runCodingRecallBenchmark,
 } from "./benchmarks/remnic/coding-recall/runner.js";
@@ -115,6 +123,14 @@ import {
   assistantSynthesisDefinition,
   runAssistantSynthesisBenchmark,
 } from "./benchmarks/remnic/assistant-synthesis/runner.js";
+import {
+  bufferSurpriseTriggerDefinition,
+  runBufferSurpriseTriggerBenchmark,
+} from "./benchmarks/remnic/buffer-surprise-trigger/runner.js";
+import {
+  contradictionDetectionDefinition,
+  runContradictionDetectionBenchmark,
+} from "./benchmarks/remnic/contradiction-detection/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -190,6 +206,14 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
     run: runRetrievalDirectAnswerBenchmark,
   },
   {
+    ...retrievalGraphDefinition,
+    run: runRetrievalGraphBenchmark,
+  },
+  {
+    ...retrievalReasoningTraceDefinition,
+    run: runRetrievalReasoningTraceBenchmark,
+  },
+  {
     ...codingRecallDefinition,
     run: runCodingRecallBenchmark,
   },
@@ -234,6 +258,14 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...assistantSynthesisDefinition,
     run: runAssistantSynthesisBenchmark,
+  },
+  {
+    ...bufferSurpriseTriggerDefinition,
+    run: runBufferSurpriseTriggerBenchmark,
+  },
+  {
+    ...contradictionDetectionDefinition,
+    run: runContradictionDetectionBenchmark,
   },
 ];
 

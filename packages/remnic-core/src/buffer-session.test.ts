@@ -183,6 +183,113 @@ test("SmartBuffer prunes stale logical session buffers to a bounded entry set", 
   assert.ok(!persistedKeys.includes("thread-0"));
 });
 
+// ---------------------------------------------------------------------------
+// Issue #562 PR 2 — defer retention
+// ---------------------------------------------------------------------------
+
+test("retainDeferredTurns preserves turns across clearAfterExtraction", async () => {
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  await buffer.addTurn("thread-a", makeTurn("thread-a", "deferred context one"));
+  await buffer.addTurn("thread-a", makeTurn("thread-a", "deferred context two"));
+
+  const liveTurns = buffer.getTurns("thread-a");
+  assert.equal(liveTurns.length, 2);
+
+  await buffer.retainDeferredTurns("thread-a", liveTurns);
+  await buffer.clearAfterExtraction("thread-a");
+
+  const afterClear = buffer.getTurns("thread-a");
+  assert.equal(afterClear.length, 2, "Retained turns must survive clearAfterExtraction");
+  assert.equal(afterClear[0]?.content, "deferred context one");
+  assert.equal(afterClear[1]?.content, "deferred context two");
+});
+
+test("retainDeferredTurns respects the max tail size", async () => {
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  const turns = Array.from({ length: 5 }, (_, i) =>
+    makeTurn("thread-a", `turn ${i}`),
+  );
+
+  await buffer.retainDeferredTurns("thread-a", turns, 2);
+  const retained = buffer.getRetainedDeferredTurns("thread-a");
+  assert.equal(retained.length, 2);
+  assert.equal(retained[0]?.content, "turn 3");
+  assert.equal(retained[1]?.content, "turn 4");
+});
+
+test("retainDeferredTurns with empty array clears the retention slot", async () => {
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  await buffer.retainDeferredTurns("thread-a", [makeTurn("thread-a", "x")], 5);
+  assert.equal(buffer.getRetainedDeferredTurns("thread-a").length, 1);
+
+  await buffer.retainDeferredTurns("thread-a", []);
+  assert.equal(buffer.getRetainedDeferredTurns("thread-a").length, 0);
+});
+
+test("retainDeferredTurns with max=0 clears the retention slot (slice -0 guard)", async () => {
+  // CLAUDE.md gotcha 27: `slice(-0)` equals `slice(0)` and would return all
+  // entries. The implementation must guard against this.
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  await buffer.retainDeferredTurns("thread-a", [makeTurn("thread-a", "x")], 5);
+  assert.equal(buffer.getRetainedDeferredTurns("thread-a").length, 1);
+
+  await buffer.retainDeferredTurns(
+    "thread-a",
+    [makeTurn("thread-a", "should-not-appear")],
+    0,
+  );
+  assert.equal(
+    buffer.getRetainedDeferredTurns("thread-a").length,
+    0,
+    "max=0 must clear the slot, not return all turns",
+  );
+});
+
+test("getTurns prepends retained deferred turns before live turns", async () => {
+  const storage = new FakeStorage({
+    turns: [],
+    lastExtractionAt: null,
+    extractionCount: 0,
+  });
+  const buffer = new SmartBuffer(parseConfig({}), storage as any);
+
+  await buffer.retainDeferredTurns(
+    "thread-a",
+    [makeTurn("thread-a", "old deferred context")],
+    10,
+  );
+  await buffer.addTurn("thread-a", makeTurn("thread-a", "new live turn"));
+
+  const all = buffer.getTurns("thread-a");
+  assert.equal(all.length, 2);
+  assert.equal(all[0]?.content, "old deferred context");
+  assert.equal(all[1]?.content, "new live turn");
+});
+
 test("SmartBuffer never prunes logical session buffers that still have pending turns", async () => {
   const entries = Object.fromEntries(
     Array.from({ length: 205 }, (_, index) => [

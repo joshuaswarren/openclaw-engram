@@ -3404,6 +3404,83 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("judge-stats")
+        .description(
+          "Show extraction-judge verdict stats from the observation ledger",
+        )
+        .option("--since <iso>", "Start timestamp (inclusive, ISO-8601)")
+        .option("--until <iso>", "End timestamp (exclusive, ISO-8601)")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const sinceRaw =
+            typeof options.since === "string" ? options.since : undefined;
+          const untilRaw =
+            typeof options.until === "string" ? options.until : undefined;
+          const sinceMs = sinceRaw ? Date.parse(sinceRaw) : undefined;
+          const untilMs = untilRaw ? Date.parse(untilRaw) : undefined;
+          if (sinceRaw && !Number.isFinite(sinceMs)) {
+            throw new Error(
+              `Invalid --since value: ${sinceRaw}. Use ISO-8601, e.g. 2026-04-01T00:00:00Z`,
+            );
+          }
+          if (untilRaw && !Number.isFinite(untilMs)) {
+            throw new Error(
+              `Invalid --until value: ${untilRaw}. Use ISO-8601, e.g. 2026-04-15T00:00:00Z`,
+            );
+          }
+          const { readJudgeVerdictStats } = await import(
+            "./extraction-judge-telemetry.js"
+          );
+          const stats = await readJudgeVerdictStats(
+            orchestrator.config.memoryDir,
+            {
+              ...(typeof sinceMs === "number" && Number.isFinite(sinceMs)
+                ? { sinceMs }
+                : {}),
+              ...(typeof untilMs === "number" && Number.isFinite(untilMs)
+                ? { untilMs }
+                : {}),
+            },
+          );
+          if (options.json === true) {
+            console.log(JSON.stringify(stats, null, 2));
+            return;
+          }
+          console.log("=== Extraction Judge Verdict Stats ===\n");
+          console.log(`Total verdicts: ${stats.total}`);
+          if (stats.total === 0) {
+            if (!orchestrator.config.extractionJudgeTelemetryEnabled) {
+              console.log(
+                "\nNote: extractionJudgeTelemetryEnabled is OFF. Enable it in plugin config to collect verdict telemetry.",
+              );
+            }
+            return;
+          }
+          console.log(
+            `  accept: ${stats.accept} (${((stats.accept / stats.total) * 100).toFixed(1)}%)`,
+          );
+          console.log(
+            `  reject: ${stats.reject} (${((stats.reject / stats.total) * 100).toFixed(1)}%)`,
+          );
+          console.log(
+            `  defer:  ${stats.defer} (${(stats.deferRate * 100).toFixed(1)}%)`,
+          );
+          if (stats.deferCapTriggered > 0) {
+            console.log(
+              `    of which ${stats.deferCapTriggered} cap-rejected (defer → reject)`,
+            );
+          }
+          console.log(`  mean elapsed: ${stats.meanElapsedMs.toFixed(1)} ms`);
+          if (stats.firstTs && stats.lastTs) {
+            console.log(`  window: ${stats.firstTs} … ${stats.lastTs}`);
+          }
+          if (stats.malformed > 0) {
+            console.log(`  malformed rows skipped: ${stats.malformed}`);
+          }
+        });
+
+      cmd
         .command("setup")
         .description("Validate config, scaffold directories, and print first-run next steps")
         .option("--install-capture-instructions", "Create workspace MEMORY.md when explicit capture is enabled and missing")
@@ -6174,6 +6251,54 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(
             `\nSemantic consolidation complete. clusters=${result.clustersFound}, consolidated=${result.memoriesConsolidated}, archived=${result.memoriesArchived}, errors=${result.errors}`,
           );
+        });
+
+      // consolidate-undo (issue #561 PR 5) — reverts a consolidated memory
+      // by restoring each source from its page-version snapshot and
+      // archiving the target.  See `consolidation-undo.ts` for the helper.
+      cmd
+        .command("consolidate-undo <target>")
+        .description(
+          "Undo a consolidation: restore source memories from their derived_from snapshots and archive the target",
+        )
+        .option("--dry-run", "Show the restore plan without modifying files")
+        .action(async (...args: unknown[]) => {
+          const rawTarget = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const dryRun = options.dryRun === true;
+          if (!rawTarget) {
+            console.error("consolidate-undo: missing <target> argument");
+            process.exitCode = 1;
+            return;
+          }
+          // Expand `~` first (gotcha #17 — Node's fs doesn't do this
+          // automatically).  Accept either an absolute path or a path
+          // relative to the configured memory directory so operators
+          // can point at the file the way they would in a text editor
+          // or via `ls`.
+          const expandedTarget = expandTildePath(rawTarget);
+          const targetPath = path.isAbsolute(expandedTarget)
+            ? expandedTarget
+            : path.join(orchestrator.config.memoryDir, expandedTarget);
+
+          const { runConsolidationUndo, formatConsolidationUndoResult } = await import(
+            "./consolidation-undo.js"
+          );
+          const result = await runConsolidationUndo({
+            storage: orchestrator.storage,
+            memoryDir: orchestrator.config.memoryDir,
+            targetPath,
+            versioning: {
+              enabled: orchestrator.config.versioningEnabled,
+              maxVersionsPerPage: orchestrator.config.versioningMaxPerPage,
+              sidecarDir: orchestrator.config.versioningSidecarDir,
+            },
+            dryRun,
+          });
+          console.log(formatConsolidationUndoResult(result));
+          if (result.error) {
+            process.exitCode = 1;
+          }
         });
 
       cmd

@@ -864,6 +864,37 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.bufferMaxTurns === "number" ? cfg.bufferMaxTurns : 5,
     bufferMaxMinutes:
       typeof cfg.bufferMaxMinutes === "number" ? cfg.bufferMaxMinutes : 15,
+    // Surprise-gated buffer flush (issue #563, D-MEM). See types.ts for
+    // semantics. Default off so PR 2 ships as a pure no-op until an operator
+    // opts in. PR 4 benchmarks the flag and may flip the default.
+    //
+    // Use `coerceBool` rather than a strict `=== true` check: CLI operators
+    // set booleans via `--config bufferSurpriseTriggerEnabled=true` which
+    // arrives as the string `"true"` — the strict form would silently
+    // leave the flag off. Matches the coercion contract established for
+    // other boolean config keys (CLAUDE.md rule #36).
+    bufferSurpriseTriggerEnabled:
+      coerceBool(cfg.bufferSurpriseTriggerEnabled) === true,
+    // Numeric surprise knobs go through `coerceNumber` so CLI operators
+    // can pass `--config bufferSurpriseThreshold=0.5` without the string
+    // silently dropping to the default. Matches the coercion contract
+    // applied to other numeric config keys (CLAUDE.md rule #28).
+    bufferSurpriseThreshold: clampSurpriseThreshold(
+      coerceNumber(cfg.bufferSurpriseThreshold),
+      0.35,
+    ),
+    bufferSurpriseK: clampSurpriseK(
+      coerceNumber(cfg.bufferSurpriseK),
+      5,
+    ),
+    bufferSurpriseRecentMemoryCount: clampSurpriseRecentMemoryCount(
+      coerceNumber(cfg.bufferSurpriseRecentMemoryCount),
+      20,
+    ),
+    bufferSurpriseProbeTimeoutMs: clampSurpriseProbeTimeoutMs(
+      coerceNumber(cfg.bufferSurpriseProbeTimeoutMs),
+      2000,
+    ),
     consolidateEveryN:
       typeof cfg.consolidateEveryN === "number" ? cfg.consolidateEveryN : 3,
     highSignalPatterns: Array.isArray(cfg.highSignalPatterns)
@@ -1021,6 +1052,50 @@ export function parseConfig(raw: unknown): PluginConfig {
     // recallDirectAnswerEnabled=false.
     recallDirectAnswerEnabled:
       coerceBool(cfg.recallDirectAnswerEnabled) ?? true,
+    // Graph-based retrieval tier (issue #559 PR 4).  Default `false` —
+    // the tier ships off pending the `retrieval-graph` bench in PR 5.
+    recallGraphEnabled:
+      coerceBool(cfg.recallGraphEnabled) ?? false,
+    recallGraphDamping: (() => {
+      const n = coerceNumber(cfg.recallGraphDamping);
+      return n !== undefined && n >= 0 && n < 1 ? n : 0.85;
+    })(),
+    // Fractional integer values (e.g. `0.5`) are REJECTED rather than
+    // silently floored to zero — CLAUDE.md rule 51 ("Reject invalid
+    // user input instead of silently defaulting"). Users who set a
+    // fractional iteration cap almost certainly meant an integer and
+    // quietly flooring their value to 0 turns off the tier without
+    // warning.
+    recallGraphIterations: (() => {
+      if (cfg.recallGraphIterations === undefined) return 20;
+      const n = coerceNumber(cfg.recallGraphIterations);
+      if (n === undefined || !Number.isFinite(n) || n < 0 || n > 500) {
+        throw new Error(
+          `recallGraphIterations must be an integer in [0, 500] (got ${JSON.stringify(cfg.recallGraphIterations)}).`,
+        );
+      }
+      if (!Number.isInteger(n)) {
+        throw new Error(
+          `recallGraphIterations must be an integer (got fractional value ${n}).`,
+        );
+      }
+      return n;
+    })(),
+    recallGraphTopK: (() => {
+      if (cfg.recallGraphTopK === undefined) return 50;
+      const n = coerceNumber(cfg.recallGraphTopK);
+      if (n === undefined || !Number.isFinite(n) || n < 0 || n > 10000) {
+        throw new Error(
+          `recallGraphTopK must be an integer in [0, 10000] (got ${JSON.stringify(cfg.recallGraphTopK)}).`,
+        );
+      }
+      if (!Number.isInteger(n)) {
+        throw new Error(
+          `recallGraphTopK must be an integer (got fractional value ${n}).`,
+        );
+      }
+      return n;
+    })(),
     recallDirectAnswerTokenOverlapFloor: (() => {
       const n = coerceNumber(cfg.recallDirectAnswerTokenOverlapFloor);
       return n !== undefined && n >= 0 && n <= 1 ? n : 0.55;
@@ -1040,6 +1115,75 @@ export function parseConfig(raw: unknown): PluginConfig {
           (v): v is string => typeof v === "string" && v.length > 0,
         )
       : ["decisions", "principles", "conventions", "runbooks", "entities"],
+    // Cross-namespace query-budget limiter (issue #565 PR 4/5).
+    // Defaults to false — ships disabled so existing deployments are
+    // unaffected. When enabled, the read path throttles a principal that
+    // issues a burst of recalls against namespaces other than their own.
+    recallCrossNamespaceBudgetEnabled:
+      coerceBool(cfg.recallCrossNamespaceBudgetEnabled) ?? false,
+    recallCrossNamespaceBudgetWindowMs: (() => {
+      const n = coerceNumber(cfg.recallCrossNamespaceBudgetWindowMs);
+      return n !== undefined && n > 0 ? Math.floor(n) : 60_000;
+    })(),
+    recallCrossNamespaceBudgetSoftLimit: (() => {
+      const n = coerceNumber(cfg.recallCrossNamespaceBudgetSoftLimit);
+      return n !== undefined && n >= 0 ? Math.floor(n) : 10;
+    })(),
+    recallCrossNamespaceBudgetHardLimit: (() => {
+      const n = coerceNumber(cfg.recallCrossNamespaceBudgetHardLimit);
+      return n !== undefined && n > 0 ? Math.floor(n) : 30;
+    })(),
+    // Recall-audit anomaly detector (issue #565 PR 5/5). Defaults off so
+    // existing deployments are unaffected; enable explicitly to let the
+    // access surfaces flag suspicious query patterns derived from the
+    // audit trail. Thresholds floor AFTER validating the floored value
+    // is still >= 1 — a `0.5` input that floors to 0 would turn every
+    // detector into a flood-on-anything, flipping the default to
+    // max-noise instead of max-silence.
+    recallAuditAnomalyDetectionEnabled:
+      coerceBool(cfg.recallAuditAnomalyDetectionEnabled) ?? false,
+    recallAuditAnomalyWindowMs: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyWindowMs);
+      if (n === undefined) return 5 * 60_000;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 5 * 60_000;
+    })(),
+    recallAuditAnomalyRepeatQueryLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyRepeatQueryLimit);
+      if (n === undefined) return 5;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 5;
+    })(),
+    recallAuditAnomalyNamespaceWalkLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyNamespaceWalkLimit);
+      if (n === undefined) return 3;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 3;
+    })(),
+    recallAuditAnomalyHighCardinalityLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyHighCardinalityLimit);
+      if (n === undefined) return 50;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 50;
+    })(),
+    recallAuditAnomalyRapidFireLimit: (() => {
+      const n = coerceNumber(cfg.recallAuditAnomalyRapidFireLimit);
+      if (n === undefined) return 30;
+      const floored = Math.floor(n);
+      return floored >= 1 ? floored : 30;
+    })(),
+
+    // Memory Worth recall filter (issue #560 PR 4, default flipped in PR 5).
+    // Bench result on the seeded fixture: precision@5 lifts from 0.00 to
+    // 0.60 across all 50 cases with zero regressions. See
+    // `runMemoryWorthBench` in memory-worth-bench.ts. Operators can still
+    // opt out with recallMemoryWorthFilterEnabled=false.
+    recallMemoryWorthFilterEnabled:
+      coerceBool(cfg.recallMemoryWorthFilterEnabled) ?? true,
+    recallMemoryWorthHalfLifeMs: (() => {
+      const n = coerceNumber(cfg.recallMemoryWorthHalfLifeMs);
+      return n !== undefined && n >= 0 ? n : 0;
+    })(),
     // Memory Linking (Phase 3A)
     memoryLinkingEnabled: cfg.memoryLinkingEnabled === true, // Off by default initially
     // Conversation Threading (Phase 3B)
@@ -1352,6 +1496,18 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.semanticConsolidationMaxPerRun === "number"
         ? Math.max(0, Math.floor(cfg.semanticConsolidationMaxPerRun))
         : 100,
+    // Operator-aware consolidation prompt (issue #561 PR 3).  Defaults
+    // to `false` to match sibling `*Enabled` flags' least-privileged
+    // convention.  Operators opt in by setting `true` (or truthy
+    // coercions like "true", "1", "yes", "on") when they want the
+    // consolidation LLM to emit SPLIT/MERGE/UPDATE operator selection
+    // on the `derived_via` frontmatter field.  Uses `coerceBool` per
+    // Gotcha #36 so CLI / env-string inputs coerce correctly.  When
+    // disabled, `derived_via` is still populated via the cluster-shape
+    // heuristic (chooseConsolidationOperator) so PR 2's provenance
+    // wiring keeps working without operator-aware prompts.
+    operatorAwareConsolidationEnabled:
+      coerceBool(cfg.operatorAwareConsolidationEnabled) ?? false,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,
@@ -1496,6 +1652,28 @@ export function parseConfig(raw: unknown): PluginConfig {
         ? Math.max(1, Math.round(cfg.extractionJudgeBatchSize))
         : 20,
     extractionJudgeShadow: cfg.extractionJudgeShadow === true,
+    // Defer cap (issue #562 PR 2): max re-deferrals for the same candidate
+    // text before the verdict is forcibly converted to reject.
+    extractionJudgeMaxDeferrals:
+      typeof cfg.extractionJudgeMaxDeferrals === "number" &&
+      Number.isFinite(cfg.extractionJudgeMaxDeferrals) &&
+      cfg.extractionJudgeMaxDeferrals >= 1
+        ? Math.floor(cfg.extractionJudgeMaxDeferrals)
+        : 2,
+    // Judge telemetry (issue #562 PR 3): opt-in structured emit to the
+    // observation ledger for defer-rate / latency metrics.
+    // Uses `coerceBool` so CLI-style string inputs (`"true"`, `"false"`,
+    // `"1"`, `"0"`) are accepted consistently with the rest of the
+    // codebase (CLAUDE.md gotcha 36).
+    extractionJudgeTelemetryEnabled:
+      coerceBool(cfg.extractionJudgeTelemetryEnabled) === true,
+    // Judge training-pair collection (issue #562 PR 4): opt-in shim for a
+    // future GRPO training pipeline. Rows land under ~/.remnic/judge-
+    // training/<date>.jsonl — NOT in the shared memory directory.
+    // Uses `coerceBool` per CLAUDE.md gotcha 36 for CLI-string parity.
+    collectJudgeTrainingPairs: coerceBool(cfg.collectJudgeTrainingPairs) === true,
+    judgeTrainingDir:
+      typeof cfg.judgeTrainingDir === "string" ? cfg.judgeTrainingDir : "",
     // Inline source attribution (issue #369). Opt-in to preserve
     // backwards compatibility with existing downstream consumers.
     inlineSourceAttributionEnabled: cfg.inlineSourceAttributionEnabled === true,
@@ -1725,6 +1903,9 @@ export function parseConfig(raw: unknown): PluginConfig {
       typeof cfg.recallMmrTopN === "number" && Number.isFinite(cfg.recallMmrTopN)
         ? Math.max(0, Math.floor(cfg.recallMmrTopN))
         : 40,
+    // Issue #564 PR 3: off by default; enable explicitly after bench validation.
+    recallReasoningTraceBoostEnabled:
+      coerceBool(cfg.recallReasoningTraceBoostEnabled) ?? false,
     qmdRecallCacheTtlMs:
       typeof cfg.qmdRecallCacheTtlMs === "number" ? Math.max(0, Math.floor(cfg.qmdRecallCacheTtlMs)) : 60_000,
     qmdRecallCacheStaleTtlMs:
@@ -2262,6 +2443,52 @@ function parseBriefingConfig(raw: unknown): import("./types.js").BriefingConfig 
 function clampNonNegativeNumber(value: unknown): number | undefined {
   if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   return Math.max(0, Math.floor(value));
+}
+
+// -----------------------------------------------------------------------------
+// Issue #563 buffer-surprise knobs — shared clamp helpers
+// -----------------------------------------------------------------------------
+//
+// Each helper takes a post-`coerceNumber` value (number | undefined) and a
+// fallback. This keeps the coercion layer (coerce CLI strings → number) and
+// the range layer (clamp to valid domain) cleanly separated — a common
+// source of post-merge fixes when these were inlined (CLAUDE.md rule #28).
+
+function clampSurpriseThreshold(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  // [0, 1] inclusive. 0 means "always flush on any score"; 1 means "never
+  // flush on surprise alone" — both are valid-but-odd configurations.
+  return Math.min(1, Math.max(0, value));
+}
+
+function clampSurpriseK(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  return Math.max(1, Math.floor(value));
+}
+
+function clampSurpriseRecentMemoryCount(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  return Math.max(0, Math.floor(value));
+}
+
+function clampSurpriseProbeTimeoutMs(
+  value: number | undefined,
+  fallback: number,
+): number {
+  if (value === undefined) return fallback;
+  // A zero or negative timeout would either skip the probe entirely or
+  // fire instantly — both surprising behaviors that hide config errors.
+  // Clamp to a minimum of 1ms and round to integer.
+  return Math.max(1, Math.floor(value));
 }
 
 function parseRecallSectionEntry(raw: unknown): RecallSectionConfig {
