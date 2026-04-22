@@ -91,6 +91,8 @@ export async function runPersonaMemBenchmark(
         await options.system.store(sessionId, messages);
       }
 
+      await options.system.drain?.();
+
       const { result: recalledText, durationMs } = await timed(async () =>
         options.system.recall(sessionId, sample.userQuery),
       );

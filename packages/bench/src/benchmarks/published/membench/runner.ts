@@ -77,6 +77,8 @@ export async function runMemBenchBenchmark(
         await options.system.store(sessionId, testCase.turns);
       }
 
+      await options.system.drain?.();
+
       const { result: recalledText, durationMs } = await timed(async () =>
         options.system.recall(sessionId, testCase.question),
       );

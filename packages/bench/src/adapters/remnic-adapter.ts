@@ -315,6 +315,13 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
         await rebuild();
       },
 
+      async drain(): Promise<void> {
+        const engine = state.orchestrator.lcmEngine;
+        if (engine && typeof (engine as any).waitForObserveQueueIdle === "function") {
+          await (engine as any).waitForObserveQueueIdle();
+        }
+      },
+
       async getStats(sessionId?: string): Promise<MemoryStats> {
         return getEngine().getStats(sessionId);
       },

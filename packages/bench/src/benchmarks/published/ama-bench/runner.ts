@@ -65,6 +65,8 @@ export async function runAmaBenchBenchmark(
       await options.system.store(sessionId, messages.slice(index, index + 50));
     }
 
+    await options.system.drain?.();
+
     for (const qa of episode.qa_pairs) {
       try {
         const { result: recalledText, durationMs } = await timed(async () =>

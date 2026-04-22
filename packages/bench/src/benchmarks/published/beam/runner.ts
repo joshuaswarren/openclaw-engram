@@ -96,6 +96,8 @@ export async function runBeamBenchmark(
       }
     }
 
+    await options.system.drain?.();
+
     let taskIndex = 0;
     for (const [ability, questions] of Object.entries(questionMap)) {
       for (const probe of questions) {

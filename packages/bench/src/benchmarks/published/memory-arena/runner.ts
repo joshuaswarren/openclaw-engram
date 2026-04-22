@@ -87,6 +87,8 @@ export async function runMemoryArenaBenchmark(
             },
           ]);
 
+          await options.system.drain?.();
+
           const { result: recalledText, durationMs } = await timed(async () =>
             options.system.recall(sessionId, question),
           );
@@ -142,6 +144,7 @@ export async function runMemoryArenaBenchmark(
                 content: `Answer for subtask ${questionIndex + 1}: ${expected}`,
               },
             ]);
+            await options.system.drain?.();
           } catch (storeErr) {
             console.error(`  [WARN] memory-arena store failed for ${taskResultId}: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`);
           }
