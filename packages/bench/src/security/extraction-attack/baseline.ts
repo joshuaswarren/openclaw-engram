@@ -196,30 +196,21 @@ export async function runMitigatedBaseline(
       allowedNamespace: scenario.allowedNamespace,
       disclosesMemoryIds: scenario.disclosesMemoryIds ?? true,
     });
-    const target = createMitigatedTarget({
-      target: rawTarget,
-      budgetHardLimit: scenario.budgetHardLimit,
-      budgetWindowMs: scenario.budgetWindowMs,
-      principalNamespace: scenario.principalNamespaceOverride
-        ?? scenario.allowedNamespace
-        ?? scenario.attackerNamespace
-        ?? "default",
-    });
     const principalNs = scenario.principalNamespaceOverride
       ?? scenario.allowedNamespace
       ?? scenario.attackerNamespace
       ?? "default";
-    // Only fall back to principalNs for same-namespace mode where the
-    // runner needs a namespace to match the mitigated target's principal.
-    // For zero-knowledge mode, leave attackerNamespace undefined so the
-    // synthetic target doesn't filter by namespace.
-    const resolvedAttackerNs = scenario.attackerNamespace
-      ?? (scenario.attackerMode === "same-namespace" ? principalNs : undefined);
+    const target = createMitigatedTarget({
+      target: rawTarget,
+      budgetHardLimit: scenario.budgetHardLimit,
+      budgetWindowMs: scenario.budgetWindowMs,
+      principalNamespace: principalNs,
+    });
     const result: ExtractionAttackResult = await runExtractionAttack({
       target,
       groundTruth: scenario.groundTruth,
       attackerMode: scenario.attackerMode,
-      attackerNamespace: resolvedAttackerNs,
+      attackerNamespace: scenario.attackerNamespace,
       queryBudget: scenario.queryBudget,
       rng: createSeededRng(scenario.seed),
       captureTimeline: false,
