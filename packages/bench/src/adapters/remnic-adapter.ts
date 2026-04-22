@@ -318,12 +318,15 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       async drain(): Promise<void> {
         const DRAIN_TIMEOUT_MS = 5 * 60_000;
         const engine = getEngine();
-        await Promise.race([
-          engine.waitForObserveQueueIdle(),
-          new Promise<void>((_, reject) =>
-            setTimeout(() => reject(new Error("drain() timed out after 5 minutes")), DRAIN_TIMEOUT_MS),
-          ),
-        ]);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timeout = new Promise<void>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("drain() timed out after 5 minutes")), DRAIN_TIMEOUT_MS);
+        });
+        try {
+          await Promise.race([engine.waitForObserveQueueIdle(), timeout]);
+        } finally {
+          clearTimeout(timer);
+        }
       },
 
       async getStats(sessionId?: string): Promise<MemoryStats> {
