@@ -165,8 +165,8 @@ function buildNewSdkApi(label: string): MockApi {
         api._registeredToolNames.push((spec as { name: string }).name);
       }
     },
-    registerCommand(spec: unknown) {
-      api._registeredCommands.push(spec);
+    registerCommand(this: MockApi, spec: unknown) {
+      this._registeredCommands.push(spec);
     },
     registerCli(_spec: unknown) {},
     registerService(spec) {

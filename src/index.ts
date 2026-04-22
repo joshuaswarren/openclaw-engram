@@ -53,7 +53,7 @@ import {
   forEachRuntimeSurfaceStorage,
 } from "../packages/plugin-openclaw/src/runtime-surface-namespaces.js";
 import {
-  buildLegacySessionCommandDescriptors,
+  buildLegacySessionCommandDescriptorsFromDescriptors,
   buildSessionCommandDescriptors,
 } from "../packages/plugin-openclaw/src/session-command-descriptors.js";
 import { validateSlotSelection } from "../packages/plugin-openclaw/src/slot-validator.js";
@@ -810,17 +810,8 @@ const pluginDefinition = {
         });
       },
     });
-    const legacySessionCommandDescriptors = buildLegacySessionCommandDescriptors(serviceId, {
-      toggles: sessionToggleStore,
-      getLastRecall: (sessionKey) => orchestrator.getLastRecall(sessionKey),
-      getLastRecallSummary: (sessionKey) =>
-        lastRecallSummaryBySession.get(sessionKey) ?? null,
-      flushSession: async (sessionKey) => {
-        await orchestrator.flushSession(sessionKey, {
-          reason: "session-command",
-        });
-      },
-    });
+    const legacySessionCommandDescriptors =
+      buildLegacySessionCommandDescriptorsFromDescriptors(sessionCommandDescriptors);
     const activeRecallEngine = createActiveRecallEngine(
       {
         recall: async (query, sessionKey) => orchestrator.recall(query, sessionKey),
@@ -3570,21 +3561,21 @@ const pluginDefinition = {
     // `commands.list` is a gateway RPC surface, not a plugin typed hook, so
     // attempting to bind it through api.on() produces an "unknown typed hook"
     // warning on current runtimes.
-    const registerCommandFn = (api as { registerCommand?: (spec: unknown) => void }).registerCommand;
+    const commandApi = api as { registerCommand?: (spec: unknown) => void };
     if (
       !passiveMode &&
       cfg.commandsListEnabled &&
       cfg.sessionTogglesEnabled !== false
     ) {
       if (
-        typeof registerCommandFn === "function" &&
+        typeof commandApi.registerCommand === "function" &&
         !(globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD]
       ) {
         (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = true;
         for (const descriptor of sessionCommandDescriptors) {
-          registerCommandFn(descriptor);
+          commandApi.registerCommand(descriptor);
         }
-      } else if (typeof registerCommandFn !== "function") {
+      } else if (typeof commandApi.registerCommand !== "function") {
         try {
           api.on("commands.list", async () => legacySessionCommandDescriptors);
         } catch (error) {

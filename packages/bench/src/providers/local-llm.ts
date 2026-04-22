@@ -36,6 +36,7 @@ import type {
   LocalLlmProviderConfig,
   TokenUsage,
 } from "./types.js";
+import { isThinkingCompatibleBackend } from "./openai-compatible.js";
 import { retryFetch } from "./retry-fetch.js";
 
 interface ChatCompletionResponse {
@@ -111,7 +112,8 @@ class LocalLlmProvider implements LlmProvider {
             ],
             temperature: opts.temperature,
             max_tokens: opts.maxTokens,
-            ...(this.config.disableThinking
+            ...(this.config.disableThinking &&
+            isThinkingCompatibleBackend(this.config.baseUrl)
               ? { chat_template_kwargs: { enable_thinking: false } }
               : {}),
           }),

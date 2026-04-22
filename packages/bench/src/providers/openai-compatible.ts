@@ -253,7 +253,7 @@ function isVllmBaseUrl(baseUrl?: string): boolean {
   }
 }
 
-function isThinkingCompatibleBackend(baseUrl?: string): boolean {
+export function isThinkingCompatibleBackend(baseUrl?: string): boolean {
   return isLmStudioBaseUrl(baseUrl) || isVllmBaseUrl(baseUrl);
 }
 
