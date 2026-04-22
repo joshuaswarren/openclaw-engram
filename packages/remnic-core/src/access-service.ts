@@ -1128,33 +1128,34 @@ export class EngramAccessService {
         },
       };
     } else {
-      // Peek at every effective namespace to find the worst-case decision
-    // WITHOUT recording side effects (Cursor review: multi-count bug).
-    // Then record a single budget event if any cross-namespace query exists.
-    let worstPeek: BudgetDecision | null = null;
-    let anyCrossNamespace = false;
-    for (const ns of effectiveNamespaces) {
-      const peek = this.budget.peek({
-        principal,
-        principalNamespace,
-        queryNamespace: ns,
-      });
-      if (peek.reason !== "allowed-same-namespace") {
-        anyCrossNamespace = true;
+      // Peek at every effective namespace to determine whether ANY would be
+      // cross-namespace WITHOUT recording side effects (Cursor review:
+      // multi-count bug).  Record a single budget event only when at least
+      // one effective namespace differs from the principal's self namespace.
+      let anyCrossNamespace = false;
+      let denied: BudgetDecision | null = null;
+      for (const ns of effectiveNamespaces) {
+        const peek = this.budget.peek({
+          principal,
+          principalNamespace,
+          queryNamespace: ns,
+        });
+        if (peek.reason !== "allowed-same-namespace") {
+          anyCrossNamespace = true;
+        }
+        if (!peek.allowed) {
+          denied = peek;
+          break;
+        }
       }
-      if (!peek.allowed) {
-        worstPeek = peek;
-        break;
-      }
-      if (peek.reason === "warn-over-soft" && (!worstPeek || worstPeek.reason !== "warn-over-soft")) {
-        worstPeek = peek;
-      }
-    }
-    // Record a single budget event for this recall if any namespace is
-    // cross-namespace.  Same-namespace-only recalls are free.
-    budgetDecision = anyCrossNamespace
-      ? this.budget.record(principal)
-      : (worstPeek ?? {
+      if (denied) {
+        // The peek projected a denial — deny without recording so the
+        // bucket is not inflated by rejected attempts.
+        budgetDecision = denied;
+      } else if (anyCrossNamespace) {
+        budgetDecision = this.budget.record(principal);
+      } else {
+        budgetDecision = {
           allowed: true as const,
           reason: "allowed-same-namespace" as const,
           count: 0,
@@ -1163,12 +1164,13 @@ export class EngramAccessService {
             hardLimit: this.orchestrator.config.recallCrossNamespaceBudgetHardLimit ?? 30,
             windowMs: this.orchestrator.config.recallCrossNamespaceBudgetWindowMs ?? 60_000,
           },
-        });
-    if (!budgetDecision.allowed) {
-      throw new EngramAccessInputError(
-        `recall denied: cross-namespace budget exceeded (${budgetDecision.count}/${budgetDecision.limit.hardLimit} in ${budgetDecision.limit.windowMs}ms window)`,
-      );
-    }
+        };
+      }
+      if (!budgetDecision.allowed) {
+        throw new EngramAccessInputError(
+          `recall denied: cross-namespace budget exceeded (${budgetDecision.count}/${budgetDecision.limit.hardLimit} in ${budgetDecision.limit.windowMs}ms window)`,
+        );
+      }
     }
     const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
     const recallOptions: RecallInvocationOptions = {
