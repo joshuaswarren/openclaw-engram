@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSessionCommandDescriptors } from "./session-command-descriptors.js";
+import {
+  buildLegacySessionCommandDescriptors,
+  buildSessionCommandDescriptors,
+} from "./session-command-descriptors.js";
 
 test("buildSessionCommandDescriptors wires toggle and status handlers", async () => {
   const disabled = new Map<string, boolean>();
@@ -149,4 +152,42 @@ test("top-level descriptor satisfies OpenClaw registerCommand validator and disp
     agentId: "main",
   });
   assert.match(defaultReply.text, /Remnic recall is/);
+});
+
+test("legacy session command descriptors unwrap top-level replies to plain strings", async () => {
+  const runtime = {
+    toggles: {
+      async isDisabled() {
+        return false;
+      },
+      async resolve() {
+        return {
+          disabled: false,
+          source: "none" as const,
+        };
+      },
+      async setDisabled() {},
+      async clear() {},
+      async list() {
+        return [];
+      },
+    },
+    getLastRecall() {
+      return null;
+    },
+    getLastRecallSummary() {
+      return null;
+    },
+    async flushSession() {},
+  };
+
+  const [descriptor] = buildLegacySessionCommandDescriptors("openclaw-remnic", runtime);
+  const reply = await descriptor?.handler({
+    sessionKey: "legacy-session",
+    agentId: "main",
+    args: "status",
+  });
+
+  assert.equal(typeof reply, "string");
+  assert.match(String(reply ?? ""), /Remnic recall is enabled/);
 });

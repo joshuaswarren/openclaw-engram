@@ -137,6 +137,7 @@ interface MockApi {
   registerMemoryCapability?: (spec: unknown) => void;
   registerCommand?: (spec: unknown) => void;
   _registeredHooks: string[];
+  _hookHandlers: Map<string, unknown>;
   _registeredToolCount: number;
   _registeredToolNames: string[];
   _registeredServiceIds: string[];
@@ -152,6 +153,7 @@ function buildNewSdkApi(label: string): MockApi {
     pluginConfig: {},
     config: {},
     _registeredHooks: [],
+    _hookHandlers: new Map(),
     _registeredToolCount: 0,
     _registeredToolNames: [],
     _registeredServiceIds: [],
@@ -172,6 +174,7 @@ function buildNewSdkApi(label: string): MockApi {
     },
     on(event: string, _handler: unknown) {
       api._registeredHooks.push(event);
+      api._hookHandlers.set(event, _handler);
     },
     registerHook(_events: unknown, _handler: unknown, _opts?: unknown) {},
     runtime: { version: "2026.3.22" },
@@ -190,6 +193,7 @@ function buildLegacySdkApi(label: string): MockApi {
     pluginConfig: {},
     config: {},
     _registeredHooks: [],
+    _hookHandlers: new Map(),
     _registeredToolCount: 0,
     _registeredToolNames: [],
     _registeredServiceIds: [],
@@ -207,6 +211,7 @@ function buildLegacySdkApi(label: string): MockApi {
     },
     on(event: string, _handler: unknown) {
       api._registeredHooks.push(event);
+      api._hookHandlers.set(event, _handler);
     },
     // No runtime, no registrationMode, no registerMemoryPromptSection
   };
@@ -532,6 +537,27 @@ test("legacy SDK api gets legacy hooks only", async () => {
       api._registeredHooks.includes("commands.list"),
       "commands.list should remain registered on legacy SDKs without registerCommand()",
     );
+    const listHandler = api._hookHandlers.get("commands.list") as
+      | (() => Promise<Array<{
+          name?: string;
+          handler?: (ctx?: {
+            sessionKey?: string;
+            agentId?: string;
+            args?: string;
+          }) => Promise<string>;
+        }>>)
+      | undefined;
+    assert.equal(typeof listHandler, "function");
+    const commands = await listHandler?.();
+    const remnicCommand = commands?.find((spec) => spec?.name === "remnic");
+    assert.equal(typeof remnicCommand?.handler, "function");
+    const legacyReply = await remnicCommand?.handler?.({
+      sessionKey: "legacy-session-command-test",
+      agentId: "main",
+      args: "status",
+    });
+    assert.equal(typeof legacyReply, "string");
+    assert.match(String(legacyReply ?? ""), /Remnic recall is/);
 
     // Core hooks still present
     assert.ok(

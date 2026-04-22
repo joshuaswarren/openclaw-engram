@@ -52,7 +52,10 @@ import {
 import {
   forEachRuntimeSurfaceStorage,
 } from "../packages/plugin-openclaw/src/runtime-surface-namespaces.js";
-import { buildSessionCommandDescriptors } from "../packages/plugin-openclaw/src/session-command-descriptors.js";
+import {
+  buildLegacySessionCommandDescriptors,
+  buildSessionCommandDescriptors,
+} from "../packages/plugin-openclaw/src/session-command-descriptors.js";
 import { validateSlotSelection } from "../packages/plugin-openclaw/src/slot-validator.js";
 import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src/plugin-id.js";
 import { createFileToggleStore } from "../packages/remnic-core/src/session-toggles.js";
@@ -797,6 +800,17 @@ const pluginDefinition = {
       log.debug(`recall audit prune failed: ${String(error)}`);
     });
     const sessionCommandDescriptors = buildSessionCommandDescriptors(serviceId, {
+      toggles: sessionToggleStore,
+      getLastRecall: (sessionKey) => orchestrator.getLastRecall(sessionKey),
+      getLastRecallSummary: (sessionKey) =>
+        lastRecallSummaryBySession.get(sessionKey) ?? null,
+      flushSession: async (sessionKey) => {
+        await orchestrator.flushSession(sessionKey, {
+          reason: "session-command",
+        });
+      },
+    });
+    const legacySessionCommandDescriptors = buildLegacySessionCommandDescriptors(serviceId, {
       toggles: sessionToggleStore,
       getLastRecall: (sessionKey) => orchestrator.getLastRecall(sessionKey),
       getLastRecallSummary: (sessionKey) =>
@@ -3572,7 +3586,7 @@ const pluginDefinition = {
         }
       } else if (typeof registerCommandFn !== "function") {
         try {
-          api.on("commands.list", async () => sessionCommandDescriptors);
+          api.on("commands.list", async () => legacySessionCommandDescriptors);
         } catch (error) {
           log.debug(
             `commands.list unavailable on this runtime: ${String(error)}`,

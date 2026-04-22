@@ -14,6 +14,27 @@ export interface SessionCommandRuntime {
   flushSession(sessionKey: string): Promise<void>;
 }
 
+export interface StructuredSessionCommandReply {
+  text: string;
+}
+
+type SessionCommandDescriptor = {
+  name: string;
+  description: string;
+  category: string;
+  pluginId: string;
+  acceptsArgs: boolean;
+  subcommands: Array<{
+    name: string;
+    description: string;
+    args: string[];
+    handler: (commandCtx?: SessionCommandContext) => Promise<string>;
+  }>;
+  handler: (
+    commandCtx?: SessionCommandContext,
+  ) => Promise<StructuredSessionCommandReply>;
+};
+
 function describeToggleSource(source: "primary" | "secondary" | "none"): string {
   if (source === "primary") return "Remnic session override";
   if (source === "secondary") return "bundled active-memory override";
@@ -45,7 +66,7 @@ function normalizeCommandArgs(args: SessionCommandContext["args"]): string[] {
 export function buildSessionCommandDescriptors(
   pluginId: string,
   runtime: SessionCommandRuntime,
-) {
+): SessionCommandDescriptor[] {
   const subcommands = [
     {
       name: "off",
@@ -158,4 +179,17 @@ export function buildSessionCommandDescriptors(
       },
     },
   ];
+}
+
+export function buildLegacySessionCommandDescriptors(
+  pluginId: string,
+  runtime: SessionCommandRuntime,
+): Array<Omit<SessionCommandDescriptor, "handler"> & {
+  handler: (commandCtx?: SessionCommandContext) => Promise<string>;
+}> {
+  return buildSessionCommandDescriptors(pluginId, runtime).map((descriptor) => ({
+    ...descriptor,
+    handler: async (commandCtx: SessionCommandContext = {}) =>
+      (await descriptor.handler(commandCtx)).text,
+  }));
 }
