@@ -1094,8 +1094,13 @@ export class EngramAccessService {
     }
     const namespaceOverride = this.resolveRecallNamespace(request.namespace, request.sessionKey);
     const namespace = namespaceOverride ?? this.orchestrator.config.defaultNamespace;
+    // Normalize mode early so that no_recall / invalid modes skip budget
+    // accounting (Codex P1: budget recorded before mode validation).
+    const mode = this.normalizeRecallMode(request.mode);
     const principal = resolvePrincipal(request.sessionKey, this.orchestrator.config);
     const principalNamespace = defaultNamespaceForPrincipal(principal, this.orchestrator.config);
+    // Skip budget checks for modes that never perform a cross-namespace read.
+    const modeSkipsBudget = mode === "no_recall";
     // Derive the full set of namespaces the orchestrator will actually search.
     // When no explicit override is provided, `recallNamespacesForPrincipal()` may
     // expand to shared / policy-default namespaces.  Budget must be checked
@@ -1110,7 +1115,20 @@ export class EngramAccessService {
     const effectiveNamespaces = namespaceOverride
       ? [namespaceOverride]
       : recallNamespacesForPrincipal(principal, this.orchestrator.config);
-    // Peek at every effective namespace to find the worst-case decision
+    let budgetDecision: BudgetDecision;
+    if (modeSkipsBudget) {
+      budgetDecision = {
+        allowed: true as const,
+        reason: "allowed-same-namespace" as const,
+        count: 0,
+        limit: {
+          softLimit: this.orchestrator.config.recallCrossNamespaceBudgetSoftLimit ?? 10,
+          hardLimit: this.orchestrator.config.recallCrossNamespaceBudgetHardLimit ?? 30,
+          windowMs: this.orchestrator.config.recallCrossNamespaceBudgetWindowMs ?? 60_000,
+        },
+      };
+    } else {
+      // Peek at every effective namespace to find the worst-case decision
     // WITHOUT recording side effects (Cursor review: multi-count bug).
     // Then record a single budget event if any cross-namespace query exists.
     let worstPeek: BudgetDecision | null = null;
@@ -1134,7 +1152,7 @@ export class EngramAccessService {
     }
     // Record a single budget event for this recall if any namespace is
     // cross-namespace.  Same-namespace-only recalls are free.
-    const budgetDecision = anyCrossNamespace
+    budgetDecision = anyCrossNamespace
       ? this.budget.record(principal)
       : (worstPeek ?? {
           allowed: true as const,
@@ -1151,7 +1169,7 @@ export class EngramAccessService {
         `recall denied: cross-namespace budget exceeded (${budgetDecision.count}/${budgetDecision.limit.hardLimit} in ${budgetDecision.limit.windowMs}ms window)`,
       );
     }
-    const mode = this.normalizeRecallMode(request.mode);
+    }
     const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
     const recallOptions: RecallInvocationOptions = {
       namespace: namespaceOverride,
