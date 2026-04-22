@@ -116,6 +116,7 @@ export async function runMemoryAgentBenchBenchmark(
     await options.system.reset();
 
     const sessionIds = await storeBenchmarkContext(options, item, itemIndex);
+    await options.system.drain?.();
     for (let questionIndex = 0; questionIndex < item.questions.length; questionIndex += 1) {
       const question = item.questions[questionIndex]!;
       const answerVariants = item.answers[questionIndex];

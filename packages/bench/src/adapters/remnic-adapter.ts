@@ -179,7 +179,7 @@ async function createBenchOrchestrator(
   const commonConfig: BenchAdapterBaseConfig = {
     memoryDir: tempDir,
     workspaceDir: tempDir,
-    lcmEnabled: false,
+    lcmEnabled: true,
   };
 
   const orchestrator = new Orchestrator(
@@ -313,6 +313,13 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
 
       async reset(_sessionId?: string): Promise<void> {
         await rebuild();
+      },
+
+      async drain(): Promise<void> {
+        const engine = state.orchestrator.lcmEngine;
+        if (engine && typeof (engine as any).waitForObserveQueueIdle === "function") {
+          await (engine as any).waitForObserveQueueIdle();
+        }
       },
 
       async getStats(sessionId?: string): Promise<MemoryStats> {

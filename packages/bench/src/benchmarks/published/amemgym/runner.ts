@@ -94,6 +94,8 @@ export async function runAMemGymBenchmark(
       }
     }
 
+    await options.system.drain?.();
+
     for (
       let questionIndex = 0;
       questionIndex < profile.qas.length;

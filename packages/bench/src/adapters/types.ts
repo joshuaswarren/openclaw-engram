@@ -60,6 +60,8 @@ export interface BenchMemoryAdapter {
   search(query: string, limit: number, sessionId?: string): Promise<SearchResult[]>;
   reset(sessionId?: string): Promise<void>;
   getStats(sessionId?: string): Promise<MemoryStats>;
+  /** Wait for background summarization (e.g. LCM) to finish after store(). */
+  drain?(): Promise<void>;
   destroy(): Promise<void>;
   responder?: BenchResponder;
   judge?: BenchJudge;
