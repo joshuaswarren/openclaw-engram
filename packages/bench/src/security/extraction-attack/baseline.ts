@@ -205,11 +205,15 @@ export async function runMitigatedBaseline(
         ?? scenario.attackerNamespace
         ?? "default",
     });
+    const principalNs = scenario.principalNamespaceOverride
+      ?? scenario.allowedNamespace
+      ?? scenario.attackerNamespace
+      ?? "default";
     const result: ExtractionAttackResult = await runExtractionAttack({
       target,
       groundTruth: scenario.groundTruth,
       attackerMode: scenario.attackerMode,
-      attackerNamespace: scenario.attackerNamespace,
+      attackerNamespace: scenario.attackerNamespace ?? principalNs,
       queryBudget: scenario.queryBudget,
       rng: createSeededRng(scenario.seed),
       captureTimeline: false,
