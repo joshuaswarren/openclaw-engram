@@ -180,7 +180,11 @@ export async function runPublishedHarness(
         await ctx.options.system.store(session.sessionId, session.messages);
       }
     }
-    await ctx.options.system.drain?.();
+    try {
+      await ctx.options.system.drain?.();
+    } catch (drainErr) {
+      console.error(`  [WARN] harness drain failed for plan: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+    }
     const planIndex = tasks.length;
     for (const trial of plan.trials) {
       const trialId = trial.taskId ?? trial.question.slice(0, 60);
