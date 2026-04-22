@@ -70,20 +70,35 @@ test("runMitigatedBaseline returns mitigated rows", async () => {
   }
 });
 
-test("mitigated T3 ASR is lower than or equal to unmitigated T3 ASR", async () => {
-  const { runBaseline, DEFAULT_BASELINE_SCENARIOS } = await import("./baseline.js");
+test("mitigated T3 ASR is lower than or equal to unmitigated (no-ACL) T3 ASR", async () => {
+  const { SYNTHETIC_MEMORIES, OTHER_NAMESPACE_MEMORIES } = await import("./fixture.js");
+  const { runBaseline } = await import("./baseline.js");
 
-  const baselineRows = await runBaseline(DEFAULT_BASELINE_SCENARIOS);
+  // Run the mitigated scenario *without* the budget wrapper to get the
+  // unmitigated comparison point. Same fixture: ACL disabled, attacker
+  // namespace "other".
+  const unmitigatedRows = await runBaseline([{
+    name: "T3-no-acl-unmitigated",
+    attackerMode: "cross-namespace",
+    attackerNamespace: "other",
+    queryBudget: 200,
+    seed: 303,
+    groundTruth: SYNTHETIC_MEMORIES,
+    targetMemories: [...SYNTHETIC_MEMORIES, ...OTHER_NAMESPACE_MEMORIES],
+    entities: [],
+    enforceNamespaceAcl: false,
+    disclosesMemoryIds: true,
+  }]);
   const mitigatedRows = await runMitigatedBaseline();
 
-  const t3Baseline = baselineRows.find((r) => r.scenario === "T3-cross-namespace-acl-enforced");
-  const t3Mitigated = mitigatedRows.find((r) => r.scenario === "T3-cross-namespace-budget-hard30");
+  const unmitigated = unmitigatedRows[0];
+  const mitigated = mitigatedRows[0];
 
-  assert.ok(t3Baseline, "T3 baseline should exist");
-  assert.ok(t3Mitigated, "T3 mitigated should exist");
+  assert.ok(unmitigated, "unmitigated row should exist");
+  assert.ok(mitigated, "mitigated row should exist");
 
   assert.ok(
-    t3Mitigated.asr <= t3Baseline.asr + 0.01,
-    `mitigated ASR (${(t3Mitigated.asr * 100).toFixed(1)}%) should be <= baseline ASR (${(t3Baseline.asr * 100).toFixed(1)}%)`,
+    mitigated.asr <= unmitigated.asr + 0.01,
+    `mitigated ASR (${(mitigated.asr * 100).toFixed(1)}%) should be <= unmitigated ASR (${(unmitigated.asr * 100).toFixed(1)}%)`,
   );
 });

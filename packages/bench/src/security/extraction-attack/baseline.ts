@@ -145,11 +145,23 @@ export async function runBaseline(
 export interface MitigatedBaselineConfig {
   budgetHardLimit: number;
   budgetWindowMs?: number;
+  /**
+   * Override for the principal's "home" namespace in the mitigated target.
+   * When set, this is passed as `principalNamespace` to `createMitigatedTarget`.
+   * When unset, falls back to `allowedNamespace ?? "default"`.
+   * Use this to decouple the budget's principal identity from the synthetic
+   * target's ACL namespace.
+   */
+  principalNamespaceOverride?: string;
 }
 
 export const MITIGATED_BASELINE_SCENARIOS: readonly (BaselineScenario &
   MitigatedBaselineConfig)[] = Object.freeze([
   {
+    // ACL is disabled so the budget is the *only* defense. The attacker
+    // (principalNamespace = "attacker-home") issues queries against namespace
+    // "other" — a cross-namespace path. Without the budget the attacker can
+    // retrieve freely; with it the hard limit throttles extraction.
     name: "T3-cross-namespace-budget-hard30",
     attackerMode: "cross-namespace",
     attackerNamespace: "other",
@@ -158,11 +170,11 @@ export const MITIGATED_BASELINE_SCENARIOS: readonly (BaselineScenario &
     groundTruth: SYNTHETIC_MEMORIES,
     targetMemories: [...SYNTHETIC_MEMORIES, ...OTHER_NAMESPACE_MEMORIES],
     entities: [],
-    enforceNamespaceAcl: true,
-    allowedNamespace: "other",
+    enforceNamespaceAcl: false,
     disclosesMemoryIds: true,
     budgetHardLimit: 30,
     budgetWindowMs: 60_000,
+    principalNamespaceOverride: "attacker-home",
   },
 ]);
 
@@ -182,7 +194,9 @@ export async function runMitigatedBaseline(
       target: rawTarget,
       budgetHardLimit: scenario.budgetHardLimit,
       budgetWindowMs: scenario.budgetWindowMs,
-      principalNamespace: scenario.allowedNamespace ?? "default",
+      principalNamespace: scenario.principalNamespaceOverride
+        ?? scenario.allowedNamespace
+        ?? "default",
     });
     const result: ExtractionAttackResult = await runExtractionAttack({
       target,
