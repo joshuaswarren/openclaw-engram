@@ -56,10 +56,13 @@ export function parseRetryAfterMs(value: string | null): number | undefined {
     return Math.min(asNumber, MAX_RETRY_AFTER_S) * 1000;
   }
 
-  const dateMs = Date.parse(value);
-  if (Number.isFinite(dateMs)) {
-    const delta = dateMs - Date.now();
-    return delta > 0 ? Math.min(delta, MAX_RETRY_AFTER_S * 1000) : undefined;
+  // Only try HTTP-date parsing for non-numeric values.
+  if (Number.isNaN(asNumber)) {
+    const dateMs = Date.parse(value);
+    if (Number.isFinite(dateMs)) {
+      const delta = dateMs - Date.now();
+      return delta > 0 ? Math.min(delta, MAX_RETRY_AFTER_S * 1000) : 0;
+    }
   }
 
   return undefined;
@@ -102,8 +105,8 @@ export async function retryFetch(
 
       // 429 Too Many Requests — pause and retry.
       if (response.status === 429 && attempt < opts.maxAttempts) {
-        // Drain the body so the connection can be reused.
-        await readBodyPreview(response, 0);
+        // Release the response body without buffering.
+        await response.body?.cancel();
         const waitMs =
           parseRetryAfterMs(response.headers.get("retry-after")) ??
           opts.baseBackoffMs * Math.pow(2, attempt - 1);
