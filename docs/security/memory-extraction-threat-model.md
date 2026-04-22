@@ -358,10 +358,10 @@ The mitigated baseline (PR #652, still open as of this writing) re-runs
 the T3 scenario with a cross-namespace budget of 30 queries per 60-second
 window:
 
-| Scenario | Budget | ASR |
-|---|---:|---:|
-| T3 unmitigated (baseline) | 200 | 0.0% (ACL enforced) |
-| T3 mitigated (budget=30) | 200 | 0.0% (ACL + budget) |
+| Scenario | Queries | Budget limit | ASR |
+|---|---:|---:|---|
+| T3 unmitigated (baseline) | 200 | none | 0.0% (ACL enforced) |
+| T3 mitigated (budget=30/60s) | 200 | 30/60s | 0.0% (ACL + budget) |
 
 The T3 ASR was already 0.0% in the baseline because the synthetic
 target enforces namespace ACLs. The budget mitigation provides defense
