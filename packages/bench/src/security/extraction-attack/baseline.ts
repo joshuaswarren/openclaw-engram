@@ -16,6 +16,7 @@ import {
   SYNTHETIC_MEMORIES,
   createSeededRng,
   createSyntheticTarget,
+  createMitigatedTarget,
   runExtractionAttack,
 } from "./index.js";
 import type {
@@ -50,6 +51,8 @@ export interface BaselineRow {
   readonly recoveredIds: readonly string[];
   readonly missedIds: readonly string[];
   readonly durationMs: number;
+  /** Whether mitigations were active during this run. */
+  readonly mitigated?: boolean;
 }
 
 /**
@@ -134,6 +137,72 @@ export async function runBaseline(
       recoveredIds: result.recovered.map((r) => r.memoryId),
       missedIds: result.missed.map((m) => m.id),
       durationMs: result.durationMs,
+    });
+  }
+  return rows;
+}
+
+export interface MitigatedBaselineConfig {
+  budgetHardLimit: number;
+  budgetWindowMs?: number;
+}
+
+export const MITIGATED_BASELINE_SCENARIOS: readonly (BaselineScenario &
+  MitigatedBaselineConfig)[] = Object.freeze([
+  {
+    name: "T3-cross-namespace-budget-hard30",
+    attackerMode: "cross-namespace",
+    attackerNamespace: "other",
+    queryBudget: 200,
+    seed: 303,
+    groundTruth: SYNTHETIC_MEMORIES,
+    targetMemories: [...SYNTHETIC_MEMORIES, ...OTHER_NAMESPACE_MEMORIES],
+    entities: [],
+    enforceNamespaceAcl: true,
+    allowedNamespace: "other",
+    disclosesMemoryIds: true,
+    budgetHardLimit: 30,
+    budgetWindowMs: 60_000,
+  },
+]);
+
+export async function runMitigatedBaseline(
+  scenarios: readonly (BaselineScenario & MitigatedBaselineConfig)[] = MITIGATED_BASELINE_SCENARIOS,
+): Promise<BaselineRow[]> {
+  const rows: BaselineRow[] = [];
+  for (const scenario of scenarios) {
+    const rawTarget = createSyntheticTarget({
+      memories: scenario.targetMemories,
+      entities: scenario.entities,
+      enforceNamespaceAcl: scenario.enforceNamespaceAcl,
+      allowedNamespace: scenario.allowedNamespace,
+      disclosesMemoryIds: scenario.disclosesMemoryIds ?? true,
+    });
+    const target = createMitigatedTarget({
+      target: rawTarget,
+      budgetHardLimit: scenario.budgetHardLimit,
+      budgetWindowMs: scenario.budgetWindowMs,
+      principalNamespace: scenario.allowedNamespace ?? "default",
+    });
+    const result: ExtractionAttackResult = await runExtractionAttack({
+      target,
+      groundTruth: scenario.groundTruth,
+      attackerMode: scenario.attackerMode,
+      attackerNamespace: scenario.attackerNamespace,
+      queryBudget: scenario.queryBudget,
+      rng: createSeededRng(scenario.seed),
+      captureTimeline: false,
+    });
+    rows.push({
+      scenario: scenario.name,
+      attackerMode: scenario.attackerMode,
+      queryBudget: scenario.queryBudget,
+      queriesIssued: result.queriesIssued,
+      asr: result.asr,
+      recoveredIds: result.recovered.map((r) => r.memoryId),
+      missedIds: result.missed.map((m) => m.id),
+      durationMs: result.durationMs,
+      mitigated: true,
     });
   }
   return rows;
