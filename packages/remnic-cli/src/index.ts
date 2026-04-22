@@ -156,6 +156,11 @@ import {
   finalizeBenchStatus,
 } from "./bench-status.js";
 import {
+  buildBenchRunnerArgs,
+  createFallbackBenchOutputDir,
+  resolveFallbackBenchResultPath,
+} from "./bench-fallback.js";
+import {
   cleanupRollbackDirectoryBestEffort,
   createOpenclawUpgradeRollbackFailure,
   runBestEffortGatewayRestart,
@@ -622,20 +627,6 @@ Examples:
   remnic benchmark run --quick longmemeval`;
 }
 
-export function buildBenchRunnerArgs(
-  parsed: ParsedBenchArgs,
-  benchmarkId: string,
-): string[] {
-  const args = [EVAL_RUNNER_PATH, "--benchmark", benchmarkId];
-  if (parsed.quick) {
-    args.push("--lightweight", "--limit", "1");
-  }
-  if (parsed.datasetDir) {
-    args.push("--dataset-dir", parsed.datasetDir);
-  }
-  return args;
-}
-
 export function buildBenchRuntimeProfileRequest(
   parsed: ParsedBenchArgs,
   runtimeProfile: BenchRuntimeProfile,
@@ -750,7 +741,7 @@ async function runBenchViaFallback(
   parsed: ParsedBenchArgs,
   benchmarkId: string,
   runtimeProfile: BenchRuntimeProfile,
-): Promise<void> {
+): Promise<string> {
   if (runtimeProfile === "real" && parsed.remnicConfigPath) {
     resolveExistingBenchRemnicConfigPath(parsed.remnicConfigPath);
   }
@@ -796,10 +787,20 @@ async function runBenchViaFallback(
     path.join(CLI_REPO_ROOT, "packages", "remnic-cli", "node_modules", ".bin", "tsx"),
   ];
   const tsxCmd = tsxCandidates.find((candidate) => fs.existsSync(candidate)) ?? "tsx";
-  childProcess.execFileSync(tsxCmd, buildBenchRunnerArgs(parsed, benchmarkId), {
+  const fallbackOutputDir = createFallbackBenchOutputDir(
+    parsed.resultsDir ?? resolveBenchOutputDir(),
+    benchmarkId,
+    process.pid,
+  );
+  const fallbackArgs = [
+    EVAL_RUNNER_PATH,
+    ...buildBenchRunnerArgs(parsed, benchmarkId, fallbackOutputDir),
+  ];
+  childProcess.execFileSync(tsxCmd, fallbackArgs, {
     stdio: "inherit",
     env: process.env,
   });
+  return resolveFallbackBenchResultPath(fallbackOutputDir);
 }
 
 function resolveBenchOutputDir(): string {
@@ -4748,20 +4749,7 @@ async function cmdBench(rest: string[]): Promise<void> {
           if (handledByPackage.ok) {
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath ?? ""); } catch { /* non-fatal */ }
           } else {
-            await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
-            // Fallback runner writes to evals/results with a timestamped
-            // filename. Scan for the most recent match by mtime.
-            let fallbackResultPath = "";
-            try {
-              const fallbackDir = path.join(path.dirname(EVAL_RUNNER_PATH), "results");
-              const files = fs.readdirSync(fallbackDir)
-                .filter((f) => f.startsWith(benchmarkId) && f.endsWith(".json"))
-                .map((f) => ({ name: f, mtime: fs.statSync(path.join(fallbackDir, f)).mtimeMs }))
-                .sort((a, b) => b.mtime - a.mtime);
-              if (files.length > 0) {
-                fallbackResultPath = path.join(fallbackDir, files[0].name);
-              }
-            } catch { /* scan failure is non-fatal */ }
+            const fallbackResultPath = await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath); } catch { /* non-fatal */ }
           }
         } catch (err) {

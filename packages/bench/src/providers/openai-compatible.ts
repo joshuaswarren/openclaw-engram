@@ -243,9 +243,11 @@ function isVllmBaseUrl(baseUrl?: string): boolean {
 
   try {
     const url = new URL(baseUrl);
+    const normalizedPath = url.pathname.replace(/\/+$/, "");
     return (
       (url.hostname === "127.0.0.1" || url.hostname === "localhost") &&
-      url.port === "8000"
+      url.port === "8000" &&
+      normalizedPath === "/v1"
     );
   } catch {
     return false;

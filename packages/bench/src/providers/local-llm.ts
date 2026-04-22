@@ -113,7 +113,7 @@ class LocalLlmProvider implements LlmProvider {
             temperature: opts.temperature,
             max_tokens: opts.maxTokens,
             ...(this.config.disableThinking &&
-            isThinkingCompatibleBackend(this.config.baseUrl)
+            isThinkingCompatibleBackend(this.normalizedBaseUrl())
               ? { chat_template_kwargs: { enable_thinking: false } }
               : {}),
           }),
@@ -222,6 +222,14 @@ class LocalLlmProvider implements LlmProvider {
   }
 
   private urlFor(pathname: string): string {
+    const normalizedBase = this.normalizedBaseUrl();
+    const normalizedPath = pathname.startsWith("/")
+      ? pathname.slice(1)
+      : pathname;
+    return `${normalizedBase}/${normalizedPath}`;
+  }
+
+  private normalizedBaseUrl(): string {
     // Codex P1 on PR #613: if the user passed a bare host like
     // `http://localhost:8080` (no `/v1`), concatenating
     // `chat/completions` would 404 on every OpenAI-compatible server
@@ -231,11 +239,7 @@ class LocalLlmProvider implements LlmProvider {
       ? this.config.baseUrl.slice(0, -1)
       : this.config.baseUrl;
     const hasV1Suffix = /\/v\d+$/.test(stripped);
-    const normalizedBase = hasV1Suffix ? stripped : `${stripped}/v1`;
-    const normalizedPath = pathname.startsWith("/")
-      ? pathname.slice(1)
-      : pathname;
-    return `${normalizedBase}/${normalizedPath}`;
+    return hasV1Suffix ? stripped : `${stripped}/v1`;
   }
 }
 
