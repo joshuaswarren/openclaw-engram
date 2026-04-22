@@ -94,7 +94,11 @@ export async function runAMemGymBenchmark(
       }
     }
 
-    await options.system.drain?.();
+    try {
+      await options.system.drain?.();
+    } catch (drainErr) {
+      console.error(`  [WARN] amemgym drain failed for profile ${profile.id}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+    }
 
     for (
       let questionIndex = 0;

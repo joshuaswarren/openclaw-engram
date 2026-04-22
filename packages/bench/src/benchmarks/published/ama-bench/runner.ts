@@ -65,7 +65,11 @@ export async function runAmaBenchBenchmark(
       await options.system.store(sessionId, messages.slice(index, index + 50));
     }
 
-    await options.system.drain?.();
+    try {
+      await options.system.drain?.();
+    } catch (drainErr) {
+      console.error(`  [WARN] ama-bench drain failed for episode ${episode.episode_id}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+    }
 
     for (const qa of episode.qa_pairs) {
       try {
