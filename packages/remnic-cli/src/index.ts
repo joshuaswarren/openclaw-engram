@@ -147,6 +147,7 @@ import {
   parseBenchArgs,
 } from "./bench-args.js";
 import {
+  createBenchStatusPath,
   initBenchStatus,
   updateBenchmarkStarted,
   updateBenchmarkCompleted,
@@ -4716,9 +4717,9 @@ async function cmdBench(rest: string[]): Promise<void> {
 
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
   const failures = new Set<string>();
-  const benchStatusPath = path.join(
+  const benchStatusPath = createBenchStatusPath(
     parsed.resultsDir ?? resolveBenchOutputDir(),
-    "bench-status.json",
+    process.pid,
   );
   // When running a matrix (multiple profiles), create profile-specific status
   // entries so that a failed profile doesn't get overwritten by a later success.
