@@ -1206,6 +1206,11 @@ export async function runOperatorDoctor(options: OperatorDoctorOptions): Promise
   // false-missing warnings.
   checks.push(await summarizeConsolidationProvenance(new StorageManager(config.memoryDir), config));
 
+  // Security mitigation status (issue #565).
+  // Reports whether the cross-namespace budget and anomaly detection
+  // mitigations are enabled and surfaces config values for operator review.
+  checks.push(summarizeSecurityMitigations(config));
+
   const summary = checks.reduce(
     (acc, check) => {
       acc[check.status] += 1;
@@ -1387,6 +1392,69 @@ export async function summarizeBufferSurpriseDistribution(
  * Exported so unit tests can exercise the summarization without booting a
  * full orchestrator.
  */
+
+function summarizeSecurityMitigations(
+  config: Pick<
+    PluginConfig,
+    | "recallCrossNamespaceBudgetEnabled"
+    | "recallCrossNamespaceBudgetWindowMs"
+    | "recallCrossNamespaceBudgetSoftLimit"
+    | "recallCrossNamespaceBudgetHardLimit"
+    | "recallAuditAnomalyDetectionEnabled"
+    | "recallAuditAnomalyWindowMs"
+    | "recallAuditAnomalyRepeatQueryLimit"
+    | "recallAuditAnomalyNamespaceWalkLimit"
+    | "recallAuditAnomalyHighCardinalityLimit"
+    | "recallAuditAnomalyRapidFireLimit"
+  >,
+): OperatorDoctorCheck {
+  const budgetEnabled = config.recallCrossNamespaceBudgetEnabled === true;
+  const anomalyEnabled = config.recallAuditAnomalyDetectionEnabled === true;
+
+  if (!budgetEnabled && !anomalyEnabled) {
+    return {
+      key: "security_mitigations",
+      status: "warn",
+      summary: "Memory-extraction mitigations are disabled (cross-namespace budget and anomaly detection off).",
+      remediation: "Enable recallCrossNamespaceBudgetEnabled and/or recallAuditAnomalyDetectionEnabled for production deployments. See docs/security/memory-extraction-threat-model.md.",
+      details: {
+        budgetEnabled: false,
+        anomalyDetectionEnabled: false,
+      },
+    };
+  }
+
+  const details: Record<string, unknown> = {
+    budgetEnabled,
+    anomalyDetectionEnabled: anomalyEnabled,
+  };
+
+  if (budgetEnabled) {
+    details.budgetConfig = {
+      windowMs: config.recallCrossNamespaceBudgetWindowMs,
+      softLimit: config.recallCrossNamespaceBudgetSoftLimit,
+      hardLimit: config.recallCrossNamespaceBudgetHardLimit,
+    };
+  }
+
+  if (anomalyEnabled) {
+    details.anomalyConfig = {
+      windowMs: config.recallAuditAnomalyWindowMs,
+      repeatQueryLimit: config.recallAuditAnomalyRepeatQueryLimit,
+      namespaceWalkLimit: config.recallAuditAnomalyNamespaceWalkLimit,
+      highCardinalityLimit: config.recallAuditAnomalyHighCardinalityLimit,
+      rapidFireLimit: config.recallAuditAnomalyRapidFireLimit,
+    };
+  }
+
+  return {
+    key: "security_mitigations",
+    status: "ok",
+    summary: `Memory-extraction mitigation config enabled: ${budgetEnabled ? "budget" : ""}${budgetEnabled && anomalyEnabled ? ", " : ""}${anomalyEnabled ? "anomaly detection" : ""}.`,
+    details: { ...details, configOnly: true },
+  };
+}
+
 export async function summarizeConsolidationProvenance(
   storage: StorageManager,
   config: Pick<PluginConfig, "memoryDir"> & { versioningSidecarDir?: string },
