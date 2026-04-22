@@ -52,7 +52,10 @@ import {
 import {
   forEachRuntimeSurfaceStorage,
 } from "../packages/plugin-openclaw/src/runtime-surface-namespaces.js";
-import { buildSessionCommandDescriptors } from "../packages/plugin-openclaw/src/session-command-descriptors.js";
+import {
+  buildLegacySessionCommandDescriptorsFromDescriptors,
+  buildSessionCommandDescriptors,
+} from "../packages/plugin-openclaw/src/session-command-descriptors.js";
 import { validateSlotSelection } from "../packages/plugin-openclaw/src/slot-validator.js";
 import { PLUGIN_ID, resolveRemnicPluginEntry } from "../packages/remnic-core/src/plugin-id.js";
 import { createFileToggleStore } from "../packages/remnic-core/src/session-toggles.js";
@@ -807,6 +810,8 @@ const pluginDefinition = {
         });
       },
     });
+    const legacySessionCommandDescriptors =
+      buildLegacySessionCommandDescriptorsFromDescriptors(sessionCommandDescriptors);
     const activeRecallEngine = createActiveRecallEngine(
       {
         recall: async (query, sessionKey) => orchestrator.recall(query, sessionKey),
@@ -3216,20 +3221,6 @@ const pluginDefinition = {
     // These hooks are only available on the new SDK and provide richer
     // lifecycle, tool, LLM, and subagent observation capabilities.
     // ========================================================================
-    if (
-      !passiveMode &&
-      cfg.commandsListEnabled &&
-      cfg.sessionTogglesEnabled !== false
-    ) {
-      try {
-        api.on("commands.list", async () => sessionCommandDescriptors);
-      } catch (error) {
-        log.debug(
-          `commands.list unavailable on this runtime: ${String(error)}`,
-        );
-      }
-    }
-
     if (!passiveMode && sdkCaps.hasBeforePromptBuild) {
       // ---- Session lifecycle ----
       api.on(
@@ -3566,14 +3557,32 @@ const pluginDefinition = {
       api.registerTool(buildMemoryGetTool(orchestrator) as Record<string, unknown>);
     }
 
+    // OpenClaw's command discovery is driven by registerCommand() entries.
+    // `commands.list` is a gateway RPC surface, not a plugin typed hook, so
+    // attempting to bind it through api.on() produces an "unknown typed hook"
+    // warning on current runtimes.
+    const commandApi = api as { registerCommand?: (spec: unknown) => void };
     if (
-      cfg.sessionTogglesEnabled !== false &&
-      typeof (api as { registerCommand?: (spec: unknown) => void }).registerCommand === "function" &&
-      !(globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD]
+      !passiveMode &&
+      cfg.commandsListEnabled &&
+      cfg.sessionTogglesEnabled !== false
     ) {
-      (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = true;
-      for (const descriptor of sessionCommandDescriptors) {
-        (api as { registerCommand: (spec: unknown) => void }).registerCommand(descriptor);
+      if (
+        typeof commandApi.registerCommand === "function" &&
+        !(globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD]
+      ) {
+        (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = true;
+        for (const descriptor of sessionCommandDescriptors) {
+          commandApi.registerCommand(descriptor);
+        }
+      } else if (typeof commandApi.registerCommand !== "function") {
+        try {
+          api.on("commands.list", async () => legacySessionCommandDescriptors);
+        } catch (error) {
+          log.debug(
+            `commands.list unavailable on this runtime: ${String(error)}`,
+          );
+        }
       }
     }
 

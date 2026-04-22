@@ -41,6 +41,8 @@ const GLOBAL_KEYS = [
   "__openclawEngramOrchestrator",
   // CLI dedupe guard — intentionally process-global (not per-serviceId).
   "__openclawEngramCliRegistered",
+  // Session command dedupe guard — intentionally process-global.
+  "__openclawEngramSessionCommandsRegistered",
   // CLI active-service refcount.
   "__openclawEngramCliActiveServiceCount",
   // Intentionally unkeyed.
@@ -76,11 +78,13 @@ interface HandlerCapturingApi {
   registerService: (spec: { id: string; start: () => Promise<void>; stop: () => Promise<void> }) => void;
   on: (event: string, handler: Function) => void;
   registerHook?: (events: unknown, handler: unknown, opts?: unknown) => void;
+  registerCommand?: (spec: unknown) => void;
   runtime?: { version: string };
   registrationMode?: string;
   registerMemoryPromptSection?: (spec: unknown) => void;
   registerMemoryCapability?: (spec: unknown) => void;
   handlers: Map<string, Function>;
+  _registeredCommands: unknown[];
   _memoryPromptSection?: (params: { sessionKey?: string }) => string[] | null;
   _memoryCapability?: { promptBuilder?: (params: { sessionKey?: string }) => string[] | null };
   _registeredServiceStart?: (() => Promise<void>) | null;
@@ -98,8 +102,12 @@ function buildHandlerCapturingApi(
     pluginConfig: {},
     config: {},
     handlers,
+    _registeredCommands: [],
     registerTool(_spec: unknown) {},
     registerCli(_spec: unknown) {},
+    registerCommand(spec: unknown) {
+      api._registeredCommands.push(spec);
+    },
     registerService(spec) {
       api._registeredServiceStart = spec.start;
       api._registeredServiceStop = spec.stop;
@@ -125,6 +133,22 @@ function buildHandlerCapturingApi(
     };
   }
   return api;
+}
+
+function getRegisteredRemnicCommand(api: HandlerCapturingApi) {
+  return api._registeredCommands.find((spec) =>
+    spec && typeof spec === "object" && (spec as { name?: unknown }).name === "remnic"
+  ) as
+    | {
+        name?: string;
+        handler?: (ctx?: {
+          sessionKey?: string;
+          agentId?: string;
+          args?: string | readonly string[];
+        }) => Promise<{ text: string }>;
+        subcommands?: Array<{ name?: string; handler?: Function }>;
+      }
+    | undefined;
 }
 
 // ============================================================================
@@ -274,27 +298,27 @@ test("before_prompt_build handler returns memory context or undefined without th
   );
 });
 
-test("commands.list handler returns the remnic discovery descriptor", async () => {
+test("registerCommand exposes the remnic discovery descriptor", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("commands-list-test");
   plugin.register(api as any);
 
-  const handler = api.handlers.get("commands.list");
-  assert.ok(handler, "commands.list handler should be registered");
-
-  const result = await handler();
-  assert.equal(Array.isArray(result), true);
-  const group = result?.[0];
+  assert.equal(
+    api.handlers.has("commands.list"),
+    false,
+    "commands.list should not be registered on current OpenClaw SDKs",
+  );
+  const group = getRegisteredRemnicCommand(api);
+  assert.ok(group, "remnic command should be registered");
   assert.equal(group?.name, "remnic");
-  assert.equal(group?.category, "memory");
-  assert.equal(group?.pluginId, "openclaw-remnic");
   assert.equal(Array.isArray(group?.subcommands), true);
   for (const command of group?.subcommands ?? []) {
     assert.equal(typeof command.handler, "function");
   }
+  assert.equal(typeof group?.handler, "function");
 });
 
-test("commands.list handler is not registered when session toggles are disabled", async () => {
+test("registerCommand stays hidden when session toggles are disabled", async () => {
   const { default: plugin } = await import("../src/index.js");
   const api = buildHandlerCapturingApi("commands-list-disabled-toggle-test");
   api.pluginConfig = {
@@ -307,6 +331,7 @@ test("commands.list handler is not registered when session toggles are disabled"
     false,
     "commands.list should stay hidden when session toggle commands are disabled",
   );
+  assert.equal(api._registeredCommands.length, 0);
 });
 
 test("before_prompt_build respects the primary session toggle store", async () => {
@@ -324,11 +349,14 @@ test("before_prompt_build respects the primary session toggle store", async () =
   const beforePromptBuild = api.handlers.get("before_prompt_build");
   assert.ok(beforePromptBuild, "before_prompt_build handler should be registered");
 
-  const commandsList = api.handlers.get("commands.list");
-  const commandGroup = ((commandsList ? await commandsList() : []) ?? [])[0];
-  const offCommand = commandGroup?.subcommands?.find((entry: { name?: string }) => entry.name === "off");
-  assert.ok(offCommand?.handler, "off command should expose a handler");
-  await offCommand.handler({ sessionKey: "session-a", agentId: "main" });
+  const remnicCommand = getRegisteredRemnicCommand(api);
+  assert.equal(typeof remnicCommand?.handler, "function");
+  const offReply = await remnicCommand?.handler?.({
+    sessionKey: "session-a",
+    agentId: "main",
+    args: "off",
+  });
+  assert.match(String(offReply?.text ?? ""), /disabled/i);
 
   const orchestrator = (globalThis as any).__openclawEngramOrchestrator;
   orchestrator.maybeRunFileHygiene = async () => undefined;

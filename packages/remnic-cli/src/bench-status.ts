@@ -1,9 +1,9 @@
 /**
  * Agent-readable benchmark status file.
  *
- * Writes a `bench-status.json` to the results directory that AI agents
- * (or humans) can poll to track benchmark progress without relying on
- * Node.js stdout (which is invisible when piped/nohup'd).
+ * Writes a run-scoped bench status file to the results directory that AI
+ * agents (or humans) can poll to track benchmark progress without relying
+ * on Node.js stdout (which is invisible when piped/nohup'd).
  *
  * All writes are serialized through a per-file queue so that concurrent
  * task-progress updates never race with benchmark completion/failure writes.
@@ -31,6 +31,14 @@ export interface BenchStatus {
   currentTaskProgress?: { completed: number; total?: number };
   benchmarks: BenchmarkStatusEntry[];
   completedResults: string[];
+}
+
+export function createBenchStatusPath(
+  resultsDir: string,
+  pid: number,
+  startedAtMs = Date.now(),
+): string {
+  return path.join(resultsDir, `bench-status-${startedAtMs}-${pid}.json`);
 }
 
 async function atomicWriteJSON(filePath: string, data: unknown): Promise<void> {

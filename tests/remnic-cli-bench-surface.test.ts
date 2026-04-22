@@ -18,6 +18,7 @@ test("remnic CLI source wires the new bench command and keeps benchmark as an al
 
 test("bench surface publishes the phase-1 benchmark catalog and quick-run fallback mapping", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
+  const fallbackSource = await readFile("packages/remnic-cli/src/bench-fallback.ts", "utf8");
 
   for (const benchmarkId of ["ama-bench", "memory-arena", "amemgym", "longmemeval", "locomo"]) {
     assert.match(source, new RegExp(`id: "${benchmarkId}"`));
@@ -35,8 +36,8 @@ test("bench surface publishes the phase-1 benchmark catalog and quick-run fallba
   ]) {
     assert.match(source, new RegExp(`"${datasetBenchmarkId}"`));
   }
-  assert.match(source, /args\.push\("--lightweight", "--limit", "1"\)/);
-  assert.match(source, /args\.push\("--dataset-dir", parsed\.datasetDir\)/);
+  assert.match(fallbackSource, /args\.push\("--lightweight", "--limit", "1"\)/);
+  assert.match(fallbackSource, /args\.push\("--dataset-dir", parsed\.datasetDir\)/);
   assert.match(source, /Use 'remnic bench list' to see available\./);
 });
 

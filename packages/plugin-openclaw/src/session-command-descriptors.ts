@@ -4,7 +4,7 @@ import type { LastRecallSnapshot } from "../../remnic-core/src/recall-state.js";
 export interface SessionCommandContext {
   sessionKey?: string;
   agentId?: string;
-  args?: readonly string[];
+  args?: string | readonly string[];
 }
 
 export interface SessionCommandRuntime {
@@ -13,6 +13,31 @@ export interface SessionCommandRuntime {
   getLastRecallSummary(sessionKey: string): string | null;
   flushSession(sessionKey: string): Promise<void>;
 }
+
+export interface StructuredSessionCommandReply {
+  text: string;
+}
+
+type SessionCommandDescriptor = {
+  name: string;
+  description: string;
+  category: string;
+  pluginId: string;
+  acceptsArgs: boolean;
+  subcommands: Array<{
+    name: string;
+    description: string;
+    args: string[];
+    handler: (commandCtx?: SessionCommandContext) => Promise<string>;
+  }>;
+  handler: (
+    commandCtx?: SessionCommandContext,
+  ) => Promise<StructuredSessionCommandReply>;
+};
+
+type LegacySessionCommandDescriptor = Omit<SessionCommandDescriptor, "handler"> & {
+  handler: (commandCtx?: SessionCommandContext) => Promise<string>;
+};
 
 function describeToggleSource(source: "primary" | "secondary" | "none"): string {
   if (source === "primary") return "Remnic session override";
@@ -27,10 +52,25 @@ function resolveSession(commandCtx: SessionCommandContext): { sessionKey: string
   };
 }
 
+function normalizeCommandArgs(args: SessionCommandContext["args"]): string[] {
+  if (Array.isArray(args)) {
+    return args
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0);
+  }
+  if (typeof args === "string") {
+    return args
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+  }
+  return [];
+}
+
 export function buildSessionCommandDescriptors(
   pluginId: string,
   runtime: SessionCommandRuntime,
-) {
+): SessionCommandDescriptor[] {
   const subcommands = [
     {
       name: "off",
@@ -131,13 +171,35 @@ export function buildSessionCommandDescriptors(
       acceptsArgs: true,
       subcommands,
       handler: async (commandCtx: SessionCommandContext = {}) => {
-        const requested = commandCtx.args?.[0]?.trim().toLowerCase() ?? "status";
+        const requested =
+          normalizeCommandArgs(commandCtx.args)[0]?.trim().toLowerCase() ?? "status";
         const match = subcommands.find((entry) => entry.name === requested);
         if (!match) {
-          return `Unknown Remnic subcommand "${requested}". Try one of: ${subcommandNames}.`;
+          return {
+            text: `Unknown Remnic subcommand "${requested}". Try one of: ${subcommandNames}.`,
+          };
         }
-        return match.handler(commandCtx);
+        return { text: await match.handler(commandCtx) };
       },
     },
   ];
+}
+
+export function buildLegacySessionCommandDescriptors(
+  pluginId: string,
+  runtime: SessionCommandRuntime,
+): LegacySessionCommandDescriptor[] {
+  return buildLegacySessionCommandDescriptorsFromDescriptors(
+    buildSessionCommandDescriptors(pluginId, runtime),
+  );
+}
+
+export function buildLegacySessionCommandDescriptorsFromDescriptors(
+  descriptors: SessionCommandDescriptor[],
+): LegacySessionCommandDescriptor[] {
+  return descriptors.map((descriptor) => ({
+    ...descriptor,
+    handler: async (commandCtx: SessionCommandContext = {}) =>
+      (await descriptor.handler(commandCtx)).text,
+  }));
 }

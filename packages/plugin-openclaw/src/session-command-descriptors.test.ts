@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildSessionCommandDescriptors } from "./session-command-descriptors.js";
+import {
+  buildLegacySessionCommandDescriptors,
+  buildSessionCommandDescriptors,
+} from "./session-command-descriptors.js";
 
 test("buildSessionCommandDescriptors wires toggle and status handlers", async () => {
   const disabled = new Map<string, boolean>();
@@ -107,7 +110,11 @@ test("top-level descriptor satisfies OpenClaw registerCommand validator and disp
     name: string;
     description: string;
     acceptsArgs: boolean;
-    handler: (ctx?: { sessionKey?: string; agentId?: string; args?: readonly string[] }) => Promise<string>;
+    handler: (ctx?: {
+      sessionKey?: string;
+      agentId?: string;
+      args?: string | readonly string[];
+    }) => Promise<{ text: string }>;
   };
 
   // Shape required by openclaw's validatePluginCommandDefinition
@@ -117,24 +124,70 @@ test("top-level descriptor satisfies OpenClaw registerCommand validator and disp
   assert.ok(descriptor.description.trim().length > 0);
   assert.equal(descriptor.acceptsArgs, true);
 
-  await descriptor.handler({ args: ["off"], sessionKey: "session-b", agentId: "main" });
-  assert.equal(disabled.get("session-b:main"), true);
-
-  const statusText = await descriptor.handler({
-    args: ["status"],
+  const offReply = await descriptor.handler({
+    args: "off",
     sessionKey: "session-b",
     agentId: "main",
   });
-  assert.match(statusText, /disabled/);
+  assert.match(offReply.text, /disabled/);
+  assert.equal(disabled.get("session-b:main"), true);
 
-  const unknownText = await descriptor.handler({
+  const statusReply = await descriptor.handler({
+    args: "status",
+    sessionKey: "session-b",
+    agentId: "main",
+  });
+  assert.match(statusReply.text, /disabled/);
+
+  const unknownReply = await descriptor.handler({
     args: ["bogus"],
     sessionKey: "session-b",
     agentId: "main",
   });
-  assert.match(unknownText, /Unknown Remnic subcommand "bogus"/);
+  assert.match(unknownReply.text, /Unknown Remnic subcommand "bogus"/);
 
   // No args => defaults to status.
-  const defaultText = await descriptor.handler({ sessionKey: "session-b", agentId: "main" });
-  assert.match(defaultText, /Remnic recall is/);
+  const defaultReply = await descriptor.handler({
+    sessionKey: "session-b",
+    agentId: "main",
+  });
+  assert.match(defaultReply.text, /Remnic recall is/);
+});
+
+test("legacy session command descriptors unwrap top-level replies to plain strings", async () => {
+  const runtime = {
+    toggles: {
+      async isDisabled() {
+        return false;
+      },
+      async resolve() {
+        return {
+          disabled: false,
+          source: "none" as const,
+        };
+      },
+      async setDisabled() {},
+      async clear() {},
+      async list() {
+        return [];
+      },
+    },
+    getLastRecall() {
+      return null;
+    },
+    getLastRecallSummary() {
+      return null;
+    },
+    async flushSession() {},
+  };
+
+  const [descriptor] = buildLegacySessionCommandDescriptors("openclaw-remnic", runtime);
+  const reply = await descriptor?.handler({
+    sessionKey: "legacy-session",
+    agentId: "main",
+    args: "status",
+  });
+
+  assert.equal(typeof reply, "string");
+  assert.match(String(reply ?? ""), /Remnic recall is enabled/);
 });

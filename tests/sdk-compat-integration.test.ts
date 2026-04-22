@@ -137,6 +137,7 @@ interface MockApi {
   registerMemoryCapability?: (spec: unknown) => void;
   registerCommand?: (spec: unknown) => void;
   _registeredHooks: string[];
+  _hookHandlers: Map<string, unknown>;
   _registeredToolCount: number;
   _registeredToolNames: string[];
   _registeredServiceIds: string[];
@@ -152,6 +153,7 @@ function buildNewSdkApi(label: string): MockApi {
     pluginConfig: {},
     config: {},
     _registeredHooks: [],
+    _hookHandlers: new Map(),
     _registeredToolCount: 0,
     _registeredToolNames: [],
     _registeredServiceIds: [],
@@ -163,8 +165,8 @@ function buildNewSdkApi(label: string): MockApi {
         api._registeredToolNames.push((spec as { name: string }).name);
       }
     },
-    registerCommand(spec: unknown) {
-      api._registeredCommands.push(spec);
+    registerCommand(this: MockApi, spec: unknown) {
+      this._registeredCommands.push(spec);
     },
     registerCli(_spec: unknown) {},
     registerService(spec) {
@@ -172,6 +174,7 @@ function buildNewSdkApi(label: string): MockApi {
     },
     on(event: string, _handler: unknown) {
       api._registeredHooks.push(event);
+      api._hookHandlers.set(event, _handler);
     },
     registerHook(_events: unknown, _handler: unknown, _opts?: unknown) {},
     runtime: { version: "2026.3.22" },
@@ -190,6 +193,7 @@ function buildLegacySdkApi(label: string): MockApi {
     pluginConfig: {},
     config: {},
     _registeredHooks: [],
+    _hookHandlers: new Map(),
     _registeredToolCount: 0,
     _registeredToolNames: [],
     _registeredServiceIds: [],
@@ -207,6 +211,7 @@ function buildLegacySdkApi(label: string): MockApi {
     },
     on(event: string, _handler: unknown) {
       api._registeredHooks.push(event);
+      api._hookHandlers.set(event, _handler);
     },
     // No runtime, no registrationMode, no registerMemoryPromptSection
   };
@@ -257,8 +262,8 @@ test("new SDK api gets all new hooks + memory section", async () => {
       "before_reset should be registered on new SDK",
     );
     assert.ok(
-      api._registeredHooks.includes("commands.list"),
-      "commands.list should be registered on new SDK",
+      !api._registeredHooks.includes("commands.list"),
+      "commands.list should NOT be registered on new SDK; command discovery uses registerCommand()",
     );
 
     // New SDK-only hooks
@@ -332,6 +337,11 @@ test("slot mismatch warn mode suppresses hook registration but still registers t
     plugin.register(api as any);
 
     assert.equal(api._registeredHooks.length, 0, "passive mode should not register hooks");
+    assert.equal(
+      api._registeredCommands.length,
+      0,
+      "passive mode should not register session command descriptors",
+    );
     assert.ok(api._registeredToolCount > 0, "tools should still register in passive mode");
     assert.ok(
       api._registeredServiceIds.includes("openclaw-remnic"),
@@ -393,6 +403,24 @@ test("new SDK registers active-memory tool names and slash commands", async () =
       api._registeredCommands.length > 0,
       "registerCommand should be used when available for session-scoped recall toggles",
     );
+    const remnicCommand = api._registeredCommands.find((spec) =>
+      spec && typeof spec === "object" && (spec as { name?: unknown }).name === "remnic"
+    ) as
+      | {
+          handler?: (ctx?: {
+            sessionKey?: string;
+            agentId?: string;
+            args?: string;
+          }) => Promise<{ text: string }>;
+        }
+      | undefined;
+    assert.equal(typeof remnicCommand?.handler, "function");
+    const reply = await remnicCommand?.handler?.({
+      sessionKey: "session-command-test",
+      agentId: "main",
+      args: "status",
+    });
+    assert.match(String(reply?.text ?? ""), /Remnic recall is/);
   } finally {
     await awaitPendingMigration();
     restoreRegisterMigrationEnv(previousDisableMigration);
@@ -421,6 +449,30 @@ test("new SDK hides session command registration when session toggles are disabl
       api._registeredCommands.length,
       0,
       "registerCommand should not expose session toggle commands when the toggle system is disabled",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("new SDK hides session command registration when commandsListEnabled is false", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("active-memory-tools-disabled-commands-list-test");
+    api.pluginConfig = {
+      commandsListEnabled: false,
+    };
+    plugin.register(api as any);
+
+    assert.equal(
+      api._registeredCommands.length,
+      0,
+      "registerCommand should stay hidden when commandsListEnabled is false",
     );
   } finally {
     await awaitPendingMigration();
@@ -480,6 +532,32 @@ test("legacy SDK api gets legacy hooks only", async () => {
       !api._registeredHooks.includes("before_prompt_build"),
       "before_prompt_build should NOT be registered on legacy SDK",
     );
+
+    assert.ok(
+      api._registeredHooks.includes("commands.list"),
+      "commands.list should remain registered on legacy SDKs without registerCommand()",
+    );
+    const listHandler = api._hookHandlers.get("commands.list") as
+      | (() => Promise<Array<{
+          name?: string;
+          handler?: (ctx?: {
+            sessionKey?: string;
+            agentId?: string;
+            args?: string;
+          }) => Promise<string>;
+        }>>)
+      | undefined;
+    assert.equal(typeof listHandler, "function");
+    const commands = await listHandler?.();
+    const remnicCommand = commands?.find((spec) => spec?.name === "remnic");
+    assert.equal(typeof remnicCommand?.handler, "function");
+    const legacyReply = await remnicCommand?.handler?.({
+      sessionKey: "legacy-session-command-test",
+      agentId: "main",
+      args: "status",
+    });
+    assert.equal(typeof legacyReply, "string");
+    assert.match(String(legacyReply ?? ""), /Remnic recall is/);
 
     // Core hooks still present
     assert.ok(
