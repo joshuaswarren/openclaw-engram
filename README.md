@@ -933,6 +933,8 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 | `procedural.enabled` | `true` | **Procedural memory (issue #519):** master gate for procedure extraction, task-init recall injection, and trajectory mining. Default-on since issue #567 PR 4/5; set nested `procedural: { "enabled": false }` to opt out (see [Procedural memory](docs/procedural-memory.md)). |
 | `codingMode.projectScope` | `true` | **Coding agent mode (issue #569):** auto-scope memory to the git project (stable origin-URL hash, falls back to root path). Set to `false` to disable project-based namespace isolation. See [Coding agent mode](docs/coding-agent.md). |
 | `codingMode.branchScope` | `false` | **Coding agent mode (issue #569):** additionally scope writes to the current git branch; reads fall back to the project-level namespace so project memories stay visible from any branch while branch writes don't leak. Enable for per-branch experimentation. |
+| `recallCrossNamespaceBudgetEnabled` | `false` | **Cross-namespace budget (issue #565):** per-principal sliding-window rate limiter. Throttles principals issuing bursts of cross-namespace recalls; soft limit emits a warning, hard limit denies the query. See [Threat model](docs/security/memory-extraction-threat-model.md). |
+| `recallAuditAnomalyDetectionEnabled` | `false` | **Recall audit anomaly detection (issue #565):** flag suspicious query patterns (repeat queries, namespace walks, high-cardinality entity probes, rapid-fire). Anomalies are surfaced in recall responses. See [Threat model](docs/security/memory-extraction-threat-model.md). |
 
 **[See the full config reference for all 60+ settings](docs/config-reference.md)** including search backend configuration, namespace policies, Memory OS features, governance, evaluation harness, trust zones, causal trajectories, and more.
 
@@ -976,6 +978,8 @@ All settings live in `openclaw.json` under `plugins.entries.openclaw-engram.conf
 - [Coding agent mode](docs/coding-agent.md) — Auto-scope memory to git project / branch, review-context recall, `set_coding_context` MCP tool (issue #569)
 - [Recall X-ray](docs/xray.md) — `remnic xray` CLI, HTTP endpoint, MCP tool for per-result retrieval attribution (issue #570)
 - [Memory importers](docs/importers.md) — Bring memory from ChatGPT, Claude, Gemini, and mem0 (issue #568)
+- [Memory Extraction Threat Model](docs/security/memory-extraction-threat-model.md) — ADAM attack analysis, attacker tiers, and mitigation wiring (issue #565)
+- [ADAM Baseline 2026-04](docs/security/adam-baseline-2026-04.md) — Reproducible ASR measurements per attacker tier
 
 ## Contributing
 

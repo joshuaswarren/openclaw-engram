@@ -982,6 +982,35 @@ Stored as `category: procedure` markdown under `memoryDir/procedures/`. Narrativ
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `memoryExtensionsEnabled` | `true` | Enable third-party memory extension discovery |
+
+## Cross-namespace Query Budget (issue #565)
+
+Per-principal sliding-window rate limiter for cross-namespace recall queries.
+When enabled, principals issuing bursts of recalls against namespaces other than
+their own are throttled: soft limit emits a warning, hard limit denies the query.
+See [Threat model](security/memory-extraction-threat-model.md).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `recallCrossNamespaceBudgetEnabled` | `false` | Enable per-principal cross-namespace recall budget |
+| `recallCrossNamespaceBudgetWindowMs` | `60000` | Sliding window duration in milliseconds |
+| `recallCrossNamespaceBudgetSoftLimit` | `10` | Queries per window that trigger a warning (still allowed) |
+| `recallCrossNamespaceBudgetHardLimit` | `30` | Queries per window that trigger a denial |
+
+## Recall Audit Anomaly Detection (issue #565)
+
+Anomaly detection on the recall audit trail. Flags suspicious query patterns
+(repeat queries, namespace walks, high-cardinality entity probes, rapid-fire)
+in recall responses. See [Threat model](security/memory-extraction-threat-model.md).
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `recallAuditAnomalyDetectionEnabled` | `false` | Enable anomaly detection on recall audit trail |
+| `recallAuditAnomalyWindowMs` | `300000` | Sliding window for anomaly detectors (5 min) |
+| `recallAuditAnomalyRepeatQueryLimit` | `5` | Max identical queries before repeat-query flag |
+| `recallAuditAnomalyNamespaceWalkLimit` | `3` | Max distinct namespaces before namespace-walk flag |
+| `recallAuditAnomalyHighCardinalityLimit` | `50` | Max distinct queries before high-cardinality flag |
+| `recallAuditAnomalyRapidFireLimit` | `30` | Max queries in window before rapid-fire flag |
 | `memoryExtensionsRoot` | `""` | Override memory extensions root directory |
 
 
