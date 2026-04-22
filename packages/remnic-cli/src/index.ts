@@ -4895,7 +4895,6 @@ async function cmdBench(rest: string[]): Promise<void> {
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath ?? ""); } catch { /* non-fatal */ }
           } else {
             const fallbackResultPath = await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
-            const fallbackResultPath = await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, fallbackResultPath); } catch { /* non-fatal */ }
           }
         } catch (err) {
