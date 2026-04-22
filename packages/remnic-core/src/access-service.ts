@@ -1112,10 +1112,14 @@ export class EngramAccessService {
     let auditAnomalies: AccessAuditResult["anomalies"] | undefined;
     if (this.auditAdapter) {
       try {
+        const resolvedAgentId = resolvePrincipal(
+          request.sessionKey,
+          this.orchestrator.config,
+        );
         const auditEntry = {
           ts: new Date().toISOString(),
           sessionKey: request.sessionKey ?? "",
-          agentId: resolvePrincipal(request.sessionKey, this.orchestrator.config),
+          agentId: resolvedAgentId,
           trigger: "access-surface",
           queryText: query,
           candidateMemoryIds: snapshot?.memoryIds ?? [],
@@ -1128,7 +1132,7 @@ export class EngramAccessService {
           fallbackUsed: snapshot?.fallbackUsed ?? false,
         };
         const auditResult = await this.auditAdapter.record(
-          request.sessionKey ?? "__anonymous__",
+          resolvedAgentId || "__anonymous__",
           auditEntry,
         );
         auditAnomalies = auditResult.anomalies;
