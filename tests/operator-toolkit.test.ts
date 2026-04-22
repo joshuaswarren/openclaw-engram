@@ -693,10 +693,11 @@ test("operator doctor reports ok when security mitigations are enabled", async (
   const sec = report.checks.find((c) => c.key === "security_mitigations");
   assert.ok(sec, "security_mitigations check should exist");
   assert.equal(sec.status, "ok");
-  assert.match(sec.summary, /active/);
+  assert.match(sec.summary, /config enabled/);
   const details = sec.details as Record<string, unknown>;
   assert.equal(details.budgetEnabled, true);
   assert.equal(details.anomalyDetectionEnabled, true);
+  assert.equal(details.configOnly, true, "should indicate this is config-only, not enforcement");
   assert.ok(details.budgetConfig, "should include budget config");
   assert.ok(details.anomalyConfig, "should include anomaly config");
 });

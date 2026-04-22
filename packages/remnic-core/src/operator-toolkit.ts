@@ -1450,8 +1450,8 @@ function summarizeSecurityMitigations(
   return {
     key: "security_mitigations",
     status: "ok",
-    summary: `Memory-extraction mitigations active: ${budgetEnabled ? "budget" : ""}${budgetEnabled && anomalyEnabled ? ", " : ""}${anomalyEnabled ? "anomaly detection" : ""}.`,
-    details,
+    summary: `Memory-extraction mitigation config enabled: ${budgetEnabled ? "budget" : ""}${budgetEnabled && anomalyEnabled ? ", " : ""}${anomalyEnabled ? "anomaly detection" : ""}.`,
+    details: { ...details, configOnly: true },
   };
 }
 
