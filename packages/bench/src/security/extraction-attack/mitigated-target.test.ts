@@ -38,10 +38,11 @@ test("createMitigatedTarget returns empty hits when budget is exceeded", async (
   }
 
   // Cross-namespace queries should exhaust the budget and still return hits
-  // (the raw target has no namespace filter for these memories).
+  // (the raw target returns matches from namespace "other").
   for (let i = 0; i < 3; i++) {
     const hits = await mitigated.recall("alpha", { namespace: "other" });
     assert.ok(Array.isArray(hits), `cross-ns query ${i} should return array`);
+    assert.ok(hits.length > 0, `cross-ns query ${i} should return non-empty hits before budget exhausted`);
   }
 
   // 4th cross-namespace query should be denied (empty hits from budget).
