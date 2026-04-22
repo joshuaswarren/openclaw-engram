@@ -1009,7 +1009,7 @@ in recall responses. See [Threat model](security/memory-extraction-threat-model.
 | `recallAuditAnomalyWindowMs` | `300000` | Sliding window for anomaly detectors (5 min) |
 | `recallAuditAnomalyRepeatQueryLimit` | `5` | Max identical queries before repeat-query flag |
 | `recallAuditAnomalyNamespaceWalkLimit` | `3` | Max distinct namespaces before namespace-walk flag |
-| `recallAuditAnomalyHighCardinalityLimit` | `50` | Max distinct queries before high-cardinality flag |
+| `recallAuditAnomalyHighCardinalityLimit` | `50` | Max candidate memory IDs in a single recall response before high-cardinality flag |
 | `recallAuditAnomalyRapidFireLimit` | `30` | Max queries in window before rapid-fire flag |
 | `memoryExtensionsRoot` | `""` | Override memory extensions root directory |
 
