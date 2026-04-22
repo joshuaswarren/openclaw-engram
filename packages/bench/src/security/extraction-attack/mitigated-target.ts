@@ -55,9 +55,9 @@ export function createMitigatedTarget(
 
   // Validate budget parameters to prevent silent enforcement skew from
   // NaN, negative, or non-integer inputs (Codex P2 review feedback).
-  if (!Number.isFinite(budgetHardLimit) || budgetHardLimit < 0 || !Number.isInteger(budgetHardLimit)) {
+  if (!Number.isFinite(budgetHardLimit) || budgetHardLimit < 1 || !Number.isInteger(budgetHardLimit)) {
     throw new Error(
-      `createMitigatedTarget: budgetHardLimit must be a non-negative finite integer, got ${budgetHardLimit}`,
+      `createMitigatedTarget: budgetHardLimit must be a positive integer, got ${budgetHardLimit}`,
     );
   }
   if (!Number.isFinite(budgetWindowMs) || budgetWindowMs <= 0) {

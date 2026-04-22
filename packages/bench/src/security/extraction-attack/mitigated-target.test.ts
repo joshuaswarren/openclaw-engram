@@ -132,19 +132,25 @@ test("createMitigatedTarget rejects invalid budget parameters", () => {
   // NaN budgetHardLimit
   assert.throws(
     () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: NaN, principalNamespace: "default" }),
-    /budgetHardLimit must be a non-negative finite integer/,
+    /budgetHardLimit must be a positive integer/,
   );
 
   // Negative budgetHardLimit
   assert.throws(
     () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: -1, principalNamespace: "default" }),
-    /budgetHardLimit must be a non-negative finite integer/,
+    /budgetHardLimit must be a positive integer/,
+  );
+
+  // Zero budgetHardLimit
+  assert.throws(
+    () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: 0, principalNamespace: "default" }),
+    /budgetHardLimit must be a positive integer/,
   );
 
   // Non-integer budgetHardLimit
   assert.throws(
     () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: 1.5, principalNamespace: "default" }),
-    /budgetHardLimit must be a non-negative finite integer/,
+    /budgetHardLimit must be a positive integer/,
   );
 
   // Zero budgetWindowMs
