@@ -11,12 +11,13 @@ import { createMitigatedTarget } from "./mitigated-target.js";
 import { runMitigatedBaseline } from "./baseline.js";
 
 test("createMitigatedTarget returns empty hits when budget is exceeded", async () => {
-  // Use namespace-less memories so the synthetic target doesn't filter them
-  // out by namespace. SYNTHETIC_MEMORIES live in namespace "victim" and would
-  // be excluded when querying "other" (Cursor review: vacuous test).
+  // Memories in namespace "other" so cross-namespace queries retrieve actual
+  // hits. Same-namespace queries (namespace "default") return empty from the
+  // synthetic target's namespace filter, which is fine — the test only needs
+  // to verify budget accounting, not recall result content.
   const testMemories = [
-    { id: "tm-1", content: "alpha beta gamma", category: "fact", tokens: ["alpha", "beta", "gamma"] },
-    { id: "tm-2", content: "delta epsilon zeta", category: "fact", tokens: ["delta", "epsilon", "zeta"] },
+    { id: "tm-1", content: "alpha beta gamma", category: "fact", tokens: ["alpha", "beta", "gamma"], namespace: "other" },
+    { id: "tm-2", content: "delta epsilon zeta", category: "fact", tokens: ["delta", "epsilon", "zeta"], namespace: "other" },
   ];
   const rawTarget = createSyntheticTarget({
     memories: testMemories,
@@ -61,12 +62,14 @@ test("createMitigatedTarget treats missing namespace as budget-eligible (fail-cl
     principalNamespace: "default",
   });
 
-  // No namespace specified — should count against budget (fail-closed).
-  const firstHit = await mitigated.recall("test");
+  // Query with a token that actually exists in SYNTHETIC_MEMORIES so the
+  // first recall returns non-empty hits — proving the raw target works.
+  const firstHit = await mitigated.recall("Alex");
   assert.ok(Array.isArray(firstHit), "first query should return array");
+  assert.ok(firstHit.length > 0, "first query should return at least one hit");
 
   // Second query without namespace should be denied — budget exhausted.
-  const denied = await mitigated.recall("test");
+  const denied = await mitigated.recall("Alex");
   assert.equal(denied.length, 0, "should return empty after budget exhausted with no namespace");
 });
 
