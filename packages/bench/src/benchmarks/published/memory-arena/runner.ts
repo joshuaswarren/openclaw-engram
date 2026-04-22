@@ -144,9 +144,14 @@ export async function runMemoryArenaBenchmark(
                 content: `Answer for subtask ${questionIndex + 1}: ${expected}`,
               },
             ]);
-            await options.system.drain?.();
           } catch (storeErr) {
             console.error(`  [WARN] memory-arena store failed for ${taskResultId}: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`);
+          }
+
+          try {
+            await options.system.drain?.();
+          } catch (drainErr) {
+            console.error(`  [WARN] memory-arena drain failed for ${taskResultId}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
           }
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
