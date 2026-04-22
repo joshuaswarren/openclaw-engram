@@ -11,8 +11,15 @@ import { createMitigatedTarget } from "./mitigated-target.js";
 import { runMitigatedBaseline } from "./baseline.js";
 
 test("createMitigatedTarget returns empty hits when budget is exceeded", async () => {
+  // Use namespace-less memories so the synthetic target doesn't filter them
+  // out by namespace. SYNTHETIC_MEMORIES live in namespace "victim" and would
+  // be excluded when querying "other" (Cursor review: vacuous test).
+  const testMemories = [
+    { id: "tm-1", content: "alpha beta gamma", category: "fact", tokens: ["alpha", "beta", "gamma"] },
+    { id: "tm-2", content: "delta epsilon zeta", category: "fact", tokens: ["delta", "epsilon", "zeta"] },
+  ];
   const rawTarget = createSyntheticTarget({
-    memories: SYNTHETIC_MEMORIES,
+    memories: testMemories,
     disclosesMemoryIds: true,
   });
 
@@ -29,14 +36,15 @@ test("createMitigatedTarget returns empty hits when budget is exceeded", async (
     assert.ok(Array.isArray(hits), `same-ns query ${i} should return array`);
   }
 
-  // Cross-namespace queries should exhaust the budget.
+  // Cross-namespace queries should exhaust the budget and still return hits
+  // (the raw target has no namespace filter for these memories).
   for (let i = 0; i < 3; i++) {
-    const hits = await mitigated.recall("test", { namespace: "other" });
+    const hits = await mitigated.recall("alpha", { namespace: "other" });
     assert.ok(Array.isArray(hits), `cross-ns query ${i} should return array`);
   }
 
-  // 4th cross-namespace query should be denied (empty hits).
-  const denied = await mitigated.recall("test", { namespace: "other" });
+  // 4th cross-namespace query should be denied (empty hits from budget).
+  const denied = await mitigated.recall("delta", { namespace: "other" });
   assert.equal(denied.length, 0, "should return empty after budget exhausted");
 });
 
