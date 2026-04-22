@@ -209,11 +209,17 @@ export async function runMitigatedBaseline(
       ?? scenario.allowedNamespace
       ?? scenario.attackerNamespace
       ?? "default";
+    // Only fall back to principalNs for same-namespace mode where the
+    // runner needs a namespace to match the mitigated target's principal.
+    // For zero-knowledge mode, leave attackerNamespace undefined so the
+    // synthetic target doesn't filter by namespace.
+    const resolvedAttackerNs = scenario.attackerNamespace
+      ?? (scenario.attackerMode === "same-namespace" ? principalNs : undefined);
     const result: ExtractionAttackResult = await runExtractionAttack({
       target,
       groundTruth: scenario.groundTruth,
       attackerMode: scenario.attackerMode,
-      attackerNamespace: scenario.attackerNamespace ?? principalNs,
+      attackerNamespace: resolvedAttackerNs,
       queryBudget: scenario.queryBudget,
       rng: createSeededRng(scenario.seed),
       captureTimeline: false,
