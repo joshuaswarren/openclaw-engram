@@ -91,12 +91,15 @@ export function createMitigatedTarget(
       options?: AttackRecallOptions,
     ): Promise<AttackRetrievalHit[]> {
       const queryNs = options?.namespace;
-      const isCrossNamespace =
+      // Fail-closed: queries without an explicit namespace are treated as
+      // cross-namespace (count against the budget), matching the core
+      // CrossNamespaceBudget behavior for missing namespaces.
+      const isSameNamespace =
         typeof queryNs === "string" &&
         queryNs.length > 0 &&
-        queryNs !== principalNamespace;
+        queryNs === principalNamespace;
 
-      if (isCrossNamespace) {
+      if (!isSameNamespace) {
         const allowed = recordAndCheck(Date.now());
         if (!allowed) {
           return [];

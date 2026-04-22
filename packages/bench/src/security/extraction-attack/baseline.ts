@@ -166,7 +166,9 @@ export const MITIGATED_BASELINE_SCENARIOS: readonly (BaselineScenario &
     // reduction. Previous revision used attackerNamespace "other" which
     // caused the synthetic target's namespace filter to exclude all victim
     // memories, making both mitigated and unmitigated ASR trivially 0.
-    name: "T3-cross-namespace-budget-hard30",
+    // budgetHardLimit is 10 (below the ~26 queries the unmitigated attack
+    // uses) so the denial branch is actually exercised.
+    name: "T3-cross-namespace-budget-hard10",
     attackerMode: "cross-namespace",
     attackerNamespace: "victim",
     queryBudget: 200,
@@ -176,7 +178,7 @@ export const MITIGATED_BASELINE_SCENARIOS: readonly (BaselineScenario &
     entities: [],
     enforceNamespaceAcl: false,
     disclosesMemoryIds: true,
-    budgetHardLimit: 30,
+    budgetHardLimit: 10,
     budgetWindowMs: 60_000,
     principalNamespaceOverride: "attacker-home",
   },

@@ -48,7 +48,7 @@ test("createMitigatedTarget returns empty hits when budget is exceeded", async (
   assert.equal(denied.length, 0, "should return empty after budget exhausted");
 });
 
-test("createMitigatedTarget does not count undefined namespace against budget", async () => {
+test("createMitigatedTarget treats missing namespace as budget-eligible (fail-closed)", async () => {
   const rawTarget = createSyntheticTarget({
     memories: SYNTHETIC_MEMORIES,
     disclosesMemoryIds: true,
@@ -61,11 +61,13 @@ test("createMitigatedTarget does not count undefined namespace against budget", 
     principalNamespace: "default",
   });
 
-  // No namespace specified — should not count.
-  for (let i = 0; i < 5; i++) {
-    const hits = await mitigated.recall("test");
-    assert.ok(Array.isArray(hits), `no-ns query ${i} should work`);
-  }
+  // No namespace specified — should count against budget (fail-closed).
+  const firstHit = await mitigated.recall("test");
+  assert.ok(Array.isArray(firstHit), "first query should return array");
+
+  // Second query without namespace should be denied — budget exhausted.
+  const denied = await mitigated.recall("test");
+  assert.equal(denied.length, 0, "should return empty after budget exhausted with no namespace");
 });
 
 test("runMitigatedBaseline returns mitigated rows", async () => {
