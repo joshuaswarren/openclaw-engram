@@ -202,6 +202,7 @@ export async function runMitigatedBaseline(
       budgetWindowMs: scenario.budgetWindowMs,
       principalNamespace: scenario.principalNamespaceOverride
         ?? scenario.allowedNamespace
+        ?? scenario.attackerNamespace
         ?? "default",
     });
     const result: ExtractionAttackResult = await runExtractionAttack({
