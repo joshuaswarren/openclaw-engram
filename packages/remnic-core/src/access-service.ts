@@ -40,7 +40,7 @@ import {
   toMemoryPathRel,
 } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
-import { canReadNamespace, canWriteNamespace, resolvePrincipal } from "./namespaces/principal.js";
+import { canReadNamespace, canWriteNamespace, defaultNamespaceForPrincipal, recallNamespacesForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type {
   GraphRecallSnapshot,
@@ -1095,12 +1095,40 @@ export class EngramAccessService {
     const namespaceOverride = this.resolveRecallNamespace(request.namespace, request.sessionKey);
     const namespace = namespaceOverride ?? this.orchestrator.config.defaultNamespace;
     const principal = resolvePrincipal(request.sessionKey, this.orchestrator.config);
-    const principalNamespace = this.orchestrator.config.defaultNamespace;
-    const budgetDecision = this.budget.check({
-      principal,
-      principalNamespace,
-      queryNamespace: namespace,
-    });
+    const principalNamespace = defaultNamespaceForPrincipal(principal, this.orchestrator.config);
+    // Derive the full set of namespaces the orchestrator will actually search.
+    // When no explicit override is provided, `recallNamespacesForPrincipal()` may
+    // expand to shared / policy-default namespaces.  Budget must be checked
+    // against every cross-namespace entry in the effective set so that omitting
+    // `namespace` cannot bypass the limiter (Cursor/Codex review feedback).
+    const effectiveNamespaces = namespaceOverride
+      ? [namespaceOverride]
+      : recallNamespacesForPrincipal(principal, this.orchestrator.config);
+    let budgetDecision: BudgetDecision = {
+      allowed: true,
+      reason: "allowed-same-namespace" as const,
+      count: 0,
+      limit: {
+        softLimit: this.orchestrator.config.recallCrossNamespaceBudgetSoftLimit ?? 10,
+        hardLimit: this.orchestrator.config.recallCrossNamespaceBudgetHardLimit ?? 30,
+        windowMs: this.orchestrator.config.recallCrossNamespaceBudgetWindowMs ?? 60_000,
+      },
+    };
+    for (const ns of effectiveNamespaces) {
+      const decision = this.budget.check({
+        principal,
+        principalNamespace,
+        queryNamespace: ns,
+      });
+      // Keep the most restrictive decision. Denied > warned > allowed.
+      if (!decision.allowed) {
+        budgetDecision = decision;
+        break;
+      }
+      if (decision.reason === "warn-over-soft" && budgetDecision.reason !== "warn-over-soft") {
+        budgetDecision = decision;
+      }
+    }
     if (!budgetDecision.allowed) {
       throw new EngramAccessInputError(
         `recall denied: cross-namespace budget exceeded (${budgetDecision.count}/${budgetDecision.limit.hardLimit} in ${budgetDecision.limit.windowMs}ms window)`,
