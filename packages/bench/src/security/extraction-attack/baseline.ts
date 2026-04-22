@@ -198,7 +198,6 @@ export async function runMitigatedBaseline(
     });
     const principalNs = scenario.principalNamespaceOverride
       ?? scenario.allowedNamespace
-      ?? scenario.attackerNamespace
       ?? "default";
     const target = createMitigatedTarget({
       target: rawTarget,
