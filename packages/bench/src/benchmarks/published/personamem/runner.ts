@@ -91,7 +91,11 @@ export async function runPersonaMemBenchmark(
         await options.system.store(sessionId, messages);
       }
 
-      await options.system.drain?.();
+      try {
+        await options.system.drain?.();
+      } catch (drainErr) {
+        console.error(`  [WARN] personamem drain failed for ${taskId}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+      }
 
       const { result: recalledText, durationMs } = await timed(async () =>
         options.system.recall(sessionId, sample.userQuery),

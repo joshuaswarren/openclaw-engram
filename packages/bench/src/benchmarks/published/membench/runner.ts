@@ -77,7 +77,11 @@ export async function runMemBenchBenchmark(
         await options.system.store(sessionId, testCase.turns);
       }
 
-      await options.system.drain?.();
+      try {
+        await options.system.drain?.();
+      } catch (drainErr) {
+        console.error(`  [WARN] membench drain failed for ${testCase.id}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+      }
 
       const { result: recalledText, durationMs } = await timed(async () =>
         options.system.recall(sessionId, testCase.question),

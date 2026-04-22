@@ -87,7 +87,11 @@ export async function runMemoryArenaBenchmark(
             },
           ]);
 
-          await options.system.drain?.();
+          try {
+            await options.system.drain?.();
+          } catch (drainErr) {
+            console.error(`  [WARN] memory-arena drain failed for ${taskResultId}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+          }
 
           const { result: recalledText, durationMs } = await timed(async () =>
             options.system.recall(sessionId, question),
