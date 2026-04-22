@@ -316,10 +316,7 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
       },
 
       async drain(): Promise<void> {
-        const engine = state.orchestrator.lcmEngine;
-        if (engine && typeof (engine as any).waitForObserveQueueIdle === "function") {
-          await (engine as any).waitForObserveQueueIdle();
-        }
+        await getEngine().waitForObserveQueueIdle();
       },
 
       async getStats(sessionId?: string): Promise<MemoryStats> {
