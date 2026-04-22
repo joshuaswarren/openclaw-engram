@@ -16,6 +16,7 @@ import {
   type ExplicitCaptureInput,
   type ValidExplicitCapture,
 } from "./explicit-capture.js";
+import { CrossNamespaceBudget, type BudgetDecision } from "./cross-namespace-budget.js";
 import { log } from "./logger.js";
 import {
   buildQualityScore,
@@ -39,7 +40,7 @@ import {
   toMemoryPathRel,
 } from "./memory-lifecycle-ledger-utils.js";
 import { getMemoryProjectionPath } from "./memory-projection-store.js";
-import { canReadNamespace, canWriteNamespace, resolvePrincipal } from "./namespaces/principal.js";
+import { canReadNamespace, canWriteNamespace, defaultNamespaceForPrincipal, recallNamespacesForPrincipal, resolvePrincipal } from "./namespaces/principal.js";
 import type { LastRecallSnapshot } from "./recall-state.js";
 import type {
   GraphRecallSnapshot,
@@ -177,6 +178,7 @@ export interface EngramAccessRecallResponse {
   sourcesUsed: string[];
   budgetsApplied?: LastRecallSnapshot["budgetsApplied"];
   auditAnomalies?: AnomalyDetectorResult;
+  budgetWarning?: BudgetDecision;
   latencyMs?: number;
   debug?: {
     snapshot?: LastRecallSnapshot;
@@ -658,10 +660,17 @@ function compareBrowseMemory(
 export class EngramAccessService {
   private readonly idempotency: AccessIdempotencyStore;
   private readonly idempotencyLocks = new Map<string, Promise<void>>();
+  private readonly budget: CrossNamespaceBudget;
   private readonly auditAdapter: AccessAuditAdapter | null;
 
   constructor(private readonly orchestrator: Orchestrator) {
     this.idempotency = new AccessIdempotencyStore(orchestrator.config.memoryDir);
+    this.budget = new CrossNamespaceBudget({
+      enabled: orchestrator.config.recallCrossNamespaceBudgetEnabled,
+      windowMs: orchestrator.config.recallCrossNamespaceBudgetWindowMs,
+      softLimit: orchestrator.config.recallCrossNamespaceBudgetSoftLimit,
+      hardLimit: orchestrator.config.recallCrossNamespaceBudgetHardLimit,
+    });
 
     const auditEnabled = orchestrator.config.recallAuditAnomalyDetectionEnabled === true;
     const auditLogEnabled = false; // Audit JSONL logging — off until wired to a directory
@@ -1085,7 +1094,87 @@ export class EngramAccessService {
     }
     const namespaceOverride = this.resolveRecallNamespace(request.namespace, request.sessionKey);
     const namespace = namespaceOverride ?? this.orchestrator.config.defaultNamespace;
+    // Normalize mode early so that no_recall / invalid modes skip budget
+    // accounting (Codex P1: budget recorded before mode validation).
     const mode = this.normalizeRecallMode(request.mode);
+    const principal = resolvePrincipal(request.sessionKey, this.orchestrator.config);
+    const principalNamespace = defaultNamespaceForPrincipal(principal, this.orchestrator.config);
+    // Skip budget checks for modes that never perform a cross-namespace read.
+    const modeSkipsBudget = mode === "no_recall";
+    // Derive the full set of namespaces the orchestrator will actually search.
+    // When no explicit override is provided, `recallNamespacesForPrincipal()` may
+    // expand to shared / policy-default namespaces.  Budget must be checked
+    // against every cross-namespace entry in the effective set so that omitting
+    // `namespace` cannot bypass the limiter (Cursor/Codex review feedback).
+    //
+    // NOTE: coding overlays (branch/project scope) are resolved inside
+    // orchestrator.recall() AFTER this check.  The access-service does not
+    // duplicate that resolution here to avoid tight coupling.  Coding-overlay
+    // namespaces are a second-layer defense covered by the anomaly detector
+    // (PR 5/5 of issue #565).
+    const effectiveNamespaces = namespaceOverride
+      ? [namespaceOverride]
+      : recallNamespacesForPrincipal(principal, this.orchestrator.config);
+    let budgetDecision: BudgetDecision;
+    if (modeSkipsBudget) {
+      budgetDecision = {
+        allowed: true as const,
+        reason: "allowed-same-namespace" as const,
+        count: 0,
+        limit: {
+          softLimit: this.orchestrator.config.recallCrossNamespaceBudgetSoftLimit ?? 10,
+          hardLimit: this.orchestrator.config.recallCrossNamespaceBudgetHardLimit ?? 30,
+          windowMs: this.orchestrator.config.recallCrossNamespaceBudgetWindowMs ?? 60_000,
+        },
+      };
+    } else {
+      // Peek at every effective namespace to determine whether ANY would be
+      // cross-namespace WITHOUT recording side effects (Cursor review:
+      // multi-count bug).  Record a single budget event only when at least
+      // one effective namespace differs from the principal's self namespace.
+      let anyCrossNamespace = false;
+      let denied: BudgetDecision | null = null;
+      for (const ns of effectiveNamespaces) {
+        const peek = this.budget.peek({
+          principal,
+          principalNamespace,
+          queryNamespace: ns,
+        });
+        if (peek.reason !== "allowed-same-namespace") {
+          anyCrossNamespace = true;
+        }
+        if (!peek.allowed) {
+          denied = peek;
+          break;
+        }
+      }
+      if (denied) {
+        // The peek projected a denial — deny without recording so the
+        // bucket is not inflated by rejected attempts.
+        budgetDecision = denied;
+      } else if (anyCrossNamespace) {
+        budgetDecision = this.budget.record(principal);
+      } else {
+        budgetDecision = {
+          allowed: true as const,
+          reason: "allowed-same-namespace" as const,
+          count: 0,
+          limit: {
+            softLimit: this.orchestrator.config.recallCrossNamespaceBudgetSoftLimit ?? 10,
+            hardLimit: this.orchestrator.config.recallCrossNamespaceBudgetHardLimit ?? 30,
+            windowMs: this.orchestrator.config.recallCrossNamespaceBudgetWindowMs ?? 60_000,
+          },
+        };
+      }
+      if (!budgetDecision.allowed) {
+        throw new EngramAccessInputError(
+          `recall denied: cross-namespace budget exceeded (${budgetDecision.count}/${budgetDecision.limit.hardLimit} in ${budgetDecision.limit.windowMs}ms window)`,
+        );
+      }
+      // Prune expired principal buckets to prevent unbounded Map growth from
+      // high-cardinality / transient principals (Codex P2 review feedback).
+      this.budget.gc();
+    }
     const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
     const recallOptions: RecallInvocationOptions = {
       namespace: namespaceOverride,
@@ -1156,6 +1245,7 @@ export class EngramAccessService {
       sourcesUsed: snapshot?.sourcesUsed ?? [],
       budgetsApplied: snapshot?.budgetsApplied,
       auditAnomalies,
+      budgetWarning: budgetDecision.reason === "warn-over-soft" ? budgetDecision : undefined,
       latencyMs: snapshot?.latencyMs ?? (Date.now() - startedAt),
       debug,
     };

@@ -237,6 +237,62 @@ export class CrossNamespaceBudget {
   }
 
   /**
+   * Read-only peek at whether a call would be allowed, WITHOUT recording a
+   * timestamp. Useful when the caller must inspect multiple namespaces before
+   * deciding to record a single event. The returned `count` reflects the
+   * current window state at call time.
+   */
+  peek(args: {
+    principal: string;
+    principalNamespace: string;
+    queryNamespace: string;
+    now?: number;
+  }): BudgetDecision {
+    const pn = args.principalNamespace;
+    const qn = args.queryNamespace;
+    const bothPresent =
+      typeof pn === "string" && pn.length > 0 &&
+      typeof qn === "string" && qn.length > 0;
+    if (bothPresent && pn === qn) {
+      return {
+        allowed: true,
+        reason: "allowed-same-namespace",
+        count: 0,
+        limit: {
+          softLimit: this.config.softLimit,
+          hardLimit: this.config.hardLimit,
+          windowMs: this.config.windowMs,
+        },
+      };
+    }
+    // Cross-namespace: simulate what record() would do without the push.
+    const { enabled, windowMs, softLimit, hardLimit } = this.config;
+    const limit = { softLimit, hardLimit, windowMs };
+    if (!enabled) {
+      return { allowed: true, reason: "allowed-no-limit", count: 0, limit };
+    }
+    let principal = args.principal;
+    if (typeof principal !== "string" || principal.length === 0) {
+      principal = "__anonymous__";
+    }
+    const now = args.now ?? Date.now();
+    const bucket = this.buckets.get(principal) ?? { timestamps: [] };
+    const cutoff = now - windowMs;
+    let liveCount = 0;
+    for (const ts of bucket.timestamps) {
+      if (ts >= cutoff) liveCount++;
+    }
+    const projected = liveCount + 1; // +1 for the current call
+    if (projected > hardLimit) {
+      return { allowed: false, reason: "deny-over-hard", count: liveCount, limit };
+    }
+    if (projected > softLimit) {
+      return { allowed: true, reason: "warn-over-soft", count: projected, limit };
+    }
+    return { allowed: true, reason: "allowed-under-soft", count: projected, limit };
+  }
+
+  /**
    * Convenience guard that also skips the limiter when `principalNamespace`
    * equals `queryNamespace` (same-namespace is never cross-namespace).
    * Returns an `allowed-same-namespace` decision in that case.
