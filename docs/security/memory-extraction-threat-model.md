@@ -325,7 +325,42 @@ Secondary metrics:
   concern and will be tracked separately if/when it materializes in the
   harness.
 
-## 10. References
+## 10. Mitigation wiring status (PRs #649–#652)
+
+PRs #638 and #639 introduced the `CrossNamespaceBudget` and
+`AccessAuditAdapter` classes, but they were not wired into the actual
+recall paths. PRs #649–#652 close this gap:
+
+| PR | Slice | Change |
+|---|---|---|
+| #649 | 6 | Wire `CrossNamespaceBudget` into `EngramAccessService.recall()` |
+| #650 | 7 | Wire `AccessAuditAdapter` into `EngramAccessService.recall()` |
+| #651 | 8 | Add `security_mitigations` check to `remnic doctor` |
+| #652 | 9 | Mitigation-aware ADAM target + mitigated baseline |
+
+Both mitigations ship **disabled by default** (rule 48):
+- `recallCrossNamespaceBudgetEnabled: false`
+- `recallAuditAnomalyDetectionEnabled: false`
+
+Operators enable them explicitly in config. The `remnic doctor` command
+warns when both are disabled.
+
+### Mitigated baseline ASR
+
+The mitigated baseline (PR #652) re-runs the T3 scenario with a
+cross-namespace budget of 30 queries per 60-second window:
+
+| Scenario | Budget | ASR |
+|---|---:|---:|
+| T3 unmitigated (baseline) | 200 | 0.0% (ACL enforced) |
+| T3 mitigated (budget=30) | 200 | 0.0% (ACL + budget) |
+
+The T3 ASR was already 0.0% in the baseline because the synthetic
+target enforces namespace ACLs. The budget mitigation provides defense
+in depth — it would throttle a regression that accidentally disabled
+the ACL check.
+
+## 11. References
 
 - Issue #565 (this work).
 - ADAM — *Adaptive Data Extraction Attack*, arXiv:2604.09747 (Apr 2026).

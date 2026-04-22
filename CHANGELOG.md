@@ -6,6 +6,12 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Security mitigation wiring** (issue #565). CrossNamespaceBudget and
+  AccessAuditAdapter wired into the access-service recall path. Both ship
+  disabled by default (`recallCrossNamespaceBudgetEnabled`,
+  `recallAuditAnomalyDetectionEnabled`). `remnic doctor` warns when
+  mitigations are off. Mitigation-aware ADAM bench target added.
+
 - **Contradiction-detection bench scenario** (issue #647). Synthetic
   benchmark at `packages/bench/src/benchmarks/remnic/contradiction-detection/`
   with 4 fixture classes (true-contradiction, near-paraphrase,
