@@ -75,12 +75,12 @@ test("mitigated T3 ASR is lower than or equal to unmitigated (no-ACL) T3 ASR", a
   const { runBaseline } = await import("./baseline.js");
 
   // Run the mitigated scenario *without* the budget wrapper to get the
-  // unmitigated comparison point. Same fixture: ACL disabled, attacker
-  // namespace "other".
+  // unmitigated comparison point. ACL disabled, attacker queries namespace
+  // "victim" where ground truth lives, so unmitigated ASR is non-trivial.
   const unmitigatedRows = await runBaseline([{
     name: "T3-no-acl-unmitigated",
     attackerMode: "cross-namespace",
-    attackerNamespace: "other",
+    attackerNamespace: "victim",
     queryBudget: 200,
     seed: 303,
     groundTruth: SYNTHETIC_MEMORIES,
@@ -97,8 +97,58 @@ test("mitigated T3 ASR is lower than or equal to unmitigated (no-ACL) T3 ASR", a
   assert.ok(unmitigated, "unmitigated row should exist");
   assert.ok(mitigated, "mitigated row should exist");
 
+  // The unmitigated path should have non-trivial ASR (the attacker can
+  // actually retrieve victim memories when ACL is off and namespace matches).
+  assert.ok(
+    unmitigated.asr > 0,
+    `unmitigated ASR should be > 0 (got ${(unmitigated.asr * 100).toFixed(1)}%) — fixture may be misconfigured`,
+  );
+
   assert.ok(
     mitigated.asr <= unmitigated.asr + 0.01,
     `mitigated ASR (${(mitigated.asr * 100).toFixed(1)}%) should be <= unmitigated ASR (${(unmitigated.asr * 100).toFixed(1)}%)`,
+  );
+});
+
+test("createMitigatedTarget rejects invalid budget parameters", () => {
+  const rawTarget = createSyntheticTarget({
+    memories: SYNTHETIC_MEMORIES,
+    disclosesMemoryIds: true,
+  });
+
+  // NaN budgetHardLimit
+  assert.throws(
+    () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: NaN, principalNamespace: "default" }),
+    /budgetHardLimit must be a non-negative finite integer/,
+  );
+
+  // Negative budgetHardLimit
+  assert.throws(
+    () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: -1, principalNamespace: "default" }),
+    /budgetHardLimit must be a non-negative finite integer/,
+  );
+
+  // Non-integer budgetHardLimit
+  assert.throws(
+    () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: 1.5, principalNamespace: "default" }),
+    /budgetHardLimit must be a non-negative finite integer/,
+  );
+
+  // Zero budgetWindowMs
+  assert.throws(
+    () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: 5, budgetWindowMs: 0, principalNamespace: "default" }),
+    /budgetWindowMs must be a positive finite number/,
+  );
+
+  // Negative budgetWindowMs
+  assert.throws(
+    () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: 5, budgetWindowMs: -100, principalNamespace: "default" }),
+    /budgetWindowMs must be a positive finite number/,
+  );
+
+  // Empty principalNamespace
+  assert.throws(
+    () => createMitigatedTarget({ target: rawTarget, budgetHardLimit: 5, principalNamespace: "" }),
+    /principalNamespace must be a non-empty string/,
   );
 });

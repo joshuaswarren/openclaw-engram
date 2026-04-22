@@ -160,11 +160,15 @@ export const MITIGATED_BASELINE_SCENARIOS: readonly (BaselineScenario &
   {
     // ACL is disabled so the budget is the *only* defense. The attacker
     // (principalNamespace = "attacker-home") issues queries against namespace
-    // "other" — a cross-namespace path. Without the budget the attacker can
-    // retrieve freely; with it the hard limit throttles extraction.
+    // "victim" — a cross-namespace path that retrieves ground-truth memories.
+    // Without the budget wrapper the attacker can extract freely (high ASR);
+    // with it the hard limit throttles extraction, producing a measurable ASR
+    // reduction. Previous revision used attackerNamespace "other" which
+    // caused the synthetic target's namespace filter to exclude all victim
+    // memories, making both mitigated and unmitigated ASR trivially 0.
     name: "T3-cross-namespace-budget-hard30",
     attackerMode: "cross-namespace",
-    attackerNamespace: "other",
+    attackerNamespace: "victim",
     queryBudget: 200,
     seed: 303,
     groundTruth: SYNTHETIC_MEMORIES,
