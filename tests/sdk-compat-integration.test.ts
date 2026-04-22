@@ -332,6 +332,11 @@ test("slot mismatch warn mode suppresses hook registration but still registers t
     plugin.register(api as any);
 
     assert.equal(api._registeredHooks.length, 0, "passive mode should not register hooks");
+    assert.equal(
+      api._registeredCommands.length,
+      0,
+      "passive mode should not register session command descriptors",
+    );
     assert.ok(api._registeredToolCount > 0, "tools should still register in passive mode");
     assert.ok(
       api._registeredServiceIds.includes("openclaw-remnic"),
@@ -439,6 +444,30 @@ test("new SDK hides session command registration when session toggles are disabl
       api._registeredCommands.length,
       0,
       "registerCommand should not expose session toggle commands when the toggle system is disabled",
+    );
+  } finally {
+    await awaitPendingMigration();
+    restoreRegisterMigrationEnv(previousDisableMigration);
+    resetGlobals();
+  }
+});
+
+test("new SDK hides session command registration when commandsListEnabled is false", async () => {
+  resetGlobals();
+  const previousDisableMigration = disableRegisterMigrationForTest();
+  try {
+    const { default: plugin } = await import("../src/index.js");
+
+    const api = buildNewSdkApi("active-memory-tools-disabled-commands-list-test");
+    api.pluginConfig = {
+      commandsListEnabled: false,
+    };
+    plugin.register(api as any);
+
+    assert.equal(
+      api._registeredCommands.length,
+      0,
+      "registerCommand should stay hidden when commandsListEnabled is false",
     );
   } finally {
     await awaitPendingMigration();

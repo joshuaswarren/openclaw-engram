@@ -3557,6 +3557,8 @@ const pluginDefinition = {
     // attempting to bind it through api.on() produces an "unknown typed hook"
     // warning on current runtimes.
     if (
+      !passiveMode &&
+      cfg.commandsListEnabled &&
       cfg.sessionTogglesEnabled !== false &&
       typeof (api as { registerCommand?: (spec: unknown) => void }).registerCommand === "function" &&
       !(globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD]
