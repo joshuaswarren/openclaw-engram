@@ -16,6 +16,7 @@ import {
   type ExplicitCaptureInput,
   type ValidExplicitCapture,
 } from "./explicit-capture.js";
+import { CrossNamespaceBudget, type BudgetDecision } from "./cross-namespace-budget.js";
 import { log } from "./logger.js";
 import {
   buildQualityScore,
@@ -177,6 +178,7 @@ export interface EngramAccessRecallResponse {
   sourcesUsed: string[];
   budgetsApplied?: LastRecallSnapshot["budgetsApplied"];
   auditAnomalies?: AnomalyDetectorResult;
+  budgetWarning?: BudgetDecision;
   latencyMs?: number;
   debug?: {
     snapshot?: LastRecallSnapshot;
@@ -658,10 +660,17 @@ function compareBrowseMemory(
 export class EngramAccessService {
   private readonly idempotency: AccessIdempotencyStore;
   private readonly idempotencyLocks = new Map<string, Promise<void>>();
+  private readonly budget: CrossNamespaceBudget;
   private readonly auditAdapter: AccessAuditAdapter | null;
 
   constructor(private readonly orchestrator: Orchestrator) {
     this.idempotency = new AccessIdempotencyStore(orchestrator.config.memoryDir);
+    this.budget = new CrossNamespaceBudget({
+      enabled: orchestrator.config.recallCrossNamespaceBudgetEnabled,
+      windowMs: orchestrator.config.recallCrossNamespaceBudgetWindowMs,
+      softLimit: orchestrator.config.recallCrossNamespaceBudgetSoftLimit,
+      hardLimit: orchestrator.config.recallCrossNamespaceBudgetHardLimit,
+    });
 
     const auditEnabled = orchestrator.config.recallAuditAnomalyDetectionEnabled === true;
     const auditLogEnabled = false; // Audit JSONL logging — off until wired to a directory
@@ -1085,6 +1094,18 @@ export class EngramAccessService {
     }
     const namespaceOverride = this.resolveRecallNamespace(request.namespace, request.sessionKey);
     const namespace = namespaceOverride ?? this.orchestrator.config.defaultNamespace;
+    const principal = resolvePrincipal(request.sessionKey, this.orchestrator.config);
+    const principalNamespace = this.orchestrator.config.defaultNamespace;
+    const budgetDecision = this.budget.check({
+      principal,
+      principalNamespace,
+      queryNamespace: namespace,
+    });
+    if (!budgetDecision.allowed) {
+      throw new EngramAccessInputError(
+        `recall denied: cross-namespace budget exceeded (${budgetDecision.count}/${budgetDecision.limit.hardLimit} in ${budgetDecision.limit.windowMs}ms window)`,
+      );
+    }
     const mode = this.normalizeRecallMode(request.mode);
     const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
     const recallOptions: RecallInvocationOptions = {
@@ -1156,6 +1177,7 @@ export class EngramAccessService {
       sourcesUsed: snapshot?.sourcesUsed ?? [],
       budgetsApplied: snapshot?.budgetsApplied,
       auditAnomalies,
+      budgetWarning: budgetDecision.reason === "warn-over-soft" ? budgetDecision : undefined,
       latencyMs: snapshot?.latencyMs ?? (Date.now() - startedAt),
       debug,
     };
