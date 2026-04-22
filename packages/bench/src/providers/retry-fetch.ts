@@ -52,7 +52,7 @@ export function parseRetryAfterMs(value: string | null): number | undefined {
   if (value === null || value.length === 0) return undefined;
 
   const asNumber = Number(value);
-  if (Number.isFinite(asNumber) && asNumber > 0) {
+  if (Number.isFinite(asNumber) && asNumber >= 0) {
     return Math.min(asNumber, MAX_RETRY_AFTER_S) * 1000;
   }
 
@@ -94,6 +94,12 @@ export async function retryFetch(
         return response;
       }
 
+      // 1xx informational / 3xx redirect — return immediately, no retry.
+      if (response.status < 400) {
+        callerSignal?.removeEventListener("abort", onCallerAbort);
+        return response;
+      }
+
       // 429 Too Many Requests — pause and retry.
       if (response.status === 429 && attempt < opts.maxAttempts) {
         // Drain the body so the connection can be reused.
@@ -105,7 +111,16 @@ export async function retryFetch(
           `[rate-limit] 429 received (attempt ${attempt}/${opts.maxAttempts}), ` +
             `pausing ${Math.round(waitMs / 1000)}s before retry…`,
         );
-        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        await new Promise<void>((resolve) => {
+          if (callerSignal?.aborted) { resolve(); return; }
+          const onSleepAbort = () => { clearTimeout(timer); resolve(); };
+          const timer = setTimeout(() => {
+            callerSignal?.removeEventListener("abort", onSleepAbort);
+            resolve();
+          }, waitMs);
+          callerSignal?.addEventListener("abort", onSleepAbort, { once: true });
+        });
+        callerSignal?.removeEventListener("abort", onCallerAbort);
         continue;
       }
 

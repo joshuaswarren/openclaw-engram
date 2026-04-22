@@ -28,7 +28,7 @@ function mockFetchSequence(responses: Array<{ status: number; headers?: Record<s
 
 test("parseRetryAfterMs parses integer seconds", () => {
   assert.equal(parseRetryAfterMs("30"), 30_000);
-  assert.equal(parseRetryAfterMs("0"), undefined);
+  assert.equal(parseRetryAfterMs("0"), 0);
   assert.equal(parseRetryAfterMs("-5"), undefined);
 });
 
@@ -126,6 +126,21 @@ test("retryFetch does not retry on 400", async () => {
       { maxAttempts: 3, baseBackoffMs: 1, timeoutMs: 5000 },
     );
     assert.equal(response.status, 400);
+    assert.equal(mock.calls.length, 1);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("retryFetch does not retry on 3xx redirect", async () => {
+  const mock = mockFetchSequence([{ status: 302 }]);
+  try {
+    const response = await retryFetch(
+      "https://example.com/api",
+      { method: "GET" },
+      { maxAttempts: 3, baseBackoffMs: 1, timeoutMs: 5000 },
+    );
+    assert.equal(response.status, 302);
     assert.equal(mock.calls.length, 1);
   } finally {
     mock.restore();
