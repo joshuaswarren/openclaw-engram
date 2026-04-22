@@ -331,24 +331,32 @@ PRs #638 and #639 introduced the `CrossNamespaceBudget` and
 `AccessAuditAdapter` classes, but they were not wired into the actual
 recall paths. PRs #649–#652 close this gap:
 
-| PR | Slice | Change |
-|---|---|---|
-| #649 | 6 | Wire `CrossNamespaceBudget` into `EngramAccessService.recall()` |
-| #650 | 7 | Wire `AccessAuditAdapter` into `EngramAccessService.recall()` |
-| #651 | 8 | Add `security_mitigations` check to `remnic doctor` |
-| #652 | 9 | Mitigation-aware ADAM target + mitigated baseline |
+| PR | Slice | Change | Status |
+|---|---|---|---|
+| #649 | 6 | Wire `CrossNamespaceBudget` into `EngramAccessService.recall()` | **Open** |
+| #650 | 7 | Wire `AccessAuditAdapter` into `EngramAccessService.recall()` | **Merged** |
+| #651 | 8 | Add `security_mitigations` check to `remnic doctor` | **Merged** |
+| #652 | 9 | Mitigation-aware ADAM target + mitigated baseline | **Open** |
+
+As of this writing, slices 7 and 8 (PRs #650, #651) are merged to
+`main`. Slices 6 and 9 (PRs #649, #652) are still open. Once #649
+lands, `CrossNamespaceBudget` will be invoked inside
+`EngramAccessService.recall()` alongside the already-wired
+`AccessAuditAdapter`.
 
 Both mitigations ship **disabled by default** (rule 48):
 - `recallCrossNamespaceBudgetEnabled: false`
 - `recallAuditAnomalyDetectionEnabled: false`
 
 Operators enable them explicitly in config. The `remnic doctor` command
-warns when both are disabled.
+(wired in PR #651 via `summarizeSecurityMitigations` in
+`operator-toolkit.ts`) warns when both are disabled.
 
-### Mitigated baseline ASR
+### Mitigated baseline ASR (PR #652, pending merge)
 
-The mitigated baseline (PR #652) re-runs the T3 scenario with a
-cross-namespace budget of 30 queries per 60-second window:
+The mitigated baseline (PR #652, still open as of this writing) re-runs
+the T3 scenario with a cross-namespace budget of 30 queries per 60-second
+window:
 
 | Scenario | Budget | ASR |
 |---|---:|---:|
