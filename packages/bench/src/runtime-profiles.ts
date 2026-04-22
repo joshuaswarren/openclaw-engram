@@ -37,9 +37,11 @@ export interface ResolveBenchRuntimeProfileOptions {
   systemProvider?: BuiltInProvider;
   systemModel?: string;
   systemBaseUrl?: string;
+  systemApiKey?: string;
   judgeProvider?: BuiltInProvider;
   judgeModel?: string;
   judgeBaseUrl?: string;
+  judgeApiKey?: string;
   requestTimeout?: number;
   disableThinking?: boolean;
 }
@@ -91,6 +93,7 @@ export async function resolveBenchRuntimeProfile(
       options.systemBaseUrl,
       options.requestTimeout,
       options.disableThinking,
+      options.systemApiKey,
     );
   const judgeProvider = resolveProviderConfig(
     "judge",
@@ -99,6 +102,7 @@ export async function resolveBenchRuntimeProfile(
     options.judgeBaseUrl,
     options.requestTimeout,
     options.disableThinking,
+    options.judgeApiKey,
   );
   const responderFactoryConfig = systemProvider
     ? asProviderFactoryConfig(systemProvider)
@@ -321,6 +325,7 @@ function resolveProviderConfig(
   baseUrl: string | undefined,
   requestTimeout?: number,
   disableThinking?: boolean,
+  apiKey?: string,
 ): ProviderConfig | null {
   const hasProvider = typeof provider === "string";
   const hasModel = typeof model === "string" && model.trim().length > 0;
@@ -350,6 +355,7 @@ function resolveProviderConfig(
     provider,
     model: model.trim(),
     ...(hasBaseUrl ? { baseUrl: baseUrl!.trim() } : {}),
+    ...(apiKey ? { apiKey } : {}),
     ...(requestTimeout != null ? { retryOptions: { timeoutMs: requestTimeout } } : {}),
     ...(disableThinking ? { disableThinking: true } : {}),
   };
@@ -388,6 +394,7 @@ function asProviderFactoryConfig(config: ProviderConfig): ProviderFactoryConfig 
     provider: config.provider,
     model: config.model,
     ...(config.baseUrl ? { baseUrl: config.baseUrl } : {}),
+    ...(config.apiKey ? { apiKey: config.apiKey } : {}),
     ...(config.retryOptions ? { retryOptions: config.retryOptions } : {}),
     ...(config.disableThinking ? { disableThinking: config.disableThinking } : {}),
   } as ProviderFactoryConfig;

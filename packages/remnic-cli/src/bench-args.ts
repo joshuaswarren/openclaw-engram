@@ -48,9 +48,11 @@ export interface ParsedBenchArgs {
   systemProvider?: BuiltInProvider;
   systemModel?: string;
   systemBaseUrl?: string;
+  systemApiKey?: string;
   judgeProvider?: BuiltInProvider;
   judgeModel?: string;
   judgeBaseUrl?: string;
+  judgeApiKey?: string;
   threshold?: number;
   baselineAction?: BenchBaselineAction;
   datasetAction?: BenchDatasetAction;
@@ -166,9 +168,11 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--system-provider" ||
       arg === "--system-model" ||
       arg === "--system-base-url" ||
+      arg === "--system-api-key" ||
       arg === "--judge-provider" ||
       arg === "--judge-model" ||
       arg === "--judge-base-url" ||
+      arg === "--judge-api-key" ||
       arg === "--threshold" ||
       arg === "--custom" ||
       arg === "--format" ||
@@ -289,9 +293,11 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const systemProviderRaw = readBenchOptionValue(args, "--system-provider");
   const systemModel = readBenchOptionValue(args, "--system-model");
   const systemBaseUrl = readBenchOptionValue(args, "--system-base-url");
+  const systemApiKey = readBenchOptionValue(args, "--system-api-key");
   const judgeProviderRaw = readBenchOptionValue(args, "--judge-provider");
   const judgeModel = readBenchOptionValue(args, "--judge-model");
   const judgeBaseUrl = readBenchOptionValue(args, "--judge-base-url");
+  const judgeApiKey = readBenchOptionValue(args, "--judge-api-key");
   const thresholdRaw = readBenchOptionValue(args, "--threshold");
   const customRaw = readBenchOptionValue(args, "--custom");
   const formatRaw = readBenchOptionValue(args, "--format");
@@ -488,9 +494,11 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     systemProvider: effectiveSystemProvider,
     systemModel: effectiveSystemModel,
     systemBaseUrl: effectiveSystemBaseUrl,
+    systemApiKey,
     judgeProvider,
     judgeModel,
     judgeBaseUrl,
+    judgeApiKey,
     threshold,
     custom: customRaw ? path.resolve(expandTilde(customRaw)) : undefined,
     baselineAction,

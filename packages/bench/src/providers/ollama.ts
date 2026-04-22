@@ -135,6 +135,9 @@ class OllamaProvider implements LlmProvider {
   private headers(extraHeaders: Record<string, string> = {}): Record<string, string> {
     return {
       "content-type": "application/json",
+      ...(this.config.apiKey
+        ? { authorization: `Bearer ${this.config.apiKey}` }
+        : {}),
       ...(this.config.headers ?? {}),
       ...extraHeaders,
     };

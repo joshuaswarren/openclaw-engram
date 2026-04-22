@@ -661,9 +661,14 @@ export function buildBenchRuntimeProfileRequest(
       runtimeProfile === "openclaw-chain"
         ? undefined
         : parsed.systemBaseUrl,
+    systemApiKey:
+      runtimeProfile === "openclaw-chain"
+        ? undefined
+        : parsed.systemApiKey,
     judgeProvider: parsed.judgeProvider,
     judgeModel: parsed.judgeModel,
     judgeBaseUrl: parsed.judgeBaseUrl,
+    judgeApiKey: parsed.judgeApiKey,
     requestTimeout: parsed.requestTimeout,
     disableThinking: parsed.disableThinking,
   };
