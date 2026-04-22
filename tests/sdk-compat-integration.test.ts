@@ -528,6 +528,11 @@ test("legacy SDK api gets legacy hooks only", async () => {
       "before_prompt_build should NOT be registered on legacy SDK",
     );
 
+    assert.ok(
+      api._registeredHooks.includes("commands.list"),
+      "commands.list should remain registered on legacy SDKs without registerCommand()",
+    );
+
     // Core hooks still present
     assert.ok(
       api._registeredHooks.includes("agent_end"),

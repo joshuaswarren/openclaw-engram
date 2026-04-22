@@ -3556,16 +3556,28 @@ const pluginDefinition = {
     // `commands.list` is a gateway RPC surface, not a plugin typed hook, so
     // attempting to bind it through api.on() produces an "unknown typed hook"
     // warning on current runtimes.
+    const registerCommandFn = (api as { registerCommand?: (spec: unknown) => void }).registerCommand;
     if (
       !passiveMode &&
       cfg.commandsListEnabled &&
-      cfg.sessionTogglesEnabled !== false &&
-      typeof (api as { registerCommand?: (spec: unknown) => void }).registerCommand === "function" &&
-      !(globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD]
+      cfg.sessionTogglesEnabled !== false
     ) {
-      (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = true;
-      for (const descriptor of sessionCommandDescriptors) {
-        (api as { registerCommand: (spec: unknown) => void }).registerCommand(descriptor);
+      if (
+        typeof registerCommandFn === "function" &&
+        !(globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD]
+      ) {
+        (globalThis as any)[SESSION_COMMANDS_REGISTERED_GUARD] = true;
+        for (const descriptor of sessionCommandDescriptors) {
+          registerCommandFn(descriptor);
+        }
+      } else if (typeof registerCommandFn !== "function") {
+        try {
+          api.on("commands.list", async () => sessionCommandDescriptors);
+        } catch (error) {
+          log.debug(
+            `commands.list unavailable on this runtime: ${String(error)}`,
+          );
+        }
       }
     }
 
