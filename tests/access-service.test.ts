@@ -2568,3 +2568,95 @@ test("briefing() accepts absent format (undefined) without error and uses defaul
     "absent format must resolve to the configured default",
   );
 });
+
+test("access service recall records audit entries and detects anomalies when enabled", async () => {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallAuditAnomalyDetectionEnabled: true,
+      recallAuditAnomalyWindowMs: 60_000,
+      recallAuditAnomalyRepeatQueryLimit: 2,
+      recallAuditAnomalyNamespaceWalkLimit: 3,
+      recallAuditAnomalyHighCardinalityLimit: 50,
+      recallAuditAnomalyRapidFireLimit: 30,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  };
+  const service = new EngramAccessService(orchestrator as any);
+
+  // First recall — no anomalies expected
+  const res1 = await service.recall({
+    query: "test query",
+    sessionKey: "agent:test:chat",
+  });
+  assert.ok(res1, "first recall should succeed");
+
+  // Repeat the same query to trigger repeat-query anomaly
+  const res2 = await service.recall({
+    query: "test query",
+    sessionKey: "agent:test:chat",
+  });
+  assert.ok(res2, "second recall should succeed");
+
+  // Third repeat should trigger the anomaly detector
+  const res3 = await service.recall({
+    query: "test query",
+    sessionKey: "agent:test:chat",
+  });
+  assert.ok(res3, "third recall should succeed");
+  assert.ok(res3.auditAnomalies, "should have audit anomalies after repeat queries");
+  assert.ok(res3.auditAnomalies!.flags.length > 0, "should have at least one anomaly flag");
+});
+
+test("access service recall has no audit anomalies when detection is disabled", async () => {
+  const orchestrator = {
+    config: {
+      memoryDir: "/tmp/engram",
+      namespacesEnabled: false,
+      defaultNamespace: "global",
+      sharedNamespace: "shared",
+      principalFromSessionKeyMode: "prefix",
+      principalFromSessionKeyRules: [],
+      namespacePolicies: [],
+      defaultRecallNamespaces: ["self"],
+      searchBackend: "qmd",
+      qmdEnabled: true,
+      nativeKnowledge: undefined,
+      recallAuditAnomalyDetectionEnabled: false,
+    },
+    recall: async () => "ctx",
+    lastRecall: {
+      get: () => null,
+      getMostRecent: () => null,
+    },
+    getStorage: async () => ({
+      getMemoryById: async () => null,
+      getMemoryTimeline: async () => [],
+    }),
+  };
+  const service = new EngramAccessService(orchestrator as any);
+
+  const res = await service.recall({
+    query: "test query",
+    sessionKey: "agent:test:chat",
+  });
+  assert.equal(res.auditAnomalies, undefined, "no audit anomalies when disabled");
+});

@@ -1,5 +1,7 @@
 import { stat } from "node:fs/promises";
 import { AccessIdempotencyStore, hashAccessIdempotencyPayload } from "./access-idempotency.js";
+import { AccessAuditAdapter, type AccessAuditConfig, type AccessAuditResult } from "./access-audit.js";
+import type { AnomalyDetectorResult } from "./recall-audit-anomaly.js";
 import { WorkStorage } from "./work/storage.js";
 import {
   exportWorkBoardMarkdown,
@@ -174,6 +176,7 @@ export interface EngramAccessRecallResponse {
   fallbackUsed: boolean;
   sourcesUsed: string[];
   budgetsApplied?: LastRecallSnapshot["budgetsApplied"];
+  auditAnomalies?: AnomalyDetectorResult;
   latencyMs?: number;
   debug?: {
     snapshot?: LastRecallSnapshot;
@@ -655,9 +658,32 @@ function compareBrowseMemory(
 export class EngramAccessService {
   private readonly idempotency: AccessIdempotencyStore;
   private readonly idempotencyLocks = new Map<string, Promise<void>>();
+  private readonly auditAdapter: AccessAuditAdapter | null;
 
   constructor(private readonly orchestrator: Orchestrator) {
     this.idempotency = new AccessIdempotencyStore(orchestrator.config.memoryDir);
+
+    const auditEnabled = orchestrator.config.recallAuditAnomalyDetectionEnabled === true;
+    const auditLogEnabled = false; // Audit JSONL logging — off until wired to a directory
+    if (auditEnabled || auditLogEnabled) {
+      const auditConfig: AccessAuditConfig = {
+        audit: {
+          enabled: auditLogEnabled,
+          rootDir: orchestrator.config.memoryDir,
+        },
+        detection: {
+          enabled: auditEnabled,
+          windowMs: orchestrator.config.recallAuditAnomalyWindowMs,
+          repeatQueryLimit: orchestrator.config.recallAuditAnomalyRepeatQueryLimit,
+          namespaceWalkLimit: orchestrator.config.recallAuditAnomalyNamespaceWalkLimit,
+          highCardinalityReturnLimit: orchestrator.config.recallAuditAnomalyHighCardinalityLimit,
+          rapidFireLimit: orchestrator.config.recallAuditAnomalyRapidFireLimit,
+        },
+      };
+      this.auditAdapter = new AccessAuditAdapter(auditConfig);
+    } else {
+      this.auditAdapter = null;
+    }
   }
 
   get briefingEnabled(): boolean {
@@ -1082,6 +1108,35 @@ export class EngramAccessService {
       request.sessionKey,
     );
 
+    // Fire-and-forget audit recording. Must never block or crash recall.
+    let auditAnomalies: AccessAuditResult["anomalies"] | undefined;
+    if (this.auditAdapter) {
+      try {
+        const auditEntry = {
+          ts: new Date().toISOString(),
+          sessionKey: request.sessionKey ?? "",
+          agentId: resolvePrincipal(request.sessionKey, this.orchestrator.config),
+          trigger: "access-surface",
+          queryText: query,
+          candidateMemoryIds: snapshot?.memoryIds ?? [],
+          summary: context.slice(0, 200) || null,
+          injectedChars: context.length,
+          toggleState: "enabled" as const,
+          latencyMs: Date.now() - startedAt,
+          plannerMode: snapshot?.plannerMode ?? mode,
+          requestedMode: mode,
+          fallbackUsed: snapshot?.fallbackUsed ?? false,
+        };
+        const auditResult = await this.auditAdapter.record(
+          request.sessionKey ?? "__anonymous__",
+          auditEntry,
+        );
+        auditAnomalies = auditResult.anomalies;
+      } catch {
+        // Audit failures must never crash the recall path.
+      }
+    }
+
     return {
       query,
       sessionKey: request.sessionKey,
@@ -1096,6 +1151,7 @@ export class EngramAccessService {
       fallbackUsed: snapshot?.fallbackUsed ?? false,
       sourcesUsed: snapshot?.sourcesUsed ?? [],
       budgetsApplied: snapshot?.budgetsApplied,
+      auditAnomalies,
       latencyMs: snapshot?.latencyMs ?? (Date.now() - startedAt),
       debug,
     };
