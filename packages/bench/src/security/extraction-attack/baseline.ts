@@ -16,6 +16,7 @@ import {
   SYNTHETIC_MEMORIES,
   createSeededRng,
   createSyntheticTarget,
+  createMitigatedTarget,
   runExtractionAttack,
 } from "./index.js";
 import type {
@@ -50,6 +51,8 @@ export interface BaselineRow {
   readonly recoveredIds: readonly string[];
   readonly missedIds: readonly string[];
   readonly durationMs: number;
+  /** Whether mitigations were active during this run. */
+  readonly mitigated?: boolean;
 }
 
 /**
@@ -134,6 +137,93 @@ export async function runBaseline(
       recoveredIds: result.recovered.map((r) => r.memoryId),
       missedIds: result.missed.map((m) => m.id),
       durationMs: result.durationMs,
+    });
+  }
+  return rows;
+}
+
+export interface MitigatedBaselineConfig {
+  budgetHardLimit: number;
+  budgetWindowMs?: number;
+  /**
+   * Override for the principal's "home" namespace in the mitigated target.
+   * When set, this is passed as `principalNamespace` to `createMitigatedTarget`.
+   * When unset, falls back to `allowedNamespace ?? "default"`.
+   * Use this to decouple the budget's principal identity from the synthetic
+   * target's ACL namespace.
+   */
+  principalNamespaceOverride?: string;
+}
+
+export const MITIGATED_BASELINE_SCENARIOS: readonly (BaselineScenario &
+  MitigatedBaselineConfig)[] = Object.freeze([
+  {
+    // ACL is disabled so the budget is the *only* defense. The attacker
+    // (principalNamespace = "attacker-home") issues queries against namespace
+    // "victim" — a cross-namespace path that retrieves ground-truth memories.
+    // Without the budget wrapper the attacker can extract freely (high ASR);
+    // with it the hard limit throttles extraction, producing a measurable ASR
+    // reduction. Previous revision used attackerNamespace "other" which
+    // caused the synthetic target's namespace filter to exclude all victim
+    // memories, making both mitigated and unmitigated ASR trivially 0.
+    // budgetHardLimit is 10 (below the ~26 queries the unmitigated attack
+    // uses) so the denial branch is actually exercised.
+    name: "T3-cross-namespace-budget-hard10",
+    attackerMode: "cross-namespace",
+    attackerNamespace: "victim",
+    queryBudget: 200,
+    seed: 303,
+    groundTruth: SYNTHETIC_MEMORIES,
+    targetMemories: [...SYNTHETIC_MEMORIES, ...OTHER_NAMESPACE_MEMORIES],
+    entities: [],
+    enforceNamespaceAcl: false,
+    disclosesMemoryIds: true,
+    budgetHardLimit: 10,
+    budgetWindowMs: 60_000,
+    principalNamespaceOverride: "attacker-home",
+  },
+]);
+
+export async function runMitigatedBaseline(
+  scenarios: readonly (BaselineScenario & MitigatedBaselineConfig)[] = MITIGATED_BASELINE_SCENARIOS,
+): Promise<BaselineRow[]> {
+  const rows: BaselineRow[] = [];
+  for (const scenario of scenarios) {
+    const rawTarget = createSyntheticTarget({
+      memories: scenario.targetMemories,
+      entities: scenario.entities,
+      enforceNamespaceAcl: scenario.enforceNamespaceAcl,
+      allowedNamespace: scenario.allowedNamespace,
+      disclosesMemoryIds: scenario.disclosesMemoryIds ?? true,
+    });
+    const principalNs = scenario.principalNamespaceOverride
+      ?? scenario.allowedNamespace
+      ?? "default";
+    const target = createMitigatedTarget({
+      target: rawTarget,
+      budgetHardLimit: scenario.budgetHardLimit,
+      budgetWindowMs: scenario.budgetWindowMs,
+      principalNamespace: principalNs,
+    });
+    const result: ExtractionAttackResult = await runExtractionAttack({
+      target,
+      groundTruth: scenario.groundTruth,
+      attackerMode: scenario.attackerMode,
+      attackerNamespace: scenario.attackerNamespace,
+      queryBudget: scenario.queryBudget,
+      rng: createSeededRng(scenario.seed),
+      captureTimeline: false,
+    });
+    rows.push({
+      scenario: scenario.name,
+      attackerMode: scenario.attackerMode,
+      queryBudget: scenario.queryBudget,
+      queriesIssued: result.queriesIssued,
+      asr: result.asr,
+      recoveredIds: result.recovered.map((r) => r.memoryId),
+      missedIds: result.missed.map((m) => m.id),
+      durationMs: result.durationMs,
+      mitigated: true,
     });
   }
   return rows;

@@ -28,10 +28,17 @@ export type {
 // Baseline runner + default scenarios (issue #565 PR 3/5).
 export {
   DEFAULT_BASELINE_SCENARIOS,
+  MITIGATED_BASELINE_SCENARIOS,
   renderBaselineMarkdown,
   runBaseline,
+  runMitigatedBaseline,
 } from "./baseline.js";
 export type {
   BaselineRow,
   BaselineScenario,
+  MitigatedBaselineConfig,
 } from "./baseline.js";
+
+// Mitigation-aware target wrapper (issue #565 slice 9).
+export { createMitigatedTarget } from "./mitigated-target.js";
+export type { MitigatedTargetConfig } from "./mitigated-target.js";
