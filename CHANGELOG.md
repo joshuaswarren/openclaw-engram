@@ -3,6 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [v9.3.155] — 2026-04-22
+
 ### Added
 
 - **Security mitigation wiring docs** (issue #565). Threat-model §10
