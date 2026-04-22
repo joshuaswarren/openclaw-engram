@@ -3,8 +3,15 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-
 ### Added
+
+- **Security mitigation wiring docs** (issue #565). Threat-model §10
+  documents the wiring status of PRs #649–#652. `AccessAuditAdapter`
+  recall-path wiring (#650) and `remnic doctor` security-mitigation check
+  (#651) are merged. `CrossNamespaceBudget` recall-path wiring (#649)
+  and mitigation-aware ADAM baseline (#652) are still open. Both
+  mitigations ship disabled by default (`recallCrossNamespaceBudgetEnabled`,
+  `recallAuditAnomalyDetectionEnabled`).
 
 - **Contradiction-detection bench scenario** (issue #647). Synthetic
   benchmark at `packages/bench/src/benchmarks/remnic/contradiction-detection/`
