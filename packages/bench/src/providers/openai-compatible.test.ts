@@ -92,6 +92,40 @@ test("OpenAI-compatible provider sends chat_template_kwargs when disableThinking
   }
 });
 
+test("OpenAI-compatible provider sends chat_template_kwargs for vLLM even when baseUrl omits /v1", async () => {
+  const originalFetch = globalThis.fetch;
+  let capturedBody: string | null = null;
+  globalThis.fetch = async (_url, init) => {
+    capturedBody = init?.body as string;
+    return new Response(
+      JSON.stringify({
+        choices: [{ message: { content: "ok" } }],
+        usage: { prompt_tokens: 1, completion_tokens: 1 },
+        model: "test",
+      }),
+      {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      },
+    );
+  };
+
+  try {
+    const provider = createOpenAiCompatibleProvider({
+      provider: "openai",
+      model: "google/gemma-4-26b-a4b",
+      baseUrl: "http://127.0.0.1:8000",
+      disableThinking: true,
+    });
+
+    await provider.complete("hello");
+    const parsed = JSON.parse(capturedBody!);
+    assert.deepEqual(parsed.chat_template_kwargs, { enable_thinking: false });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("OpenAI-compatible provider does not send chat_template_kwargs when disableThinking is false", async () => {
   const originalFetch = globalThis.fetch;
   let capturedBody: string | null = null;

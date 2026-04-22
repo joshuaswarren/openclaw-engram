@@ -245,8 +245,7 @@ function isVllmBaseUrl(baseUrl?: string): boolean {
     const url = new URL(baseUrl);
     return (
       (url.hostname === "127.0.0.1" || url.hostname === "localhost") &&
-      url.port === "8000" &&
-      url.pathname.startsWith("/v1")
+      url.port === "8000"
     );
   } catch {
     return false;
