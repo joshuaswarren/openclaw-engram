@@ -107,7 +107,11 @@ test("top-level descriptor satisfies OpenClaw registerCommand validator and disp
     name: string;
     description: string;
     acceptsArgs: boolean;
-    handler: (ctx?: { sessionKey?: string; agentId?: string; args?: readonly string[] }) => Promise<string>;
+    handler: (ctx?: {
+      sessionKey?: string;
+      agentId?: string;
+      args?: string | readonly string[];
+    }) => Promise<{ text: string }>;
   };
 
   // Shape required by openclaw's validatePluginCommandDefinition
@@ -117,24 +121,32 @@ test("top-level descriptor satisfies OpenClaw registerCommand validator and disp
   assert.ok(descriptor.description.trim().length > 0);
   assert.equal(descriptor.acceptsArgs, true);
 
-  await descriptor.handler({ args: ["off"], sessionKey: "session-b", agentId: "main" });
-  assert.equal(disabled.get("session-b:main"), true);
-
-  const statusText = await descriptor.handler({
-    args: ["status"],
+  const offReply = await descriptor.handler({
+    args: "off",
     sessionKey: "session-b",
     agentId: "main",
   });
-  assert.match(statusText, /disabled/);
+  assert.match(offReply.text, /disabled/);
+  assert.equal(disabled.get("session-b:main"), true);
 
-  const unknownText = await descriptor.handler({
+  const statusReply = await descriptor.handler({
+    args: "status",
+    sessionKey: "session-b",
+    agentId: "main",
+  });
+  assert.match(statusReply.text, /disabled/);
+
+  const unknownReply = await descriptor.handler({
     args: ["bogus"],
     sessionKey: "session-b",
     agentId: "main",
   });
-  assert.match(unknownText, /Unknown Remnic subcommand "bogus"/);
+  assert.match(unknownReply.text, /Unknown Remnic subcommand "bogus"/);
 
   // No args => defaults to status.
-  const defaultText = await descriptor.handler({ sessionKey: "session-b", agentId: "main" });
-  assert.match(defaultText, /Remnic recall is/);
+  const defaultReply = await descriptor.handler({
+    sessionKey: "session-b",
+    agentId: "main",
+  });
+  assert.match(defaultReply.text, /Remnic recall is/);
 });

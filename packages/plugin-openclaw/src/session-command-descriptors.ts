@@ -4,7 +4,7 @@ import type { LastRecallSnapshot } from "../../remnic-core/src/recall-state.js";
 export interface SessionCommandContext {
   sessionKey?: string;
   agentId?: string;
-  args?: readonly string[];
+  args?: string | readonly string[];
 }
 
 export interface SessionCommandRuntime {
@@ -25,6 +25,21 @@ function resolveSession(commandCtx: SessionCommandContext): { sessionKey: string
     sessionKey: commandCtx.sessionKey ?? "default",
     agentId: commandCtx.agentId ?? "main",
   };
+}
+
+function normalizeCommandArgs(args: SessionCommandContext["args"]): string[] {
+  if (Array.isArray(args)) {
+    return args
+      .map((value) => (typeof value === "string" ? value.trim() : ""))
+      .filter((value) => value.length > 0);
+  }
+  if (typeof args === "string") {
+    return args
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+  }
+  return [];
 }
 
 export function buildSessionCommandDescriptors(
@@ -131,12 +146,15 @@ export function buildSessionCommandDescriptors(
       acceptsArgs: true,
       subcommands,
       handler: async (commandCtx: SessionCommandContext = {}) => {
-        const requested = commandCtx.args?.[0]?.trim().toLowerCase() ?? "status";
+        const requested =
+          normalizeCommandArgs(commandCtx.args)[0]?.trim().toLowerCase() ?? "status";
         const match = subcommands.find((entry) => entry.name === requested);
         if (!match) {
-          return `Unknown Remnic subcommand "${requested}". Try one of: ${subcommandNames}.`;
+          return {
+            text: `Unknown Remnic subcommand "${requested}". Try one of: ${subcommandNames}.`,
+          };
         }
-        return match.handler(commandCtx);
+        return { text: await match.handler(commandCtx) };
       },
     },
   ];

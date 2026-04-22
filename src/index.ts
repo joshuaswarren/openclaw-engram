@@ -3216,20 +3216,6 @@ const pluginDefinition = {
     // These hooks are only available on the new SDK and provide richer
     // lifecycle, tool, LLM, and subagent observation capabilities.
     // ========================================================================
-    if (
-      !passiveMode &&
-      cfg.commandsListEnabled &&
-      cfg.sessionTogglesEnabled !== false
-    ) {
-      try {
-        api.on("commands.list", async () => sessionCommandDescriptors);
-      } catch (error) {
-        log.debug(
-          `commands.list unavailable on this runtime: ${String(error)}`,
-        );
-      }
-    }
-
     if (!passiveMode && sdkCaps.hasBeforePromptBuild) {
       // ---- Session lifecycle ----
       api.on(
@@ -3566,6 +3552,10 @@ const pluginDefinition = {
       api.registerTool(buildMemoryGetTool(orchestrator) as Record<string, unknown>);
     }
 
+    // OpenClaw's command discovery is driven by registerCommand() entries.
+    // `commands.list` is a gateway RPC surface, not a plugin typed hook, so
+    // attempting to bind it through api.on() produces an "unknown typed hook"
+    // warning on current runtimes.
     if (
       cfg.sessionTogglesEnabled !== false &&
       typeof (api as { registerCommand?: (spec: unknown) => void }).registerCommand === "function" &&

@@ -257,8 +257,8 @@ test("new SDK api gets all new hooks + memory section", async () => {
       "before_reset should be registered on new SDK",
     );
     assert.ok(
-      api._registeredHooks.includes("commands.list"),
-      "commands.list should be registered on new SDK",
+      !api._registeredHooks.includes("commands.list"),
+      "commands.list should NOT be registered on new SDK; command discovery uses registerCommand()",
     );
 
     // New SDK-only hooks
@@ -393,6 +393,24 @@ test("new SDK registers active-memory tool names and slash commands", async () =
       api._registeredCommands.length > 0,
       "registerCommand should be used when available for session-scoped recall toggles",
     );
+    const remnicCommand = api._registeredCommands.find((spec) =>
+      spec && typeof spec === "object" && (spec as { name?: unknown }).name === "remnic"
+    ) as
+      | {
+          handler?: (ctx?: {
+            sessionKey?: string;
+            agentId?: string;
+            args?: string;
+          }) => Promise<{ text: string }>;
+        }
+      | undefined;
+    assert.equal(typeof remnicCommand?.handler, "function");
+    const reply = await remnicCommand?.handler?.({
+      sessionKey: "session-command-test",
+      agentId: "main",
+      args: "status",
+    });
+    assert.match(String(reply?.text ?? ""), /Remnic recall is/);
   } finally {
     await awaitPendingMigration();
     restoreRegisterMigrationEnv(previousDisableMigration);
