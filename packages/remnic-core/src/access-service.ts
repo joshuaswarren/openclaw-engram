@@ -1171,6 +1171,9 @@ export class EngramAccessService {
           `recall denied: cross-namespace budget exceeded (${budgetDecision.count}/${budgetDecision.limit.hardLimit} in ${budgetDecision.limit.windowMs}ms window)`,
         );
       }
+      // Prune expired principal buckets to prevent unbounded Map growth from
+      // high-cardinality / transient principals (Codex P2 review feedback).
+      this.budget.gc();
     }
     const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
     const recallOptions: RecallInvocationOptions = {
