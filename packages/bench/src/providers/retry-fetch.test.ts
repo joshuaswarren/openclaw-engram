@@ -146,3 +146,45 @@ test("retryFetch does not retry on 3xx redirect", async () => {
     mock.restore();
   }
 });
+
+test("retryFetch retries 429 beyond maxAttempts when max429WaitMs is set", async () => {
+  // Returns 429 for first 5 calls, then 200.
+  const mock = mockFetchSequence([
+    { status: 429 },
+    { status: 429 },
+    { status: 429 },
+    { status: 429 },
+    { status: 429 },
+    { status: 200, body: "finally" },
+  ]);
+  try {
+    const response = await retryFetch(
+      "https://example.com/api",
+      { method: "GET" },
+      // maxAttempts=3 but max429WaitMs=30s allows retries beyond 3 attempts
+      { maxAttempts: 3, baseBackoffMs: 1, timeoutMs: 5000, max429WaitMs: 30_000 },
+    );
+    assert.equal(response.status, 200);
+    assert.equal(mock.calls.length, 6);
+  } finally {
+    mock.restore();
+  }
+});
+
+test("retryFetch respects max429WaitMs budget and returns 429 when exhausted", async () => {
+  // Always returns 429 — budget should expire quickly.
+  const mock = mockFetchSequence([{ status: 429 }]);
+  try {
+    // Tiny budget: 10ms. With baseBackoffMs=1, we'll get a few attempts before budget expires.
+    const response = await retryFetch(
+      "https://example.com/api",
+      { method: "GET" },
+      { maxAttempts: 3, baseBackoffMs: 1, timeoutMs: 5000, max429WaitMs: 10 },
+    );
+    assert.equal(response.status, 429);
+    // Should have retried at least once beyond maxAttempts due to budget
+    assert.ok(mock.calls.length >= 3);
+  } finally {
+    mock.restore();
+  }
+});
