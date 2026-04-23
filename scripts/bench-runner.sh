@@ -156,13 +156,16 @@ cmd_status() {
   fi
 
   # Extract key fields with portable parsing (no jq dependency).
-  # Patterns tolerate pretty-printed JSON (optional whitespace around colons).
+  # Collapse whitespace first to handle pretty-printed JSON.
+  local collapsed
+  collapsed="$(tr -s ' \n\r\t' ' ' < "$status_file")"
+
   local current_bench completed total benchmarks failed
-  current_bench="$(grep -oE '"currentBenchmark"\s*:\s*"[^"]*"' "$status_file" | head -1 | grep -oE '"[^"]*"$' | tr -d '"')"
-  completed="$(grep -oE '"completed"\s*:\s*[0-9]+' "$status_file" | head -1 | grep -oE '[0-9]+$')"
-  total="$(grep -oE '"total"\s*:\s*[0-9]+' "$status_file" | head -1 | grep -oE '[0-9]+$')"
-  benchmarks="$(grep -oE '"id"\s*:\s*"[^"]*"\s*,\s*"status"\s*:\s*"[^"]*"' "$status_file" | sed -E 's/"id"\s*:\s*"/  /;s/"\s*,\s*"status"\s*:\s*"/ → /;s/"$//' | tail -20)"
-  failed="$(grep -cE '"status"\s*:\s*"failed"' "$status_file" 2>/dev/null || echo 0)"
+  current_bench="$(printf '%s' "$collapsed" | grep -oE '"currentBenchmark"\s*:\s*"[^"]*"' | head -1 | grep -oE '"[^"]*"$' | tr -d '"' || true)"
+  completed="$(printf '%s' "$collapsed" | grep -oE '"completed"\s*:\s*[0-9]+' | head -1 | grep -oE '[0-9]+$' || true)"
+  total="$(printf '%s' "$collapsed" | grep -oE '"total"\s*:\s*[0-9]+' | head -1 | grep -oE '[0-9]+$' || true)"
+  benchmarks="$(printf '%s' "$collapsed" | grep -oE '"id"\s*:\s*"[^"]*"[^}]*?"status"\s*:\s*"[^"]*"' | sed -E 's/"id"\s*:\s*"/  /;s/".*?"status"\s*:\s*"/ → /;s/"$//' | tail -20 || true)"
+  failed="$(printf '%s' "$collapsed" | grep -cE '"status"\s*:\s*"failed"' || echo 0)"
 
   echo "status_file: $(basename "$status_file")"
   if [[ -n "$current_bench" ]]; then
@@ -170,8 +173,8 @@ cmd_status() {
   fi
 
   local bench_complete bench_total
-  bench_complete="$(grep -cE '"status"\s*:\s*"complete"' "$status_file" 2>/dev/null || echo 0)"
-  bench_total="$(grep -cE '"status"\s*:\s*"(pending|running|complete|failed)"' "$status_file" 2>/dev/null || echo 0)"
+  bench_complete="$(printf '%s' "$collapsed" | grep -cE '"status"\s*:\s*"complete"' || echo 0)"
+  bench_total="$(printf '%s' "$collapsed" | grep -cE '"status"\s*:\s*"(pending|running|complete|failed)"' || echo 0)"
 
   echo "benchmarks: ${bench_complete}/${bench_total} complete, ${failed} failed"
   if [[ -n "$benchmarks" ]]; then

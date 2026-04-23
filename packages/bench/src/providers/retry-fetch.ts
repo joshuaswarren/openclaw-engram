@@ -108,16 +108,20 @@ export async function retryFetch(
       throw new DOMException("The operation was aborted.", "AbortError");
     }
 
-    // Stop when we've exhausted normal attempts AND have no 429 time budget left.
-    // The 429 budget only extends retries for 429 responses — transient/5xx
-    // errors are always capped by maxAttempts.
-    const outOfRegularAttempts = attempt > opts.maxAttempts;
-    const outOf429Budget = opts.max429WaitMs <= 0 ||
-      (Date.now() - loopStartMs) >= opts.max429WaitMs;
-    if (outOfRegularAttempts && outOf429Budget) {
-      // Return the 429 response if we have one, otherwise throw.
-      if (last429Response) return last429Response;
-      break;
+    // Non-429 errors (transient, 5xx) are always capped by maxAttempts.
+    // The 429 budget only extends retries for 429 responses beyond maxAttempts.
+    if (attempt > opts.maxAttempts) {
+      const in429Budget = opts.max429WaitMs > 0 &&
+        (Date.now() - loopStartMs) < opts.max429WaitMs;
+      if (!in429Budget) {
+        if (last429Response) return last429Response;
+        break;
+      }
+      // Past maxAttempts but within 429 budget — only continue if we've
+      // seen a 429. Otherwise transient/5xx errors would loop uncapped.
+      if (!last429Response) {
+        break;
+      }
     }
 
     const controller = new AbortController();
@@ -215,7 +219,8 @@ export async function retryFetch(
       lastError = err instanceof Error ? err : new Error(String(err));
     }
 
-    if (attempt < opts.maxAttempts || (opts.max429WaitMs > 0 && (Date.now() - loopStartMs) < opts.max429WaitMs)) {
+    // Backoff before next attempt. Capped at maxAttempts for non-429 errors.
+    if (attempt < opts.maxAttempts) {
       const backoffMs = opts.baseBackoffMs * Math.pow(2, attempt - 1);
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
