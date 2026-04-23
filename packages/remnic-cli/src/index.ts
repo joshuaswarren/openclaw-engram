@@ -4929,12 +4929,19 @@ async function cmdBench(rest: string[]): Promise<void> {
     const before = selectedBenchmarks.length;
 
     if (parsed.resume) {
-      // Skip benchmarks where ALL entries completed; re-run if any entry is
-      // pending, running, or failed. Benchmarks absent from previous status
-      // are treated as new and always re-run.
+      // Skip benchmarks where ALL expected profile entries completed; re-run
+      // if any entry is pending, running, failed, or absent (new profile).
       selectedBenchmarks = selectedBenchmarks.filter((benchmarkId) => {
         const statuses = relevantStatuses(benchmarkId);
         if (statuses.length === 0) return true; // not in previous run
+        // When running multiple profiles, check that each expected profile
+        // entry exists in the previous status. Missing profiles mean the
+        // benchmark hasn't been run for that profile yet.
+        if (runtimeProfiles.length > 1) {
+          for (const p of runtimeProfiles) {
+            if (!statusEntryMap.has(`${benchmarkId} [${p}]`)) return true;
+          }
+        }
         return !statuses.every((s) => s === "complete");
       });
       console.log(`  Resuming: ${selectedBenchmarks.length} of ${before} benchmarks to re-run`);
