@@ -4900,23 +4900,27 @@ async function cmdBench(rest: string[]): Promise<void> {
     const statusEntryMap = new Map(prevStatus.benchmarks.map((b) => [b.id, b.status]));
 
     // Helper: collect all status entries relevant to a benchmark ID across
-    // profile variations. Handles both current-matrix → previous-single and
-    // current-single → previous-matrix (where entries have ` [profile]` suffix).
+    // profile variations. Handles all four combinations of current/previous
+    // single vs matrix runs.
     const relevantStatuses = (benchmarkId: string): string[] => {
       const profileEntries = runtimeProfiles.length > 1
         ? runtimeProfiles.map((p) => `${benchmarkId} [${p}]`)
         : [benchmarkId];
       const statuses: string[] = [];
+      // Direct match: current profile entries against previous status entries.
       for (const id of profileEntries) {
         const s = statusEntryMap.get(id);
         if (s) statuses.push(s);
       }
-      // Also check previous matrix entries when current run is single-profile.
-      if (runtimeProfiles.length <= 1) {
-        for (const [entryId, entryStatus] of statusEntryMap) {
-          if (entryId.startsWith(`${benchmarkId} [`) && !statuses.includes(entryStatus)) {
-            statuses.push(entryStatus);
-          }
+      // Cross-profile: when current run profiles don't cover all previous
+      // entries, also check bare IDs and bracket-suffixed IDs.
+      const bareStatus = statusEntryMap.get(benchmarkId);
+      if (bareStatus && !statuses.includes(bareStatus)) {
+        statuses.push(bareStatus);
+      }
+      for (const [entryId, entryStatus] of statusEntryMap) {
+        if (entryId.startsWith(`${benchmarkId} [`) && !statuses.includes(entryStatus)) {
+          statuses.push(entryStatus);
         }
       }
       return statuses;
