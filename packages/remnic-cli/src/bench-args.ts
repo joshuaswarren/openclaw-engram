@@ -193,11 +193,12 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--provider" ||
       arg === "--base-url" ||
       arg === "--request-timeout" ||
-      arg === "--max-429-wait" ||
-      arg === "--resume" ||
-      arg === "--retry-failed"
+      arg === "--max-429-wait"
     ) {
       index += 1;
+      continue;
+    }
+    if (arg === "--resume" || arg === "--retry-failed") {
       continue;
     }
     if (!arg.startsWith("-")) {

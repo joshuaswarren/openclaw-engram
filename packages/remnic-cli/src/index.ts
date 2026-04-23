@@ -4864,6 +4864,15 @@ async function cmdBench(rest: string[]): Promise<void> {
 
   const runtimeProfiles = resolveBenchRunProfiles(parsed);
 
+  // Validate benchmark IDs before resume/retry-failed filtering so unknown
+  // names are caught early instead of being silently dropped by the filter.
+  const knownBenchmarkIds = await resolveKnownBenchmarkIds();
+  const unknown = selectedBenchmarks.filter((benchmarkId) => !knownBenchmarkIds.has(benchmarkId));
+  if (unknown.length > 0) {
+    console.error(`ERROR: unknown benchmark(s): ${unknown.join(", ")}. Use 'remnic bench list' to see available.`);
+    process.exit(1);
+  }
+
   // --resume / --retry-failed: filter against previous run status
   if (parsed.resume || parsed.retryFailed) {
     const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
@@ -4915,13 +4924,6 @@ async function cmdBench(rest: string[]): Promise<void> {
       console.log("Nothing to re-run — all selected benchmarks completed successfully.");
       process.exit(0);
     }
-  }
-
-  const knownBenchmarkIds = await resolveKnownBenchmarkIds();
-  const unknown = selectedBenchmarks.filter((benchmarkId) => !knownBenchmarkIds.has(benchmarkId));
-  if (unknown.length > 0) {
-    console.error(`ERROR: unknown benchmark(s): ${unknown.join(", ")}. Use 'remnic bench list' to see available.`);
-    process.exit(1);
   }
 
   const failures = new Set<string>();
