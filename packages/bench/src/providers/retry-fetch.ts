@@ -100,6 +100,7 @@ export async function retryFetch(
   const opts = { ...DEFAULTS, ...options };
   let lastError: Error | null = null;
   let last429Response: Response | null = null;
+  let last429IsStale = false;
   const loopStartMs = Date.now();
 
   for (let attempt = 1; ; attempt++) {
@@ -114,9 +115,10 @@ export async function retryFetch(
       const in429Budget = opts.max429WaitMs > 0 &&
         (Date.now() - loopStartMs) < opts.max429WaitMs;
       if (!in429Budget) {
-        // Only return a saved 429 when the budget feature is active.
+        // Only return a saved 429 when the budget feature is active and
+        // no non-429 failures have occurred since the last 429.
         // With max429WaitMs=0 (default), always break to throw lastError.
-        if (opts.max429WaitMs > 0 && last429Response) return last429Response;
+        if (opts.max429WaitMs > 0 && last429Response && !last429IsStale) return last429Response;
         break;
       }
       // Past maxAttempts but within 429 budget — only continue if we've
@@ -165,6 +167,7 @@ export async function retryFetch(
         // Only cancel the body when we're going to retry.
         await response.body?.cancel();
         last429Response = response;
+        last429IsStale = false;
 
         let waitMs =
           parseRetryAfterMs(response.headers.get("retry-after")) ??
@@ -211,6 +214,7 @@ export async function retryFetch(
       lastError = new Error(
         `HTTP ${response.status} ${response.statusText} (attempt ${attempt}/${opts.maxAttempts}): ${bodyPreview}`,
       );
+      last429IsStale = true;
     } catch (err) {
       clearTimeout(timeout);
       if (callerSignal?.aborted) {
@@ -222,6 +226,7 @@ export async function retryFetch(
         throw err;
       }
       lastError = err instanceof Error ? err : new Error(String(err));
+      last429IsStale = true;
     }
 
     // Backoff before next attempt. Capped at maxAttempts for non-429 errors.

@@ -78,7 +78,9 @@ cmd_start() {
   redacted_args="$(printf '%s' "$*" | sed -E 's/(-system-api-key |-judge-api-key |-api-key )[^ ]*/\1***REDACTED***/g')"
   echo "[$(date -Iseconds)] Starting benchmark: run-bench-cli.mjs run $redacted_args" >> "$LOG_FILE"
 
-  nohup node "$RUNNER_SCRIPT" run "$@" >> "$LOG_FILE" 2>&1 &
+  # Use setsid to create a new process group so kill -- -$pid
+  # reliably terminates the entire benchmark tree.
+  setsid nohup node "$RUNNER_SCRIPT" run "$@" >> "$LOG_FILE" 2>&1 &
   local bg_pid=$!
   echo "$bg_pid" > "$PID_FILE"
 
