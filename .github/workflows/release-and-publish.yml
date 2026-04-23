@@ -385,12 +385,31 @@ jobs:
             fi
             pkg_name="$(node -p "require('./$pkg_json').name")"
             pkg_version="$(node -p "require('./$pkg_json').version")"
+            pkg_exists="false"
+            if npm view "${pkg_name}" version >/dev/null 2>&1; then
+              pkg_exists="true"
+            fi
             if npm view "${pkg_name}@${pkg_version}" version >/dev/null 2>&1; then
               echo "::notice::${pkg_name}@${pkg_version} already published; skipping."
               continue
             fi
             echo "Publishing ${pkg_name}@${pkg_version} from ${pkg_dir}..."
-            (cd "$pkg_dir" && pnpm publish --access public --provenance --no-git-checks)
+            publish_log="$(mktemp)"
+            if (cd "$pkg_dir" && pnpm publish --access public --provenance --no-git-checks) >"$publish_log" 2>&1; then
+              cat "$publish_log"
+              rm -f "$publish_log"
+              continue
+            else
+              publish_status=$?
+              cat "$publish_log"
+              if [ "$pkg_exists" != "true" ] && grep -q "npm error code E404" "$publish_log"; then
+                echo "::warning::${pkg_name}@${pkg_version} is not provisioned for first-time npm publish from this automation yet; skipping so existing package updates can still ship."
+                rm -f "$publish_log"
+                continue
+              fi
+              rm -f "$publish_log"
+              exit $publish_status
+            fi
           done
 
       - name: Push release commits to main
