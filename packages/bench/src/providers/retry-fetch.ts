@@ -114,7 +114,9 @@ export async function retryFetch(
       const in429Budget = opts.max429WaitMs > 0 &&
         (Date.now() - loopStartMs) < opts.max429WaitMs;
       if (!in429Budget) {
-        if (last429Response) return last429Response;
+        // Only return a saved 429 when the budget feature is active.
+        // With max429WaitMs=0 (default), always break to throw lastError.
+        if (opts.max429WaitMs > 0 && last429Response) return last429Response;
         break;
       }
       // Past maxAttempts but within 429 budget — only continue if we've
