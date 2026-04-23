@@ -33,7 +33,7 @@ export interface ProviderConfig {
   model: string;
   baseUrl?: string;
   apiKey?: string;
-  retryOptions?: { maxAttempts?: number; baseBackoffMs?: number; timeoutMs?: number };
+  retryOptions?: { maxAttempts?: number; baseBackoffMs?: number; timeoutMs?: number; max429WaitMs?: number };
   disableThinking?: boolean;
 }
 
