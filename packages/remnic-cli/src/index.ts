@@ -4917,11 +4917,15 @@ async function cmdBench(rest: string[]): Promise<void> {
           : [benchmarkId];
         return profileEntries.some((id) => statusEntryMap.get(id) === "failed");
       });
-      console.log(`  Retrying: ${selectedBenchmarks.length} of ${before} failed benchmarks`);
+      console.log(`  Retrying: ${selectedBenchmarks.length} of ${before} selected benchmarks had failures`);
     }
 
     if (selectedBenchmarks.length === 0) {
-      console.log("Nothing to re-run — all selected benchmarks completed successfully.");
+      if (parsed.retryFailed) {
+        console.log("Nothing to re-run — no selected benchmarks had failures.");
+      } else {
+        console.log("Nothing to re-run — all selected benchmarks completed successfully.");
+      }
       process.exit(0);
     }
   }
