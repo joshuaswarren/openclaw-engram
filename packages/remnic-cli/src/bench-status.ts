@@ -42,6 +42,7 @@ export function createBenchStatusPath(
 }
 
 const BENCH_STATUS_FILENAME = /^bench-status-\d+-\d+\.json$/;
+const VALID_BENCH_ENTRY_STATUSES = new Set(["pending", "running", "complete", "failed"]);
 
 /**
  * Find the most recent bench-status file in the results directory.
@@ -94,7 +95,12 @@ export async function readBenchStatus(filePath: string): Promise<BenchStatus | n
       if (typeof entry !== "object" || entry === null) return null;
       const e = entry as Record<string, unknown>;
       if (typeof e.id !== "string") return null;
-      if (typeof e.status !== "string") return null;
+      if (
+        typeof e.status !== "string" ||
+        !VALID_BENCH_ENTRY_STATUSES.has(e.status)
+      ) {
+        return null;
+      }
     }
     return parsed as BenchStatus;
   } catch {

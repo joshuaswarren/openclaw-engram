@@ -4951,7 +4951,9 @@ async function cmdBench(rest: string[]): Promise<void> {
       if (parsed.retryFailed) {
         console.log("Nothing to re-run — no selected benchmarks had failures.");
       } else {
-        console.log("Nothing to re-run — all selected benchmarks completed successfully.");
+        console.log(
+          "Nothing to re-run — all selected benchmarks completed successfully in the previous run.",
+        );
       }
       process.exit(0);
     }
