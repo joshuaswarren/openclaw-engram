@@ -104,6 +104,15 @@ cmd_stop() {
     exit 0
   fi
 
+  # Verify the PID still belongs to the bench runner before signaling.
+  local cmd
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+  if [[ "$cmd" != *"run-bench-cli"* ]]; then
+    echo "WARNING: PID $pid no longer belongs to bench runner. Skipping kill."
+    rm -f "$PID_FILE"
+    exit 0
+  fi
+
   echo "Stopping benchmark (PID $pid)..."
   # Kill the process group so child processes are also terminated
   kill -- -"$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true

@@ -227,6 +227,7 @@ export async function retryFetch(
       }
       lastError = err instanceof Error ? err : new Error(String(err));
       last429IsStale = true;
+      callerSignal?.removeEventListener("abort", onCallerAbort);
     }
 
     // Backoff before next attempt. Capped at maxAttempts for non-429 errors.
