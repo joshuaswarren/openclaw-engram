@@ -401,7 +401,7 @@ function followCurrentNodeChain(
       return [];
     }
     visited.add(cursor);
-    const node = mapping[cursor];
+    const node: ChatGPTConversationNode | undefined = mapping[cursor];
     if (!node) {
       // Broken parent link (dangling reference). Don't return a partial
       // tail — it would silently omit the root and leave the caller with
