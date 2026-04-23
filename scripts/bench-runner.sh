@@ -44,6 +44,21 @@ read_pid() {
 }
 
 latest_status_file() {
+  local runner_pid="${1:-}"
+  if [[ -n "$runner_pid" ]] && is_alive "$runner_pid"; then
+    # Find the bench child process PID via pgrep.
+    local child_pid
+    child_pid="$(pgrep -P "$runner_pid" 2>/dev/null | head -1 || true)"
+    # Try status files matching the child PID first, then fall back to newest.
+    if [[ -n "$child_pid" ]]; then
+      local matched
+      matched="$(ls -t "$RESULTS_DIR"/bench-status-*-"$child_pid".json 2>/dev/null | head -1 || true)"
+      if [[ -n "$matched" ]]; then
+        printf '%s' "$matched"
+        return
+      fi
+    fi
+  fi
   ls -t "$RESULTS_DIR"/bench-status-*.json 2>/dev/null | head -1 || true
 }
 
@@ -153,9 +168,9 @@ cmd_status() {
     echo "process: no run"
   fi
 
-  # Parse latest status JSON
+  # Parse latest status JSON (filtered by runner PID when available).
   local status_file
-  status_file="$(latest_status_file)"
+  status_file="$(latest_status_file "$pid")"
 
   if [[ -z "$status_file" ]]; then
     echo "status_file: none"
