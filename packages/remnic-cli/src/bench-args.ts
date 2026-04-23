@@ -77,6 +77,10 @@ export interface ParsedBenchArgs {
   publishedOut?: string;
   /** `bench published` — dry-run: validate + load but do NOT call the model. */
   publishedDryRun?: boolean;
+  /** Skip benchmarks that completed successfully in the previous run. */
+  resume?: boolean;
+  /** Only re-run benchmarks that failed in the previous run. */
+  retryFailed?: boolean;
 }
 
 export type PublishedBenchmarkName = "longmemeval" | "locomo";
@@ -189,7 +193,9 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--provider" ||
       arg === "--base-url" ||
       arg === "--request-timeout" ||
-      arg === "--max-429-wait"
+      arg === "--max-429-wait" ||
+      arg === "--resume" ||
+      arg === "--retry-failed"
     ) {
       index += 1;
       continue;
@@ -493,6 +499,16 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
         "vLLM (http://localhost:8000/v1), LM Studio (http://localhost:1234/v1).",
     );
   }
+
+  const resume = args.includes("--resume");
+  const retryFailed = args.includes("--retry-failed");
+  if (resume && retryFailed) {
+    throw new Error(
+      "ERROR: --resume and --retry-failed are mutually exclusive. " +
+        "Use --resume to skip completed benchmarks, or --retry-failed to only re-run failed ones.",
+    );
+  }
+
   return {
     action,
     benchmarks,
@@ -537,5 +553,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     requestTimeout,
     max429WaitMs,
     disableThinking: args.includes("--disable-thinking"),
+    resume,
+    retryFailed,
   };
 }

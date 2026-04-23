@@ -9,6 +9,10 @@
 #   scripts/bench-runner.sh log                      - tail the log file
 #   scripts/bench-runner.sh show                     - print latest status JSON
 #
+# Resume / retry flags (passed to run-bench-cli.mjs):
+#   --resume          - skip benchmarks that completed successfully
+#   --retry-failed    - only re-run benchmarks that failed
+#
 # State files:
 #   ~/.remnic/bench/runner.pid   - PID of the bench process
 #   ~/.remnic/bench/runner.log   - combined stdout+stderr
