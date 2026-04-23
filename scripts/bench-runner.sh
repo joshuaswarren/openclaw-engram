@@ -147,8 +147,15 @@ cmd_stop() {
   done
 
   if is_alive "$pid"; then
-    echo "Process did not exit, sending SIGKILL to process group..."
-    kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+    # Re-validate ownership before SIGKILL — PID may have been reused.
+    local sigkill_cmd
+    sigkill_cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+    if [[ "$sigkill_cmd" == *"run-bench-cli"* ]]; then
+      echo "Process did not exit, sending SIGKILL to process group..."
+      kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
+    else
+      echo "PID $pid reassigned during shutdown, skipping SIGKILL."
+    fi
   fi
 
   rm -f "$PID_FILE"
