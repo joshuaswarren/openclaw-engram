@@ -171,8 +171,8 @@ export async function retryFetch(
 
         const retryAfter = parseRetryAfterMs(response.headers.get("retry-after"));
         let waitMs =
-          (retryAfter && retryAfter > 0)
-            ? retryAfter
+          retryAfter != null
+            ? Math.max(retryAfter, 100)
             : Math.min(
                 opts.baseBackoffMs * Math.pow(2, attempt - 1),
                 MAX_429_BACKOFF_S * 1000,

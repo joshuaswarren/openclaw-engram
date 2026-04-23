@@ -175,7 +175,7 @@ cmd_status() {
   completed="$(printf '%s' "$collapsed" | grep -oE '"completed"\s*:\s*[0-9]+' | head -1 | grep -oE '[0-9]+$' || true)"
   total="$(printf '%s' "$collapsed" | grep -oE '"total"\s*:\s*[0-9]+' | head -1 | grep -oE '[0-9]+$' || true)"
   benchmarks="$(printf '%s' "$collapsed" | grep -oE '"id"\s*:\s*"[^"]*"[^}]*?"status"\s*:\s*"[^"]*"' | sed -E 's/"id"\s*:\s*"/  /;s/".*?"status"\s*:\s*"/ → /;s/"$//' | tail -20 || true)"
-  failed="$(printf '%s' "$collapsed" | grep -cE '"status"\s*:\s*"failed"' || true)"
+  failed="$(printf '%s' "$collapsed" | grep -oE '"status"\s*:\s*"failed"' | wc -l | tr -d ' ')"
 
   echo "status_file: $(basename "$status_file")"
   if [[ -n "$current_bench" ]]; then
@@ -183,8 +183,8 @@ cmd_status() {
   fi
 
   local bench_complete bench_total
-  bench_complete="$(printf '%s' "$collapsed" | grep -cE '"status"\s*:\s*"complete"' || true)"
-  bench_total="$(printf '%s' "$collapsed" | grep -cE '"status"\s*:\s*"(pending|running|complete|failed)"' || true)"
+  bench_complete="$(printf '%s' "$collapsed" | grep -oE '"status"\s*:\s*"complete"' | wc -l | tr -d ' ')"
+  bench_total="$(printf '%s' "$collapsed" | grep -oE '"status"\s*:\s*"(pending|running|complete|failed)"' | wc -l | tr -d ' ')"
 
   echo "benchmarks: ${bench_complete}/${bench_total} complete, ${failed} failed"
   if [[ -n "$benchmarks" ]]; then
