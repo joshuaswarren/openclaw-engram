@@ -42,6 +42,23 @@ type ExtractedFactResult = ExtractionResult["facts"][number];
 type ExtractedEntityResult = ExtractionResult["entities"][number];
 type ExtractedRelationshipResult = NonNullable<ExtractionResult["relationships"]>[number];
 const PROACTIVE_MIN_CONFIDENCE = 0.8;
+const CONSOLIDATION_RESPONSE_SCHEMA = `{
+  "items": [
+    {
+      "existingId": "id",
+      "action": "ADD",
+      "mergeWith": "optional-existing-id",
+      "updatedContent": "optional replacement content",
+      "reason": "brief reason for this action"
+    }
+  ],
+  "profileUpdates": ["optional profile update"],
+  "entityUpdates": [{"name": "person-jane-doe", "type": "person", "facts": ["Now leads the backend team", "Recently migrated the user service to TypeScript"]}]
+}`;
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 function normalizeQuestion(question: ExtractionQuestion): ExtractionQuestion {
   const priority = Number.isFinite(question.priority)
@@ -266,14 +283,60 @@ export class ExtractionEngine {
   }
 
   private normalizeEntityUpdate(entity: any): ExtractedEntityResult {
+    const rawUpdates = isPlainRecord(entity?.updates) ? entity.updates : null;
+    const directFacts = Array.isArray(entity?.facts)
+      ? entity.facts
+          .filter((fact: any) => typeof fact === "string")
+          .map((fact: string) => fact.trim())
+          .filter((fact: string) => fact.length > 0)
+      : [];
+    const updateFacts = rawUpdates && Array.isArray(rawUpdates.facts)
+      ? rawUpdates.facts
+          .filter((fact: unknown) => typeof fact === "string")
+          .map((fact: string) => fact.trim())
+          .filter((fact: string) => fact.length > 0)
+      : [];
+    const scalarUpdateFacts = rawUpdates
+      ? Object.keys(rawUpdates)
+          .sort((a, b) => a.localeCompare(b))
+          .filter((key) => !["facts", "name", "promptedByQuestion", "structuredSections", "type"].includes(key))
+          .flatMap((key) => {
+            const value = rawUpdates[key];
+            if (typeof value === "string" && value.trim().length > 0) {
+              return [`${key}: ${value.trim()}`];
+            }
+            if (typeof value === "number" || typeof value === "boolean") {
+              return [`${key}: ${String(value)}`];
+            }
+            return [];
+          })
+      : [];
+    const structuredSectionsSource = Array.isArray(entity?.structuredSections)
+      ? entity.structuredSections
+      : Array.isArray(rawUpdates?.structuredSections)
+        ? rawUpdates.structuredSections
+        : [];
+    const name =
+      typeof entity?.name === "string"
+        ? entity.name.trim()
+        : typeof entity?.entityId === "string"
+          ? entity.entityId.trim()
+          : typeof rawUpdates?.name === "string"
+            ? rawUpdates.name.trim()
+            : "";
+    const type =
+      typeof entity?.type === "string" && entity.type.trim().length > 0
+        ? entity.type.trim()
+        : typeof rawUpdates?.type === "string" && rawUpdates.type.trim().length > 0
+          ? rawUpdates.type.trim()
+          : "other";
+
     return {
-      name: typeof entity?.name === "string" ? entity.name : "",
-      type: typeof entity?.type === "string" ? entity.type : "other",
-      facts: Array.isArray(entity?.facts)
-        ? entity.facts.filter((fact: any) => typeof fact === "string")
-        : [],
-      structuredSections: Array.isArray(entity?.structuredSections)
-        ? entity.structuredSections
+      name,
+      type,
+      facts: [...directFacts, ...updateFacts, ...scalarUpdateFacts],
+      structuredSections: structuredSectionsSource.length > 0
+        ? structuredSectionsSource
             .map((section: any) => ({
               key: typeof section?.key === "string" ? section.key.trim() : "",
               title: typeof section?.title === "string" ? section.title.trim() : "",
@@ -290,7 +353,11 @@ export class ExtractionEngine {
             ))
         : undefined,
       promptedByQuestion:
-        typeof entity?.promptedByQuestion === "string" ? entity.promptedByQuestion : undefined,
+        typeof entity?.promptedByQuestion === "string"
+          ? entity.promptedByQuestion
+          : typeof rawUpdates?.promptedByQuestion === "string"
+            ? rawUpdates.promptedByQuestion
+            : undefined,
     };
   }
 
@@ -400,16 +467,63 @@ export class ExtractionEngine {
     return normalized.summary.length > 0 ? normalized : null;
   }
 
-  private sanitizeConsolidationResult(result: ConsolidationResult): ConsolidationResult {
-    const items = result.items.map((item) => {
-      if (!item.updatedContent) return item;
-      const sanitized = sanitizeMemoryContent(item.updatedContent);
-      if (!sanitized.clean) {
-        log.warn(`consolidation item sanitized (${item.existingId}); violations=${sanitized.violations.join(", ")}`);
+  private sanitizeConsolidationResult(result: {
+    items?: unknown[];
+    profileUpdates?: unknown[];
+    entityUpdates?: unknown[];
+  }): ConsolidationResult {
+    const items: ConsolidationResult["items"] = [];
+    for (const item of Array.isArray(result.items) ? result.items : []) {
+      const rawAction = typeof (item as any)?.action === "string" ? (item as any).action.toUpperCase() : "SKIP";
+      const action =
+        rawAction === "ADD" ||
+        rawAction === "MERGE" ||
+        rawAction === "UPDATE" ||
+        rawAction === "INVALIDATE" ||
+        rawAction === "SKIP"
+          ? rawAction
+          : "SKIP";
+      const existingId =
+        typeof (item as any)?.existingId === "string"
+          ? (item as any).existingId.trim()
+          : typeof (item as any)?.newMemoryId === "string"
+            ? (item as any).newMemoryId.trim()
+            : typeof (item as any)?.memoryId === "string"
+              ? (item as any).memoryId.trim()
+              : "";
+      if (!existingId) continue;
+      const mergeWith = typeof (item as any)?.mergeWith === "string" ? (item as any).mergeWith : undefined;
+      const reason = typeof (item as any)?.reason === "string" ? (item as any).reason : "";
+      const rawUpdatedContent = typeof (item as any)?.updatedContent === "string" ? (item as any).updatedContent : undefined;
+      if (!rawUpdatedContent) {
+        items.push({ existingId, action, mergeWith, updatedContent: undefined, reason });
+        continue;
       }
-      return { ...item, updatedContent: sanitized.text };
-    });
-    return { ...result, items };
+      const sanitized = sanitizeMemoryContent(rawUpdatedContent);
+      if (!sanitized.clean) {
+        log.warn(`consolidation item sanitized (${existingId}); violations=${sanitized.violations.join(", ")}`);
+      }
+      items.push({
+        existingId,
+        action,
+        mergeWith,
+        updatedContent: sanitized.text,
+        reason,
+      });
+    }
+    const profileUpdates = (Array.isArray(result.profileUpdates) ? result.profileUpdates : [])
+      .map((update: any) =>
+        typeof update === "string"
+          ? update.trim()
+          : typeof update?.content === "string"
+            ? update.content.trim()
+            : "",
+      )
+      .filter((update) => update.length > 0);
+    const entityUpdates = (Array.isArray(result.entityUpdates) ? result.entityUpdates : [])
+      .map((entity: any) => this.normalizeEntityUpdate(entity))
+      .filter((entity: ExtractedEntityResult) => entity.name.length > 0);
+    return { items, profileUpdates, entityUpdates };
   }
 
   private async applyProactiveQuestionPass(
@@ -1480,15 +1594,10 @@ Consolidate the new memories against existing ones.`,
     );
     if (fallbackResult) {
       log.debug(`consolidation: ${fallbackResult.items.length} decisions via fallback`);
-      const normalizedEntityUpdates = fallbackResult.entityUpdates.map((entity) => this.normalizeEntityUpdate(entity));
       return this.sanitizeConsolidationResult({
-        items: fallbackResult.items.map((item) => ({
-          ...item,
-          mergeWith: item.mergeWith ?? undefined,
-          updatedContent: item.updatedContent ?? undefined,
-        })),
+        items: fallbackResult.items,
         profileUpdates: fallbackResult.profileUpdates,
-        entityUpdates: normalizedEntityUpdates,
+        entityUpdates: fallbackResult.entityUpdates,
       });
     }
 
@@ -1523,19 +1632,7 @@ New memories to consolidate:
 ${newList}
 
 Respond with valid JSON only, matching this schema:
-{
-  "items": [
-    {
-      "existingId": "id",
-      "action": "ADD",
-      "mergeWith": "optional-existing-id",
-      "updatedContent": "optional replacement content",
-      "reason": "brief reason for this action"
-    }
-  ],
-  "profileUpdates": ["optional profile update"],
-  "entityUpdates": [{"name": "person-jane-doe", "type": "person", "facts": ["Now leads the backend team", "Recently migrated the user service to TypeScript"]}]
-}`;
+${CONSOLIDATION_RESPONSE_SCHEMA}`;
 
       const response = await this.client.chat.completions.create({
         model: this.config.model,
@@ -1572,46 +1669,14 @@ Respond with valid JSON only, matching this schema:
       });
 
       if (parsed && Array.isArray(parsed.items)) {
-        const normalizedItems = parsed.items
-          .map((item: any) => {
-            const rawAction = typeof item?.action === "string" ? item.action.toUpperCase() : "SKIP";
-            const action =
-              rawAction === "ADD" ||
-              rawAction === "MERGE" ||
-              rawAction === "UPDATE" ||
-              rawAction === "INVALIDATE" ||
-              rawAction === "SKIP"
-                ? rawAction
-                : "SKIP";
-            return {
-            existingId:
-              typeof item?.existingId === "string"
-                ? item.existingId
-                : typeof item?.newMemoryId === "string"
-                  ? item.newMemoryId
-                  : "",
-            action,
-            mergeWith: typeof item?.mergeWith === "string" ? item.mergeWith : undefined,
-            updatedContent: typeof item?.updatedContent === "string" ? item.updatedContent : undefined,
-            reason: typeof item?.reason === "string" ? item.reason : "",
-          };
-          })
-          .filter((item: any) => item.existingId.length > 0);
-        const normalizedEntityUpdates = Array.isArray(parsed.entityUpdates)
-          ? parsed.entityUpdates
-              .map((entity: any) => this.normalizeEntityUpdate(entity))
-              .filter((entity: any) => entity.name.length > 0)
-          : [];
         log.debug(
-          `consolidation: ${normalizedItems.length} decisions`,
+          `consolidation: ${parsed.items.length} decisions`,
         );
         return this.sanitizeConsolidationResult({
-          items: normalizedItems,
-          profileUpdates: Array.isArray(parsed.profileUpdates)
-            ? parsed.profileUpdates.filter((update: unknown) => typeof update === "string" && update.trim().length > 0)
-            : [],
-          entityUpdates: normalizedEntityUpdates,
-        } as ConsolidationResult);
+          items: parsed.items,
+          profileUpdates: Array.isArray(parsed.profileUpdates) ? parsed.profileUpdates : [],
+          entityUpdates: Array.isArray(parsed.entityUpdates) ? parsed.entityUpdates : [],
+        });
       }
 
       log.warn("consolidation returned no parsed output");
@@ -1665,13 +1730,7 @@ New memories to consolidate:
 ${newList}
 
 Respond with valid JSON matching this schema:
-{
-  "items": [
-    {"memoryId": "id", "action": "ADD|MERGE|UPDATE|INVALIDATE|SKIP", "reason": "why", "updatedContent": "optional new content"}
-  ],
-  "profileUpdates": [{"section": "section name", "content": "new bullet"}],
-  "entityUpdates": [{"entityId": "id", "updates": {"field": "value"}}]
-}`;
+${CONSOLIDATION_RESPONSE_SCHEMA}`;
 
     const response = await this.localLlm.chatCompletion(
       [

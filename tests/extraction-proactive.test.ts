@@ -263,6 +263,96 @@ test("consolidate normalizes fallback entity updates with validated structured s
   ]);
 });
 
+test("consolidate aligns local LLM entity-update schema and bridges legacy payloads", async () => {
+  const config = parseConfig({
+    memoryDir: ".tmp/memory",
+    workspaceDir: ".tmp/workspace",
+    openaiApiKey: "test-key",
+    localLlmEnabled: true,
+    localLlmFallback: false,
+  });
+
+  const engine = new ExtractionEngine(config);
+  let prompt = "";
+  (engine as any).localLlm = {
+    chatCompletion: async (messages: Array<{ role: string; content: string }>) => {
+      prompt = messages[1]?.content ?? "";
+      return {
+        content: JSON.stringify({
+          items: [
+            {
+              memoryId: "memory-1",
+              action: "add",
+              reason: "keep it",
+            },
+          ],
+          profileUpdates: [
+            {
+              section: "preferences",
+              content: "Prefers terse status updates.",
+            },
+          ],
+          entityUpdates: [
+            {
+              entityId: "person-alex",
+              updates: {
+                type: "person",
+                facts: ["Owns the review timeline.", 7],
+                city: "Austin",
+                structuredSections: [
+                  {
+                    key: "beliefs",
+                    title: "Beliefs",
+                    facts: ["Small teams should own whole systems.", 3],
+                  },
+                ],
+              },
+              promptedByQuestion: "Who owns the review timeline?",
+            },
+          ],
+        }),
+      };
+    },
+  };
+
+  const result = await engine.consolidate(
+    [{ frontmatter: { id: "memory-1", category: "fact" }, content: "New memory." } as any],
+    [{ frontmatter: { id: "memory-0", category: "fact" }, content: "Existing memory." } as any],
+    "",
+  );
+
+  assert.match(
+    prompt,
+    /"entityUpdates": \[\{"name": "person-jane-doe", "type": "person", "facts": \["Now leads the backend team"/,
+  );
+  assert.doesNotMatch(prompt, /"entityUpdates": \[\{"entityId": "id", "updates": \{"field": "value"\}\}\]/);
+  assert.deepEqual(result.items, [
+    {
+      existingId: "memory-1",
+      action: "ADD",
+      mergeWith: undefined,
+      updatedContent: undefined,
+      reason: "keep it",
+    },
+  ]);
+  assert.deepEqual(result.profileUpdates, ["Prefers terse status updates."]);
+  assert.deepEqual(result.entityUpdates, [
+    {
+      name: "person-alex",
+      type: "person",
+      facts: ["Owns the review timeline.", "city: Austin"],
+      structuredSections: [
+        {
+          key: "beliefs",
+          title: "Beliefs",
+          facts: ["Small teams should own whole systems."],
+        },
+      ],
+      promptedByQuestion: "Who owns the review timeline?",
+    },
+  ]);
+});
+
 test("normalizeExtractionResultPayload trims structured section fields before keeping them", () => {
   const config = parseConfig({
     memoryDir: ".tmp/memory",
