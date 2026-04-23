@@ -150,8 +150,11 @@ export async function retryFetch(
         const inBudget = opts.max429WaitMs > 0 &&
           (Date.now() - loopStartMs) < opts.max429WaitMs;
         const underMaxAttempts = attempt < opts.maxAttempts;
+        const budgetExhausted = opts.max429WaitMs > 0 && !inBudget;
 
-        if (!underMaxAttempts && !inBudget) {
+        // Stop if budget is exhausted (enforces wall-clock limit even under
+        // maxAttempts) or if past maxAttempts with no budget remaining.
+        if (budgetExhausted || (!underMaxAttempts && !inBudget)) {
           // Return the response with a readable body for the caller.
           callerSignal?.removeEventListener("abort", onCallerAbort);
           return response;

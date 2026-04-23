@@ -118,14 +118,6 @@ cmd_stop() {
     kill -9 "$pid" 2>/dev/null || true
   fi
 
-  # Kill any orphaned bench processes from previous runs
-  local orphaned
-  orphaned="$(pgrep -f "tsx.*packages/remnic-cli/src/index.ts bench run" 2>/dev/null || true)"
-  if [[ -n "$orphaned" ]]; then
-    echo "Killing orphaned bench processes: $orphaned"
-    echo "$orphaned" | xargs kill 2>/dev/null || true
-  fi
-
   rm -f "$PID_FILE"
   echo "Stopped."
 }
