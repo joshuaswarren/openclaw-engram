@@ -89,6 +89,13 @@ export async function readBenchStatus(filePath: string): Promise<BenchStatus | n
     if (!Array.isArray(obj.benchmarks)) return null;
     if (typeof obj.pid !== "number") return null;
     if (typeof obj.startedAt !== "string") return null;
+    // Validate each benchmark entry has required fields.
+    for (const entry of obj.benchmarks as unknown[]) {
+      if (typeof entry !== "object" || entry === null) return null;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.id !== "string") return null;
+      if (typeof e.status !== "string") return null;
+    }
     return parsed as BenchStatus;
   } catch {
     return null;

@@ -4898,24 +4898,47 @@ async function cmdBench(rest: string[]): Promise<void> {
     console.log(`  Benchmarks: ${prevStatus.benchmarks.length} total, ${completeCount} complete, ${failedCount} failed`);
 
     const statusEntryMap = new Map(prevStatus.benchmarks.map((b) => [b.id, b.status]));
+
+    // Helper: collect all status entries relevant to a benchmark ID across
+    // profile variations. Handles both current-matrix → previous-single and
+    // current-single → previous-matrix (where entries have ` [profile]` suffix).
+    const relevantStatuses = (benchmarkId: string): string[] => {
+      const profileEntries = runtimeProfiles.length > 1
+        ? runtimeProfiles.map((p) => `${benchmarkId} [${p}]`)
+        : [benchmarkId];
+      const statuses: string[] = [];
+      for (const id of profileEntries) {
+        const s = statusEntryMap.get(id);
+        if (s) statuses.push(s);
+      }
+      // Also check previous matrix entries when current run is single-profile.
+      if (runtimeProfiles.length <= 1) {
+        for (const [entryId, entryStatus] of statusEntryMap) {
+          if (entryId.startsWith(`${benchmarkId} [`) && !statuses.includes(entryStatus)) {
+            statuses.push(entryStatus);
+          }
+        }
+      }
+      return statuses;
+    };
+
     const before = selectedBenchmarks.length;
 
     if (parsed.resume) {
-      // Skip completed benchmarks; re-run pending/running/failed.
+      // Skip benchmarks where ALL entries completed; re-run if any entry is
+      // pending, running, or failed. Benchmarks absent from previous status
+      // are treated as new and always re-run.
       selectedBenchmarks = selectedBenchmarks.filter((benchmarkId) => {
-        const profileEntries = runtimeProfiles.length > 1
-          ? runtimeProfiles.map((p) => `${benchmarkId} [${p}]`)
-          : [benchmarkId];
-        return !profileEntries.every((id) => statusEntryMap.get(id) === "complete");
+        const statuses = relevantStatuses(benchmarkId);
+        if (statuses.length === 0) return true; // not in previous run
+        return !statuses.every((s) => s === "complete");
       });
       console.log(`  Resuming: ${selectedBenchmarks.length} of ${before} benchmarks to re-run`);
     } else {
-      // --retry-failed: only re-run failed benchmarks.
+      // --retry-failed: only re-run benchmarks that had failures.
       selectedBenchmarks = selectedBenchmarks.filter((benchmarkId) => {
-        const profileEntries = runtimeProfiles.length > 1
-          ? runtimeProfiles.map((p) => `${benchmarkId} [${p}]`)
-          : [benchmarkId];
-        return profileEntries.some((id) => statusEntryMap.get(id) === "failed");
+        const statuses = relevantStatuses(benchmarkId);
+        return statuses.some((s) => s === "failed");
       });
       console.log(`  Retrying: ${selectedBenchmarks.length} of ${before} selected benchmarks had failures`);
     }
