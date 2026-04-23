@@ -169,12 +169,14 @@ export async function retryFetch(
         last429Response = response;
         last429IsStale = false;
 
+        const retryAfter = parseRetryAfterMs(response.headers.get("retry-after"));
         let waitMs =
-          parseRetryAfterMs(response.headers.get("retry-after")) ??
-          Math.min(
-            opts.baseBackoffMs * Math.pow(2, attempt - 1),
-            MAX_429_BACKOFF_S * 1000,
-          );
+          (retryAfter && retryAfter > 0)
+            ? retryAfter
+            : Math.min(
+                opts.baseBackoffMs * Math.pow(2, attempt - 1),
+                MAX_429_BACKOFF_S * 1000,
+              );
 
         // Clamp to remaining 429 budget so we don't overshoot.
         if (opts.max429WaitMs > 0) {

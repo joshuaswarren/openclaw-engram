@@ -57,9 +57,16 @@ cmd_start() {
   local pid
   pid="$(read_pid)"
   if [[ -n "$pid" ]] && is_alive "$pid"; then
-    echo "ERROR: benchmark already running (PID $pid). Stop it first." >&2
-    echo "  scripts/bench-runner.sh stop" >&2
-    exit 1
+    # Verify the PID still belongs to the bench runner before blocking.
+    local cmd
+    cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+    if [[ "$cmd" == *"run-bench-cli"* ]]; then
+      echo "ERROR: benchmark already running (PID $pid). Stop it first." >&2
+      echo "  scripts/bench-runner.sh stop" >&2
+      exit 1
+    fi
+    # Stale PID file — clean it up and continue.
+    rm -f "$PID_FILE"
   fi
 
   # Save flags for reproducibility (redact API keys).
@@ -125,8 +132,8 @@ cmd_stop() {
   done
 
   if is_alive "$pid"; then
-    echo "Process did not exit, sending SIGKILL..."
-    kill -9 "$pid" 2>/dev/null || true
+    echo "Process did not exit, sending SIGKILL to process group..."
+    kill -9 -- -"$pid" 2>/dev/null || kill -9 "$pid" 2>/dev/null || true
   fi
 
   rm -f "$PID_FILE"
