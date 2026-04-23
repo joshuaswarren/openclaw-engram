@@ -44,7 +44,7 @@ read_pid() {
 }
 
 latest_status_file() {
-  ls -t "$RESULTS_DIR"/bench-status-*.json 2>/dev/null | head -1
+  ls -t "$RESULTS_DIR"/bench-status-*.json 2>/dev/null | head -1 || true
 }
 
 cmd_start() {
@@ -62,8 +62,10 @@ cmd_start() {
     exit 1
   fi
 
-  # Save flags for reproducibility (redact API keys)
-  printf '%s\n' "$@" | sed -E 's/(-system-api-key |-judge-api-key |-api-key )[^ ]*/\1***REDACTED***/g' > "$ENV_FILE"
+  # Save flags for reproducibility (redact API keys).
+  # Join args onto one line so sed can match flag+value pairs that
+  # arrive as separate shell words.
+  printf '%s' "$*" | sed -E 's/(-system-api-key |-judge-api-key |-api-key )[^ ]*/\1***REDACTED***/g' > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
 
   # Rotate log if large (>10MB)
@@ -153,13 +155,14 @@ cmd_status() {
     exit 0
   fi
 
-  # Extract key fields with portable parsing (no jq dependency)
+  # Extract key fields with portable parsing (no jq dependency).
+  # Patterns tolerate pretty-printed JSON (optional whitespace around colons).
   local current_bench completed total benchmarks failed
-  current_bench="$(grep -o '"currentBenchmark":"[^"]*"' "$status_file" | head -1 | cut -d'"' -f4)"
-  completed="$(grep -o '"completed":[0-9]*' "$status_file" | head -1 | cut -d: -f2)"
-  total="$(grep -o '"total":[0-9]*' "$status_file" | head -1 | cut -d: -f2)"
-  benchmarks="$(grep -o '"id":"[^"]*","status":"[^"]*"' "$status_file" | sed 's/"id":"/  /;s/","status":"/ → /;s/"$//' | tail -20)"
-  failed="$(grep -c '"status":"failed"' "$status_file" 2>/dev/null || echo 0)"
+  current_bench="$(grep -oE '"currentBenchmark"\s*:\s*"[^"]*"' "$status_file" | head -1 | grep -oE '"[^"]*"$' | tr -d '"')"
+  completed="$(grep -oE '"completed"\s*:\s*[0-9]+' "$status_file" | head -1 | grep -oE '[0-9]+$')"
+  total="$(grep -oE '"total"\s*:\s*[0-9]+' "$status_file" | head -1 | grep -oE '[0-9]+$')"
+  benchmarks="$(grep -oE '"id"\s*:\s*"[^"]*"\s*,\s*"status"\s*:\s*"[^"]*"' "$status_file" | sed -E 's/"id"\s*:\s*"/  /;s/"\s*,\s*"status"\s*:\s*"/ → /;s/"$//' | tail -20)"
+  failed="$(grep -cE '"status"\s*:\s*"failed"' "$status_file" 2>/dev/null || echo 0)"
 
   echo "status_file: $(basename "$status_file")"
   if [[ -n "$current_bench" ]]; then
@@ -167,8 +170,8 @@ cmd_status() {
   fi
 
   local bench_complete bench_total
-  bench_complete="$(grep -c '"status":"complete"' "$status_file" 2>/dev/null || echo 0)"
-  bench_total="$(grep -c '"status":"pending"\|"status":"running"\|"status":"complete"\|"status":"failed"' "$status_file" 2>/dev/null || echo 0)"
+  bench_complete="$(grep -cE '"status"\s*:\s*"complete"' "$status_file" 2>/dev/null || echo 0)"
+  bench_total="$(grep -cE '"status"\s*:\s*"(pending|running|complete|failed)"' "$status_file" 2>/dev/null || echo 0)"
 
   echo "benchmarks: ${bench_complete}/${bench_total} complete, ${failed} failed"
   if [[ -n "$benchmarks" ]]; then

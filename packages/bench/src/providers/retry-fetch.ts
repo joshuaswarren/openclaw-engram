@@ -109,6 +109,8 @@ export async function retryFetch(
     }
 
     // Stop when we've exhausted normal attempts AND have no 429 time budget left.
+    // The 429 budget only extends retries for 429 responses — transient/5xx
+    // errors are always capped by maxAttempts.
     const outOfRegularAttempts = attempt > opts.maxAttempts;
     const outOf429Budget = opts.max429WaitMs <= 0 ||
       (Date.now() - loopStartMs) >= opts.max429WaitMs;
@@ -141,24 +143,32 @@ export async function retryFetch(
 
       // 429 Too Many Requests — pause and retry.
       if (response.status === 429) {
-        await response.body?.cancel();
-        last429Response = response;
-
         const inBudget = opts.max429WaitMs > 0 &&
           (Date.now() - loopStartMs) < opts.max429WaitMs;
         const underMaxAttempts = attempt < opts.maxAttempts;
 
         if (!underMaxAttempts && !inBudget) {
+          // Return the response with a readable body for the caller.
           callerSignal?.removeEventListener("abort", onCallerAbort);
           return response;
         }
 
-        const waitMs =
+        // Only cancel the body when we're going to retry.
+        await response.body?.cancel();
+        last429Response = response;
+
+        let waitMs =
           parseRetryAfterMs(response.headers.get("retry-after")) ??
           Math.min(
             opts.baseBackoffMs * Math.pow(2, attempt - 1),
             MAX_429_BACKOFF_S * 1000,
           );
+
+        // Clamp to remaining 429 budget so we don't overshoot.
+        if (opts.max429WaitMs > 0) {
+          const remaining = opts.max429WaitMs - (Date.now() - loopStartMs);
+          waitMs = Math.min(waitMs, Math.max(remaining, 0));
+        }
 
         const budgetTag = inBudget
           ? ` (${Math.round((Date.now() - loopStartMs) / 1000)}s/${Math.round(opts.max429WaitMs / 1000)}s budget)`
@@ -205,7 +215,7 @@ export async function retryFetch(
       lastError = err instanceof Error ? err : new Error(String(err));
     }
 
-    if (attempt < opts.maxAttempts) {
+    if (attempt < opts.maxAttempts || (opts.max429WaitMs > 0 && (Date.now() - loopStartMs) < opts.max429WaitMs)) {
       const backoffMs = opts.baseBackoffMs * Math.pow(2, attempt - 1);
       await new Promise((resolve) => setTimeout(resolve, backoffMs));
     }
