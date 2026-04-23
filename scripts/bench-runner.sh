@@ -43,21 +43,31 @@ read_pid() {
   fi
 }
 
+# Collect all descendant PIDs of a given PID (walks the full process tree).
+descendant_pids() {
+  local parent="$1"
+  local children
+  children="$(pgrep -P "$parent" 2>/dev/null || true)"
+  for child in $children; do
+    printf '%s\n' "$child"
+    descendant_pids "$child"
+  done
+}
+
 latest_status_file() {
   local runner_pid="${1:-}"
   if [[ -n "$runner_pid" ]] && is_alive "$runner_pid"; then
-    # Find the bench child process PID via pgrep.
-    local child_pid
-    child_pid="$(pgrep -P "$runner_pid" 2>/dev/null | head -1 || true)"
-    # Try status files matching the child PID first, then fall back to newest.
-    if [[ -n "$child_pid" ]]; then
+    # Walk the full process tree to find the bench process PID.
+    local all_pids
+    all_pids="$(descendant_pids "$runner_pid")"
+    for pid in $all_pids; do
       local matched
-      matched="$(ls -t "$RESULTS_DIR"/bench-status-*-"$child_pid".json 2>/dev/null | head -1 || true)"
+      matched="$(ls -t "$RESULTS_DIR"/bench-status-*-"$pid".json 2>/dev/null | head -1 || true)"
       if [[ -n "$matched" ]]; then
         printf '%s' "$matched"
         return
       fi
-    fi
+    done
   fi
   ls -t "$RESULTS_DIR"/bench-status-*.json 2>/dev/null | head -1 || true
 }
