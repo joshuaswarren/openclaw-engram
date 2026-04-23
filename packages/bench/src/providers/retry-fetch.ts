@@ -9,16 +9,28 @@ export interface RetryFetchOptions {
   maxAttempts?: number;
   baseBackoffMs?: number;
   timeoutMs?: number;
+  /**
+   * Maximum wall-clock time (ms) to keep retrying 429 responses.
+   * When set, 429s are retried with capped exponential backoff
+   * until this budget expires, regardless of maxAttempts.
+   * Useful for session-quota rate limits that take minutes to reset.
+   * Set to 0 or undefined to disable (uses maxAttempts instead).
+   */
+  max429WaitMs?: number;
 }
 
 const DEFAULTS: Required<RetryFetchOptions> = {
   maxAttempts: 3,
   baseBackoffMs: 1000,
   timeoutMs: 120_000,
+  max429WaitMs: 0,
 };
 
 /** Maximum time to wait on a single Retry-After value (seconds). */
 const MAX_RETRY_AFTER_S = 600;
+
+/** Maximum backoff for a single 429 retry when no Retry-After header (seconds). */
+const MAX_429_BACKOFF_S = 120;
 
 async function readBodyPreview(response: Response, maxBytes: number): Promise<string> {
   try {
@@ -68,6 +80,18 @@ export function parseRetryAfterMs(value: string | null): number | undefined {
   return undefined;
 }
 
+function abortAwareSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal?.aborted) { resolve(); return; }
+    const onAbort = () => { clearTimeout(timer); resolve(); };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 export async function retryFetch(
   url: string,
   init: RequestInit,
@@ -75,14 +99,36 @@ export async function retryFetch(
 ): Promise<Response> {
   const opts = { ...DEFAULTS, ...options };
   let lastError: Error | null = null;
+  let last429Response: Response | null = null;
+  let last429IsStale = false;
+  const loopStartMs = Date.now();
 
-  for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
-    if ((init.signal as AbortSignal | undefined)?.aborted) {
+  for (let attempt = 1; ; attempt++) {
+    const callerSignal = init.signal as AbortSignal | undefined;
+    if (callerSignal?.aborted) {
       throw new DOMException("The operation was aborted.", "AbortError");
     }
 
+    // Non-429 errors (transient, 5xx) are always capped by maxAttempts.
+    // The 429 budget only extends retries for 429 responses beyond maxAttempts.
+    if (attempt > opts.maxAttempts) {
+      const in429Budget = opts.max429WaitMs > 0 &&
+        (Date.now() - loopStartMs) < opts.max429WaitMs;
+      if (!in429Budget) {
+        // Only return a saved 429 when the budget feature is active and
+        // no non-429 failures have occurred since the last 429.
+        // With max429WaitMs=0 (default), always break to throw lastError.
+        if (opts.max429WaitMs > 0 && last429Response && !last429IsStale) return last429Response;
+        break;
+      }
+      // Past maxAttempts but within 429 budget — only continue if we've
+      // seen a 429. Otherwise transient/5xx errors would loop uncapped.
+      if (!last429Response) {
+        break;
+      }
+    }
+
     const controller = new AbortController();
-    const callerSignal = init.signal as AbortSignal | undefined;
     const onCallerAbort = () => controller.abort();
     callerSignal?.addEventListener("abort", onCallerAbort, { once: true });
     const timeout = setTimeout(() => controller.abort(), opts.timeoutMs);
@@ -104,25 +150,50 @@ export async function retryFetch(
       }
 
       // 429 Too Many Requests — pause and retry.
-      if (response.status === 429 && attempt < opts.maxAttempts) {
-        // Release the response body without buffering.
+      if (response.status === 429) {
+        const inBudget = opts.max429WaitMs > 0 &&
+          (Date.now() - loopStartMs) < opts.max429WaitMs;
+        const underMaxAttempts = attempt < opts.maxAttempts;
+
+        // Stop if past maxAttempts with no budget remaining.
+        // Under maxAttempts, 429s always retry regardless of budget —
+        // the budget only EXTENDS retries beyond maxAttempts.
+        if (!underMaxAttempts && !inBudget) {
+          // Return the response with a readable body for the caller.
+          callerSignal?.removeEventListener("abort", onCallerAbort);
+          return response;
+        }
+
+        // Only cancel the body when we're going to retry.
         await response.body?.cancel();
-        const waitMs =
-          parseRetryAfterMs(response.headers.get("retry-after")) ??
-          opts.baseBackoffMs * Math.pow(2, attempt - 1);
+        last429Response = response;
+        last429IsStale = false;
+
+        const retryAfter = parseRetryAfterMs(response.headers.get("retry-after"));
+        let waitMs =
+          retryAfter != null
+            ? Math.max(retryAfter, 100)
+            : Math.min(
+                opts.baseBackoffMs * Math.pow(2, attempt - 1),
+                MAX_429_BACKOFF_S * 1000,
+              );
+
+        // Clamp to remaining 429 budget so we don't overshoot.
+        if (opts.max429WaitMs > 0) {
+          const remaining = opts.max429WaitMs - (Date.now() - loopStartMs);
+          waitMs = Math.min(waitMs, Math.max(remaining, 0));
+        }
+
+        const budgetTag = inBudget
+          ? ` (${Math.round((Date.now() - loopStartMs) / 1000)}s/${Math.round(opts.max429WaitMs / 1000)}s budget)`
+          : "";
+
         console.error(
-          `[rate-limit] 429 received (attempt ${attempt}/${opts.maxAttempts}), ` +
+          `[rate-limit] 429 received (attempt ${attempt}/${opts.maxAttempts})${budgetTag}, ` +
             `pausing ${Math.round(waitMs / 1000)}s before retry…`,
         );
-        await new Promise<void>((resolve) => {
-          if (callerSignal?.aborted) { resolve(); return; }
-          const onSleepAbort = () => { clearTimeout(timer); resolve(); };
-          const timer = setTimeout(() => {
-            callerSignal?.removeEventListener("abort", onSleepAbort);
-            resolve();
-          }, waitMs);
-          callerSignal?.addEventListener("abort", onSleepAbort, { once: true });
-        });
+        await abortAwareSleep(waitMs, callerSignal);
+
         callerSignal?.removeEventListener("abort", onCallerAbort);
         continue;
       }
@@ -133,11 +204,19 @@ export async function retryFetch(
         return response;
       }
 
-      // 5xx — retry with exponential backoff.
+      // 5xx — retry with exponential backoff (bounded by maxAttempts only).
+      if (attempt >= opts.maxAttempts) {
+        callerSignal?.removeEventListener("abort", onCallerAbort);
+        const bodyPreview = await readBodyPreview(response, 512);
+        throw new Error(
+          `HTTP ${response.status} ${response.statusText} (attempt ${attempt}/${opts.maxAttempts}): ${bodyPreview}`,
+        );
+      }
       const bodyPreview = await readBodyPreview(response, 512);
       lastError = new Error(
         `HTTP ${response.status} ${response.statusText} (attempt ${attempt}/${opts.maxAttempts}): ${bodyPreview}`,
       );
+      last429IsStale = true;
     } catch (err) {
       clearTimeout(timeout);
       if (callerSignal?.aborted) {
@@ -149,8 +228,11 @@ export async function retryFetch(
         throw err;
       }
       lastError = err instanceof Error ? err : new Error(String(err));
+      last429IsStale = true;
+      callerSignal?.removeEventListener("abort", onCallerAbort);
     }
 
+    // Backoff before next attempt. Capped at maxAttempts for non-429 errors.
     if (attempt < opts.maxAttempts) {
       const backoffMs = opts.baseBackoffMs * Math.pow(2, attempt - 1);
       await new Promise((resolve) => setTimeout(resolve, backoffMs));

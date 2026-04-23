@@ -32,7 +32,7 @@ export interface ProviderBaseConfig {
   baseUrl?: string;
   apiKey?: string;
   headers?: Record<string, string>;
-  retryOptions?: { maxAttempts?: number; baseBackoffMs?: number; timeoutMs?: number };
+  retryOptions?: { maxAttempts?: number; baseBackoffMs?: number; timeoutMs?: number; max429WaitMs?: number };
   /** Suppress thinking/reasoning tokens for thinking-capable models (Qwen 3.5, Gemma 4, DeepSeek). */
   disableThinking?: boolean;
 }

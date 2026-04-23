@@ -63,6 +63,8 @@ export interface ParsedBenchArgs {
   custom?: string;
   target?: BenchPublishTarget;
   requestTimeout?: number;
+  /** Max wall-clock time (ms) to keep retrying 429 rate-limit responses. */
+  max429WaitMs?: number;
   /** Suppress thinking/reasoning tokens for thinking-capable models (Gemma 4, Qwen 3.5, DeepSeek). */
   disableThinking?: boolean;
   /** `bench published` — specific benchmark to run (longmemeval|locomo). */
@@ -186,7 +188,8 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--out" ||
       arg === "--provider" ||
       arg === "--base-url" ||
-      arg === "--request-timeout"
+      arg === "--request-timeout" ||
+      arg === "--max-429-wait"
     ) {
       index += 1;
       continue;
@@ -304,6 +307,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const output = readBenchOptionValue(args, "--output");
   const targetRaw = readBenchOptionValue(args, "--target");
   const requestTimeoutRaw = readBenchOptionValue(args, "--request-timeout");
+  const max429WaitRaw = readBenchOptionValue(args, "--max-429-wait");
   let runtimeProfile: BenchRuntimeProfile | undefined;
   if (runtimeProfileRaw !== undefined) {
     runtimeProfile = parseBenchRuntimeProfile(
@@ -381,6 +385,21 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     if (requestTimeout > 3600_000) {
       throw new Error(
         "ERROR: --request-timeout must not exceed 3,600,000 ms (1 hour).",
+      );
+    }
+  }
+
+  let max429WaitMs: number | undefined;
+  if (max429WaitRaw !== undefined) {
+    max429WaitMs = Number(max429WaitRaw);
+    if (!Number.isInteger(max429WaitMs) || max429WaitMs < 0) {
+      throw new Error(
+        "ERROR: --max-429-wait must be a non-negative integer (milliseconds).",
+      );
+    }
+    if (max429WaitMs > 86_400_000) {
+      throw new Error(
+        "ERROR: --max-429-wait must not exceed 86,400,000 ms (24 hours).",
       );
     }
   }
@@ -516,6 +535,7 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
       : undefined,
     publishedDryRun: args.includes("--dry-run"),
     requestTimeout,
+    max429WaitMs,
     disableThinking: args.includes("--disable-thinking"),
   };
 }

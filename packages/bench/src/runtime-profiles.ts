@@ -43,6 +43,7 @@ export interface ResolveBenchRuntimeProfileOptions {
   judgeBaseUrl?: string;
   judgeApiKey?: string;
   requestTimeout?: number;
+  max429WaitMs?: number;
   disableThinking?: boolean;
 }
 
@@ -94,6 +95,7 @@ export async function resolveBenchRuntimeProfile(
       options.requestTimeout,
       options.disableThinking,
       options.systemApiKey,
+      options.max429WaitMs,
     );
   const judgeProvider = resolveProviderConfig(
     "judge",
@@ -103,6 +105,7 @@ export async function resolveBenchRuntimeProfile(
     options.requestTimeout,
     options.disableThinking,
     options.judgeApiKey,
+    options.max429WaitMs,
   );
   const responderFactoryConfig = systemProvider
     ? asProviderFactoryConfig(systemProvider)
@@ -326,6 +329,7 @@ function resolveProviderConfig(
   requestTimeout?: number,
   disableThinking?: boolean,
   apiKey?: string,
+  max429WaitMs?: number,
 ): ProviderConfig | null {
   const hasProvider = typeof provider === "string";
   const hasModel = typeof model === "string" && model.trim().length > 0;
@@ -356,7 +360,12 @@ function resolveProviderConfig(
     model: model.trim(),
     ...(hasBaseUrl ? { baseUrl: baseUrl!.trim() } : {}),
     ...(apiKey ? { apiKey } : {}),
-    ...(requestTimeout != null ? { retryOptions: { timeoutMs: requestTimeout } } : {}),
+    ...(requestTimeout != null || max429WaitMs != null
+      ? { retryOptions: {
+          ...(requestTimeout != null ? { timeoutMs: requestTimeout } : {}),
+          ...(max429WaitMs != null ? { max429WaitMs } : {}),
+        } }
+      : {}),
     ...(disableThinking ? { disableThinking: true } : {}),
   };
 }
