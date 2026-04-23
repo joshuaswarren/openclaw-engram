@@ -87,7 +87,7 @@ cmd_start() {
   # Save flags for reproducibility (redact API keys).
   # Join args onto one line so sed can match flag+value pairs that
   # arrive as separate shell words.
-  printf '%s' "$*" | sed -E 's/(-system-api-key |-judge-api-key |-api-key )[^ ]*/\1***REDACTED***/g' > "$ENV_FILE"
+  printf '%s' "$*" | sed -E 's/(-system-api-key[= ]|-judge-api-key[= ]|-api-key[= ])[^ ]*/\1***REDACTED***/g' > "$ENV_FILE"
   chmod 600 "$ENV_FILE"
 
   # Rotate log if large (>10MB)
@@ -97,7 +97,7 @@ cmd_start() {
 
   # Log flags with API keys redacted
   local redacted_args
-  redacted_args="$(printf '%s' "$*" | sed -E 's/(-system-api-key |-judge-api-key |-api-key )[^ ]*/\1***REDACTED***/g')"
+  redacted_args="$(printf '%s' "$*" | sed -E 's/(-system-api-key[= ]|-judge-api-key[= ]|-api-key[= ])[^ ]*/\1***REDACTED***/g')"
   echo "[$(date -Iseconds)] Starting benchmark: run-bench-cli.mjs run $redacted_args" >> "$LOG_FILE"
 
   # Use setsid to create a new process group so kill -- -$pid
@@ -161,7 +161,14 @@ cmd_status() {
 
   # Process status
   if [[ -n "$pid" ]] && is_alive "$pid"; then
-    echo "process: running (PID $pid)"
+    local cmd
+    cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+    if [[ "$cmd" == *"run-bench-cli"* ]]; then
+      echo "process: running (PID $pid)"
+    else
+      echo "process: stale (PID $pid reused by another process)"
+      pid=""
+    fi
   elif [[ -n "$pid" ]]; then
     echo "process: stopped (PID $pid exited)"
   else
