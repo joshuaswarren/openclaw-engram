@@ -4912,14 +4912,17 @@ async function cmdBench(rest: string[]): Promise<void> {
         const s = statusEntryMap.get(id);
         if (s) statuses.push(s);
       }
-      // Cross-profile: when current run profiles don't cover all previous
-      // entries, also check bare IDs and bracket-suffixed IDs.
+      // Bare ID from a previous single-profile run (needed for
+      // single→matrix and matrix→single transitions).
       const bareStatus = statusEntryMap.get(benchmarkId);
       if (bareStatus && !statuses.includes(bareStatus)) {
         statuses.push(bareStatus);
       }
-      for (const [entryId, entryStatus] of statusEntryMap) {
-        if (entryId.startsWith(`${benchmarkId} [`) && !statuses.includes(entryStatus)) {
+      // Bracket-suffixed entries ONLY for profiles in the current run.
+      // This avoids contamination from profiles not being re-run.
+      for (const p of runtimeProfiles) {
+        const entryStatus = statusEntryMap.get(`${benchmarkId} [${p}]`);
+        if (entryStatus && !statuses.includes(entryStatus)) {
           statuses.push(entryStatus);
         }
       }
