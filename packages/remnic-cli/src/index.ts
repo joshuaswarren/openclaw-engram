@@ -158,6 +158,8 @@ import {
   updateBenchmarkFailed,
   updateTaskProgress as updateBenchStatusTaskProgress,
   finalizeBenchStatus,
+  findLatestBenchStatusFile,
+  readBenchStatus,
 } from "./bench-status.js";
 import {
   buildBenchRunnerArgs,
@@ -4848,7 +4850,7 @@ async function cmdBench(rest: string[]): Promise<void> {
     return;
   }
 
-  const selectedBenchmarks = parsed.all
+  let selectedBenchmarks = parsed.all
     ? await resolveAllBenchmarks()
     : parsed.benchmarks;
   if (selectedBenchmarks.length === 0) {
@@ -4860,6 +4862,10 @@ async function cmdBench(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
+  const runtimeProfiles = resolveBenchRunProfiles(parsed);
+
+  // Validate benchmark IDs before resume/retry-failed filtering so unknown
+  // names are caught early instead of being silently dropped by the filter.
   const knownBenchmarkIds = await resolveKnownBenchmarkIds();
   const unknown = selectedBenchmarks.filter((benchmarkId) => !knownBenchmarkIds.has(benchmarkId));
   if (unknown.length > 0) {
@@ -4867,7 +4873,102 @@ async function cmdBench(rest: string[]): Promise<void> {
     process.exit(1);
   }
 
-  const runtimeProfiles = resolveBenchRunProfiles(parsed);
+  // --resume / --retry-failed: filter against previous run status
+  if (parsed.resume || parsed.retryFailed) {
+    const resultsDir = parsed.resultsDir ?? resolveBenchOutputDir();
+    const latestStatusPath = await findLatestBenchStatusFile(resultsDir);
+    if (!latestStatusPath) {
+      console.error(
+        parsed.resume
+          ? "ERROR: --resume requires a previous bench-status file. Run a benchmark first."
+          : "ERROR: --retry-failed requires a previous bench-status file. Run a benchmark first.",
+      );
+      process.exit(1);
+    }
+    const prevStatus = await readBenchStatus(latestStatusPath);
+    if (!prevStatus) {
+      console.error("ERROR: could not parse previous bench-status file.");
+      process.exit(1);
+    }
+
+    const completeCount = prevStatus.benchmarks.filter((b) => b.status === "complete").length;
+    const failedCount = prevStatus.benchmarks.filter((b) => b.status === "failed").length;
+    console.log(`Resuming from: ${path.basename(latestStatusPath)}`);
+    console.log(`  Previous run: ${prevStatus.startedAt}`);
+    console.log(`  Benchmarks: ${prevStatus.benchmarks.length} total, ${completeCount} complete, ${failedCount} failed`);
+
+    const statusEntryMap = new Map(prevStatus.benchmarks.map((b) => [b.id, b.status]));
+
+    // Helper: collect all status entries relevant to a benchmark ID across
+    // profile variations. Handles all four combinations of current/previous
+    // single vs matrix runs.
+    const relevantStatuses = (benchmarkId: string): string[] => {
+      const profileEntries = runtimeProfiles.length > 1
+        ? runtimeProfiles.map((p) => `${benchmarkId} [${p}]`)
+        : [benchmarkId];
+      const statuses: string[] = [];
+      // Direct match: current profile entries against previous status entries.
+      for (const id of profileEntries) {
+        const s = statusEntryMap.get(id);
+        if (s) statuses.push(s);
+      }
+      // Bare ID from a previous single-profile run (needed for
+      // single→matrix and matrix→single transitions).
+      const bareStatus = statusEntryMap.get(benchmarkId);
+      if (bareStatus && !statuses.includes(bareStatus)) {
+        statuses.push(bareStatus);
+      }
+      // Bracket-suffixed entries ONLY for profiles in the current run.
+      // This avoids contamination from profiles not being re-run.
+      for (const p of runtimeProfiles) {
+        const entryStatus = statusEntryMap.get(`${benchmarkId} [${p}]`);
+        if (entryStatus && !statuses.includes(entryStatus)) {
+          statuses.push(entryStatus);
+        }
+      }
+      return statuses;
+    };
+
+    const before = selectedBenchmarks.length;
+
+    if (parsed.resume) {
+      // Skip benchmarks where ALL expected profile entries completed; re-run
+      // if any entry is pending, running, failed, or absent (new profile).
+      selectedBenchmarks = selectedBenchmarks.filter((benchmarkId) => {
+        const statuses = relevantStatuses(benchmarkId);
+        if (statuses.length === 0) return true; // not in previous run
+        // When running multiple profiles, check that each expected profile
+        // entry exists in the previous status. Missing profiles mean the
+        // benchmark hasn't been run for that profile yet.
+        if (runtimeProfiles.length > 1) {
+          for (const p of runtimeProfiles) {
+            if (!statusEntryMap.has(`${benchmarkId} [${p}]`)) return true;
+          }
+        }
+        return !statuses.every((s) => s === "complete");
+      });
+      console.log(`  Resuming: ${selectedBenchmarks.length} of ${before} benchmarks to re-run`);
+    } else {
+      // --retry-failed: only re-run benchmarks that had failures.
+      selectedBenchmarks = selectedBenchmarks.filter((benchmarkId) => {
+        const statuses = relevantStatuses(benchmarkId);
+        return statuses.some((s) => s === "failed");
+      });
+      console.log(`  Retrying: ${selectedBenchmarks.length} of ${before} selected benchmarks had failures`);
+    }
+
+    if (selectedBenchmarks.length === 0) {
+      if (parsed.retryFailed) {
+        console.log("Nothing to re-run — no selected benchmarks had failures.");
+      } else {
+        console.log(
+          "Nothing to re-run — all selected benchmarks completed successfully in the previous run.",
+        );
+      }
+      process.exit(0);
+    }
+  }
+
   const failures = new Set<string>();
   const benchStatusPath = createBenchStatusPath(
     parsed.resultsDir ?? resolveBenchOutputDir(),

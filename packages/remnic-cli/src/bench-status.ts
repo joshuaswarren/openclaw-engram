@@ -11,7 +11,7 @@
  * partially-written JSON.
  */
 
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface BenchmarkStatusEntry {
@@ -41,6 +41,39 @@ export function createBenchStatusPath(
   return path.join(resultsDir, `bench-status-${startedAtMs}-${pid}.json`);
 }
 
+const BENCH_STATUS_FILENAME = /^bench-status-\d+-\d+\.json$/;
+const VALID_BENCH_ENTRY_STATUSES = new Set(["pending", "running", "complete", "failed"]);
+
+/**
+ * Find the most recent bench-status file in the results directory.
+ * Returns `null` when no valid status file exists.
+ */
+export async function findLatestBenchStatusFile(
+  resultsDir: string,
+): Promise<string | null> {
+  let entries: string[];
+  try {
+    entries = await readdir(resultsDir);
+  } catch {
+    return null;
+  }
+
+  const candidates = entries
+    .filter((name) => BENCH_STATUS_FILENAME.test(name))
+    .sort()
+    .reverse();
+
+  for (const name of candidates) {
+    const filePath = path.join(resultsDir, name);
+    const status = await readBenchStatus(filePath);
+    if (status) {
+      return filePath;
+    }
+  }
+
+  return null;
+}
+
 async function atomicWriteJSON(filePath: string, data: unknown): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true });
   const tmp = `${filePath}.${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`;
@@ -48,11 +81,27 @@ async function atomicWriteJSON(filePath: string, data: unknown): Promise<void> {
   await rename(tmp, filePath);
 }
 
-async function readStatusFile(filePath: string): Promise<BenchStatus | null> {
+export async function readBenchStatus(filePath: string): Promise<BenchStatus | null> {
   try {
     const raw = await readFile(filePath, "utf-8");
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== "object" || parsed === null) return null;
+    const obj = parsed as Record<string, unknown>;
+    if (!Array.isArray(obj.benchmarks)) return null;
+    if (typeof obj.pid !== "number") return null;
+    if (typeof obj.startedAt !== "string") return null;
+    // Validate each benchmark entry has required fields.
+    for (const entry of obj.benchmarks as unknown[]) {
+      if (typeof entry !== "object" || entry === null) return null;
+      const e = entry as Record<string, unknown>;
+      if (typeof e.id !== "string") return null;
+      if (
+        typeof e.status !== "string" ||
+        !VALID_BENCH_ENTRY_STATUSES.has(e.status)
+      ) {
+        return null;
+      }
+    }
     return parsed as BenchStatus;
   } catch {
     return null;
@@ -68,7 +117,7 @@ function serializedWrite(
 ): Promise<void> {
   const prev = writeQueues.get(filePath) ?? Promise.resolve();
   const next = prev.then(async () => {
-    const current = await readStatusFile(filePath);
+    const current = await readBenchStatus(filePath);
     if (!current) return;
     const updated = fn(current);
     if (updated) {

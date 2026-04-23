@@ -110,7 +110,7 @@ test("--all selection resolves to runnable package benchmarks when package metad
     source,
     /packageBenchmarks\s*\n\s*\.filter\(\s*\(entry\) =>\s*entry\.runnerAvailable\s*&&\s*entry\.meta\?\.category !== "ingestion"/s,
   );
-  assert.match(source, /const selectedBenchmarks = parsed\.all\s+\? await resolveAllBenchmarks\(\)/s);
+  assert.match(source, /let selectedBenchmarks = parsed\.all\s+\? await resolveAllBenchmarks\(\)/s);
   assert.match(source, /async function resolveKnownBenchmarkIds\(\): Promise<Set<string>>/);
   assert.match(source, /const knownBenchmarkIds = await resolveKnownBenchmarkIds\(\);/);
   assert.match(source, /selectedBenchmarks\.filter\(\(benchmarkId\) => !knownBenchmarkIds\.has\(benchmarkId\)\)/);
