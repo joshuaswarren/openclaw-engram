@@ -350,6 +350,7 @@ type PackageBenchModule = {
     mode?: "full" | "quick";
     outputDir?: string;
     limit?: number;
+    seed?: number;
     adapterMode?: string;
     runtimeProfile?: BenchRuntimeProfile | null;
     systemProvider?: {
@@ -2259,6 +2260,7 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
   }
 
   const outputDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const effectiveLimit = parsed.publishedLimit ?? (parsed.quick ? 1 : undefined);
   const writtenPaths: string[] = [];
   const customBenchmarkIds: string[] = [];
   for (const plan of plans) {
@@ -2268,7 +2270,8 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
       const result = await benchModule.runCustomBenchmarkFile(parsed.custom!, {
         mode: parsed.quick ? "quick" : "full",
         outputDir,
-        limit: parsed.quick ? 1 : undefined,
+        ...(effectiveLimit !== undefined ? { limit: effectiveLimit } : {}),
+        ...(parsed.publishedSeed !== undefined ? { seed: parsed.publishedSeed } : {}),
         adapterMode: plan.adapterMode,
         runtimeProfile: plan.runtime.profile,
         systemProvider: plan.runtime.systemProvider,

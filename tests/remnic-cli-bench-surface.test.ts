@@ -144,6 +144,9 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /resolveBenchDatasetDir\(\s*benchmarkId,\s*parsed\.quick,\s*parsed\.datasetDir/s);
   assert.match(source, /if \(parsed\.custom\) \{/);
   assert.match(source, /const outputDir = parsed\.resultsDir \?\? resolveBenchOutputDir\(\);/);
+  assert.match(source, /const effectiveLimit = parsed\.publishedLimit \?\? \(parsed\.quick \? 1 : undefined\);/);
+  assert.match(source, /\.\.\.\(effectiveLimit !== undefined \? \{ limit: effectiveLimit \} : \{\}\),/);
+  assert.match(source, /\.\.\.\(parsed\.publishedSeed !== undefined \? \{ seed: parsed\.publishedSeed \} : \{\}\),/);
   assert.match(source, /const customBenchmarkIds: string\[\] = \[\];/);
   assert.match(source, /customBenchmarkIds\.push\(result\.meta\.benchmark\);/);
   assert.match(source, /benchmarkIds: \[\.\.\.new Set\(customBenchmarkIds\)\]/);

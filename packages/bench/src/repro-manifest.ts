@@ -218,6 +218,33 @@ function buildGitInfo(cwd: string): BenchmarkReproManifest["git"] {
   };
 }
 
+function buildArtifactHashIdentity(manifest: Omit<BenchmarkReproManifest, "artifactHash">): unknown {
+  return {
+    schemaVersion: manifest.schemaVersion,
+    run: manifest.run,
+    git: {
+      commit: manifest.git.commit,
+      shortCommit: manifest.git.shortCommit,
+    },
+    command: {
+      argv: manifest.command.argv,
+      envKeys: manifest.command.envKeys,
+    },
+    environment: {
+      platform: manifest.environment.platform,
+      arch: manifest.environment.arch,
+      nodeVersion: manifest.environment.nodeVersion,
+      ...(manifest.environment.packageManager
+        ? { packageManager: manifest.environment.packageManager }
+        : {}),
+    },
+    ...(manifest.qmd ? { qmd: manifest.qmd } : {}),
+    configFiles: manifest.configFiles,
+    datasets: manifest.datasets,
+    results: manifest.results,
+  };
+}
+
 async function scanDatasetFiles(root: string): Promise<BenchmarkReproManifestFile[]> {
   const files: BenchmarkReproManifestFile[] = [];
 
@@ -493,7 +520,7 @@ export async function buildBenchmarkReproManifest(
 
   return {
     ...manifestWithoutHash,
-    artifactHash: sha256String(stableStringify(manifestWithoutHash)),
+    artifactHash: sha256String(stableStringify(buildArtifactHashIdentity(manifestWithoutHash))),
   };
 }
 

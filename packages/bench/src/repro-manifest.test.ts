@@ -156,6 +156,35 @@ test("writeBenchmarkReproManifest writes MANIFEST.json beside results", async ()
   assert.equal(manifest.results[0]?.benchmark, "longmemeval");
 });
 
+test("artifact hash ignores volatile host and command metadata", async () => {
+  const firstRoot = await createTempRoot("remnic-repro-manifest-stable-a-");
+  const secondRoot = await createTempRoot("remnic-repro-manifest-stable-b-");
+  const firstResultsDir = path.join(firstRoot, "results");
+  const secondResultsDir = path.join(secondRoot, "results");
+  await mkdir(firstResultsDir, { recursive: true });
+  await mkdir(secondResultsDir, { recursive: true });
+
+  const resultJson = `${JSON.stringify(buildResult(), null, 2)}\n`;
+  const firstResultPath = path.join(firstResultsDir, "longmemeval.json");
+  const secondResultPath = path.join(secondResultsDir, "longmemeval.json");
+  await writeFile(firstResultPath, resultJson, "utf8");
+  await writeFile(secondResultPath, resultJson, "utf8");
+
+  const firstManifest = await buildBenchmarkReproManifest(firstResultsDir, {
+    resultPaths: [firstResultPath],
+    selectedBenchmarks: ["longmemeval"],
+    command: { cwd: firstRoot, argv: ["bench", "run", "longmemeval"] },
+  });
+  const secondManifest = await buildBenchmarkReproManifest(secondResultsDir, {
+    resultPaths: [secondResultPath],
+    selectedBenchmarks: ["longmemeval"],
+    command: { cwd: secondRoot, argv: ["bench", "run", "longmemeval"] },
+  });
+
+  assert.notEqual(firstManifest.command.cwd, secondManifest.command.cwd);
+  assert.equal(firstManifest.artifactHash, secondManifest.artifactHash);
+});
+
 test("buildBenchmarkReproManifest rejects symlinked dataset roots", async () => {
   const root = await createTempRoot("remnic-repro-manifest-root-link-");
   const resultsDir = path.join(root, "results");
