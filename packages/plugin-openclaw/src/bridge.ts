@@ -8,10 +8,9 @@
  * Used when `remnic daemon install` has been run and the daemon is already active.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import * as childProcess from "node:child_process";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
-import { firstSuccessfulResult } from "./service-candidates.js";
+import { Worker } from "node:worker_threads";
 
 export type BridgeMode = "embedded" | "delegate";
 
@@ -24,6 +23,56 @@ export interface BridgeConfig {
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4318;
 const LEGACY_HEALTH_PATH = "/engram/v1/health";
+const SYNC_HEALTH_TIMEOUT_MS = 750;
+const HEALTH_WORKER_SOURCE = `
+import { request } from "node:http";
+import { workerData } from "node:worker_threads";
+
+const view = new Int32Array(workerData.state);
+let completed = false;
+
+function finish(ok) {
+  if (completed) return;
+  completed = true;
+  Atomics.store(view, 0, ok ? 1 : 2);
+  Atomics.notify(view, 0);
+}
+
+try {
+  const headers = {};
+  if (workerData.token) headers.Authorization = "Bearer " + workerData.token;
+  const req = request(
+    {
+      hostname: workerData.host,
+      port: workerData.port,
+      path: workerData.path,
+      method: "GET",
+      timeout: workerData.timeoutMs,
+      headers,
+    },
+    (res) => {
+      finish(res.statusCode === 200);
+      res.resume();
+    },
+  );
+  req.on("error", () => finish(false));
+  req.on("timeout", () => {
+    req.destroy();
+    finish(false);
+  });
+  req.end();
+} catch {
+  finish(false);
+}
+`;
+const LAUNCHD_SERVICE_PATHS = [
+  ["Library", "LaunchAgents", "ai.remnic.daemon.plist"],
+  ["Library", "LaunchAgents", "ai.engram.daemon.plist"],
+] as const;
+const SYSTEMD_SERVICE_PATHS = [
+  [".config", "systemd", "user", "remnic.service"],
+  [".config", "systemd", "user", "engram.service"],
+] as const;
 
 function resolveHomeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? "~";
@@ -44,9 +93,19 @@ function configPathCandidates(): string[] {
   ];
 }
 
+function fileExists(filePath: string): boolean {
+  try {
+    return statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Detect whether a daemon is already running by checking the PID file
- * and the system service manager (launchd on macOS, systemd on Linux).
+ * Detect whether a daemon is already running by checking the PID file.
+ *
+ * Keep this path subprocess-free: OpenClaw's plugin installer statically blocks
+ * packaged plugins that invoke shell/process launch APIs.
  */
 function isDaemonRunning(): boolean {
   for (const pidFile of [
@@ -61,22 +120,45 @@ function isDaemonRunning(): boolean {
       // PID file missing or stale — continue checking
     }
   }
-  if (process.platform === "darwin") {
-    const running = firstSuccessfulResult(["ai.remnic.daemon", "ai.engram.daemon"], (label) => {
-      const out = childProcess.execSync(`launchctl list ${label} 2>/dev/null`, { encoding: "utf8" });
-      return out.includes('"PID"') ? true : undefined;
-    });
-    if (running) return true;
-  } else if (process.platform === "linux") {
-    const running = firstSuccessfulResult(["remnic.service", "engram.service"], (unit) => {
-      const out = childProcess.execSync(`systemctl --user is-active ${unit} 2>/dev/null`, {
-        encoding: "utf8",
-      }).trim();
-      return out === "active" ? true : undefined;
-    });
-    if (running) return true;
+  return false;
+}
+
+function isDaemonServiceConfigured(): boolean {
+  const homeDir = resolveHomeDir();
+  for (const segments of [...LAUNCHD_SERVICE_PATHS, ...SYSTEMD_SERVICE_PATHS]) {
+    if (fileExists(path.join(homeDir, ...segments))) return true;
   }
   return false;
+}
+
+function checkDaemonHealthSync(host: string, port: number, timeoutMs = SYNC_HEALTH_TIMEOUT_MS): boolean {
+  if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) return false;
+
+  let worker: Worker | undefined;
+  try {
+    const state = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const view = new Int32Array(state);
+    const workerUrl = new URL(`data:text/javascript,${encodeURIComponent(HEALTH_WORKER_SOURCE)}`);
+    worker = new Worker(workerUrl, {
+      type: "module",
+      workerData: {
+        host,
+        port,
+        path: LEGACY_HEALTH_PATH,
+        token: loadAnyToken(),
+        timeoutMs,
+        state,
+      },
+    });
+
+    Atomics.wait(view, 0, 0, timeoutMs + 250);
+    const status = Atomics.load(view, 0);
+    if (status === 0) void worker.terminate();
+    return status === 1;
+  } catch {
+    if (worker) void worker.terminate();
+    return false;
+  }
 }
 
 /**
@@ -92,8 +174,8 @@ function readDaemonPort(): number {
   for (const p of configPathCandidates()) {
     if (!existsSync(p)) continue;
     try {
-        const raw = JSON.parse(readFileSync(p, "utf8"));
-        if (raw.server?.port) return raw.server.port;
+      const raw = JSON.parse(readFileSync(p, "utf8"));
+      if (raw.server?.port) return raw.server.port;
     } catch {
       // Ignore malformed config files and continue to the next candidate.
     }
@@ -126,19 +208,22 @@ export function detectBridgeMode(): BridgeConfig {
     };
   }
 
-  // Auto-detect: if daemon is running, delegate; otherwise embedded
-  if (isDaemonRunning()) {
+  const daemonHost = readCompatEnv("REMNIC_HOST", "ENGRAM_HOST") ?? DEFAULT_HOST;
+  const daemonPort = readDaemonPort();
+
+  // Auto-detect: if daemon is running or service-managed and live, delegate; otherwise embedded.
+  if (isDaemonRunning() || (isDaemonServiceConfigured() && checkDaemonHealthSync(daemonHost, daemonPort))) {
     return {
       mode: "delegate",
-      daemonHost: readCompatEnv("REMNIC_HOST", "ENGRAM_HOST") ?? DEFAULT_HOST,
-      daemonPort: readDaemonPort(),
+      daemonHost,
+      daemonPort,
     };
   }
 
   return {
     mode: "embedded",
     daemonHost: DEFAULT_HOST,
-    daemonPort: readDaemonPort(),
+    daemonPort,
   };
 }
 
