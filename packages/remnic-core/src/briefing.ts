@@ -16,6 +16,7 @@
  */
 
 import { readFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { log } from "./logger.js";
 import { StorageManager } from "./storage.js";
@@ -1350,7 +1351,7 @@ export function resolveBriefingSaveDir(
   }
   const home = env === undefined
     ? resolveHomeDir()
-    : env.HOME ?? env.USERPROFILE ?? ".";
+    : env.HOME ?? env.USERPROFILE ?? os.homedir();
   return path.join(home, ".remnic", "briefings");
 }
 

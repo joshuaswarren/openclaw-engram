@@ -7,6 +7,7 @@
  */
 
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 import type {
@@ -46,7 +47,7 @@ export class CodexMemoryExtensionPublisher implements MemoryExtensionPublisher {
   ): Promise<string> {
     const codexHome = env === undefined
       ? readEnvVar("CODEX_HOME")?.trim() || path.join(resolveHomeDir(), ".codex")
-      : env.CODEX_HOME?.trim() || path.join(env.HOME ?? env.USERPROFILE ?? ".", ".codex");
+      : env.CODEX_HOME?.trim() || path.join(env.HOME ?? env.USERPROFILE ?? os.homedir(), ".codex");
     return path.join(codexHome, "memories_extensions", REMNIC_EXTENSION_DIR_NAME);
   }
 

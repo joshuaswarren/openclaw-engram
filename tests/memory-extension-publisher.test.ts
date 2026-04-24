@@ -116,6 +116,13 @@ test("Codex publisher: resolveExtensionRoot does not read ambient CODEX_HOME whe
   }
 });
 
+test("Codex publisher: resolveExtensionRoot falls back to an absolute home when injected env has no home keys", async () => {
+  const pub = new CodexMemoryExtensionPublisher();
+  const root = await pub.resolveExtensionRoot({});
+  assert.equal(root, path.join(os.homedir(), ".codex", "memories_extensions", "remnic"));
+  assert.equal(path.isAbsolute(root), true);
+});
+
 test("Codex publisher: publish writes instructions.md to tmp dir", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-pub-test-"));
   const codexHome = path.join(tmpDir, ".codex");

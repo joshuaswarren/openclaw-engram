@@ -33,7 +33,7 @@ permissions:
 jobs:
   pinned-openclaw-scanner:
     name: pinned-openclaw-scanner
-    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    if: github.event_name == 'push' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
