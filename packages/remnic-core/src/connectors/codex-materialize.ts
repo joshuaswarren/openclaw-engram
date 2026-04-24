@@ -55,6 +55,7 @@ import {
 import path from "node:path";
 
 import { log } from "../logger.js";
+import { readEnvVar, resolveHomeDir } from "../runtime/env.js";
 import type { MemoryFile } from "../types.js";
 
 // ─── Types ─────────────────────────────────────────────────────────────────
@@ -759,10 +760,9 @@ export function validateMemoryMd(content: string): MemoryMdValidation {
 
 function resolveCodexHome(override?: string): string {
   if (override && override.trim().length > 0) return override;
-  const fromEnv = process.env.CODEX_HOME;
+  const fromEnv = readEnvVar("CODEX_HOME");
   if (fromEnv && fromEnv.trim().length > 0) return fromEnv;
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
-  return path.join(home, ".codex");
+  return path.join(resolveHomeDir(), ".codex");
 }
 
 function readSentinel(sentinelPath: string): SentinelFile | null {

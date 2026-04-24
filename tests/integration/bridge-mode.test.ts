@@ -227,6 +227,58 @@ test("detectBridgeMode delegates when daemon service is installed and healthy wi
   }
 });
 
+test("detectBridgeMode coerces string config port before service health probing", async () => {
+  const previousHome = process.env.HOME;
+  const previousPort = process.env.REMNIC_PORT;
+  const previousMode = process.env.REMNIC_BRIDGE_MODE;
+  const previousLegacyMode = process.env.ENGRAM_BRIDGE_MODE;
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "bridge-service-string-port-"));
+  const launchAgentsDir = path.join(homeDir, "Library", "LaunchAgents");
+  const remnicConfigDir = path.join(homeDir, ".config", "remnic");
+
+  await mkdir(launchAgentsDir, { recursive: true });
+  await mkdir(remnicConfigDir, { recursive: true });
+  await writeFile(path.join(launchAgentsDir, "ai.remnic.daemon.plist"), "<plist />\n", "utf8");
+
+  const state = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT * 2);
+  const view = new Int32Array(state);
+  const serverWorker = new Worker(
+    new URL(`data:text/javascript,${encodeURIComponent(HEALTH_SERVER_WORKER_SOURCE)}`),
+    { type: "module", workerData: { state } },
+  );
+  Atomics.wait(view, 0, 0, 1000);
+  const port = Atomics.load(view, 1);
+  assert.ok(port > 0);
+
+  await writeFile(
+    path.join(remnicConfigDir, "config.json"),
+    JSON.stringify({ server: { port: String(port) } }),
+    "utf8",
+  );
+
+  try {
+    process.env.HOME = homeDir;
+    delete process.env.REMNIC_PORT;
+    delete process.env.REMNIC_BRIDGE_MODE;
+    delete process.env.ENGRAM_BRIDGE_MODE;
+
+    const { detectBridgeMode } = await import(path.join(ROOT, "packages/plugin-openclaw/src/bridge.ts"));
+    const config = detectBridgeMode();
+    assert.equal(config.mode, "delegate");
+    assert.equal(config.daemonPort, port);
+  } finally {
+    await serverWorker.terminate();
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousPort === undefined) delete process.env.REMNIC_PORT;
+    else process.env.REMNIC_PORT = previousPort;
+    if (previousMode === undefined) delete process.env.REMNIC_BRIDGE_MODE;
+    else process.env.REMNIC_BRIDGE_MODE = previousMode;
+    if (previousLegacyMode === undefined) delete process.env.ENGRAM_BRIDGE_MODE;
+    else process.env.ENGRAM_BRIDGE_MODE = previousLegacyMode;
+  }
+});
+
 test("detectBridgeMode does not delegate for an installed but stopped daemon service", async () => {
   const previousHome = process.env.HOME;
   const previousPort = process.env.REMNIC_PORT;

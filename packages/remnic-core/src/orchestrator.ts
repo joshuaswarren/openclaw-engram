@@ -2557,7 +2557,7 @@ export class Orchestrator {
   }
 
   private async autoRegisterNightlyGovernanceCron(): Promise<void> {
-    const home = process.env.HOME || os.homedir();
+    const home = resolveHomeDir();
     const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
 
     try {

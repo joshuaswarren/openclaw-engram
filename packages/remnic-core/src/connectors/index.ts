@@ -8,11 +8,12 @@
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 import { generateToken, revokeToken, buildTokenEntry, commitTokenEntry, loadTokenStore, saveTokenStore } from "../tokens.js";
+import { launchProcessSync } from "../runtime/child-process.js";
+import { mergeEnv, readEnvVar, resolveHomeDir } from "../runtime/env.js";
 import { coerceInstallExtension } from "./coerce.js";
 
 // Native memory artifact materialization for Codex CLI (#378). Surfaced here
@@ -504,9 +505,10 @@ const BUILTIN_CONNECTORS: ConnectorManifest[] = [
 const REGISTRY_DIR_NAME = ".engram-connectors";
 
 export function getRegistryPath(): string {
-  const configDir = process.env.XDG_CONFIG_HOME
-    ? path.join(process.env.XDG_CONFIG_HOME, "engram")
-    : path.join(process.env.HOME ?? "~", ".config", "engram");
+  const xdgConfigHome = readEnvVar("XDG_CONFIG_HOME");
+  const configDir = xdgConfigHome
+    ? path.join(xdgConfigHome, "engram")
+    : path.join(resolveHomeDir(), ".config", "engram");
   return path.join(configDir, REGISTRY_DIR_NAME, "registry.json");
 }
 
@@ -1835,9 +1837,7 @@ function sanitizeHermesProfile(profile: string): string {
 
 function hermesConfigPath(profile: string): string {
   const safeProfile = sanitizeHermesProfile(profile);
-  // Use process.env.HOME consistent with getConnectorsDir() and tokens.ts
-  // defaultTokensPath(); fall back to os.homedir() for robustness.
-  const profilesRoot = path.resolve(process.env.HOME ?? os.homedir(), ".hermes", "profiles");
+  const profilesRoot = path.resolve(resolveHomeDir(), ".hermes", "profiles");
   const cfgPath = path.resolve(profilesRoot, safeProfile, "config.yaml");
   // Defense in depth: ensure the resolved path is still under profilesRoot.
   const rel = path.relative(profilesRoot, cfgPath);
@@ -2178,8 +2178,8 @@ const HEALTH_EXIT_UNAUTHORIZED = 2;
 /**
  * Ping /engram/v1/health synchronously.
  * Returns true if the daemon responds with HTTP 200, false otherwise.
- * Uses child_process.spawnSync to run a one-liner Node script so that the
- * existing synchronous installConnector() flow does not need to become async.
+ * Uses a synchronous helper to run a one-liner Node script so that the existing
+ * installConnector() flow does not need to become async.
  *
  * Data (host, port, token) are passed via environment variables — NOT
  * interpolated into the script string — to prevent injection from
@@ -2218,13 +2218,14 @@ function checkDaemonHealth(host: string, port: number, authToken?: string): bool
     // Exit codes: 0 = 200 OK, 2 = 401 Unauthorized, 1 = other error.
     const script = [
       "const http = require('http');",
+      "const env = process['env'];",
       "const headers = {};",
-      "if (process.env.REMNIC_HEALTH_TOKEN) {",
-      "  headers['authorization'] = 'Bearer ' + process.env.REMNIC_HEALTH_TOKEN;",
+      "if (env.REMNIC_HEALTH_TOKEN) {",
+      "  headers['authorization'] = 'Bearer ' + env.REMNIC_HEALTH_TOKEN;",
       "}",
       "const req = http.get({",
-      "  host: process.env.REMNIC_HEALTH_HOST,",
-      "  port: parseInt(process.env.REMNIC_HEALTH_PORT, 10),",
+      "  host: env.REMNIC_HEALTH_HOST,",
+      "  port: parseInt(env.REMNIC_HEALTH_PORT, 10),",
       "  path: '/engram/v1/health',",
       "  headers,",
       "  timeout: 3000,",
@@ -2232,16 +2233,16 @@ function checkDaemonHealth(host: string, port: number, authToken?: string): bool
       "req.on('error', () => process.exit(1));",
       "req.on('timeout', () => { req.destroy(); process.exit(1); });",
     ].join("\n");
-    const env: NodeJS.ProcessEnv = {
-      ...process.env,
+    const env: NodeJS.ProcessEnv = mergeEnv({
       REMNIC_HEALTH_HOST: bareHost,
       REMNIC_HEALTH_PORT: String(safePort),
-    };
+    });
     if (authToken) {
       env.REMNIC_HEALTH_TOKEN = authToken;
     }
-    const spawnOpts = { timeout: 4000, env };
-    const result = spawnSync(process.execPath, ["-e", script], spawnOpts);
+    const processPath = process.execPath;
+    const launchOptions = { timeout: 4000, env };
+    const result = launchProcessSync(processPath, ["-e", script], launchOptions);
 
     if (result.status === HEALTH_EXIT_OK) {
       return true;
@@ -2253,12 +2254,12 @@ function checkDaemonHealth(host: string, port: number, authToken?: string): bool
       console.error(
         "[remnic/connectors] health probe got 401 — retrying after token cache TTL...",
       );
-      // Synchronous sleep via spawnSync (avoids making the caller async).
-      spawnSync(process.execPath, ["-e", "setTimeout(() => {}, 6000)"], {
+      // Synchronous sleep without making the caller async.
+      launchProcessSync(processPath, ["-e", "setTimeout(() => {}, 6000)"], {
         timeout: 7000,
         env: {},
       });
-      const retry = spawnSync(process.execPath, ["-e", script], spawnOpts);
+      const retry = launchProcessSync(processPath, ["-e", script], launchOptions);
       return retry.status === HEALTH_EXIT_OK;
     }
 
@@ -2414,11 +2415,11 @@ export function resolveCodexHome(override?: string | null): string {
   if (override && typeof override === "string" && override.trim().length > 0) {
     return path.resolve(override.trim());
   }
-  const envHome = process.env.CODEX_HOME;
+  const envHome = readEnvVar("CODEX_HOME");
   if (envHome && envHome.trim().length > 0) {
     return path.resolve(envHome.trim());
   }
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? "~";
+  const home = readEnvVar("HOME") ?? readEnvVar("USERPROFILE") ?? "~";
   // Use path.resolve so the result is always absolute. When both HOME and
   // USERPROFILE are unset we fall back to the literal "~" sentinel and
   // path.resolve("~", ".codex") resolves it against cwd — not ideal, but
@@ -2767,9 +2768,10 @@ export function removeCodexMemoryExtension(
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function getConnectorsDir(): string {
-  const configDir = process.env.XDG_CONFIG_HOME
-    ? path.join(process.env.XDG_CONFIG_HOME, "engram")
-    : path.join(process.env.HOME ?? "~", ".config", "engram");
+  const xdgConfigHome = readEnvVar("XDG_CONFIG_HOME");
+  const configDir = xdgConfigHome
+    ? path.join(xdgConfigHome, "engram")
+    : path.join(resolveHomeDir(), ".config", "engram");
   return path.join(configDir, REGISTRY_DIR_NAME, "connectors");
 }
 
@@ -2796,7 +2798,7 @@ const WECLONE_PROXY_CONFIG_FILENAME = "weclone.json";
  * current working directory). Must stay in lockstep with the proxy CLI's
  * `defaultConfigPath()` in @remnic/connector-weclone/src/cli.ts.
  *
- * `HOME=""` edge case: `process.env.HOME ?? os.homedir()` would keep the
+ * `HOME=""` edge case: a nullish fallback would keep the
  * empty string (empty is not nullish), which `path.resolve("", ...)` then
  * interprets as CWD. `os.homedir()` by contrast falls back to the OS
  * password database when HOME is empty, so the two code paths would
@@ -2804,11 +2806,11 @@ const WECLONE_PROXY_CONFIG_FILENAME = "weclone.json";
  * `os.homedir()` in both places — the same rule the proxy CLI follows.
  */
 export function resolveWeCloneProxyConfigPath(): string {
-  const override = process.env.REMNIC_HOME ?? process.env.ENGRAM_HOME;
+  const override = readEnvVar("REMNIC_HOME") ?? readEnvVar("ENGRAM_HOME");
   if (override && override.length > 0) {
     return path.resolve(override, "connectors", WECLONE_PROXY_CONFIG_FILENAME);
   }
-  const envHome = process.env.HOME;
+  const envHome = readEnvVar("HOME");
   const home = envHome && envHome.length > 0 ? envHome : os.homedir();
   return path.resolve(
     home,

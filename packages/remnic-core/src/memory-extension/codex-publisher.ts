@@ -7,7 +7,6 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import type {
@@ -23,6 +22,7 @@ import {
   REMNIC_MCP_TOOL_INVENTORY,
   REMNIC_RECALL_DECISION_RULES,
 } from "./shared-instructions.js";
+import { readEnvVar, resolveHomeDir } from "../runtime/env.js";
 
 /** Folder name Remnic installs its extension under inside memories_extensions/. */
 const REMNIC_EXTENSION_DIR_NAME = "remnic";
@@ -44,16 +44,17 @@ export class CodexMemoryExtensionPublisher implements MemoryExtensionPublisher {
   async resolveExtensionRoot(
     env?: NodeJS.ProcessEnv,
   ): Promise<string> {
-    const e = env ?? process.env;
     const codexHome =
-      e.CODEX_HOME?.trim() || path.join(e.HOME ?? os.homedir(), ".codex");
+      env?.CODEX_HOME?.trim() ||
+      readEnvVar("CODEX_HOME")?.trim() ||
+      path.join(env?.HOME ?? resolveHomeDir(), ".codex");
     return path.join(codexHome, "memories_extensions", REMNIC_EXTENSION_DIR_NAME);
   }
 
   async isHostAvailable(): Promise<boolean> {
     try {
-      const home = process.env.CODEX_HOME?.trim() ||
-        path.join(process.env.HOME ?? os.homedir(), ".codex");
+      const home = readEnvVar("CODEX_HOME")?.trim() ||
+        path.join(resolveHomeDir(), ".codex");
       return fs.existsSync(home);
     } catch {
       return false;

@@ -21,7 +21,6 @@ const SCANNABLE_EXTENSIONS = new Set([
   ".tsx",
 ]);
 const MAX_SCAN_FILES = 500;
-const MAX_FILE_BYTES = 1024 * 1024;
 const NETWORK_SEND_CONTEXT_PATTERN = /\bfetch\s*\(|\bpost\s*\(|\.\s*post\s*\(|http\.request\s*\(/i;
 
 const CRITICAL_LINE_RULES = [
@@ -121,8 +120,6 @@ function scanOpenClawCriticalFindings(rootDir: string): Finding[] {
   const findings: Finding[] = [];
 
   for (const file of collectScannableFiles(rootDir)) {
-    const stat = fs.statSync(file);
-    if (stat.size > MAX_FILE_BYTES) continue;
     findings.push(...scanSource(fs.readFileSync(file, "utf8"), file));
   }
 

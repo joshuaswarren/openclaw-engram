@@ -19,6 +19,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { log } from "./logger.js";
 import { StorageManager } from "./storage.js";
+import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import type {
   BriefingActiveThread,
   BriefingCalendarSourceError,
@@ -1338,16 +1339,16 @@ export function renderBriefingMarkdown(ctx: RenderContext): string {
  */
 export function resolveBriefingSaveDir(
   configOverride: string | null | undefined,
-  env: NodeJS.ProcessEnv = process.env,
+  env?: NodeJS.ProcessEnv,
 ): string {
   if (typeof configOverride === "string" && configOverride.trim().length > 0) {
     return path.resolve(configOverride.trim());
   }
-  const remnicHome = env.REMNIC_HOME?.trim();
+  const remnicHome = (env?.REMNIC_HOME ?? readEnvVar("REMNIC_HOME"))?.trim();
   if (remnicHome && remnicHome.length > 0) {
     return path.join(remnicHome, "briefings");
   }
-  const home = env.HOME ?? env.USERPROFILE ?? ".";
+  const home = env?.HOME ?? env?.USERPROFILE ?? resolveHomeDir();
   return path.join(home, ".remnic", "briefings");
 }
 

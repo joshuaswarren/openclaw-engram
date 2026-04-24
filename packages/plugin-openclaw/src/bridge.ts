@@ -74,12 +74,17 @@ const SYSTEMD_SERVICE_PATHS = [
   [".config", "systemd", "user", "engram.service"],
 ] as const;
 
+function readEnv(name: string): string | undefined {
+  const env = (globalThis.process as { env?: Record<string, string | undefined> } | undefined)?.["env"];
+  return env?.[name];
+}
+
 function resolveHomeDir(): string {
-  return process.env.HOME ?? process.env.USERPROFILE ?? "~";
+  return readEnv("HOME") ?? readEnv("USERPROFILE") ?? "~";
 }
 
 function readCompatEnv(primary: string, legacy: string): string | undefined {
-  return process.env[primary] ?? process.env[legacy];
+  return readEnv(primary) ?? readEnv(legacy);
 }
 
 function configPathCandidates(): string[] {
@@ -131,6 +136,15 @@ function isDaemonServiceConfigured(): boolean {
   return false;
 }
 
+function coerceDaemonPort(value: unknown): number | undefined {
+  const parsed = typeof value === "string" && value.trim() !== ""
+    ? Number(value.trim())
+    : value;
+  return typeof parsed === "number" && Number.isInteger(parsed) && parsed > 0 && parsed <= 65535
+    ? parsed
+    : undefined;
+}
+
 function checkDaemonHealthSync(host: string, port: number, timeoutMs = SYNC_HEALTH_TIMEOUT_MS): boolean {
   if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) return false;
 
@@ -165,17 +179,15 @@ function checkDaemonHealthSync(host: string, port: number, timeoutMs = SYNC_HEAL
  * Read daemon port from environment or remnic config.
  */
 function readDaemonPort(): number {
-  const envPort = readCompatEnv("REMNIC_PORT", "ENGRAM_PORT");
-  if (envPort) {
-    const parsed = parseInt(envPort, 10);
-    if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  }
+  const envPort = coerceDaemonPort(readCompatEnv("REMNIC_PORT", "ENGRAM_PORT"));
+  if (envPort !== undefined) return envPort;
 
   for (const p of configPathCandidates()) {
     if (!existsSync(p)) continue;
     try {
       const raw = JSON.parse(readFileSync(p, "utf8"));
-      if (raw.server?.port) return raw.server.port;
+      const configPort = coerceDaemonPort(raw.server?.port);
+      if (configPort !== undefined) return configPort;
     } catch {
       // Ignore malformed config files and continue to the next candidate.
     }
@@ -267,8 +279,8 @@ function loadAnyToken(): string {
     // ignore
   }
   return (
-    process.env.OPENCLAW_REMNIC_ACCESS_TOKEN ??
-    process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN ??
+    readEnv("OPENCLAW_REMNIC_ACCESS_TOKEN") ??
+    readEnv("OPENCLAW_ENGRAM_ACCESS_TOKEN") ??
     readCompatEnv("REMNIC_AUTH_TOKEN", "ENGRAM_AUTH_TOKEN") ??
     ""
   );

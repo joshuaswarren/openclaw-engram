@@ -11,6 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { readEnvVar, resolveHomeDir } from "../runtime/env.js";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -124,7 +125,7 @@ export interface AuditEntry {
 const MANIFEST_VERSION = 1;
 
 export function getSpacesDir(baseDir?: string): string {
-  const homeDir = baseDir ?? process.env.HOME ?? "~";
+  const homeDir = baseDir ?? resolveHomeDir();
   return path.join(homeDir, ".config", "engram", "spaces");
 }
 
@@ -158,12 +159,12 @@ export function saveManifest(manifest: SpaceManifest, baseDir?: string): void {
 }
 
 function createPersonalSpace(baseDir?: string, memoryDirOverride?: string): Space {
-  const homeDir = baseDir ?? process.env.HOME ?? "~";
+  const homeDir = baseDir ?? resolveHomeDir();
   // Priority: override > env var > existing standalone dir > existing OpenClaw dir > new standalone dir
   const standalonePath = path.join(homeDir, ".engram", "memory");
   const openclawPath = path.join(homeDir, ".openclaw", "workspace", "memory", "local");
   const memoryDir = memoryDirOverride
-    ?? process.env.ENGRAM_MEMORY_DIR
+    ?? readEnvVar("ENGRAM_MEMORY_DIR")
     ?? (fs.existsSync(standalonePath) ? standalonePath
       : fs.existsSync(openclawPath) ? openclawPath
       : standalonePath);
@@ -177,7 +178,7 @@ function createPersonalSpace(baseDir?: string, memoryDirOverride?: string): Spac
     memoryDir,
     createdAt: now,
     updatedAt: now,
-    owner: process.env.USER,
+    owner: readEnvVar("USER"),
   };
 }
 
@@ -230,7 +231,7 @@ export function createSpace(options: {
     memoryDir,
     createdAt: now,
     updatedAt: now,
-    owner: process.env.USER,
+    owner: readEnvVar("USER"),
     parentSpaceId: options.parentSpaceId,
   };
 
