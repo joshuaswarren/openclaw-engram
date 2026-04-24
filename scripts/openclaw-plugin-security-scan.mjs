@@ -13,7 +13,8 @@ function usage() {
 }
 
 function parseArgs(argv) {
-  const packageDir = argv[2];
+  const args = argv.slice(2).filter((arg) => arg !== "--");
+  const packageDir = args[0];
   if (!packageDir || packageDir === "--help" || packageDir === "-h") {
     console.error(usage());
     process.exit(packageDir ? 0 : 2);
