@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  __findExecutableOnPathForTest,
   __setGatewayResolverForTest,
   clearSecretCache,
   resolveProviderApiKey,
@@ -45,5 +46,26 @@ test("resolveProviderApiKey scopes cached gateway secrets by agent directory", a
     ]);
   } finally {
     clearSecretCache();
+  }
+});
+
+test("findExecutableOnPath skips directories named like the executable", () => {
+  const calls: string[] = [];
+  const access = (candidate: string): void => {
+    calls.push(candidate);
+  };
+  const stat = (candidate: string): { isFile(): boolean } => ({
+    isFile: () => candidate === "/bin/openclaw",
+  });
+  const previousPath = process.env.PATH;
+
+  try {
+    process.env.PATH = ["/tmp", "/bin"].join(":");
+    const resolved = __findExecutableOnPathForTest("openclaw", access, stat, 1);
+    assert.equal(resolved, "/bin/openclaw");
+    assert.deepEqual(calls, ["/tmp/openclaw", "/bin/openclaw"]);
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
   }
 });

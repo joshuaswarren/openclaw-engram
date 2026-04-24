@@ -105,7 +105,7 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
  * Uses require.resolve to find the openclaw package regardless of install method.
  */
 async function findRuntimeModules(): Promise<string[]> {
-  const { accessSync, constants, readdirSync, realpathSync } = await import("node:fs");
+  const { accessSync, constants, readdirSync, realpathSync, statSync } = await import("node:fs");
   const { createRequire } = await import("node:module");
   const candidates: string[] = [];
 
@@ -154,7 +154,7 @@ async function findRuntimeModules(): Promise<string[]> {
   // without spawning `which`. OpenClaw's plugin installer blocks process-launch
   // patterns in packaged plugins.
   try {
-    const openclawBin = findExecutableOnPath("openclaw", accessSync, constants.X_OK);
+    const openclawBin = findExecutableOnPath("openclaw", accessSync, statSync, constants.X_OK);
     if (openclawBin) {
       pushDistDirs(realpathSync(openclawBin));
     }
@@ -181,6 +181,7 @@ async function findRuntimeModules(): Promise<string[]> {
 function findExecutableOnPath(
   executableName: string,
   access: (path: string, mode?: number) => void,
+  stat: (path: string) => { isFile(): boolean },
   executableMode: number,
 ): string | undefined {
   const pathEnv = readEnvVar("PATH");
@@ -203,6 +204,7 @@ function findExecutableOnPath(
       const candidate = path.join(dir, candidateName);
       try {
         access(candidate, executableMode);
+        if (!stat(candidate).isFile()) continue;
         return candidate;
       } catch {
         // Try the next PATH entry.
@@ -212,6 +214,8 @@ function findExecutableOnPath(
 
   return undefined;
 }
+
+export const __findExecutableOnPathForTest = findExecutableOnPath;
 
 /**
  * Resolve a provider API key from various OpenClaw formats.

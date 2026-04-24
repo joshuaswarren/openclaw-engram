@@ -8,7 +8,7 @@
  * Used when `remnic daemon install` has been run and the daemon is already active.
  */
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 
 export type BridgeMode = "embedded" | "delegate";
@@ -22,6 +22,14 @@ export interface BridgeConfig {
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4318;
 const LEGACY_HEALTH_PATH = "/engram/v1/health";
+const LAUNCHD_SERVICE_PATHS = [
+  ["Library", "LaunchAgents", "ai.remnic.daemon.plist"],
+  ["Library", "LaunchAgents", "ai.engram.daemon.plist"],
+] as const;
+const SYSTEMD_SERVICE_PATHS = [
+  [".config", "systemd", "user", "remnic.service"],
+  [".config", "systemd", "user", "engram.service"],
+] as const;
 
 function resolveHomeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? "~";
@@ -42,6 +50,14 @@ function configPathCandidates(): string[] {
   ];
 }
 
+function fileExists(filePath: string): boolean {
+  try {
+    return statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Detect whether a daemon is already running by checking the PID file.
  *
@@ -60,6 +76,14 @@ function isDaemonRunning(): boolean {
     } catch {
       // PID file missing or stale — continue checking
     }
+  }
+  return false;
+}
+
+function isDaemonServiceConfigured(): boolean {
+  const homeDir = resolveHomeDir();
+  for (const segments of [...LAUNCHD_SERVICE_PATHS, ...SYSTEMD_SERVICE_PATHS]) {
+    if (fileExists(path.join(homeDir, ...segments))) return true;
   }
   return false;
 }
@@ -111,8 +135,8 @@ export function detectBridgeMode(): BridgeConfig {
     };
   }
 
-  // Auto-detect: if daemon is running, delegate; otherwise embedded
-  if (isDaemonRunning()) {
+  // Auto-detect: if daemon is running or service-managed, delegate; otherwise embedded.
+  if (isDaemonRunning() || isDaemonServiceConfigured()) {
     return {
       mode: "delegate",
       daemonHost: readCompatEnv("REMNIC_HOST", "ENGRAM_HOST") ?? DEFAULT_HOST,
