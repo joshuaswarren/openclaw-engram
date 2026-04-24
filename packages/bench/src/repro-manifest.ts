@@ -259,6 +259,33 @@ async function scanDatasetFiles(root: string): Promise<BenchmarkReproManifestFil
   return files.sort((left, right) => left.path.localeCompare(right.path));
 }
 
+async function lstatPathWithoutSymlinkComponents(
+  targetPath: string,
+): Promise<Awaited<ReturnType<typeof lstat>> | undefined> {
+  const parsed = path.parse(targetPath);
+  const relativePath = path.relative(parsed.root, targetPath);
+  const parts = relativePath.length > 0 ? relativePath.split(path.sep) : [];
+  let currentPath = parsed.root;
+  let currentStat: Awaited<ReturnType<typeof lstat>> | undefined;
+
+  try {
+    if (parts.length === 0) {
+      currentStat = await lstat(currentPath);
+    }
+    for (const part of parts) {
+      currentPath = path.join(currentPath, part);
+      currentStat = await lstat(currentPath);
+      if (currentStat.isSymbolicLink()) {
+        return undefined;
+      }
+    }
+  } catch {
+    return undefined;
+  }
+
+  return currentStat;
+}
+
 async function buildDatasetManifest(
   benchmark: string,
   datasetDir: string | undefined,
@@ -274,10 +301,8 @@ async function buildDatasetManifest(
   }
 
   const datasetRoot = path.resolve(datasetDir);
-  let datasetStat;
-  try {
-    datasetStat = await lstat(datasetRoot);
-  } catch {
+  const datasetStat = await lstatPathWithoutSymlinkComponents(datasetRoot);
+  if (!datasetStat) {
     return {
       benchmark,
       status: "missing",
@@ -288,7 +313,7 @@ async function buildDatasetManifest(
     };
   }
 
-  if (!datasetStat.isDirectory() || datasetStat.isSymbolicLink()) {
+  if (!datasetStat.isDirectory()) {
     return {
       benchmark,
       status: "missing",
