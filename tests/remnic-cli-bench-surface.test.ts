@@ -153,6 +153,7 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /result\.config\.remnicConfig = plan\.runtime\.remnicConfig;/);
   assert.match(source, /writeBenchReproManifestForPackageRun/);
   assert.match(source, /writeBenchmarkReproManifest/);
+  assert.match(source, /WARNING: failed to write reproducibility manifest/);
 });
 
 test("parseBenchArgs supports custom benchmark files without counting them as benchmark ids", async () => {

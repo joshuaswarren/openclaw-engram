@@ -84,9 +84,11 @@ test("buildBenchmarkReproManifest hashes datasets/results and redacts secret arg
       argv: [
         "bench",
         "run",
+        "fixtures/token-benchmark.json",
         "--system-api-key",
         "secret-value",
         "--judge-api-key=other-secret",
+        "next-positional",
       ],
       env: { OLLAMA_API_KEY: "secret-value", QMD_CONFIG_DIR: "/tmp/qmd" },
       envKeys: ["OLLAMA_API_KEY", "QMD_CONFIG_DIR"],
@@ -100,9 +102,11 @@ test("buildBenchmarkReproManifest hashes datasets/results and redacts secret arg
   assert.deepEqual(manifest.command.argv, [
     "bench",
     "run",
+    "fixtures/token-benchmark.json",
     "--system-api-key",
     "[redacted]",
     "--judge-api-key=[redacted]",
+    "next-positional",
   ]);
   assert.deepEqual(manifest.command.envKeys, ["OLLAMA_API_KEY", "QMD_CONFIG_DIR"]);
   assert.equal(manifest.datasets[0]?.status, "hashed");

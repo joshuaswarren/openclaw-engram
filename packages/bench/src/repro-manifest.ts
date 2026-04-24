@@ -160,8 +160,12 @@ function sanitizeArgv(argv: string[]): string[] {
   const sanitized: string[] = [];
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]!;
+    const isOptionFlag = arg.startsWith("-");
     const [flagName] = arg.split("=", 1);
-    if (SECRET_ARG_FLAGS.has(flagName) || SECRET_KEY_PATTERN.test(flagName)) {
+    if (
+      isOptionFlag &&
+      (SECRET_ARG_FLAGS.has(flagName) || SECRET_KEY_PATTERN.test(flagName))
+    ) {
       if (arg.includes("=")) {
         sanitized.push(`${flagName}=[redacted]`);
       } else {

@@ -2347,31 +2347,36 @@ async function writeBenchReproManifestForPackageRun(args: {
   const resultsDir = args.parsed.resultsDir ?? resolveBenchOutputDir();
   const effectiveLimit =
     args.parsed.publishedLimit ?? (args.parsed.quick ? 1 : undefined);
-  const manifestPath = await benchModule.writeBenchmarkReproManifest(resultsDir, {
-    resultPaths: args.resultPaths,
-    selectedBenchmarks: args.benchmarkIds,
-    runtimeProfiles: args.runtimeProfiles,
-    mode: args.parsed.quick ? "quick" : "full",
-    ...(effectiveLimit !== undefined ? { limit: effectiveLimit } : {}),
-    ...(args.parsed.publishedSeed !== undefined ? { seed: args.parsed.publishedSeed } : {}),
-    datasetDirs: resolveBenchReproDatasetDirs(args.parsed, args.benchmarkIds),
-    command: {
-      cwd: process.cwd(),
-      argv: process.argv.slice(2),
-      env: process.env,
-      envKeys: resolveBenchReproEnvKeys(),
-    },
-    configFiles: [
-      { label: "remnic", path: args.parsed.remnicConfigPath },
-      { label: "openclaw", path: args.parsed.openclawConfigPath },
-    ],
-    qmd: {
-      ...(process.env.QMD_CONFIG_DIR ? { configDir: process.env.QMD_CONFIG_DIR } : {}),
-      ...(process.env.XDG_CACHE_HOME ? { cacheDir: process.env.XDG_CACHE_HOME } : {}),
-    },
-  });
-  if (!args.parsed.json) {
-    console.log(`Reproducibility manifest: ${manifestPath}`);
+  try {
+    const manifestPath = await benchModule.writeBenchmarkReproManifest(resultsDir, {
+      resultPaths: args.resultPaths,
+      selectedBenchmarks: args.benchmarkIds,
+      runtimeProfiles: args.runtimeProfiles,
+      mode: args.parsed.quick ? "quick" : "full",
+      ...(effectiveLimit !== undefined ? { limit: effectiveLimit } : {}),
+      ...(args.parsed.publishedSeed !== undefined ? { seed: args.parsed.publishedSeed } : {}),
+      datasetDirs: resolveBenchReproDatasetDirs(args.parsed, args.benchmarkIds),
+      command: {
+        cwd: process.cwd(),
+        argv: process.argv.slice(2),
+        env: process.env,
+        envKeys: resolveBenchReproEnvKeys(),
+      },
+      configFiles: [
+        { label: "remnic", path: args.parsed.remnicConfigPath },
+        { label: "openclaw", path: args.parsed.openclawConfigPath },
+      ],
+      qmd: {
+        ...(process.env.QMD_CONFIG_DIR ? { configDir: process.env.QMD_CONFIG_DIR } : {}),
+        ...(process.env.XDG_CACHE_HOME ? { cacheDir: process.env.XDG_CACHE_HOME } : {}),
+      },
+    });
+    if (!args.parsed.json) {
+      console.log(`Reproducibility manifest: ${manifestPath}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`WARNING: failed to write reproducibility manifest: ${message}`);
   }
 }
 
