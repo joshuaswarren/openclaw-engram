@@ -350,6 +350,7 @@ type PackageBenchModule = {
     mode?: "full" | "quick";
     outputDir?: string;
     limit?: number;
+    seed?: number;
     adapterMode?: string;
     runtimeProfile?: BenchRuntimeProfile | null;
     systemProvider?: {
@@ -406,6 +407,27 @@ type PackageBenchModule = {
     results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
     cost: { meanQueryLatencyMs: number };
   }, outputDir: string) => Promise<string>;
+  writeBenchmarkReproManifest?: (resultsDir: string, options?: {
+    resultPaths?: string[];
+    selectedBenchmarks?: string[];
+    runtimeProfiles?: string[];
+    mode?: "full" | "quick";
+    limit?: number;
+    seed?: number;
+    datasetDirs?: Record<string, string | undefined>;
+    command?: {
+      cwd?: string;
+      argv?: string[];
+      env?: NodeJS.ProcessEnv;
+      envKeys?: string[];
+    };
+    configFiles?: Array<{ label: string; path?: string }>;
+    qmd?: {
+      configDir?: string;
+      cacheDir?: string;
+      collections?: string[];
+    };
+  }) => Promise<string>;
   getRemnicVersion?: () => Promise<string>;
   createLightweightAdapter?: (options?: {
     configOverrides?: Record<string, unknown>;
@@ -1964,6 +1986,12 @@ async function runBenchPublished(parsed: ParsedBenchArgs): Promise<void> {
       writtenPaths.push(result.writtenPath);
     }
   }
+  await writeBenchReproManifestForPackageRun({
+    parsed,
+    benchmarkIds: [benchmarkId],
+    runtimeProfiles,
+    resultPaths: writtenPaths,
+  });
 
   // When `--out` is supplied, copy the result artifact we just wrote
   // into the directory under a canonical leaderboard filename. We
@@ -2076,7 +2104,7 @@ async function runBenchViaPackage(
     return { ok: false };
   }
 
-  const outputDir = resolveBenchOutputDir();
+  const outputDir = parsed.resultsDir ?? resolveBenchOutputDir();
   const datasetDir = resolveBenchDatasetDir(
     benchmarkId,
     parsed.quick,
@@ -2231,7 +2259,10 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
     return false;
   }
 
-  const outputDir = resolveBenchOutputDir();
+  const outputDir = parsed.resultsDir ?? resolveBenchOutputDir();
+  const effectiveLimit = parsed.publishedLimit ?? (parsed.quick ? 1 : undefined);
+  const writtenPaths: string[] = [];
+  const customBenchmarkIds: string[] = [];
   for (const plan of plans) {
     const system = await plan.createAdapter(plan.runtime.adapterOptions);
 
@@ -2239,7 +2270,8 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
       const result = await benchModule.runCustomBenchmarkFile(parsed.custom!, {
         mode: parsed.quick ? "quick" : "full",
         outputDir,
-        limit: parsed.quick ? 1 : undefined,
+        ...(effectiveLimit !== undefined ? { limit: effectiveLimit } : {}),
+        ...(parsed.publishedSeed !== undefined ? { seed: parsed.publishedSeed } : {}),
         adapterMode: plan.adapterMode,
         runtimeProfile: plan.runtime.profile,
         systemProvider: plan.runtime.systemProvider,
@@ -2248,7 +2280,9 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
         system,
       });
       result.config.remnicConfig = plan.runtime.remnicConfig;
+      customBenchmarkIds.push(result.meta.benchmark);
       const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
+      writtenPaths.push(writtenPath);
       if (parsed.json) {
         console.log(JSON.stringify(result, null, 2));
       } else {
@@ -2259,7 +2293,96 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
     }
   }
 
+  await writeBenchReproManifestForPackageRun({
+    parsed,
+    benchmarkIds: [...new Set(customBenchmarkIds)],
+    runtimeProfiles,
+    resultPaths: writtenPaths,
+  });
+
   return true;
+}
+
+const BENCH_REPRO_ENV_KEYS = [
+  "ANTHROPIC_API_KEY",
+  "LITELLM_API_KEY",
+  "OLLAMA_API_KEY",
+  "OPENAI_API_KEY",
+  "QMD_CONFIG_DIR",
+  "REMNIC_BENCH_DATASET_ROOT",
+  "REMNIC_BENCH_IDS",
+  "REMNIC_BENCH_LIMIT",
+  "REMNIC_BENCH_MODE",
+  "REMNIC_BENCH_PHASE_TIMEOUT_MS",
+  "REMNIC_BENCH_REQUEST_TIMEOUT_MS",
+  "XDG_CACHE_HOME",
+] as const;
+
+function resolveBenchReproEnvKeys(): string[] {
+  return BENCH_REPRO_ENV_KEYS.filter((key) => process.env[key] !== undefined);
+}
+
+function resolveBenchReproDatasetDirs(
+  parsed: ParsedBenchArgs,
+  benchmarkIds: string[],
+): Record<string, string | undefined> {
+  return Object.fromEntries(
+    benchmarkIds.map((benchmarkId) => [
+      benchmarkId,
+      resolveBenchDatasetDir(benchmarkId, parsed.quick, parsed.datasetDir),
+    ]),
+  );
+}
+
+async function writeBenchReproManifestForPackageRun(args: {
+  parsed: ParsedBenchArgs;
+  benchmarkIds: string[];
+  runtimeProfiles: BenchRuntimeProfile[];
+  resultPaths: string[];
+}): Promise<void> {
+  if (args.resultPaths.length === 0) {
+    return;
+  }
+  const loaded = await tryLoadBenchModule();
+  const benchModule = loaded as unknown as PackageBenchModule | undefined;
+  if (!benchModule?.writeBenchmarkReproManifest) {
+    return;
+  }
+
+  const resultsDir = args.parsed.resultsDir ?? resolveBenchOutputDir();
+  const effectiveLimit =
+    args.parsed.publishedLimit ?? (args.parsed.quick ? 1 : undefined);
+  try {
+    const manifestPath = await benchModule.writeBenchmarkReproManifest(resultsDir, {
+      resultPaths: args.resultPaths,
+      selectedBenchmarks: args.benchmarkIds,
+      runtimeProfiles: args.runtimeProfiles,
+      mode: args.parsed.quick ? "quick" : "full",
+      ...(effectiveLimit !== undefined ? { limit: effectiveLimit } : {}),
+      ...(args.parsed.publishedSeed !== undefined ? { seed: args.parsed.publishedSeed } : {}),
+      datasetDirs: resolveBenchReproDatasetDirs(args.parsed, args.benchmarkIds),
+      command: {
+        cwd: process.cwd(),
+        argv: process.argv.slice(2),
+        env: process.env,
+        envKeys: resolveBenchReproEnvKeys(),
+      },
+      configFiles: [
+        { label: "remnic", path: args.parsed.remnicConfigPath },
+        { label: "openclaw", path: args.parsed.openclawConfigPath },
+      ],
+      qmd: {
+        ...(process.env.QMD_CONFIG_DIR ? { configDir: process.env.QMD_CONFIG_DIR } : {}),
+        ...(process.env.XDG_CACHE_HOME ? { cacheDir: process.env.XDG_CACHE_HOME } : {}),
+      },
+    });
+    if (!args.parsed.json) {
+      console.log(`Reproducibility manifest: ${manifestPath}`);
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`WARNING: failed to write reproducibility manifest: ${message}`);
+  }
 }
 
 // ── Config helpers ───────────────────────────────────────────────────────────
@@ -4984,6 +5107,7 @@ async function cmdBench(rest: string[]): Promise<void> {
       : selectedBenchmarks,
   )];
   try { await initBenchStatus(benchStatusPath, statusEntryIds, process.pid); } catch { /* non-fatal */ }
+  const writtenPaths: string[] = [];
   try {
     for (const benchmarkId of selectedBenchmarks) {
       for (const runtimeProfile of runtimeProfiles) {
@@ -4999,6 +5123,9 @@ async function cmdBench(rest: string[]): Promise<void> {
             benchStatusPath,
           );
           if (handledByPackage.ok) {
+            if (handledByPackage.writtenPath) {
+              writtenPaths.push(handledByPackage.writtenPath);
+            }
             try { await updateBenchmarkCompleted(benchStatusPath, statusId, handledByPackage.writtenPath ?? ""); } catch { /* non-fatal */ }
           } else {
             const fallbackResultPath = await runBenchViaFallback(parsed, benchmarkId, runtimeProfile);
@@ -5015,6 +5142,12 @@ async function cmdBench(rest: string[]): Promise<void> {
   } finally {
     try { await finalizeBenchStatus(benchStatusPath); } catch { /* non-fatal */ }
   }
+  await writeBenchReproManifestForPackageRun({
+    parsed,
+    benchmarkIds: selectedBenchmarks,
+    runtimeProfiles,
+    resultPaths: writtenPaths,
+  });
   if (failures.size > 0) {
     console.error(`\nFailed benchmarks: ${[...failures].join(", ")}`);
     if (failures.size === selectedBenchmarks.length) {

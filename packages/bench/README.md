@@ -20,6 +20,7 @@ The CLI loads `@remnic/bench` via a computed-specifier dynamic import. If it's n
 
 - **Benchmark runners** for a growing set of memory-oriented evals: `longmemeval`, `locomo`, `memory-arena`, `amemgym`, `ama-bench`, plus a lightweight smoke fixture.
 - **Stored-run management** — every `remnic bench run *` writes a timestamped JSON result under `~/.remnic/bench/results/`; `remnic bench runs list|show|delete` let you browse, inspect, and prune.
+- **Reproducibility manifests** — package-backed runs write `MANIFEST.json` beside the result files, locking result hashes, dataset file hashes, seeds, runtime profiles, command argv with secret values redacted, selected environment keys, git state, QMD collections, and config-file hashes.
 - **Baselines + regression gates** — save a run as a named baseline, compare candidates against it, gate CI on threshold violations.
 - **Result export** — `remnic bench export <run> --format json|csv|html`.
 - **Published feed** — `remnic bench publish --target remnic-ai` builds the tamper-evident integrity manifest consumed by remnic.ai.
@@ -43,6 +44,9 @@ remnic bench run --quick longmemeval
 # Browse stored runs:
 remnic bench runs list
 remnic bench runs show <run-id> --detail
+
+# Inspect the reproducibility lock for the last run set:
+jq . ~/.remnic/bench/results/MANIFEST.json
 
 # Compare two runs:
 remnic bench compare base-run candidate-run
@@ -145,6 +149,7 @@ import {
   listBenchmarks,
   runBenchmark,
   writeBenchmarkResult,
+  writeBenchmarkReproManifest,
   createLightweightAdapter,
   createRemnicAdapter,
   compareResults,

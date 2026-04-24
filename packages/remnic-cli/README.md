@@ -85,6 +85,12 @@ full runs need a real benchmark dataset. In a repo checkout the CLI will use
 `evals/datasets/<benchmark>` automatically; in packaged installs pass
 `--dataset-dir <path>` explicitly.
 
+Package-backed benchmark runs also write `MANIFEST.json` in the results
+directory. The manifest records result artifact hashes, dataset file hashes,
+fixed seeds, runtime profile/model configuration, git state, QMD collection
+names, selected benchmark environment keys, and config-file hashes. Secret
+argument values are redacted.
+
 `remnic bench datasets download` currently manages the published benchmark
 datasets for `ama-bench`, `memory-arena`, `amemgym`, `longmemeval`, `locomo`,
 `beam`, `personamem`, `membench`, and `memoryagentbench`. Internal Remnic
