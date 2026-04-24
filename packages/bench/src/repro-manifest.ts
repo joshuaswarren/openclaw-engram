@@ -275,7 +275,7 @@ async function buildDatasetManifest(
 
   let datasetStat;
   try {
-    datasetStat = await stat(datasetDir);
+    datasetStat = await lstat(datasetDir);
   } catch {
     return {
       benchmark,
@@ -287,7 +287,7 @@ async function buildDatasetManifest(
     };
   }
 
-  if (!datasetStat.isDirectory()) {
+  if (!datasetStat.isDirectory() || datasetStat.isSymbolicLink()) {
     return {
       benchmark,
       status: "missing",

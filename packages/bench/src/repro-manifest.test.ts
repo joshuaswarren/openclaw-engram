@@ -141,3 +141,26 @@ test("writeBenchmarkReproManifest writes MANIFEST.json beside results", async ()
   };
   assert.equal(manifest.results[0]?.benchmark, "longmemeval");
 });
+
+test("buildBenchmarkReproManifest rejects symlinked dataset roots", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-repro-manifest-root-link-"));
+  const resultsDir = path.join(root, "results");
+  const datasetDir = path.join(root, "dataset");
+  const linkedDatasetDir = path.join(root, "linked-dataset");
+  await mkdir(resultsDir, { recursive: true });
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(path.join(datasetDir, "answers.json"), JSON.stringify({ answer: 42 }), "utf8");
+  await symlink(datasetDir, linkedDatasetDir);
+  const resultPath = path.join(resultsDir, "longmemeval.json");
+  await writeFile(resultPath, `${JSON.stringify(buildResult(), null, 2)}\n`, "utf8");
+
+  const manifest = await buildBenchmarkReproManifest(resultsDir, {
+    resultPaths: [resultPath],
+    selectedBenchmarks: ["longmemeval"],
+    datasetDirs: { longmemeval: linkedDatasetDir },
+  });
+
+  assert.equal(manifest.datasets[0]?.status, "missing");
+  assert.equal(manifest.datasets[0]?.fileCount, 0);
+  assert.equal(manifest.datasets[0]?.sha256, undefined);
+});
