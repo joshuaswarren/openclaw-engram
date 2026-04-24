@@ -86,15 +86,15 @@ test("runBenchmark executes memory-arena in quick mode through the phase-1 packa
   assert.equal(result.meta.benchmark, "memory-arena");
   assert.equal(result.meta.mode, "quick");
   assert.equal(result.meta.benchmarkTier, "published");
-  assert.equal(result.results.tasks.length, 2);
+  assert.equal(result.results.tasks.length, 1);
   assert.equal(result.results.statistics, undefined);
   assert.equal(typeof result.results.aggregates.f1?.mean, "number");
   assert.equal(typeof result.results.aggregates.contains_answer?.mean, "number");
   assert.equal(
-    result.results.tasks[1]?.actual.includes("Answer for subtask 1: trail mix"),
+    result.results.tasks[0]?.actual.includes("Environment result: trail mix"),
     true,
   );
-  assert.equal(result.results.tasks[1]?.expected, "trail mix");
+  assert.equal(result.results.tasks[0]?.expected, "trail mix");
 });
 
 test("runBenchmark preserves string-form memory-arena answers in full mode datasets", async () => {

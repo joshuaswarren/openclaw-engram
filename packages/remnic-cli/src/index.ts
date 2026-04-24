@@ -236,7 +236,7 @@ type ReviewAction = "approve" | "dismiss" | "flag";
 export interface BenchCatalogEntry {
   id: string;
   title: string;
-  category: "agentic" | "retrieval" | "conversational";
+  category: "agentic" | "retrieval" | "conversational" | "ingestion";
   summary: string;
 }
 
@@ -324,6 +324,7 @@ type PackageBenchModule = {
     system: {
       destroy(): Promise<void>;
     };
+    ingestionAdapter?: unknown;
     onTaskComplete?: (task: { taskId: string; scores: Record<string, number>; latencyMs: number; tokens: { input: number; output: number } }, completedCount: number, totalCount?: number) => void;
   }) => Promise<{
     meta: { benchmark: string; mode: string };
@@ -418,6 +419,9 @@ type PackageBenchModule = {
     responder?: unknown;
     judge?: unknown;
   }) => Promise<{ destroy(): Promise<void> }>;
+  createSyntheticEmailIngestionAdapter?: (options?: {
+    system?: unknown;
+  }) => unknown;
   loadLongMemEvalS?: (options: {
     mode: "full" | "quick";
     datasetDir?: string;
@@ -495,9 +499,14 @@ interface ResolveBenchRuntimeProfileOptions {
   systemProvider?: string;
   systemModel?: string;
   systemBaseUrl?: string;
+  systemApiKey?: string;
   judgeProvider?: string;
   judgeModel?: string;
   judgeBaseUrl?: string;
+  judgeApiKey?: string;
+  requestTimeout?: number;
+  max429WaitMs?: number;
+  disableThinking?: boolean;
 }
 
 interface ResolvedBenchRuntimeProfile {
@@ -684,7 +693,8 @@ function coerceBenchCategory(
   if (
     category === "agentic" ||
     category === "retrieval" ||
-    category === "conversational"
+    category === "conversational" ||
+    category === "ingestion"
   ) {
     return category;
   }
@@ -722,11 +732,7 @@ async function resolveAllBenchmarks(): Promise<string[]> {
   const packageBenchmarks = await loadBenchDefinitionsFromPackage();
   if (packageBenchmarks) {
     return packageBenchmarks
-      .filter(
-        (entry) =>
-          entry.runnerAvailable
-          && entry.meta?.category !== "ingestion",
-      )
+      .filter((entry) => entry.runnerAvailable)
       .map((entry) => entry.id);
   }
 
@@ -2057,13 +2063,6 @@ async function runBenchViaPackage(
     return { ok: false };
   }
 
-  if (definition.meta?.category === "ingestion") {
-    throw new Error(
-      `Benchmark "${benchmarkId}" requires an ingestion adapter which is not yet available via the CLI. ` +
-      `Run ingestion benchmarks programmatically by passing an ingestionAdapter to runBenchmark().`,
-    );
-  }
-
   const plans = await buildPackageBenchExecutionPlans(
     benchModule,
     parsed,
@@ -2084,11 +2083,12 @@ async function runBenchViaPackage(
     parsed.datasetDir,
   );
 
-  const system = await plan.createAdapter(plan.runtime.adapterOptions);
   const benchStartTime = Date.now();
   const partialTasks: import("@remnic/bench").TaskResult[] = [];
+  let system: Awaited<ReturnType<PackageBenchExecutionPlan["createAdapter"]>> | undefined;
 
   try {
+    system = await plan.createAdapter(plan.runtime.adapterOptions);
     // `publishedLimit` (from `bench published --limit N`) takes
     // precedence over the implicit quick-mode limit of 1.
     const effectiveLimit =
@@ -2112,7 +2112,7 @@ async function runBenchViaPackage(
       remnicConfig: plan.runtime.effectiveRemnicConfig,
       system,
       onTaskComplete: (task, completed, total) => {
-        partialTasks.push(task);
+        partialTasks.push(task as import("@remnic/bench").TaskResult);
         if (benchStatusPath) {
           updateBenchStatusTaskProgress(
             benchStatusPath,
@@ -2158,7 +2158,7 @@ async function runBenchViaPackage(
     }
     throw err;
   } finally {
-    await system.destroy();
+    await system?.destroy();
   }
 }
 

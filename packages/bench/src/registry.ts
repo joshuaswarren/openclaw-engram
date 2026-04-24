@@ -227,7 +227,6 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   },
   {
     ...ingestionSchemaCompletenessDefinition,
-    runnerAvailable: false,
     run: runIngestionSchemaCompletenessBenchmark,
   },
   {
@@ -240,7 +239,6 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   },
   {
     ...ingestionCitationAccuracyDefinition,
-    runnerAvailable: false,
     run: runIngestionCitationAccuracyBenchmark,
   },
   {

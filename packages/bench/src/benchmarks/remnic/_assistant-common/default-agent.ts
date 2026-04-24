@@ -18,6 +18,13 @@
 
 import type { ResolvedRunBenchmarkOptions } from "../../../types.js";
 import type { StructuredJudge } from "../../../judges/sealed-rubric.js";
+import { createProviderBackedStructuredJudge } from "../../../responders.js";
+import type { ProviderFactoryConfig } from "../../../providers/types.js";
+import {
+  resolveBenchmarkPhaseTimeoutMs,
+  resolveBenchmarkProgressLogging,
+  runWithBenchmarkPhaseTimeout,
+} from "../../../adapters/timeout-guard.js";
 import type { AssistantAgent } from "./types.js";
 
 export const ASSISTANT_AGENT_CONFIG_KEY = "assistantAgent";
@@ -36,6 +43,9 @@ export function resolveAssistantAgent(
   if (injected && typeof injected.respond === "function") {
     return injected;
   }
+  if (resolved.system.responder) {
+    return createAssistantAgentFromResponder(resolved.system.responder);
+  }
   return createDeterministicAssistantAgent();
 }
 
@@ -47,7 +57,12 @@ export function resolveStructuredJudge(
     ASSISTANT_JUDGE_CONFIG_KEY,
   );
   if (injected && typeof injected.evaluate === "function") {
-    return injected;
+    return wrapStructuredJudgeWithTimeout(injected, resolved);
+  }
+  if (resolved.judgeProvider) {
+    return wrapStructuredJudgeWithTimeout(createProviderBackedStructuredJudge(
+      resolved.judgeProvider as ProviderFactoryConfig,
+    ), resolved);
   }
   return undefined;
 }
@@ -114,6 +129,41 @@ function createDeterministicAssistantAgent(): AssistantAgent {
         "consider the memory context above to be the entirety of my response.",
       ];
       return lines.join("\n");
+    },
+  };
+}
+
+function wrapStructuredJudgeWithTimeout(
+  judge: StructuredJudge,
+  resolved: ResolvedRunBenchmarkOptions,
+): StructuredJudge {
+  const timeoutMs = resolveBenchmarkPhaseTimeoutMs(resolved);
+  if (timeoutMs === undefined) {
+    return judge;
+  }
+  const logProgress = resolveBenchmarkProgressLogging(resolved.remnicConfig);
+  return {
+    evaluate(request) {
+      return runWithBenchmarkPhaseTimeout(
+        `${resolved.benchmark.id}:assistant.judge task=${request.taskId}`,
+        timeoutMs,
+        () => judge.evaluate(request),
+        {
+          logProgress,
+          log: (message) => console.error(`  ${message}`),
+        },
+      );
+    },
+  };
+}
+
+function createAssistantAgentFromResponder(
+  responder: NonNullable<ResolvedRunBenchmarkOptions["system"]["responder"]>,
+): AssistantAgent {
+  return {
+    async respond({ prompt, memoryView }) {
+      const response = await responder.respond(prompt, memoryView);
+      return response.text;
     },
   };
 }

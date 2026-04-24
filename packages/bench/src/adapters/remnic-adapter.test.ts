@@ -5,6 +5,7 @@ import { parseConfig } from "@remnic/core";
 import {
   buildBenchAdapterConfig,
   buildBenchBaselineRemnicConfig,
+  createRemnicAdapter,
 } from "./remnic-adapter.ts";
 
 const BASE_CONFIG = {
@@ -121,4 +122,32 @@ test("runtime-backed direct configs preserve core defaults for omitted keys", ()
   assert.equal(parsed.qmdEnabled, true);
   assert.equal(parsed.identityEnabled, true);
   assert.equal(parsed.workspaceDir, BASE_CONFIG.workspaceDir);
+});
+
+test("direct adapter recall expands search hits with adjacent stored results", async () => {
+  const adapter = await createRemnicAdapter();
+
+  try {
+    await adapter.store("arena-session", [
+      {
+        role: "user",
+        content: "Buy a train ride snack that is compact, shareable, and not messy.",
+      },
+      {
+        role: "assistant",
+        content: "MemoryArena completed subtask 1.\nEnvironment result: trail mix",
+      },
+    ]);
+    await adapter.drain?.();
+
+    const recalled = await adapter.recall(
+      "arena-session",
+      "Which train ride snack from the completed purchase should I pack?",
+    );
+
+    assert.match(recalled, /Environment result: trail mix/);
+    assert.match(recalled, /\[arena-session turn 1, assistant\]/);
+  } finally {
+    await adapter.destroy();
+  }
 });

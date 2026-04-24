@@ -140,6 +140,8 @@ export interface HarnessContext {
    * of this iterator (`loadLongMemEvalS` / `loadLoCoMo10` honor limit).
    */
   plans: Iterable<HarnessPlan> | AsyncIterable<HarnessPlan>;
+  /** Optional global task count for progress callbacks. */
+  totalCount?: number;
 }
 
 /** Convenience: guard an arbitrary iterable shape into an async iterator. */

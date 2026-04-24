@@ -59,6 +59,7 @@ export async function runLongMemEvalBenchmark(
       metrics: ["f1", "contains_answer", "llm_judge"],
     },
     plans,
+    totalCount: plans.reduce((sum, plan) => sum + plan.trials.length, 0),
   });
 }
 

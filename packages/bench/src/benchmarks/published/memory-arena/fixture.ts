@@ -13,6 +13,7 @@ export interface ArenaTask {
   id: number;
   questions: string[];
   answers: ArenaExpectedAnswer[];
+  backgrounds?: string | string[];
   category: string;
 }
 
@@ -29,8 +30,8 @@ export const MEMORY_ARENA_SMOKE_FIXTURE: DomainData[] = [
         id: 1,
         category: "bundled_shopping",
         questions: [
-          "What snack did we decide to buy for the train ride?",
-          "Which snack from earlier should I pack in the bag now?",
+          "Buy a snack for the train ride that is compact, shareable, and not messy.",
+          "Which snack from the completed train-ride purchase should I pack in the bag now?",
         ],
         answers: [
           { attributes: ["trail mix"] },
