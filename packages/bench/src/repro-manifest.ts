@@ -273,9 +273,10 @@ async function buildDatasetManifest(
     };
   }
 
+  const datasetRoot = path.resolve(datasetDir);
   let datasetStat;
   try {
-    datasetStat = await lstat(datasetDir);
+    datasetStat = await lstat(datasetRoot);
   } catch {
     return {
       benchmark,
@@ -298,7 +299,7 @@ async function buildDatasetManifest(
     };
   }
 
-  const realDatasetDir = await realpath(datasetDir);
+  const realDatasetDir = await realpath(datasetRoot);
   const files = await scanDatasetFiles(realDatasetDir);
   const totalBytes = files.reduce((sum, file) => sum + file.sizeBytes, 0);
   const digest = sha256String(stableStringify(files));

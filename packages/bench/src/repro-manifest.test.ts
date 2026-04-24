@@ -167,7 +167,7 @@ test("buildBenchmarkReproManifest rejects symlinked dataset roots", async () => 
   const manifest = await buildBenchmarkReproManifest(resultsDir, {
     resultPaths: [resultPath],
     selectedBenchmarks: ["longmemeval"],
-    datasetDirs: { longmemeval: linkedDatasetDir },
+    datasetDirs: { longmemeval: `${linkedDatasetDir}${path.sep}` },
   });
 
   assert.equal(manifest.datasets[0]?.status, "missing");
