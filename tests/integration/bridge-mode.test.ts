@@ -137,18 +137,30 @@ test("detectBridgeMode reads legacy config port when remnic config is malformed"
   }
 });
 
-test("bridge service candidate helper falls through to legacy labels after a failure", async () => {
-  const { firstSuccessfulResult } = await import(
-    path.join(ROOT, "packages/plugin-openclaw/src/service-candidates.ts")
-  );
-  const calls: string[] = [];
-  const result = firstSuccessfulResult(["ai.remnic.daemon", "ai.engram.daemon"], (candidate) => {
-    calls.push(candidate);
-    if (candidate === "ai.remnic.daemon") {
-      throw new Error("canonical label missing");
-    }
-    return candidate;
-  });
-  assert.equal(result, "ai.engram.daemon");
-  assert.deepEqual(calls, ["ai.remnic.daemon", "ai.engram.daemon"]);
+test("detectBridgeMode delegates when a Remnic daemon pid file is live", async () => {
+  const previousHome = process.env.HOME;
+  const previousMode = process.env.REMNIC_BRIDGE_MODE;
+  const previousLegacyMode = process.env.ENGRAM_BRIDGE_MODE;
+  const homeDir = await mkdtemp(path.join(os.tmpdir(), "bridge-live-pid-"));
+  const remnicDir = path.join(homeDir, ".remnic");
+
+  await mkdir(remnicDir, { recursive: true });
+  await writeFile(path.join(remnicDir, "server.pid"), `${process.pid}\n`, "utf8");
+
+  try {
+    process.env.HOME = homeDir;
+    delete process.env.REMNIC_BRIDGE_MODE;
+    delete process.env.ENGRAM_BRIDGE_MODE;
+
+    const { detectBridgeMode } = await import(path.join(ROOT, "packages/plugin-openclaw/src/bridge.ts"));
+    const config = detectBridgeMode();
+    assert.equal(config.mode, "delegate");
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousMode === undefined) delete process.env.REMNIC_BRIDGE_MODE;
+    else process.env.REMNIC_BRIDGE_MODE = previousMode;
+    if (previousLegacyMode === undefined) delete process.env.ENGRAM_BRIDGE_MODE;
+    else process.env.ENGRAM_BRIDGE_MODE = previousLegacyMode;
+  }
 });

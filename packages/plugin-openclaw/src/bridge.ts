@@ -9,9 +9,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import * as childProcess from "node:child_process";
 import path from "node:path";
-import { firstSuccessfulResult } from "./service-candidates.js";
 
 export type BridgeMode = "embedded" | "delegate";
 
@@ -45,8 +43,10 @@ function configPathCandidates(): string[] {
 }
 
 /**
- * Detect whether a daemon is already running by checking the PID file
- * and the system service manager (launchd on macOS, systemd on Linux).
+ * Detect whether a daemon is already running by checking the PID file.
+ *
+ * Keep this path subprocess-free: OpenClaw's plugin installer statically blocks
+ * packaged plugins that invoke shell/process launch APIs.
  */
 function isDaemonRunning(): boolean {
   for (const pidFile of [
@@ -60,21 +60,6 @@ function isDaemonRunning(): boolean {
     } catch {
       // PID file missing or stale — continue checking
     }
-  }
-  if (process.platform === "darwin") {
-    const running = firstSuccessfulResult(["ai.remnic.daemon", "ai.engram.daemon"], (label) => {
-      const out = childProcess.execSync(`launchctl list ${label} 2>/dev/null`, { encoding: "utf8" });
-      return out.includes('"PID"') ? true : undefined;
-    });
-    if (running) return true;
-  } else if (process.platform === "linux") {
-    const running = firstSuccessfulResult(["remnic.service", "engram.service"], (unit) => {
-      const out = childProcess.execSync(`systemctl --user is-active ${unit} 2>/dev/null`, {
-        encoding: "utf8",
-      }).trim();
-      return out === "active" ? true : undefined;
-    });
-    if (running) return true;
   }
   return false;
 }
@@ -92,8 +77,8 @@ function readDaemonPort(): number {
   for (const p of configPathCandidates()) {
     if (!existsSync(p)) continue;
     try {
-        const raw = JSON.parse(readFileSync(p, "utf8"));
-        if (raw.server?.port) return raw.server.port;
+      const raw = JSON.parse(readFileSync(p, "utf8"));
+      if (raw.server?.port) return raw.server.port;
     } catch {
       // Ignore malformed config files and continue to the next candidate.
     }

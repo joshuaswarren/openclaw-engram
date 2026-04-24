@@ -105,9 +105,8 @@ async function getGatewayResolver(): Promise<ResolveApiKeyFn | null> {
  * Uses require.resolve to find the openclaw package regardless of install method.
  */
 async function findRuntimeModules(): Promise<string[]> {
-  const { readdirSync } = await import("node:fs");
+  const { accessSync, constants, readdirSync, realpathSync } = await import("node:fs");
   const { createRequire } = await import("node:module");
-  const { execFileSync } = await import("node:child_process");
   const candidates: string[] = [];
 
   // Discover the openclaw dist directory from the installed package,
@@ -140,7 +139,6 @@ async function findRuntimeModules(): Promise<string[]> {
   // Fallback: infer from the running process (gateway runs from its own dist/)
   // Use fs.realpathSync to resolve symlinks (e.g., /usr/local/bin/openclaw → actual path)
   try {
-    const { realpathSync } = await import("node:fs");
     const mainScript = process.argv[1];
     if (mainScript) {
       const realScript = realpathSync(mainScript);
@@ -152,14 +150,12 @@ async function findRuntimeModules(): Promise<string[]> {
     // Silent
   }
 
-  // Fallback: inspect the installed openclaw binary on PATH (Homebrew/global npm).
+  // Fallback: inspect the installed openclaw binary on PATH (Homebrew/global npm)
+  // without spawning `which`. OpenClaw's plugin installer blocks process-launch
+  // patterns in packaged plugins.
   try {
-    const openclawBin = execFileSync("which", ["openclaw"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const openclawBin = findExecutableOnPath("openclaw", accessSync, constants.X_OK);
     if (openclawBin) {
-      const { realpathSync } = await import("node:fs");
       pushDistDirs(realpathSync(openclawBin));
     }
   } catch {
@@ -180,6 +176,41 @@ async function findRuntimeModules(): Promise<string[]> {
   }
 
   return candidates;
+}
+
+function findExecutableOnPath(
+  executableName: string,
+  access: (path: string, mode?: number) => void,
+  executableMode: number,
+): string | undefined {
+  const pathEnv = readEnvVar("PATH");
+  if (!pathEnv) return undefined;
+
+  const pathExts = process.platform === "win32"
+    ? (readEnvVar("PATHEXT") ?? ".EXE;.CMD;.BAT;.COM")
+        .split(";")
+        .filter((ext) => ext.length > 0)
+    : [""];
+  const hasExtension = path.extname(executableName).length > 0;
+
+  for (const dir of pathEnv.split(path.delimiter)) {
+    if (!dir) continue;
+    const candidateNames = process.platform === "win32" && !hasExtension
+      ? pathExts.map((ext) => `${executableName}${ext}`)
+      : [executableName];
+
+    for (const candidateName of candidateNames) {
+      const candidate = path.join(dir, candidateName);
+      try {
+        access(candidate, executableMode);
+        return candidate;
+      } catch {
+        // Try the next PATH entry.
+      }
+    }
+  }
+
+  return undefined;
 }
 
 /**
