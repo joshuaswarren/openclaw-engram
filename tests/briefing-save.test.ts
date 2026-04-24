@@ -34,6 +34,27 @@ test("resolveBriefingSaveDir falls back to HOME/.remnic/briefings when REMNIC_HO
   assert.equal(resolved, path.join(home, ".remnic", "briefings"));
 });
 
+test("resolveBriefingSaveDir does not read ambient REMNIC_HOME when env is injected", () => {
+  const previousRemnicHome = process.env.REMNIC_HOME;
+  const ambientHome = path.join(os.tmpdir(), "ambient-remnic-home");
+  const injectedHome = path.join(os.tmpdir(), "injected-home");
+
+  process.env.REMNIC_HOME = ambientHome;
+  try {
+    const resolved = resolveBriefingSaveDir(undefined, { HOME: injectedHome });
+    assert.equal(resolved, path.join(injectedHome, ".remnic", "briefings"));
+  } finally {
+    if (previousRemnicHome === undefined) delete process.env.REMNIC_HOME;
+    else process.env.REMNIC_HOME = previousRemnicHome;
+  }
+});
+
+test("resolveBriefingSaveDir falls back to an absolute home when injected env has no home keys", () => {
+  const resolved = resolveBriefingSaveDir(undefined, {});
+  assert.equal(resolved, path.join(os.homedir(), ".remnic", "briefings"));
+  assert.equal(path.isAbsolute(resolved), true);
+});
+
 test("resolveBriefingSaveDir treats empty overrides as absent", () => {
   const home = path.join(os.tmpdir(), "fallback-home");
   const resolved = resolveBriefingSaveDir("   ", { HOME: home });

@@ -1,6 +1,7 @@
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { log } from "./logger.js";
+import { readEnvVar } from "./runtime/env.js";
 import type { PluginConfig } from "./types.js";
 
 type EmbeddingProviderType = "openai" | "local";
@@ -97,7 +98,7 @@ const DEFAULT_EMBEDDING_LOOKUP_TIMEOUT_MS = 5000;
 const DEFAULT_EMBEDDING_INDEX_TIMEOUT_MS = 120_000;
 
 function resolveEmbeddingLookupTimeoutMs(): number {
-  const raw = process.env.REMNIC_EMBEDDING_FETCH_TIMEOUT_MS;
+  const raw = readEnvVar("REMNIC_EMBEDDING_FETCH_TIMEOUT_MS");
   if (raw) {
     const parsed = Number(raw);
     if (Number.isFinite(parsed) && parsed > 0) {
@@ -108,7 +109,7 @@ function resolveEmbeddingLookupTimeoutMs(): number {
 }
 
 function resolveEmbeddingIndexTimeoutMs(): number {
-  const raw = process.env.REMNIC_EMBEDDING_INDEX_TIMEOUT_MS;
+  const raw = readEnvVar("REMNIC_EMBEDDING_INDEX_TIMEOUT_MS");
   if (raw) {
     const parsed = Number(raw);
     if (Number.isFinite(parsed) && parsed > 0) {
@@ -559,4 +560,3 @@ function cosineSimilarity(a: number[], b: number[]): number {
   if (denom === 0) return 0;
   return dot / denom;
 }
-

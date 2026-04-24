@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import {
@@ -14,6 +13,7 @@ import {
 } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolveHomeDir } from "../runtime/env.js";
+import { launchProcessSync } from "../runtime/child-process.js";
 
 export interface MigrationResult {
   status: "fresh-install" | "already-migrated" | "migrated";
@@ -81,7 +81,16 @@ function resolveLogger(options?: MigrationOptions): (message: string) => void {
 
 function resolveExec(options?: MigrationOptions): (command: string, args: string[]) => void {
   return options?.execCommand ?? ((command: string, args: string[]) => {
-    execFileSync(command, args, { stdio: "ignore" });
+    const result = launchProcessSync(command, args, { stdio: "ignore" });
+    if (result.error) {
+      throw result.error;
+    }
+    if (result.status !== 0) {
+      const reason = result.status === null
+        ? `signal ${result.signal ?? "unknown"}`
+        : `exit code ${result.status}`;
+      throw new Error(`migration command failed: ${command} ${args.join(" ")} (${reason})`);
+    }
   });
 }
 

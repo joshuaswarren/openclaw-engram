@@ -907,7 +907,7 @@ test("checkDaemonHealth: retries exactly once on 401 (source structure check)", 
   // Verify the retry-once structure exists in the source without running a live server.
   const content = fs.readFileSync(CONNECTORS_SRC, "utf-8");
   // There must be a single retry call after the 401 branch.
-  const retryIdx = content.indexOf("const retry = spawnSync");
+  const retryIdx = content.indexOf("const retry = launchProcessSync");
   assert.ok(retryIdx >= 0, "checkDaemonHealth must perform exactly one retry");
   // The retry must check HEALTH_EXIT_OK (0) to decide success.
   const afterRetry = content.slice(retryIdx, retryIdx + 200);
@@ -916,7 +916,7 @@ test("checkDaemonHealth: retries exactly once on 401 (source structure check)", 
     "retry result must be compared against HEALTH_EXIT_OK",
   );
   // There must be only ONE retry invocation (not two).
-  const secondRetryIdx = content.indexOf("const retry = spawnSync", retryIdx + 1);
+  const secondRetryIdx = content.indexOf("const retry = launchProcessSync", retryIdx + 1);
   assert.equal(
     secondRetryIdx,
     -1,

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import os from "node:os";
 import path from "node:path";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import {
   migrateFromEngram,
@@ -271,6 +271,47 @@ test("migrateFromEngram clears malformed migration locks before acquiring a fres
   assert.equal(result.status, "migrated");
   assert.equal(existsSync(path.join(remnicRoot, ".migration.lock")), false);
   assert.equal(existsSync(path.join(remnicRoot, ".migrated-from-engram")), true);
+});
+
+test("migrateFromEngram stops a service command batch after the first command failure", {
+  skip: process.platform === "win32",
+}, async () => {
+  const homeDir = await makeTempHome("remnic-migrate-service-failure-");
+  const legacyRoot = path.join(homeDir, ".engram");
+  const legacyUnit = path.join(homeDir, ".config", "systemd", "user", "engram.service");
+  const binDir = path.join(homeDir, "bin");
+  const callsLog = path.join(homeDir, "systemctl-calls.log");
+  const fakeSystemctl = path.join(binDir, "systemctl");
+  const escapedCallsLog = callsLog.replace(/'/g, "'\\''");
+  const previousPath = process.env.PATH;
+
+  await mkdir(legacyRoot, { recursive: true });
+  await mkdir(path.dirname(legacyUnit), { recursive: true });
+  await mkdir(binDir, { recursive: true });
+  await writeFile(path.join(legacyRoot, "tokens.json"), JSON.stringify({ tokens: [] }), "utf8");
+  await writeFile(legacyUnit, "[Unit]\nDescription=engram.service\n", "utf8");
+  await writeFile(
+    fakeSystemctl,
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> '${escapedCallsLog}'\nexit 7\n`,
+    "utf8",
+  );
+  await chmod(fakeSystemctl, 0o755);
+
+  process.env.PATH = `${binDir}${path.delimiter}${previousPath ?? ""}`;
+  try {
+    await migrateFromEngram({
+      homeDir,
+      cwd: homeDir,
+      quiet: true,
+      platform: "linux",
+    });
+  } finally {
+    if (previousPath === undefined) delete process.env.PATH;
+    else process.env.PATH = previousPath;
+  }
+
+  const calls = (await readFile(callsLog, "utf8")).trim().split("\n");
+  assert.deepEqual(calls, ["--user stop engram.service"]);
 });
 
 test("rollbackFromEngramMigration restores backed up connector configs and removes created service files", async () => {

@@ -343,7 +343,7 @@ export function parseConfig(raw: unknown): PluginConfig {
   if (typeof cfg.openaiApiKey === "string" && cfg.openaiApiKey.length > 0) {
     apiKey = resolveEnvVars(cfg.openaiApiKey);
   } else {
-    apiKey = process.env.OPENAI_API_KEY;
+    apiKey = readEnvVar("OPENAI_API_KEY");
   }
 
   // API key is optional at load time — retrieval works without it.
@@ -826,11 +826,11 @@ export function parseConfig(raw: unknown): PluginConfig {
     authToken:
       typeof rawAgentAccessHttp?.authToken === "string" && rawAgentAccessHttp.authToken.trim().length > 0
         ? resolveEnvVars(rawAgentAccessHttp.authToken)
-        : process.env.OPENCLAW_REMNIC_ACCESS_TOKEN ?? process.env.OPENCLAW_ENGRAM_ACCESS_TOKEN,
+        : readEnvVar("OPENCLAW_REMNIC_ACCESS_TOKEN") ?? readEnvVar("OPENCLAW_ENGRAM_ACCESS_TOKEN"),
     principal:
       typeof rawAgentAccessHttp?.principal === "string" && rawAgentAccessHttp.principal.trim().length > 0
         ? resolveEnvVars(rawAgentAccessHttp.principal)
-        : process.env.OPENCLAW_ENGRAM_ACCESS_PRINCIPAL?.trim() || undefined,
+        : readEnvVar("OPENCLAW_ENGRAM_ACCESS_PRINCIPAL")?.trim() || undefined,
     maxBodyBytes:
       typeof rawAgentAccessHttp?.maxBodyBytes === "number"
         ? Math.max(1, Math.floor(rawAgentAccessHttp.maxBodyBytes))
@@ -841,7 +841,7 @@ export function parseConfig(raw: unknown): PluginConfig {
   if (typeof cfg.openaiBaseUrl === "string" && cfg.openaiBaseUrl.length > 0) {
     baseUrl = normalizeOpenaiBaseUrl(resolveEnvVars(cfg.openaiBaseUrl), "config");
   } else {
-    baseUrl = normalizeOpenaiBaseUrl(process.env.OPENAI_BASE_URL, "env");
+    baseUrl = normalizeOpenaiBaseUrl(readEnvVar("OPENAI_BASE_URL"), "env");
   }
 
   const sharedCrossSignalSemanticEnabled =

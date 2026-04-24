@@ -248,6 +248,7 @@ test("resolveCodexHome returns an absolute path even when HOME and USERPROFILE a
     delete process.env.USERPROFILE;
     delete process.env.CODEX_HOME;
     const result = resolveCodexHome();
+    assert.equal(result, path.resolve(os.homedir(), ".codex"));
     assert.ok(
       path.isAbsolute(result),
       `expected an absolute path, got: ${result}`,

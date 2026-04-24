@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
+import { resolveHomeDir } from "./runtime/env.js";
 
 export interface TokenEntry {
   token: string;
@@ -36,11 +37,11 @@ const TOKEN_PREFIXES: Record<string, string> = {
 };
 
 function defaultTokensPath(): string {
-  return path.join(process.env.HOME ?? "~", ".remnic", "tokens.json");
+  return path.join(resolveHomeDir(), ".remnic", "tokens.json");
 }
 
 function legacyTokensPath(): string {
-  return path.join(process.env.HOME ?? "~", ".engram", "tokens.json");
+  return path.join(resolveHomeDir(), ".engram", "tokens.json");
 }
 
 function resolveReadPath(tokensPath?: string): string {
