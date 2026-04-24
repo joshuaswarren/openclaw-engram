@@ -340,7 +340,7 @@ async function resolveResultPaths(
   resultsDir: string,
   explicitPaths: string[] | undefined,
 ): Promise<string[]> {
-  if (explicitPaths && explicitPaths.length > 0) {
+  if (explicitPaths !== undefined) {
     return [...new Set(explicitPaths.map((entry) => path.resolve(entry)))]
       .sort((left, right) => left.localeCompare(right));
   }

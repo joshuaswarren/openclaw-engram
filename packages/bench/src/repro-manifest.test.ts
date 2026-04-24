@@ -174,3 +174,21 @@ test("buildBenchmarkReproManifest rejects symlinked dataset roots", async () => 
   assert.equal(manifest.datasets[0]?.fileCount, 0);
   assert.equal(manifest.datasets[0]?.sha256, undefined);
 });
+
+test("buildBenchmarkReproManifest preserves explicitly empty result paths", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "remnic-repro-manifest-empty-results-"));
+  const resultsDir = path.join(root, "results");
+  await mkdir(resultsDir, { recursive: true });
+  await writeFile(
+    path.join(resultsDir, "longmemeval.json"),
+    `${JSON.stringify(buildResult(), null, 2)}\n`,
+    "utf8",
+  );
+
+  const manifest = await buildBenchmarkReproManifest(resultsDir, {
+    resultPaths: [],
+  });
+
+  assert.deepEqual(manifest.results, []);
+  assert.deepEqual(manifest.run.selectedBenchmarks, []);
+});
