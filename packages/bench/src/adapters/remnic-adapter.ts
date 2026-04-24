@@ -265,9 +265,52 @@ function createAdapterFactory(mode: "lightweight" | "direct") {
         if (query) {
           const searchResults = await engine.searchContextFull(query, 20, sessionId);
           if (searchResults.length > 0) {
+            const expandedByTurn = new Map<
+              string,
+              { sessionId: string; turn_index: number; role: string; content: string }
+            >();
+
+            for (const result of searchResults) {
+              const fromTurn = Math.max(0, result.turn_index - 1);
+              const toTurn = result.turn_index + 1;
+              const expanded = await engine.expandContext(
+                result.session_id,
+                fromTurn,
+                toTurn,
+                800,
+              );
+
+              if (expanded.length === 0) {
+                expandedByTurn.set(`${result.session_id}:${result.turn_index}`, {
+                  sessionId: result.session_id,
+                  turn_index: result.turn_index,
+                  role: result.role,
+                  content: result.content,
+                });
+                continue;
+              }
+
+              for (const message of expanded) {
+                expandedByTurn.set(`${result.session_id}:${message.turn_index}`, {
+                  sessionId: result.session_id,
+                  ...message,
+                });
+              }
+            }
+
+            const expandedResults = [...expandedByTurn.values()].sort((a, b) => {
+              if (a.sessionId !== b.sessionId) {
+                return a.sessionId.localeCompare(b.sessionId);
+              }
+              return a.turn_index - b.turn_index;
+            });
+
             sections.push(
-              `## Search results\n${searchResults
-                .map((result) => `[turn ${result.turn_index}, ${result.role}]: ${result.content}`)
+              `## Search results\n${expandedResults
+                .map(
+                  (result) =>
+                    `[${result.sessionId} turn ${result.turn_index}, ${result.role}]: ${result.content}`,
+                )
                 .join("\n\n")}`,
             );
           }

@@ -158,6 +158,7 @@ function parseLongMemEvalFile(raw: string, filename: string): LongMemEvalItem[] 
       `${filename} must contain an array of LongMemEval items at top level.`,
     );
   }
+  const normalized: LongMemEvalItem[] = [];
   for (let index = 0; index < parsed.length; index += 1) {
     const entry = parsed[index];
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
@@ -171,9 +172,13 @@ function parseLongMemEvalFile(raw: string, filename: string): LongMemEvalItem[] 
         `${filename} entry ${index} is missing a string question field.`,
       );
     }
-    if (typeof record.answer !== "string") {
+    if (
+      typeof record.answer !== "string" &&
+      typeof record.answer !== "number" &&
+      typeof record.answer !== "boolean"
+    ) {
       throw new Error(
-        `${filename} entry ${index} is missing a string answer field.`,
+        `${filename} entry ${index} is missing a scalar answer field.`,
       );
     }
     // Required arrays that the runner dereferences directly. Missing any
@@ -252,8 +257,12 @@ function parseLongMemEvalFile(raw: string, filename: string): LongMemEvalItem[] 
         );
       }
     }
+    normalized.push({
+      ...(record as unknown as LongMemEvalItem),
+      answer: String(record.answer),
+    });
   }
-  return parsed as LongMemEvalItem[];
+  return normalized;
 }
 
 function parseLoCoMoFile(raw: string, filename: string): LoCoMoConversation[] {

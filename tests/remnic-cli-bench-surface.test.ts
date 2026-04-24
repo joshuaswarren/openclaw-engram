@@ -105,10 +105,15 @@ test("CLI uses package-owned adapters for migrated benchmark runs", async () => 
 test("--all selection resolves to runnable package benchmarks when package metadata is available", async () => {
   const source = await readFile("packages/remnic-cli/src/index.ts", "utf8");
 
+  assert.match(source, /category === "ingestion"/);
   assert.match(source, /async function resolveAllBenchmarks\(\)/);
   assert.match(
     source,
-    /packageBenchmarks\s*\n\s*\.filter\(\s*\(entry\) =>\s*entry\.runnerAvailable\s*&&\s*entry\.meta\?\.category !== "ingestion"/s,
+    /packageBenchmarks\s*\n\s*\.filter\(\s*\(entry\) =>\s*entry\.runnerAvailable\s*\)/s,
+  );
+  assert.doesNotMatch(
+    source,
+    /packageBenchmarks[\s\S]*?entry\.meta\?\.category !== "ingestion"/,
   );
   assert.match(source, /let selectedBenchmarks = parsed\.all\s+\? await resolveAllBenchmarks\(\)/s);
   assert.match(source, /async function resolveKnownBenchmarkIds\(\): Promise<Set<string>>/);

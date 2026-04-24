@@ -53,7 +53,7 @@ export async function runMemoryArenaBenchmark(
 
   const totalTasks = dataset.reduce(
     (sum, { tasks: domainTasks }) =>
-      sum + domainTasks.reduce((tSum, task) => tSum + task.questions.length, 0),
+      sum + domainTasks.reduce((tSum, task) => tSum + scoredSubtaskCount(task), 0),
     0,
   );
 
@@ -77,20 +77,28 @@ export async function runMemoryArenaBenchmark(
 
         const expected = answerToString(expectedAnswer);
         const taskResultId = `${domain}-t${task.id}-q${questionIndex}`;
+        const isScored = shouldScoreSubtask(task, questionIndex);
 
         try {
-          await options.system.store(sessionId, [
-            { role: "user", content: question },
-            {
-              role: "assistant",
-              content: `Processing subtask ${questionIndex + 1}: ${question.slice(0, 100)}...`,
-            },
-          ]);
+          const background = backgroundForSubtask(task, questionIndex);
+          if (background) {
+            await options.system.store(sessionId, [
+              {
+                role: "system",
+                content: `MemoryArena background for subtask ${questionIndex + 1}: ${background}`,
+              },
+            ]);
+          }
 
           try {
             await options.system.drain?.();
           } catch (drainErr) {
             console.error(`  [WARN] memory-arena drain failed for ${taskResultId}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+          }
+
+          if (!isScored) {
+            await storeCompletedSubtask(options, sessionId, questionIndex, question, expected);
+            continue;
           }
 
           const { result: recalledText, durationMs } = await timed(async () =>
@@ -114,6 +122,11 @@ export async function runMemoryArenaBenchmark(
           };
           if (judgeResult.score >= 0) {
             scores.llm_judge = judgeResult.score;
+          }
+          const subtaskSuccess = scoreSubtaskSuccess(scores);
+          scores.process_score = subtaskSuccess;
+          if (questionIndex === task.questions.length - 1) {
+            scores.task_success_rate = subtaskSuccess;
           }
 
           tasks.push({
@@ -142,12 +155,7 @@ export async function runMemoryArenaBenchmark(
           });
 
           try {
-            await options.system.store(sessionId, [
-              {
-                role: "assistant",
-                content: `Answer for subtask ${questionIndex + 1}: ${expected}`,
-              },
-            ]);
+            await storeCompletedSubtask(options, sessionId, questionIndex, question, expected);
           } catch (storeErr) {
             console.error(`  [WARN] memory-arena store failed for ${taskResultId}: ${storeErr instanceof Error ? storeErr.message : String(storeErr)}`);
           }
@@ -160,19 +168,32 @@ export async function runMemoryArenaBenchmark(
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           console.error(`  [WARN] memory-arena task ${taskResultId} failed: ${message}`);
+          if (!isScored) {
+            continue;
+          }
           tasks.push({
             taskId: taskResultId,
             question,
             expected,
             actual: `(error: ${message})`,
-            scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+            scores: {
+              f1: -1,
+              contains_answer: -1,
+              llm_judge: -1,
+              process_score: 0,
+              ...(questionIndex === task.questions.length - 1
+                ? { task_success_rate: 0 }
+                : {}),
+            },
             latencyMs: 0,
             tokens: { input: 0, output: 0 },
             details: { error: message },
           });
         }
 
-        options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalTasks);
+        if (isScored) {
+          options.onTaskComplete?.(tasks[tasks.length - 1]!, tasks.length, totalTasks);
+        }
       }
     }
   }
@@ -369,12 +390,23 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
       `${location} must include an answers array of strings, objects, or arrays of those values.`,
     );
   }
+  if (
+    record.backgrounds !== undefined
+    && !isValidBackgrounds(record.backgrounds)
+  ) {
+    throw new Error(
+      `${location} backgrounds must be a string or an array of strings when provided.`,
+    );
+  }
 
   return {
     id: record.id as number,
     category,
     questions: record.questions as string[],
     answers: record.answers as ArenaExpectedAnswer[],
+    ...(record.backgrounds === undefined
+      ? {}
+      : { backgrounds: record.backgrounds as string | string[] }),
   };
 }
 
@@ -447,4 +479,76 @@ function isValidArenaAnswerObject(answer: unknown): answer is ArenaAnswer {
     return false;
   }
   return true;
+}
+
+function isValidBackgrounds(backgrounds: unknown): backgrounds is string | string[] {
+  return typeof backgrounds === "string"
+    || (Array.isArray(backgrounds)
+      && backgrounds.every((entry) => typeof entry === "string"));
+}
+
+function scoredSubtaskCount(task: ArenaTask): number {
+  return task.questions.filter((_, index) => shouldScoreSubtask(task, index)).length;
+}
+
+function shouldScoreSubtask(task: ArenaTask, questionIndex: number): boolean {
+  if (task.questions.length === 1) {
+    return true;
+  }
+  return questionIndex > 0 || Boolean(backgroundForSubtask(task, questionIndex));
+}
+
+function backgroundForSubtask(
+  task: ArenaTask,
+  questionIndex: number,
+): string | undefined {
+  const background = task.backgrounds;
+  if (typeof background === "string") {
+    return background.trim().length > 0 ? background : undefined;
+  }
+  if (Array.isArray(background)) {
+    const entry = background[questionIndex];
+    return typeof entry === "string" && entry.trim().length > 0
+      ? entry
+      : undefined;
+  }
+  return undefined;
+}
+
+async function storeCompletedSubtask(
+  options: ResolvedRunBenchmarkOptions,
+  sessionId: string,
+  questionIndex: number,
+  question: string,
+  expected: string,
+): Promise<void> {
+  await options.system.store(sessionId, [
+    {
+      role: "user",
+      content: question,
+    },
+    {
+      role: "assistant",
+      content: [
+        `MemoryArena completed subtask ${questionIndex + 1}.`,
+        `Instruction: ${question}`,
+        `Environment result: ${expected}`,
+      ].join("\n"),
+    },
+  ]);
+  try {
+    await options.system.drain?.();
+  } catch (drainErr) {
+    console.error(`  [WARN] memory-arena drain failed after completed subtask ${questionIndex + 1}: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+  }
+}
+
+function scoreSubtaskSuccess(scores: Record<string, number>): number {
+  if (typeof scores.llm_judge === "number") {
+    return scores.llm_judge >= 0.5 ? 1 : 0;
+  }
+  if (scores.contains_answer === 1) {
+    return 1;
+  }
+  return (scores.f1 ?? 0) > 0 ? 1 : 0;
 }

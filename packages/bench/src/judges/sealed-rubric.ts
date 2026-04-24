@@ -253,11 +253,11 @@ export function parseRubricResponse(raw: string): {
     };
   }
 
-  const scoreObject = parsed as Record<string, unknown>;
+  const scoreObject = unwrapScoreObject(parsed as Record<string, unknown>);
   const scores = zeroScores();
   for (const dimension of ASSISTANT_RUBRIC_DIMENSIONS) {
-    const value = scoreObject[dimension];
-    if (typeof value !== "number" || !Number.isFinite(value)) {
+    const value = coerceScoreValue(scoreObject[dimension]);
+    if (value === undefined) {
       return {
         scores: zeroScores(),
         notes: `parse_error: missing dimension ${dimension}`,
@@ -270,6 +270,47 @@ export function parseRubricResponse(raw: string): {
   const rawNotes = scoreObject.notes;
   const notes = typeof rawNotes === "string" ? rawNotes : "";
   return { scores, notes, ok: true };
+}
+
+function unwrapScoreObject(
+  parsed: Record<string, unknown>,
+): Record<string, unknown> {
+  if (hasValidCompleteRubricDimensions(parsed)) {
+    return parsed;
+  }
+
+  const nested = parsed.scores;
+  if (
+    nested &&
+    typeof nested === "object" &&
+    !Array.isArray(nested)
+  ) {
+    return {
+      ...(nested as Record<string, unknown>),
+      ...(typeof parsed.notes === "string" ? { notes: parsed.notes } : {}),
+    };
+  }
+
+  return parsed;
+}
+
+function hasValidCompleteRubricDimensions(value: Record<string, unknown>): boolean {
+  return ASSISTANT_RUBRIC_DIMENSIONS.every(
+    (dimension) => coerceScoreValue(value[dimension]) !== undefined,
+  );
+}
+
+function coerceScoreValue(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
 }
 
 /**

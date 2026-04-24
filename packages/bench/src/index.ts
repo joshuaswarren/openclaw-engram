@@ -81,7 +81,18 @@ export {
   createLightweightAdapter,
   createRemnicAdapter,
 } from "./adapters/remnic-adapter.js";
+export {
+  createTimeoutGuardedAdapter,
+  resolveBenchmarkPhaseTimeoutMs,
+  resolveBenchmarkProgressLogging,
+} from "./adapters/timeout-guard.js";
 export type { RemnicAdapterOptions } from "./adapters/remnic-adapter.js";
+export {
+  createSyntheticEmailIngestionAdapter,
+} from "./ingestion-adapters/synthetic-email-adapter.js";
+export type {
+  SyntheticEmailIngestionAdapterOptions,
+} from "./ingestion-adapters/synthetic-email-adapter.js";
 export type {
   AnthropicProviderConfig,
   CompletionOpts,

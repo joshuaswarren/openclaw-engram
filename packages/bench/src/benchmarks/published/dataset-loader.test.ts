@@ -248,7 +248,7 @@ test("loadLongMemEvalS rejects entries missing haystack_sessions array", async (
   });
 });
 
-test("loadLongMemEvalS rejects entries missing a string answer", async () => {
+test("loadLongMemEvalS rejects entries missing a scalar answer", async () => {
   await withTempDir(async (dir) => {
     await writeFile(
       path.join(dir, "longmemeval_oracle.json"),
@@ -273,7 +273,7 @@ test("loadLongMemEvalS rejects entries missing a string answer", async () => {
     });
     assert.equal(result.source, "missing");
     assert.ok(
-      result.errors.some((entry) => /string answer field/.test(entry)),
+      result.errors.some((entry) => /scalar answer field/.test(entry)),
     );
   });
 });

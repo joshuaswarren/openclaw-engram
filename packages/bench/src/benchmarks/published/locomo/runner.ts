@@ -107,6 +107,7 @@ export async function runLoCoMoBenchmark(
       metrics: ["f1", "contains_answer", "rouge_l", "llm_judge"],
     },
     plans,
+    totalCount: plans.reduce((sum, plan) => sum + plan.trials.length, 0),
   });
 }
 

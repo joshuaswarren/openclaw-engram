@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type {
@@ -55,8 +55,8 @@ export async function runIngestionSetupFrictionBenchmark(
       await writeFile(filePath, file.content, "utf8");
     }
 
-    const { result: ingestionLog, durationMs } = await timed(() =>
-      options.ingestionAdapter!.ingest(fixtureDir),
+    const { result: ingestionLog, durationMs } = await timed(async () =>
+      options.ingestionAdapter!.ingest(await realpath(fixtureDir)),
     );
 
     const commandsCount = ingestionLog.commandsIssued.length;

@@ -5,6 +5,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { EngramAccessService } from "@remnic/core";
+import {
+  createTimeoutGuardedAdapter,
+  createTimeoutGuardedIngestionAdapter,
+  resolveBenchmarkPhaseTimeoutMs,
+  resolveBenchmarkProgressLogging,
+} from "./adapters/timeout-guard.js";
+import { createSyntheticEmailIngestionAdapter } from "./ingestion-adapters/synthetic-email-adapter.js";
 import { getRegisteredBenchmark, listBenchmarks, getBenchmark } from "./registry.js";
 import { finalizeBenchmarkResultConfig } from "./result-config.js";
 import { buildBenchmarkRunSeeds } from "./run-seeds.js";
@@ -124,19 +131,64 @@ export async function runBenchmark(
   }
 
   const definition = benchmarkDefinition(registeredBenchmark.id);
-  if (definition.meta.category === "ingestion" && !options.ingestionAdapter) {
+  const timeoutMs = resolveBenchmarkPhaseTimeoutMs(options);
+  const logProgress = resolveBenchmarkProgressLogging(options.remnicConfig);
+  const log = (message: string): void => {
+    console.error(`  ${message}`);
+  };
+  const system =
+    timeoutMs === undefined
+      ? options.system
+      : createTimeoutGuardedAdapter(options.system, {
+          benchmarkId,
+          timeoutMs,
+          logProgress,
+          log,
+        });
+  const rawIngestionAdapter =
+    options.ingestionAdapter ??
+    (definition.meta.category === "ingestion"
+      ? createSyntheticEmailIngestionAdapter({ system })
+      : undefined);
+  const ownsIngestionAdapter =
+    options.ingestionAdapter === undefined && rawIngestionAdapter !== undefined;
+  let ownedIngestionAdapterDestroyPromise: Promise<void> | undefined;
+  const destroyOwnedIngestionAdapter = async (): Promise<void> => {
+    if (!ownsIngestionAdapter) {
+      return;
+    }
+    ownedIngestionAdapterDestroyPromise ??= rawIngestionAdapter.destroy();
+    await ownedIngestionAdapterDestroyPromise;
+  };
+  if (definition.meta.category === "ingestion" && !rawIngestionAdapter) {
     throw new Error(
       `Benchmark "${benchmarkId}" requires an ingestion adapter. ` +
-      `Pass ingestionAdapter via RunBenchmarkOptions or use the programmatic API. ` +
-      `The CLI does not yet support ingestion benchmarks.`,
+      `Pass ingestionAdapter via RunBenchmarkOptions or use the programmatic API.`,
     );
   }
+  const ingestionAdapter =
+    rawIngestionAdapter && timeoutMs !== undefined
+      ? createTimeoutGuardedIngestionAdapter(rawIngestionAdapter, {
+          benchmarkId,
+          timeoutMs,
+          logProgress,
+          log,
+          onTimeout: destroyOwnedIngestionAdapter,
+        })
+      : rawIngestionAdapter;
 
-  const result = await registeredBenchmark.run({
-    ...options,
-    mode: options.mode ?? "quick",
-    benchmark: definition,
-  });
+  let result: BenchmarkResult;
+  try {
+    result = await registeredBenchmark.run({
+      ...options,
+      system,
+      ...(ingestionAdapter ? { ingestionAdapter } : {}),
+      mode: options.mode ?? "quick",
+      benchmark: definition,
+    });
+  } finally {
+    await destroyOwnedIngestionAdapter();
+  }
 
   return finalizeBenchmarkResultConfig(result, options);
 }
