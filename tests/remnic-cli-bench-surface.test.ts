@@ -143,7 +143,7 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(parserSource, /custom: customRaw \? path\.resolve\(expandTilde\(customRaw\)\) : undefined/);
   assert.match(source, /resolveBenchDatasetDir\(\s*benchmarkId,\s*parsed\.quick,\s*parsed\.datasetDir/s);
   assert.match(source, /if \(parsed\.custom\) \{/);
-  assert.match(source, /const outputDir = resolveBenchOutputDir\(\);/);
+  assert.match(source, /const outputDir = parsed\.resultsDir \?\? resolveBenchOutputDir\(\);/);
   assert.match(source, /const datasetDir = resolveBenchDatasetDir\(/);
   assert.doesNotMatch(source, /full benchmark runs for "\$\{benchmarkId\}" require dataset files/);
   assert.match(source, /const runtime = await resolvePackageBenchRuntime\(/);
@@ -151,6 +151,8 @@ test("bench CLI validates and resolves explicit dataset overrides for full packa
   assert.match(source, /const system = await plan\.createAdapter\(plan\.runtime\.adapterOptions\);/);
   assert.match(source, /remnicConfig: plan\.runtime\.effectiveRemnicConfig,/);
   assert.match(source, /result\.config\.remnicConfig = plan\.runtime\.remnicConfig;/);
+  assert.match(source, /writeBenchReproManifestForPackageRun/);
+  assert.match(source, /writeBenchmarkReproManifest/);
 });
 
 test("parseBenchArgs supports custom benchmark files without counting them as benchmark ids", async () => {

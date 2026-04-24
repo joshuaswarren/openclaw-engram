@@ -110,6 +110,19 @@ export type {
 
 export { BENCHMARK_RESULT_SCHEMA } from "./schema.js";
 export {
+  BENCHMARK_REPRO_MANIFEST_FILENAME,
+  BENCHMARK_REPRO_MANIFEST_SCHEMA_VERSION,
+  buildBenchmarkReproManifest,
+  writeBenchmarkReproManifest,
+} from "./repro-manifest.js";
+export type {
+  BuildBenchmarkReproManifestOptions,
+  BenchmarkReproManifest,
+  BenchmarkReproManifestDataset,
+  BenchmarkReproManifestFile,
+  BenchmarkReproManifestResult,
+} from "./repro-manifest.js";
+export {
   BENCHMARK_ARTIFACT_SCHEMA_VERSION,
   buildBenchmarkArtifact,
   buildBenchmarkArtifactFilename,
