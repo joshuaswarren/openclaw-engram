@@ -8,7 +8,8 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "packages/plugin-openclaw/**"
-      - "packages/remnic-core/src/resolve-provider-secret.ts"
+      - "packages/remnic-core/src/**"
+      - "src/**"
       - "scripts/openclaw-plugin-security-scan.mjs"
       - "tests/openclaw-plugin-dangerous-scan.test.ts"
   push:
@@ -18,7 +19,8 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "packages/plugin-openclaw/**"
-      - "packages/remnic-core/src/resolve-provider-secret.ts"
+      - "packages/remnic-core/src/**"
+      - "src/**"
       - "scripts/openclaw-plugin-security-scan.mjs"
       - "tests/openclaw-plugin-dangerous-scan.test.ts"
   schedule:
