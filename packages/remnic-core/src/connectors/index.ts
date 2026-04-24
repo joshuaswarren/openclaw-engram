@@ -2409,7 +2409,7 @@ export interface RemoveCodexMemoryExtensionResult extends CodexMemoryExtensionPa
  * Resolve the Codex home directory. Precedence:
  *   1. explicit `override` argument (from config)
  *   2. `$CODEX_HOME` env var
- *   3. `~/.codex`
+ *   3. `$HOME/.codex`, `$USERPROFILE/.codex`, or the OS home directory
  */
 export function resolveCodexHome(override?: string | null): string {
   if (override && typeof override === "string" && override.trim().length > 0) {
@@ -2419,11 +2419,7 @@ export function resolveCodexHome(override?: string | null): string {
   if (envHome && envHome.trim().length > 0) {
     return path.resolve(envHome.trim());
   }
-  const home = readEnvVar("HOME") ?? readEnvVar("USERPROFILE") ?? "~";
-  // Use path.resolve so the result is always absolute. When both HOME and
-  // USERPROFILE are unset we fall back to the literal "~" sentinel and
-  // path.resolve("~", ".codex") resolves it against cwd — not ideal, but
-  // still an absolute path. A cleaner error can be added later if needed.
+  const home = readEnvVar("HOME") || readEnvVar("USERPROFILE") || resolveHomeDir();
   return path.resolve(home, ".codex");
 }
 
