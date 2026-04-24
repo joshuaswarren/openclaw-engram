@@ -2260,6 +2260,7 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
 
   const outputDir = parsed.resultsDir ?? resolveBenchOutputDir();
   const writtenPaths: string[] = [];
+  const customBenchmarkIds: string[] = [];
   for (const plan of plans) {
     const system = await plan.createAdapter(plan.runtime.adapterOptions);
 
@@ -2276,6 +2277,7 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
         system,
       });
       result.config.remnicConfig = plan.runtime.remnicConfig;
+      customBenchmarkIds.push(result.meta.benchmark);
       const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
       writtenPaths.push(writtenPath);
       if (parsed.json) {
@@ -2290,7 +2292,7 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
 
   await writeBenchReproManifestForPackageRun({
     parsed,
-    benchmarkIds: parsed.custom ? [path.basename(parsed.custom)] : [],
+    benchmarkIds: [...new Set(customBenchmarkIds)],
     runtimeProfiles,
     resultPaths: writtenPaths,
   });
