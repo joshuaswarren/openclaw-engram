@@ -88,6 +88,11 @@ test("buildBenchmarkReproManifest hashes datasets/results and redacts secret arg
         "--system-api-key",
         "secret-value",
         "--judge-api-key=other-secret",
+        "--max-tokens",
+        "2048",
+        "--output-token-limit=128",
+        "--auth-token",
+        "auth-secret",
         "next-positional",
       ],
       env: { OLLAMA_API_KEY: "secret-value", QMD_CONFIG_DIR: "/tmp/qmd" },
@@ -106,6 +111,11 @@ test("buildBenchmarkReproManifest hashes datasets/results and redacts secret arg
     "--system-api-key",
     "[redacted]",
     "--judge-api-key=[redacted]",
+    "--max-tokens",
+    "2048",
+    "--output-token-limit=128",
+    "--auth-token",
+    "[redacted]",
     "next-positional",
   ]);
   assert.deepEqual(manifest.command.envKeys, ["OLLAMA_API_KEY", "QMD_CONFIG_DIR"]);
@@ -120,7 +130,7 @@ test("buildBenchmarkReproManifest hashes datasets/results and redacts secret arg
     "bench-hot",
   ]);
   assert.ok(/^[0-9a-f]{64}$/.test(manifest.artifactHash));
-  assert.doesNotMatch(JSON.stringify(manifest), /secret-value|other-secret/);
+  assert.doesNotMatch(JSON.stringify(manifest), /secret-value|other-secret|auth-secret/);
 });
 
 test("writeBenchmarkReproManifest writes MANIFEST.json beside results", async () => {

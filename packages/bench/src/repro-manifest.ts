@@ -126,7 +126,7 @@ const SECRET_ARG_FLAGS = new Set([
   "--auth-token",
 ]);
 
-const SECRET_KEY_PATTERN = /(?:api[_-]?key|token|secret|password|authorization)/i;
+const SECRET_KEY_PATTERN = /(^|[-_])(?:api[-_]?key|secret|password|authorization|credential|access[-_]?token|auth[-_]?token|refresh[-_]?token|id[-_]?token|token)$/i;
 
 function sha256String(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -317,8 +317,8 @@ async function buildDatasetManifest(
 async function buildResultManifest(
   resultsDir: string,
   resultPath: string,
+  result: BenchmarkResult,
 ): Promise<BenchmarkReproManifestResult> {
-  const result = await loadBenchmarkResult(resultPath);
   const fileStats = await stat(resultPath);
   return {
     path: path.relative(resultsDir, resultPath).split(path.sep).join("/"),
@@ -416,7 +416,9 @@ export async function buildBenchmarkReproManifest(
   const resultPaths = await resolveResultPaths(resolvedResultsDir, options.resultPaths);
   const loadedResults = await Promise.all(resultPaths.map((resultPath) => loadBenchmarkResult(resultPath)));
   const resultEntries = await Promise.all(
-    resultPaths.map((resultPath) => buildResultManifest(resolvedResultsDir, resultPath)),
+    resultPaths.map((resultPath, index) =>
+      buildResultManifest(resolvedResultsDir, resultPath, loadedResults[index]!),
+    ),
   );
   const selectedBenchmarks = options.selectedBenchmarks ??
     [...new Set(loadedResults.map((result) => result.meta.benchmark))].sort();
