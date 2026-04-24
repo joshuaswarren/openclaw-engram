@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  checks: read
   issues: read
   pull-requests: read
 
@@ -78,6 +79,16 @@ jobs:
               per_page: 100,
             });
 
+            const headSha = context.payload.pull_request?.head?.sha;
+            const checkRuns = headSha
+              ? await github.paginate(github.rest.checks.listForRef, {
+                  owner,
+                  repo,
+                  ref: headSha,
+                  per_page: 100,
+                })
+              : [];
+
             const latestByUser = new Map();
             for (const review of reviews) {
               const login = review.user?.login?.toLowerCase();
@@ -88,6 +99,14 @@ jobs:
               const login = comment.user?.login?.toLowerCase();
               if (!login) continue;
               if (!latestByUser.has(login)) latestByUser.set(login, "COMMENTED");
+            }
+            for (const checkRun of checkRuns) {
+              if (!["success", "failure", "neutral"].includes(checkRun.conclusion)) continue;
+              for (const appName of [checkRun.app?.slug, checkRun.app?.name]) {
+                const login = appName?.toLowerCase();
+                if (!login) continue;
+                if (!latestByUser.has(login)) latestByUser.set(login, "CHECK_RUN");
+              }
             }
 
             const present = [];
