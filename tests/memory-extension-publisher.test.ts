@@ -102,6 +102,20 @@ test("Codex publisher: resolveExtensionRoot falls back to ~/.codex", async () =>
   assert.equal(root, path.join("/home/test", ".codex", "memories_extensions", "remnic"));
 });
 
+test("Codex publisher: resolveExtensionRoot does not read ambient CODEX_HOME when env is injected", async () => {
+  const pub = new CodexMemoryExtensionPublisher();
+  const previousCodexHome = process.env.CODEX_HOME;
+
+  process.env.CODEX_HOME = "/ambient/codex";
+  try {
+    const root = await pub.resolveExtensionRoot({ HOME: "/home/injected" });
+    assert.equal(root, path.join("/home/injected", ".codex", "memories_extensions", "remnic"));
+  } finally {
+    if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previousCodexHome;
+  }
+});
+
 test("Codex publisher: publish writes instructions.md to tmp dir", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-pub-test-"));
   const codexHome = path.join(tmpDir, ".codex");

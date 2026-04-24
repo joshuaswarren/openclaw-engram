@@ -44,10 +44,9 @@ export class CodexMemoryExtensionPublisher implements MemoryExtensionPublisher {
   async resolveExtensionRoot(
     env?: NodeJS.ProcessEnv,
   ): Promise<string> {
-    const codexHome =
-      env?.CODEX_HOME?.trim() ||
-      readEnvVar("CODEX_HOME")?.trim() ||
-      path.join(env?.HOME ?? resolveHomeDir(), ".codex");
+    const codexHome = env === undefined
+      ? readEnvVar("CODEX_HOME")?.trim() || path.join(resolveHomeDir(), ".codex")
+      : env.CODEX_HOME?.trim() || path.join(env.HOME ?? env.USERPROFILE ?? ".", ".codex");
     return path.join(codexHome, "memories_extensions", REMNIC_EXTENSION_DIR_NAME);
   }
 

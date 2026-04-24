@@ -1344,11 +1344,13 @@ export function resolveBriefingSaveDir(
   if (typeof configOverride === "string" && configOverride.trim().length > 0) {
     return path.resolve(configOverride.trim());
   }
-  const remnicHome = (env?.REMNIC_HOME ?? readEnvVar("REMNIC_HOME"))?.trim();
+  const remnicHome = (env === undefined ? readEnvVar("REMNIC_HOME") : env.REMNIC_HOME)?.trim();
   if (remnicHome && remnicHome.length > 0) {
     return path.join(remnicHome, "briefings");
   }
-  const home = env?.HOME ?? env?.USERPROFILE ?? resolveHomeDir();
+  const home = env === undefined
+    ? resolveHomeDir()
+    : env.HOME ?? env.USERPROFILE ?? ".";
   return path.join(home, ".remnic", "briefings");
 }
 
