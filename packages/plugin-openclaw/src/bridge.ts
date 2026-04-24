@@ -10,6 +10,7 @@
 
 import { existsSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
+import { Worker } from "node:worker_threads";
 
 export type BridgeMode = "embedded" | "delegate";
 
@@ -22,6 +23,48 @@ export interface BridgeConfig {
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 4318;
 const LEGACY_HEALTH_PATH = "/engram/v1/health";
+const SYNC_HEALTH_TIMEOUT_MS = 750;
+const HEALTH_WORKER_SOURCE = `
+import { request } from "node:http";
+import { workerData } from "node:worker_threads";
+
+const view = new Int32Array(workerData.state);
+let completed = false;
+
+function finish(ok) {
+  if (completed) return;
+  completed = true;
+  Atomics.store(view, 0, ok ? 1 : 2);
+  Atomics.notify(view, 0);
+}
+
+try {
+  const headers = {};
+  if (workerData.token) headers.Authorization = "Bearer " + workerData.token;
+  const req = request(
+    {
+      hostname: workerData.host,
+      port: workerData.port,
+      path: workerData.path,
+      method: "GET",
+      timeout: workerData.timeoutMs,
+      headers,
+    },
+    (res) => {
+      finish(res.statusCode === 200);
+      res.resume();
+    },
+  );
+  req.on("error", () => finish(false));
+  req.on("timeout", () => {
+    req.destroy();
+    finish(false);
+  });
+  req.end();
+} catch {
+  finish(false);
+}
+`;
 const LAUNCHD_SERVICE_PATHS = [
   ["Library", "LaunchAgents", "ai.remnic.daemon.plist"],
   ["Library", "LaunchAgents", "ai.engram.daemon.plist"],
@@ -88,6 +131,36 @@ function isDaemonServiceConfigured(): boolean {
   return false;
 }
 
+function checkDaemonHealthSync(host: string, port: number, timeoutMs = SYNC_HEALTH_TIMEOUT_MS): boolean {
+  if (!host || !Number.isInteger(port) || port <= 0 || port > 65535) return false;
+
+  let worker: Worker | undefined;
+  try {
+    const state = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const view = new Int32Array(state);
+    const workerUrl = new URL(`data:text/javascript,${encodeURIComponent(HEALTH_WORKER_SOURCE)}`);
+    worker = new Worker(workerUrl, {
+      type: "module",
+      workerData: {
+        host,
+        port,
+        path: LEGACY_HEALTH_PATH,
+        token: loadAnyToken(),
+        timeoutMs,
+        state,
+      },
+    });
+
+    Atomics.wait(view, 0, 0, timeoutMs + 250);
+    const status = Atomics.load(view, 0);
+    if (status === 0) void worker.terminate();
+    return status === 1;
+  } catch {
+    if (worker) void worker.terminate();
+    return false;
+  }
+}
+
 /**
  * Read daemon port from environment or remnic config.
  */
@@ -135,19 +208,22 @@ export function detectBridgeMode(): BridgeConfig {
     };
   }
 
-  // Auto-detect: if daemon is running or service-managed, delegate; otherwise embedded.
-  if (isDaemonRunning() || isDaemonServiceConfigured()) {
+  const daemonHost = readCompatEnv("REMNIC_HOST", "ENGRAM_HOST") ?? DEFAULT_HOST;
+  const daemonPort = readDaemonPort();
+
+  // Auto-detect: if daemon is running or service-managed and live, delegate; otherwise embedded.
+  if (isDaemonRunning() || (isDaemonServiceConfigured() && checkDaemonHealthSync(daemonHost, daemonPort))) {
     return {
       mode: "delegate",
-      daemonHost: readCompatEnv("REMNIC_HOST", "ENGRAM_HOST") ?? DEFAULT_HOST,
-      daemonPort: readDaemonPort(),
+      daemonHost,
+      daemonPort,
     };
   }
 
   return {
     mode: "embedded",
     daemonHost: DEFAULT_HOST,
-    daemonPort: readDaemonPort(),
+    daemonPort,
   };
 }
 
