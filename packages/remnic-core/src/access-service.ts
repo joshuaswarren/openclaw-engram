@@ -1554,6 +1554,19 @@ export class EngramAccessService {
       // an empty snapshot.
       throw new Error("recallXray: query is required and must be non-empty");
     }
+    // Validate disclosure UP FRONT — before recall executes, before
+    // the xray queue mutex is acquired, before namespace resolution.
+    // A bad value should fail fast rather than after we've burned
+    // cycles on an irreversible recall (Cursor Medium review on PR
+    // #699).
+    if (
+      request.disclosure !== undefined &&
+      !isRecallDisclosure(request.disclosure)
+    ) {
+      throw new EngramAccessInputError(
+        `recallXray: disclosure must be one of: chunk, section, raw (got: ${String(request.disclosure)})`,
+      );
+    }
 
     const namespacesEnabled = this.orchestrator.config.namespacesEnabled;
     const requestedNamespace = request.namespace?.trim()
@@ -1666,15 +1679,9 @@ export class EngramAccessService {
       // and raw use full content.  Best-effort only — a missing
       // memory or read failure is silently dropped (CLAUDE.md rule 13).
       if (request.disclosure !== undefined) {
-        // Validate disclosure input — recallXray must reject invalid
-        // values rather than writing them straight into result metadata
-        // (Codex P2 review on PR #699).  Aligned with `recall()` above.
-        if (!isRecallDisclosure(request.disclosure)) {
-          throw new EngramAccessInputError(
-            `recallXray: disclosure must be one of: chunk, section, raw (got: ${String(request.disclosure)})`,
-          );
-        }
-        const disclosure = request.disclosure;
+        // Disclosure already validated up front; pin to the narrowed
+        // type here.  Re-validation inside the queue would be dead code.
+        const disclosure: RecallDisclosure = request.disclosure;
         const namespace = snapshot.namespace
           ? this.resolveNamespace(snapshot.namespace)
           : this.orchestrator.config.defaultNamespace;
@@ -1722,7 +1729,16 @@ export class EngramAccessService {
           (await this.orchestrator.getStorage(namespace)).dir;
         const decorated = snapshot.results.map((result, index) => {
           const memory = memoryByIndex[index];
-          if (!memory) return result;
+          if (!memory) {
+            // Unreadable result: attach the disclosure tag anyway so
+            // the per-disclosure summary classifies it correctly,
+            // but skip the token estimate since we don't have the
+            // content to measure.  Without the disclosure tag the
+            // result silently flows into the `unspecified` bucket
+            // even though the caller explicitly requested a depth
+            // (Cursor Low review on PR #699).
+            return { ...result, disclosure };
+          }
           // Build a representative shaped summary so the estimate
           // counts every field `shapeMemorySummary` actually emits.
           // The serialized JSON form is a close-enough proxy for the
