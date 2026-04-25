@@ -3586,7 +3586,11 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             if (reportHasMachineReadableOutput(options)) {
               console.log(JSON.stringify({ ok: false, error: message }, null, 2));
             } else {
-              console.error(`tier explain: ${message}`);
+              console.error(
+                message.startsWith("tier explain:")
+                  ? message
+                  : `tier explain: ${message}`,
+              );
             }
             process.exitCode = 1;
           }
