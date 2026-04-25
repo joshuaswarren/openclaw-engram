@@ -84,6 +84,7 @@ import type {
 } from "./types.js";
 import { DEFAULT_RECALL_DISCLOSURE, isRecallDisclosure } from "./types.js";
 import { estimateRecallTokens } from "./recall-xray.js";
+import { decideDisclosureEscalation } from "./recall-disclosure-escalation.js";
 import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
 import type { SemanticDedupLookup } from "./dedup/semantic.js";
@@ -1350,8 +1351,10 @@ export class EngramAccessService {
     // Disclosure depth (issue #677).  Default to `"chunk"` when omitted so
     // pre-#677 callers see unchanged behavior.  Reject explicitly invalid
     // string values per CLAUDE.md rule 51 (do not silently fall back).
-    const disclosure: RecallDisclosure = (() => {
-      if (request.disclosure === undefined || request.disclosure === null) {
+    const callerProvidedDisclosure =
+      request.disclosure !== undefined && request.disclosure !== null;
+    const requestedDisclosure: RecallDisclosure = (() => {
+      if (!callerProvidedDisclosure) {
         return DEFAULT_RECALL_DISCLOSURE;
       }
       if (!isRecallDisclosure(request.disclosure)) {
@@ -1476,6 +1479,62 @@ export class EngramAccessService {
     const effectiveNamespace = snapshot?.namespace
       ? this.resolveNamespace(snapshot.namespace)
       : namespace;
+    // Auto-escalation policy (issue #677 PR 4/4).  When the operator
+    // configured `recallDisclosureEscalation: "auto"` AND the caller
+    // did not explicitly choose a disclosure level AND recall produced
+    // a low-confidence result set (proxied by fill ratio: results
+    // returned / topK requested), we escalate the default `chunk`
+    // shape to `section` so the LLM gets richer context to compensate
+    // for ambiguous retrieval.  Manual mode and explicit caller
+    // disclosure both bypass the policy.  Documented in
+    // `recall-disclosure-escalation.ts` and unit-tested there.
+    // Confidence-proxy denominator: priority order is
+    //   1. `snapshot.budgetsApplied.appliedTopK` (ALWAYS wins) — this is
+    //      the limit the orchestrator actually applied after planner /
+    //      minimal-mode / section-cap narrowing.  Codex P1 rounds 2+3
+    //      on #705 emphasize that even a caller's explicit `request.topK`
+    //      is wrong when the orchestrator caps below it (e.g. topK=50
+    //      but appliedTopK=3 makes a 2-hit recall actually 0.67, not
+    //      0.04).
+    //   2. The caller's explicit `topK` when the snapshot lacks
+    //      `budgetsApplied` (early-return paths, error cases).
+    //   3. Config `qmdMaxResults` as a last-resort fallback.
+    // Floor at observed-results so the ratio stays in [0, 1] even if
+    // any of the signals drifts below the actual hit count.
+    const resultsReturned = snapshot?.memoryIds?.length ?? 0;
+    const appliedTopK = snapshot?.budgetsApplied?.appliedTopK;
+    const configMaxResults =
+      typeof this.orchestrator.config.qmdMaxResults === "number" &&
+      Number.isFinite(this.orchestrator.config.qmdMaxResults) &&
+      this.orchestrator.config.qmdMaxResults > 0
+        ? this.orchestrator.config.qmdMaxResults
+        : 0;
+    const topKDenominator =
+      typeof appliedTopK === "number" &&
+      Number.isFinite(appliedTopK) &&
+      appliedTopK > 0
+        ? Math.max(appliedTopK, resultsReturned)
+        : typeof topK === "number" && topK > 0
+          ? Math.max(topK, resultsReturned)
+          : Math.max(configMaxResults, resultsReturned, 1);
+    // When the recall produced no snapshot (sessionless / namespace
+    // mismatch / early-return path), there is no confidence signal to
+    // base escalation on.  Pass `undefined` so the helper takes its
+    // `no-top-k-confidence` branch instead of computing 0/N=0 and
+    // forcing auto-escalation on every sessionless caller (Codex P2
+    // review on PR #705).
+    const topKConfidence =
+      snapshot && topKDenominator > 0
+        ? Math.min(1, resultsReturned / topKDenominator)
+        : undefined;
+    const escalationDecision = decideDisclosureEscalation({
+      mode: this.orchestrator.config.recallDisclosureEscalation,
+      threshold: this.orchestrator.config.recallDisclosureEscalationThreshold,
+      originalDisclosure: requestedDisclosure,
+      callerProvidedDisclosure,
+      topKConfidence,
+    });
+    const disclosure = escalationDecision.effective;
     const results = await this.serializeRecallResults(snapshot, disclosure, {
       query,
       sessionKey: request.sessionKey,

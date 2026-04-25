@@ -2032,6 +2032,22 @@
         "default": true,
         "description": "When true, recall runs the direct-answer tier in observation mode: annotates LastRecallSnapshot.tierExplain with which tier would have served the query (issue #518). Does not short-circuit the QMD path in the current release."
       },
+      "recallDisclosureEscalation": {
+        "type": "string",
+        "enum": [
+          "manual",
+          "auto"
+        ],
+        "default": "manual",
+        "description": "Disclosure auto-escalation policy (issue #677 PR 4/4). When 'auto', recalls without an explicit caller-supplied disclosure escalate from chunk to section if the top-K confidence falls below recallDisclosureEscalationThreshold. 'raw' is never auto-selected. Default 'manual' preserves pre-#677 behavior."
+      },
+      "recallDisclosureEscalationThreshold": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.5,
+        "description": "Top-K confidence threshold (0-1) below which auto-escalation promotes chunk to section. Only consulted when recallDisclosureEscalation is 'auto'. Default 0.5."
+      },
       "recallGraphEnabled": {
         "type": "boolean",
         "default": false,
@@ -4296,6 +4312,16 @@
     "recallDirectAnswerEnabled": {
       "label": "Direct-Answer Retrieval Tier",
       "help": "Route validated high-trust queries to a fast direct-answer path before QMD (issue #518)."
+    },
+    "recallDisclosureEscalation": {
+      "label": "Disclosure Auto-Escalation",
+      "help": "Auto-promote default chunk recalls to section when top-K confidence is low (issue #677 PR 4/4). Set to 'auto' to enable; 'manual' (default) preserves pre-#677 behavior."
+    },
+    "recallDisclosureEscalationThreshold": {
+      "label": "Disclosure Escalation Threshold",
+      "advanced": true,
+      "placeholder": "0.5",
+      "help": "Top-K confidence (0-1) below which auto-escalation triggers. Only consulted when Disclosure Auto-Escalation is set to 'auto'."
     },
     "recallGraphEnabled": {
       "label": "Graph Retrieval (PPR)",
