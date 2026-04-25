@@ -145,18 +145,18 @@ cron will hard-delete forgotten memories after a configurable retention window
 
 ## Operator visibility (#686 PR 5/6)
 
-Current CLI surfaces give operators a window into the tier substrate without
-manually walking the filesystem:
+Current OpenClaw plugin CLI surfaces give operators a window into the tier
+substrate without manually walking the filesystem:
 
 ```bash
 # Migration telemetry and last-cycle summary
-remnic tier-status
+openclaw engram tier-status
 
 # One bounded migration pass; dry-run by default
-remnic tier-migrate --dry-run --limit 50
+openclaw engram tier-migrate --dry-run --limit 50
 
 # Explain the most recent recall snapshot
-remnic recall-explain --format json
+openclaw engram recall-explain --format json
 ```
 
 `tier-status` reports cumulative migration counters plus the latest cycle
@@ -205,10 +205,10 @@ See `docs/config-reference.md` for the full schema.
 Three signals together let an operator confirm the policy is doing the
 right thing:
 
-1. `remnic tier-status` — are migration cycles running and moving the expected counts?
+1. `openclaw engram tier-status` — are migration cycles running and moving the expected counts?
 2. `remnic doctor` — does the lifecycle ledger show recent migrations?
-3. `remnic recall-explain --format json` — for a surprising recall, which
-   snapshot and tier signals were recorded?
+3. `openclaw engram recall-explain --format json` — for a surprising recall,
+   which snapshot and tier signals were recorded?
 
 When the answer is "the policy is right but the threshold is wrong," tune the
 `lifecycle*` and `qmdTier*` config knobs and re-run the aged-dataset bench to
