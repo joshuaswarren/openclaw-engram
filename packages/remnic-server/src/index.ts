@@ -14,7 +14,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { parseConfig, Orchestrator, EngramAccessService, EngramAccessHttpServer, initLogger, log, getAllValidTokens, getAllValidTokensCached, type PluginConfig } from "@remnic/core";
+import { parseConfig, Orchestrator, EngramAccessService, EngramAccessHttpServer, initLogger, log, getAllValidTokens, getAllValidTokensCached, expandTildePath, type PluginConfig } from "@remnic/core";
 
 // ── Config loading ──────────────────────────────────────────────────────────
 
@@ -27,6 +27,7 @@ export interface ServerConfig {
     principal?: string;
     maxBodyBytes?: number;
     adminConsoleEnabled?: boolean;
+    adminConsolePublicDir?: string;
   };
 }
 
@@ -163,6 +164,9 @@ export async function startServer(options?: {
     principal: serverConfig.principal,
     maxBodyBytes: serverConfig.maxBodyBytes,
     adminConsoleEnabled: serverConfig.adminConsoleEnabled ?? false,
+    adminConsolePublicDir: serverConfig.adminConsolePublicDir
+      ? path.resolve(expandTildePath(serverConfig.adminConsolePublicDir))
+      : undefined,
     citationsEnabled: config.citationsEnabled,
     citationsAutoDetect: config.citationsAutoDetect,
   });
