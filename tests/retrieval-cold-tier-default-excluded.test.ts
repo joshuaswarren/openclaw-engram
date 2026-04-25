@@ -279,32 +279,26 @@ test("AST audit: every fetchQmdMemoryResultsWithArtifactTopUp call resolves to h
     if (ts.isObjectLiteralExpression(arg)) {
       return resolveObjectLiteral(arg);
     }
-    if (ts.isIdentifier(arg)) {
-      // Find the variable declaration in the enclosing function.
-      const decl = findVariableDeclaration(arg);
-      if (!decl) {
-        return {
-          kind: "unknown",
-          reason: `identifier ${arg.text} has no resolvable declaration`,
-        };
-      }
-      if (!decl.initializer) {
-        return {
-          kind: "unknown",
-          reason: `${arg.text} has no initializer`,
-        };
-      }
-      if (!ts.isObjectLiteralExpression(decl.initializer)) {
-        return {
-          kind: "unknown",
-          reason: `${arg.text} initializer is not an object literal`,
-        };
-      }
-      return resolveObjectLiteral(decl.initializer);
-    }
+    // Tripwire-conservative: any non-inline argument (identifier, property
+    // access, function call, etc.) is `unknown`. We deliberately do NOT
+    // attempt lexical-scope resolution here — building a fully-correct
+    // scope analyzer (handling switch cases, for-initializers, catch
+    // bindings, parameter shadowing, destructuring, hoisting, etc.) is its
+    // own subsystem and any incomplete implementation produces silent
+    // false negatives on shadowed names. Forcing `unknown` means: if a
+    // future refactor passes options by identifier, the audit fails
+    // loudly until a human re-reviews and either inlines the object or
+    // expands the audit. The current orchestrator.ts has no
+    // identifier-passed call sites, so this remains a no-op for today's
+    // codebase but a strict tripwire for tomorrow's.
+    //
+    // (Codex review on PR #693: switch-case scopes and for-initializer
+    // declarations were each individually unhandled by the previous
+    // resolver; this simplification trades partial coverage for a
+    // strictly safer "anything-non-trivial fails the audit" stance.)
     return {
       kind: "unknown",
-      reason: `unsupported argument kind: ${ts.SyntaxKind[arg.kind]}`,
+      reason: `non-inline argument (kind=${ts.SyntaxKind[arg.kind]}); inline the options object literal at the call site or extend the audit`,
     };
   }
 
@@ -370,107 +364,12 @@ test("AST audit: every fetchQmdMemoryResultsWithArtifactTopUp call resolves to h
     return { kind: "absent" };
   }
 
-  /**
-   * Resolve an identifier to its lexically-visible variable declaration.
-   *
-   * Walks UP the parent chain from the use-site, and at each enclosing
-   * Block / SourceFile / function body, scans only that block's *direct*
-   * statements (not deep descendants). This respects shadowing: an inner
-   * `opts` shadows an outer `opts`, and the audit will bind to the inner
-   * declaration. If the same name is declared in a sibling block (not on
-   * the path to the use-site), it is correctly ignored.
-   *
-   * Returns the nearest lexically-visible `VariableDeclaration`.
-   */
-  function findVariableDeclaration(
-    id: import("typescript").Identifier,
-  ): import("typescript").VariableDeclaration | undefined {
-    function scanStatement(
-      stmt: import("typescript").Node,
-    ): import("typescript").VariableDeclaration | undefined {
-      // Variable declarations live inside VariableStatement → VariableDeclarationList
-      // (e.g. `const x = ...`). Function/method parameters are also declarations.
-      if (ts.isVariableStatement(stmt)) {
-        for (const decl of stmt.declarationList.declarations) {
-          if (ts.isIdentifier(decl.name) && decl.name.text === id.text) {
-            return decl;
-          }
-        }
-      }
-      return undefined;
-    }
-
-    function scanScope(
-      scope: import("typescript").Node,
-    ): import("typescript").VariableDeclaration | undefined {
-      // Iterate the scope's direct children. For Block, that's `statements`.
-      // For function-like nodes, the body is a Block; we already handle that
-      // when the parent walk lands on the Block itself.
-      const children: import("typescript").Statement[] = [];
-      if (ts.isBlock(scope) || ts.isSourceFile(scope)) {
-        children.push(...(scope.statements as readonly import("typescript").Statement[]));
-      } else if (ts.isCaseOrDefaultClause(scope)) {
-        children.push(
-          ...(scope.statements as readonly import("typescript").Statement[]),
-        );
-      }
-      for (const child of children) {
-        const found = scanStatement(child);
-        if (found) return found;
-      }
-      return undefined;
-    }
-
-    function scanFunctionParameters(
-      fn:
-        | import("typescript").MethodDeclaration
-        | import("typescript").FunctionDeclaration
-        | import("typescript").FunctionExpression
-        | import("typescript").ArrowFunction
-        | import("typescript").Constructor
-        | import("typescript").GetAccessorDeclaration
-        | import("typescript").SetAccessorDeclaration,
-    ): import("typescript").VariableDeclaration | undefined {
-      for (const param of fn.parameters) {
-        if (ts.isIdentifier(param.name) && param.name.text === id.text) {
-          // Parameters aren't VariableDeclarations, but for our audit we only
-          // care that the identifier resolves to *something* with an
-          // initializer we can read. Parameters do not have initializers we
-          // can statically resolve, so we surface a sentinel by returning a
-          // synthetic-looking unresolved decl — handled by the caller as
-          // "no initializer", which becomes `unknown` upstream.
-          // We can't construct a VariableDeclaration here, so return
-          // undefined to force the caller to flag this as `unknown`.
-          return undefined;
-        }
-      }
-      return undefined;
-    }
-
-    let cur: import("typescript").Node | undefined = id.parent;
-    while (cur) {
-      if (ts.isBlock(cur) || ts.isSourceFile(cur)) {
-        const found = scanScope(cur);
-        if (found) return found;
-      }
-      // When we hit a function-like node, also check its parameters as a
-      // sibling scope (parameters are visible inside the function body).
-      if (
-        ts.isMethodDeclaration(cur) ||
-        ts.isFunctionDeclaration(cur) ||
-        ts.isFunctionExpression(cur) ||
-        ts.isArrowFunction(cur) ||
-        ts.isConstructorDeclaration(cur) ||
-        ts.isGetAccessorDeclaration(cur) ||
-        ts.isSetAccessorDeclaration(cur)
-      ) {
-        const paramHit = scanFunctionParameters(cur);
-        if (paramHit) return paramHit;
-      }
-      cur = cur.parent;
-    }
-    return undefined;
-  }
+  // Note: a previous version of this audit attempted to lexically resolve
+  // identifiers passed as options arguments. Codex review on PR #693
+  // surfaced multiple edge cases (shadowed names, switch-case clauses,
+  // for-initializer declarations) that an incomplete resolver would miss
+  // silently, producing false negatives. The current implementation does
+  // not attempt resolution — see `resolveOptionsArg` for the rationale.
 
   interface CallSite {
     enclosingFn: string;
