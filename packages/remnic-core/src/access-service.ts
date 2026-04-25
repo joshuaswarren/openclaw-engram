@@ -1635,8 +1635,13 @@ export class EngramAccessService {
           trigger: "access-surface",
           queryText: query,
           candidateMemoryIds: snapshot?.memoryIds ?? [],
-          summary: context.slice(0, 200) || null,
-          injectedChars: context.length,
+          // Audit must reflect what was actually injected, not what
+          // recall produced before the tag filter. Using `context`
+          // (pre-filter) overstates injectedChars and can leak content
+          // from excluded memories into the audit summary (cursor
+          // Medium on PR #712).
+          summary: effectiveContext.slice(0, 200) || null,
+          injectedChars: effectiveContext.length,
           toggleState: "enabled" as const,
           latencyMs: Date.now() - startedAt,
           plannerMode: snapshot?.plannerMode ?? mode,
