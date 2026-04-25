@@ -146,6 +146,19 @@ test("explainTierForMemory: finds cold memories and reports importance score", a
   assert.equal(explain.signals.importance, 0.91);
 });
 
+test("explainTierForMemory: reports scoring importance and feedback inputs", async () => {
+  const memory = makeMemory({ id: "default-value-inputs" });
+
+  const explain = await explainTierForMemory(
+    makeStorageStub([memory]) as never,
+    "default-value-inputs",
+    makeConfigStub(),
+  );
+
+  assert.equal(explain.signals.importance, 0.5);
+  assert.equal(explain.signals.feedback, 0.5);
+});
+
 test("explainTierForMemory: uses qmd tier migration policy for decisions", async () => {
   const memory = makeMemory({
     id: "hot-low-value",
@@ -321,7 +334,7 @@ test("formatTierExplainText: renders score, decision, and signals", () => {
       created: "2026-01-01T00:00:00.000Z",
       updated: "2026-04-19T00:00:00.000Z",
       importance: 0.5,
-      feedback: "user_confirmed",
+      feedback: 0.5,
     },
   };
   const text = formatTierExplainText(explain);
@@ -333,7 +346,7 @@ test("formatTierExplainText: renders score, decision, and signals", () => {
   assert.match(text, /lastAccessed: 2026-04-20/);
 });
 
-test("formatTierExplainText: shows '(never)' / '(unset)' for missing signals", () => {
+test("formatTierExplainText: shows '(never)' and scoring defaults for missing signals", () => {
   const explain: TierExplainResult = {
     id: "bare",
     path: "/tmp/mem/bare.md",
@@ -354,12 +367,12 @@ test("formatTierExplainText: shows '(never)' / '(unset)' for missing signals", (
       lastAccessed: null,
       created: "",
       updated: "",
-      importance: null,
-      feedback: null,
+      importance: 0.5,
+      feedback: 0.5,
     },
   };
   const text = formatTierExplainText(explain);
   assert.match(text, /lastAccessed: \(never\)/);
-  assert.match(text, /importance: {3}\(unset\)/);
-  assert.match(text, /feedback: {5}\(unset\)/);
+  assert.match(text, /importance: {3}0\.5/);
+  assert.match(text, /feedback: {5}0\.5/);
 });

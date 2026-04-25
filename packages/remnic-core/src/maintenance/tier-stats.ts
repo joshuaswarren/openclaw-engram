@@ -55,8 +55,8 @@ export interface TierExplainResult {
     lastAccessed: string | null;
     created: string;
     updated: string;
-    importance: number | null;
-    feedback: string | null;
+    importance: number;
+    feedback: number;
   };
 }
 
@@ -140,7 +140,6 @@ export async function explainTierForMemory(
   const policy = await tierRoutingPolicyFromConfig(config);
   const decision = decideTierTransition(memory, currentTier, policy, now);
   const fm = memory.frontmatter as unknown as Record<string, unknown>;
-  const importanceScore = memory.frontmatter.importance?.score;
   return {
     id: trimmed,
     path: memory.path,
@@ -157,14 +156,8 @@ export async function explainTierForMemory(
         typeof fm.lastAccessed === "string" ? (fm.lastAccessed as string) : null,
       created: typeof fm.created === "string" ? (fm.created as string) : "",
       updated: typeof fm.updated === "string" ? (fm.updated as string) : "",
-      importance:
-        typeof importanceScore === "number" && Number.isFinite(importanceScore)
-          ? importanceScore
-          : null,
-      feedback:
-        typeof fm.verificationState === "string"
-          ? (fm.verificationState as string)
-          : null,
+      importance: valueInputs.importance,
+      feedback: valueInputs.feedback,
     },
   };
 }
@@ -223,7 +216,7 @@ export function formatTierExplainText(explain: TierExplainResult): string {
   lines.push(`  lastAccessed: ${explain.signals.lastAccessed ?? "(never)"}`);
   lines.push(`  created:      ${explain.signals.created}`);
   lines.push(`  updated:      ${explain.signals.updated}`);
-  lines.push(`  importance:   ${explain.signals.importance ?? "(unset)"}`);
-  lines.push(`  feedback:     ${explain.signals.feedback ?? "(unset)"}`);
+  lines.push(`  importance:   ${explain.signals.importance}`);
+  lines.push(`  feedback:     ${explain.signals.feedback}`);
   return lines.join("\n");
 }
