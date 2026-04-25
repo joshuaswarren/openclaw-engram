@@ -625,6 +625,39 @@ test("runBenchmark matches numeric-prefixed amemgym text answer choices", async 
   assert.equal(task.details?.scoredAnswer, "2 bedrooms");
 });
 
+test("runBenchmark rejects conflicting numeric prefixes before amemgym text fallback", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-conflicting-numeric-text-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("1 3 bedrooms"));
+  const dataset = createDatasetProfile();
+  dataset[0]!.periods[0]!.state.city = "3 bedrooms";
+  dataset[0]!.periods[0]!.updates.city = "3 bedrooms";
+  dataset[0]!.periods[0]!.sessions[0]!.exposed_states.city = "3 bedrooms";
+  dataset[0]!.qas[0]!.answer_choices = [
+    { state: ["2 bedrooms"], answer: "2 bedrooms" },
+    { state: ["3 bedrooms"], answer: "3 bedrooms" },
+  ];
+
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(dataset),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.expected, "3 bedrooms");
+  assert.equal(task.scores.qa_accuracy, 0);
+  assert.equal(task.details?.selectedChoiceIndex, null);
+  assert.equal(task.details?.scoredAnswer, "1 3 bedrooms");
+});
+
 test("runBenchmark uses token boundaries for amemgym text choice fallback", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-choice-boundary-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");

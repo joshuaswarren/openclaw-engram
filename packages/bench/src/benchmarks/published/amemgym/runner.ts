@@ -285,6 +285,7 @@ function parseAMemGymChoice(
     normalized: normalizeForChoiceMatch(choice.answer),
   }));
   const numericChoiceNumberAttempt = looksLikeChoiceNumberAttempt(trimmed);
+  const numericAttemptPrefix = leadingNumericToken(normalizedAnswer);
 
   const exactMatches = normalizedChoices.filter(
     (candidate) =>
@@ -293,7 +294,10 @@ function parseAMemGymChoice(
   );
   if (exactMatches.length === 1) {
     const exactMatch = exactMatches[0]!;
-    if (!numericChoiceNumberAttempt || startsWithNumericToken(exactMatch.normalized)) {
+    if (
+      !numericChoiceNumberAttempt
+      || numericPrefixesAgree(numericAttemptPrefix, exactMatch.normalized)
+    ) {
       return { index: exactMatch.index, choice: exactMatch.choice };
     }
   }
@@ -308,7 +312,8 @@ function parseAMemGymChoice(
     const candidate = normalizedChoices[index]!;
     if (
       candidate.normalized.length > 0
-      && (!numericChoiceNumberAttempt || startsWithNumericToken(candidate.normalized))
+      && (!numericChoiceNumberAttempt
+        || numericPrefixesAgree(numericAttemptPrefix, candidate.normalized))
       && containsNormalizedPhrase(normalizedAnswer, candidate.normalized)
     ) {
       if (candidate.normalized.length > bestSubstringLength) {
@@ -343,8 +348,18 @@ function containsNormalizedPhrase(haystack: string, needle: string): boolean {
   return false;
 }
 
-function startsWithNumericToken(value: string): boolean {
-  return /^\d+\b/.test(value);
+function numericPrefixesAgree(
+  answerPrefix: string | undefined,
+  choiceText: string,
+): boolean {
+  const choicePrefix = leadingNumericToken(choiceText);
+  return answerPrefix !== undefined
+    && choicePrefix !== undefined
+    && answerPrefix === choicePrefix;
+}
+
+function leadingNumericToken(value: string): string | undefined {
+  return value.match(/^(\d+)\b/)?.[1];
 }
 
 function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
