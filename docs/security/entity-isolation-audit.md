@@ -399,9 +399,12 @@ The **out-of-scope** risk is:
   isolation mechanism — see Section 2.
 - The contamination test suite in PR 2 (`tests/entity-contamination.test.ts`)
   exercises each in-scope risk row above.
-- Both files are added to the `npm run test:entity-hardening` preflight gate
-  via the standard test discovery pattern (`tests/*.test.ts`); no extra
-  configuration is needed beyond confirming the suite runs under that gate.
+- The `npm run test:entity-hardening` script in `package.json` is an
+  **explicit file list** (it invokes `tsx --test` with named paths), not a
+  glob discovery. PR 2 must therefore append `tests/entity-contamination.test.ts`
+  to that file list as part of the same PR; otherwise the new suite will not
+  run under the existing entity-hardening preflight gate even though it lives
+  in `tests/`.
 
 ## 6. References
 
