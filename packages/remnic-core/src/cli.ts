@@ -3536,6 +3536,60 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         });
 
       cmd
+        .command("forget")
+        .description(
+          "Forget a memory by id (issue #686 PR 4/6). Soft-delete: sets " +
+          "status='forgotten' and stamps forgottenAt; the file stays on " +
+          "disk and the act is reversible by editing the YAML directly. " +
+          "Forgotten memories are excluded from recall, browse, and entity " +
+          "attribution.",
+        )
+        .argument("<id>", "Memory id (frontmatter `id`) to forget")
+        .option(
+          "--reason <text>",
+          "Optional human-readable reason captured in YAML and the lifecycle ledger",
+        )
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const idArg = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const reason =
+            typeof options.reason === "string" && options.reason.trim().length > 0
+              ? options.reason.trim()
+              : undefined;
+          const { forgetMemory } = await import("./maintenance/forget.js");
+          try {
+            const result = await forgetMemory(orchestrator.storage, {
+              id: idArg,
+              ...(reason !== undefined ? { reason } : {}),
+            });
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify(result, null, 2));
+            } else {
+              console.log(`forgot ${result.id}`);
+              console.log(`  path: ${result.path}`);
+              console.log(`  prior status: ${result.priorStatus}`);
+              console.log(`  forgotten at: ${result.forgottenAt}`);
+              if (result.reason.length > 0) {
+                console.log(`  reason: ${result.reason}`);
+              }
+              console.log(
+                "Forgotten memories are excluded from recall + browse. " +
+                "Edit the YAML to restore.",
+              );
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+            } else {
+              console.error(`forget: ${message}`);
+            }
+            process.exitCode = 1;
+          }
+        });
+
+      cmd
         .command("config-review")
         .description("Review Engram config defaults, recommendations, and contradictory settings")
         .option("--json", "Emit machine-readable JSON only")
