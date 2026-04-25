@@ -481,6 +481,25 @@ export class EngramAccessHttpServer {
         }
         budget = parsedBudget;
       }
+      // Disclosure depth (issue #677 PR 3/4 telemetry plumbing).  When
+      // present, must match the chunk|section|raw allow-list; invalid
+      // values surface as a 400 (CLAUDE.md rule 51 — no silent
+      // fallback) rather than silently disabling the per-disclosure
+      // summary table.
+      const disclosureParam = parsed.searchParams.get("disclosure");
+      let disclosure: RecallDisclosure | undefined;
+      if (disclosureParam !== null && disclosureParam.length > 0) {
+        if (!isRecallDisclosure(disclosureParam)) {
+          this.respondJson(res, 400, {
+            error: "invalid_disclosure",
+            code: "invalid_disclosure",
+            message:
+              "disclosure must be one of: chunk, section, raw",
+          });
+          return;
+        }
+        disclosure = disclosureParam;
+      }
       // Only translate validation errors (empty query, bad budget)
       // into 400s.  Backend faults (timeouts, storage errors,
       // unexpected orchestrator failures) must bubble to the global
@@ -496,6 +515,7 @@ export class EngramAccessHttpServer {
           namespace,
           budget,
           authenticatedPrincipal: this.resolveRequestPrincipal(req),
+          ...(disclosure !== undefined ? { disclosure } : {}),
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

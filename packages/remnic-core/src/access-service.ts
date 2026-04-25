@@ -1692,11 +1692,17 @@ export class EngramAccessService {
         // undercounted spend on the first result (Cursor Medium review
         // on PR #699).  Excerpts are scoped to the same session +
         // namespace as the recall.
+        // Trim sessionKey to match what `orchestrator.recall(...)`
+        // already does (`request.sessionKey?.trim() || undefined`),
+        // otherwise a whitespace-padded key drives recall under one
+        // identity but probes LCM under a different prefix and
+        // misses stored excerpts (Cursor Low review on PR #699).
+        const trimmedSessionKey = request.sessionKey?.trim() || undefined;
         const rawExcerpts =
           disclosure === "raw"
             ? await this.fetchRawExcerpts(disclosure, {
                 query,
-                ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
+                ...(trimmedSessionKey ? { sessionKey: trimmedSessionKey } : {}),
                 namespace,
               })
             : null;

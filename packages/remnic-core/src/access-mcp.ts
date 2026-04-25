@@ -1314,12 +1314,20 @@ export class EngramMcpServer {
           }
           budget = parsed;
         }
+        // Forward disclosure depth so the recallXray telemetry table is
+        // populated for MCP callers (issue #677 PR 3/4).  Service does
+        // strict allow-list validation up front.
+        const disclosure =
+          typeof args.disclosure === "string" ? args.disclosure : undefined;
         return this.service.recallXray({
           query,
           sessionKey,
           namespace,
           budget,
           authenticatedPrincipal: effectivePrincipal,
+          ...(disclosure !== undefined
+            ? { disclosure: disclosure as import("./types.js").RecallDisclosure }
+            : {}),
         });
       }
       case "engram.day_summary":

@@ -4258,6 +4258,10 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           "--out <path>",
           "Write the rendered snapshot to a file instead of stdout",
         )
+        .option(
+          "--disclosure <level>",
+          "Disclosure depth (chunk | section | raw). Populates the per-disclosure token-spend summary.",
+        )
         .action(async (...args: unknown[]) => {
           // Commander passes positional args first, then the options
           // object as the last argument.  `parseXrayCliOptions` is a
@@ -4285,6 +4289,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             query: parsed.query,
             ...(parsed.namespace ? { namespace: parsed.namespace } : {}),
             ...(parsed.budget !== undefined ? { budget: parsed.budget } : {}),
+            ...(parsed.disclosure !== undefined
+              ? { disclosure: parsed.disclosure }
+              : {}),
           });
           const snapshot = response.snapshotFound
             ? response.snapshot ?? null
