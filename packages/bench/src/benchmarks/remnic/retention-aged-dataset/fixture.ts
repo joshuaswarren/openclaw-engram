@@ -164,14 +164,26 @@ export function generateAgedDataset(
     nowIso,
   } = options;
 
-  if (size <= 0 || !Number.isFinite(size)) {
+  if (size <= 0 || !Number.isFinite(size) || !Number.isInteger(size)) {
     throw new Error(`size must be a positive integer, got ${size}`);
   }
-  if (topicCount <= 0 || !Number.isFinite(topicCount)) {
-    throw new Error(`topicCount must be positive, got ${topicCount}`);
+  // topicCount must be an integer — `new Array(n)` and the Zipf weight
+  // builder both crash with a `RangeError` on fractional inputs.  Reject
+  // here so callers see a clear validation error rather than a deep
+  // stack trace from `paretoIndex` (Codex P2 review on PR #698).
+  if (
+    topicCount <= 0 ||
+    !Number.isFinite(topicCount) ||
+    !Number.isInteger(topicCount)
+  ) {
+    throw new Error(`topicCount must be a positive integer, got ${topicCount}`);
   }
-  if (horizonDays <= 0 || !Number.isFinite(horizonDays)) {
-    throw new Error(`horizonDays must be positive, got ${horizonDays}`);
+  if (
+    horizonDays <= 0 ||
+    !Number.isFinite(horizonDays) ||
+    !Number.isInteger(horizonDays)
+  ) {
+    throw new Error(`horizonDays must be a positive integer, got ${horizonDays}`);
   }
 
   const rng = mulberry32(seed);
@@ -254,19 +266,14 @@ export function generateAgedDataset(
     perTopic.push(id);
   }
 
-  // Build queries weighted by topic frequency. Topic memory counts are
-  // already Pareto-distributed (because memories are sampled with
-  // `paretoIndex`), so emitting one query per memory in a topic — rounded
-  // by a freq-floor cap so each topic gets at least one query but hot
-  // topics get proportionally more — yields aggregate scores that reflect
-  // realistic hot-topic-heavy traffic instead of weighting every topic
-  // equally. (Codex review on PR #698.)
-  //
-  // We cap the multiplier per topic at `MAX_QUERIES_PER_TOPIC` to keep
-  // total task count tractable in `quick` mode.
-  // Build a Pareto-weighted query workload. Total queries scale with
-  // total memory count so each topic's share of the workload is
-  // proportional to its share of the corpus.
+  // Build a Pareto-weighted query workload.  Topic memory counts are
+  // already Pareto-distributed (memories were sampled via
+  // `paretoIndex`), so emitting one query per memory in a topic —
+  // proportionally trimmed to the global `MAX_TOTAL_QUERIES` cap —
+  // yields aggregate scores that reflect realistic hot-topic-heavy
+  // traffic instead of weighting every topic equally.  Total queries
+  // scale with total memory count so each topic's share of the workload
+  // is proportional to its share of the corpus.
   //
   // Each query carries a *bounded* relevant-memory subset (the K most
   // recently-accessed members of the topic, capped at RELEVANT_PER_QUERY).
