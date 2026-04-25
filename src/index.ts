@@ -16,6 +16,7 @@ import { registerLcmTools } from "./lcm/index.js";
 import { estimateTokens as estimateLcmTokens } from "./lcm/archive.js";
 import { registerCli } from "./cli.js";
 import { recordObjectiveStateSnapshotsFromAgentMessages } from "./objective-state-writers.js";
+import { probeQmdAvailability } from "./qmd-availability-probe.js";
 import { EngramAccessService } from "./access-service.js";
 import { EngramAccessHttpServer } from "./access-http.js";
 
@@ -2604,10 +2605,7 @@ const pluginDefinition = {
               },
               async probeEmbeddingAvailability() {
                 if (!remnicUsesQmd) return { ok: true };
-                const qmdAvailable =
-                  typeof (orchestrator as any).qmd?.isAvailable === "function"
-                    ? Boolean((orchestrator as any).qmd.isAvailable())
-                    : false;
+                const qmdAvailable = await probeQmdAvailability(orchestrator as unknown as Parameters<typeof probeQmdAvailability>[0]);
                 if (qmdAvailable) return { ok: true };
                 const qmdDebug =
                   typeof (orchestrator as any).qmd?.debugStatus === "function"
@@ -2620,9 +2618,7 @@ const pluginDefinition = {
               },
               async probeVectorAvailability() {
                 if (!remnicUsesQmd) return false;
-                return typeof (orchestrator as any).qmd?.isAvailable === "function"
-                  ? Boolean((orchestrator as any).qmd.isAvailable())
-                  : false;
+                return probeQmdAvailability(orchestrator as unknown as Parameters<typeof probeQmdAvailability>[0]);
               },
               async close() {},
             },
