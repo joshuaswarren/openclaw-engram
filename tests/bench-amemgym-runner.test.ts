@@ -263,6 +263,29 @@ test("runBenchmark accepts amemgym answers labeled with is and a colon", async (
   assert.equal(task.details?.scoredAnswer, "Seattle");
 });
 
+test("runBenchmark accepts amemgym answers labeled as answer is option", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-answer-option-choice-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("The answer is option 1"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.scoredAnswer, "Seattle");
+});
+
 test("runBenchmark accepts parenthesized amemgym option-number answers", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-parenthesized-choice-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");

@@ -359,7 +359,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   }
 
   const labeledNumber = trimmedAnswer.match(
-    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
+    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?:(?:the\s+)?(?:option|choice|answer)\s*)?(?::|#)?\s*\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
   );
   if (labeledNumber && mentionsAdditionalOptionNumber(labeledNumber.groups?.tail ?? "")) {
     return undefined;
@@ -370,7 +370,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
 }
 
 function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
-  if (/^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*\(?#?\s*\d+/i.test(trimmedAnswer)) {
+  if (/^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?:(?:the\s+)?(?:option|choice|answer)\s*)?(?::|#)?\s*\(?#?\s*\d+/i.test(trimmedAnswer)) {
     return true;
   }
   return /^\(?#?\s*\d+\s*\)?\s+(?!weeks?\b|days?\b|months?\b|years?\b|hours?\b|minutes?\b)/i.test(trimmedAnswer);
