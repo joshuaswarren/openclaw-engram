@@ -10,6 +10,7 @@ import {
   filterTrajectoriesByLookbackDays,
 } from "../causal-trajectory.js";
 import { buildProcedurePersistBody, normalizeProcedureSteps, type ProcedureStep } from "./procedure-types.js";
+import { clusterByKey } from "./reinforcement-core.js";
 import { log } from "../logger.js";
 
 /** Must match truncation on `procedure_cluster` structured attribute (dedupe + storage). */
@@ -102,13 +103,7 @@ export async function runProcedureMining(options: {
   });
   const recent = filterTrajectoriesByLookbackDays(trajectories, cfg.lookbackDays);
 
-  const clusters = new Map<string, CausalTrajectoryRecord[]>();
-  for (const t of recent) {
-    const key = clusterKey(t);
-    const arr = clusters.get(key) ?? [];
-    arr.push(t);
-    clusters.set(key, arr);
-  }
+  const clusters = clusterByKey(recent, clusterKey);
 
   let clustersProcessed = 0;
   let proceduresWritten = 0;
