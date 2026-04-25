@@ -156,6 +156,49 @@ test("MCP engram.recall handler omits `disclosure` when caller does not supply i
   assert.strictEqual(calls[0]?.disclosure, undefined);
 });
 
+test("MCP engram.recall rejects non-string disclosure with a structured error", async () => {
+  // Codex review on PR #694: a number (e.g. `1`) used to be coerced to
+  // `undefined`, masking malformed input and silently applying the
+  // chunk default.  The handler now distinguishes "absent" from
+  // "present-but-wrong-type" and throws a structured error for the
+  // latter.  The MCP transport surfaces tool errors as `isError: true`.
+  const { service, calls } = makeMcpRecallSpyService();
+  const server = new EngramMcpServer(service);
+  const response = await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: {
+      name: "engram.recall",
+      arguments: { query: "hello", disclosure: 1 as unknown as string },
+    },
+  });
+  assert.strictEqual(calls.length, 0, "service.recall must not be called for invalid input");
+  const result = (response as { result?: { isError?: boolean; content?: Array<{ text?: string }> } } | undefined)?.result;
+  assert.strictEqual(result?.isError, true);
+  const text = result?.content?.[0]?.text ?? "";
+  assert.match(text, /disclosure must be a string/i);
+});
+
+test("MCP engram.recall treats explicit `null` disclosure as absent (service applies default)", async () => {
+  // JSON-RPC clients sometimes serialize an unset field as `null`.
+  // Treat `null` like absence so the service-layer default path runs
+  // — matches `EngramAccessService.recall()`'s own null-tolerance.
+  const { service, calls } = makeMcpRecallSpyService();
+  const server = new EngramMcpServer(service);
+  await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 4,
+    method: "tools/call",
+    params: {
+      name: "engram.recall",
+      arguments: { query: "hello", disclosure: null as unknown as string },
+    },
+  });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0]?.disclosure, undefined);
+});
+
 test("MCP engram.recall inputSchema advertises the `disclosure` enum", () => {
   // MCP clients with strict validation reject unknown fields; the
   // tool-list schema must declare `disclosure` so legitimate clients

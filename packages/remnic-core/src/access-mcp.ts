@@ -1179,13 +1179,24 @@ export class EngramMcpServer {
       case "engram.recall": {
         // Forward `disclosure` only when the caller actually supplied it,
         // so the service layer's default-application path stays the
-        // single source of truth.  Pass it through as a raw string when
-        // present; the service rejects unknown values via the shared
-        // `isRecallDisclosure` guard (CLAUDE.md rule 51).
-        const disclosure =
-          typeof args.disclosure === "string"
-            ? (args.disclosure as RecallDisclosure)
-            : undefined;
+        // single source of truth.  We must distinguish "absent" from
+        // "present-but-wrong-type": absence forwards as `undefined`
+        // (service applies the chunk default), while a present-but-
+        // non-string value (e.g. `1`, `true`) is rejected here as a
+        // structured input error instead of silently being coerced to
+        // `undefined`.  CLAUDE.md rule 51: never silently default on
+        // malformed input.  String values are forwarded as-is; the
+        // service's `isRecallDisclosure` guard rejects unknown enum
+        // strings (e.g. `"verbose"`) with the same error class.
+        let disclosure: RecallDisclosure | undefined;
+        if ("disclosure" in args && args.disclosure !== undefined && args.disclosure !== null) {
+          if (typeof args.disclosure !== "string") {
+            throw new EngramAccessInputError(
+              "disclosure must be a string (one of: chunk, section, raw)",
+            );
+          }
+          disclosure = args.disclosure as RecallDisclosure;
+        }
         const response = await this.service.recall({
           query: typeof args.query === "string" ? args.query : "",
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
