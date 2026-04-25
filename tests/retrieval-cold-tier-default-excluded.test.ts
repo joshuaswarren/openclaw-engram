@@ -206,53 +206,333 @@ test("applyColdFallbackPipeline: cold QMD IS queried when explicitly opted in", 
   }
 });
 
-test("primary recall path (fetchQmdMemoryResultsWithArtifactTopUp default invocation) does not target cold collection", async () => {
-  // Static-call-site audit: every call to fetchQmdMemoryResultsWithArtifactTopUp
-  // in orchestrator.ts that is not inside applyColdFallbackPipeline must omit
-  // the `collection` option (so it falls back to the hot-collection default).
-  // This reads the orchestrator source at runtime and asserts the property.
+test("AST audit: every fetchQmdMemoryResultsWithArtifactTopUp call resolves to hot-collection default outside applyColdFallbackPipeline", async () => {
+  // Structural (AST-based) audit, replacing a brittle text-regex variant.
+  //
+  // Invariant: in `orchestrator.ts`, every call to
+  // `fetchQmdMemoryResultsWithArtifactTopUp` whose enclosing function is NOT
+  // `applyColdFallbackPipeline` must resolve to an options object whose
+  // `collection` property is either absent or `undefined`. The cold-targeted
+  // call site is permitted only inside `applyColdFallbackPipeline`.
+  //
+  // The AST walker handles both inline object literals AND options objects
+  // declared in a parent block and passed by reference (the indirection that
+  // a regex would miss — see codex review on PR #693).
+  const ts = await import("typescript");
   const { readFile } = await import("node:fs/promises");
   const orchestratorPath = new URL(
     "../packages/remnic-core/src/orchestrator.ts",
     import.meta.url,
   );
   const src = await readFile(orchestratorPath, "utf-8");
-
-  // Find every call to fetchQmdMemoryResultsWithArtifactTopUp(...).
-  const callMatches = [
-    ...src.matchAll(/fetchQmdMemoryResultsWithArtifactTopUp\(([\s\S]*?)\n\s*\);/g),
-  ];
-  assert.ok(
-    callMatches.length >= 2,
-    `expected to find at least 2 call sites; found ${callMatches.length}`,
+  const sourceFile = ts.createSourceFile(
+    "orchestrator.ts",
+    src,
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TS,
   );
 
-  // Only one call site is allowed to pass collection: coldCollection — the one
-  // inside applyColdFallbackPipeline. Every other call must NOT pass any
-  // `collection:` field, so it inherits the hot-collection default.
-  let coldExplicitCount = 0;
-  let hotImplicitCount = 0;
-  for (const match of callMatches) {
-    const args = match[1] ?? "";
-    if (/collection:\s*coldCollection\b/.test(args)) {
-      coldExplicitCount += 1;
-    } else if (!/collection:/.test(args)) {
-      hotImplicitCount += 1;
-    } else {
-      // A new explicit collection target appeared — fail loudly so the audit
-      // is re-run.
-      assert.fail(
-        `unexpected explicit collection target in fetchQmdMemoryResultsWithArtifactTopUp call: ${args}`,
-      );
+  /**
+   * Find the nearest enclosing function/method declaration name for a node.
+   * Returns "<top-level>" if no method/function ancestor is found.
+   */
+  function enclosingFunctionName(node: import("typescript").Node): string {
+    let cur: import("typescript").Node | undefined = node.parent;
+    while (cur) {
+      if (
+        ts.isMethodDeclaration(cur) ||
+        ts.isFunctionDeclaration(cur) ||
+        ts.isFunctionExpression(cur) ||
+        ts.isArrowFunction(cur)
+      ) {
+        if (
+          (ts.isMethodDeclaration(cur) || ts.isFunctionDeclaration(cur)) &&
+          cur.name &&
+          ts.isIdentifier(cur.name)
+        ) {
+          return cur.name.text;
+        }
+        // Anonymous arrow/function — keep walking up to the next named scope.
+      }
+      cur = cur.parent;
     }
+    return "<top-level>";
   }
+
+  /**
+   * Resolve an argument expression to a *static* `collection` value if one is
+   * statically determinable. Returns:
+   *   - { kind: "absent" } — no collection key on the resolved options.
+   *   - { kind: "explicit", value } — a syntactic value (Identifier text or
+   *     string literal). The caller compares this against expected names.
+   *   - { kind: "unknown" } — the audit cannot statically determine the
+   *     value (e.g. a property access, function call, or unresolved
+   *     parameter). Treated as a HARD FAILURE so the audit is re-run.
+   */
+  type Resolution =
+    | { kind: "absent" }
+    | { kind: "explicit"; value: string }
+    | { kind: "unknown"; reason: string };
+
+  function resolveOptionsArg(arg: import("typescript").Expression): Resolution {
+    if (ts.isObjectLiteralExpression(arg)) {
+      return resolveObjectLiteral(arg);
+    }
+    if (ts.isIdentifier(arg)) {
+      // Find the variable declaration in the enclosing function.
+      const decl = findVariableDeclaration(arg);
+      if (!decl) {
+        return {
+          kind: "unknown",
+          reason: `identifier ${arg.text} has no resolvable declaration`,
+        };
+      }
+      if (!decl.initializer) {
+        return {
+          kind: "unknown",
+          reason: `${arg.text} has no initializer`,
+        };
+      }
+      if (!ts.isObjectLiteralExpression(decl.initializer)) {
+        return {
+          kind: "unknown",
+          reason: `${arg.text} initializer is not an object literal`,
+        };
+      }
+      return resolveObjectLiteral(decl.initializer);
+    }
+    return {
+      kind: "unknown",
+      reason: `unsupported argument kind: ${ts.SyntaxKind[arg.kind]}`,
+    };
+  }
+
+  function resolveObjectLiteral(
+    obj: import("typescript").ObjectLiteralExpression,
+  ): Resolution {
+    for (const prop of obj.properties) {
+      if (
+        ts.isPropertyAssignment(prop) &&
+        ts.isIdentifier(prop.name) &&
+        prop.name.text === "collection"
+      ) {
+        const init = prop.initializer;
+        if (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init)) {
+          return { kind: "explicit", value: init.text };
+        }
+        if (ts.isIdentifier(init)) {
+          return { kind: "explicit", value: init.text };
+        }
+        if (ts.isPropertyAccessExpression(init)) {
+          // e.g. `options.collection` or `this.config.qmdColdCollection`
+          return {
+            kind: "explicit",
+            value: init.getText(sourceFile),
+          };
+        }
+        return {
+          kind: "unknown",
+          reason: `collection initializer kind: ${ts.SyntaxKind[init.kind]}`,
+        };
+      }
+      if (
+        ts.isShorthandPropertyAssignment(prop) &&
+        prop.name.text === "collection"
+      ) {
+        return { kind: "explicit", value: "collection" };
+      }
+      if (ts.isSpreadAssignment(prop)) {
+        // A spread could carry a `collection` field. Force a re-audit.
+        return {
+          kind: "unknown",
+          reason: "object literal contains a spread; cannot statically audit",
+        };
+      }
+    }
+    return { kind: "absent" };
+  }
+
+  function findVariableDeclaration(
+    id: import("typescript").Identifier,
+  ): import("typescript").VariableDeclaration | undefined {
+    let cur: import("typescript").Node | undefined = id.parent;
+    while (cur) {
+      if (
+        ts.isMethodDeclaration(cur) ||
+        ts.isFunctionDeclaration(cur) ||
+        ts.isFunctionExpression(cur) ||
+        ts.isArrowFunction(cur) ||
+        ts.isSourceFile(cur)
+      ) {
+        let found: import("typescript").VariableDeclaration | undefined;
+        const visit = (n: import("typescript").Node) => {
+          if (found) return;
+          if (
+            ts.isVariableDeclaration(n) &&
+            ts.isIdentifier(n.name) &&
+            n.name.text === id.text
+          ) {
+            found = n;
+            return;
+          }
+          ts.forEachChild(n, visit);
+        };
+        ts.forEachChild(cur, visit);
+        if (found) return found;
+      }
+      cur = cur.parent;
+    }
+    return undefined;
+  }
+
+  interface CallSite {
+    enclosingFn: string;
+    resolution: Resolution;
+    line: number;
+  }
+  const callSites: CallSite[] = [];
+
+  function visit(node: import("typescript").Node) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isPropertyAccessExpression(node.expression) &&
+      ts.isIdentifier(node.expression.name) &&
+      node.expression.name.text === "fetchQmdMemoryResultsWithArtifactTopUp"
+    ) {
+      const lastArg = node.arguments[node.arguments.length - 1];
+      const resolution: Resolution = lastArg
+        ? resolveOptionsArg(lastArg)
+        : { kind: "absent" };
+      const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      callSites.push({
+        enclosingFn: enclosingFunctionName(node),
+        resolution,
+        line: line + 1,
+      });
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+
+  assert.ok(
+    callSites.length >= 2,
+    `expected to find at least 2 call sites; found ${callSites.length}`,
+  );
+
+  // Categorize.
+  const coldFromColdFallback: CallSite[] = [];
+  const hotImplicit: CallSite[] = [];
+  const violations: string[] = [];
+  for (const site of callSites) {
+    const inColdFallback = site.enclosingFn === "applyColdFallbackPipeline";
+    if (site.resolution.kind === "unknown") {
+      violations.push(
+        `line ${site.line} in ${site.enclosingFn}: cannot statically audit collection arg (${site.resolution.reason})`,
+      );
+      continue;
+    }
+    if (site.resolution.kind === "absent") {
+      hotImplicit.push(site);
+      continue;
+    }
+    // Explicit collection argument.
+    if (inColdFallback && site.resolution.value === "coldCollection") {
+      coldFromColdFallback.push(site);
+      continue;
+    }
+    violations.push(
+      `line ${site.line} in ${site.enclosingFn}: explicit collection=${site.resolution.value} outside applyColdFallbackPipeline`,
+    );
+  }
+
+  assert.deepEqual(
+    violations,
+    [],
+    `cold-tier exclusion audit failed:\n${violations.join("\n")}`,
+  );
   assert.equal(
-    coldExplicitCount,
+    coldFromColdFallback.length,
     1,
-    "exactly one cold-targeted call site is allowed (inside applyColdFallbackPipeline)",
+    `expected exactly 1 cold-targeted call inside applyColdFallbackPipeline; found ${coldFromColdFallback.length}`,
   );
   assert.ok(
-    hotImplicitCount >= 1,
-    "at least one hot-default call site must exist",
+    hotImplicit.length >= 1,
+    "at least one hot-default call site (no collection key) must exist",
+  );
+});
+
+test("AST audit: this.config.qmdColdCollection is read only inside applyColdFallbackPipeline or TierMigrationExecutor setup", async () => {
+  // Companion invariant: the cold-collection config field is read in exactly
+  // two known-safe places:
+  //   - inside `applyColdFallbackPipeline` (recall opt-in path, gated by
+  //     qmdColdTierEnabled === true), and
+  //   - inside the TierMigrationExecutor wiring (write-time migration).
+  // Any new read elsewhere is a regression and must be re-reviewed.
+  const ts = await import("typescript");
+  const { readFile } = await import("node:fs/promises");
+  const orchestratorPath = new URL(
+    "../packages/remnic-core/src/orchestrator.ts",
+    import.meta.url,
+  );
+  const src = await readFile(orchestratorPath, "utf-8");
+  const sourceFile = ts.createSourceFile(
+    "orchestrator.ts",
+    src,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+
+  function enclosingFunctionName(node: import("typescript").Node): string {
+    let cur: import("typescript").Node | undefined = node.parent;
+    while (cur) {
+      if (
+        (ts.isMethodDeclaration(cur) || ts.isFunctionDeclaration(cur)) &&
+        cur.name &&
+        ts.isIdentifier(cur.name)
+      ) {
+        return cur.name.text;
+      }
+      cur = cur.parent;
+    }
+    return "<top-level>";
+  }
+
+  const reads: { fn: string; line: number }[] = [];
+  function visit(node: import("typescript").Node) {
+    if (
+      ts.isPropertyAccessExpression(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === "qmdColdCollection"
+    ) {
+      const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      reads.push({ fn: enclosingFunctionName(node), line: line + 1 });
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+
+  // Allowed enclosing functions for `qmdColdCollection` reads.
+  const allowedFns = new Set<string>([
+    "applyColdFallbackPipeline",
+    "runTierMigrationCycle",
+    "runQmdTierMigrationCycle",
+    "performTierMigrationOnce",
+  ]);
+
+  const violations = reads.filter((r) => !allowedFns.has(r.fn));
+  // We allow either of the documented reads to be merged into a helper; the
+  // real assertion is that no UNKNOWN function reads it.
+  assert.deepEqual(
+    violations,
+    [],
+    `qmdColdCollection read outside the allow-list — review and add to allowedFns if intentional:\n${violations
+      .map((v) => `  line ${v.line} in ${v.fn}`)
+      .join("\n")}`,
+  );
+  assert.ok(
+    reads.length >= 1,
+    "at least one read of qmdColdCollection must exist (inside applyColdFallbackPipeline)",
   );
 });
