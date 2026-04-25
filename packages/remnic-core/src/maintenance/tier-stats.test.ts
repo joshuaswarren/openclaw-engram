@@ -6,13 +6,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  explainTierForMemory,
   formatTierExplainText,
   formatTierSummaryText,
   summarizeTiers,
   type TierExplainResult,
   type TierSummary,
 } from "./tier-stats.js";
-import type { MemoryFile, MemoryFrontmatter } from "../types.js";
+import type { MemoryFile, MemoryFrontmatter, PluginConfig } from "../types.js";
 
 function makeMemory(
   overrides: Partial<MemoryFrontmatter>,
@@ -32,21 +33,44 @@ function makeMemory(
   };
 }
 
-function makeStorageStub(memories: MemoryFile[]) {
+function makeStorageStub(
+  memories: MemoryFile[],
+  coldMemories: MemoryFile[] = [],
+) {
   return {
     readAllMemories: async () => memories,
+    readAllColdMemories: async () => coldMemories,
   };
+}
+
+function makeConfigStub(
+  overrides: Partial<PluginConfig> = {},
+): PluginConfig {
+  return {
+    qmdTierMigrationEnabled: true,
+    qmdTierDemotionMinAgeDays: 14,
+    qmdTierDemotionValueThreshold: 0.35,
+    qmdTierPromotionValueThreshold: 0.7,
+    lifecyclePolicyEnabled: false,
+    lifecycleStaleDecayThreshold: 0,
+    lifecyclePromoteHeatThreshold: 0,
+    ...overrides,
+  } as unknown as PluginConfig;
 }
 
 test("summarizeTiers: counts tiers, statuses, and categories", async () => {
   const memories = [
     makeMemory({ id: "a", status: "active", category: "preference" }),
     makeMemory({ id: "b", status: "active", category: "decision" }),
-    makeMemory({ id: "c", status: "archived", category: "preference" }, "/tmp/mem/cold/c.md"),
     makeMemory({ id: "d", status: "forgotten" as MemoryFrontmatter["status"], category: "fact" }),
+  ];
+  const coldMemories = [
+    makeMemory({ id: "c", status: "archived", category: "preference" }, "/tmp/mem/cold/c.md"),
     makeMemory({ id: "e" }, "/tmp/mem/cold/e.md"),
   ];
-  const summary = await summarizeTiers(makeStorageStub(memories) as never);
+  const summary = await summarizeTiers(
+    makeStorageStub(memories, coldMemories) as never,
+  );
   assert.equal(summary.total, 5);
   assert.equal(summary.byTier.hot, 3);
   assert.equal(summary.byTier.cold, 2);
@@ -75,6 +99,60 @@ test("summarizeTiers: defaults missing status to active", async () => {
     makeStorageStub([makeMemory({ id: "a" })]) as never,
   );
   assert.equal(summary.byStatus.active, 1);
+});
+
+test("explainTierForMemory: finds cold memories and reports importance score", async () => {
+  const coldMemory = makeMemory(
+    {
+      id: "cold-a",
+      status: "active",
+      confidence: 0.8,
+      accessCount: 2,
+      importance: {
+        score: 0.91,
+        level: "high",
+        reasons: ["operator marked important"],
+        keywords: ["operator"],
+      },
+    },
+    "/tmp/mem/cold/facts/cold-a.md",
+  );
+
+  const explain = await explainTierForMemory(
+    makeStorageStub([], [coldMemory]) as never,
+    "cold-a",
+    makeConfigStub(),
+  );
+
+  assert.equal(explain.id, "cold-a");
+  assert.equal(explain.currentTier, "cold");
+  assert.equal(explain.signals.importance, 0.91);
+});
+
+test("explainTierForMemory: uses qmd tier migration policy for decisions", async () => {
+  const memory = makeMemory({
+    id: "hot-low-value",
+    confidence: 0,
+    updated: "2020-01-01T00:00:00.000Z",
+  });
+
+  const explain = await explainTierForMemory(
+    makeStorageStub([memory]) as never,
+    "hot-low-value",
+    makeConfigStub({
+      qmdTierMigrationEnabled: true,
+      qmdTierDemotionMinAgeDays: 0,
+      qmdTierDemotionValueThreshold: 1,
+      qmdTierPromotionValueThreshold: 1,
+      lifecyclePolicyEnabled: false,
+      lifecycleStaleDecayThreshold: 0,
+      lifecyclePromoteHeatThreshold: 0,
+    }),
+  );
+
+  assert.equal(explain.decision.nextTier, "cold");
+  assert.equal(explain.decision.changed, true);
+  assert.equal(explain.decision.reason, "value_below_demotion_threshold");
 });
 
 test("formatTierSummaryText: renders headings and counts", () => {

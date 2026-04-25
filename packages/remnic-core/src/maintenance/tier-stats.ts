@@ -66,10 +66,29 @@ function inferTier(memory: MemoryFile): MemoryTier {
     : "hot";
 }
 
+async function readTierVisibleMemories(
+  storage: StorageManager,
+): Promise<MemoryFile[]> {
+  const [hotMemories, coldMemories] = await Promise.all([
+    storage.readAllMemories(),
+    storage.readAllColdMemories(),
+  ]);
+  return [...hotMemories, ...coldMemories];
+}
+
+function tierRoutingPolicyFromConfig(config: PluginConfig): TierRoutingPolicy {
+  return {
+    enabled: config.qmdTierMigrationEnabled,
+    demotionMinAgeDays: config.qmdTierDemotionMinAgeDays,
+    demotionValueThreshold: config.qmdTierDemotionValueThreshold,
+    promotionValueThreshold: config.qmdTierPromotionValueThreshold,
+  };
+}
+
 export async function summarizeTiers(
   storage: StorageManager,
 ): Promise<TierSummary> {
-  const all = await storage.readAllMemories();
+  const all = await readTierVisibleMemories(storage);
   const summary: TierSummary = {
     total: all.length,
     byTier: { hot: 0, cold: 0 },
@@ -100,22 +119,18 @@ export async function explainTierForMemory(
   if (trimmed.length === 0) {
     throw new Error("tier explain: memory id is required and must be non-empty");
   }
-  const all = await storage.readAllMemories();
+  const all = await readTierVisibleMemories(storage);
   const memory = all.find((m) => m.frontmatter.id === trimmed);
   if (!memory) {
     throw new Error(`tier explain: memory not found: ${trimmed}`);
   }
   const now = new Date();
   const valueScore = computeTierValueScore(memory, now);
-  const policy: TierRoutingPolicy = {
-    enabled: config.lifecyclePolicyEnabled,
-    demotionMinAgeDays: 14,
-    demotionValueThreshold: config.lifecycleStaleDecayThreshold,
-    promotionValueThreshold: config.lifecyclePromoteHeatThreshold,
-  };
+  const policy = tierRoutingPolicyFromConfig(config);
   const currentTier = inferTier(memory);
   const decision = decideTierTransition(memory, currentTier, policy, now);
   const fm = memory.frontmatter as unknown as Record<string, unknown>;
+  const importanceScore = memory.frontmatter.importance?.score;
   return {
     id: trimmed,
     path: memory.path,
@@ -134,7 +149,9 @@ export async function explainTierForMemory(
       created: typeof fm.created === "string" ? (fm.created as string) : "",
       updated: typeof fm.updated === "string" ? (fm.updated as string) : "",
       importance:
-        typeof fm.importance === "number" ? (fm.importance as number) : null,
+        typeof importanceScore === "number" && Number.isFinite(importanceScore)
+          ? importanceScore
+          : null,
       feedback:
         typeof fm.verificationState === "string"
           ? (fm.verificationState as string)
