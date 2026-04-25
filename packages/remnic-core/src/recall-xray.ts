@@ -20,6 +20,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { RecallDisclosure, RecallTierExplain } from "./types.js";
+import { isRecallDisclosure } from "./types.js";
 
 /**
  * Estimate token cost of a payload at the rough ~4 chars/token English
@@ -352,12 +353,10 @@ function cloneResult(result: RecallXrayResult): RecallXrayResult {
   if (rejectedBy !== undefined) out.rejectedBy = rejectedBy;
   // Disclosure + token telemetry (issue #677 PR 3/4).  Only attach when
   // present and well-formed; unknown disclosure values are dropped so a
-  // bad caller can't poison downstream renderers.
-  if (
-    result.disclosure === "chunk" ||
-    result.disclosure === "section" ||
-    result.disclosure === "raw"
-  ) {
+  // bad caller can't poison downstream renderers.  Uses the shared
+  // `isRecallDisclosure` guard so adding a fourth disclosure level
+  // requires touching only `types.ts`.
+  if (isRecallDisclosure(result.disclosure)) {
     out.disclosure = result.disclosure;
   }
   if (
@@ -391,12 +390,9 @@ export function summarizeDisclosureTokens(
       result.estimatedTokens >= 0
         ? Math.floor(result.estimatedTokens)
         : 0;
-    const bucket =
-      result.disclosure === "chunk" ||
-      result.disclosure === "section" ||
-      result.disclosure === "raw"
-        ? result.disclosure
-        : "unspecified";
+    const bucket = isRecallDisclosure(result.disclosure)
+      ? result.disclosure
+      : "unspecified";
     summary[bucket].count += 1;
     summary[bucket].estimatedTokens += tokens;
   }

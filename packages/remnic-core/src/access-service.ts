@@ -82,6 +82,7 @@ import type {
   RecallPlanMode,
 } from "./types.js";
 import { DEFAULT_RECALL_DISCLOSURE, isRecallDisclosure } from "./types.js";
+import { estimateRecallTokens } from "./recall-xray.js";
 import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
 import type { SemanticDedupLookup } from "./dedup/semantic.js";
@@ -1533,6 +1534,15 @@ export class EngramAccessService {
     namespace?: string;
     budget?: number;
     authenticatedPrincipal?: string;
+    /**
+     * Disclosure depth used to shape per-result payload (issue #677
+     * PR 3/4).  When set, each X-ray result is decorated with the
+     * matching `disclosure` field and `estimatedTokens` computed from
+     * the actual rendered content at that depth, so the renderer's
+     * "Token spend by disclosure" summary reflects real spend rather
+     * than staying empty when no caller wires the depth knob through.
+     */
+    disclosure?: RecallDisclosure;
   }): Promise<{
     snapshotFound: boolean;
     snapshot?: import("./recall-xray.js").RecallXraySnapshot;
@@ -1646,6 +1656,44 @@ export class EngramAccessService {
       // asked for.
       if (requestedNamespace && snapshot.namespace !== requestedNamespace) {
         return { snapshotFound: false };
+      }
+      // Decorate per-result disclosure + token estimate when the caller
+      // wired a depth knob (issue #677 PR 3/4 — codex review on #699
+      // flagged that the renderer's per-disclosure summary stays empty
+      // until callers populate these fields).  Estimate tokens from
+      // the actual rendered payload at the requested depth so the
+      // summary reflects real spend; chunk uses the preview, section
+      // and raw use full content.  Best-effort only — a missing
+      // memory or read failure is silently dropped (CLAUDE.md rule 13).
+      if (request.disclosure !== undefined) {
+        const disclosure = request.disclosure;
+        const namespace = snapshot.namespace
+          ? this.resolveNamespace(snapshot.namespace)
+          : this.orchestrator.config.defaultNamespace;
+        const decorated = await Promise.all(
+          snapshot.results.map(async (result) => {
+            try {
+              const storage = await this.orchestrator.getStorage(namespace);
+              const memory = await storage.readMemoryByPath(result.path);
+              if (!memory) return result;
+              const renderedText =
+                disclosure === "chunk"
+                  ? normalizeProjectionPreview(memory.content)
+                  : memory.content;
+              return {
+                ...result,
+                disclosure,
+                estimatedTokens: estimateRecallTokens(renderedText),
+              };
+            } catch {
+              return result;
+            }
+          }),
+        );
+        return {
+          snapshotFound: true,
+          snapshot: { ...snapshot, results: decorated },
+        };
       }
       return { snapshotFound: true, snapshot };
     } finally {
