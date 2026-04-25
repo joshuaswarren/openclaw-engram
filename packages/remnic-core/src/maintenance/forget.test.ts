@@ -87,8 +87,12 @@ test("forgetMemory: marks active memory as forgotten with timestamp + reason", a
   });
 });
 
-test("forgetMemory: omits forgottenReason when reason is empty", async () => {
-  const mem = makeMemory({ id: "beta", status: "active" });
+test("forgetMemory: clears forgottenReason when reason is empty", async () => {
+  const mem = makeMemory({
+    id: "beta",
+    status: "active",
+    forgottenReason: "stale restored reason",
+  });
   const { stub, writes } = makeStorageStub([mem]);
   const result = await forgetMemory(stub, {
     id: "beta",
@@ -96,6 +100,10 @@ test("forgetMemory: omits forgottenReason when reason is empty", async () => {
     now: () => new Date("2026-04-25T12:00:00Z"),
   });
   assert.equal(result.reason, "");
+  assert.ok(
+    Object.hasOwn(writes[0]?.patch ?? {}, "forgottenReason"),
+    "patch must explicitly clear stale merged frontmatter",
+  );
   assert.equal(writes[0]?.patch.forgottenReason, undefined);
 });
 

@@ -94,7 +94,7 @@ export async function forgetMemory(
   await storage.writeMemoryFrontmatter(memory, {
     status: "forgotten",
     forgottenAt,
-    ...(reason.length > 0 ? { forgottenReason: reason } : {}),
+    forgottenReason: reason.length > 0 ? reason : undefined,
     updated: forgottenAt,
   }, {
     actor: "remnic-forget",
