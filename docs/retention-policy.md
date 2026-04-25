@@ -55,20 +55,25 @@ This is the verified behavior on `main` as of PR #686/1:
 
 ### Regression tests pinning this behavior
 
-`tests/retrieval-cold-tier-default-excluded.test.ts`:
+`tests/retrieval-cold-tier-default-excluded.test.ts` runs three runtime
+tests against an instrumented orchestrator:
 
 - `parseConfig: qmdColdTierEnabled defaults to false (cold tier opt-in)`
 - `applyColdFallbackPipeline: cold QMD collection NOT queried under default
-  config`
+  config` — also asserts no redundant hot-tier QMD query is made from
+  inside the fallback pipeline; archive-scan must be the only fallback
+  source under default config.
 - `applyColdFallbackPipeline: cold QMD IS queried when explicitly opted in`
-- `primary recall path (fetchQmdMemoryResultsWithArtifactTopUp default
-  invocation) does not target cold collection` — a static-call-site audit
-  asserting that exactly one call site in `orchestrator.ts` passes
-  `collection: coldCollection`, and every other call omits the `collection`
-  option entirely.
 
-If a future PR adds another caller that targets `qmdColdCollection`, the
-fourth test will fail loudly so the audit can be re-run.
+The runtime instrumentation hooks `qmd.search` / `qmd.hybridSearch`,
+`fetchQmdMemoryResultsWithArtifactTopUp`, and
+`searchLongTermArchiveFallback` so it captures any code path that actually
+queries the cold collection — regardless of how the call is spelled in
+source. Static AST-source audits were considered and intentionally
+dropped because their completeness is unbounded (computed property
+names, shadowed identifiers, switch-case scopes, for-initializer
+declarations, bracket-access keys, destructuring, etc.); the runtime
+boundary check is strictly stronger.
 
 ## Related configuration
 
