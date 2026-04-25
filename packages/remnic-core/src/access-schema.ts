@@ -89,6 +89,13 @@ export const recallRequestSchema = z.object({
    */
   projectTag: z.string().trim().min(1, "projectTag must be non-empty when provided").max(256).optional(),
   /**
+   * Historical recall pin (issue #680).  ISO 8601 timestamp.  The
+   * schema only enforces the basic shape; the access service runs
+   * `Date.parse` and emits a structured 400 on malformed input
+   * (CLAUDE.md rule 51).
+   */
+  asOf: z.string().trim().min(1, "asOf must be a non-empty ISO 8601 timestamp").max(64).optional(),
+  /**
    * Free-form recall tag filter (issue #689). When provided, recall results
    * whose frontmatter `tags` do not match the filter are removed before the
    * response is returned. Comparison is case-sensitive exact match.

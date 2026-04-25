@@ -353,6 +353,32 @@ export async function applyTemporalSupersession(args: {
       );
       const supersededAt = new Date(maxMs).toISOString();
 
+      // Issue #680 — explicit fact lifecycle.  When the new fact
+      // supersedes this one, set the predecessor's `invalid_at` to the
+      // successor's effective valid_at.  Skip when the predecessor
+      // already carries an `invalid_at` so manual / earlier values
+      // are preserved (idempotent).
+      //
+      // Codex P1 on PR #713: in the hash-dedup early-return path
+      // (`useCallerTimestamp: true`), `newMemoryFile` is actually the
+      // OLD matching fact — no new file was written — so its
+      // `valid_at` is the predecessor's own old timestamp, not the
+      // successor's effective time. Use `persistedCreatedAt`
+      // directly in that path so the predecessor's invalid_at lines
+      // up with the caller's wall-clock, not the matching fact's old
+      // valid_at. The non-dedup path keeps the previous behavior
+      // (prefer the new file's explicit valid_at, fall back to its
+      // persisted created).
+      let invalidAtPatch: string | undefined;
+      if (!fresh.frontmatter.invalid_at) {
+        if (args.useCallerTimestamp) {
+          invalidAtPatch = persistedCreatedAt;
+        } else {
+          const newValidAt = newMemoryFile?.frontmatter.valid_at?.trim();
+          invalidAtPatch =
+            newValidAt && newValidAt.length > 0 ? newValidAt : persistedCreatedAt;
+        }
+      }
       const wrote = await args.storage.writeMemoryFrontmatter(
         fresh,
         {
@@ -360,6 +386,7 @@ export async function applyTemporalSupersession(args: {
           supersededBy: args.newMemoryId,
           supersededAt,
           updated: supersededAt,
+          ...(invalidAtPatch ? { invalid_at: invalidAtPatch } : {}),
         },
         {
           actor: "temporal-supersession",

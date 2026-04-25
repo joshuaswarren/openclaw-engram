@@ -183,6 +183,14 @@ export interface EngramAccessRecallRequest {
    */
   projectTag?: string;
   /**
+   * Historical recall pin (issue #680).  ISO 8601 timestamp.  When set,
+   * the orchestrator filters out memories whose `valid_at` is after this
+   * instant OR whose `invalid_at` is at-or-before this instant, so the
+   * caller sees the corpus as it existed at `asOf`.  Invalid values are
+   * rejected here with `EngramAccessInputError` (CLAUDE.md rule 51).
+   */
+  asOf?: string;
+  /**
    * Free-form recall tag filter (issue #689). When non-empty, recall results
    * whose frontmatter `tags` do not match are removed from the response.
    * Comparison is case-sensitive exact match against tags stored on each
@@ -1485,10 +1493,31 @@ export class EngramAccessService {
       this.budget.gc();
     }
     const topK = Number.isFinite(request.topK) ? Math.max(0, Math.floor(request.topK ?? 0)) : undefined;
+    // Issue #680 — historical recall pin.  Validate at the input
+    // boundary so a malformed `asOf` is rejected with a structured
+    // 400 instead of silently flooring at NaN inside the orchestrator
+    // (CLAUDE.md rule 51, gotcha #51).  Empty / undefined is fine —
+    // means "no pin".
+    let asOf: string | undefined;
+    if (request.asOf !== undefined && request.asOf !== null) {
+      if (typeof request.asOf !== "string" || request.asOf.trim().length === 0) {
+        throw new EngramAccessInputError(
+          "asOf must be a non-empty ISO 8601 timestamp string",
+        );
+      }
+      const parsed = Date.parse(request.asOf);
+      if (!Number.isFinite(parsed)) {
+        throw new EngramAccessInputError(
+          `asOf must be a parseable ISO 8601 timestamp (got: "${request.asOf}")`,
+        );
+      }
+      asOf = request.asOf;
+    }
     const recallOptions: RecallInvocationOptions = {
       namespace: namespaceOverride,
       topK,
       mode,
+      ...(asOf !== undefined ? { asOf } : {}),
     };
     const startedAt = Date.now();
     const context = await this.orchestrator.recall(query, request.sessionKey, recallOptions);

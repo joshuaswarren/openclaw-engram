@@ -4231,12 +4231,12 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           "text",
         )
         .option(
+          "--as-of <iso>",
+          "Historical recall pin (issue #680). ISO 8601 timestamp; returns the corpus as it existed at this instant.",
+        )
+        .option(
           "--tag <tag>",
           "Filter recall results by tag. Repeatable; alternatively pass a comma-separated list (issue #689).",
-          // Custom accumulator (cursor review): commander's default behavior
-          // overwrites the value on each occurrence, so `--tag a --tag b`
-          // would silently drop `a`. Collect every occurrence into an array
-          // so the documented repeatable usage actually works.
           (val: string, prev: unknown) =>
             Array.isArray(prev) ? [...(prev as string[]), val] : [val],
         )
@@ -4307,13 +4307,25 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             format = raw as "text" | "json";
           }
 
-          // Tag filter (issue #689). `--tag` accepts a comma-separated
-          // list; if the underlying parser surfaces multiple `--tag`
-          // invocations as an array we accept that too. Each entry is
-          // trimmed and deduped in declaration order. `--tag-match`
-          // accepts only "any" or "all"; reject typos loudly so a
-          // mis-typed `--tag-match every` doesn't silently default
-          // (CLAUDE.md rule 51).
+          // Issue #680 — `--as-of` validation at the input boundary
+          // (CLAUDE.md rule 51 / gotcha #14).
+          let asOf: string | undefined;
+          if (options.asOf !== undefined) {
+            const raw = String(options.asOf).trim();
+            if (raw.length === 0) {
+              throw new Error("--as-of requires a non-empty ISO 8601 timestamp");
+            }
+            const parsedAsOf = Date.parse(raw);
+            if (!Number.isFinite(parsedAsOf)) {
+              throw new Error(
+                `invalid --as-of value: ${raw} (expected an ISO 8601 timestamp parseable by Date.parse)`,
+              );
+            }
+            asOf = raw;
+          }
+
+          // Tag filter (issue #689). `--tag` accepts comma-separated
+          // and repeated invocations.
           let tags: string[] | undefined;
           if (options.tag !== undefined) {
             const raw = Array.isArray(options.tag)
@@ -4351,6 +4363,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             ...(namespace !== undefined ? { namespace } : {}),
             ...(topK !== undefined ? { topK } : {}),
             ...(disclosure !== undefined ? { disclosure } : {}),
+            ...(asOf !== undefined ? { asOf } : {}),
             ...(tags !== undefined ? { tags } : {}),
             ...(tagMatch !== undefined ? { tagMatch } : {}),
           });

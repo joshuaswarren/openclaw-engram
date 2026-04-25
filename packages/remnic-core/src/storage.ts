@@ -191,6 +191,10 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.supersededBy) lines.push(`supersededBy: ${fm.supersededBy}`);
   if (fm.supersededAt) lines.push(`supersededAt: ${fm.supersededAt}`);
   if (fm.archivedAt) lines.push(`archivedAt: ${fm.archivedAt}`);
+  // Issue #680 — explicit fact lifecycle.  Emit only when present so legacy
+  // memories round-trip unchanged; readers default `valid_at` to `created`.
+  if (fm.valid_at) lines.push(`validAt: ${fm.valid_at}`);
+  if (fm.invalid_at) lines.push(`invalidAt: ${fm.invalid_at}`);
   if (fm.forgottenAt) lines.push(`forgottenAt: ${fm.forgottenAt}`);
   if (fm.forgottenReason) lines.push(`forgottenReason: ${JSON.stringify(fm.forgottenReason)}`);
   // Lifecycle policy fields
@@ -641,6 +645,9 @@ function parseFrontmatter(
       supersededBy: fm.supersededBy || undefined,
       supersededAt: fm.supersededAt || undefined,
       archivedAt: fm.archivedAt || undefined,
+      // Issue #680 — explicit fact lifecycle round-trip.
+      valid_at: fm.validAt || undefined,
+      invalid_at: fm.invalidAt || undefined,
       forgottenAt: fm.forgottenAt || undefined,
       forgottenReason: parseFrontmatterStringValue(fm.forgottenReason),
       lifecycleState: (fm.lifecycleState as LifecycleState) || undefined,

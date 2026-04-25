@@ -115,6 +115,11 @@ export class EngramMcpServer {
             disclosure: { type: "string", enum: ["chunk", "section", "raw"] },
             cwd: { type: "string", description: "Working directory for auto git-context resolution." },
             projectTag: { type: "string", description: "Project tag for non-git project scoping (e.g. 'blend-supply')." },
+            asOf: {
+              type: "string",
+              description:
+                "Historical recall pin (issue #680). ISO 8601 timestamp; when set, the recall returns the corpus as it existed at this instant.",
+            },
             tags: {
               type: "array",
               items: { type: "string" },
@@ -1232,7 +1237,14 @@ export class EngramMcpServer {
         if ("projectTag" in args && args.projectTag !== undefined && args.projectTag !== null && typeof args.projectTag !== "string") {
           throw new EngramAccessInputError("projectTag must be a string");
         }
-        // Tag filter (issue #689).  Reject malformed `tags` / `tagMatch`
+        // Issue #680 — historical recall pin. Reject non-string asOf
+        // values up-front so malformed payloads surface as structured
+        // input errors. The service layer performs Date.parse on the
+        // string value.
+        if ("asOf" in args && args.asOf !== undefined && args.asOf !== null && typeof args.asOf !== "string") {
+          throw new EngramAccessInputError("asOf must be a string (ISO 8601 timestamp)");
+        }
+        // Tag filter (issue #689). Reject malformed tags / tagMatch
         // up front rather than silently dropping (CLAUDE.md rule 51).
         let tags: string[] | undefined;
         if ("tags" in args && args.tags !== undefined && args.tags !== null) {
@@ -1260,6 +1272,7 @@ export class EngramMcpServer {
           disclosure,
           cwd: typeof args.cwd === "string" ? args.cwd : undefined,
           projectTag: typeof args.projectTag === "string" ? args.projectTag : undefined,
+          asOf: typeof args.asOf === "string" ? args.asOf : undefined,
           ...(tags !== undefined ? { tags } : {}),
           ...(tagMatch !== undefined ? { tagMatch } : {}),
         });

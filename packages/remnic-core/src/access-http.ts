@@ -377,14 +377,29 @@ export class EngramAccessHttpServer {
       // silently overridden by a stale URL.  CLAUDE.md rule 51: invalid
       // query-param values throw, never fall back silently.
       const disclosure = this.resolveRecallDisclosure(body.disclosure, parsed);
-      // Tag filter (issue #689). Body fields take precedence; otherwise
-      // accept `?tag=...&tag=...&tag_match=...` so plain curl invocations
-      // can exercise the surface. Invalid `tag_match` throws (CLAUDE.md
-      // rule 51).
-      // Body takes precedence by *presence* of the `tags` field, not by
-      // emptiness (codex P2): an explicit `tags: []` clears the filter
-      // even when the URL still carries stale `?tag=...` params, so
-      // callers can deterministically opt out via JSON body.
+      // Issue #680 — historical recall pin (`asOf`). Body field wins
+      // over `?as_of=` query param. Empty query is rejected only when
+      // the body didn't supply a valid pin (codex P2 + cursor Medium).
+      const asOfQueryRaw = parsed.searchParams.get("as_of");
+      const bodyHasAsOf =
+        typeof body.asOf === "string" && body.asOf.length > 0;
+      if (
+        !bodyHasAsOf &&
+        asOfQueryRaw !== null &&
+        asOfQueryRaw.length === 0
+      ) {
+        throw new EngramAccessInputError(
+          "as_of must be a non-empty timestamp (got empty value)",
+        );
+      }
+      const asOf =
+        body.asOf ??
+        (asOfQueryRaw !== null && asOfQueryRaw.length > 0
+          ? asOfQueryRaw
+          : undefined);
+      // Tag filter (issue #689). Body presence wins over query params
+      // — explicit `tags: []` in body clears the filter even with
+      // stale `?tag=` URLs.
       const bodyHasTagsField =
         body !== null &&
         typeof body === "object" &&
@@ -397,7 +412,7 @@ export class EngramAccessHttpServer {
         : undefined;
       const queryTags = parsed.searchParams.getAll("tag");
       const tags = bodyHasTagsField
-        ? bodyTags // honour explicit body value, including empty array
+        ? bodyTags
         : queryTags.length > 0
           ? queryTags
           : undefined;
@@ -407,8 +422,6 @@ export class EngramAccessHttpServer {
         if (bodyTagMatch === "any" || bodyTagMatch === "all") {
           tagMatch = bodyTagMatch;
         }
-        // Schema validation already rejects malformed body values;
-        // we don't need to re-throw here.
       } else {
         const queryTagMatch = parsed.searchParams.get("tag_match");
         if (queryTagMatch !== null) {
@@ -435,6 +448,7 @@ export class EngramAccessHttpServer {
         // Forward cwd/projectTag for auto git-context resolution (issue #569).
         cwd: body.cwd,
         projectTag: body.projectTag,
+        ...(asOf !== undefined ? { asOf } : {}),
         ...(tags !== undefined ? { tags } : {}),
         ...(tagMatch !== undefined ? { tagMatch } : {}),
       });
