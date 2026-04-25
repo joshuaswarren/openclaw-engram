@@ -2,6 +2,8 @@
 
 **Persistent, private memory for AI agents.** Your agents forget everything between sessions — Remnic fixes that.
 
+**The trace is noise. The primitive is the product.** Remnic's job is the pipeline that distills hours of agent conversation into compressed, searchable, durable memory primitives. ([How it works →](docs/trace-to-primitive.md))
+
 Remnic gives AI agents long-term memory that survives across conversations. Decisions, preferences, project context, personal details, past mistakes — everything your agent learns persists and resurfaces exactly when it's needed. All data stays on your machine as plain markdown files. No cloud services, no subscriptions, no sharing your data with third parties.
 
 [![npm version](https://img.shields.io/npm/v/@remnic/cli)](https://www.npmjs.com/package/@remnic/cli)

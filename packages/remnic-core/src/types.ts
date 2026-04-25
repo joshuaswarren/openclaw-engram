@@ -1859,6 +1859,63 @@ export interface MemoryFile {
   content: string;
 }
 
+/**
+ * Public type representing the **Observation** stage in the
+ * Trace → Observation → Primitive pipeline (issue #685).
+ *
+ * - **Trace**: raw conversation turns captured in `buffer.ts`. Noisy,
+ *   verbose, ephemeral.
+ * - **Observation** (this type): post-extraction, importance-scored
+ *   fact candidate emitted by `extraction.ts` / `extraction-judge.ts`.
+ *   Already distilled — but not yet consolidated against the corpus.
+ * - **Primitive**: the durable `MemoryFile` written by `storage.ts`,
+ *   reinforced over time by `compounding/engine.ts`.
+ *
+ * `MemoryObservation` is the named handle on the intermediate stage
+ * the codebase has always produced but never publicly typed. It lets
+ * callers (telemetry, doctor surfaces, tests, downstream tooling)
+ * inspect the post-extraction shape without reaching into extraction
+ * internals.
+ *
+ * Naming note: this is intentionally NOT the same as the existing
+ * `state/observation-ledger/` directory, which is telemetry storage
+ * for the extraction pipeline (turn-count aggregates rebuilt by
+ * `maintenance/rebuild-observations.ts` and judge verdict events
+ * appended by `extraction-judge-telemetry.ts`). Lifecycle events on
+ * primitives — status flips, supersessions, archival, forget — live
+ * in `state/memory-lifecycle-ledger.jsonl`, written by
+ * `StorageManager`. A `MemoryObservation` describes the in-flight
+ * candidate that became (or didn't become) a primitive; the ledger
+ * directory is how the pipeline reports on itself. See
+ * `docs/trace-to-primitive.md` for the full pipeline walkthrough.
+ */
+export interface MemoryObservation {
+  /** Stable id for this observation, distinct from any primitive id. */
+  id: string;
+  /** Source session id the trace came from. */
+  sessionId?: string;
+  /** ISO timestamp the observation was emitted. */
+  observedAt: string;
+  /** The extracted fact candidate (category, content, confidence, tags, etc.). */
+  fact: ExtractedFact;
+  /** Importance score in [0,1], from `importance.ts`. */
+  importance?: number;
+  /**
+   * Whether the observation passed the extraction judge
+   * (`extraction-judge.ts`). When `false`, the observation was
+   * captured for telemetry but not persisted as a primitive.
+   */
+  judgeAccepted?: boolean;
+  /** Optional reason the judge gave when rejecting. */
+  judgeRejectionReason?: string;
+  /**
+   * Id of the resulting `MemoryFile` primitive once consolidation runs.
+   * Absent until consolidation decides to ADD/MERGE/UPDATE the
+   * observation into the corpus.
+   */
+  resultingPrimitiveId?: string;
+}
+
 /** Ordered step for extracted procedure memories (issue #519). */
 export interface ExtractedProcedureStep {
   order: number;
