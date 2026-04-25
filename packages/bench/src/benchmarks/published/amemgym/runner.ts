@@ -375,7 +375,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   }
 
   const labeledNumber = trimmedAnswer.match(
-    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?:(?:the\s+)?(?:option|choice|answer)\s*)?(?::|#)?\s*\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
+    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
   );
   if (labeledNumber) {
     const selectedNumber = Number.parseInt(labeledNumber[1]!, 10);
@@ -388,7 +388,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
 }
 
 function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
-  if (/^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?:(?:the\s+)?(?:option|choice|answer)\s*)?(?::|#)?\s*\(?#?\s*\d+/i.test(trimmedAnswer)) {
+  if (/^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*\d+/i.test(trimmedAnswer)) {
     return true;
   }
   return /^\(?#?\s*\d+\s*\)?\s+(?!weeks?\b|days?\b|months?\b|years?\b|hours?\b|minutes?\b)/i.test(trimmedAnswer);
@@ -400,6 +400,18 @@ function mentionsConflictingOptionNumber(
 ): boolean {
   const trimmed = value.trim();
   for (const match of trimmed.matchAll(/\b(?:option|choice|answer)\s*#?\s*(\d+)\b/gi)) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+  for (const match of trimmed.matchAll(/#\s*(\d+)\b/gi)) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+  for (const match of trimmed.matchAll(
+    /\b(\d+)\s+(?:(?:might|may|could|would|should)\s+be\s+|is\s+(?:also\s+)?|also\s+)?(?:right|correct|valid|the\s+(?:answer|option|choice))\b/gi,
+  )) {
     if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
       return true;
     }

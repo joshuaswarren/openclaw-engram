@@ -862,9 +862,13 @@ function findLastDayContext(
       && (tokens[index] === "day" || tokens[index] === "days")
       && tokens[index + 1]
     ) {
+      const dayToken = normalizeExplicitPlanDayToken(tokens[index + 1]!);
+      if (dayToken === undefined) {
+        continue;
+      }
       return {
         startIndex: index,
-        dayTokens: [normalizePlanDayToken(tokens[index + 1]!)],
+        dayTokens: [dayToken],
       };
     }
   }
@@ -895,6 +899,12 @@ function extractCompactPlanDayToken(token: string): string | undefined {
   return match?.[1] === undefined
     ? undefined
     : normalizePlanDayToken(match[1]);
+}
+
+function normalizeExplicitPlanDayToken(token: string): string | undefined {
+  return /^\d+$/.test(token)
+    ? normalizePlanDayToken(token)
+    : undefined;
 }
 
 function normalizePlanDayToken(token: string): string {
