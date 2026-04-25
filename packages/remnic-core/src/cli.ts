@@ -219,7 +219,12 @@ interface CliProgram {
 
 interface CliCommand {
   description(desc: string): CliCommand;
-  option(flags: string, desc: string, defaultValue?: string): CliCommand;
+  option(
+    flags: string,
+    desc: string,
+    parserOrDefault?: string | ((value: string, prev: unknown) => unknown),
+    defaultValue?: unknown,
+  ): CliCommand;
   requiredOption(flags: string, desc: string, defaultValue?: string): CliCommand;
   argument(name: string, desc: string): CliCommand;
   action(fn: (...args: unknown[]) => Promise<void> | void): CliCommand;
@@ -4228,6 +4233,12 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option(
           "--tag <tag>",
           "Filter recall results by tag. Repeatable; alternatively pass a comma-separated list (issue #689).",
+          // Custom accumulator (cursor review): commander's default behavior
+          // overwrites the value on each occurrence, so `--tag a --tag b`
+          // would silently drop `a`. Collect every occurrence into an array
+          // so the documented repeatable usage actually works.
+          (val: string, prev: unknown) =>
+            Array.isArray(prev) ? [...(prev as string[]), val] : [val],
         )
         .option(
           "--tag-match <mode>",

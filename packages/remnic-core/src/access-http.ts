@@ -381,12 +381,23 @@ export class EngramAccessHttpServer {
       // accept `?tag=...&tag=...&tag_match=...` so plain curl invocations
       // can exercise the surface. Invalid `tag_match` throws (CLAUDE.md
       // rule 51).
-      const bodyTags = Array.isArray((body as { tags?: unknown }).tags)
-        ? ((body as { tags?: string[] }).tags as string[])
+      // Body takes precedence by *presence* of the `tags` field, not by
+      // emptiness (codex P2): an explicit `tags: []` clears the filter
+      // even when the URL still carries stale `?tag=...` params, so
+      // callers can deterministically opt out via JSON body.
+      const bodyHasTagsField =
+        body !== null &&
+        typeof body === "object" &&
+        "tags" in (body as Record<string, unknown>);
+      const bodyTagsValue = bodyHasTagsField
+        ? (body as { tags?: unknown }).tags
+        : undefined;
+      const bodyTags = Array.isArray(bodyTagsValue)
+        ? (bodyTagsValue as string[])
         : undefined;
       const queryTags = parsed.searchParams.getAll("tag");
-      const tags = bodyTags && bodyTags.length > 0
-        ? bodyTags
+      const tags = bodyHasTagsField
+        ? bodyTags // honour explicit body value, including empty array
         : queryTags.length > 0
           ? queryTags
           : undefined;
