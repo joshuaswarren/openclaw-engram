@@ -187,13 +187,16 @@ rarely contributes to a recall worth the latency.
 | Key                                       | Default                | Purpose                                       |
 |-------------------------------------------|-----------------------:|-----------------------------------------------|
 | `lifecyclePolicyEnabled`                  | `false`                | Enable lifecycle scoring.                     |
-| `lifecyclePromoteHeatThreshold`           | `0.55`                 | Cold→hot promotion threshold.                 |
-| `lifecycleStaleDecayThreshold`            | `0.65`                 | Used by the demotion gate.                    |
-| `lifecycleArchiveDecayThreshold`          | `0.85`                 | Used by the archive gate.                     |
+| `lifecyclePromoteHeatThreshold`           | `0.55`                 | Lifecycle heat threshold for validated/active transitions. |
+| `lifecycleStaleDecayThreshold`            | `0.65`                 | Lifecycle decay threshold for stale state.    |
+| `lifecycleArchiveDecayThreshold`          | `0.85`                 | Lifecycle decay threshold for archived state. |
 | `lifecycleProtectedCategories`            | (5 categories)         | Categories never demoted automatically.       |
 | `lifecycleMetricsEnabled`                 | mirrors policy         | Emit lifecycle metrics for inspection.        |
 | `lifecycleFilterStaleEnabled`             | `false`                | Filter stale lifecycle memories from recall.  |
 | `qmdTierMigrationEnabled`                 | `false`                | Enable value-aware hot/cold tier migration.   |
+| `qmdTierDemotionMinAgeDays`               | `14`                   | Minimum age before hot→cold demotion.         |
+| `qmdTierDemotionValueThreshold`           | `0.35`                 | Value score threshold for hot→cold demotion.  |
+| `qmdTierPromotionValueThreshold`          | `0.7`                  | Value score threshold for cold→hot promotion. |
 | `qmdColdTierEnabled`                      | `false`                | Query cold QMD before archive fallback.       |
 | `qmdColdCollection`                       | `openclaw-engram-cold` | QMD collection name for cold tier.            |
 
