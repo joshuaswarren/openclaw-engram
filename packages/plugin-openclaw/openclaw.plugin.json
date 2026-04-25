@@ -363,6 +363,11 @@
             "type": "boolean",
             "default": false,
             "description": "When true, memory also overlays the current branch (project:<id>/branch:<name>). Opt-in — most development wants cross-branch recall. Wired in PR 3 of #569."
+          },
+          "globalFallback": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true (default), project-scoped sessions include the root/default namespace in read fallbacks so globally useful memories remain visible. Set to false for strict project isolation."
           }
         }
       },

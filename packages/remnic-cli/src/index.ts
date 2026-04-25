@@ -4306,7 +4306,8 @@ async function cmdDoctor(): Promise<void> {
       }>;
       describeCodingScope?: (
         ctx: unknown,
-        config: { projectScope: boolean; branchScope: boolean },
+        config: { projectScope: boolean; branchScope: boolean; globalFallback: boolean },
+        defaultNamespace?: string,
       ) => {
         scope: "none" | "project" | "branch";
         effectiveNamespace: string | null;
@@ -4344,12 +4345,21 @@ async function cmdDoctor(): Promise<void> {
           typeof pluginCodingMode.branchScope === "boolean"
             ? pluginCodingMode.branchScope
             : false;
+        const globalFallbackCfg =
+          typeof pluginCodingMode.globalFallback === "boolean"
+            ? pluginCodingMode.globalFallback
+            : true;
+        const defaultNamespaceCfg =
+          typeof pluginRemnic.defaultNamespace === "string" && pluginRemnic.defaultNamespace.length > 0
+            ? pluginRemnic.defaultNamespace
+            : "default";
         let effective = `project-…`;
         if (typeof core.describeCodingScope === "function") {
           const desc = core.describeCodingScope(gitCtx, {
             projectScope: projectScopeCfg,
             branchScope: branchScopeCfg,
-          });
+            globalFallback: globalFallbackCfg,
+          }, defaultNamespaceCfg as string);
           effective = desc.effectiveNamespace ?? "(no overlay)";
         }
         parts.push(`projectScope=${projectScopeCfg}`);

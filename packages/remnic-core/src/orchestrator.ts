@@ -1485,15 +1485,14 @@ export class Orchestrator {
   applyCodingNamespaceOverlay(sessionKey: string | undefined, baseNamespace: string): string {
     if (!this.config.namespacesEnabled) return baseNamespace;
     const codingContext = this.getCodingContextForSession(sessionKey);
-    const overlay = resolveCodingNamespaceOverlay(codingContext, this.config.codingMode);
+    const overlay = resolveCodingNamespaceOverlay(codingContext, this.config.codingMode, this.config.defaultNamespace);
     if (!overlay) return baseNamespace;
     return combineNamespaces(baseNamespace, overlay.namespace);
   }
 
   /**
    * Read-side overlay: returns the list of namespaces a session should read
-   * from, including any read fallbacks (branch → project asymmetry lands in
-   * PR 3; PR 2 returns an empty fallbacks list).
+   * from, including any read fallbacks (branch → project, global root).
    *
    * Returns `null` when:
    *   - `namespacesEnabled` is false (overlay would create false isolation)
@@ -1510,7 +1509,7 @@ export class Orchestrator {
   applyCodingRecallOverlay(sessionKey: string | undefined): { namespace: string; readFallbacks: string[] } | null {
     if (!this.config.namespacesEnabled) return null;
     const codingContext = this.getCodingContextForSession(sessionKey);
-    const overlay = resolveCodingNamespaceOverlay(codingContext, this.config.codingMode);
+    const overlay = resolveCodingNamespaceOverlay(codingContext, this.config.codingMode, this.config.defaultNamespace);
     if (!overlay) return null;
     return { namespace: overlay.namespace, readFallbacks: overlay.readFallbacks };
   }
