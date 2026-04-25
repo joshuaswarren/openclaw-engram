@@ -127,7 +127,7 @@ The trace is noise. The primitive is the product.
 | Surface | What you'll see |
 |---------|-----------------|
 | `@remnic/core` types | The `MemoryObservation` interface ships in the public types so callers can read post-extraction state without reaching into `extraction.ts`. |
-| `remnic doctor` | Reports observation throughput (observations/hour), judge acceptance rate, and the most recent `observedAt`. |
+| `remnic doctor` | *(future)* Will report observation throughput, judge acceptance rate, and the most recent `observedAt`. Today these signals live in the separate observation-ledger / judge stats paths; surfacing them in `doctor` is tracked as a follow-up. |
 | `recall` responses | `<oai-mem-citation>` blocks point at the primitive ids that came out the other end of the pipeline. |
 | `remnic tier list` / `tier explain` | Inspect what happened to primitives after they were written (issue #686). |
 | `observation-ledger` | A separate concept: this records *lifecycle events* on primitives (supersessions, archive, forget). It is **not** the observation stage of this pipeline — see the naming note below. |
