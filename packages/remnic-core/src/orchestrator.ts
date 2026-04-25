@@ -14629,13 +14629,32 @@ export class Orchestrator {
           continue;
         }
 
-        // Temporal supersession filter (issue #375): drop memories that a
-        // newer fact has retired, unless the caller opted in to history.
-        // NOTE: This check is intentionally independent of allowLifecycleFiltered
-        // (Finding A fix) — cold fallback sets allowLifecycleFiltered=true to
-        // include archived/retired candidates, but superseded memories must
-        // still be filtered unless temporalSupersessionIncludeInRecall is set.
-        if (
+        // Historical recall (issue #680): when the caller pinned the
+        // recall to a specific point in time, evaluate temporal validity
+        // at that instant FIRST and bypass the supersession filter
+        // entirely. A fact that is currently superseded but was valid
+        // at `as_of` is exactly what historical recall should surface;
+        // running supersession filtering before the as_of check would
+        // drop it and break the worked example in docs/temporal-recall.md
+        // (codex P1 / cursor High on PR #713).
+        const asOfActive =
+          typeof options?.asOfMs === "number" && Number.isFinite(options.asOfMs);
+        if (asOfActive) {
+          if (!isValidAsOf(memory.frontmatter, options!.asOfMs!)) {
+            temporalSupersededFilteredCount += 1;
+            continue;
+          }
+        } else if (
+          // Temporal supersession filter (issue #375): drop memories that
+          // a newer fact has retired, unless the caller opted in to history.
+          // NOTE: This check is intentionally independent of
+          // allowLifecycleFiltered (Finding A fix) — cold fallback sets
+          // allowLifecycleFiltered=true to include archived/retired
+          // candidates, but superseded memories must still be filtered
+          // unless temporalSupersessionIncludeInRecall is set.
+          // Skipped entirely when `as_of` is active (above branch); the
+          // half-open `[valid_at, invalid_at)` evaluation in isValidAsOf
+          // is the authoritative gate for historical recall.
           shouldFilterSupersededFromRecall(memory.frontmatter, {
             enabled: this.config.temporalSupersessionEnabled,
             includeInRecall: this.config.temporalSupersessionIncludeInRecall,
@@ -14643,21 +14662,6 @@ export class Orchestrator {
         ) {
           temporalSupersededFilteredCount += 1;
           continue;
-        }
-
-        // Historical recall (issue #680): when the caller pinned the
-        // recall to a specific point in time, drop candidates that were
-        // not authoritative at that instant.  `as_of` overrides the
-        // supersession filter above — a fact that is currently
-        // superseded but was valid at `as_of` should still surface.
-        // The caller controls that override by setting
-        // `temporalSupersessionIncludeInRecall=true` for the as-of
-        // request, which is documented in `docs/temporal-recall.md`.
-        if (typeof options?.asOfMs === "number" && Number.isFinite(options.asOfMs)) {
-          if (!isValidAsOf(memory.frontmatter, options.asOfMs)) {
-            temporalSupersededFilteredCount += 1;
-            continue;
-          }
         }
 
         if (

@@ -1,0 +1,12 @@
+{
+  "ts": "2026-04-25T17:05:00Z",
+  "issue": 686,
+  "agent_id": "a-686",
+  "current_pr_index": "2/6",
+  "current_pr_number": 698,
+  "phase": "addressing",
+  "branch": "feat/686-pr2-aged-dataset-bench",
+  "last_event": "PR1 #693 merged + released. PR2 #698 open with 7 commits, 16 reviews addressed (P1 Pareto sampler, P1 Pareto weighting, P1 recency-sort relevant set, multiple P2/medium fixes). Iterations continuing; pausing here to avoid the micro-push loop. PRs 3-6 will not fit in remaining session time. Stopping with PR2 in advanced review.",
+  "blocked_on": "ai-reviewers",
+  "error": null
+}

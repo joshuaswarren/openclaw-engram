@@ -383,9 +383,20 @@ export class EngramAccessHttpServer {
       // `Date.parse` validation and rejects malformed values with a
       // structured 400 (CLAUDE.md rule 51).
       const asOfQueryRaw = parsed.searchParams.get("as_of");
+      // CLAUDE.md rule 51 + codex P2: an explicit `?as_of=` (param
+      // present, value empty) is operator intent that we should treat
+      // as a malformed historical pin rather than silently drop.
+      // Falling back to "no pin" would let `?as_of=` quietly return
+      // present-time results — exactly the behavior drift the rule
+      // is meant to prevent.
+      if (asOfQueryRaw !== null && asOfQueryRaw.length === 0) {
+        throw new EngramAccessInputError(
+          "as_of must be a non-empty timestamp (got empty value)",
+        );
+      }
       const asOf =
         body.asOf ??
-        (asOfQueryRaw !== null && asOfQueryRaw.length > 0 ? asOfQueryRaw : undefined);
+        (asOfQueryRaw !== null ? asOfQueryRaw : undefined);
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
