@@ -234,5 +234,5 @@ Issue #686's six PRs:
 | Future PR | Scope |
 |-----------|-------|
 | Forget / restore / purge surfaces | Operator-managed soft-delete plus maintenance hard-delete after the configurable window. |
-| HTTP / MCP surfaces for tier telemetry and recall explanation | Today these are CLI-only. |
+| HTTP / MCP surfaces for tier telemetry and migration control | Recall explanation already has HTTP endpoints; tier telemetry remains CLI-only. |
 | Default-tuning study | Ship a tunable threshold profile based on aged-dataset bench results across multiple corpus shapes. |
