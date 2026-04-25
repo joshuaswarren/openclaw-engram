@@ -238,6 +238,22 @@ test("AMA-Bench recommended judge does not treat benign no-phrases as negative",
   assert.equal(await judge.score("q", "predicted", "expected"), 1);
 });
 
+test("AMA-Bench recommended judge treats negated negative labels as correct", async () => {
+  const judge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider("This is not incorrect."),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 1);
+
+  const failJudge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider("It doesn't fail."),
+  );
+
+  assert.equal(await failJudge.score("q", "predicted", "expected"), 1);
+});
+
 test("AMA-Bench recommended judge treats negated positive labels as incorrect", async () => {
   const judge = createProviderBackedAmaBenchRecommendedJudge(
     { provider: "openai", model: "qwen3-32b" },
