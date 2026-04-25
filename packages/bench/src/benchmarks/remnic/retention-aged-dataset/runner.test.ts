@@ -153,11 +153,17 @@ test("aged-dataset Pareto sampler produces a long-tail distribution (no clamping
     seed: 0xa686,
     nowIso: "2026-04-25T12:00:00.000Z",
   });
-  // Per-topic memory counts come straight from the queries' relevantMemoryIds
-  // (each query carries the full memory-id list for its topic).
+  // Per-topic memory counts come from the memory frontmatter tags
+  // (the first tag is the topic keyword).
+  const TOPIC_KEYWORDS = [
+    "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta",
+    "iota", "kappa", "lambda", "mu", "nu", "xi", "omicron", "pi",
+  ];
   const memoriesByTopic: number[] = new Array(16).fill(0);
-  for (const q of fixture.queries) {
-    memoriesByTopic[q.topicId] = q.relevantMemoryIds.length;
+  for (const m of fixture.memories) {
+    const tag = m.frontmatter.tags?.[0] ?? "";
+    const idx = TOPIC_KEYWORDS.indexOf(tag);
+    if (idx >= 0) memoriesByTopic[idx] += 1;
   }
   // Topic 0 (highest-frequency) must have more memories than topic 15
   // (lowest). The previous clamped Pareto would have made topic 15 a
@@ -181,5 +187,23 @@ test("aged-dataset Pareto sampler produces a long-tail distribution (no clamping
   assert.ok(
     queriesByTopic[0] > queriesByTopic[15],
     `query workload must Pareto-weight topic 0 above topic 15: topic0=${queriesByTopic[0]} topic15=${queriesByTopic[15]}`,
+  );
+});
+
+test("aged-dataset bench enforces MAX_TOTAL_QUERIES cap", async () => {
+  // The fixture must trim to MAX_TOTAL_QUERIES=200 even when rounding
+  // would otherwise push the total over. (Codex P2 review on PR #698.)
+  const fixture = generateAgedDataset({
+    size: 4000,
+    horizonDays: 365,
+    topicCount: 32,
+    paretoAlpha: 1.16,
+    ageSkew: 1.5,
+    seed: 0xa686,
+    nowIso: "2026-04-25T12:00:00.000Z",
+  });
+  assert.ok(
+    fixture.queries.length <= 200,
+    `MAX_TOTAL_QUERIES cap must be honored; got ${fixture.queries.length} queries`,
   );
 });

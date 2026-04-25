@@ -254,24 +254,48 @@ export function generateAgedDataset(
   // total task count tractable in `quick` mode.
   // Build a Pareto-weighted query workload. Total queries scale with
   // total memory count so each topic's share of the workload is
-  // proportional to its share of the corpus. With size=2000 and a
-  // Pareto-skewed corpus (topic 0 ≈ 695 memories, topic 15 ≈ 26), this
-  // yields topic 0 ≈ 70 queries and topic 15 ≈ 3 queries — a clean
-  // Pareto-weighted workload. The saturating `min(8, ceil(n/4))` formula
-  // collapsed both extremes onto the cap, losing the Pareto signal.
-  // (Codex P1 review on PR #698.)
+  // proportional to its share of the corpus.
   //
-  // We cap total queries to `MAX_TOTAL_QUERIES` so quick mode stays
-  // tractable. Each topic gets at least 1 query.
+  // Each query carries a *bounded* relevant-memory subset (the K most
+  // recently-accessed members of the topic, capped at RELEVANT_PER_QUERY).
+  // Without this cap, `recall_at_5` is structurally capped at
+  // `5 / size_of_topic` for large topics — recall@5 against a 695-member
+  // topic can never exceed ~0.007, making `recall_at_5_delta` insensitive
+  // to tier-policy changes. Bounding the relevant set lets recall@5 range
+  // freely across [0, 1]. (Cursor Bugbot medium-severity review on PR #698.)
   const MAX_TOTAL_QUERIES = 200;
+  const RELEVANT_PER_QUERY = 5;
   const totalMemoryCount = memories.length;
   const totalShare = Math.min(MAX_TOTAL_QUERIES, Math.max(1, totalMemoryCount));
+  // First pass: compute proportional integer query counts per topic.
+  const topicEntries = [...memoriesByTopic.entries()].sort(
+    (a, b) => a[0] - b[0],
+  );
+  const rawCounts = topicEntries.map(([, ids]) =>
+    Math.max(1, Math.round((ids.length / Math.max(1, totalMemoryCount)) * totalShare)),
+  );
+  // Second pass: trim to MAX_TOTAL_QUERIES if rounding pushed us over.
+  // Trim from the largest topics first so we don't drop sparse topics
+  // below the floor of 1. (Codex P2 review on PR #698.)
+  let runningTotal = rawCounts.reduce((s, n) => s + n, 0);
+  while (runningTotal > MAX_TOTAL_QUERIES) {
+    let maxIdx = 0;
+    for (let i = 1; i < rawCounts.length; i += 1) {
+      if (rawCounts[i] > rawCounts[maxIdx]) maxIdx = i;
+    }
+    if (rawCounts[maxIdx] <= 1) break; // safety: don't push any topic below 1.
+    rawCounts[maxIdx] -= 1;
+    runningTotal -= 1;
+  }
+
   const queries: AgedQuery[] = [];
-  for (const [topicId, ids] of memoriesByTopic.entries()) {
-    const topicQueryCount = Math.max(
-      1,
-      Math.round((ids.length / Math.max(1, totalMemoryCount)) * totalShare),
-    );
+  for (let i = 0; i < topicEntries.length; i += 1) {
+    const [topicId, ids] = topicEntries[i];
+    const topicQueryCount = rawCounts[i];
+    // Choose the K most recently-touched memories as the bounded
+    // relevant set for queries on this topic. This makes recall@K a
+    // meaningful, tier-policy-sensitive metric.
+    const relevantSubset = [...ids].slice(0, RELEVANT_PER_QUERY);
     for (let q = 0; q < topicQueryCount; q += 1) {
       queries.push({
         // Per-topic instance index keeps duplicates within a topic
@@ -281,7 +305,7 @@ export function generateAgedDataset(
         id: `topic-${topicId}-${q}`,
         text: `${topicWord(topicId, 0)} ${topicWord(topicId, 1)}`,
         topicId,
-        relevantMemoryIds: ids,
+        relevantMemoryIds: relevantSubset,
       });
     }
   }
