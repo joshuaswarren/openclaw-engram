@@ -956,11 +956,19 @@ export class EngramAccessService {
   ): Promise<EngramAccessMemorySummary["rawExcerpts"] | null> {
     if (disclosure !== "raw") return null;
     if (!context || !context.query) return [];
+    // Privacy guard: raw disclosure must be session-scoped.  Without a
+    // sessionKey, `lcm.searchContextFull(query, n, undefined)` searches
+    // across every archived session in the LCM store and would return
+    // excerpts from unrelated sessions (potentially crossing namespaces
+    // via their `${namespace}:${sessionKey}` prefix encoding).  Treat a
+    // missing sessionKey as "no excerpts" — callers asking for raw
+    // disclosure outside a session get an empty list, not a leak.
+    if (!context.sessionKey) return [];
     const lcm = this.orchestrator.lcmEngine;
     if (!lcm || !lcm.enabled) return [];
     try {
       const lcmSessionKey =
-        context.sessionKey && context.namespace &&
+        context.namespace &&
         context.namespace !== this.orchestrator.config.defaultNamespace
           ? `${context.namespace}:${context.sessionKey}`
           : context.sessionKey;
