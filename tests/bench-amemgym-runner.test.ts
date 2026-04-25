@@ -499,6 +499,29 @@ test("runBenchmark accepts labeled option numbers followed by plain amemgym text
   assert.equal(task.details?.scoredAnswer, "Seattle");
 });
 
+test("runBenchmark rejects plain amemgym option text that mentions another option", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-plain-conflicting-choice-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("1 Seattle or 2 Dallas"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.qa_accuracy, 0);
+  assert.equal(task.details?.selectedChoiceIndex, null);
+  assert.equal(task.details?.scoredAnswer, "1 Seattle or 2 Dallas");
+});
+
 test("runBenchmark accepts bare amemgym option-number answers with rationale", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-bare-rationale-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");

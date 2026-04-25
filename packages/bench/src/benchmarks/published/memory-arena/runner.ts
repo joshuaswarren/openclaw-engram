@@ -890,6 +890,13 @@ function findLastDayContext(
         dayTokens: [compactDayToken],
       };
     }
+    const precedingExplicitDayContext = extractPrecedingExplicitPlanDayContext(
+      tokens,
+      index,
+    );
+    if (precedingExplicitDayContext !== undefined) {
+      return precedingExplicitDayContext;
+    }
     const standaloneDayToken = normalizeStandalonePlanDayToken(tokens[index]!);
     if (standaloneDayToken !== undefined) {
       return {
@@ -967,6 +974,28 @@ function extractTrailingPlanDayContext(
     startIndex: dayTokenIndex - 1,
     dayTokens: [previousToken, normalizePlanDayToken(tokens[dayTokenIndex]!)],
   };
+}
+
+function extractPrecedingExplicitPlanDayContext(
+  tokens: string[],
+  beforeIndex: number,
+): { startIndex: number; dayTokens: string[] } | undefined {
+  const searchStart = Math.max(0, beforeIndex - 4);
+  for (let index = beforeIndex - 2; index >= searchStart; index -= 1) {
+    if (
+      (tokens[index] === "day" || tokens[index] === "days")
+      && tokens[index + 1]
+    ) {
+      const dayToken = normalizeExplicitPlanDayToken(tokens[index + 1]!);
+      if (dayToken !== undefined) {
+        return {
+          startIndex: index,
+          dayTokens: [dayToken],
+        };
+      }
+    }
+  }
+  return undefined;
 }
 
 function normalizeExplicitPlanDayToken(token: string): string | undefined {
