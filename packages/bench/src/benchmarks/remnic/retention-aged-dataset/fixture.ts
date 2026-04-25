@@ -134,16 +134,18 @@ const TOPIC_KEYWORDS = [
 function topicWord(topicId: number, slot: number): string {
   // Disambiguate distinct topics that wrap past the keyword table's
   // length so query/content text stays unique even when topicCount
-  // exceeds 16.  (Codex P2 review on PR #698: bare modulo collapsed
-  // topic 0 and topic 16 to identical text, contaminating recall@K
-  // measurement at high topic counts.)  Format: keyword for the first
-  // wrap, keyword + "-N" for subsequent wraps where N is the wrap
-  // generation.
+  // exceeds 16.  (Codex P2 + Cursor Medium review on PR #698: a bare
+  // modulo collapsed topic 0 and topic 16 to identical text, and a
+  // hyphenated `keyword-N` suffix was defeated by the ranker's
+  // `[^a-z0-9]` tokenizer which splits the suffix back off.)  Format:
+  // keyword for the first wrap, keyword + Nth-generation digit
+  // CONCATENATED (no hyphen) so the result remains a single token after
+  // tokenization — `alpha`, `alpha1`, `alpha2`, ...
   const tableLen = TOPIC_KEYWORDS.length;
   const kws = TOPIC_KEYWORDS[topicId % tableLen];
   const generation = Math.floor(topicId / tableLen);
   const base = kws[slot % kws.length];
-  return generation === 0 ? base : `${base}-${generation}`;
+  return generation === 0 ? base : `${base}${generation}`;
 }
 
 /**
