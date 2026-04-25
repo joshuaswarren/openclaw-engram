@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   MEMORY_ARENA_SMOKE_FIXTURE,
   type ArenaAnswer,
+  type ArenaBasePerson,
   type ArenaExpectedAnswer,
   type ArenaTask,
   type DomainData,
@@ -62,6 +63,19 @@ export async function runMemoryArenaBenchmark(
       await options.system.reset();
 
       const sessionId = `arena-${domain}-${task.id}`;
+      let initialSeedError: string | undefined;
+      if (isGroupTravelPlannerCategory(task.category)) {
+        try {
+          await storeInitialTaskState(options, sessionId, task);
+        } catch (seedErr) {
+          initialSeedError = seedErr instanceof Error
+            ? seedErr.message
+            : String(seedErr);
+          console.error(
+            `  [WARN] memory-arena initial task state failed for ${domain}:${task.id}: ${initialSeedError}`,
+          );
+        }
+      }
       for (
         let questionIndex = 0;
         questionIndex < task.questions.length;
@@ -104,11 +118,21 @@ export async function runMemoryArenaBenchmark(
           const { result: recalledText, durationMs } = await timed(async () =>
             options.system.recall(sessionId, question),
           );
-          const answered = await answerBenchmarkQuestion({
+          const benchmarkQuestion = formatMemoryArenaQuestion(
+            task.category,
             question,
+            expectedAnswer,
+          );
+          const answered = await answerBenchmarkQuestion({
+            question: benchmarkQuestion,
             recalledText,
             responder: options.system.responder,
           });
+          const domainScores = scoreMemoryArenaDomainAnswer(
+            task.category,
+            answered.finalAnswer,
+            expectedAnswer,
+          );
           const judgeResult = await llmJudgeScoreDetailed(
             options.system.judge,
             question,
@@ -119,6 +143,7 @@ export async function runMemoryArenaBenchmark(
           const scores: Record<string, number> = {
             f1: f1Score(answered.finalAnswer, expected),
             contains_answer: containsAnswer(answered.finalAnswer, expected),
+            ...domainScores,
           };
           if (judgeResult.score >= 0) {
             scores.llm_judge = judgeResult.score;
@@ -145,6 +170,10 @@ export async function runMemoryArenaBenchmark(
               taskId: task.id,
               subtaskIndex: questionIndex,
               category: task.category,
+              promptQuestion: benchmarkQuestion,
+              ...(initialSeedError === undefined
+                ? {}
+                : { initialSeedError }),
               recalledLength: recalledText.length,
               answeredLength: answered.finalAnswer.length,
               recalledText,
@@ -180,6 +209,7 @@ export async function runMemoryArenaBenchmark(
               f1: -1,
               contains_answer: -1,
               llm_judge: -1,
+              ...failureMemoryArenaDomainScores(task.category, expectedAnswer),
               process_score: 0,
               ...(questionIndex === task.questions.length - 1
                 ? { task_success_rate: 0 }
@@ -187,7 +217,12 @@ export async function runMemoryArenaBenchmark(
             },
             latencyMs: 0,
             tokens: { input: 0, output: 0 },
-            details: { error: message },
+            details: {
+              error: message,
+              ...(initialSeedError === undefined
+                ? {}
+                : { initialSeedError }),
+            },
           });
         }
 
@@ -398,6 +433,14 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
       `${location} backgrounds must be a string or an array of strings when provided.`,
     );
   }
+  if (
+    record.base_person != null
+    && !isValidBasePerson(record.base_person)
+  ) {
+    throw new Error(
+      `${location} base_person must be an object with a valid daily_plans value when provided.`,
+    );
+  }
 
   return {
     id: record.id as number,
@@ -407,6 +450,9 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
     ...(record.backgrounds === undefined
       ? {}
       : { backgrounds: record.backgrounds as string | string[] }),
+    ...(record.base_person == null
+      ? {}
+      : { base_person: record.base_person as ArenaBasePerson }),
   };
 }
 
@@ -487,6 +533,18 @@ function isValidBackgrounds(backgrounds: unknown): backgrounds is string | strin
       && backgrounds.every((entry) => typeof entry === "string"));
 }
 
+function isValidBasePerson(basePerson: unknown): basePerson is ArenaBasePerson {
+  if (!basePerson || typeof basePerson !== "object" || Array.isArray(basePerson)) {
+    return false;
+  }
+
+  const record = basePerson as Record<string, unknown>;
+  return !("daily_plans" in record)
+    || record.daily_plans === undefined
+    || record.daily_plans === null
+    || isValidExpectedAnswer(record.daily_plans);
+}
+
 function scoredSubtaskCount(task: ArenaTask): number {
   return task.questions.filter((_, index) => shouldScoreSubtask(task, index)).length;
 }
@@ -513,6 +571,428 @@ function backgroundForSubtask(
       : undefined;
   }
   return undefined;
+}
+
+async function storeInitialTaskState(
+  options: ResolvedRunBenchmarkOptions,
+  sessionId: string,
+  task: ArenaTask,
+): Promise<void> {
+  if (!task.base_person) {
+    return;
+  }
+
+  const basePerson = task.base_person;
+  const name = typeof basePerson.name === "string" ? basePerson.name : "base traveler";
+  const query = typeof basePerson.query === "string" ? basePerson.query : "";
+  const plan = basePerson.daily_plans == null
+    ? ""
+    : answerToString(basePerson.daily_plans);
+  if (query.trim().length === 0 && plan.trim().length === 0) {
+    return;
+  }
+
+  await options.system.store(sessionId, [
+    {
+      role: "user",
+      content: query.trim().length > 0
+        ? query
+        : `MemoryArena initial state for ${name}.`,
+    },
+    {
+      role: "assistant",
+      content: [
+        `MemoryArena initial finalized plan for ${name}.`,
+        query.trim().length > 0 ? `Base traveler request: ${query}` : "",
+        plan.trim().length > 0 ? `Environment result: ${plan}` : "",
+      ].filter((part) => part.length > 0).join("\n"),
+    },
+  ]);
+
+  try {
+    await options.system.drain?.();
+  } catch (drainErr) {
+    console.error(`  [WARN] memory-arena drain failed after initial task state: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+  }
+}
+
+function formatMemoryArenaQuestion(
+  category: string,
+  question: string,
+  expectedAnswer: ArenaExpectedAnswer,
+): string {
+  if (!shouldUseGroupTravelPlanProtocol(category, expectedAnswer)) {
+    return question;
+  }
+
+  return [
+    "You are a travel planner assistant in the MemoryArena Group Travel Planning task.",
+    "Use the supplied memory context containing the base traveler plan and previous travelers' finalized plans.",
+    "Generate the complete finalized plan for the current traveler, not just a short answer to one constraint.",
+    "Preserve the exact known flight, restaurant, attraction, and accommodation names from memory when they are required by JOIN or comparison constraints.",
+    "Return all required day sections from the current traveler request and memory context.",
+    "",
+    "Final output format:",
+    "=== Traveler Plan ===",
+    "Day 1:",
+    "Current City: ...",
+    "Transportation: ...",
+    "Breakfast: ...",
+    "Attraction: ...",
+    "Lunch: ...",
+    "Dinner: ...",
+    "Accommodation: ...",
+    "",
+    "Current traveler request:",
+    question,
+  ].join("\n");
+}
+
+function scoreMemoryArenaDomainAnswer(
+  category: string,
+  predicted: string,
+  expectedAnswer: ArenaExpectedAnswer,
+): Record<string, number> {
+  if (!isGroupTravelPlannerCategory(category)) {
+    return {};
+  }
+
+  const expectedFields = extractPlanFieldValues(expectedAnswer);
+  if (expectedFields.length === 0) {
+    return {};
+  }
+
+  const hits = countNonOverlappingPlanFieldHits(predicted, expectedFields);
+  const planFieldRecall = hits / expectedFields.length;
+
+  return {
+    soft_process_score: hits === expectedFields.length ? 1 : 0,
+    plan_field_recall: planFieldRecall,
+  };
+}
+
+function failureMemoryArenaDomainScores(
+  category: string,
+  expectedAnswer: ArenaExpectedAnswer,
+): Record<string, number> {
+  if (
+    !isGroupTravelPlannerCategory(category)
+    || extractPlanFieldValues(expectedAnswer).length === 0
+  ) {
+    return {};
+  }
+  return {
+    plan_field_recall: 0,
+    soft_process_score: 0,
+  };
+}
+
+function isGroupTravelPlannerCategory(category: string): boolean {
+  return category.trim().toLowerCase() === "group_travel_planner";
+}
+
+function shouldUseGroupTravelPlanProtocol(
+  category: string,
+  expectedAnswer: ArenaExpectedAnswer,
+): boolean {
+  return isGroupTravelPlannerCategory(category)
+    && extractPlanFieldValues(expectedAnswer).length > 0;
+}
+
+interface PlanFieldExpectation {
+  value: string;
+  fieldKey: string;
+  day?: string;
+}
+
+const PLAN_FIELD_KEYS = [
+  "current_city",
+  "transportation",
+  "breakfast",
+  "attraction",
+  "lunch",
+  "dinner",
+  "accommodation",
+] as const;
+
+const PLAN_FIELD_LABEL_TOKEN_SEQUENCES = PLAN_FIELD_KEYS
+  .map((key) => tokenizePlanText(key.replace(/_/g, " ")))
+  .sort((a, b) => b.length - a.length);
+const WEEKDAY_PLAN_DAY_TOKENS = new Set([
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+]);
+const WORD_PLAN_DAY_TOKENS = new Set([
+  ...WEEKDAY_PLAN_DAY_TOKENS,
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+]);
+
+function extractPlanFieldValues(answer: ArenaExpectedAnswer): PlanFieldExpectation[] {
+  const planItems = Array.isArray(answer) ? answer : [answer];
+  const fields: PlanFieldExpectation[] = [];
+  for (const item of planItems) {
+    if (!isValidArenaAnswerObject(item)) {
+      continue;
+    }
+    const day = typeof item.days === "string" || typeof item.days === "number"
+      ? normalizePlanDayLabel(item.days)
+      : undefined;
+    for (const key of PLAN_FIELD_KEYS) {
+      const value = item[key];
+      if (typeof value === "string" && value.trim().length > 0 && value.trim() !== "-") {
+        fields.push({ value: value.trim(), fieldKey: key, day });
+      }
+    }
+  }
+  return fields;
+}
+
+function normalizePlanText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/_/g, " ")
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizePlanDayLabel(value: string | number): string {
+  const tokens = tokenizePlanText(String(value));
+  const dayIndex = tokens.findIndex((token) => token === "day" || token === "days");
+  if (dayIndex !== -1 && tokens[dayIndex + 1]) {
+    return normalizePlanDayToken(tokens[dayIndex + 1]!);
+  }
+  if (tokens.length === 1) {
+    return extractCompactPlanDayToken(tokens[0]!) ?? normalizePlanDayToken(tokens[0]!);
+  }
+  return tokens.join(" ");
+}
+
+function countNonOverlappingPlanFieldHits(
+  predicted: string,
+  expectedFields: PlanFieldExpectation[],
+): number {
+  const predictedTokens = tokenizePlanText(predicted);
+  const expectedTokenFields = expectedFields
+    .map((field, index) => ({
+      index,
+      tokens: tokenizePlanText(field.value),
+      fieldTokens: tokenizePlanText(field.fieldKey.replace(/_/g, " ")),
+      dayTokens: field.day === undefined ? [] : tokenizePlanText(field.day),
+    }))
+    .filter((field) => field.tokens.length > 0)
+    .sort((a, b) =>
+      b.tokens.length - a.tokens.length
+      || a.index - b.index,
+    );
+
+  const usedTokens = Array.from({ length: predictedTokens.length }, () => false);
+  let count = 0;
+  for (const expectedField of expectedTokenFields) {
+    const matchIndex = findPlanFieldTokenWindow(
+      predictedTokens,
+      expectedField,
+      usedTokens,
+    );
+    if (matchIndex !== -1) {
+      count += 1;
+      for (
+        let tokenIndex = matchIndex;
+        tokenIndex < matchIndex + expectedField.tokens.length;
+        tokenIndex += 1
+      ) {
+        usedTokens[tokenIndex] = true;
+      }
+    }
+  }
+  return count;
+}
+
+function findPlanFieldTokenWindow(
+  predictedTokens: string[],
+  expectedField: {
+    tokens: string[];
+    fieldTokens: string[];
+    dayTokens: string[];
+  },
+  usedTokens: boolean[],
+): number {
+  for (let index = 0; index <= predictedTokens.length - expectedField.tokens.length; index += 1) {
+    const valueMatches = expectedField.tokens.every(
+      (token, offset) =>
+        !usedTokens[index + offset]
+        && predictedTokens[index + offset] === token,
+    );
+    if (!valueMatches) {
+      continue;
+    }
+
+    const dayContext = expectedField.dayTokens.length > 0
+      ? findLastDayContext(predictedTokens, index)
+      : undefined;
+    if (
+      expectedField.dayTokens.length > 0
+      && (dayContext === undefined || !tokensEqual(dayContext.dayTokens, expectedField.dayTokens))
+    ) {
+      continue;
+    }
+
+    const contextStart = dayContext?.startIndex ?? Math.max(0, index - 32);
+    if (
+      expectedField.fieldTokens.length > 0
+      && !tokensEqual(
+        findNearestPlanFieldLabel(predictedTokens, contextStart, index) ?? [],
+        expectedField.fieldTokens,
+      )
+    ) {
+      continue;
+    }
+    return index;
+  }
+  return -1;
+}
+
+function findLastDayContext(
+  tokens: string[],
+  beforeIndex: number,
+): { startIndex: number; dayTokens: string[] } | undefined {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const compactDayToken = extractCompactPlanDayToken(tokens[index]!);
+    if (compactDayToken !== undefined) {
+      return {
+        startIndex: index,
+        dayTokens: [compactDayToken],
+      };
+    }
+    const standaloneDayToken = normalizeStandalonePlanDayToken(tokens[index]!);
+    if (standaloneDayToken !== undefined) {
+      return {
+        startIndex: index,
+        dayTokens: [standaloneDayToken],
+      };
+    }
+    const trailingDayContext = extractTrailingPlanDayContext(tokens, index);
+    if (trailingDayContext !== undefined) {
+      return trailingDayContext;
+    }
+    if (
+      index <= beforeIndex - 2
+      && (tokens[index] === "day" || tokens[index] === "days")
+      && tokens[index + 1]
+    ) {
+      const dayToken = normalizeExplicitPlanDayToken(tokens[index + 1]!);
+      if (dayToken === undefined) {
+        continue;
+      }
+      return {
+        startIndex: index,
+        dayTokens: [dayToken],
+      };
+    }
+  }
+  return undefined;
+}
+
+function findNearestPlanFieldLabel(
+  tokens: string[],
+  startIndex: number,
+  beforeIndex: number,
+): string[] | undefined {
+  for (let endIndex = beforeIndex - 1; endIndex >= startIndex; endIndex -= 1) {
+    for (const labelTokens of PLAN_FIELD_LABEL_TOKEN_SEQUENCES) {
+      const labelStart = endIndex - labelTokens.length + 1;
+      if (labelStart < startIndex) {
+        continue;
+      }
+      if (labelTokens.every((token, offset) => tokens[labelStart + offset] === token)) {
+        return labelTokens;
+      }
+    }
+  }
+  return undefined;
+}
+
+function extractCompactPlanDayToken(token: string): string | undefined {
+  const match = /^days?(\d+)$/.exec(token);
+  return match?.[1] === undefined
+    ? undefined
+    : normalizePlanDayToken(match[1]);
+}
+
+function normalizeStandalonePlanDayToken(token: string): string | undefined {
+  return WEEKDAY_PLAN_DAY_TOKENS.has(token)
+    ? token
+    : undefined;
+}
+
+function extractTrailingPlanDayContext(
+  tokens: string[],
+  dayTokenIndex: number,
+): { startIndex: number; dayTokens: string[] } | undefined {
+  const previousToken = tokens[dayTokenIndex - 1];
+  if (
+    previousToken === undefined
+    || (tokens[dayTokenIndex] !== "day" && tokens[dayTokenIndex] !== "days")
+    || !WORD_PLAN_DAY_TOKENS.has(previousToken)
+  ) {
+    return undefined;
+  }
+  return {
+    startIndex: dayTokenIndex - 1,
+    dayTokens: [previousToken, normalizePlanDayToken(tokens[dayTokenIndex]!)],
+  };
+}
+
+function normalizeExplicitPlanDayToken(token: string): string | undefined {
+  const normalizedToken = normalizePlanDayToken(token);
+  return /^\d+$/.test(token)
+    || WORD_PLAN_DAY_TOKENS.has(normalizedToken)
+    ? normalizedToken
+    : undefined;
+}
+
+function normalizePlanDayToken(token: string): string {
+  if (/^\d+$/.test(token)) {
+    return String(Number(token));
+  }
+  return token;
+}
+
+function tokensEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length
+    && left.every((token, index) => token === right[index]);
+}
+
+function tokenizePlanText(value: string): string[] {
+  return normalizePlanText(value)
+    .split(" ")
+    .filter((token) => token.length > 0);
 }
 
 async function storeCompletedSubtask(
@@ -546,6 +1026,9 @@ async function storeCompletedSubtask(
 function scoreSubtaskSuccess(scores: Record<string, number>): number {
   if (typeof scores.llm_judge === "number") {
     return scores.llm_judge >= 0.5 ? 1 : 0;
+  }
+  if (typeof scores.soft_process_score === "number") {
+    return scores.soft_process_score >= 1 ? 1 : 0;
   }
   if (scores.contains_answer === 1) {
     return 1;

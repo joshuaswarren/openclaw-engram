@@ -39,16 +39,20 @@ const DATASET_FILENAMES = [
  * The QA has answer_choices, each tied to specific state values.
  * We pick the one matching the user's final state.
  */
-function findBestAnswer(qa: AMemGymQA, finalState: Record<string, string>): string {
-  for (const choice of qa.answer_choices) {
+function findExpectedAnswerChoice(
+  qa: AMemGymQA,
+  finalState: Record<string, string>,
+): { index: number; choice: AMemGymQA["answer_choices"][number] } | undefined {
+  for (let index = 0; index < qa.answer_choices.length; index += 1) {
+    const choice = qa.answer_choices[index]!;
     const requiredStates = choice.state;
     const matchValues = qa.required_info.map((key) => finalState[key]);
     if (requiredStates.length === matchValues.length &&
       requiredStates.every((s, i) => s === matchValues[i])) {
-      return choice.answer;
+      return { index, choice };
     }
   }
-  return qa.answer_choices[0]?.answer ?? "";
+  return undefined;
 }
 
 export const amemGymDefinition: BenchmarkDefinition = {
@@ -107,26 +111,34 @@ export async function runAMemGymBenchmark(
     ) {
       const qa = profile.qas[questionIndex]!;
       const taskResultId = `${profile.id}-q${questionIndex}`;
-      const expectedAnswer = findBestAnswer(qa, finalState);
+      const expectedChoice = findExpectedAnswerChoice(qa, finalState);
+      const expectedAnswer = expectedChoice?.choice.answer ?? qa.answer_choices[0]?.answer ?? "";
+      const benchmarkQuestion = formatAMemGymQuestion(qa);
 
       try {
         const { result: recallText, durationMs } = await timed(async () => {
           return options.system.recall(sessionId, qa.query);
         });
         const answered = await answerBenchmarkQuestion({
-          question: qa.query,
+          question: benchmarkQuestion,
           recalledText: recallText,
           responder: options.system.responder,
         });
+        const selectedChoice = parseAMemGymChoice(answered.finalAnswer, qa);
+        const answerForScoring = selectedChoice?.choice.answer ?? answered.finalAnswer;
 
         const scores: Record<string, number> = {
-          f1: f1Score(answered.finalAnswer, expectedAnswer),
-          contains_answer: containsAnswer(answered.finalAnswer, expectedAnswer),
+          f1: f1Score(answerForScoring, expectedAnswer),
+          contains_answer: containsAnswer(answerForScoring, expectedAnswer),
+          qa_accuracy:
+            selectedChoice && expectedChoice && selectedChoice.index === expectedChoice.index
+              ? 1
+              : 0,
         };
         const judgeResult = await llmJudgeScoreDetailed(
           options.system.judge,
           qa.query,
-          answered.finalAnswer,
+          answerForScoring,
           expectedAnswer,
         );
         if (judgeResult.score >= 0) {
@@ -135,7 +147,7 @@ export async function runAMemGymBenchmark(
 
         tasks.push({
           taskId: taskResultId,
-          question: qa.query,
+          question: benchmarkQuestion,
           expected: expectedAnswer,
           actual: answered.finalAnswer,
           scores,
@@ -148,8 +160,16 @@ export async function runAMemGymBenchmark(
             profileId: profile.id,
             profileName: profile.user_profile.name,
             questionIndex,
+            originalQuery: qa.query,
             periodCount: profile.periods.length,
             requiredInfo: qa.required_info,
+            expectedChoiceIndex:
+              expectedChoice === undefined ? null : expectedChoice.index + 1,
+            selectedChoiceIndex:
+              selectedChoice === undefined ? null : selectedChoice.index + 1,
+            selectedAnswer:
+              selectedChoice === undefined ? null : selectedChoice.choice.answer,
+            scoredAnswer: answerForScoring,
             recalledLength: recallText.length,
             answeredLength: answered.finalAnswer.length,
             recalledText: recallText,
@@ -163,10 +183,10 @@ export async function runAMemGymBenchmark(
         console.error(`  [WARN] amemgym task ${taskResultId} failed: ${message}`);
         tasks.push({
           taskId: taskResultId,
-          question: qa.query,
+          question: benchmarkQuestion,
           expected: expectedAnswer,
           actual: `(error: ${message})`,
-          scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+          scores: { f1: -1, contains_answer: -1, qa_accuracy: -1, llm_judge: -1 },
           latencyMs: 0,
           tokens: { input: 0, output: 0 },
           details: { error: message },
@@ -226,6 +246,252 @@ export async function runAMemGymBenchmark(
       hardware: process.arch,
     },
   };
+}
+
+function formatAMemGymQuestion(qa: AMemGymQA): string {
+  const choices = qa.answer_choices
+    .map((choice, index) => `${index + 1}. ${choice.answer}`)
+    .join("\n");
+
+  return [
+    qa.query,
+    "",
+    "Choose the single best answer using the user's current remembered state.",
+    "Return only the option number and no explanation.",
+    "",
+    "Answer choices:",
+    choices,
+  ].join("\n");
+}
+
+function parseAMemGymChoice(
+  rawAnswer: string,
+  qa: AMemGymQA,
+): { index: number; choice: AMemGymQA["answer_choices"][number] } | undefined {
+  const trimmed = rawAnswer.trim();
+  const selectedNumber = parseAMemGymOptionNumber(trimmed);
+  if (selectedNumber !== undefined) {
+    const index = selectedNumber - 1;
+    const choice = qa.answer_choices[index];
+    if (choice) {
+      return { index, choice };
+    }
+    return undefined;
+  }
+  const plainTextOption = parseAMemGymPlainTextOptionNumber(trimmed);
+  if (plainTextOption !== undefined) {
+    const index = plainTextOption.selectedNumber - 1;
+    const choice = qa.answer_choices[index];
+    if (!choice) {
+      return undefined;
+    }
+    if (
+      plainOptionTextMatchesChoice(plainTextOption.choiceText, choice.answer)
+    ) {
+      return { index, choice };
+    }
+  }
+  const normalizedAnswer = normalizeForChoiceMatch(rawAnswer);
+  const normalizedChoices = qa.answer_choices.map((choice, index) => ({
+    index,
+    choice,
+    normalized: normalizeForChoiceMatch(choice.answer),
+  }));
+  const numericChoiceNumberAttempt = looksLikeChoiceNumberAttempt(trimmed);
+  const numericAttemptPrefix = leadingNumericToken(normalizedAnswer);
+
+  const exactMatches = normalizedChoices.filter(
+    (candidate) =>
+      candidate.normalized.length > 0
+      && normalizedAnswer === candidate.normalized,
+  );
+  if (exactMatches.length === 1) {
+    const exactMatch = exactMatches[0]!;
+    if (
+      !numericChoiceNumberAttempt
+      || numericPrefixesAgree(numericAttemptPrefix, exactMatch.normalized)
+    ) {
+      return { index: exactMatch.index, choice: exactMatch.choice };
+    }
+  }
+
+  let bestSubstringLength = -1;
+  let bestSubstringMatches: Array<{
+    index: number;
+    choice: AMemGymQA["answer_choices"][number];
+    normalized: string;
+  }> = [];
+  for (let index = 0; index < qa.answer_choices.length; index += 1) {
+    const candidate = normalizedChoices[index]!;
+    if (
+      candidate.normalized.length > 0
+      && (!numericChoiceNumberAttempt
+        || numericPrefixesAgree(numericAttemptPrefix, candidate.normalized))
+      && containsNormalizedPhrase(normalizedAnswer, candidate.normalized)
+    ) {
+      if (candidate.normalized.length > bestSubstringLength) {
+        bestSubstringLength = candidate.normalized.length;
+        bestSubstringMatches = [candidate];
+      } else if (candidate.normalized.length === bestSubstringLength) {
+        bestSubstringMatches.push(candidate);
+      }
+    }
+  }
+
+  const uniqueMatch = bestSubstringMatches.length === 1
+    ? bestSubstringMatches[0]
+    : undefined;
+  return uniqueMatch
+    ? { index: uniqueMatch.index, choice: uniqueMatch.choice }
+    : undefined;
+}
+
+function parseAMemGymPlainTextOptionNumber(
+  trimmedAnswer: string,
+): { selectedNumber: number; choiceText: string } | undefined {
+  const bareNumber = trimmedAnswer.match(
+    /^\(?#?\s*(\d+)\s+(?!weeks?\b|days?\b|months?\b|years?\b|hours?\b|minutes?\b)(?<choiceText>\S.*)$/i,
+  );
+  if (bareNumber) {
+    return {
+      selectedNumber: Number.parseInt(bareNumber[1]!, 10),
+      choiceText: bareNumber.groups!.choiceText!,
+    };
+  }
+
+  const labeledNumber = trimmedAnswer.match(
+    /^(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s+(?<choiceText>\S.*)$/i,
+  );
+  if (labeledNumber) {
+    return {
+      selectedNumber: Number.parseInt(labeledNumber[1]!, 10),
+      choiceText: labeledNumber.groups!.choiceText!,
+    };
+  }
+
+  return undefined;
+}
+
+function plainOptionTextMatchesChoice(
+  choiceText: string,
+  choiceAnswer: string,
+): boolean {
+  const normalizedChoiceText = normalizeForChoiceMatch(choiceText);
+  const normalizedChoiceAnswer = normalizeForChoiceMatch(choiceAnswer);
+  return normalizedChoiceText.length > 0
+    && normalizedChoiceAnswer.length > 0
+    && (
+      normalizedChoiceText === normalizedChoiceAnswer
+      || containsNormalizedPhrase(normalizedChoiceText, normalizedChoiceAnswer)
+    );
+}
+
+function containsNormalizedPhrase(haystack: string, needle: string): boolean {
+  const haystackTokens = haystack.split(" ").filter((token) => token.length > 0);
+  const needleTokens = needle.split(" ").filter((token) => token.length > 0);
+  if (needleTokens.length === 0 || needleTokens.length > haystackTokens.length) {
+    return false;
+  }
+
+  for (let index = 0; index <= haystackTokens.length - needleTokens.length; index += 1) {
+    if (needleTokens.every((token, offset) => haystackTokens[index + offset] === token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function numericPrefixesAgree(
+  answerPrefix: string | undefined,
+  choiceText: string,
+): boolean {
+  const choicePrefix = leadingNumericToken(choiceText);
+  return answerPrefix !== undefined
+    && choicePrefix !== undefined
+    && answerPrefix === choicePrefix;
+}
+
+function leadingNumericToken(value: string): string | undefined {
+  return value.match(/^(\d+)\b/)?.[1];
+}
+
+function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
+  const bareNumber = trimmedAnswer.match(
+    /^\(?#?\s*(\d+)\s*(?:\)(?!\s+\S))?(?<tail>\s*(?:\)\s+\S.*|\([^)]*\).*|because.*|[,.;:\-](?!\s*#?\d).*)?)$/i,
+  );
+  if (bareNumber) {
+    const selectedNumber = Number.parseInt(bareNumber[1]!, 10);
+    if (mentionsConflictingOptionNumber(bareNumber.groups?.tail ?? "", selectedNumber)) {
+      return undefined;
+    }
+    return selectedNumber;
+  }
+
+  const labeledNumber = trimmedAnswer.match(
+    /^(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s*(?:\)(?!\s+\S))?(?<tail>\s*(?:\)\s+\S.*|\([^)]*\).*|because.*|[,.;:\-](?!\s*#?\d).*)?)$/i,
+  );
+  if (labeledNumber) {
+    const selectedNumber = Number.parseInt(labeledNumber[1]!, 10);
+    if (mentionsConflictingOptionNumber(labeledNumber.groups?.tail ?? "", selectedNumber)) {
+      return undefined;
+    }
+    return selectedNumber;
+  }
+  return undefined;
+}
+
+function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
+  if (/^(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*\d+/i.test(trimmedAnswer)) {
+    return true;
+  }
+  return /^\(?#?\s*\d+\s*\)?\s+(?!weeks?\b|days?\b|months?\b|years?\b|hours?\b|minutes?\b)/i.test(trimmedAnswer);
+}
+
+function mentionsConflictingOptionNumber(
+  value: string,
+  selectedNumber: number,
+): boolean {
+  const trimmed = value.trim();
+  for (const match of trimmed.matchAll(/\b(?:option|choice|answer)\s*#?\s*(\d+)\b/gi)) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+  for (const match of trimmed.matchAll(/#\s*(\d+)\b/gi)) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+  for (const match of trimmed.matchAll(
+    /\b(\d+)\s+(?:(?:might|may|could|would|should)\s+be\s+|is\s+(?:also\s+)?|also\s+)?(?:right|correct|valid|the\s+(?:answer|option|choice))\b/gi,
+  )) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+  for (const match of trimmed.matchAll(
+    /\b(?:or|maybe|possibly|probably|perhaps|alternatively)\s+#?\s*(\d+)\b/gi,
+  )) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+
+  const punctuationNumber = trimmed.match(
+    /^[,.;:\-]\s*(?:#?(\d+)\b|(?:or|maybe|possibly|probably|perhaps|alternatively)\s+#?(\d+)\b)/i,
+  );
+  const ambiguousNumber = punctuationNumber?.[1] ?? punctuationNumber?.[2];
+  return ambiguousNumber !== undefined
+    && Number.parseInt(ambiguousNumber, 10) !== selectedNumber;
+}
+
+function normalizeForChoiceMatch(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function loadDataset(
