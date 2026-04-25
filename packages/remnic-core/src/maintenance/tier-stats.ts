@@ -1,0 +1,203 @@
+/**
+ * Operator-facing tier visibility (issue #686 PR 5/6).
+ *
+ * Two read-only surfaces:
+ *
+ *   - `summarizeTiers(storage)` — count memories by tier (hot vs cold)
+ *     plus per-status breakdown so operators can see at a glance
+ *     whether the lifecycle policy has actually demoted anything.
+ *   - `explainTierForMemory(storage, id)` — show the value-score
+ *     components and tier-transition decision for a single memory
+ *     so an operator can reason about why a memory ended up where
+ *     it did.
+ *
+ * Pure inspection — neither surface mutates anything.  The CLI wires
+ * them as `remnic tier list` and `remnic tier explain <id>`.
+ */
+
+import type { StorageManager } from "../storage.js";
+import type { MemoryFile, PluginConfig } from "../types.js";
+import {
+  computeTierValueScore,
+  decideTierTransition,
+  type MemoryTier,
+  type TierRoutingPolicy,
+  type TierTransitionDecision,
+} from "../tier-routing.js";
+
+export interface TierSummary {
+  /** Total memories scanned (all tiers, all statuses). */
+  total: number;
+  byTier: Record<MemoryTier, number>;
+  byStatus: Record<string, number>;
+  /** Memories with `status === "forgotten"` (issue #686 PR 4/6). */
+  forgottenCount: number;
+  /** Top contributors to the forgotten / archived buckets, by category. */
+  byCategory: Record<string, number>;
+}
+
+export interface TierExplainResult {
+  id: string;
+  path: string;
+  currentTier: MemoryTier;
+  status: string;
+  category: string;
+  valueScore: number;
+  decision: TierTransitionDecision;
+  signals: {
+    confidence: number;
+    accessCount: number;
+    lastAccessed: string | null;
+    created: string;
+    updated: string;
+    importance: number | null;
+    feedback: string | null;
+  };
+}
+
+/**
+ * Determine the on-disk tier of a memory by scanning its path for the
+ * `cold/` segment that `tier-migration.ts` writes.  Mirrors the same
+ * detection that `temporal-supersession.ts` uses around line 283.
+ */
+function inferTier(memory: MemoryFile): MemoryTier {
+  return memory.path.includes("/cold/") || memory.path.includes("\\cold\\")
+    ? "cold"
+    : "hot";
+}
+
+export async function summarizeTiers(
+  storage: StorageManager,
+): Promise<TierSummary> {
+  const all = await storage.readAllMemories();
+  const summary: TierSummary = {
+    total: all.length,
+    byTier: { hot: 0, cold: 0 },
+    byStatus: {},
+    forgottenCount: 0,
+    byCategory: {},
+  };
+  for (const m of all) {
+    const tier = inferTier(m);
+    summary.byTier[tier] += 1;
+    const status: string = m.frontmatter.status ?? "active";
+    summary.byStatus[status] = (summary.byStatus[status] ?? 0) + 1;
+    // Compare via the widened `string` type so this module compiles
+    // both before and after PR 4/6 lands `"forgotten"` in MemoryStatus.
+    if (status === "forgotten") summary.forgottenCount += 1;
+    const cat = m.frontmatter.category ?? "(uncategorized)";
+    summary.byCategory[cat] = (summary.byCategory[cat] ?? 0) + 1;
+  }
+  return summary;
+}
+
+export async function explainTierForMemory(
+  storage: StorageManager,
+  id: string,
+  config: PluginConfig,
+): Promise<TierExplainResult> {
+  const trimmed = typeof id === "string" ? id.trim() : "";
+  if (trimmed.length === 0) {
+    throw new Error("tier explain: memory id is required and must be non-empty");
+  }
+  const all = await storage.readAllMemories();
+  const memory = all.find((m) => m.frontmatter.id === trimmed);
+  if (!memory) {
+    throw new Error(`tier explain: memory not found: ${trimmed}`);
+  }
+  const now = new Date();
+  const valueScore = computeTierValueScore(memory, now);
+  const policy: TierRoutingPolicy = {
+    enabled: config.lifecyclePolicyEnabled,
+    demotionMinAgeDays: 14,
+    demotionValueThreshold: config.lifecycleStaleDecayThreshold,
+    promotionValueThreshold: config.lifecyclePromoteHeatThreshold,
+  };
+  const currentTier = inferTier(memory);
+  const decision = decideTierTransition(memory, currentTier, policy, now);
+  const fm = memory.frontmatter as unknown as Record<string, unknown>;
+  return {
+    id: trimmed,
+    path: memory.path,
+    currentTier,
+    status: typeof fm.status === "string" ? (fm.status as string) : "active",
+    category: typeof fm.category === "string" ? (fm.category as string) : "",
+    valueScore,
+    decision,
+    signals: {
+      confidence:
+        typeof fm.confidence === "number" ? (fm.confidence as number) : 0,
+      accessCount:
+        typeof fm.accessCount === "number" ? (fm.accessCount as number) : 0,
+      lastAccessed:
+        typeof fm.lastAccessed === "string" ? (fm.lastAccessed as string) : null,
+      created: typeof fm.created === "string" ? (fm.created as string) : "",
+      updated: typeof fm.updated === "string" ? (fm.updated as string) : "",
+      importance:
+        typeof fm.importance === "number" ? (fm.importance as number) : null,
+      feedback:
+        typeof fm.verificationState === "string"
+          ? (fm.verificationState as string)
+          : null,
+    },
+  };
+}
+
+/**
+ * Render a TierSummary as plain text for `remnic tier list` text mode.
+ * Pure formatter — exposed so future surfaces (HTTP, MCP) can reuse.
+ */
+export function formatTierSummaryText(summary: TierSummary): string {
+  const lines: string[] = [];
+  lines.push("=== Memory Tier Distribution ===");
+  lines.push(`Total memories: ${summary.total}`);
+  lines.push("");
+  lines.push("Tier:");
+  lines.push(`  hot:  ${summary.byTier.hot}`);
+  lines.push(`  cold: ${summary.byTier.cold}`);
+  lines.push("");
+  lines.push("Status:");
+  const statusEntries = Object.entries(summary.byStatus).sort(
+    (a, b) => b[1] - a[1],
+  );
+  for (const [status, count] of statusEntries) {
+    lines.push(`  ${status}: ${count}`);
+  }
+  lines.push("");
+  lines.push("Top categories:");
+  const categoryEntries = Object.entries(summary.byCategory)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8);
+  for (const [cat, count] of categoryEntries) {
+    lines.push(`  ${cat}: ${count}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Render a TierExplainResult as plain text for `remnic tier explain`.
+ */
+export function formatTierExplainText(explain: TierExplainResult): string {
+  const lines: string[] = [];
+  lines.push(`=== Tier Explain: ${explain.id} ===`);
+  lines.push(`path:          ${explain.path}`);
+  lines.push(`current tier:  ${explain.currentTier}`);
+  lines.push(`status:        ${explain.status}`);
+  lines.push(`category:      ${explain.category}`);
+  lines.push(`value score:   ${explain.valueScore.toFixed(3)}`);
+  lines.push("");
+  lines.push("Tier-transition decision:");
+  lines.push(`  next tier: ${explain.decision.nextTier}`);
+  lines.push(`  changed:   ${explain.decision.changed}`);
+  lines.push(`  reason:    ${explain.decision.reason}`);
+  lines.push("");
+  lines.push("Signals:");
+  lines.push(`  confidence:   ${explain.signals.confidence}`);
+  lines.push(`  accessCount:  ${explain.signals.accessCount}`);
+  lines.push(`  lastAccessed: ${explain.signals.lastAccessed ?? "(never)"}`);
+  lines.push(`  created:      ${explain.signals.created}`);
+  lines.push(`  updated:      ${explain.signals.updated}`);
+  lines.push(`  importance:   ${explain.signals.importance ?? "(unset)"}`);
+  lines.push(`  feedback:     ${explain.signals.feedback ?? "(unset)"}`);
+  return lines.join("\n");
+}

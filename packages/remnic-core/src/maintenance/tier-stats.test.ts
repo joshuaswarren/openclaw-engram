@@ -1,0 +1,160 @@
+/**
+ * Unit tests for tier-stats helpers (issue #686 PR 5/6).
+ */
+
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  formatTierExplainText,
+  formatTierSummaryText,
+  summarizeTiers,
+  type TierExplainResult,
+  type TierSummary,
+} from "./tier-stats.js";
+import type { MemoryFile, MemoryFrontmatter } from "../types.js";
+
+function makeMemory(
+  overrides: Partial<MemoryFrontmatter>,
+  pathOverride?: string,
+): MemoryFile {
+  return {
+    path: pathOverride ?? `/tmp/mem/${overrides.id ?? "mem"}.md`,
+    content: "synthetic",
+    frontmatter: {
+      id: overrides.id ?? "mem",
+      category: "preference",
+      created: "2026-01-01T00:00:00.000Z",
+      updated: "2026-01-01T00:00:00.000Z",
+      source: "test",
+      ...overrides,
+    } as MemoryFrontmatter,
+  };
+}
+
+function makeStorageStub(memories: MemoryFile[]) {
+  return {
+    readAllMemories: async () => memories,
+  };
+}
+
+test("summarizeTiers: counts tiers, statuses, and categories", async () => {
+  const memories = [
+    makeMemory({ id: "a", status: "active", category: "preference" }),
+    makeMemory({ id: "b", status: "active", category: "decision" }),
+    makeMemory({ id: "c", status: "archived", category: "preference" }, "/tmp/mem/cold/c.md"),
+    makeMemory({ id: "d", status: "forgotten" as MemoryFrontmatter["status"], category: "fact" }),
+    makeMemory({ id: "e" }, "/tmp/mem/cold/e.md"),
+  ];
+  const summary = await summarizeTiers(makeStorageStub(memories) as never);
+  assert.equal(summary.total, 5);
+  assert.equal(summary.byTier.hot, 3);
+  assert.equal(summary.byTier.cold, 2);
+  // 3 active: a, b, e (e has no explicit status → defaults to active).
+  assert.equal(summary.byStatus.active, 3);
+  assert.equal(summary.byStatus.archived, 1);
+  assert.equal(summary.byStatus.forgotten, 1);
+  assert.equal(summary.forgottenCount, 1);
+  // 3 preference: a, c, e (e inherits the makeMemory default).
+  assert.equal(summary.byCategory.preference, 3);
+  assert.equal(summary.byCategory.decision, 1);
+  assert.equal(summary.byCategory.fact, 1);
+});
+
+test("summarizeTiers: handles empty store", async () => {
+  const summary = await summarizeTiers(makeStorageStub([]) as never);
+  assert.equal(summary.total, 0);
+  assert.equal(summary.byTier.hot, 0);
+  assert.equal(summary.byTier.cold, 0);
+  assert.deepEqual(summary.byStatus, {});
+  assert.equal(summary.forgottenCount, 0);
+});
+
+test("summarizeTiers: defaults missing status to active", async () => {
+  const summary = await summarizeTiers(
+    makeStorageStub([makeMemory({ id: "a" })]) as never,
+  );
+  assert.equal(summary.byStatus.active, 1);
+});
+
+test("formatTierSummaryText: renders headings and counts", () => {
+  const summary: TierSummary = {
+    total: 5,
+    byTier: { hot: 3, cold: 2 },
+    byStatus: { active: 4, archived: 1 },
+    forgottenCount: 0,
+    byCategory: { preference: 3, decision: 2 },
+  };
+  const text = formatTierSummaryText(summary);
+  assert.match(text, /Memory Tier Distribution/);
+  assert.match(text, /Total memories: 5/);
+  assert.match(text, /hot: {2}3/);
+  assert.match(text, /cold: 2/);
+  assert.match(text, /active: 4/);
+  assert.match(text, /preference: 3/);
+});
+
+test("formatTierExplainText: renders score, decision, and signals", () => {
+  const explain: TierExplainResult = {
+    id: "alpha",
+    path: "/tmp/mem/alpha.md",
+    currentTier: "hot",
+    status: "active",
+    category: "preference",
+    valueScore: 0.123456,
+    decision: {
+      currentTier: "hot",
+      nextTier: "hot",
+      valueScore: 0.123456,
+      changed: false,
+      reason: "demotion_min_age_not_met",
+    },
+    signals: {
+      confidence: 0.7,
+      accessCount: 4,
+      lastAccessed: "2026-04-20T00:00:00.000Z",
+      created: "2026-01-01T00:00:00.000Z",
+      updated: "2026-04-19T00:00:00.000Z",
+      importance: 0.5,
+      feedback: "user_confirmed",
+    },
+  };
+  const text = formatTierExplainText(explain);
+  assert.match(text, /alpha/);
+  assert.match(text, /value score: {3}0\.123/);
+  assert.match(text, /next tier: hot/);
+  assert.match(text, /demotion_min_age_not_met/);
+  assert.match(text, /confidence: {3}0\.7/);
+  assert.match(text, /lastAccessed: 2026-04-20/);
+});
+
+test("formatTierExplainText: shows '(never)' / '(unset)' for missing signals", () => {
+  const explain: TierExplainResult = {
+    id: "bare",
+    path: "/tmp/mem/bare.md",
+    currentTier: "hot",
+    status: "active",
+    category: "fact",
+    valueScore: 0,
+    decision: {
+      currentTier: "hot",
+      nextTier: "hot",
+      valueScore: 0,
+      changed: false,
+      reason: "tier_migration_disabled",
+    },
+    signals: {
+      confidence: 0,
+      accessCount: 0,
+      lastAccessed: null,
+      created: "",
+      updated: "",
+      importance: null,
+      feedback: null,
+    },
+  };
+  const text = formatTierExplainText(explain);
+  assert.match(text, /lastAccessed: \(never\)/);
+  assert.match(text, /importance: {3}\(unset\)/);
+  assert.match(text, /feedback: {5}\(unset\)/);
+});
