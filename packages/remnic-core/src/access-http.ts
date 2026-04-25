@@ -1016,8 +1016,13 @@ export class EngramAccessHttpServer {
     pathname: string,
   ): Promise<boolean> {
     if (req.method !== "GET") return false;
-    if (pathname === "/remnic/ui" || pathname === "/remnic/ui/"
-      || pathname === "/engram/ui" || pathname === "/engram/ui/") {
+    if (pathname === "/remnic/ui" || pathname === "/engram/ui") {
+      res.statusCode = 301;
+      res.setHeader("location", pathname + "/");
+      res.end();
+      return true;
+    }
+    if (pathname === "/remnic/ui/" || pathname === "/engram/ui/") {
       await this.respondStatic(res, path.join(this.adminConsolePublicDir, "index.html"), "text/html; charset=utf-8");
       return true;
     }
