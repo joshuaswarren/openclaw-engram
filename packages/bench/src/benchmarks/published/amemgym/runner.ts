@@ -465,11 +465,6 @@ function mentionsConflictingOptionNumber(
       return true;
     }
   }
-  for (const match of trimmed.matchAll(/#\s*(\d+)\b/gi)) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
-      return true;
-    }
-  }
   for (const match of trimmed.matchAll(
     /\b(\d+)\s+(?:(?:might|may|could|would|should)\s+be\s+|is\s+(?:also\s+)?|also\s+)?(?:right|correct|valid|the\s+(?:answer|option|choice))\b/gi,
   )) {

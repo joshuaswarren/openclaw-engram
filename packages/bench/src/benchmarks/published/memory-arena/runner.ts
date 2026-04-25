@@ -858,7 +858,7 @@ function findPlanFieldTokenWindow(
       : undefined;
     if (
       expectedField.dayTokens.length > 0
-      && (dayContext === undefined || !tokensEqual(dayContext.dayTokens, expectedField.dayTokens))
+      && (dayContext === undefined || !dayContextMatches(dayContext, expectedField.dayTokens))
     ) {
       continue;
     }
@@ -881,13 +881,35 @@ function findPlanFieldTokenWindow(
 function findLastDayContext(
   tokens: string[],
   beforeIndex: number,
-): { startIndex: number; dayTokens: string[] } | undefined {
+): PlanDayContext | undefined {
   for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const previousStandaloneDayToken = normalizeStandalonePlanDayToken(tokens[index - 1] ?? "");
+    if (previousStandaloneDayToken !== undefined) {
+      const precedingExplicitDayContext = extractPrecedingExplicitPlanDayContext(
+        tokens,
+        index - 1,
+      );
+      return {
+        startIndex: precedingExplicitDayContext?.startIndex ?? index - 1,
+        dayTokens: [previousStandaloneDayToken],
+        alternateDayTokens:
+          precedingExplicitDayContext === undefined
+            ? undefined
+            : [precedingExplicitDayContext.dayTokens],
+      };
+    }
     const compactDayToken = extractCompactPlanDayToken(tokens[index]!);
     if (compactDayToken !== undefined) {
       return {
         startIndex: index,
         dayTokens: [compactDayToken],
+      };
+    }
+    const standaloneDayToken = normalizeStandalonePlanDayToken(tokens[index]!);
+    if (standaloneDayToken !== undefined) {
+      return {
+        startIndex: index,
+        dayTokens: [standaloneDayToken],
       };
     }
     const precedingExplicitDayContext = extractPrecedingExplicitPlanDayContext(
@@ -896,13 +918,6 @@ function findLastDayContext(
     );
     if (precedingExplicitDayContext !== undefined) {
       return precedingExplicitDayContext;
-    }
-    const standaloneDayToken = normalizeStandalonePlanDayToken(tokens[index]!);
-    if (standaloneDayToken !== undefined) {
-      return {
-        startIndex: index,
-        dayTokens: [standaloneDayToken],
-      };
     }
     const trailingDayContext = extractTrailingPlanDayContext(tokens, index);
     if (trailingDayContext !== undefined) {
@@ -924,6 +939,22 @@ function findLastDayContext(
     }
   }
   return undefined;
+}
+
+interface PlanDayContext {
+  startIndex: number;
+  dayTokens: string[];
+  alternateDayTokens?: string[][];
+}
+
+function dayContextMatches(
+  context: PlanDayContext,
+  expectedDayTokens: string[],
+): boolean {
+  return tokensEqual(context.dayTokens, expectedDayTokens)
+    || (context.alternateDayTokens ?? []).some((tokens) =>
+      tokensEqual(tokens, expectedDayTokens),
+    );
 }
 
 function findNearestPlanFieldLabel(

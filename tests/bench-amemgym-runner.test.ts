@@ -499,6 +499,40 @@ test("runBenchmark accepts labeled option numbers followed by plain amemgym text
   assert.equal(task.details?.scoredAnswer, "Seattle");
 });
 
+test("runBenchmark accepts hash numerals inside amemgym option text", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-hash-choice-text-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const profile = createDatasetProfile();
+  profile[0]!.state_schema.route = { type: "string" };
+  profile[0]!.periods[0]!.state.route = "Route #66";
+  profile[0]!.periods[0]!.updates.route = "Route #66";
+  profile[0]!.periods[0]!.sessions[0]!.exposed_states.route = "Route #66";
+  profile[0]!.qas[0]!.required_info = ["route"];
+  profile[0]!.qas[0]!.answer_choices = [
+    { state: ["Route #66"], answer: "Route #66" },
+    { state: ["Route #20"], answer: "Route #20" },
+  ];
+  const adapter = new FakeMemoryAdapter(new FixedResponder("1 Route #66"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(profile),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual, "1 Route #66");
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.scoredAnswer, "Route #66");
+});
+
 test("runBenchmark rejects plain amemgym option text that mentions another option", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-plain-conflicting-choice-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");
