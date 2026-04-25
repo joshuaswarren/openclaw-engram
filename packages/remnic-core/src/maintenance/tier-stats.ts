@@ -183,7 +183,7 @@ export function formatTierSummaryText(summary: TierSummary): string {
   lines.push("");
   lines.push("Status:");
   const statusEntries = Object.entries(summary.byStatus).sort(
-    (a, b) => b[1] - a[1],
+    (a, b) => b[1] - a[1] || a[0].localeCompare(b[0]),
   );
   for (const [status, count] of statusEntries) {
     lines.push(`  ${status}: ${count}`);
@@ -191,7 +191,7 @@ export function formatTierSummaryText(summary: TierSummary): string {
   lines.push("");
   lines.push("Top categories:");
   const categoryEntries = Object.entries(summary.byCategory)
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, 8);
   for (const [cat, count] of categoryEntries) {
     lines.push(`  ${cat}: ${count}`);

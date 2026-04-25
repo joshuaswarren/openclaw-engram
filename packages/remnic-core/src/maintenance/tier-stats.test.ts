@@ -269,6 +269,20 @@ test("formatTierSummaryText: renders headings and counts", () => {
   assert.match(text, /preference: 3/);
 });
 
+test("formatTierSummaryText: sorts equal-count rows by key", () => {
+  const summary: TierSummary = {
+    total: 4,
+    byTier: { hot: 4, cold: 0 },
+    byStatus: { pending_review: 1, active: 1, archived: 2 },
+    forgottenCount: 0,
+    byCategory: { zebra: 1, decision: 2, alpha: 1 },
+  };
+
+  const text = formatTierSummaryText(summary);
+  assert.match(text, /archived: 2[\s\S]*active: 1[\s\S]*pending_review: 1/);
+  assert.match(text, /decision: 2[\s\S]*alpha: 1[\s\S]*zebra: 1/);
+});
+
 test("formatTierExplainText: renders score, decision, and signals", () => {
   const explain: TierExplainResult = {
     id: "alpha",
