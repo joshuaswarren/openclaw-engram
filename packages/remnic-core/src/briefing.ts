@@ -216,17 +216,20 @@ export function focusMatchesMemory(memory: MemoryFile, focus: BriefingFocus): bo
   // and a focus on `project:Project-Alpha` does the same.
   if (!entityRef) return false;
   const focusCanonical = normalizeEntityName(focus.value, focus.type);
-  // Strip a leading `<type>:` or `<type>-` prefix from a legacy /
-  // non-canonical entityRef before normalizing — `normalizeEntityName`
-  // only strips `<type>-` so the colon-separated legacy form
-  // `person:Alice-Test` would otherwise double up.
-  const typePrefixes = [`${focus.type}:`, `${focus.type}-`];
+  // Strip a leading `<type><delimiter>` prefix from a non-canonical
+  // entityRef before normalizing — `normalizeEntityName` only strips
+  // `<type>-` so other valid verbatim formats (`person:Alice-Test`,
+  // `person/alice-test`, `person_alice_test`, `person Alice Test`)
+  // would otherwise double up the type prefix and miss the canonical
+  // comparison.  Codex P2 review on #695: memory writes persist
+  // entityRef strings as provided, so any non-alphanumeric delimiter
+  // after the type token must be tolerated here.
   let refForNormalize = entityRef;
-  for (const prefix of typePrefixes) {
-    if (refForNormalize.startsWith(prefix)) {
-      refForNormalize = refForNormalize.slice(prefix.length);
-      break;
-    }
+  const typeDelimMatch = refForNormalize.match(
+    new RegExp(`^${focus.type}[^a-z0-9]+`, "i"),
+  );
+  if (typeDelimMatch) {
+    refForNormalize = refForNormalize.slice(typeDelimMatch[0].length);
   }
   const refCanonical = normalizeEntityName(refForNormalize, focus.type);
   return refCanonical === focusCanonical;
