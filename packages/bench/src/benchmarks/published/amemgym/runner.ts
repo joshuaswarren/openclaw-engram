@@ -364,7 +364,7 @@ function leadingNumericToken(value: string): string | undefined {
 
 function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   const bareNumber = trimmedAnswer.match(
-    /^\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:\([^)]*\)|because|[,.;:\-](?!\s*#?\d)).*)?$/i,
+    /^\(?#?\s*(\d+)\s*(?:\)(?!\s+\S))?(?<tail>\s*(?:\)\s+\S.*|\([^)]*\).*|because.*|[,.;:\-](?!\s*#?\d).*)?)$/i,
   );
   if (bareNumber) {
     const selectedNumber = Number.parseInt(bareNumber[1]!, 10);
@@ -375,7 +375,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   }
 
   const labeledNumber = trimmedAnswer.match(
-    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:\([^)]*\)|because|[,.;:\-](?!\s*#?\d)).*)?$/i,
+    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s*(?:\)(?!\s+\S))?(?<tail>\s*(?:\)\s+\S.*|\([^)]*\).*|because.*|[,.;:\-](?!\s*#?\d).*)?)$/i,
   );
   if (labeledNumber) {
     const selectedNumber = Number.parseInt(labeledNumber[1]!, 10);
@@ -411,6 +411,13 @@ function mentionsConflictingOptionNumber(
   }
   for (const match of trimmed.matchAll(
     /\b(\d+)\s+(?:(?:might|may|could|would|should)\s+be\s+|is\s+(?:also\s+)?|also\s+)?(?:right|correct|valid|the\s+(?:answer|option|choice))\b/gi,
+  )) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+  for (const match of trimmed.matchAll(
+    /\b(?:or|maybe|possibly|probably|perhaps|alternatively)\s+#?\s*(\d+)\b/gi,
   )) {
     if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
       return true;

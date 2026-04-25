@@ -380,6 +380,54 @@ test("runBenchmark accepts labeled option numbers followed by parenthesized amem
   assert.equal(task.details?.scoredAnswer, "Seattle");
 });
 
+test("runBenchmark accepts option numbers with closing-paren amemgym text", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-choice-closing-paren-text-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("1) Seattle"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual, "1) Seattle");
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.scoredAnswer, "Seattle");
+});
+
+test("runBenchmark accepts labeled option numbers with closing-paren amemgym text", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-labeled-choice-closing-paren-text-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("Option 1) Seattle"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual, "Option 1) Seattle");
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.scoredAnswer, "Seattle");
+});
+
 test("runBenchmark accepts bare amemgym option-number answers with rationale", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-bare-rationale-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");
@@ -493,6 +541,29 @@ test("runBenchmark rejects amemgym option-number rationales with bare conflictin
   assert.equal(task.scores.qa_accuracy, 0);
   assert.equal(task.details?.selectedChoiceIndex, null);
   assert.equal(task.details?.scoredAnswer, "1 because 2 might be right.");
+});
+
+test("runBenchmark rejects amemgym option-number rationales with hedged conflicting choices", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-hedged-conflicting-choice-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("Answer: 1 because maybe 2"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.qa_accuracy, 0);
+  assert.equal(task.details?.selectedChoiceIndex, null);
+  assert.equal(task.details?.scoredAnswer, "Answer: 1 because maybe 2");
 });
 
 test("runBenchmark accepts comma-led amemgym option-number rationales with non-option numbers", async () => {
