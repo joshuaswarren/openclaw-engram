@@ -65,16 +65,18 @@ applies the policy:
 
 ## What ships on by default vs opt-in
 
-| Behavior                                              | Status (since #686 PR 3/6) |
-|-------------------------------------------------------|----------------------------|
-| Lifecycle policy engine (`lifecyclePolicyEnabled`)    | **default `true`**         |
-| Lifecycle metrics (`lifecycleMetricsEnabled`)         | **default mirrors policy** |
-| Recall queries hot tier only                          | always (PR 1/6 audit)      |
-| Cold-tier fallback (`qmdColdTierEnabled`)             | default `false` (opt-in)   |
-| Recall-time stale filter (`lifecycleFilterStaleEnabled`) | default `false` (opt-in)|
+| Behavior                                              | Status on current branch |
+|-------------------------------------------------------|--------------------------|
+| Lifecycle policy engine (`lifecyclePolicyEnabled`)    | default `false` (opt-in) |
+| Lifecycle metrics (`lifecycleMetricsEnabled`)         | explicit value, otherwise mirrors policy |
+| Tier migration (`qmdTierMigrationEnabled`)            | default `false` (opt-in) |
+| Recall queries hot tier only                          | always (PR 1/6 audit) |
+| Cold-tier fallback (`qmdColdTierEnabled`)             | default `false` (opt-in) |
+| Recall-time stale filter (`lifecycleFilterStaleEnabled`) | default `false` (opt-in) |
 
-**Operators who want pre-#686 behavior** can set
-`lifecyclePolicyEnabled: false` to disable automatic tier migration.
+Automatic lifecycle migration requires both `lifecyclePolicyEnabled: true` and
+`qmdTierMigrationEnabled: true`. The default keeps pre-#686 behavior: lifecycle
+scoring and hot/cold migration stay off until explicitly enabled.
 
 ## Default-recall behavior (audit, #686 PR 1/6)
 
@@ -121,16 +123,12 @@ default-tuning iterations have an objective signal.
 
 ## The forgotten tier (#686 PR 4/6)
 
-Operators can mark a memory as forgotten — a soft-delete that excludes it
-from recall, browse, and entity attribution while keeping the file on disk
-for the retention window so the act is reversible.
+The planned forgotten tier is a soft-delete state that excludes a memory from
+recall, browse, and entity attribution while keeping the file on disk for the
+retention window so the act is reversible. A dedicated forget command is not
+present on this branch yet.
 
-```bash
-remnic forget <memory-id> --reason "stale preference, user retracted"
-remnic forget <memory-id> --json   # machine-readable result
-```
-
-Effect on the YAML frontmatter:
+The follow-up implementation should define frontmatter equivalent to:
 
 ```yaml
 status: forgotten
@@ -138,34 +136,36 @@ forgottenAt: 2026-04-25T18:30:00.000Z
 forgottenReason: stale preference, user retracted
 ```
 
-Forgotten memories flow through the existing status-allow-list filters
-(memory-cache, access-service browse, retrieval) so they don't appear in
-any default surface. Edit the YAML directly to restore. A future
-maintenance cron will hard-delete forgotten memories after a configurable
-retention window (default 90 days).
+Once the soft-delete surface lands, forgotten memories should flow through the
+existing status-allow-list filters (memory-cache, access-service browse,
+retrieval) so they don't appear in any default surface. A future maintenance
+cron will hard-delete forgotten memories after a configurable retention window
+(default 90 days).
 
 ## Operator visibility (#686 PR 5/6)
 
-Two read-only CLI surfaces give operators a window into the tier substrate
-without manually walking the filesystem:
+Current CLI surfaces give operators a window into the tier substrate without
+manually walking the filesystem:
 
 ```bash
-# Aggregate distribution
-remnic tier list
-remnic tier list --json
+# Migration telemetry and last-cycle summary
+remnic tier-status
 
-# Per-memory explanation
-remnic tier explain <memory-id>
-remnic tier explain <memory-id> --json
+# One bounded migration pass; dry-run by default
+remnic tier-migrate --dry-run --limit 50
+
+# Explain the most recent recall snapshot
+remnic recall-explain --format json
 ```
 
-`tier list` reports total memory count, hot/cold split, per-status
-breakdown (including the new `forgotten` status), and top categories.
+`tier-status` reports cumulative migration counters plus the latest cycle
+summary (`cycles`, `scanned`, `migrated`, `promoted`, `demoted`, `errors`).
 
-`tier explain <id>` reports the current tier, the value score, the
-tier-transition decision (next tier + reason), and the underlying signals
-(`confidence`, `accessCount`, `lastAccessed`, `created`, `updated`,
-`importance`, `verificationState`).
+`tier-migrate` runs one bounded maintenance pass. It defaults to dry-run; pass
+`--write` to apply mutations after reviewing the reported plan.
+
+`recall-explain` reports the most recent recall snapshot (or a session selected
+with `--session`) and can emit either text or JSON.
 
 ## Cold tier opt-in
 
@@ -186,13 +186,14 @@ latency.
 
 | Key                                       | Default                | Purpose                                       |
 |-------------------------------------------|-----------------------:|-----------------------------------------------|
-| `lifecyclePolicyEnabled`                  | `true`                 | Enable lifecycle scoring + tier migration.    |
+| `lifecyclePolicyEnabled`                  | `false`                | Enable lifecycle scoring.                     |
 | `lifecyclePromoteHeatThreshold`           | `0.55`                 | Cold→hot promotion threshold.                 |
 | `lifecycleStaleDecayThreshold`            | `0.65`                 | Used by the demotion gate.                    |
 | `lifecycleArchiveDecayThreshold`          | `0.85`                 | Used by the archive gate.                     |
 | `lifecycleProtectedCategories`            | (5 categories)         | Categories never demoted automatically.       |
 | `lifecycleMetricsEnabled`                 | mirrors policy         | Emit lifecycle metrics for inspection.        |
 | `lifecycleFilterStaleEnabled`             | `false`                | Filter stale lifecycle memories from recall.  |
+| `qmdTierMigrationEnabled`                 | `false`                | Enable value-aware hot/cold tier migration.   |
 | `qmdColdTierEnabled`                      | `false`                | Whether the cold-fallback pipeline runs.      |
 | `qmdColdCollection`                       | `openclaw-engram-cold` | QMD collection name for cold tier.            |
 
@@ -203,15 +204,14 @@ See `docs/config-reference.md` for the full schema.
 Three signals together let an operator confirm the policy is doing the
 right thing:
 
-1. `remnic tier list` — does the hot/cold split match the corpus age profile?
+1. `remnic tier-status` — are migration cycles running and moving the expected counts?
 2. `remnic doctor` — does the lifecycle ledger show recent migrations?
-3. `remnic tier explain <id>` — for any memory that surprises, why did the
-   policy decide as it did?
+3. `remnic recall-explain --format json` — for a surprising recall, which
+   snapshot and tier signals were recorded?
 
-When the answer is "the policy is wrong," `remnic forget <id>` is the
-operator's escape hatch. When the answer is "the policy is right but the
-threshold is wrong," tune the `lifecycle*` config knobs and re-run the
-aged-dataset bench to verify.
+When the answer is "the policy is right but the threshold is wrong," tune the
+`lifecycle*` and `qmdTier*` config knobs and re-run the aged-dataset bench to
+verify. A dedicated forget/restore surface remains future work on this branch.
 
 ## PR roll-up
 
@@ -221,15 +221,15 @@ Issue #686's six PRs:
 |-----|----------------------------------------------------------------|---------------------|
 | 1/6 | Recall-path audit + cold-tier exclusion test                   | Merged ([#693](https://github.com/joshuaswarren/remnic/pull/693)) |
 | 2/6 | Aged-dataset retention bench harness                           | Merged ([#698](https://github.com/joshuaswarren/remnic/pull/698)) |
-| 3/6 | Flip `lifecyclePolicyEnabled` default to `true`                | [#707](https://github.com/joshuaswarren/remnic/pull/707) |
-| 4/6 | `remnic forget <id>` CLI for soft-delete                       | [#708](https://github.com/joshuaswarren/remnic/pull/708) |
-| 5/6 | `remnic tier list` + `remnic tier explain <id>` CLI            | [#709](https://github.com/joshuaswarren/remnic/pull/709) |
+| 3/6 | Lifecycle policy default and migration gate follow-up          | [#707](https://github.com/joshuaswarren/remnic/pull/707) |
+| 4/6 | Forgotten-tier soft-delete surface                             | [#708](https://github.com/joshuaswarren/remnic/pull/708) |
+| 5/6 | Operator visibility CLI follow-up                              | [#709](https://github.com/joshuaswarren/remnic/pull/709) |
 | 6/6 | This document                                                  | This PR             |
 
 ## What's next
 
 | Future PR | Scope |
 |-----------|-------|
-| Bulk `remnic purge` with retention window | Maintenance cron that hard-deletes forgotten memories after the configurable window. |
-| HTTP / MCP surfaces for `tier list` / `tier explain` | Today these are CLI-only. |
+| Forget / restore / purge surfaces | Operator-managed soft-delete plus maintenance hard-delete after the configurable window. |
+| HTTP / MCP surfaces for tier telemetry and recall explanation | Today these are CLI-only. |
 | Default-tuning study | Ship a tunable threshold profile based on aged-dataset bench results across multiple corpus shapes. |
