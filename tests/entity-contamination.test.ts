@@ -247,25 +247,29 @@ test("R-3: pronoun query carries forward the most recent entity from transcript"
       content: "Tell me about Person-A1",
       timestamp: "2026-04-25T10:00:00.000Z",
       sessionKey: "s",
-    } as TranscriptEntry,
+      turnId: "t1",
+    },
     {
       role: "assistant",
       content: "Person-A1 is on the team.",
       timestamp: "2026-04-25T10:00:01.000Z",
       sessionKey: "s",
-    } as TranscriptEntry,
+      turnId: "t2",
+    },
     {
       role: "user",
       content: "and Person-B1?",
       timestamp: "2026-04-25T10:00:02.000Z",
       sessionKey: "s",
-    } as TranscriptEntry,
+      turnId: "t3",
+    },
     {
       role: "assistant",
       content: "Person-B1 also on the team.",
       timestamp: "2026-04-25T10:00:03.000Z",
       sessionKey: "s",
-    } as TranscriptEntry,
+      turnId: "t4",
+    },
   ];
   const section = await buildSection(
     config,
