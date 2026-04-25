@@ -378,3 +378,47 @@ test("maybeAttachCodingContext: skips when neither cwd nor projectTag provided",
   await maybeAttach("session-X", {});
   assert.equal(calls.length, 0, "should not attach without cwd or projectTag");
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// P1: Non-string cwd/projectTag must be rejected in MCP (CLAUDE.md #51)
+// ──────────────────────────────────────────────────────────────────────────
+
+test("MCP recall rejects non-string cwd (e.g. number)", async () => {
+  const { mcp } = makeMcp();
+  await assert.rejects(
+    call(mcp, "engram.recall", { query: "test", cwd: 123 }),
+    (err: unknown) => err instanceof EngramAccessInputError && /cwd/i.test((err as Error).message),
+  );
+});
+
+test("MCP recall rejects non-string projectTag (e.g. boolean)", async () => {
+  const { mcp } = makeMcp();
+  await assert.rejects(
+    call(mcp, "engram.recall", { query: "test", projectTag: false }),
+    (err: unknown) => err instanceof EngramAccessInputError && /projectTag/i.test((err as Error).message),
+  );
+});
+
+test("MCP observe rejects non-string cwd", async () => {
+  const { mcp } = makeMcp();
+  await assert.rejects(
+    call(mcp, "engram.observe", {
+      sessionKey: "s",
+      messages: [{ role: "user", content: "hi" }],
+      cwd: 42,
+    }),
+    (err: unknown) => err instanceof EngramAccessInputError && /cwd/i.test((err as Error).message),
+  );
+});
+
+test("MCP observe rejects non-string projectTag", async () => {
+  const { mcp } = makeMcp();
+  await assert.rejects(
+    call(mcp, "engram.observe", {
+      sessionKey: "s",
+      messages: [{ role: "user", content: "hi" }],
+      projectTag: true,
+    }),
+    (err: unknown) => err instanceof EngramAccessInputError && /projectTag/i.test((err as Error).message),
+  );
+});

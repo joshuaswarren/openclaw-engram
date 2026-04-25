@@ -2607,6 +2607,15 @@ export class EngramAccessService {
       }
     }
 
+    // Validate namespace authorization BEFORE attaching coding context so
+    // a failed auth check doesn't leave orphaned context on the session
+    // (Codex review P2).
+    const namespace = this.resolveWritableNamespace(
+      request.namespace,
+      request.sessionKey,
+      request.authenticatedPrincipal,
+    );
+
     // Auto-resolve coding context from cwd/projectTag so observe writes
     // route to the correct project namespace (rule 42: same namespace layer
     // as recall).
@@ -2614,12 +2623,6 @@ export class EngramAccessService {
       cwd: request.cwd,
       projectTag: request.projectTag,
     });
-
-    const namespace = this.resolveWritableNamespace(
-      request.namespace,
-      request.sessionKey,
-      request.authenticatedPrincipal,
-    );
 
     // Prefix sessionKey with namespace for LCM archival so turns are namespace-scoped.
     // This ensures multi-tenant isolation in the LCM archive.

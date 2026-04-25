@@ -1208,6 +1208,14 @@ export class EngramMcpServer {
           }
           disclosure = args.disclosure as RecallDisclosure;
         }
+        // Reject non-string cwd/projectTag (CLAUDE.md #51) — these control
+        // namespace routing so silent coercion to undefined would mix memories.
+        if ("cwd" in args && args.cwd !== undefined && args.cwd !== null && typeof args.cwd !== "string") {
+          throw new EngramAccessInputError("cwd must be a string");
+        }
+        if ("projectTag" in args && args.projectTag !== undefined && args.projectTag !== null && typeof args.projectTag !== "string") {
+          throw new EngramAccessInputError("projectTag must be a string");
+        }
         const response = await this.service.recall({
           query: typeof args.query === "string" ? args.query : "",
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
@@ -1449,7 +1457,15 @@ export class EngramMcpServer {
           typeof args.namespace === "string" ? args.namespace : undefined,
           effectivePrincipal,
         );
-      case "engram.observe":
+      case "engram.observe": {
+        // Reject non-string cwd/projectTag (CLAUDE.md #51) — these control
+        // namespace routing so silent coercion to undefined would mix memories.
+        if ("cwd" in args && args.cwd !== undefined && args.cwd !== null && typeof args.cwd !== "string") {
+          throw new EngramAccessInputError("cwd must be a string");
+        }
+        if ("projectTag" in args && args.projectTag !== undefined && args.projectTag !== null && typeof args.projectTag !== "string") {
+          throw new EngramAccessInputError("projectTag must be a string");
+        }
         return this.service.observe({
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : "",
           messages: Array.isArray(args.messages) ? args.messages : [],
@@ -1459,6 +1475,7 @@ export class EngramMcpServer {
           cwd: typeof args.cwd === "string" ? args.cwd : undefined,
           projectTag: typeof args.projectTag === "string" ? args.projectTag : undefined,
         });
+      }
       case "engram.lcm_search":
         return this.service.lcmSearch({
           query: typeof args.query === "string" ? args.query : "",
