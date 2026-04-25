@@ -144,7 +144,7 @@ The trace is noise. The primitive is the product.
 | Term | Meaning |
 |------|---------|
 | `MemoryObservation` (this doc, public type) | The post-extraction, pre-storage candidate. The "observation" stage of Trace → Observation → Primitive. |
-| `observation-ledger` (`state/observation-ledger/` directory) | Telemetry storage for the extraction pipeline itself: turn-count aggregates rebuilt by `maintenance/rebuild-observations.ts` (`rebuilt-observations.jsonl`) and judge verdict events appended by `extraction-judge-telemetry.ts`. Operator-observability data, not lifecycle transitions. Lifecycle events on primitives (supersession, archive, forget) live in `state/memory-lifecycle-ledger/`. |
+| `observation-ledger` (`state/observation-ledger/` directory) | Telemetry storage for the extraction pipeline itself: turn-count aggregates rebuilt by `maintenance/rebuild-observations.ts` (`rebuilt-observations.jsonl`) and judge verdict events appended by `extraction-judge-telemetry.ts`. Operator-observability data, not lifecycle transitions. Lifecycle events on primitives (supersession, archive, forget) live in `state/memory-lifecycle-ledger.jsonl`. |
 
 `MemoryObservation` is the in-flight candidate type; `observation-ledger` is the on-disk telemetry directory describing how that pipeline performed. They share a word but describe different layers — the type is what the pipeline produces, the ledger directory is how it reports on itself. We considered renaming the directory to disambiguate but kept it for backward compatibility (operator tooling and crons reference the existing path). New code should reach for `MemoryObservation` when describing the extraction pipeline and `observation-ledger` only when referring to that telemetry storage.
 
