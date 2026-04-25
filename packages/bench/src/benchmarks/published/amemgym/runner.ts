@@ -286,6 +286,14 @@ function parseAMemGymChoice(
       return undefined;
     }
     if (
+      mentionsConflictingOptionNumber(
+        plainTextOption.choiceText,
+        plainTextOption.selectedNumber,
+      )
+    ) {
+      return undefined;
+    }
+    if (
       plainOptionTextMatchesChoice(plainTextOption.choiceText, choice.answer)
     ) {
       return { index, choice };
