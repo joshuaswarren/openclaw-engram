@@ -73,7 +73,13 @@ export function reinforceEdge(
   delta: number = DEFAULT_REINFORCE_DELTA,
 ): GraphEdge {
   const current = readEdgeConfidence(edge);
-  const safeDelta = Number.isFinite(delta) ? delta : 0;
+  // Codex P2: reinforcement must never silently decrease confidence.
+  // A negative delta sneaking in through parsed config / CLI flags
+  // would push strong edges toward zero on every observation. Treat
+  // anything below zero as 0 (no-op besides the timestamp bump) so
+  // misconfiguration is harmless rather than corrupting.
+  const safeDelta =
+    Number.isFinite(delta) && delta >= 0 ? delta : 0;
   const next = Math.min(CONFIDENCE_CEILING, Math.max(0, current + safeDelta));
   return {
     ...edge,
@@ -119,10 +125,21 @@ export function decayEdgeConfidence(
   const perWindow = opts.perWindow ?? DEFAULT_DECAY_PER_WINDOW;
   const floor = opts.floor ?? DEFAULT_DECAY_FLOOR;
 
-  if (!(windowMs > 0) || !Number.isFinite(perWindow) || !Number.isFinite(floor)) {
+  // Codex P2: reject negative `perWindow` so a misconfigured value
+  // doesn't invert the decay equation and silently boost stale
+  // edges instead of decaying them. Negative `floor` would also let
+  // confidence drop below zero — clamp the floor to [0, 1] so the
+  // model stays well-defined.
+  if (
+    !(windowMs > 0) ||
+    !Number.isFinite(perWindow) ||
+    perWindow < 0 ||
+    !Number.isFinite(floor)
+  ) {
     // Degenerate options — return a normalized copy without changing confidence.
     return { ...edge, confidence: readEdgeConfidence(edge) };
   }
+  const safeFloor = Math.min(CONFIDENCE_CEILING, Math.max(0, floor));
 
   const nowMs = Date.parse(now);
   const refMs = Date.parse(readLastReinforcedAt(edge));
@@ -141,8 +158,7 @@ export function decayEdgeConfidence(
   // Number of full windows past the grace window. age > windowMs ⇒ at least 1.
   const windowsPast = Math.floor((age - windowMs) / windowMs) + 1;
   const decayed = current - perWindow * windowsPast;
-  const clampedFloor = Math.max(0, Math.min(CONFIDENCE_CEILING, floor));
-  const next = Math.max(clampedFloor, Math.min(CONFIDENCE_CEILING, decayed));
+  const next = Math.max(safeFloor, Math.min(CONFIDENCE_CEILING, decayed));
 
   return { ...edge, confidence: next };
 }

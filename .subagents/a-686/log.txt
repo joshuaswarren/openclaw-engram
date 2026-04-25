@@ -1,0 +1,19 @@
+2026-04-25T14:48:39Z PR1 started: branched feat/686-pr1-cold-tier-recall-audit from origin/main
+2026-04-25T15:03:25Z PR #693 opened for PR1/6; waiting for CI
+2026-04-25T15:06:48Z PR #693 CI green; waiting for AI reviewers
+2026-04-25T15:15:01Z Pushed empty commit to PR #693 to nudge codex review (codex silent for 20+ min, posting on other PRs)
+2026-04-25T15:24:59Z Addressed codex 'collection: undefined' P2 feedback in cfc3e670; thread resolved
+2026-04-25T15:28:56Z Addressed codex 'lexical scope' P2 feedback in f9c213f6; thread resolved
+2026-04-25T15:33:21Z Addressed codex 'require fallback read' P2 in 81f50f85; thread resolved
+2026-04-25T15:39:29Z Addressed 2 codex P2 (switch-case + for-init) by downgrading identifier resolution; c6162637 pushed; both threads resolved
+2026-04-25T15:43:59Z Addressed 2 more codex P2 (string-literal keys + non-dot reads) in 13ab7375; resolved
+2026-04-25T15:50:58Z Dropped AST audits, strengthened runtime test with hotPrimaryCalls===0 assertion in 28f3df6b. Codex iteration loop ended.
+2026-04-25T15:54:32Z Codex iter 9: hybridSearch counter; fixed in 293b4ca0; resolved
+2026-04-25T16:04:31Z PR #693 merged to main
+2026-04-25T16:24:09Z PR #698 (PR2/6) opened: aged-dataset bench
+2026-04-25T16:33:14Z Addressed 4 reviews on PR #698 in d4aee4be (codex limit + 3 cursor: tier-aggregate, recall denominator, seed threading)
+2026-04-25T16:37:21Z Addressed 2 more codex P2 (Pareto weighting + whole-word tokens) on PR #698 in 74115cdf
+2026-04-25T16:44:43Z Addressed 3 more reviews on PR #698 in 01e8bfcd (P1 Zipf sampler, taskId uniqueness, CLI docs)
+2026-04-25T16:50:41Z Addressed 2 more reviews on PR #698 in 572cc623 (P1 proportional Pareto, dead test code)
+2026-04-25T16:57:47Z PR #698 14 reviews addressed across 6 commits
+2026-04-25T17:09:16Z Stopping with PR2 in advanced review state (16 reviews addressed, 7 commits). PRs 3-6 not started; out of session time.
