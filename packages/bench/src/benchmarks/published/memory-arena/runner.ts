@@ -928,11 +928,17 @@ function normalizeStandalonePlanDayToken(
   token: string,
   expectedDayTokens: string[],
 ): string | undefined {
-  return expectedDayTokens.length === 1
-    && expectedDayTokens[0] === token
+  return matchesSingleExpectedDayToken(token, expectedDayTokens)
     && WEEKDAY_PLAN_DAY_TOKENS.has(token)
     ? token
     : undefined;
+}
+
+function matchesSingleExpectedDayToken(
+  token: string,
+  expectedDayTokens: string[],
+): boolean {
+  return expectedDayTokens.length === 1 && expectedDayTokens[0] === token;
 }
 
 function normalizeExplicitPlanDayToken(
@@ -941,7 +947,7 @@ function normalizeExplicitPlanDayToken(
 ): string | undefined {
   const normalizedToken = normalizePlanDayToken(token);
   return /^\d+$/.test(token)
-    || normalizeStandalonePlanDayToken(normalizedToken, expectedDayTokens) !== undefined
+    || matchesSingleExpectedDayToken(normalizedToken, expectedDayTokens)
     ? normalizedToken
     : undefined;
 }

@@ -278,6 +278,17 @@ function parseAMemGymChoice(
     }
     return undefined;
   }
+  const plainTextOption = parseAMemGymPlainTextOptionNumber(trimmed);
+  if (plainTextOption !== undefined) {
+    const index = plainTextOption.selectedNumber - 1;
+    const choice = qa.answer_choices[index];
+    if (
+      choice
+      && plainOptionTextMatchesChoice(plainTextOption.choiceText, choice.answer)
+    ) {
+      return { index, choice };
+    }
+  }
   const normalizedAnswer = normalizeForChoiceMatch(rawAnswer);
   const normalizedChoices = qa.answer_choices.map((choice, index) => ({
     index,
@@ -331,6 +342,46 @@ function parseAMemGymChoice(
   return uniqueMatch
     ? { index: uniqueMatch.index, choice: uniqueMatch.choice }
     : undefined;
+}
+
+function parseAMemGymPlainTextOptionNumber(
+  trimmedAnswer: string,
+): { selectedNumber: number; choiceText: string } | undefined {
+  const bareNumber = trimmedAnswer.match(
+    /^\(?#?\s*(\d+)\s+(?!weeks?\b|days?\b|months?\b|years?\b|hours?\b|minutes?\b)(?<choiceText>\S.*)$/i,
+  );
+  if (bareNumber) {
+    return {
+      selectedNumber: Number.parseInt(bareNumber[1]!, 10),
+      choiceText: bareNumber.groups!.choiceText!,
+    };
+  }
+
+  const labeledNumber = trimmedAnswer.match(
+    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s+(?<choiceText>\S.*)$/i,
+  );
+  if (labeledNumber) {
+    return {
+      selectedNumber: Number.parseInt(labeledNumber[1]!, 10),
+      choiceText: labeledNumber.groups!.choiceText!,
+    };
+  }
+
+  return undefined;
+}
+
+function plainOptionTextMatchesChoice(
+  choiceText: string,
+  choiceAnswer: string,
+): boolean {
+  const normalizedChoiceText = normalizeForChoiceMatch(choiceText);
+  const normalizedChoiceAnswer = normalizeForChoiceMatch(choiceAnswer);
+  return normalizedChoiceText.length > 0
+    && normalizedChoiceAnswer.length > 0
+    && (
+      normalizedChoiceText === normalizedChoiceAnswer
+      || containsNormalizedPhrase(normalizedChoiceText, normalizedChoiceAnswer)
+    );
 }
 
 function containsNormalizedPhrase(haystack: string, needle: string): boolean {
