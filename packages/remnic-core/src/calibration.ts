@@ -75,7 +75,7 @@ async function writeCalibrationIndex(memoryDir: string, index: CalibrationIndex)
 
 // ─── Correction Reading ──────────────────────────────────────────────────────
 
-interface CorrectionMemory {
+export interface CorrectionMemory {
   id: string;
   content: string;
   created: string;
@@ -84,7 +84,21 @@ interface CorrectionMemory {
   tags: string[];
 }
 
+/**
+ * Exported for entity-contamination R-11 regression coverage (#682
+ * PR 2/3 — codex review).  Tests can drive the real correction-reading
+ * path instead of duplicating the regex inline, so calibration parser
+ * regressions surface via the contamination suite.
+ */
+export async function readCalibrationCorrections(memoryDir: string): Promise<CorrectionMemory[]> {
+  return readCorrectionsImpl(memoryDir);
+}
+
 async function readCorrections(memoryDir: string): Promise<CorrectionMemory[]> {
+  return readCorrectionsImpl(memoryDir);
+}
+
+async function readCorrectionsImpl(memoryDir: string): Promise<CorrectionMemory[]> {
   const correctionsDir = path.join(memoryDir, "corrections");
   const files = await listJsonFiles(correctionsDir).catch(() => {
     // Corrections might be in facts/ directories too

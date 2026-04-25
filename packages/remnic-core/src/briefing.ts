@@ -169,47 +169,36 @@ export function parseBriefingFocus(token: string | undefined): BriefingFocus | n
 }
 
 /**
- * Derive the slugged form of a typed focus value that mirrors how entityRefs
- * are constructed (lowercased, non-alphanumeric runs → hyphens, prefixed with
- * the focus type).  Example: `person:Jane Doe` → `"person-jane-doe"`.
- *
- * This lets `focusMatchesMemory` match against `entityRef` even when the
- * focus value was supplied with spaces/capitals that the slug normalised away.
- */
-function focusToEntityRefSlug(focus: BriefingFocus): string {
-  const sluggedValue = focus.value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
-  return `${focus.type}-${sluggedValue}`;
-}
-
-/**
  * Decide whether a memory/entity matches the given focus filter.
  * Purely deterministic — no LLM, case-insensitive substring match across
  * the most useful surfaces.
  *
- * For `entityRef` matching we also check the slugged form of the typed focus
- * (e.g. `person:Jane Doe` → `"person-jane-doe"`) because entityRefs are stored
- * in normalised slug form and a raw substring match on `"Jane Doe"` would never
- * hit `"person-jane-doe"`.
+ * For typed focus (`person:`, `project:`, `entity:`) we attribute via the
+ * canonical-id path below to avoid the substring leak fixed in #682 PR 2/3
+ * R-10 (`Alice-Test` substring-hitting `person-alice-test-a1`).
+ *
+ * For untyped (`topic`) focus there is no type to canonicalize against, so
+ * we keep `entityRef` in the raw haystack — otherwise memories that link to
+ * an entity only via `frontmatter.entityRef` (no body / tag mention) would
+ * silently drop out of an untyped focus filter (codex P2 review on #695).
  */
 export function focusMatchesMemory(memory: MemoryFile, focus: BriefingFocus): boolean {
   const needle = focus.value.toLowerCase();
   const entityRef = (memory.frontmatter.entityRef ?? "").toLowerCase();
 
-  // Raw substring match across content and tags only — NOT the entityRef.
-  // Including the entityRef in the raw haystack would re-introduce the
-  // substring leak fixed below (#682 PR 2/3 R-10): a focus on
-  // `Alice-Test` substring-hits the entityRef `person-alice-test-a1`.
-  // Entity attribution must go through the canonical-id path below.
-  const rawHaystack = [
+  // Raw substring match across content and tags.  For untyped (`topic`)
+  // focus, also include the entityRef so memories linked only via the
+  // frontmatter ref still match.  For typed focus we deliberately
+  // exclude entityRef here and route through the canonical-id path
+  // below (see comment above).
+  const rawHaystackParts = [
     memory.content,
     ...(memory.frontmatter.tags ?? []),
-  ]
-    .join(" ")
-    .toLowerCase();
+  ];
+  if (focus.type === "topic" && entityRef) {
+    rawHaystackParts.push(entityRef);
+  }
+  const rawHaystack = rawHaystackParts.join(" ").toLowerCase();
   if (rawHaystack.includes(needle)) return true;
 
   // Canonical-id match (#682 PR 2/3 R-10). Normalize BOTH sides through

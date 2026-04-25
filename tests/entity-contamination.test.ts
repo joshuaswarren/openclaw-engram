@@ -24,6 +24,7 @@ import { parseConfig } from "../src/config.js";
 import { buildEntityRecallSection } from "../src/entity-retrieval.js";
 import { StorageManager, normalizeEntityName } from "../src/storage.js";
 import { focusMatchesMemory, parseBriefingFocus } from "../src/briefing.js";
+import { readCalibrationCorrections } from "../src/calibration.js";
 import {
   DIRECT_ANSWER_FILTER_LABELS as FILTER_LABELS,
   isDirectAnswerEligible,
@@ -720,18 +721,18 @@ test("R-10: focusMatchesMemory uses slug-exact match, not substring (no prefix l
 // ──────────────────────────────────────────────────────────────────────
 
 test("R-11: calibration's correction parser extracts entityRef verbatim, not canonicalized", async () => {
-  // Per Codex review: drive this test through the actual calibration.ts
-  // parsing path, not just storage round-trip. We write a real correction
-  // markdown file under `<memoryDir>/corrections/` (the directory
-  // calibration.ts:88 scans) and apply the same regex calibration uses
-  // (`/^entityRef:\s*(.+)$/m`, calibration.ts:145) to confirm it extracts
-  // the verbatim display-name value with no canonicalization.
+  // Drive R-11 through calibration.ts's REAL correction-reading code path
+  // (`readCalibrationCorrections` — the exported wrapper around the
+  // private `readCorrections`). If calibration's regex changes (or moves
+  // to a YAML parser), this test exercises the actual production path
+  // rather than a duplicated regex, so a parser regression is caught
+  // here instead of going unnoticed.  (Codex review on #695 P2.)
   const { memoryDir } = await buildHarness("contam-r11");
   const correctionsDir = path.join(memoryDir, "corrections");
   await mkdir(correctionsDir, { recursive: true });
 
   const correctionPath = path.join(correctionsDir, "correction-r11.md");
-  // Display-name form (NOT slug). Calibration's regex captures the line
+  // Display-name form (NOT slug). Calibration's parser captures the line
   // verbatim, so downstream consumers comparing against the canonical id
   // `person-alice-test` will not match.
   const correctionBody = [
@@ -746,22 +747,20 @@ test("R-11: calibration's correction parser extracts entityRef verbatim, not can
   ].join("\n");
   await writeFile(correctionPath, correctionBody, "utf-8");
 
-  // Inline the EXACT regex calibration.ts:145–146 uses, against the file
-  // contents we just wrote. Asserting the parse output proves R-11
-  // directly: calibration sees "Alice Test" verbatim, not the canonical
-  // "person-alice-test".
-  const raw = await readFile(correctionPath, "utf-8");
-  const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  assert.ok(fmMatch);
-  const entityMatch = fmMatch![1].match(/^entityRef:\s*(.+)$/m);
-  assert.ok(entityMatch);
-  const parsedEntityRef = entityMatch![1].trim();
+  // Invoke calibration.ts's actual reader.  The single fixture above is
+  // the only correction in the dir, so the result list is length 1 with
+  // exactly one entityRef captured by the production regex.
+  const corrections = await readCalibrationCorrections(memoryDir);
+  assert.equal(corrections.length, 1, "expected exactly one correction parsed");
+  const parsedEntityRefs = corrections[0]?.entityRefs ?? [];
+  assert.equal(parsedEntityRefs.length, 1, "entityRef captured exactly once");
+  const parsedEntityRef = parsedEntityRefs[0];
 
   // R-11: the parser produces the verbatim display name.
   assert.equal(
     parsedEntityRef,
     "Alice Test",
-    "calibration's regex captures the display-name form verbatim",
+    "calibration's parser captures the display-name form verbatim",
   );
   // The canonical form is different — any downstream consumer comparing
   // against `normalizeEntityName(...)` output will silently miss this
