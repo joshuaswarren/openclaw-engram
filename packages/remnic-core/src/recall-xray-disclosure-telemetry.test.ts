@@ -20,8 +20,8 @@ import {
   estimateRecallTokens,
   summarizeDisclosureTokens,
   type RecallXrayResult,
-} from "./recall-xray.ts";
-import { renderXrayMarkdown } from "./recall-xray-renderer.ts";
+} from "./recall-xray.js";
+import { renderXrayMarkdown } from "./recall-xray-renderer.js";
 
 function makeResult(overrides: Partial<RecallXrayResult>): RecallXrayResult {
   return {
