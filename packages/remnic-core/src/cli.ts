@@ -11,6 +11,7 @@ import type {
   MemoryActionEvent,
   MemoryFile,
   MemoryStatus,
+  QmdSearchResult,
   RecallDisclosure,
   TranscriptEntry,
 } from "./types.js";
@@ -1339,6 +1340,26 @@ export async function runVerifiedRecallSearchCliCommand(options: {
     maxResults: Math.max(1, Math.floor(options.maxResults ?? 3)),
     boxRecallDays: options.boxRecallDays,
   });
+}
+
+export function isNormalRetrievalVisibleMemory(memory: MemoryFile): boolean {
+  return memory.frontmatter.status !== "forgotten";
+}
+
+export async function filterNormalMemorySearchResults(
+  results: QmdSearchResult[],
+  storage: {
+    readMemoryByPath(path: string): Promise<MemoryFile | null>;
+  },
+): Promise<QmdSearchResult[]> {
+  const filtered: QmdSearchResult[] = [];
+  for (const result of results) {
+    if (!result.path) continue;
+    const memory = await storage.readMemoryByPath(result.path);
+    if (!memory || !isNormalRetrievalVisibleMemory(memory)) continue;
+    filtered.push(result);
+  }
+  return filtered;
 }
 
 export async function runSemanticRulePromoteCliCommand(options: {
@@ -6261,10 +6282,14 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           await orchestrator.qmd.probe();
 
           if (orchestrator.qmd.isAvailable()) {
-            const results = await orchestrator.qmd.search(
+            const rawResults = await orchestrator.qmd.search(
               query,
               undefined,
               maxResults,
+            );
+            const results = await filterNormalMemorySearchResults(
+              rawResults,
+              orchestrator.storage,
             );
             if (results.length === 0) {
               console.log(`No results for: "${query}"`);
@@ -6286,8 +6311,9 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             const lowerQuery = query.toLowerCase();
             const matches = memories.filter(
               (m) =>
-                m.content.toLowerCase().includes(lowerQuery) ||
-                m.frontmatter.tags.some((t) => t.includes(lowerQuery)),
+                isNormalRetrievalVisibleMemory(m) &&
+                (m.content.toLowerCase().includes(lowerQuery) ||
+                  m.frontmatter.tags.some((t) => t.includes(lowerQuery))),
             );
             const qmdStatus = orchestrator.qmd.debugStatus();
             if (matches.length === 0) {
