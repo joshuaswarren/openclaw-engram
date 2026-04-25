@@ -1689,36 +1689,39 @@ export class EngramAccessService {
           rawExcerpts && rawExcerpts.length > 0
             ? rawExcerpts.map((e) => e.content).join("\n")
             : "";
-        let firstRawDecorated = false;
+        // Excerpts attach to result[0] in the recall response — pin the
+        // attribution to the deterministic index here so concurrent
+        // execution inside the Promise.all map can't reassign which
+        // result gets credited (Cursor + Codex Medium review on PR #699).
         const decorated = await Promise.all(
-          snapshot.results.map(async (result) => {
+          snapshot.results.map(async (result, index) => {
             try {
               const storage = await this.orchestrator.getStorage(namespace);
               const memory = await storage.readMemoryByPath(result.path);
               if (!memory) return result;
-              const baseText =
-                disclosure === "chunk"
-                  ? normalizeProjectionPreview(memory.content)
-                  : memory.content;
-              // Match `shapeMemorySummary`'s rawExcerpts attribution:
-              // the helper attaches excerpts to the first raw result
-              // only.  We do the same here so the per-result token
-              // estimate matches what the response actually rendered.
-              let extraText = "";
+              // Mirror `shapeMemorySummary` output exactly:
+              //   chunk   → preview only
+              //   section → preview + full content
+              //   raw     → preview + full content + (first result) rawExcerpts
+              // Earlier rev under-counted section/raw by omitting the
+              // preview emitted at every depth (Cursor Low review on
+              // PR #699).
+              const previewText = normalizeProjectionPreview(memory.content);
+              const parts: string[] = [previewText];
+              if (disclosure === "section" || disclosure === "raw") {
+                parts.push(memory.content);
+              }
               if (
                 disclosure === "raw" &&
-                !firstRawDecorated &&
+                index === 0 &&
                 rawExcerptText.length > 0
               ) {
-                extraText = rawExcerptText;
-                firstRawDecorated = true;
+                parts.push(rawExcerptText);
               }
-              const renderedText =
-                extraText.length > 0 ? `${baseText}\n${extraText}` : baseText;
               return {
                 ...result,
                 disclosure,
-                estimatedTokens: estimateRecallTokens(renderedText),
+                estimatedTokens: estimateRecallTokens(parts.join("\n")),
               };
             } catch {
               return result;
