@@ -25,6 +25,24 @@ test("parseConfig honors explicit lifecyclePolicyEnabled: false opt-out", () => 
   assert.equal(cfg.lifecycleMetricsEnabled, false);
 });
 
+test("parseConfig coerces boolean-like strings for lifecyclePolicyEnabled", () => {
+  // CLAUDE.md gotcha #36: string `"false"` is truthy in JS, so the
+  // strict `typeof === "boolean"` check would silently re-enable the
+  // policy when operators pass `--config lifecyclePolicyEnabled=false`.
+  for (const falsey of ["false", "0", "no", "off", "False", " FALSE ", 0]) {
+    const cfg = parseConfig({ openaiApiKey: "sk-test", lifecyclePolicyEnabled: falsey });
+    assert.equal(cfg.lifecyclePolicyEnabled, false, `expected ${JSON.stringify(falsey)} → false`);
+    assert.equal(cfg.lifecycleMetricsEnabled, false, `metrics should mirror coerced false for ${JSON.stringify(falsey)}`);
+  }
+  for (const truthy of ["true", "1", "yes", "on", "True", 1]) {
+    const cfg = parseConfig({ openaiApiKey: "sk-test", lifecyclePolicyEnabled: truthy });
+    assert.equal(cfg.lifecyclePolicyEnabled, true, `expected ${JSON.stringify(truthy)} → true`);
+  }
+  // Uninterpretable values fall through to the default (`true`).
+  const cfg = parseConfig({ openaiApiKey: "sk-test", lifecyclePolicyEnabled: "maybe" });
+  assert.equal(cfg.lifecyclePolicyEnabled, true);
+});
+
 test("parseConfig supports explicit lifecycle policy settings", () => {
   const cfg = parseConfig({
     openaiApiKey: "sk-test",
