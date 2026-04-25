@@ -14,6 +14,11 @@ import {
   parseXrayFormat,
   type RecallXrayFormat,
 } from "./recall-xray-renderer.js";
+import {
+  isRecallDisclosure,
+  RECALL_DISCLOSURE_LEVELS,
+  type RecallDisclosure,
+} from "./types.js";
 
 export interface ParsedXrayCliOptions {
   format: RecallXrayFormat;
@@ -23,6 +28,22 @@ export interface ParsedXrayCliOptions {
   namespace?: string;
   /** Trimmed, tilde-unexpanded output path, or undefined when stdout. */
   outPath?: string;
+  /** Disclosure depth for X-ray telemetry, or undefined when not specified. */
+  disclosure?: RecallDisclosure;
+}
+
+/**
+ * Validate and coerce `--disclosure <level>`.  Must be one of the
+ * canonical levels; throws a listed-options error otherwise.
+ */
+export function parseXrayDisclosureFlag(value: unknown): RecallDisclosure | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || !isRecallDisclosure(value)) {
+    throw new Error(
+      `--disclosure expects one of ${RECALL_DISCLOSURE_LEVELS.join(", ")}; got ${JSON.stringify(value)}`,
+    );
+  }
+  return value;
 }
 
 /**
@@ -67,11 +88,13 @@ export function parseXrayCliOptions(
     typeof options.out === "string" && options.out.trim().length > 0
       ? options.out.trim()
       : undefined;
+  const disclosure = parseXrayDisclosureFlag(options.disclosure);
   return {
     query: rawQuery,
     format,
     ...(budget !== undefined ? { budget } : {}),
     ...(namespace !== undefined ? { namespace } : {}),
     ...(outPath !== undefined ? { outPath } : {}),
+    ...(disclosure !== undefined ? { disclosure } : {}),
   };
 }

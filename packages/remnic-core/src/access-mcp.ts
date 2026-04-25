@@ -220,6 +220,12 @@ export class EngramMcpServer {
               description:
                 "Optional positive-integer override for the recall character budget.",
             },
+            disclosure: {
+              type: "string",
+              enum: ["chunk", "section", "raw"],
+              description:
+                "Optional disclosure depth for X-ray telemetry (issue #677). When set, populates the per-disclosure token-spend summary on each result.",
+            },
           },
           required: ["query"],
           additionalProperties: false,
@@ -1359,12 +1365,39 @@ export class EngramMcpServer {
           }
           budget = parsed;
         }
+        // Forward disclosure depth so the recallXray telemetry table is
+        // populated for MCP callers (issue #677 PR 3/4).  Reject
+        // non-string types explicitly (matches the strict input
+        // contract used elsewhere in this handler — see `budget` /
+        // `disclosure` in engram.recall around line 1198 — and the
+        // HTTP path's 400-on-bad-disclosure handling).  Treat empty
+        // string as absent so HTTP `?disclosure=` and MCP align on
+        // the same observable contract for that pathological input.
+        // Non-empty strings flow through to the service's strict
+        // allow-list validator (which throws on unknown values).
+        let disclosure: string | undefined;
+        if (
+          "disclosure" in args &&
+          args.disclosure !== undefined &&
+          args.disclosure !== null &&
+          args.disclosure !== ""
+        ) {
+          if (typeof args.disclosure !== "string") {
+            throw new Error(
+              "engram.recall_xray: disclosure must be a string (one of: chunk, section, raw)",
+            );
+          }
+          disclosure = args.disclosure;
+        }
         return this.service.recallXray({
           query,
           sessionKey,
           namespace,
           budget,
           authenticatedPrincipal: effectivePrincipal,
+          ...(disclosure !== undefined
+            ? { disclosure: disclosure as import("./types.js").RecallDisclosure }
+            : {}),
         });
       }
       case "engram.day_summary":

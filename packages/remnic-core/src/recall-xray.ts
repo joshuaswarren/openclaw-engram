@@ -19,7 +19,33 @@
 
 import { randomUUID } from "node:crypto";
 
-import type { RecallTierExplain } from "./types.js";
+import type { RecallDisclosure, RecallTierExplain } from "./types.js";
+import { isRecallDisclosure } from "./types.js";
+
+/**
+ * Estimate token cost of a payload at the rough ~4 chars/token English
+ * heuristic.  Non-negative integer; returns 0 for empty / null input.
+ * Used by recall surfaces to attach `estimatedTokens` to X-ray results
+ * (issue #677 PR 3/4).  Identical to the private heuristic in
+ * `chunking.ts`; kept self-contained here so X-ray callers don't pull
+ * in chunking internals.
+ */
+export function estimateRecallTokens(text: string | null | undefined): number {
+  if (typeof text !== "string" || text.length === 0) return 0;
+  return Math.ceil(text.length / 4);
+}
+
+/**
+ * Aggregated per-disclosure token spend summary, computed by the
+ * renderer from a snapshot's results.  Non-negative integers.
+ */
+export interface RecallXrayDisclosureSummary {
+  chunk: { count: number; estimatedTokens: number };
+  section: { count: number; estimatedTokens: number };
+  raw: { count: number; estimatedTokens: number };
+  /** Number of results without a recorded disclosure level. */
+  unspecified: { count: number; estimatedTokens: number };
+}
 
 /**
  * Which retrieval source produced a given result.  This is the X-ray
@@ -93,6 +119,21 @@ export interface RecallXrayResult {
    * before the rejecting gate; consumers should render both.
    */
   rejectedBy?: string;
+  /**
+   * Disclosure depth used to render this result's payload (issue #677
+   * PR 3/4).  Mirrors the per-result disclosure already exposed in the
+   * recall response so X-ray consumers can attribute token spend to
+   * the depth that produced it.
+   */
+  disclosure?: RecallDisclosure;
+  /**
+   * Estimated token cost of the rendered payload at the chosen
+   * disclosure depth.  Non-negative integer.  Computed by callers via
+   * `estimateRecallTokens(text)`; the renderer aggregates these into
+   * a per-disclosure summary so operators can see where their budget
+   * went.
+   */
+  estimatedTokens?: number;
 }
 
 /**
@@ -310,7 +351,52 @@ function cloneResult(result: RecallXrayResult): RecallXrayResult {
   if (graphPath !== undefined) out.graphPath = graphPath;
   if (auditEntryId !== undefined) out.auditEntryId = auditEntryId;
   if (rejectedBy !== undefined) out.rejectedBy = rejectedBy;
+  // Disclosure + token telemetry (issue #677 PR 3/4).  Only attach when
+  // present and well-formed; unknown disclosure values are dropped so a
+  // bad caller can't poison downstream renderers.  Uses the shared
+  // `isRecallDisclosure` guard so adding a fourth disclosure level
+  // requires touching only `types.ts`.
+  if (isRecallDisclosure(result.disclosure)) {
+    out.disclosure = result.disclosure;
+  }
+  if (
+    typeof result.estimatedTokens === "number" &&
+    Number.isFinite(result.estimatedTokens) &&
+    result.estimatedTokens >= 0
+  ) {
+    out.estimatedTokens = Math.floor(result.estimatedTokens);
+  }
   return out;
+}
+
+/**
+ * Summarize per-disclosure token spend across an X-ray snapshot's
+ * results.  Pure helper — used by the markdown renderer to print a
+ * "per-disclosure token spend" line and exposed for tests / surfaces.
+ */
+export function summarizeDisclosureTokens(
+  results: ReadonlyArray<RecallXrayResult>,
+): RecallXrayDisclosureSummary {
+  const summary: RecallXrayDisclosureSummary = {
+    chunk: { count: 0, estimatedTokens: 0 },
+    section: { count: 0, estimatedTokens: 0 },
+    raw: { count: 0, estimatedTokens: 0 },
+    unspecified: { count: 0, estimatedTokens: 0 },
+  };
+  for (const result of results) {
+    const tokens =
+      typeof result.estimatedTokens === "number" &&
+      Number.isFinite(result.estimatedTokens) &&
+      result.estimatedTokens >= 0
+        ? Math.floor(result.estimatedTokens)
+        : 0;
+    const bucket = isRecallDisclosure(result.disclosure)
+      ? result.disclosure
+      : "unspecified";
+    summary[bucket].count += 1;
+    summary[bucket].estimatedTokens += tokens;
+  }
+  return summary;
 }
 
 function cloneFilter(filter: RecallFilterTrace): RecallFilterTrace {
