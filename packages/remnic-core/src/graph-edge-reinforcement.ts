@@ -155,8 +155,17 @@ export function decayEdgeConfidence(
     return { ...edge, confidence: current };
   }
 
-  // Number of full windows past the grace window. age > windowMs ⇒ at least 1.
-  const windowsPast = Math.floor((age - windowMs) / windowMs) + 1;
+  // Number of full windows past the grace window.
+  //
+  // Codex P2: the previous formula (`Math.floor((age - windowMs) / windowMs) + 1`)
+  // over-counted at exact multiples of the window. At `age === 2 * windowMs`,
+  // only ONE post-grace window has elapsed (we're sitting on the boundary
+  // of the second), but the old formula returned 2. Switch to a ceiling
+  // count: `ceil((age - windowMs) / windowMs)` correctly returns 1 for
+  // `windowMs < age <= 2*windowMs`, 2 for `2*windowMs < age <= 3*windowMs`,
+  // etc. With the outer `age > windowMs` guard, this always evaluates to
+  // a positive integer.
+  const windowsPast = Math.ceil((age - windowMs) / windowMs);
   const decayed = current - perWindow * windowsPast;
   // Codex P2: an edge that already sits below `safeFloor` (e.g. an
   // explicit confidence: 0) must NOT be boosted up to the floor by a

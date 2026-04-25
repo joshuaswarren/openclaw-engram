@@ -157,10 +157,13 @@ test("decayEdgeConfidence applies linear decay across multiple windows", () => {
     confidence: 0.9,
     lastReinforcedAt: "2026-01-01T00:00:00.000Z",
   });
-  // 3x the window past the start ⇒ 2 windows of decay (windowsPast = floor(2*window/window) + 1 = 3)
+  // 3x the window past the start ⇒ 2 windows of decay
+  // (windowsPast = ceil((3w - 1w)/1w) = 2; the boundary fix in
+  // graph-edge-reinforcement.ts addresses codex P2 over-counting at
+  // exact window multiples).
   const now = isoOffset("2026-01-01T00:00:00.000Z", 3 * DEFAULT_DECAY_WINDOW_MS);
   const out = decayEdgeConfidence(edge, now);
-  assert.equal(out.confidence, 0.9 - 3 * DEFAULT_DECAY_PER_WINDOW);
+  assert.equal(out.confidence, 0.9 - 2 * DEFAULT_DECAY_PER_WINDOW);
 });
 
 test("decayEdgeConfidence clamps at the floor", () => {
@@ -191,8 +194,9 @@ test("decayEdgeConfidence on legacy edge falls back to edge.ts", () => {
   const edge = baseEdge({ ts: "2026-01-01T00:00:00.000Z" }); // no confidence, no lastReinforcedAt
   const now = isoOffset("2026-01-01T00:00:00.000Z", 2 * DEFAULT_DECAY_WINDOW_MS);
   const out = decayEdgeConfidence(edge, now);
-  // Legacy confidence treated as 1.0 ⇒ 1.0 - 2*0.1 = 0.8
-  assert.equal(out.confidence, 1.0 - 2 * DEFAULT_DECAY_PER_WINDOW);
+  // Legacy confidence treated as 1.0; at exactly 2*windowMs only one
+  // post-grace window has elapsed (windowsPast = ceil((2w-1w)/1w) = 1).
+  assert.equal(out.confidence, 1.0 - 1 * DEFAULT_DECAY_PER_WINDOW);
 });
 
 test("decayEdgeConfidence reinforce-then-decay round trip resets the clock", () => {
@@ -227,4 +231,32 @@ test("decayEdgeConfidence with unparseable timestamps returns normalized confide
   });
   const out = decayEdgeConfidence(edge, "also-not-a-date");
   assert.equal(out.confidence, 0.7);
+});
+
+test("decayEdgeConfidence does not over-decay at exact window multiples (codex P2)", () => {
+  const edge = baseEdge({
+    confidence: 0.9,
+    lastReinforcedAt: "2026-01-01T00:00:00.000Z",
+  });
+  // At exactly 2*windowMs, only ONE post-grace window has elapsed —
+  // sitting on the boundary doesn't count as a completed second window.
+  const out2 = decayEdgeConfidence(
+    edge,
+    isoOffset("2026-01-01T00:00:00.000Z", 2 * DEFAULT_DECAY_WINDOW_MS),
+  );
+  assert.equal(out2.confidence, 0.9 - 1 * DEFAULT_DECAY_PER_WINDOW);
+
+  // Just past the boundary, still counts as one window.
+  const out2b = decayEdgeConfidence(
+    edge,
+    isoOffset("2026-01-01T00:00:00.000Z", 2 * DEFAULT_DECAY_WINDOW_MS + 1),
+  );
+  assert.equal(out2b.confidence, 0.9 - 2 * DEFAULT_DECAY_PER_WINDOW);
+
+  // Halfway through the second post-grace window, still 1.
+  const out15 = decayEdgeConfidence(
+    edge,
+    isoOffset("2026-01-01T00:00:00.000Z", 1.5 * DEFAULT_DECAY_WINDOW_MS),
+  );
+  assert.equal(out15.confidence, 0.9 - 1 * DEFAULT_DECAY_PER_WINDOW);
 });
