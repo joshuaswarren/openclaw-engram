@@ -24,6 +24,10 @@ import {
   type TierRoutingPolicy,
   type TierTransitionDecision,
 } from "../tier-routing.js";
+import {
+  applyUtilityPromotionRuntimePolicy,
+  loadUtilityRuntimeValues,
+} from "../utility-runtime.js";
 
 export interface TierSummary {
   /** Total memories scanned (all tiers, all statuses). */
@@ -76,13 +80,21 @@ async function readTierVisibleMemories(
   return [...hotMemories, ...coldMemories];
 }
 
-function tierRoutingPolicyFromConfig(config: PluginConfig): TierRoutingPolicy {
-  return {
+async function tierRoutingPolicyFromConfig(
+  config: PluginConfig,
+): Promise<TierRoutingPolicy> {
+  const basePolicy: TierRoutingPolicy = {
     enabled: config.qmdTierMigrationEnabled,
     demotionMinAgeDays: config.qmdTierDemotionMinAgeDays,
     demotionValueThreshold: config.qmdTierDemotionValueThreshold,
     promotionValueThreshold: config.qmdTierPromotionValueThreshold,
   };
+  const runtime = await loadUtilityRuntimeValues({
+    memoryDir: config.memoryDir,
+    memoryUtilityLearningEnabled: config.memoryUtilityLearningEnabled,
+    promotionByOutcomeEnabled: config.promotionByOutcomeEnabled,
+  });
+  return applyUtilityPromotionRuntimePolicy(basePolicy, runtime);
 }
 
 export async function summarizeTiers(
@@ -126,7 +138,7 @@ export async function explainTierForMemory(
   }
   const now = new Date();
   const valueScore = computeTierValueScore(memory, now);
-  const policy = tierRoutingPolicyFromConfig(config);
+  const policy = await tierRoutingPolicyFromConfig(config);
   const currentTier = inferTier(memory);
   const decision = decideTierTransition(memory, currentTier, policy, now);
   const fm = memory.frontmatter as unknown as Record<string, unknown>;

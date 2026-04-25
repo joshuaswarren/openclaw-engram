@@ -3,6 +3,9 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -47,10 +50,13 @@ function makeConfigStub(
   overrides: Partial<PluginConfig> = {},
 ): PluginConfig {
   return {
+    memoryDir: "/tmp/remnic-tier-stats-test",
     qmdTierMigrationEnabled: true,
     qmdTierDemotionMinAgeDays: 14,
     qmdTierDemotionValueThreshold: 0.35,
     qmdTierPromotionValueThreshold: 0.7,
+    memoryUtilityLearningEnabled: false,
+    promotionByOutcomeEnabled: false,
     lifecyclePolicyEnabled: false,
     lifecycleStaleDecayThreshold: 0,
     lifecyclePromoteHeatThreshold: 0,
@@ -153,6 +159,70 @@ test("explainTierForMemory: uses qmd tier migration policy for decisions", async
   assert.equal(explain.decision.nextTier, "cold");
   assert.equal(explain.decision.changed, true);
   assert.equal(explain.decision.reason, "value_below_demotion_threshold");
+});
+
+test("explainTierForMemory: applies utility runtime tier deltas", async () => {
+  const memoryDir = await mkdtemp(path.join(tmpdir(), "remnic-tier-stats-"));
+  try {
+    const stateDir = path.join(memoryDir, "state", "utility-telemetry");
+    const snapshot = {
+      version: 1,
+      updatedAt: "2026-04-25T00:00:00.000Z",
+      windowDays: 14,
+      minEventCount: 3,
+      maxWeightMagnitude: 0.35,
+      weights: [
+        {
+          target: "promotion",
+          decision: "demote",
+          eventCount: 10,
+          learnedWeight: 0.35,
+          averageUtilityScore: 0.35,
+          confidence: 0.9,
+          outcomeCounts: { helpful: 10 },
+          updatedAt: "2026-04-25T00:00:00.000Z",
+        },
+      ],
+    };
+    await mkdir(stateDir, { recursive: true });
+    await writeFile(
+      path.join(stateDir, "learning-state.json"),
+      `${JSON.stringify(snapshot, null, 2)}\n`,
+      "utf8",
+    );
+    const memory = makeMemory({
+      id: "runtime-borderline",
+      category: "fact",
+      confidence: 0,
+      updated: "2020-01-01T00:00:00.000Z",
+      importance: {
+        score: 0,
+        level: "low",
+        reasons: [],
+        keywords: [],
+      },
+    });
+
+    const explain = await explainTierForMemory(
+      makeStorageStub([memory]) as never,
+      "runtime-borderline",
+      makeConfigStub({
+        memoryDir,
+        memoryUtilityLearningEnabled: true,
+        promotionByOutcomeEnabled: true,
+        qmdTierMigrationEnabled: true,
+        qmdTierDemotionMinAgeDays: 0,
+        qmdTierDemotionValueThreshold: 0.04,
+        qmdTierPromotionValueThreshold: 1,
+      }),
+    );
+
+    assert.equal(explain.decision.nextTier, "cold");
+    assert.equal(explain.decision.changed, true);
+    assert.equal(explain.decision.reason, "value_below_demotion_threshold");
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+  }
 });
 
 test("formatTierSummaryText: renders headings and counts", () => {
