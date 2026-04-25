@@ -75,7 +75,7 @@ Recall request fields:
 - `mode` (`auto`, `no_recall`, `minimal`, `full`, `graph_mode`)
 - `includeDebug`
 - `cwd` (string, optional) — absolute path to the working directory. When provided and no coding context exists for the session, the server resolves git context automatically (see [Coding agent mode](coding-agent.md#project-detection)).
-- `projectTag` (string, optional) — project name for non-git sessions (e.g. `"blend-supply"`). Creates a `tag:<name>` coding context when no git repository is available.
+- `projectTag` (string, optional) — project name (e.g. `"blend-supply"`). Creates a `tag:<name>` coding context. Takes precedence over `cwd` when both are provided.
 
 Recall response fields:
 
@@ -157,7 +157,7 @@ Request fields:
 - `namespace` (string, optional) — target namespace; defaults to the resolved namespace from the principal
 - `skipExtraction` (boolean, optional) — when `true`, messages are archived in LCM but not sent through extraction
 - `cwd` (string, optional) — absolute path to the working directory. When provided and no coding context exists for the session, the server resolves git context automatically (see [Coding agent mode](coding-agent.md#project-detection)).
-- `projectTag` (string, optional) — project name for non-git sessions (e.g. `"blend-supply"`). Creates a `tag:<name>` coding context when no git repository is available.
+- `projectTag` (string, optional) — project name (e.g. `"blend-supply"`). Creates a `tag:<name>` coding context. Takes precedence over `cwd` when both are provided.
 
 Response (HTTP 202):
 

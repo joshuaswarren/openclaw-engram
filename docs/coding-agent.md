@@ -121,8 +121,11 @@ isolation that coding agents get automatically.
    startup context post fails, project scoping is inactive for that
    session. Connectors that want auto-resolution can add `cwd` to
    their request payloads; the server will resolve it on their behalf.
-2. **OpenClaw** — conversations pass `projectTag` on `recall` and
-   `observe` requests when the operator tags a session with a project.
+2. **OpenClaw** — the server accepts `projectTag` on `recall` and
+   `observe` requests, but the OpenClaw runtime does not yet forward it
+   automatically. Operators can wire `projectTag` into their OpenClaw
+   integration or call `set_coding_context` with a `projectTag` at
+   session start.
 3. **Cursor / generic MCP** — clients can pass `cwd` or `projectTag`
    directly on `recall`/`observe`, or call `set_coding_context` as
    before.
@@ -286,12 +289,15 @@ Claude Code, the shipped hooks do not yet send `cwd` on
 `recall`/`observe` as a fallback. See
 [`packages/plugin-codex/`](../packages/plugin-codex/) for the hook.
 
-### OpenClaw (ships today)
+### OpenClaw (server-ready, integration pending)
 
-OpenClaw conversations are typically not inside a git repository.
-Operators can tag sessions with `projectTag` on `recall` and `observe`
-requests to scope memory to a named project (e.g., `"blend-supply"`).
-This creates a `tag:<name>` coding context without requiring git.
+OpenClaw conversations are typically not inside a per-project git
+repository. The server accepts `projectTag` on `recall` and `observe`
+requests to scope memory to a named project (e.g., `"blend-supply"`),
+creating a `tag:<name>` coding context without requiring git. However,
+the OpenClaw runtime does not yet forward `projectTag` automatically —
+operators must wire it into their integration or call
+`set_coding_context` at session start.
 
 ### Cursor / generic MCP (manual)
 
