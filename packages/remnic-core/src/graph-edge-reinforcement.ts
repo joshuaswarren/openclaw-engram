@@ -158,7 +158,13 @@ export function decayEdgeConfidence(
   // Number of full windows past the grace window. age > windowMs ⇒ at least 1.
   const windowsPast = Math.floor((age - windowMs) / windowMs) + 1;
   const decayed = current - perWindow * windowsPast;
-  const next = Math.max(safeFloor, Math.min(CONFIDENCE_CEILING, decayed));
+  // Codex P2: an edge that already sits below `safeFloor` (e.g. an
+  // explicit confidence: 0) must NOT be boosted up to the floor by a
+  // decay pass. Decay can lower confidence or leave it unchanged — it
+  // can never raise it. Cap the result at `current` and only apply
+  // the floor when the pre-existing value is still above it.
+  const lowerBound = Math.min(safeFloor, current);
+  const next = Math.max(lowerBound, Math.min(current, decayed));
 
   return { ...edge, confidence: next };
 }
