@@ -91,3 +91,43 @@ test("aged-dataset bench reports plausible hot/cold split for default policy", a
     `default policy must keep some memories hot; cold_share=${coldShare}`,
   );
 });
+
+test("aged-dataset bench applies options.limit to fixture queries", async () => {
+  const unlimited = await runRetentionAgedDatasetBenchmark(options());
+  const limited = await runRetentionAgedDatasetBenchmark(options({ limit: 1 }));
+  assert.ok(unlimited.results.tasks.length >= 2);
+  assert.equal(limited.results.tasks.length, 1);
+});
+
+test("aged-dataset bench threads options.seed into the generator", async () => {
+  const a = await runRetentionAgedDatasetBenchmark(options({ seed: 1234 }));
+  const b = await runRetentionAgedDatasetBenchmark(options({ seed: 5678 }));
+  // Different seed → different fixture → different first-task topFull.
+  const aTopFull = JSON.parse(a.results.tasks[0].actual).topFull;
+  const bTopFull = JSON.parse(b.results.tasks[0].actual).topFull;
+  assert.notDeepEqual(
+    aTopFull,
+    bTopFull,
+    "different seeds must produce different fixtures",
+  );
+  // And meta.seeds must reflect the seed actually used (not the
+  // hardcoded baseOptions seed).
+  assert.deepEqual(a.meta.seeds, [1234]);
+  assert.deepEqual(b.meta.seeds, [5678]);
+});
+
+test("aged-dataset bench produces non-empty aggregates", async () => {
+  const result = await runRetentionAgedDatasetBenchmark(options());
+  // Aggregate keys should include the per-task score names. If we used
+  // buildTieredAggregates without setting details.tier, this object
+  // would be empty.
+  const keys = Object.keys(result.results.aggregates);
+  assert.ok(
+    keys.includes("recall_at_5_full"),
+    `aggregates must include recall_at_5_full, got: ${keys.join(",")}`,
+  );
+  assert.ok(
+    keys.includes("recall_at_5_hot_only"),
+    `aggregates must include recall_at_5_hot_only, got: ${keys.join(",")}`,
+  );
+});

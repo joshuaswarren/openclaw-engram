@@ -41,7 +41,7 @@ import type {
   TaskResult,
 } from "../../../types.js";
 import { getGitSha, getRemnicVersion } from "../../../reporter.js";
-import { buildTieredAggregates } from "../retrieval-shared.js";
+import { aggregateTaskScores } from "../../../scorer.js";
 import {
   generateAgedDataset,
   type AgedDatasetGeneratorOptions,
@@ -138,7 +138,10 @@ function recallAtK(
   for (const m of topK) {
     if (relevantIds.has(m.frontmatter.id)) hits += 1;
   }
-  return Math.min(1, hits / Math.min(k, relevantIds.size));
+  // Recall@K = (relevant items in top K) / (total relevant items).
+  // Using min(k, relevantIds.size) as the denominator turns this into
+  // precision@K. (Cursor Bugbot review on PR #698.)
+  return hits / relevantIds.size;
 }
 
 function partitionByTier(
@@ -166,7 +169,16 @@ function partitionByTier(
 export async function runRetentionAgedDatasetBenchmark(
   options: ResolvedRunBenchmarkOptions,
 ): Promise<BenchmarkResult> {
-  const fixtureOptions = options.mode === "quick" ? QUICK_OPTIONS : FULL_OPTIONS;
+  const baseOptions =
+    options.mode === "quick" ? QUICK_OPTIONS : FULL_OPTIONS;
+  // Thread `options.seed` into the generator so result metadata's reported
+  // seed actually drives the corpus. (Cursor Bugbot review on PR #698.)
+  const seed =
+    typeof options.seed === "number" ? options.seed : baseOptions.seed;
+  const fixtureOptions: AgedDatasetGeneratorOptions = {
+    ...baseOptions,
+    seed,
+  };
   const fixture = generateAgedDataset(fixtureOptions);
 
   const policyEnabled: TierRoutingPolicy = { ...DEFAULT_POLICY, enabled: true };
@@ -178,8 +190,16 @@ export async function runRetentionAgedDatasetBenchmark(
   const hotShare = hotMemories.length / Math.max(1, fixture.memories.length);
   const coldShare = coldMemories.length / Math.max(1, fixture.memories.length);
 
+  // Honor `options.limit` so quick / limited bench runs don't fan out across
+  // every fixture topic. Other remnic runners apply this same shape.
+  // (Codex review on PR #698.)
+  const queries =
+    typeof options.limit === "number" && options.limit > 0
+      ? fixture.queries.slice(0, options.limit)
+      : fixture.queries;
+
   const tasks: TaskResult[] = [];
-  for (const query of fixture.queries) {
+  for (const query of queries) {
     const relevantIds = new Set(query.relevantMemoryIds);
 
     const startedFull = performance.now();
@@ -241,7 +261,9 @@ export async function runRetentionAgedDatasetBenchmark(
       timestamp: new Date().toISOString(),
       mode: options.mode,
       runCount: 1,
-      seeds: [options.seed ?? fixture.options.seed],
+      // `seed` is the actual seed used to generate `fixture` (resolved
+      // from options.seed if provided, otherwise from baseOptions).
+      seeds: [seed],
     },
     config: {
       systemProvider: options.systemProvider ?? null,
@@ -260,7 +282,11 @@ export async function runRetentionAgedDatasetBenchmark(
     },
     results: {
       tasks,
-      aggregates: buildTieredAggregates(tasks),
+      // Use plain `aggregateTaskScores` rather than `buildTieredAggregates`:
+      // this bench has no clean/dirty pairing semantics. The latter requires
+      // each task to set `details.tier === "clean" | "dirty"` and produces
+      // empty aggregates otherwise. (Cursor Bugbot review on PR #698.)
+      aggregates: aggregateTaskScores(tasks.map((t) => t.scores)),
     },
     environment: {
       os: process.platform,
