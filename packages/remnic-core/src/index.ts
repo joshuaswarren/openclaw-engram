@@ -880,6 +880,7 @@ export type {
   GatewayConfig,
   MemoryFile,
   MemoryObservation,
+  ExtractedFact,
   MemoryCategory,
   MemoryScope,
   MemoryActionType,

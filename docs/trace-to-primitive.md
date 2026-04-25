@@ -46,13 +46,13 @@ The trace is the noise. We are not going to keep it.
 
 ### Extraction — distill the trace into observation candidates
 
-When the buffer flushes (smart-flush signals: topic shift, time elapsed, explicit `before_reset`), `extraction.ts` calls the extractor (GPT-5.2 via the OpenAI Responses API). The extractor reads the trace and emits zero or more `ExtractedFact` records, each with a category (decision, preference, fact, principle, …), content, confidence, tags, and an importance score.
+When the buffer flushes (smart-flush signals: topic shift, time elapsed, explicit `before_reset`), `extraction.ts` calls the extractor (GPT-5.2 via the OpenAI Responses API). The extractor reads the trace and emits zero or more `ExtractedFact` records, each with a category (decision, preference, fact, principle, …), content, confidence, and tags. A separate pass (`importance.ts` / `calibration.ts`) then assigns an importance score in `[0, 1]` — importance is computed *after* extraction, not part of the `ExtractedFact` payload itself.
 
-For our session, the extractor might emit:
+For our session, the pipeline might emit (extractor output → after importance scoring):
 
-1. `{ category: "decision", content: "Cut releases every Tuesday", confidence: 0.95, importance: 0.85 }`
-2. `{ category: "fact", content: "Postgres replica lag alarm fires when GC pauses cross 200ms", confidence: 0.9, importance: 0.78 }`
-3. `{ category: "principle", content: "Caching layer should be per-tenant, not global", confidence: 0.85, importance: 0.7 }`
+1. `{ category: "decision", content: "Cut releases every Tuesday", confidence: 0.95 }` → `importance: 0.85`
+2. `{ category: "fact", content: "Postgres replica lag alarm fires when GC pauses cross 200ms", confidence: 0.9 }` → `importance: 0.78`
+3. `{ category: "principle", content: "Caching layer should be per-tenant, not global", confidence: 0.85 }` → `importance: 0.7`
 
 The extraction judge (`extraction-judge.ts`) then post-filters: it asks an LLM whether each candidate is genuinely durable or just transient task chatter. The flaky-test debugging turns produce no observations — they were noise.
 
