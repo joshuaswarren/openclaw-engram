@@ -322,16 +322,25 @@ test("R-4: short alias does not match longer alphanumeric token in query", async
   await storage.addEntityAlias(projectA12, "A12");
 
   // Query about "A12" must NOT surface Project-A1 just because "A1" is a
-  // prefix of "A12".
+  // prefix of "A12". Section MUST exist (Project-A12's alias matches),
+  // and the surfaced content must be Project-A12's, not A1's.
   const section = await buildSection(config, storage, "tell me about A12");
-  if (section) {
-    // Project-A12 is the right target; Project-A1's body must not appear.
-    assert.doesNotMatch(
-      section,
-      /Project-A1 launched in March/,
-      "alias 'A1' must not match query token 'A12'",
-    );
-  }
+  assert.ok(section, "query for A12 must produce an entity hint section");
+  assert.match(
+    section!,
+    /target: Project-A12 \(project\)/,
+    "Project-A12 should be the resolved target",
+  );
+  assert.doesNotMatch(
+    section!,
+    /Project-A1 launched in March/,
+    "alias 'A1' must not match query token 'A12'",
+  );
+  assert.doesNotMatch(
+    section!,
+    /target: Project-A1 \(project\)/,
+    "Project-A1 must not appear as a separate target for query 'A12'",
+  );
 });
 
 // ──────────────────────────────────────────────────────────────────────
@@ -432,23 +441,32 @@ test("R-6: direct-answer entityRef filter is case-insensitive but not slug-toler
 test("R-7: graph PPR result shape does not expose seed provenance (under-attribution risk)", () => {
   // Documented under-attribution risk: PPR returns memory ids ranked by
   // score; the result shape does NOT carry a back-reference to "which
-  // seed pulled this memory in." A caller that mis-resolved the seed
-  // (picked Person-B1 when the user meant Person-A1) gets memories that
-  // mention Person-B1 with no signal that the wrong entity was the seed.
+  // seed pulled this memory in." Build a memory pool with `derived-from`
+  // edges so PPR's projection step actually surfaces memory results we
+  // can introspect — checking the SHAPE of a self-constructed sample
+  // would be a tautology (per cursor / codex review).
   const memories: MemoryEdgeSource[] = [
+    {
+      id: "mem-b1-old",
+      content: "Person-B1 owned Project-B1 in 2025.",
+      entityRef: "person-person-b1",
+    },
+    {
+      id: "mem-b1-new",
+      content: "Person-B1 owns Project-B1 in 2026.",
+      entityRef: "person-person-b1",
+      supersedes: "mem-b1-old",
+    },
     {
       id: "mem-a1",
       content: "Person-A1 owns Project-A1.",
       entityRef: "person-person-a1",
     },
-    {
-      id: "mem-b1",
-      content: "Person-B1 owns Project-B1.",
-      entityRef: "person-person-b1",
-    },
   ];
 
-  // Seed with the WRONG entity (B1) as if the upstream resolver mis-fired.
+  // Seed with B1's memory id directly — PPR will personalize the random
+  // walk on this seed so memory-typed neighbors of mem-b1-new are
+  // surfaced.
   const run = runGraphRecall(
     {
       recallGraphEnabled: true,
@@ -458,37 +476,42 @@ test("R-7: graph PPR result shape does not expose seed provenance (under-attribu
     },
     {
       memories,
-      seedIds: ["person-person-b1"],
+      seedIds: ["mem-b1-new"],
     },
   );
 
   assert.equal(run.ran, true);
-  // Verify the documented absence of seed provenance on EVERY result
-  // (regardless of how PPR ranks them). Even when no memory survives
-  // the projection, the GraphRecallResult interface itself does not
-  // declare a seed-provenance field — so a future hardening PR will
-  // need to add the field deliberately.
+  assert.ok(
+    run.results.length > 0,
+    "memory-seeded PPR must surface memory-typed results so the shape assertion exercises real output",
+  );
+
+  // Assert on EACH actual result returned by runGraphRecall — the audit
+  // claim ("results carry no seed provenance") is verified against the
+  // real return value, not a self-constructed mock.
   for (const result of run.results) {
-    assert.equal(
-      "seedId" in (result as object),
-      false,
-      "GraphRecallResult does not expose seed provenance — under-attribution risk R-7",
+    const keys = Object.keys(result).sort();
+    assert.deepEqual(
+      keys,
+      ["id", "score"],
+      `R-7: GraphRecallResult exposes only {id, score}; got ${JSON.stringify(keys)} for ${result.id}`,
     );
     assert.equal(
-      "seedIds" in (result as object),
+      "seedId" in result,
       false,
-      "GraphRecallResult does not expose seed provenance — under-attribution risk R-7",
+      "no per-result seed back-reference",
+    );
+    assert.equal(
+      "seedIds" in result,
+      false,
+      "no per-result seed back-reference",
+    );
+    assert.equal(
+      "seedProvenance" in result,
+      false,
+      "no per-result seed provenance field",
     );
   }
-  // Also assert the structural shape: id + score only.
-  // The interface declaration in graph-recall.ts:65-70 is `{ id, score }`.
-  // We simulate a downstream caller's expectation by JSON-stringifying.
-  const sample: { id: string; score: number } = { id: "mem-a1", score: 0.5 };
-  assert.deepEqual(
-    Object.keys(sample).sort(),
-    ["id", "score"],
-    "GraphRecallResult shape is {id, score} — no seed provenance field exists",
-  );
 });
 
 // ──────────────────────────────────────────────────────────────────────
