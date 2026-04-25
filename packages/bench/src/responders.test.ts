@@ -202,6 +202,22 @@ test("AMA-Bench recommended judge parses incorrect before correct", async () => 
   assert.equal(await judge.score("q", "predicted", "expected"), 0);
 });
 
+test("AMA-Bench recommended judge treats negated positive labels as incorrect", async () => {
+  const judge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider("The answer is not correct."),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 0);
+
+  const passJudge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider("This does not pass."),
+  );
+
+  assert.equal(await passJudge.score("q", "predicted", "expected"), 0);
+});
+
 test("provider-backed judge ignores date-like fractions and uses the trailing score", async () => {
   const judge = createProviderBackedJudge(
     { provider: "openai", model: "gpt-5.4-mini" },

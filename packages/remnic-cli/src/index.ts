@@ -841,6 +841,7 @@ async function runBenchViaFallback(
     parsed.amaBenchCrossJudgeProvider !== undefined ||
     parsed.amaBenchCrossJudgeModel !== undefined ||
     parsed.amaBenchCrossJudgeBaseUrl !== undefined ||
+    parsed.amaBenchCrossJudgeApiKey !== undefined ||
     parsed.disableThinking === true ||
     parsed.requestTimeout !== undefined
   ) {
@@ -2314,20 +2315,29 @@ function resolveAmaBenchCrossJudgeProvider(
         "or an existing --judge-provider.",
     );
   }
+  const canInheritPrimaryTransport =
+    parsed.amaBenchCrossJudgeProvider === undefined ||
+    parsed.amaBenchCrossJudgeProvider === primaryJudgeProvider?.provider;
+  const inheritedBaseUrl = canInheritPrimaryTransport
+    ? primaryJudgeProvider?.baseUrl
+    : undefined;
+  const inheritedApiKey = canInheritPrimaryTransport
+    ? primaryJudgeProvider?.apiKey
+    : undefined;
 
   return {
     provider,
     model: parsed.amaBenchCrossJudgeModel,
-    ...(parsed.amaBenchCrossJudgeBaseUrl ?? primaryJudgeProvider?.baseUrl
-      ? { baseUrl: parsed.amaBenchCrossJudgeBaseUrl ?? primaryJudgeProvider?.baseUrl }
+    ...(parsed.amaBenchCrossJudgeBaseUrl ?? inheritedBaseUrl
+      ? { baseUrl: parsed.amaBenchCrossJudgeBaseUrl ?? inheritedBaseUrl }
       : {}),
-    ...(parsed.amaBenchCrossJudgeApiKey ?? primaryJudgeProvider?.apiKey
-      ? { apiKey: parsed.amaBenchCrossJudgeApiKey ?? primaryJudgeProvider?.apiKey }
+    ...(parsed.amaBenchCrossJudgeApiKey ?? inheritedApiKey
+      ? { apiKey: parsed.amaBenchCrossJudgeApiKey ?? inheritedApiKey }
       : {}),
-    ...(primaryJudgeProvider?.retryOptions
+    ...(canInheritPrimaryTransport && primaryJudgeProvider?.retryOptions
       ? { retryOptions: primaryJudgeProvider.retryOptions }
       : {}),
-    ...(primaryJudgeProvider?.disableThinking
+    ...(canInheritPrimaryTransport && primaryJudgeProvider?.disableThinking
       ? { disableThinking: primaryJudgeProvider.disableThinking }
       : {}),
   };

@@ -95,6 +95,13 @@ export async function runAmaBenchBenchmark(
               qa.answer,
             )
           : undefined;
+        const crossJudgeLatencyMs = crossJudgeResult?.latencyMs ?? 0;
+        const crossJudgeTokens = crossJudgeResult?.tokens ?? {
+          input: 0,
+          output: 0,
+        };
+        const isRecommendedPrimaryProtocol =
+          options.amaBenchJudgeProtocol === "recommended";
 
         const scores: Record<string, number> = {
           f1: f1Score(answered.finalAnswer, qa.answer),
@@ -102,13 +109,13 @@ export async function runAmaBenchBenchmark(
         };
         if (judgeResult.score >= 0) {
           scores.llm_judge = judgeResult.score;
-          if (options.amaBenchJudgeProtocol === "recommended") {
+          if (isRecommendedPrimaryProtocol) {
             scores.ama_bench_recommended_accuracy = judgeResult.score;
           }
         }
         if (crossJudgeResult?.score != null && crossJudgeResult.score >= 0) {
           scores.ama_bench_cross_accuracy = crossJudgeResult.score;
-          if (judgeResult.score >= 0) {
+          if (isRecommendedPrimaryProtocol && judgeResult.score >= 0) {
             scores.ama_bench_cross_agreement =
               judgeResult.score === crossJudgeResult.score ? 1 : 0;
           }
@@ -120,10 +127,20 @@ export async function runAmaBenchBenchmark(
           expected: qa.answer,
           actual: answered.finalAnswer,
           scores,
-          latencyMs: durationMs + answered.latencyMs + judgeResult.latencyMs,
+          latencyMs:
+            durationMs +
+            answered.latencyMs +
+            judgeResult.latencyMs +
+            crossJudgeLatencyMs,
           tokens: {
-            input: answered.tokens.input + judgeResult.tokens.input,
-            output: answered.tokens.output + judgeResult.tokens.output,
+            input:
+              answered.tokens.input +
+              judgeResult.tokens.input +
+              crossJudgeTokens.input,
+            output:
+              answered.tokens.output +
+              judgeResult.tokens.output +
+              crossJudgeTokens.output,
           },
           details: {
             qaType: qa.type,
