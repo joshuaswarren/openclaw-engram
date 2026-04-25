@@ -136,6 +136,35 @@ test("promoteSemanticRuleFromMemory skips non-episodic memories and duplicate pr
   assert.equal(second.skipped[0]?.reason, "duplicate-rule");
 });
 
+test("promoteSemanticRuleFromMemory reports forgotten episode sources distinctly", async () => {
+  const { memoryDir, storage } = await createStore();
+  const sourceEpisodeId = await storage.writeMemory(
+    "fact",
+    "IF a memory has been forgotten THEN keep it out of promoted rules.",
+    {
+      source: "test",
+      tags: ["retention"],
+      confidence: 0.87,
+      memoryKind: "episode",
+    },
+  );
+  const sourceMemory = await storage.getMemoryById(sourceEpisodeId);
+  assert.ok(sourceMemory);
+  await storage.writeMemoryFrontmatter(sourceMemory, {
+    status: "forgotten",
+    forgottenAt: "2026-04-25T12:00:00.000Z",
+  });
+
+  const report = await promoteSemanticRuleFromMemory({
+    memoryDir,
+    enabled: true,
+    sourceMemoryId: sourceEpisodeId,
+  });
+
+  assert.equal(report.promoted.length, 0);
+  assert.equal(report.skipped[0]?.reason, "source-memory-forgotten");
+});
+
 test("promoteSemanticRuleFromMemory strips trailing punctuation from THEN outcomes before duplicate checks", async () => {
   const { memoryDir, storage } = await createStore();
   const firstEpisodeId = await storage.writeMemory(

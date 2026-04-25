@@ -16,6 +16,7 @@ export interface SemanticRulePromotionSkip {
   reason:
     | "disabled"
     | "source-memory-missing"
+    | "source-memory-forgotten"
     | "source-memory-not-episode"
     | "no-explicit-rule"
     | "duplicate-rule";
@@ -103,9 +104,15 @@ export async function promoteSemanticRuleFromMemory(options: {
     });
     return report;
   }
+  if (sourceMemory.frontmatter.status === "forgotten") {
+    report.skipped.push({
+      sourceMemoryId: options.sourceMemoryId,
+      reason: "source-memory-forgotten",
+    });
+    return report;
+  }
   if (
     sourceMemory.frontmatter.status === "archived" ||
-    sourceMemory.frontmatter.status === "forgotten" ||
     sourceMemory.frontmatter.memoryKind !== "episode"
   ) {
     report.skipped.push({

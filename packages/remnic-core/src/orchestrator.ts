@@ -14560,6 +14560,7 @@ export class Orchestrator {
     let lifecycleFilteredCount = 0;
     let temporalSupersededFilteredCount = 0;
     let dedicatedSurfaceFilteredCount = 0;
+    let forgottenFilteredCount = 0;
     const boosted: QmdSearchResult[] = [];
     const recencyWeight = this.effectiveRecencyWeight();
     for (const r of results) {
@@ -14567,6 +14568,11 @@ export class Orchestrator {
       let score = r.score;
 
       if (memory) {
+        if (memory.frontmatter.status === "forgotten") {
+          forgottenFilteredCount += 1;
+          continue;
+        }
+
         if (
           options?.allowLifecycleFiltered !== true &&
           shouldFilterLifecycleRecallCandidate(memory.frontmatter, {
@@ -14734,6 +14740,11 @@ export class Orchestrator {
     if (dedicatedSurfaceFilteredCount > 0) {
       log.debug(
         `dedicated surface filter removed ${dedicatedSurfaceFilteredCount} dream/procedural candidates from generic recall`,
+      );
+    }
+    if (forgottenFilteredCount > 0) {
+      log.debug(
+        `forgotten status filter removed ${forgottenFilteredCount} candidates from recall`,
       );
     }
 
