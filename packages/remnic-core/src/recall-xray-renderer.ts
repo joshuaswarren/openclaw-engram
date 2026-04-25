@@ -22,6 +22,7 @@ import type {
   RecallXraySnapshot,
   RecallXrayServedBy,
 } from "./recall-xray.js";
+import { summarizeDisclosureTokens } from "./recall-xray.js";
 import { renderTierExplainTextLines } from "./recall-explain-renderer.js";
 
 export type RecallXrayFormat = "json" | "text" | "markdown";
@@ -224,6 +225,36 @@ export function renderXrayMarkdown(
         lines.push(line);
       }
     });
+
+    // Per-disclosure token-spend summary (issue #677 PR 3/4).  Only
+    // emitted when at least one result carries a disclosure level so
+    // we don't pollute the snapshot for callers who haven't wired the
+    // depth knob through.  Counts and tokens default to 0 for buckets
+    // with no contributions.
+    const summary = summarizeDisclosureTokens(snapshot.results);
+    const hasAnyDisclosure =
+      summary.chunk.count + summary.section.count + summary.raw.count > 0;
+    if (hasAnyDisclosure) {
+      lines.push("");
+      lines.push("### Token spend by disclosure");
+      lines.push("");
+      lines.push("| Disclosure | Results | Estimated tokens |");
+      lines.push("| --- | ---: | ---: |");
+      lines.push(
+        `| chunk | ${summary.chunk.count} | ${summary.chunk.estimatedTokens} |`,
+      );
+      lines.push(
+        `| section | ${summary.section.count} | ${summary.section.estimatedTokens} |`,
+      );
+      lines.push(
+        `| raw | ${summary.raw.count} | ${summary.raw.estimatedTokens} |`,
+      );
+      if (summary.unspecified.count > 0) {
+        lines.push(
+          `| _(unspecified)_ | ${summary.unspecified.count} | ${summary.unspecified.estimatedTokens} |`,
+        );
+      }
+    }
   }
 
   lines.push("");
@@ -297,6 +328,17 @@ function renderResultMarkdownLines(
   }
   if (result.auditEntryId) {
     lines.push(`- **Audit entry:** \`${result.auditEntryId}\``);
+  }
+  if (result.disclosure !== undefined) {
+    const tokenLine =
+      typeof result.estimatedTokens === "number"
+        ? ` (~${result.estimatedTokens} tokens)`
+        : "";
+    lines.push(`- **Disclosure:** \`${result.disclosure}\`${tokenLine}`);
+  } else if (typeof result.estimatedTokens === "number") {
+    // Disclosure unspecified but tokens recorded — still surface the
+    // budget so the operator can attribute spend.
+    lines.push(`- **Estimated tokens:** ${result.estimatedTokens}`);
   }
   return lines;
 }
