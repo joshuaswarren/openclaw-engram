@@ -17,14 +17,14 @@ import test from "node:test";
 import { EngramMcpServer } from "../access-mcp.js";
 import { EngramAccessInputError, EngramAccessService } from "../access-service.js";
 import type { CodingContext } from "../types.js";
-import { validateRequest } from "../access-schema.js";
+import { validateRequest, type RecallRequest, type ObserveRequest } from "../access-schema.js";
 
 // ──────────────────────────────────────────────────────────────────────────
 // Schema validation tests
 // ──────────────────────────────────────────────────────────────────────────
 
 test("recall schema accepts cwd field", () => {
-  const result = validateRequest("recall", {
+  const result = validateRequest<RecallRequest>("recall", {
     query: "test query",
     sessionKey: "sess-1",
     cwd: "/home/user/project",
@@ -36,7 +36,7 @@ test("recall schema accepts cwd field", () => {
 });
 
 test("recall schema accepts projectTag field", () => {
-  const result = validateRequest("recall", {
+  const result = validateRequest<RecallRequest>("recall", {
     query: "test query",
     sessionKey: "sess-1",
     projectTag: "blend-supply",
@@ -74,7 +74,7 @@ test("recall schema rejects empty projectTag", () => {
 });
 
 test("observe schema accepts cwd field", () => {
-  const result = validateRequest("observe", {
+  const result = validateRequest<ObserveRequest>("observe", {
     sessionKey: "sess-1",
     messages: [{ role: "user", content: "hello" }],
     cwd: "/home/user/project",
@@ -86,7 +86,7 @@ test("observe schema accepts cwd field", () => {
 });
 
 test("observe schema accepts projectTag field", () => {
-  const result = validateRequest("observe", {
+  const result = validateRequest<ObserveRequest>("observe", {
     sessionKey: "sess-1",
     messages: [{ role: "user", content: "hello" }],
     projectTag: "worthington-direct",
