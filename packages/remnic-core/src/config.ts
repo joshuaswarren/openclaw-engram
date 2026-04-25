@@ -2025,8 +2025,19 @@ export function parseConfig(raw: unknown): PluginConfig {
     factArchivalProtectedCategories: Array.isArray(cfg.factArchivalProtectedCategories)
       ? (cfg.factArchivalProtectedCategories as any[]).filter((c) => typeof c === "string")
       : ["commitment", "preference", "decision", "principle", "procedure"],
-    // v8.3 lifecycle policy engine (default off)
-    lifecyclePolicyEnabled: cfg.lifecyclePolicyEnabled === true,
+    // Lifecycle policy engine (issue #686 PR 3/6 — flipped default to
+    // `true`).  Tier infrastructure (`tier-routing.ts`,
+    // `tier-migration.ts`, separate cold QMD collection) has shipped
+    // for several releases.  Default-on lets the year-2 retention
+    // story land for every install instead of staying gated behind
+    // an opt-in flag the typical operator never reaches.  Operators
+    // who need pre-#686 behavior (no automatic hot↔cold migration,
+    // no recall-time stale filtering) can set
+    // `lifecyclePolicyEnabled: false` explicitly.
+    lifecyclePolicyEnabled:
+      typeof cfg.lifecyclePolicyEnabled === "boolean"
+        ? cfg.lifecyclePolicyEnabled
+        : true,
     lifecycleFilterStaleEnabled: cfg.lifecycleFilterStaleEnabled === true,
     lifecyclePromoteHeatThreshold:
       typeof cfg.lifecyclePromoteHeatThreshold === "number"
@@ -2046,10 +2057,16 @@ export function parseConfig(raw: unknown): PluginConfig {
             typeof c === "string" && VALID_MEMORY_CATEGORIES.has(c),
         )
       : ["decision", "principle", "commitment", "preference", "procedure"],
+    // Mirror the *resolved* lifecyclePolicyEnabled default (not the
+    // raw input) — otherwise omitting both flags returns `false` for
+    // metrics even though the policy is enabled by default since
+    // #686 PR 3/6.
     lifecycleMetricsEnabled:
       typeof cfg.lifecycleMetricsEnabled === "boolean"
         ? cfg.lifecycleMetricsEnabled
-        : cfg.lifecyclePolicyEnabled === true,
+        : typeof cfg.lifecyclePolicyEnabled === "boolean"
+          ? cfg.lifecyclePolicyEnabled
+          : true,
     // v8.3 proactive + policy learning (default off)
     proactiveExtractionEnabled: cfg.proactiveExtractionEnabled === true,
     contextCompressionActionsEnabled: cfg.contextCompressionActionsEnabled === true,
