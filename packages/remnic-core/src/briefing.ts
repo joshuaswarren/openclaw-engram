@@ -994,7 +994,8 @@ export function filterMemoriesByWindow(memories: MemoryFile[], window: ParsedBri
       status === "superseded" ||
       status === "archived" ||
       status === "rejected" ||
-      status === "quarantined"
+      status === "quarantined" ||
+      status === "forgotten"
     ) {
       return false;
     }

@@ -5,6 +5,7 @@
 import type { MemoryFile, PluginConfig } from "../types.js";
 import type { StorageManager } from "../storage.js";
 import { inferIntentFromText, intentCompatibilityScore, isTaskInitiationIntent } from "../intent.js";
+import { isActiveMemoryStatus } from "../memory-lifecycle-ledger-utils.js";
 
 function tokenOverlapScore(prompt: string, memoryText: string): number {
   const norm = (s: string) =>
@@ -71,11 +72,7 @@ export async function buildProcedureRecallSection(
     .filter(
       (m) =>
         m.frontmatter.category === "procedure" &&
-        m.frontmatter.status !== "pending_review" &&
-        m.frontmatter.status !== "rejected" &&
-        m.frontmatter.status !== "quarantined" &&
-        m.frontmatter.status !== "superseded" &&
-        m.frontmatter.status !== "archived",
+        isActiveMemoryStatus(m.frontmatter.status),
     )
     .map((m) => ({ m, score: scoreProcedureForPrompt(m, trimmed, queryIntent) }))
     .filter((x) => x.score > 0.04)

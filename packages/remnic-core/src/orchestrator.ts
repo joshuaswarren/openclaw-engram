@@ -174,6 +174,7 @@ import {
   resolveLifecycleState,
   type LifecycleSignals,
 } from "./lifecycle.js";
+import { isActiveMemoryStatus } from "./memory-lifecycle-ledger-utils.js";
 import {
   indexMemoriesBatch,
   clearIndexes,
@@ -12110,10 +12111,8 @@ export class Orchestrator {
 
       // Bootstrap: index only active (non-archived, non-superseded) memories.
       // Incremental: index only the newly persisted IDs.
-      const isActive = (m: { frontmatter: { status?: string } }) =>
-        !m.frontmatter.status || m.frontmatter.status === "active";
       const pool = needsFullRebuild
-        ? allMemories.filter(isActive)
+        ? allMemories.filter((m) => isActiveMemoryStatus(m.frontmatter.status))
         : (() => {
             const idSet = new Set(persistedIds);
             return allMemories.filter((m) => idSet.has(m.frontmatter.id));
@@ -12499,8 +12498,7 @@ export class Orchestrator {
         const tmtEntries = allMemories
           .filter(
             (m) =>
-              m.frontmatter.status !== "superseded" &&
-              m.frontmatter.status !== "archived",
+              isActiveMemoryStatus(m.frontmatter.status),
           )
           .map((m) => ({
             path: m.path,
@@ -13005,7 +13003,7 @@ export class Orchestrator {
     const actionPriors = await this.buildLifecycleActionPriors();
 
     for (const memory of allMemories) {
-      if (memory.frontmatter.status === "superseded") {
+      if (!isActiveMemoryStatus(memory.frontmatter.status)) {
         continue;
       }
       evaluatedCount += 1;
@@ -13181,7 +13179,7 @@ export class Orchestrator {
   ): Promise<void> {
     // Only active memories count toward the threshold
     const activeMemories = allMemories.filter(
-      (m) => !m.frontmatter.status || m.frontmatter.status === "active",
+      (m) => isActiveMemoryStatus(m.frontmatter.status),
     );
 
     if (activeMemories.length < this.config.summarizationTriggerCount) {
@@ -13276,7 +13274,7 @@ export class Orchestrator {
   ): Promise<void> {
     // Only extract from active memories
     const activeMemories = allMemories.filter(
-      (m) => !m.frontmatter.status || m.frontmatter.status === "active",
+      (m) => isActiveMemoryStatus(m.frontmatter.status),
     );
 
     if (activeMemories.length === 0) return;
@@ -14823,8 +14821,8 @@ export class Orchestrator {
       const existingMemory = await resultStorage.getMemoryById(memoryId);
       if (!existingMemory) continue;
 
-      // Skip already superseded memories
-      if (existingMemory.frontmatter.status === "superseded") continue;
+      // Skip memories outside the active corpus.
+      if (!isActiveMemoryStatus(existingMemory.frontmatter.status)) continue;
 
       // Verify contradiction with LLM
       const verification = await this.extraction.verifyContradiction(
@@ -14922,7 +14920,7 @@ export class Orchestrator {
       const resultStorage =
         await this.storageRouter.storageFor(resultNamespace);
       const memory = await resultStorage.getMemoryById(memoryId);
-      if (memory && memory.frontmatter.status !== "superseded") {
+      if (memory && isActiveMemoryStatus(memory.frontmatter.status)) {
         candidates.push({
           id: memory.frontmatter.id,
           content: memory.content,

@@ -45,6 +45,10 @@ export function inferMemoryStatus(
   return fallbackStatus;
 }
 
+export function isActiveMemoryStatus(status: MemoryStatus | string | undefined): boolean {
+  return status === undefined || status === "active";
+}
+
 export function summarizeMemoryLifecycleState(memory: MemoryFile): MemoryLifecycleStateSummary {
   return {
     category: memory.frontmatter.category,

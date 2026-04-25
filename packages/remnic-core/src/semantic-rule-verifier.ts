@@ -2,6 +2,7 @@ import { getCachedRuleMemories, setCachedRuleMemories } from "./memory-cache.js"
 import { StorageManager } from "./storage.js";
 import type { MemoryFile } from "./types.js";
 import { countRecallTokenOverlap, normalizeRecallTokens } from "./recall-tokenization.js";
+import { isActiveMemoryStatus } from "./memory-lifecycle-ledger-utils.js";
 
 export type SemanticRuleVerificationStatus =
   | "verified"
@@ -37,7 +38,7 @@ function verificationConfidenceMultiplier(status: SemanticRuleVerificationStatus
 
 function resolveVerificationStatus(sourceMemory: MemoryFile | undefined): SemanticRuleVerificationStatus {
   if (!sourceMemory) return "source-memory-missing";
-  if (sourceMemory.frontmatter.status === "archived") return "source-memory-archived";
+  if (!isActiveMemoryStatus(sourceMemory.frontmatter.status)) return "source-memory-archived";
   if (sourceMemory.frontmatter.memoryKind !== "episode") return "source-memory-not-episode";
   return "verified";
 }
@@ -115,7 +116,7 @@ export async function searchVerifiedSemanticRules(options: {
   const minEffectiveConfidence = options.minEffectiveConfidence ?? DEFAULT_MIN_EFFECTIVE_CONFIDENCE;
 
   const candidates: VerifiedSemanticRuleResult[] = [];
-  // ruleMemories is pre-filtered to category=rule, status!=archived
+  // ruleMemories is pre-filtered to active category=rule memories.
   for (const memory of ruleMemories) {
     if (memory.frontmatter.source !== "semantic-rule-promotion") continue;
     const sourceMemoryId = memory.frontmatter.sourceMemoryId;

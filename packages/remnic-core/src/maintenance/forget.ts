@@ -11,12 +11,11 @@
  *      CLI and downstream telemetry can render it.
  *
  * Memories with `status === "forgotten"` are excluded from recall,
- * browse, and entity attribution by the existing status filters
- * (storage.ts and access-service.ts already drop everything that
- * isn't `active` from default reads).  A future maintenance cron
- * will hard-delete forgotten memories after a configurable retention
- * window (default 90 days) — for this PR the file stays on disk and
- * the act is reversible by editing the YAML directly.
+ * browse, and entity attribution by the status filters that serve
+ * active user context.  A future maintenance cron will hard-delete
+ * forgotten memories after a configurable retention window (default
+ * 90 days) — for this PR the file stays on disk and the act is
+ * reversible by editing the YAML directly.
  *
  * This module ships the pure helper; the CLI wires it in `cli.ts` as
  * a new `remnic forget` subcommand.
@@ -66,11 +65,8 @@ export class ForgetMemoryAlreadyForgottenError extends Error {
 /**
  * Mark a memory as forgotten.  Pure orchestration over storage —
  * caller supplies the storage instance and the request.  Status
- * filters elsewhere in the codebase already exclude
- * `status: "forgotten"` from default reads (memory-cache,
- * access-service browse, retrieval) because they enumerate the
- * `active` allow-list rather than excluding individual non-active
- * statuses (CLAUDE.md rule 53).
+ * filters elsewhere in the codebase exclude `status: "forgotten"`
+ * from recall/browse surfaces before they serve active user context.
  */
 export async function forgetMemory(
   storage: StorageManager,
@@ -117,6 +113,14 @@ async function findMemoryById(
   storage: StorageManager,
   id: string,
 ): Promise<MemoryFile | null> {
-  const all = await storage.readAllMemories();
-  return all.find((m) => m.frontmatter.id === id) ?? null;
+  const hot = await storage.readAllMemories();
+  const hotMatch = hot.find((m) => m.frontmatter.id === id);
+  if (hotMatch) return hotMatch;
+
+  const archived = await storage.readArchivedMemories();
+  const archivedMatch = archived.find((m) => m.frontmatter.id === id);
+  if (archivedMatch) return archivedMatch;
+
+  const cold = await storage.readAllColdMemories();
+  return cold.find((m) => m.frontmatter.id === id) ?? null;
 }

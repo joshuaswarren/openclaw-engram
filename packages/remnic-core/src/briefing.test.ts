@@ -224,6 +224,7 @@ function makeMemoryWithStatus(
     | "active"
     | "superseded"
     | "archived"
+    | "forgotten"
     | "pending_review"
     | "rejected"
     | "quarantined",
@@ -284,6 +285,15 @@ test("filterMemoriesByWindow: quarantined memory within window is excluded from 
   const active = makeMemoryWithStatus("2026-04-10T11:00:00.000Z", "active");
   const result = filterMemoriesByWindow([quarantined, active], window);
   assert.equal(result.length, 1, "quarantined memory must be excluded from briefing");
+  assert.equal(result[0]!.frontmatter.status, "active");
+});
+
+test("filterMemoriesByWindow: forgotten memory within window is excluded from briefing", () => {
+  const window = makeWindow("2026-04-10T00:00:00.000Z", "2026-04-11T00:00:00.000Z");
+  const forgotten = makeMemoryWithStatus("2026-04-10T10:00:00.000Z", "forgotten");
+  const active = makeMemoryWithStatus("2026-04-10T11:00:00.000Z", "active");
+  const result = filterMemoriesByWindow([forgotten, active], window);
+  assert.equal(result.length, 1, "forgotten memory must be excluded from briefing");
   assert.equal(result[0]!.frontmatter.status, "active");
 });
 

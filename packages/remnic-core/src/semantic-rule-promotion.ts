@@ -1,5 +1,6 @@
 import { StorageManager } from "./storage.js";
 import type { MemoryFile, MemoryLink } from "./types.js";
+import { isActiveMemoryStatus } from "./memory-lifecycle-ledger-utils.js";
 
 export interface SemanticRulePromotionCandidate {
   id: string;
@@ -103,7 +104,7 @@ export async function promoteSemanticRuleFromMemory(options: {
     });
     return report;
   }
-  if (sourceMemory.frontmatter.status === "archived" || sourceMemory.frontmatter.memoryKind !== "episode") {
+  if (!isActiveMemoryStatus(sourceMemory.frontmatter.status) || sourceMemory.frontmatter.memoryKind !== "episode") {
     report.skipped.push({
       sourceMemoryId: options.sourceMemoryId,
       reason: "source-memory-not-episode",
@@ -124,7 +125,7 @@ export async function promoteSemanticRuleFromMemory(options: {
   const existingRule = (await storage.readAllMemories()).find(
     (memory) =>
       memory.frontmatter.category === "rule" &&
-      memory.frontmatter.status !== "archived" &&
+      isActiveMemoryStatus(memory.frontmatter.status) &&
       canonicalizeRuleKey(memory.content) === ruleKey,
   );
   if (existingRule) {

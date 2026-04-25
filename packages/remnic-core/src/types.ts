@@ -1698,7 +1698,7 @@ export interface MemoryFrontmatter {
   expiresAt?: string;
   /** IDs of parent memories this was derived from (lineage tracking) */
   lineage?: string[];
-  /** Memory status: active (default), pending_review, rejected, quarantined, superseded, or archived */
+  /** Memory status: active (default), pending_review, rejected, quarantined, superseded, archived, or forgotten */
   status?: MemoryStatus;
   /** ID of memory that superseded this one */
   supersededBy?: string;
