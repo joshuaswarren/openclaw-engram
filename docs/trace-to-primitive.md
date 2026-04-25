@@ -78,13 +78,14 @@ const observation: MemoryObservation = {
 
 **At this point: ~80,000 tokens of trace have become 3 observations totaling ~80 tokens.** The compression ratio is the product.
 
-### Consolidation — observations become primitives
+### Persist + consolidate — observations become primitives
 
-Observations are not yet persistent. Before they hit disk, consolidation runs (`semantic-consolidation.ts`, `dedup/`):
+The write path runs in two stages, not the "consolidate before persist" order an earlier draft implied:
 
-- Does the corpus already contain a near-duplicate? → MERGE (`resultingPrimitiveId` points at the merged record).
-- Does the corpus contain a contradicting earlier fact? → SUPERSEDE (the older fact gets `invalid_at` flipped via `temporal-supersession.ts`; the new one is added).
-- Genuinely new? → ADD.
+1. **Persist immediately.** `runExtraction()` calls `persistExtraction(...)` so each accepted observation lands on disk as soon as the extraction judge approves it. Hash-dedup and supersession (`temporal-supersession.ts`) gate the write at this stage; superseded predecessors get `invalid_at` stamped without losing the file.
+2. **Consolidate asynchronously.** `maybeScheduleConsolidation(...)` then schedules a separate consolidation pass (`semantic-consolidation.ts`, `dedup/`) that merges near-duplicates of recently persisted primitives, updates or invalidates older primitives that turn out to be redundant, and leaves genuinely new primitives unchanged. `resultingPrimitiveId` on the original `MemoryObservation` ends up pointing at the merged record after that pass.
+
+A primitive *exists* before consolidation runs — consolidation refines an already-durable corpus rather than gating the write itself.
 
 Each accepted observation is written by `storage.ts` as a `MemoryFile`. Illustrative subset of the keys `serializeFrontmatter` actually emits (the live serializer is the source of truth):
 
