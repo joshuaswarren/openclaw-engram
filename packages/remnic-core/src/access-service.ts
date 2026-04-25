@@ -1488,16 +1488,37 @@ export class EngramAccessService {
     // for ambiguous retrieval.  Manual mode and explicit caller
     // disclosure both bypass the policy.  Documented in
     // `recall-disclosure-escalation.ts` and unit-tested there.
-    // Use the caller's topK when provided, otherwise fall back to a
-    // sensible default that matches `conversationRecallTopK`'s
-    // documented baseline.  The exact value here only affects the
-    // confidence proxy; it does not change recall behavior.
-    const topKResolved =
-      typeof topK === "number" && topK > 0 ? topK : 5;
+    // Confidence-proxy denominator: prefer (in order):
+    //   1. The caller's explicit topK if supplied.
+    //   2. The orchestrator's actual applied top-K
+    //      (`snapshot.budgetsApplied.appliedTopK`) — this is the
+    //      authoritative number after planner/minimal-mode caps and
+    //      section caps have all narrowed the limit.
+    //   3. Config `qmdMaxResults` as a last-resort fallback.
+    // Codex P1 round 2 on #705: hardcoded `5` (round 1) and naïve
+    // `qmdMaxResults` (round 2) both ignored the dynamic per-call
+    // limit the orchestrator already records.  Floor at the observed
+    // result count so the ratio stays in [0, 1] even if config drifts
+    // below it.
     const resultsReturned = snapshot?.memoryIds?.length ?? 0;
+    const appliedTopK = snapshot?.budgetsApplied?.appliedTopK;
+    const configMaxResults =
+      typeof this.orchestrator.config.qmdMaxResults === "number" &&
+      Number.isFinite(this.orchestrator.config.qmdMaxResults) &&
+      this.orchestrator.config.qmdMaxResults > 0
+        ? this.orchestrator.config.qmdMaxResults
+        : 0;
+    const topKDenominator =
+      typeof topK === "number" && topK > 0
+        ? topK
+        : typeof appliedTopK === "number" &&
+            Number.isFinite(appliedTopK) &&
+            appliedTopK > 0
+          ? Math.max(appliedTopK, resultsReturned)
+          : Math.max(configMaxResults, resultsReturned, 1);
     const topKConfidence =
-      topKResolved > 0
-        ? Math.min(1, resultsReturned / topKResolved)
+      topKDenominator > 0
+        ? Math.min(1, resultsReturned / topKDenominator)
         : undefined;
     const escalationDecision = decideDisclosureEscalation({
       mode: this.orchestrator.config.recallDisclosureEscalation,
