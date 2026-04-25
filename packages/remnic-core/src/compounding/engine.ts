@@ -6,7 +6,6 @@ import { log } from "../logger.js";
 import { sanitizeMemoryContent } from "../sanitize.js";
 import { StorageManager } from "../storage.js";
 import type { ContinuityIncidentRecord, PluginConfig } from "../types.js";
-import { isActiveMemoryStatus } from "../memory-lifecycle-ledger-utils.js";
 import { SharedFeedbackEntrySchema, type SharedFeedbackEntry } from "../shared-context/manager.js";
 import { parseContinuityIncident, parseContinuityImprovementLoops } from "../identity-continuity.js";
 
@@ -666,7 +665,8 @@ export class CompoundingEngine {
     const storage = opts.storage ?? new StorageManager(this.config.memoryDir);
     const existing = (await storage.readAllMemories()).find((memory) =>
       memory.frontmatter.category === candidate.category &&
-      isActiveMemoryStatus(memory.frontmatter.status) &&
+      memory.frontmatter.status !== "archived" &&
+      memory.frontmatter.status !== "forgotten" &&
       canonicalPromotionContentKey(memory.content) === canonicalPromotionContentKey(persistedContent)
     );
     if (existing) {

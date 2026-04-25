@@ -189,6 +189,9 @@ test("promoteSemanticRuleFromMemory dedupes against existing rule memories with 
       memoryKind: "note",
     },
   );
+  const existingRule = await storage.getMemoryById(existingRuleId);
+  assert.ok(existingRule);
+  await storage.writeMemoryFrontmatter(existingRule, { status: "superseded" });
 
   const sourceEpisodeId = await storage.writeMemory(
     "fact",

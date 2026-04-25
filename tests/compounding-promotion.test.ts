@@ -195,6 +195,7 @@ test("compounding promotion persists durable guidance and dedupes repeated promo
   assert.equal(memory!.frontmatter.category, "principle");
   assert.equal(memory!.frontmatter.source, "compounding-promotion");
   assert.match(memory!.content, /Always include explicit confidence rationale\./);
+  await storage.writeMemoryFrontmatter(memory!, { status: "superseded" });
 
   const duplicate = await engine.promoteCandidate({ weekId: "2026-W09", candidateId: candidate!.id });
   assert.equal(duplicate.promoted.length, 0);

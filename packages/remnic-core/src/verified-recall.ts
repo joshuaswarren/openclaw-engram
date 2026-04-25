@@ -3,7 +3,6 @@ import { getCachedEpisodeMap, setCachedEpisodeMap } from "./memory-cache.js";
 import { StorageManager } from "./storage.js";
 import type { MemoryFile } from "./types.js";
 import { countRecallTokenOverlap, normalizeRecallTokens } from "./recall-tokenization.js";
-import { isActiveMemoryStatus } from "./memory-lifecycle-ledger-utils.js";
 
 export interface VerifiedEpisodeResult {
   box: BoxFrontmatter;
@@ -75,7 +74,7 @@ function resolveVerifiedEpisodeMemoriesFromMap(
     try {
       const memory = memoryById.get(memoryId);
       if (!memory) continue;
-      if (!isActiveMemoryStatus(memory.frontmatter.status)) continue;
+      if (memory.frontmatter.status === "archived" || memory.frontmatter.status === "forgotten") continue;
       if (memory.frontmatter.memoryKind !== "episode") continue;
       verified.push(memory);
     } catch {

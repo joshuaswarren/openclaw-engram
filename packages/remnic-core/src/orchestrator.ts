@@ -12498,7 +12498,9 @@ export class Orchestrator {
         const tmtEntries = allMemories
           .filter(
             (m) =>
-              isActiveMemoryStatus(m.frontmatter.status),
+              m.frontmatter.status !== "superseded" &&
+              m.frontmatter.status !== "archived" &&
+              m.frontmatter.status !== "forgotten",
           )
           .map((m) => ({
             path: m.path,
@@ -13003,7 +13005,10 @@ export class Orchestrator {
     const actionPriors = await this.buildLifecycleActionPriors();
 
     for (const memory of allMemories) {
-      if (!isActiveMemoryStatus(memory.frontmatter.status)) {
+      if (
+        memory.frontmatter.status === "superseded" ||
+        memory.frontmatter.status === "forgotten"
+      ) {
         continue;
       }
       evaluatedCount += 1;
@@ -14821,8 +14826,14 @@ export class Orchestrator {
       const existingMemory = await resultStorage.getMemoryById(memoryId);
       if (!existingMemory) continue;
 
-      // Skip memories outside the active corpus.
-      if (!isActiveMemoryStatus(existingMemory.frontmatter.status)) continue;
+      // Skip memories already resolved or explicitly forgotten. Other
+      // non-active statuses remain valid contradiction candidates.
+      if (
+        existingMemory.frontmatter.status === "superseded" ||
+        existingMemory.frontmatter.status === "forgotten"
+      ) {
+        continue;
+      }
 
       // Verify contradiction with LLM
       const verification = await this.extraction.verifyContradiction(
@@ -14920,7 +14931,11 @@ export class Orchestrator {
       const resultStorage =
         await this.storageRouter.storageFor(resultNamespace);
       const memory = await resultStorage.getMemoryById(memoryId);
-      if (memory && isActiveMemoryStatus(memory.frontmatter.status)) {
+      if (
+        memory &&
+        memory.frontmatter.status !== "superseded" &&
+        memory.frontmatter.status !== "forgotten"
+      ) {
         candidates.push({
           id: memory.frontmatter.id,
           content: memory.content,
