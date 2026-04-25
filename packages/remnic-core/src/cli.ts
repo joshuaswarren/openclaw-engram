@@ -4135,10 +4135,22 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             typeof options.session === "string" && options.session.length > 0
               ? options.session
               : undefined;
-          const format =
-            typeof options.format === "string" && options.format.toLowerCase() === "json"
-              ? "json"
-              : "text";
+          // Strict --format validation: reject unrecognized values
+          // instead of silently defaulting (CLAUDE.md rule 51).
+          // Only "text" and "json" are supported; an absent flag falls
+          // back to "text" by intent, but `--format csv` (or anything
+          // else) must throw.  Mirrors --disclosure / --top-k strictness
+          // in the same handler.
+          let format: "text" | "json" = "text";
+          if (options.format !== undefined) {
+            const raw = String(options.format).toLowerCase();
+            if (raw !== "text" && raw !== "json") {
+              throw new Error(
+                `invalid --format value: ${String(options.format)} (expected one of: text, json)`,
+              );
+            }
+            format = raw as "text" | "json";
+          }
 
           const accessService = new EngramAccessService(orchestrator);
           const response = await accessService.recall({
