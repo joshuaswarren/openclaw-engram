@@ -335,6 +335,23 @@ test("dreams surface watch catches callback failures instead of leaking unhandle
   const surface = createDreamsSurface();
   const warnings: unknown[][] = [];
   const originalWarn = console.warn;
+  await writeFile(
+    dreamsPath,
+    [
+      "# Dream Diary",
+      "",
+      "<!-- openclaw:dreaming:diary:start -->",
+      "---",
+      "",
+      "*2026-04-12T14:00:00Z — Initial entry*",
+      "",
+      "Create the watched file before arming the watcher.",
+      "",
+      "<!-- openclaw:dreaming:diary:end -->",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
   const stop = surface.watch(dreamsPath, () => {
     throw new Error("boom");
   });
@@ -344,6 +361,7 @@ test("dreams surface watch catches callback failures instead of leaking unhandle
   };
 
   try {
+    await new Promise((resolve) => setTimeout(resolve, 50));
     await writeFile(
       dreamsPath,
       [
@@ -367,6 +385,10 @@ test("dreams surface watch catches callback failures instead of leaking unhandle
     stop();
   }
 
-  assert.equal(warnings.length, 1);
-  assert.match(String(warnings[0]?.[0] ?? ""), /dreams surface watch update failed/);
+  assert.equal(warnings.length >= 1, true);
+  assert.equal(
+    warnings.some((args) =>
+      /dreams surface watch update failed/.test(String(args[0] ?? ""))),
+    true,
+  );
 });

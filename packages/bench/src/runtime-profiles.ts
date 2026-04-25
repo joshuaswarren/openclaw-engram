@@ -24,6 +24,7 @@ import {
 } from "./responders.js";
 import type { ProviderFactoryConfig } from "./providers/types.js";
 import { createProvider } from "./providers/factory.js";
+import { isSecretKey } from "./security/secret-keys.js";
 import type { BenchRuntimeProfile, BuiltInProvider, ProviderConfig } from "./types.js";
 export type BenchModelSource = "plugin" | "gateway";
 
@@ -60,24 +61,6 @@ export interface ResolvedBenchRuntimeProfile {
   systemProvider: ProviderConfig | null;
   judgeProvider: ProviderConfig | null;
 }
-
-const EXACT_SECRET_KEYS = new Set([
-  "authorization",
-  "password",
-  "secret",
-  "token",
-] as const);
-
-const SECRET_KEY_SEGMENT_SUFFIXES = new Set([
-  "apikey",
-  "authtoken",
-  "accesstoken",
-  "refreshtoken",
-  "bearertoken",
-  "clientsecret",
-  "secretkey",
-  "privatekey",
-] as const);
 
 const REDACTED_CONFIG_VALUE = "[redacted]";
 
@@ -443,48 +426,6 @@ function sanitizePersistedValue(value: unknown): unknown {
     next[key] = sanitizePersistedValue(entry);
   }
   return next;
-}
-
-function isSecretKey(key: string): boolean {
-  const segments = key
-    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
-    .split(/[^a-z0-9]+/i)
-    .map((segment) => segment.trim().toLowerCase())
-    .filter(Boolean);
-
-  if (segments.length === 0) {
-    return false;
-  }
-
-  const normalized = segments.join("");
-  if (EXACT_SECRET_KEYS.has(normalized as (typeof EXACT_SECRET_KEYS extends Set<infer T> ? T : never))) {
-    return true;
-  }
-
-  if (
-    SECRET_KEY_SEGMENT_SUFFIXES.has(
-      normalized as (typeof SECRET_KEY_SEGMENT_SUFFIXES extends Set<infer T> ? T : never),
-    )
-  ) {
-    return true;
-  }
-
-  const lastSegment = segments.at(-1);
-  if (
-    lastSegment &&
-    EXACT_SECRET_KEYS.has(lastSegment as (typeof EXACT_SECRET_KEYS extends Set<infer T> ? T : never))
-  ) {
-    return true;
-  }
-
-  for (let width = 2; width <= Math.min(3, segments.length); width += 1) {
-    const candidate = segments.slice(-width).join("");
-    if (SECRET_KEY_SEGMENT_SUFFIXES.has(candidate as (typeof SECRET_KEY_SEGMENT_SUFFIXES extends Set<infer T> ? T : never))) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

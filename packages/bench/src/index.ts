@@ -152,6 +152,7 @@ export {
 } from "./answering.js";
 export {
   createGatewayResponder,
+  createProviderBackedAmaBenchRecommendedJudge,
   createProviderBackedJudge,
   createProviderBackedResponder,
   createProviderBackedStructuredJudge,
@@ -175,6 +176,7 @@ export {
   runBenchmark,
   listBenchmarks,
   getBenchmark,
+  redactBenchmarkResultSecrets,
   writeBenchmarkResult,
   loadBaseline,
   saveBaseline,

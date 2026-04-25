@@ -154,6 +154,53 @@ test("parseBenchArgs accepts --provider shorthand", () => {
   assert.equal(parsed.systemBaseUrl, "https://api.openai.com");
 });
 
+test("parseBenchArgs accepts AMA-Bench recommended judge and cross-judge flags", () => {
+  const parsed = parseBenchArgs([
+    "run",
+    "ama-bench",
+    "--judge-provider",
+    "ollama",
+    "--judge-model",
+    "qwen3:32b",
+    "--judge-base-url",
+    "https://ollama.com/api",
+    "--ama-bench-judge-protocol",
+    "recommended",
+    "--ama-bench-cross-judge-model",
+    "gemma4:31b-cloud",
+  ]);
+
+  assert.equal(parsed.amaBenchJudgeProtocol, "recommended");
+  assert.equal(parsed.amaBenchCrossJudgeModel, "gemma4:31b-cloud");
+  assert.equal(parsed.amaBenchCrossJudgeProvider, undefined);
+});
+
+test("parseBenchArgs rejects unknown AMA-Bench judge protocol", () => {
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        "run",
+        "ama-bench",
+        "--ama-bench-judge-protocol",
+        "paperish",
+      ]),
+    /--ama-bench-judge-protocol must be "default" or "recommended"/,
+  );
+});
+
+test("parseBenchArgs requires cross-judge model when cross-judge provider is configured", () => {
+  assert.throws(
+    () =>
+      parseBenchArgs([
+        "run",
+        "ama-bench",
+        "--ama-bench-cross-judge-provider",
+        "ollama",
+      ]),
+    /--ama-bench-cross-judge-model is required/,
+  );
+});
+
 test("parseBenchArgs rejects unknown --provider", () => {
   assert.throws(
     () =>

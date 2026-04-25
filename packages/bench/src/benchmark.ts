@@ -33,7 +33,7 @@ import type {
 } from "./types.js";
 
 export { listBenchmarks, getBenchmark } from "./registry.js";
-export { writeBenchmarkResult } from "./reporter.js";
+export { redactBenchmarkResultSecrets, writeBenchmarkResult } from "./reporter.js";
 
 const DEFAULT_BASELINE_PATH = path.join(process.cwd(), "benchmarks", "baseline.json");
 const DEFAULT_REPORT_PATH = path.join(process.cwd(), "benchmarks", "report.json");

@@ -32,6 +32,7 @@
     "provenance": true
   },
   "scripts": {
+    "prebuild": "node ../../scripts/ensure-bench-build-deps.mjs",
     "build": "tsup --config tsup.config.ts",
     "check-types": "tsc --noEmit",
     "prepublishOnly": "npm run build"

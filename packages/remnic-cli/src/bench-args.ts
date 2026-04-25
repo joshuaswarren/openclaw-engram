@@ -27,6 +27,7 @@ export type BenchPublishTarget = "remnic-ai";
 export type BenchRuntimeProfile = "baseline" | "real" | "openclaw-chain";
 export type BenchModelSource = "plugin" | "gateway";
 export type BenchRunAction = "list" | "show" | "delete";
+export type AmaBenchJudgeProtocol = "default" | "recommended";
 
 export interface ParsedBenchArgs {
   action: BenchAction;
@@ -67,6 +68,12 @@ export interface ParsedBenchArgs {
   max429WaitMs?: number;
   /** Suppress thinking/reasoning tokens for thinking-capable models (Gemma 4, Qwen 3.5, DeepSeek). */
   disableThinking?: boolean;
+  /** AMA-Bench-specific judge protocol. `recommended` uses binary accuracy scoring. */
+  amaBenchJudgeProtocol?: AmaBenchJudgeProtocol;
+  amaBenchCrossJudgeProvider?: BuiltInProvider;
+  amaBenchCrossJudgeModel?: string;
+  amaBenchCrossJudgeBaseUrl?: string;
+  amaBenchCrossJudgeApiKey?: string;
   /** `bench published` — specific benchmark to run (longmemeval|locomo). */
   publishedName?: PublishedBenchmarkName;
   /** `bench published` — seed forwarded into the harness context. */
@@ -193,7 +200,12 @@ export function collectBenchmarks(argv: string[]): string[] {
       arg === "--provider" ||
       arg === "--base-url" ||
       arg === "--request-timeout" ||
-      arg === "--max-429-wait"
+      arg === "--max-429-wait" ||
+      arg === "--ama-bench-judge-protocol" ||
+      arg === "--ama-bench-cross-judge-provider" ||
+      arg === "--ama-bench-cross-judge-model" ||
+      arg === "--ama-bench-cross-judge-base-url" ||
+      arg === "--ama-bench-cross-judge-api-key"
     ) {
       index += 1;
       continue;
@@ -315,6 +327,11 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   const targetRaw = readBenchOptionValue(args, "--target");
   const requestTimeoutRaw = readBenchOptionValue(args, "--request-timeout");
   const max429WaitRaw = readBenchOptionValue(args, "--max-429-wait");
+  const amaBenchJudgeProtocolRaw = readBenchOptionValue(args, "--ama-bench-judge-protocol");
+  const amaBenchCrossJudgeProviderRaw = readBenchOptionValue(args, "--ama-bench-cross-judge-provider");
+  const amaBenchCrossJudgeModel = readBenchOptionValue(args, "--ama-bench-cross-judge-model");
+  const amaBenchCrossJudgeBaseUrl = readBenchOptionValue(args, "--ama-bench-cross-judge-base-url");
+  const amaBenchCrossJudgeApiKey = readBenchOptionValue(args, "--ama-bench-cross-judge-api-key");
   let runtimeProfile: BenchRuntimeProfile | undefined;
   if (runtimeProfileRaw !== undefined) {
     runtimeProfile = parseBenchRuntimeProfile(
@@ -355,6 +372,27 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
   let judgeProvider: BuiltInProvider | undefined;
   if (judgeProviderRaw !== undefined) {
     judgeProvider = parseBenchProvider(judgeProviderRaw, "--judge-provider");
+  }
+
+  let amaBenchJudgeProtocol: AmaBenchJudgeProtocol | undefined;
+  if (amaBenchJudgeProtocolRaw !== undefined) {
+    if (
+      amaBenchJudgeProtocolRaw !== "default" &&
+      amaBenchJudgeProtocolRaw !== "recommended"
+    ) {
+      throw new Error(
+        'ERROR: --ama-bench-judge-protocol must be "default" or "recommended".',
+      );
+    }
+    amaBenchJudgeProtocol = amaBenchJudgeProtocolRaw;
+  }
+
+  let amaBenchCrossJudgeProvider: BuiltInProvider | undefined;
+  if (amaBenchCrossJudgeProviderRaw !== undefined) {
+    amaBenchCrossJudgeProvider = parseBenchProvider(
+      amaBenchCrossJudgeProviderRaw,
+      "--ama-bench-cross-judge-provider",
+    );
   }
 
   let threshold: number | undefined;
@@ -500,6 +538,25 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
         "vLLM (http://localhost:8000/v1), LM Studio (http://localhost:1234/v1).",
     );
   }
+  if (
+    amaBenchCrossJudgeProvider === "local-llm" &&
+    !(amaBenchCrossJudgeBaseUrl ?? judgeBaseUrl)
+  ) {
+    throw new Error(
+      "ERROR: --ama-bench-cross-judge-provider local-llm requires " +
+        "--ama-bench-cross-judge-base-url (or --judge-base-url).",
+    );
+  }
+  if (
+    (amaBenchCrossJudgeProvider !== undefined ||
+      amaBenchCrossJudgeBaseUrl !== undefined ||
+      amaBenchCrossJudgeApiKey !== undefined) &&
+    amaBenchCrossJudgeModel === undefined
+  ) {
+    throw new Error(
+      "ERROR: --ama-bench-cross-judge-model is required when configuring an AMA-Bench cross judge.",
+    );
+  }
 
   const resume = args.includes("--resume");
   const retryFailed = args.includes("--retry-failed");
@@ -554,6 +611,11 @@ export function parseBenchArgs(argv: string[]): ParsedBenchArgs {
     requestTimeout,
     max429WaitMs,
     disableThinking: args.includes("--disable-thinking"),
+    amaBenchJudgeProtocol,
+    amaBenchCrossJudgeProvider,
+    amaBenchCrossJudgeModel,
+    amaBenchCrossJudgeBaseUrl,
+    amaBenchCrossJudgeApiKey,
     resume,
     retryFailed,
   };

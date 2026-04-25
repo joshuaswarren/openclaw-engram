@@ -6,11 +6,36 @@ import { execSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { LegacyBenchmarkResult } from "./adapters/types.js";
+import { isSecretKey } from "./security/secret-keys.js";
 import type { BenchmarkResult } from "./types.js";
+
+const REDACTED_SECRET = "[REDACTED]";
 
 function sanitizeFilenameSegment(value: string): string {
   const sanitized = value.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
   return sanitized.length > 0 ? sanitized : "unknown";
+}
+
+export function redactBenchmarkResultSecrets<T>(value: T): T {
+  return redactSecrets(value) as T;
+}
+
+function redactSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSecrets(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    redacted[key] = isSecretKey(key)
+      ? REDACTED_SECRET
+      : redactSecrets(nestedValue);
+  }
+  return redacted;
 }
 
 export async function writeBenchmarkResult(
@@ -26,7 +51,7 @@ export async function writeBenchmarkResult(
     `${result.meta.benchmark}-v${safeRemnicVersion}-${timestamp}.json`,
   );
 
-  await writeFile(filePath, JSON.stringify(result, null, 2) + "\n");
+  await writeFile(filePath, JSON.stringify(redactBenchmarkResultSecrets(result), null, 2) + "\n");
   return filePath;
 }
 
