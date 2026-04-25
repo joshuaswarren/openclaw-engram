@@ -39,17 +39,12 @@ const DATASET_FILENAMES = [
  * The QA has answer_choices, each tied to specific state values.
  * We pick the one matching the user's final state.
  */
-function findBestAnswer(qa: AMemGymQA, finalState: Record<string, string>): string {
-  const choice = findBestAnswerChoice(qa, finalState);
-  return choice?.choice.answer ?? qa.answer_choices[0]?.answer ?? "";
-}
-
-function findBestAnswerChoice(
+function findExpectedAnswerChoice(
   qa: AMemGymQA,
   finalState: Record<string, string>,
 ): { index: number; choice: AMemGymQA["answer_choices"][number] } | undefined {
-  for (const choice of qa.answer_choices) {
-    const index = qa.answer_choices.indexOf(choice);
+  for (let index = 0; index < qa.answer_choices.length; index += 1) {
+    const choice = qa.answer_choices[index]!;
     const requiredStates = choice.state;
     const matchValues = qa.required_info.map((key) => finalState[key]);
     if (requiredStates.length === matchValues.length &&
@@ -116,8 +111,8 @@ export async function runAMemGymBenchmark(
     ) {
       const qa = profile.qas[questionIndex]!;
       const taskResultId = `${profile.id}-q${questionIndex}`;
-      const expectedChoice = findBestAnswerChoice(qa, finalState);
-      const expectedAnswer = expectedChoice?.choice.answer ?? findBestAnswer(qa, finalState);
+      const expectedChoice = findExpectedAnswerChoice(qa, finalState);
+      const expectedAnswer = expectedChoice?.choice.answer ?? qa.answer_choices[0]?.answer ?? "";
       const benchmarkQuestion = formatAMemGymQuestion(qa);
 
       try {
@@ -174,6 +169,7 @@ export async function runAMemGymBenchmark(
               selectedChoice === undefined ? null : selectedChoice.index + 1,
             selectedAnswer:
               selectedChoice === undefined ? null : selectedChoice.choice.answer,
+            scoredAnswer: answerForScoring,
             recalledLength: recallText.length,
             answeredLength: answered.finalAnswer.length,
             recalledText: recallText,
@@ -187,10 +183,10 @@ export async function runAMemGymBenchmark(
         console.error(`  [WARN] amemgym task ${taskResultId} failed: ${message}`);
         tasks.push({
           taskId: taskResultId,
-          question: qa.query,
+          question: benchmarkQuestion,
           expected: expectedAnswer,
           actual: `(error: ${message})`,
-          scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+          scores: { f1: -1, contains_answer: -1, qa_accuracy: -1, llm_judge: -1 },
           latencyMs: 0,
           tokens: { input: 0, output: 0 },
           details: { error: message },
@@ -273,29 +269,113 @@ function parseAMemGymChoice(
   qa: AMemGymQA,
 ): { index: number; choice: AMemGymQA["answer_choices"][number] } | undefined {
   const trimmed = rawAnswer.trim();
-  const leadingNumber = trimmed.match(/^(?:option|choice|answer)?\s*#?\s*(\d+)\b/i);
-  if (leadingNumber) {
-    const index = Number.parseInt(leadingNumber[1]!, 10) - 1;
+  const selectedNumber = parseAMemGymOptionNumber(trimmed);
+  if (selectedNumber !== undefined) {
+    const index = selectedNumber - 1;
     const choice = qa.answer_choices[index];
     if (choice) {
       return { index, choice };
     }
+    return undefined;
+  }
+  if (looksLikeChoiceNumberAttempt(trimmed)) {
+    return undefined;
   }
 
   const normalizedAnswer = normalizeForChoiceMatch(rawAnswer);
+  const normalizedChoices = qa.answer_choices.map((choice, index) => ({
+    index,
+    choice,
+    normalized: normalizeForChoiceMatch(choice.answer),
+  }));
+
+  const exactMatches = normalizedChoices.filter(
+    (candidate) =>
+      candidate.normalized.length > 0
+      && normalizedAnswer === candidate.normalized,
+  );
+  if (exactMatches.length === 1) {
+    const exactMatch = exactMatches[0]!;
+    return { index: exactMatch.index, choice: exactMatch.choice };
+  }
+
+  let bestSubstringLength = -1;
+  let bestSubstringMatches: Array<{
+    index: number;
+    choice: AMemGymQA["answer_choices"][number];
+    normalized: string;
+  }> = [];
   for (let index = 0; index < qa.answer_choices.length; index += 1) {
-    const choice = qa.answer_choices[index]!;
-    const normalizedChoice = normalizeForChoiceMatch(choice.answer);
+    const candidate = normalizedChoices[index]!;
     if (
-      normalizedChoice.length > 0
-      && (normalizedAnswer === normalizedChoice
-        || normalizedAnswer.includes(normalizedChoice))
+      candidate.normalized.length > 0
+      && containsNormalizedPhrase(normalizedAnswer, candidate.normalized)
     ) {
-      return { index, choice };
+      if (candidate.normalized.length > bestSubstringLength) {
+        bestSubstringLength = candidate.normalized.length;
+        bestSubstringMatches = [candidate];
+      } else if (candidate.normalized.length === bestSubstringLength) {
+        bestSubstringMatches.push(candidate);
+      }
     }
   }
 
-  return undefined;
+  const uniqueMatch = bestSubstringMatches.length === 1
+    ? bestSubstringMatches[0]
+    : undefined;
+  return uniqueMatch
+    ? { index: uniqueMatch.index, choice: uniqueMatch.choice }
+    : undefined;
+}
+
+function containsNormalizedPhrase(haystack: string, needle: string): boolean {
+  const haystackTokens = haystack.split(" ").filter((token) => token.length > 0);
+  const needleTokens = needle.split(" ").filter((token) => token.length > 0);
+  if (needleTokens.length === 0 || needleTokens.length > haystackTokens.length) {
+    return false;
+  }
+
+  for (let index = 0; index <= haystackTokens.length - needleTokens.length; index += 1) {
+    if (needleTokens.every((token, offset) => haystackTokens[index + offset] === token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
+  const bareNumber = trimmedAnswer.match(
+    /^\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
+  );
+  if (bareNumber) {
+    if (mentionsAdditionalOptionNumber(bareNumber.groups?.tail ?? "")) {
+      return undefined;
+    }
+    return Number.parseInt(bareNumber[1]!, 10);
+  }
+
+  const labeledNumber = trimmedAnswer.match(
+    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
+  );
+  if (labeledNumber && mentionsAdditionalOptionNumber(labeledNumber.groups?.tail ?? "")) {
+    return undefined;
+  }
+  return labeledNumber
+    ? Number.parseInt(labeledNumber[1]!, 10)
+    : undefined;
+}
+
+function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
+  if (/^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*\(?#?\s*\d+/i.test(trimmedAnswer)) {
+    return true;
+  }
+  return /^\(?#?\s*\d+\s*\)?\s+(?!weeks?\b|days?\b|months?\b|years?\b|hours?\b|minutes?\b)/i.test(trimmedAnswer);
+}
+
+function mentionsAdditionalOptionNumber(value: string): boolean {
+  const trimmed = value.trim();
+  return /\b(?:option|choice|answer)\s*#?\d+\b/i.test(trimmed)
+    || (/^[,.;:\-]/.test(trimmed) && /\b#?\d+\b/.test(trimmed));
 }
 
 function normalizeForChoiceMatch(value: string): string {

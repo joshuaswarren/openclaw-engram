@@ -63,7 +63,19 @@ export async function runMemoryArenaBenchmark(
       await options.system.reset();
 
       const sessionId = `arena-${domain}-${task.id}`;
-      await storeInitialTaskState(options, sessionId, task);
+      let initialSeedError: string | undefined;
+      if (isGroupTravelPlannerCategory(task.category)) {
+        try {
+          await storeInitialTaskState(options, sessionId, task);
+        } catch (seedErr) {
+          initialSeedError = seedErr instanceof Error
+            ? seedErr.message
+            : String(seedErr);
+          console.error(
+            `  [WARN] memory-arena initial task state failed for ${domain}:${task.id}: ${initialSeedError}`,
+          );
+        }
+      }
       for (
         let questionIndex = 0;
         questionIndex < task.questions.length;
@@ -107,7 +119,7 @@ export async function runMemoryArenaBenchmark(
             options.system.recall(sessionId, question),
           );
           const benchmarkQuestion = formatMemoryArenaQuestion(
-            domain,
+            task.category,
             question,
             expectedAnswer,
           );
@@ -117,7 +129,7 @@ export async function runMemoryArenaBenchmark(
             responder: options.system.responder,
           });
           const domainScores = scoreMemoryArenaDomainAnswer(
-            domain,
+            task.category,
             answered.finalAnswer,
             expectedAnswer,
           );
@@ -159,6 +171,9 @@ export async function runMemoryArenaBenchmark(
               subtaskIndex: questionIndex,
               category: task.category,
               promptQuestion: benchmarkQuestion,
+              ...(initialSeedError === undefined
+                ? {}
+                : { initialSeedError }),
               recalledLength: recalledText.length,
               answeredLength: answered.finalAnswer.length,
               recalledText,
@@ -194,6 +209,7 @@ export async function runMemoryArenaBenchmark(
               f1: -1,
               contains_answer: -1,
               llm_judge: -1,
+              ...failureMemoryArenaDomainScores(task.category, expectedAnswer),
               process_score: 0,
               ...(questionIndex === task.questions.length - 1
                 ? { task_success_rate: 0 }
@@ -201,7 +217,12 @@ export async function runMemoryArenaBenchmark(
             },
             latencyMs: 0,
             tokens: { input: 0, output: 0 },
-            details: { error: message },
+            details: {
+              error: message,
+              ...(initialSeedError === undefined
+                ? {}
+                : { initialSeedError }),
+            },
           });
         }
 
@@ -417,7 +438,7 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
     && !isValidBasePerson(record.base_person)
   ) {
     throw new Error(
-      `${location} base_person must be an object when provided.`,
+      `${location} base_person must be an object with a valid daily_plans value when provided.`,
     );
   }
 
@@ -513,9 +534,15 @@ function isValidBackgrounds(backgrounds: unknown): backgrounds is string | strin
 }
 
 function isValidBasePerson(basePerson: unknown): basePerson is ArenaBasePerson {
-  return Boolean(basePerson)
-    && typeof basePerson === "object"
-    && !Array.isArray(basePerson);
+  if (!basePerson || typeof basePerson !== "object" || Array.isArray(basePerson)) {
+    return false;
+  }
+
+  const record = basePerson as Record<string, unknown>;
+  return !("daily_plans" in record)
+    || record.daily_plans === undefined
+    || record.daily_plans === null
+    || isValidExpectedAnswer(record.daily_plans);
 }
 
 function scoredSubtaskCount(task: ArenaTask): number {
@@ -558,9 +585,12 @@ async function storeInitialTaskState(
   const basePerson = task.base_person;
   const name = typeof basePerson.name === "string" ? basePerson.name : "base traveler";
   const query = typeof basePerson.query === "string" ? basePerson.query : "";
-  const plan = basePerson.daily_plans === undefined
+  const plan = basePerson.daily_plans == null
     ? ""
     : answerToString(basePerson.daily_plans);
+  if (query.trim().length === 0 && plan.trim().length === 0) {
+    return;
+  }
 
   await options.system.store(sessionId, [
     {
@@ -587,26 +617,20 @@ async function storeInitialTaskState(
 }
 
 function formatMemoryArenaQuestion(
-  domain: string,
+  category: string,
   question: string,
   expectedAnswer: ArenaExpectedAnswer,
 ): string {
-  if (domain !== "group_travel_planner") {
+  if (!shouldUseGroupTravelPlanProtocol(category, expectedAnswer)) {
     return question;
   }
-
-  const expectedDayCount = Array.isArray(expectedAnswer)
-    ? expectedAnswer.filter((entry) => isValidArenaAnswerObject(entry)).length
-    : 0;
 
   return [
     "You are a travel planner assistant in the MemoryArena Group Travel Planning task.",
     "Use the supplied memory context containing the base traveler plan and previous travelers' finalized plans.",
     "Generate the complete finalized plan for the current traveler, not just a short answer to one constraint.",
     "Preserve the exact known flight, restaurant, attraction, and accommodation names from memory when they are required by JOIN or comparison constraints.",
-    expectedDayCount > 0
-      ? `Return ${expectedDayCount} day sections.`
-      : "Return all required day sections.",
+    "Return all required day sections from the current traveler request and memory context.",
     "",
     "Final output format:",
     "=== Traveler Plan ===",
@@ -625,11 +649,11 @@ function formatMemoryArenaQuestion(
 }
 
 function scoreMemoryArenaDomainAnswer(
-  domain: string,
+  category: string,
   predicted: string,
   expectedAnswer: ArenaExpectedAnswer,
 ): Record<string, number> {
-  if (domain !== "group_travel_planner") {
+  if (!isGroupTravelPlannerCategory(category)) {
     return {};
   }
 
@@ -638,27 +662,59 @@ function scoreMemoryArenaDomainAnswer(
     return {};
   }
 
-  const normalizedPredicted = normalizePlanText(predicted);
-  const hits = expectedFields.filter((value) =>
-    normalizedPredicted.includes(normalizePlanText(value)),
-  ).length;
+  const hits = countNonOverlappingPlanFieldHits(predicted, expectedFields);
+  const planFieldRecall = hits / expectedFields.length;
 
   return {
-    soft_process_score: hits / expectedFields.length,
-    plan_field_recall: hits / expectedFields.length,
+    soft_process_score: hits === expectedFields.length ? 1 : 0,
+    plan_field_recall: planFieldRecall,
   };
 }
 
-function extractPlanFieldValues(answer: ArenaExpectedAnswer): string[] {
-  if (!Array.isArray(answer)) {
-    return [];
+function failureMemoryArenaDomainScores(
+  category: string,
+  expectedAnswer: ArenaExpectedAnswer,
+): Record<string, number> {
+  if (
+    !isGroupTravelPlannerCategory(category)
+    || extractPlanFieldValues(expectedAnswer).length === 0
+  ) {
+    return {};
   }
+  return {
+    plan_field_recall: 0,
+    soft_process_score: 0,
+  };
+}
 
-  const fields: string[] = [];
-  for (const item of answer) {
+function isGroupTravelPlannerCategory(category: string): boolean {
+  return category.trim().toLowerCase() === "group_travel_planner";
+}
+
+function shouldUseGroupTravelPlanProtocol(
+  category: string,
+  expectedAnswer: ArenaExpectedAnswer,
+): boolean {
+  return isGroupTravelPlannerCategory(category)
+    && extractPlanFieldValues(expectedAnswer).length > 0;
+}
+
+interface PlanFieldExpectation {
+  value: string;
+  fieldKey: string;
+  day?: string;
+}
+
+function extractPlanFieldValues(answer: ArenaExpectedAnswer): PlanFieldExpectation[] {
+  const planItems = Array.isArray(answer) ? answer : [answer];
+  const fields: PlanFieldExpectation[] = [];
+  for (const item of planItems) {
     if (!isValidArenaAnswerObject(item)) {
       continue;
     }
+    const day = typeof item.days === "string" || typeof item.days === "number"
+      ? normalizePlanDayLabel(item.days)
+      : undefined;
     for (const key of [
       "current_city",
       "transportation",
@@ -670,7 +726,7 @@ function extractPlanFieldValues(answer: ArenaExpectedAnswer): string[] {
     ]) {
       const value = item[key];
       if (typeof value === "string" && value.trim().length > 0 && value.trim() !== "-") {
-        fields.push(value);
+        fields.push({ value: value.trim(), fieldKey: key, day });
       }
     }
   }
@@ -681,9 +737,147 @@ function normalizePlanText(value: string): string {
   return value
     .trim()
     .toLowerCase()
+    .replace(/_/g, " ")
     .replace(/[^\w\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function normalizePlanDayLabel(value: string | number): string {
+  const tokens = tokenizePlanText(String(value));
+  const dayIndex = tokens.findIndex((token) => token === "day" || token === "days");
+  if (dayIndex !== -1 && tokens[dayIndex + 1]) {
+    return tokens[dayIndex + 1]!;
+  }
+  return tokens.join(" ");
+}
+
+function countNonOverlappingPlanFieldHits(
+  predicted: string,
+  expectedFields: PlanFieldExpectation[],
+): number {
+  const predictedTokens = tokenizePlanText(predicted);
+  const expectedTokenFields = expectedFields
+    .map((field, index) => ({
+      index,
+      tokens: tokenizePlanText(field.value),
+      fieldTokens: tokenizePlanText(field.fieldKey.replace(/_/g, " ")),
+      dayTokens: field.day === undefined ? [] : tokenizePlanText(field.day),
+    }))
+    .filter((field) => field.tokens.length > 0)
+    .sort((a, b) =>
+      b.tokens.length - a.tokens.length
+      || a.index - b.index,
+    );
+
+  const usedTokens = Array.from({ length: predictedTokens.length }, () => false);
+  let count = 0;
+  for (const expectedField of expectedTokenFields) {
+    const matchIndex = findPlanFieldTokenWindow(
+      predictedTokens,
+      expectedField,
+      usedTokens,
+    );
+    if (matchIndex !== -1) {
+      count += 1;
+      for (
+        let tokenIndex = matchIndex;
+        tokenIndex < matchIndex + expectedField.tokens.length;
+        tokenIndex += 1
+      ) {
+        usedTokens[tokenIndex] = true;
+      }
+    }
+  }
+  return count;
+}
+
+function findPlanFieldTokenWindow(
+  predictedTokens: string[],
+  expectedField: {
+    tokens: string[];
+    fieldTokens: string[];
+    dayTokens: string[];
+  },
+  usedTokens: boolean[],
+): number {
+  for (let index = 0; index <= predictedTokens.length - expectedField.tokens.length; index += 1) {
+    const valueMatches = expectedField.tokens.every(
+      (token, offset) =>
+        !usedTokens[index + offset]
+        && predictedTokens[index + offset] === token,
+    );
+    if (!valueMatches) {
+      continue;
+    }
+
+    const dayContext = expectedField.dayTokens.length > 0
+      ? findLastDayContext(predictedTokens, index)
+      : undefined;
+    if (
+      expectedField.dayTokens.length > 0
+      && (dayContext === undefined || !tokensEqual(dayContext.dayTokens, expectedField.dayTokens))
+    ) {
+      continue;
+    }
+
+    const context = predictedTokens.slice(
+      dayContext?.startIndex ?? Math.max(0, index - 32),
+      index,
+    );
+    if (
+      expectedField.fieldTokens.length > 0
+      && !containsTokenSequence(context, expectedField.fieldTokens)
+    ) {
+      continue;
+    }
+    if (
+      expectedField.dayTokens.length > 0
+      && !containsTokenSequence(context, expectedField.dayTokens)
+    ) {
+      continue;
+    }
+    return index;
+  }
+  return -1;
+}
+
+function findLastDayContext(
+  tokens: string[],
+  beforeIndex: number,
+): { startIndex: number; dayTokens: string[] } | undefined {
+  for (let index = beforeIndex - 2; index >= 0; index -= 1) {
+    if ((tokens[index] === "day" || tokens[index] === "days") && tokens[index + 1]) {
+      return {
+        startIndex: index,
+        dayTokens: [tokens[index + 1]!],
+      };
+    }
+  }
+  return undefined;
+}
+
+function tokensEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length
+    && left.every((token, index) => token === right[index]);
+}
+
+function containsTokenSequence(tokens: string[], sequence: string[]): boolean {
+  if (sequence.length === 0 || sequence.length > tokens.length) {
+    return false;
+  }
+  for (let index = 0; index <= tokens.length - sequence.length; index += 1) {
+    if (sequence.every((token, offset) => tokens[index + offset] === token)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function tokenizePlanText(value: string): string[] {
+  return normalizePlanText(value)
+    .split(" ")
+    .filter((token) => token.length > 0);
 }
 
 async function storeCompletedSubtask(
@@ -715,6 +909,9 @@ async function storeCompletedSubtask(
 }
 
 function scoreSubtaskSuccess(scores: Record<string, number>): number {
+  if (typeof scores.soft_process_score === "number") {
+    return scores.soft_process_score >= 1 ? 1 : 0;
+  }
   if (typeof scores.llm_judge === "number") {
     return scores.llm_judge >= 0.5 ? 1 : 0;
   }

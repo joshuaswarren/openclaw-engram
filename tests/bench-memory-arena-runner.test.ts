@@ -5,6 +5,8 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import type {
   BenchMemoryAdapter,
+  BenchResponder,
+  BenchResponse,
   Message,
   SearchResult,
 } from "../packages/bench/src/index.js";
@@ -12,6 +14,11 @@ import { runBenchmark } from "../packages/bench/src/index.js";
 
 class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
+  responder?: BenchResponder;
+
+  constructor(responder?: BenchResponder) {
+    this.responder = responder;
+  }
 
   async store(sessionId: string, messages: Message[]): Promise<void> {
     const existing = this.sessions.get(sessionId) ?? [];
@@ -75,6 +82,43 @@ class FakeMemoryAdapter implements BenchMemoryAdapter {
   async destroy(): Promise<void> {}
 }
 
+class FixedResponder implements BenchResponder {
+  constructor(private readonly text: string) {}
+
+  async respond(): Promise<BenchResponse> {
+    return {
+      text: this.text,
+      tokens: { input: 0, output: 0 },
+      latencyMs: 0,
+      model: "fixed",
+    };
+  }
+}
+
+class FailingFirstStoreAdapter extends FakeMemoryAdapter {
+  private shouldFailStore = true;
+
+  async store(sessionId: string, messages: Message[]): Promise<void> {
+    if (this.shouldFailStore) {
+      this.shouldFailStore = false;
+      throw new Error("forced seed store failure");
+    }
+    await super.store(sessionId, messages);
+  }
+}
+
+class FailingRecallAdapter extends FakeMemoryAdapter {
+  async recall(): Promise<string> {
+    throw new Error("forced recall failure");
+  }
+}
+
+class FailingSeedAndRecallAdapter extends FailingFirstStoreAdapter {
+  async recall(): Promise<string> {
+    throw new Error("forced recall failure");
+  }
+}
+
 test("runBenchmark executes memory-arena in quick mode through the phase-1 package API", async () => {
   const adapter = new FakeMemoryAdapter();
 
@@ -131,7 +175,7 @@ test("runBenchmark preserves array-form memory-arena answers in full mode datase
     path.join(datasetDir, "group_travel_planner.jsonl"),
     `${JSON.stringify({
       id: 1,
-      category: "group_travel_planner",
+      category: " Group_Travel_Planner ",
       questions: ["Which museum stop should we keep in the itinerary?"],
       answers: [[{ name: "Art Institute" }, { day: "Saturday" }]],
     })}\n`,
@@ -203,6 +247,657 @@ test("runBenchmark seeds memory-arena group travel with the base traveler plan",
   assert.match(String(task.details?.promptQuestion), /complete finalized plan/);
   assert.equal(task.scores.plan_field_recall, 1);
   assert.equal(task.scores.soft_process_score, 1);
+  assert.equal(task.scores.process_score, 1);
+  assert.equal(task.scores.task_success_rate, 1);
+});
+
+test("runBenchmark treats null memory-arena base traveler plans as absent", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-null-base-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Which dinner should I share with Jennifer?"],
+      answers: ["Coco Bambu, Dallas"],
+      base_person: {
+        name: "Jennifer",
+        query: "I am Jennifer. Plan my trip.",
+        daily_plans: null,
+      },
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(task.actual, /initial finalized plan for Jennifer/);
+  assert.match(task.actual, /Base traveler request: I am Jennifer/);
+  assert.doesNotMatch(task.actual, /Environment result:/);
+});
+
+test("runBenchmark keeps memory-arena base traveler seed failures task-local", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-seed-failure-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FailingFirstStoreAdapter(new FixedResponder("Coco Bambu, Dallas"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Which dinner should I share with Jennifer?"],
+      answers: ["Coco Bambu, Dallas"],
+      base_person: {
+        name: "Jennifer",
+        query: "I am Jennifer. Plan my trip.",
+        daily_plans: [{ dinner: "Coco Bambu, Dallas" }],
+      },
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual, "Coco Bambu, Dallas");
+  assert.match(String(task.details?.initialSeedError), /forced seed store failure/);
+});
+
+test("runBenchmark ignores base traveler seeds outside group-travel tasks", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-non-group-base-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("trail mix"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "bundled_shopping.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      category: "bundled_shopping",
+      questions: ["Which snack did we agree to buy?"],
+      answers: ["trail mix"],
+      base_person: {
+        name: "Jennifer",
+        query: "I am Jennifer. Plan my trip.",
+        daily_plans: [{ dinner: "Coco Bambu, Dallas" }],
+      },
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks[0]?.actual, "trail mix");
+  assert.equal(
+    [...adapter.sessions.values()].some((messages) =>
+      messages.some((message) => /initial finalized plan/.test(message.content)),
+    ),
+    false,
+  );
+});
+
+test("runBenchmark applies group-travel protocol using the task category", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-category-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 Transportation: Flight Number: F1\nDay 1 Dinner: Coco Bambu, Dallas"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "custom_domain.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      category: "group_travel_planner",
+      questions: ["I am Eric. Generate my complete shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "Flight Number: F1",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(String(task.details?.promptQuestion), /complete finalized plan/);
+  assert.doesNotMatch(String(task.details?.promptQuestion), /Return 1 day sections/);
+  assert.equal(task.scores.plan_field_recall, 1);
+  assert.equal(task.scores.soft_process_score, 1);
+});
+
+test("runBenchmark keeps memory-arena partial plan recall separate from process completion", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-partial-plan-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 Transportation: Flight Number: F1"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my complete shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "Flight Number: F1",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0.5);
+  assert.equal(task.scores.soft_process_score, 0);
+  assert.equal(task.scores.process_score, 0);
+  assert.equal(task.scores.task_success_rate, 0);
+});
+
+test("runBenchmark does not double-count overlapping memory-arena plan fields", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-overlap-plan-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 Transportation: Flight Number: F1, from Austin to Dallas"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my complete shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "from Austin to Dallas",
+          transportation: "Flight Number: F1, from Austin to Dallas",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "-",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0.5);
+  assert.equal(task.scores.soft_process_score, 0);
+});
+
+test("runBenchmark uses boundary-aware matching for memory-arena plan fields", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-boundary-plan-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("Flight Number: F10"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my complete shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "Flight Number: F1",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "-",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0);
+  assert.equal(task.scores.soft_process_score, 0);
+});
+
+test("runBenchmark includes group-travel metrics in memory-arena failure rows", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-failure-metrics-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FailingRecallAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my complete shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "Flight Number: F1",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "-",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0);
+  assert.equal(task.scores.soft_process_score, 0);
+  assert.equal(result.results.aggregates.plan_field_recall?.mean, 0);
+  assert.equal(result.results.aggregates.soft_process_score?.mean, 0);
+});
+
+test("runBenchmark omits group-travel plan metrics in failure rows without plan fields", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-failure-no-plan-metrics-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FailingRecallAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Which dinner should I choose?"],
+      answers: ["Coco Bambu, Dallas"],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal("plan_field_recall" in task.scores, false);
+  assert.equal("soft_process_score" in task.scores, false);
+  assert.equal(result.results.aggregates.plan_field_recall, undefined);
+  assert.equal(result.results.aggregates.soft_process_score, undefined);
+});
+
+test("runBenchmark counts repeated memory-arena plan fields with multiplicity", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-repeated-plan-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 Accommodation: Central Stay, Dallas"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my two-day shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "-",
+          accommodation: "Central Stay, Dallas",
+        },
+        {
+          days: 2,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "-",
+          accommodation: "Central Stay, Dallas",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0.5);
+  assert.equal(task.scores.soft_process_score, 0);
+});
+
+test("runBenchmark counts adjacent repeated memory-arena plan fields", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-adjacent-plan-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder(
+      "Day 1 Accommodation: Central Stay, Dallas Day 2 Accommodation: Central Stay, Dallas",
+    ),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my two-day shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "-",
+          accommodation: "Central Stay, Dallas",
+        },
+        {
+          days: 2,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "-",
+          accommodation: "Central Stay, Dallas",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 1);
+  assert.equal(task.scores.soft_process_score, 1);
+});
+
+test("runBenchmark rejects swapped-day memory-arena plan fields", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-swapped-days-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 Dinner: Sushi Place. Day 2 Dinner: Coco Bambu, Dallas."),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my two-day shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+        {
+          days: 2,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Sushi Place",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0);
+  assert.equal(task.scores.soft_process_score, 0);
+});
+
+test("runBenchmark normalizes string day labels for memory-arena plan fields", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-string-day-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 Dinner: Coco Bambu, Dallas"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my one-day shared itinerary."],
+      answers: [[
+        {
+          days: "Day 1",
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 1);
+  assert.equal(task.scores.soft_process_score, 1);
+});
+
+test("runBenchmark scores object-form memory-arena group-travel plans by field", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-object-plan-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 dinner is Coco Bambu, Dallas. Accommodation is Central Stay, Dallas."),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my one-day shared itinerary."],
+      answers: [
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "Central Stay, Dallas",
+        },
+      ],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 1);
+  assert.equal(task.scores.soft_process_score, 1);
+});
+
+test("runBenchmark leaves string-answer memory-arena group-travel prompts unrewritten", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-string-plan-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("Coco Bambu, Dallas"));
+  const question = "What dinner should Eric keep?";
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: [question],
+      answers: ["Coco Bambu, Dallas"],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.details?.promptQuestion, question);
+  assert.equal(task.scores.plan_field_recall, undefined);
+  assert.equal(task.scores.soft_process_score, undefined);
+  assert.equal(task.scores.contains_answer, 1);
+});
+
+test("runBenchmark skips empty memory-arena base-person seed data", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-empty-base-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("Coco Bambu, Dallas"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["What dinner should Eric keep?"],
+      answers: ["Coco Bambu, Dallas"],
+      base_person: {
+        name: "Jennifer",
+        query: "",
+        daily_plans: null,
+      },
+    })}\n`,
+    "utf8",
+  );
+
+  await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const storedText = [...adapter.sessions.values()]
+    .flat()
+    .map((message) => message.content)
+    .join("\n");
+  assert.equal(storedText.includes("MemoryArena initial state"), false);
+  assert.equal(storedText.includes("MemoryArena initial finalized plan"), false);
+});
+
+test("runBenchmark keeps memory-arena initial seed errors in failure rows", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-seed-failure-details-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FailingSeedAndRecallAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["What dinner should Eric keep?"],
+      answers: ["Coco Bambu, Dallas"],
+      base_person: {
+        name: "Jennifer",
+        query: "Jennifer wants a one-day Dallas plan.",
+        daily_plans: {
+          days: 1,
+          dinner: "Coco Bambu, Dallas",
+        },
+      },
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.details?.error, "forced recall failure");
+  assert.equal(task.details?.initialSeedError, "forced seed store failure");
 });
 
 test("runBenchmark applies the memory-arena limit across the full benchmark, not once per domain file", async () => {
@@ -434,6 +1129,36 @@ test("runBenchmark rejects memory-arena answer objects with non-array attributes
         system: adapter,
       }),
     /must include an answers array of strings, objects, or arrays of those values/,
+  );
+});
+
+test("runBenchmark rejects invalid memory-arena base traveler plans while parsing", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-bad-base-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["What dinner should we keep?"],
+      answers: ["Coco Bambu, Dallas"],
+      base_person: {
+        name: "Jennifer",
+        daily_plans: 42,
+      },
+    })}\n`,
+    "utf8",
+  );
+
+  await assert.rejects(
+    () =>
+      runBenchmark("memory-arena", {
+        mode: "full",
+        datasetDir,
+        system: adapter,
+      }),
+    /base_person must be an object with a valid daily_plans value/,
   );
 });
 

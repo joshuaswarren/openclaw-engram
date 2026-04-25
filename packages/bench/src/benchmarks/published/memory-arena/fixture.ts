@@ -21,7 +21,7 @@ export interface ArenaTask {
 export interface ArenaBasePerson {
   name?: string;
   query?: string;
-  daily_plans?: ArenaExpectedAnswer;
+  daily_plans?: ArenaExpectedAnswer | null;
   [key: string]: unknown;
 }
 
