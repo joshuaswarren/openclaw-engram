@@ -894,7 +894,12 @@ export class EngramAccessService {
     // for a future PR if/when the LCM index can be joined to memory ids.
     // Coerce `null` (non-raw disclosure) to `undefined` so the optional
     // serializer field is never explicitly `null`.
-    const rawExcerptsResult = await this.fetchRawExcerpts(disclosure, rawContext);
+    // Pass the resolved namespace so the LCM lookup can mirror the
+    // `${namespace}:${sessionKey}` prefix that `observe()` writes.
+    const rawExcerptsResult = await this.fetchRawExcerpts(
+      disclosure,
+      rawContext ? { ...rawContext, namespace } : null,
+    );
     const rawExcerpts = rawExcerptsResult ?? undefined;
 
     for (const memoryPath of snapshot.resultPaths ?? []) {
@@ -939,16 +944,26 @@ export class EngramAccessService {
    * matches, and an array of LCM-side excerpts otherwise.  Errors are
    * swallowed and treated as "no excerpts" so a failing LCM never breaks
    * the recall response.
+   *
+   * Namespace handling: LCM archival prefixes non-default-namespace
+   * sessions with `${namespace}:${sessionKey}` (see `observe()` around
+   * line 2498), so the lookup must mirror that prefix or raw recalls in
+   * non-default namespaces miss their own excerpts.
    */
   private async fetchRawExcerpts(
     disclosure: RecallDisclosure,
-    context: { query: string; sessionKey?: string } | null,
+    context: { query: string; sessionKey?: string; namespace?: string } | null,
   ): Promise<EngramAccessMemorySummary["rawExcerpts"] | null> {
     if (disclosure !== "raw") return null;
     if (!context || !context.query) return [];
     const lcm = this.orchestrator.lcmEngine;
     if (!lcm || !lcm.enabled) return [];
     try {
+      const lcmSessionKey =
+        context.sessionKey && context.namespace &&
+        context.namespace !== this.orchestrator.config.defaultNamespace
+          ? `${context.namespace}:${context.sessionKey}`
+          : context.sessionKey;
       const rows = await lcm.searchContextFull(
         context.query,
         // Cap the excerpt fanout so recall responses stay bounded.  Five
@@ -956,7 +971,7 @@ export class EngramAccessService {
         // without ballooning token spend; raw is meant as the escape
         // hatch, not the default.
         5,
-        context.sessionKey,
+        lcmSessionKey,
       );
       return rows.map((r) => ({
         turnIndex: r.turn_index,

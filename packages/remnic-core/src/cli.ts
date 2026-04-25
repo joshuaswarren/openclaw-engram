@@ -4111,9 +4111,15 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
 
           // Top-K validation: positive integer or undefined.  Reject
           // strings that don't parse so the operator notices typos.
+          // `Number.parseInt` silently truncates floats and accepts
+          // trailing garbage (`3.7` -> 3, `10abc` -> 10), so we require
+          // an exact decimal-integer match before parsing.
           let topK: number | undefined;
           if (options.topK !== undefined) {
             const raw = String(options.topK);
+            if (!/^\d+$/.test(raw)) {
+              throw new Error(`invalid --top-k value: ${raw} (expected positive integer)`);
+            }
             const parsed = Number.parseInt(raw, 10);
             if (!Number.isFinite(parsed) || parsed <= 0) {
               throw new Error(`invalid --top-k value: ${raw} (expected positive integer)`);
