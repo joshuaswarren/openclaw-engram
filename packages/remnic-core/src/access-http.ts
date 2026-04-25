@@ -46,9 +46,14 @@ export interface EngramAccessHttpServerStatus {
 }
 
 function resolveDefaultAdminConsolePublicDir(): string {
+  const thisDir = path.dirname(fileURLToPath(import.meta.url));
   const candidates = [
-    fileURLToPath(new URL("../admin-console/public", import.meta.url)),
-    fileURLToPath(new URL("./admin-console/public", import.meta.url)),
+    // Standard: admin-console sibling to src/ (development layout)
+    path.resolve(thisDir, "../admin-console/public"),
+    // Bundled: admin-console inside dist/ alongside the bundle
+    path.resolve(thisDir, "./admin-console/public"),
+    // Package root: walk up from dist/ to the package root
+    path.resolve(thisDir, "../../admin-console/public"),
   ];
   return candidates.find((candidate) => existsSync(candidate)) ?? candidates[0];
 }

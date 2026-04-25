@@ -27,6 +27,7 @@ export interface ServerConfig {
     principal?: string;
     maxBodyBytes?: number;
     adminConsoleEnabled?: boolean;
+    adminConsolePublicDir?: string;
   };
 }
 
@@ -163,6 +164,7 @@ export async function startServer(options?: {
     principal: serverConfig.principal,
     maxBodyBytes: serverConfig.maxBodyBytes,
     adminConsoleEnabled: serverConfig.adminConsoleEnabled ?? false,
+    adminConsolePublicDir: serverConfig.adminConsolePublicDir,
     citationsEnabled: config.citationsEnabled,
     citationsAutoDetect: config.citationsAutoDetect,
   });
