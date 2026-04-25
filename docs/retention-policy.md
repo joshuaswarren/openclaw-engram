@@ -113,14 +113,17 @@ age skew, and deterministic seeds. The harness measures `recall@K`, latency
 proxy, and hot/cold tier shares for both the full-corpus baseline and the
 hot-only configuration.
 
-Run it via:
+When the optional `@remnic/bench` runtime is available to `@remnic/cli`,
+run it via:
 
 ```bash
 remnic bench run --quick retention-aged-dataset
 ```
 
-The bench produces a structured report including `recall_at_5_delta` so
-default-tuning iterations have an objective signal.
+Base CLI installs that cannot load `@remnic/bench` will report
+`retention-aged-dataset` as an unknown benchmark; use `remnic bench list`
+to confirm availability. The bench produces a structured report including
+`recall_at_5_delta` so default-tuning iterations have an objective signal.
 
 ## The forgotten tier (#686 PR 4/6)
 
