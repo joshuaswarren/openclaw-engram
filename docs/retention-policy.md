@@ -178,10 +178,9 @@ on demand:
 qmdColdTierEnabled: true
 ```
 
-When enabled, `applyColdFallbackPipeline` queries the cold QMD collection
-when the hot-tier search returns fewer than the configured threshold.
-Default off because the long-tail rarely contributes to a recall worth the
-latency.
+When enabled, `applyColdFallbackPipeline` queries the cold QMD collection only
+after the hot-tier search returns no results. Default off because the long-tail
+rarely contributes to a recall worth the latency.
 
 ## Configuration knobs
 
@@ -206,7 +205,7 @@ Three signals together let an operator confirm the policy is doing the
 right thing:
 
 1. `openclaw engram tier-status` — are migration cycles running and moving the expected counts?
-2. `remnic doctor` — does the lifecycle ledger show recent migrations?
+2. `openclaw engram tier-migrate --dry-run --limit 50` — what would the next bounded migration pass move?
 3. `openclaw engram recall-explain --format json` — for a surprising recall,
    which snapshot and tier signals were recorded?
 
