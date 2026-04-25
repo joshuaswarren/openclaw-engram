@@ -718,6 +718,15 @@ const PLAN_FIELD_KEYS = [
 const PLAN_FIELD_LABEL_TOKEN_SEQUENCES = PLAN_FIELD_KEYS
   .map((key) => tokenizePlanText(key.replace(/_/g, " ")))
   .sort((a, b) => b.length - a.length);
+const WEEKDAY_PLAN_DAY_TOKENS = new Set([
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+]);
 
 function extractPlanFieldValues(answer: ArenaExpectedAnswer): PlanFieldExpectation[] {
   const planItems = Array.isArray(answer) ? answer : [answer];
@@ -821,7 +830,7 @@ function findPlanFieldTokenWindow(
     }
 
     const dayContext = expectedField.dayTokens.length > 0
-      ? findLastDayContext(predictedTokens, index)
+      ? findLastDayContext(predictedTokens, index, expectedField.dayTokens)
       : undefined;
     if (
       expectedField.dayTokens.length > 0
@@ -848,6 +857,7 @@ function findPlanFieldTokenWindow(
 function findLastDayContext(
   tokens: string[],
   beforeIndex: number,
+  expectedDayTokens: string[],
 ): { startIndex: number; dayTokens: string[] } | undefined {
   for (let index = beforeIndex - 1; index >= 0; index -= 1) {
     const compactDayToken = extractCompactPlanDayToken(tokens[index]!);
@@ -857,12 +867,25 @@ function findLastDayContext(
         dayTokens: [compactDayToken],
       };
     }
+    const standaloneDayToken = normalizeStandalonePlanDayToken(
+      tokens[index]!,
+      expectedDayTokens,
+    );
+    if (standaloneDayToken !== undefined) {
+      return {
+        startIndex: index,
+        dayTokens: [standaloneDayToken],
+      };
+    }
     if (
       index <= beforeIndex - 2
       && (tokens[index] === "day" || tokens[index] === "days")
       && tokens[index + 1]
     ) {
-      const dayToken = normalizeExplicitPlanDayToken(tokens[index + 1]!);
+      const dayToken = normalizeExplicitPlanDayToken(
+        tokens[index + 1]!,
+        expectedDayTokens,
+      );
       if (dayToken === undefined) {
         continue;
       }
@@ -901,9 +924,25 @@ function extractCompactPlanDayToken(token: string): string | undefined {
     : normalizePlanDayToken(match[1]);
 }
 
-function normalizeExplicitPlanDayToken(token: string): string | undefined {
+function normalizeStandalonePlanDayToken(
+  token: string,
+  expectedDayTokens: string[],
+): string | undefined {
+  return expectedDayTokens.length === 1
+    && expectedDayTokens[0] === token
+    && WEEKDAY_PLAN_DAY_TOKENS.has(token)
+    ? token
+    : undefined;
+}
+
+function normalizeExplicitPlanDayToken(
+  token: string,
+  expectedDayTokens: string[],
+): string | undefined {
+  const normalizedToken = normalizePlanDayToken(token);
   return /^\d+$/.test(token)
-    ? normalizePlanDayToken(token)
+    || normalizeStandalonePlanDayToken(normalizedToken, expectedDayTokens) !== undefined
+    ? normalizedToken
     : undefined;
 }
 

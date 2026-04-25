@@ -364,7 +364,7 @@ function leadingNumericToken(value: string): string | undefined {
 
 function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   const bareNumber = trimmedAnswer.match(
-    /^\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
+    /^\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:\([^)]*\)|because|[,.;:\-](?!\s*#?\d)).*)?$/i,
   );
   if (bareNumber) {
     const selectedNumber = Number.parseInt(bareNumber[1]!, 10);
@@ -375,7 +375,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   }
 
   const labeledNumber = trimmedAnswer.match(
-    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
+    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:\([^)]*\)|because|[,.;:\-](?!\s*#?\d)).*)?$/i,
   );
   if (labeledNumber) {
     const selectedNumber = Number.parseInt(labeledNumber[1]!, 10);
