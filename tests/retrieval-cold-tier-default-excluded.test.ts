@@ -88,6 +88,14 @@ async function buildAuditedOrchestrator(opts: {
     },
     hybridSearch: async (_query: string, collection?: string) => {
       state.observedCollections.push(collection);
+      // Mirror the hot/cold counter logic in `search` so a hot-tier
+      // hybrid query from inside applyColdFallbackPipeline still trips
+      // the `hotPrimaryCalls === 0` assertion. (Codex review on PR #693.)
+      if (collection === "engram-cold") {
+        state.coldQmdCalls += 1;
+      } else if (collection === undefined || collection === "engram-hot") {
+        state.hotPrimaryCalls += 1;
+      }
       return [] as QmdSearchResult[];
     },
   };
