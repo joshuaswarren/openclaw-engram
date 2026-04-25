@@ -278,16 +278,13 @@ function parseAMemGymChoice(
     }
     return undefined;
   }
-  if (looksLikeChoiceNumberAttempt(trimmed)) {
-    return undefined;
-  }
-
   const normalizedAnswer = normalizeForChoiceMatch(rawAnswer);
   const normalizedChoices = qa.answer_choices.map((choice, index) => ({
     index,
     choice,
     normalized: normalizeForChoiceMatch(choice.answer),
   }));
+  const numericChoiceNumberAttempt = looksLikeChoiceNumberAttempt(trimmed);
 
   const exactMatches = normalizedChoices.filter(
     (candidate) =>
@@ -296,7 +293,9 @@ function parseAMemGymChoice(
   );
   if (exactMatches.length === 1) {
     const exactMatch = exactMatches[0]!;
-    return { index: exactMatch.index, choice: exactMatch.choice };
+    if (!numericChoiceNumberAttempt || startsWithNumericToken(exactMatch.normalized)) {
+      return { index: exactMatch.index, choice: exactMatch.choice };
+    }
   }
 
   let bestSubstringLength = -1;
@@ -309,6 +308,7 @@ function parseAMemGymChoice(
     const candidate = normalizedChoices[index]!;
     if (
       candidate.normalized.length > 0
+      && (!numericChoiceNumberAttempt || startsWithNumericToken(candidate.normalized))
       && containsNormalizedPhrase(normalizedAnswer, candidate.normalized)
     ) {
       if (candidate.normalized.length > bestSubstringLength) {
@@ -343,6 +343,10 @@ function containsNormalizedPhrase(haystack: string, needle: string): boolean {
   return false;
 }
 
+function startsWithNumericToken(value: string): boolean {
+  return /^\d+\b/.test(value);
+}
+
 function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   const bareNumber = trimmedAnswer.match(
     /^\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
@@ -375,7 +379,7 @@ function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
 function mentionsAdditionalOptionNumber(value: string): boolean {
   const trimmed = value.trim();
   return /\b(?:option|choice|answer)\s*#?\d+\b/i.test(trimmed)
-    || (/^[,.;:\-]/.test(trimmed) && /\b#?\d+\b/.test(trimmed));
+    || /^[,.;:\-]\s*(?:#?\d+\b|(?:or|maybe|possibly|probably|perhaps|alternatively)\s+#?\d+\b)/i.test(trimmed);
 }
 
 function normalizeForChoiceMatch(value: string): string {

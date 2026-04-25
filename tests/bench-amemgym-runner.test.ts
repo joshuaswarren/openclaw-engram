@@ -332,6 +332,29 @@ test("runBenchmark accepts amemgym option-number rationales with non-option numb
   assert.equal(task.details?.scoredAnswer, "Seattle");
 });
 
+test("runBenchmark accepts comma-led amemgym option-number rationales with non-option numbers", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-comma-rationale-number-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("Answer: 1, because 2 weeks ago I moved to Seattle."));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.scoredAnswer, "Seattle");
+});
+
 test("runBenchmark accepts labeled amemgym text answers", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-labeled-text-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");
@@ -498,6 +521,39 @@ test("runBenchmark blocks text fallback for labeled numeric-prefixed amemgym con
   assert.equal(task.scores.qa_accuracy, 0);
   assert.equal(task.details?.selectedChoiceIndex, null);
   assert.equal(task.details?.scoredAnswer, "option 2 Seattle");
+});
+
+test("runBenchmark matches numeric-prefixed amemgym text answer choices", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-numeric-text-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("2 bedrooms"));
+  const dataset = createDatasetProfile();
+  dataset[0]!.periods[0]!.state.city = "2 bedrooms";
+  dataset[0]!.periods[0]!.updates.city = "2 bedrooms";
+  dataset[0]!.periods[0]!.sessions[0]!.exposed_states.city = "2 bedrooms";
+  dataset[0]!.qas[0]!.answer_choices = [
+    { state: ["2 bedrooms"], answer: "2 bedrooms" },
+    { state: ["3 bedrooms"], answer: "3 bedrooms" },
+  ];
+
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(dataset),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.expected, "2 bedrooms");
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.scoredAnswer, "2 bedrooms");
 });
 
 test("runBenchmark uses token boundaries for amemgym text choice fallback", async () => {
