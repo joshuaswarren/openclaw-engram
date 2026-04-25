@@ -44,6 +44,7 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "assistant-synthesis",
       "buffer-surprise-trigger",
       "contradiction-detection",
+      "retention-aged-dataset",
     ],
   );
   assert.deepEqual(
@@ -81,11 +82,12 @@ test("listBenchmarks exposes the published and remnic benchmark catalog from @re
       "remnic",
       "remnic",
       "remnic",
+      "remnic",
     ],
   );
   assert.equal(
     benchmarks.filter((benchmark) => benchmark.runnerAvailable).map((benchmark) => benchmark.id).join(","),
-    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,retrieval-temporal,retrieval-direct-answer,retrieval-graph,retrieval-reasoning-trace,coding-recall,procedural-recall,ingestion-entity-recall,ingestion-schema-completeness,ingestion-backlink-f1,ingestion-setup-friction,ingestion-citation-accuracy,assistant-morning-brief,assistant-meeting-prep,assistant-next-best-action,assistant-synthesis,buffer-surprise-trigger,contradiction-detection",
+    "ama-bench,memory-arena,amemgym,longmemeval,locomo,beam,personamem,membench,memoryagentbench,taxonomy-accuracy,extraction-judge-calibration,enrichment-fidelity,entity-consolidation,page-versioning,retrieval-personalization,retrieval-temporal,retrieval-direct-answer,retrieval-graph,retrieval-reasoning-trace,coding-recall,procedural-recall,ingestion-entity-recall,ingestion-schema-completeness,ingestion-backlink-f1,ingestion-setup-friction,ingestion-citation-accuracy,assistant-morning-brief,assistant-meeting-prep,assistant-next-best-action,assistant-synthesis,buffer-surprise-trigger,contradiction-detection,retention-aged-dataset",
   );
   // The synthetic ingestion adapter wires all built-in ingestion benchmarks.
   assert.equal(getBenchmark("ingestion-schema-completeness")?.runnerAvailable, true);

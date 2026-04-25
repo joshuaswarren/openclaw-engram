@@ -147,6 +147,18 @@ export {
 } from "./direct-answer.js";
 
 // ---------------------------------------------------------------------------
+// Hot/cold tier routing (issue #686)
+// ---------------------------------------------------------------------------
+
+export {
+  computeTierValueScore,
+  decideTierTransition,
+  type MemoryTier,
+  type TierRoutingPolicy,
+  type TierTransitionDecision,
+} from "./tier-routing.js";
+
+// ---------------------------------------------------------------------------
 // Reasoning-trace retrieval boost (issue #564)
 // ---------------------------------------------------------------------------
 
