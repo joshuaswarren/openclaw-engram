@@ -747,7 +747,10 @@ function normalizePlanDayLabel(value: string | number): string {
   const tokens = tokenizePlanText(String(value));
   const dayIndex = tokens.findIndex((token) => token === "day" || token === "days");
   if (dayIndex !== -1 && tokens[dayIndex + 1]) {
-    return tokens[dayIndex + 1]!;
+    return normalizePlanDayToken(tokens[dayIndex + 1]!);
+  }
+  if (tokens.length === 1) {
+    return extractCompactPlanDayToken(tokens[0]!) ?? normalizePlanDayToken(tokens[0]!);
   }
   return tokens.join(" ");
 }
@@ -831,12 +834,6 @@ function findPlanFieldTokenWindow(
     ) {
       continue;
     }
-    if (
-      expectedField.dayTokens.length > 0
-      && !containsTokenSequence(context, expectedField.dayTokens)
-    ) {
-      continue;
-    }
     return index;
   }
   return -1;
@@ -846,15 +843,40 @@ function findLastDayContext(
   tokens: string[],
   beforeIndex: number,
 ): { startIndex: number; dayTokens: string[] } | undefined {
-  for (let index = beforeIndex - 2; index >= 0; index -= 1) {
-    if ((tokens[index] === "day" || tokens[index] === "days") && tokens[index + 1]) {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const compactDayToken = extractCompactPlanDayToken(tokens[index]!);
+    if (compactDayToken !== undefined) {
       return {
         startIndex: index,
-        dayTokens: [tokens[index + 1]!],
+        dayTokens: [compactDayToken],
+      };
+    }
+    if (
+      index <= beforeIndex - 2
+      && (tokens[index] === "day" || tokens[index] === "days")
+      && tokens[index + 1]
+    ) {
+      return {
+        startIndex: index,
+        dayTokens: [normalizePlanDayToken(tokens[index + 1]!)],
       };
     }
   }
   return undefined;
+}
+
+function extractCompactPlanDayToken(token: string): string | undefined {
+  const match = /^days?(\d+)$/.exec(token);
+  return match?.[1] === undefined
+    ? undefined
+    : normalizePlanDayToken(match[1]);
+}
+
+function normalizePlanDayToken(token: string): string {
+  if (/^\d+$/.test(token)) {
+    return String(Number(token));
+  }
+  return token;
 }
 
 function tokensEqual(left: string[], right: string[]): boolean {
