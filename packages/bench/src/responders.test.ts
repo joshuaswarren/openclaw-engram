@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   createGatewayResponder,
+  createProviderBackedAmaBenchRecommendedJudge,
   createProviderBackedJudge,
   createProviderBackedResponder,
   createResponderFromProvider,
@@ -179,6 +180,26 @@ test("provider-backed judge parses fraction and percent score formats", async ()
     createFakeProvider("Score: 8 out of 10"),
   );
   assert.equal(await outOfJudge.score("q", "predicted", "expected"), 0.8);
+});
+
+test("AMA-Bench recommended judge uses binary JSON scoring", async () => {
+  const judge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider('{"score":1,"reason":"same fact"}'),
+  );
+
+  const result = await judge.scoreWithMetrics?.("q", "predicted", "expected");
+  assert.equal(result?.score, 1);
+  assert.equal(result?.model, "test-model");
+});
+
+test("AMA-Bench recommended judge parses incorrect before correct", async () => {
+  const judge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider("incorrect"),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 0);
 });
 
 test("provider-backed judge ignores date-like fractions and uses the trailing score", async () => {

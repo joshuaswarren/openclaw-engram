@@ -8,9 +8,35 @@ import path from "node:path";
 import type { LegacyBenchmarkResult } from "./adapters/types.js";
 import type { BenchmarkResult } from "./types.js";
 
+const REDACTED_SECRET = "[REDACTED]";
+const SECRET_KEY_PATTERN =
+  /(?:api[-_]?key|auth[-_]?token|access[-_]?token|refresh[-_]?token|secret|password|credential)/i;
+
 function sanitizeFilenameSegment(value: string): string {
   const sanitized = value.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
   return sanitized.length > 0 ? sanitized : "unknown";
+}
+
+export function redactBenchmarkResultSecrets<T>(value: T): T {
+  return redactSecrets(value) as T;
+}
+
+function redactSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSecrets(item));
+  }
+
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    redacted[key] = SECRET_KEY_PATTERN.test(key)
+      ? REDACTED_SECRET
+      : redactSecrets(nestedValue);
+  }
+  return redacted;
 }
 
 export async function writeBenchmarkResult(
@@ -26,7 +52,7 @@ export async function writeBenchmarkResult(
     `${result.meta.benchmark}-v${safeRemnicVersion}-${timestamp}.json`,
   );
 
-  await writeFile(filePath, JSON.stringify(result, null, 2) + "\n");
+  await writeFile(filePath, JSON.stringify(redactBenchmarkResultSecrets(result), null, 2) + "\n");
   return filePath;
 }
 

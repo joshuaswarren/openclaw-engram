@@ -95,3 +95,74 @@ test("AMA-Bench normalizes sparse null trajectory fields from the official datas
     await rm(tempDir, { recursive: true, force: true });
   }
 });
+
+test("AMA-Bench records recommended and cross-judge protocol metrics", async () => {
+  const result = await runAmaBenchBenchmark({
+    benchmark: amaBenchDefinition,
+    mode: "quick",
+    amaBenchJudgeProtocol: "recommended",
+    amaBenchCrossJudgeProvider: {
+      provider: "ollama",
+      model: "qwen3:32b",
+    },
+    amaBenchCrossJudge: {
+      async score() {
+        return 0;
+      },
+      async scoreWithMetrics() {
+        return {
+          score: 0,
+          tokens: { input: 1, output: 1 },
+          latencyMs: 2,
+          model: "cross-qwen3-32b",
+        };
+      },
+    },
+    system: {
+      async store() {},
+      async recall() {
+        return "Spanish";
+      },
+      async search() {
+        return [];
+      },
+      async reset() {},
+      async getStats() {
+        return {
+          totalMessages: 4,
+          totalSummaryNodes: 0,
+          maxDepth: 0,
+        };
+      },
+      async destroy() {},
+      judge: {
+        async score() {
+          return 1;
+        },
+        async scoreWithMetrics() {
+          return {
+            score: 1,
+            tokens: { input: 1, output: 1 },
+            latencyMs: 2,
+            model: "primary-qwen3-32b",
+          };
+        },
+      },
+    },
+  });
+
+  const first = result.results.tasks[0]!;
+  assert.equal(first.scores.ama_bench_recommended_accuracy, 1);
+  assert.equal(first.scores.ama_bench_cross_accuracy, 0);
+  assert.equal(first.scores.ama_bench_cross_agreement, 0);
+  assert.equal(first.details?.amaBenchJudgeProtocol, "recommended");
+  assert.equal(first.details?.amaBenchCrossJudgeModel, "cross-qwen3-32b");
+  assert.equal(
+    result.config.benchmarkOptions?.amaBenchJudgeProtocol,
+    "recommended",
+  );
+  assert.deepEqual(result.config.benchmarkOptions?.amaBenchCrossJudgeProvider, {
+    provider: "ollama",
+    model: "qwen3:32b",
+  });
+});

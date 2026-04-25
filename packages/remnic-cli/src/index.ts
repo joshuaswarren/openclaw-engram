@@ -294,6 +294,20 @@ export const BENCHMARK_CATALOG: BenchCatalogEntry[] = [
 
 const BENCHMARK_IDS = new Set(BENCHMARK_CATALOG.map((entry) => entry.id));
 
+type PackageBenchProviderConfig = {
+  provider: string;
+  model: string;
+  baseUrl?: string;
+  apiKey?: string;
+  retryOptions?: {
+    maxAttempts?: number;
+    baseBackoffMs?: number;
+    timeoutMs?: number;
+    max429WaitMs?: number;
+  };
+  disableThinking?: boolean;
+};
+
 type PackageBenchModule = {
   getBenchmark?: (id: string) => {
     runnerAvailable?: boolean;
@@ -310,17 +324,12 @@ type PackageBenchModule = {
     seed?: number;
     adapterMode?: string;
     runtimeProfile?: BenchRuntimeProfile | null;
-    systemProvider?: {
-      provider: string;
-      model: string;
-      baseUrl?: string;
-    } | null;
-    judgeProvider?: {
-      provider: string;
-      model: string;
-      baseUrl?: string;
-    } | null;
+    systemProvider?: PackageBenchProviderConfig | null;
+    judgeProvider?: PackageBenchProviderConfig | null;
     remnicConfig?: Record<string, unknown>;
+    amaBenchJudgeProtocol?: "default" | "recommended";
+    amaBenchCrossJudge?: unknown;
+    amaBenchCrossJudgeProvider?: PackageBenchProviderConfig | null;
     system: {
       destroy(): Promise<void>;
     };
@@ -330,18 +339,11 @@ type PackageBenchModule = {
     meta: { benchmark: string; mode: string };
     config: {
       runtimeProfile?: BenchRuntimeProfile | null;
-      systemProvider?: {
-        provider: string;
-        model: string;
-        baseUrl?: string;
-      } | null;
-      judgeProvider?: {
-        provider: string;
-        model: string;
-        baseUrl?: string;
-      } | null;
+      systemProvider?: PackageBenchProviderConfig | null;
+      judgeProvider?: PackageBenchProviderConfig | null;
       adapterMode: string;
       remnicConfig: Record<string, unknown>;
+      benchmarkOptions?: Record<string, unknown>;
     };
     results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
     cost: { meanQueryLatencyMs: number };
@@ -407,6 +409,10 @@ type PackageBenchModule = {
     results: { tasks: Array<unknown>; aggregates: Record<string, { mean: number }> };
     cost: { meanQueryLatencyMs: number };
   }, outputDir: string) => Promise<string>;
+  redactBenchmarkResultSecrets?: <T>(result: T) => T;
+  createProviderBackedAmaBenchRecommendedJudge?: (
+    config: PackageBenchProviderConfig,
+  ) => unknown;
   writeBenchmarkReproManifest?: (resultsDir: string, options?: {
     resultPaths?: string[];
     selectedBenchmarks?: string[];
@@ -509,6 +515,14 @@ interface BenchProviderConfig {
   provider: string;
   model: string;
   baseUrl?: string;
+  apiKey?: string;
+  retryOptions?: {
+    maxAttempts?: number;
+    baseBackoffMs?: number;
+    timeoutMs?: number;
+    max429WaitMs?: number;
+  };
+  disableThinking?: boolean;
 }
 
 interface ResolveBenchRuntimeProfileOptions {
@@ -526,6 +540,11 @@ interface ResolveBenchRuntimeProfileOptions {
   judgeModel?: string;
   judgeBaseUrl?: string;
   judgeApiKey?: string;
+  amaBenchJudgeProtocol?: "default" | "recommended";
+  amaBenchCrossJudgeProvider?: string;
+  amaBenchCrossJudgeModel?: string;
+  amaBenchCrossJudgeBaseUrl?: string;
+  amaBenchCrossJudgeApiKey?: string;
   requestTimeout?: number;
   max429WaitMs?: number;
   disableThinking?: boolean;
@@ -626,6 +645,14 @@ Options:
                            Use a direct provider-backed judge
   --judge-model <model>    Model name for the judge provider
   --judge-base-url <url>   Base URL for the judge provider
+  --ama-bench-judge-protocol <default|recommended>
+                           For ama-bench, use the recommended binary LLM-judge protocol
+  --ama-bench-cross-judge-model <model>
+                           For ama-bench, add a second recommended-protocol judge for agreement checks
+  --ama-bench-cross-judge-provider <provider>
+                           Provider for the ama-bench cross judge (defaults to --judge-provider)
+  --ama-bench-cross-judge-base-url <url>
+                           Base URL for the ama-bench cross judge (defaults to --judge-base-url)
   --custom <path>          Run a YAML-defined custom benchmark file
   --results-dir <path>     Override the stored benchmark results directory
   --baselines-dir <path>   Override the named baseline directory
@@ -649,6 +676,7 @@ Examples:
   remnic bench run longmemeval --dataset-dir ~/datasets/longmemeval
   remnic bench run longmemeval --runtime-profile real --remnic-config ~/.config/remnic/config.json
   remnic bench run longmemeval --runtime-profile real --system-provider openai --system-model gpt-5.4-mini
+  remnic bench run ama-bench --runtime-profile real --system-provider ollama --system-model gemma4:31b-cloud --judge-provider ollama --judge-model qwen3:32b --ama-bench-judge-protocol recommended
   remnic bench run longmemeval --runtime-profile openclaw-chain --openclaw-config ~/.openclaw/openclaw.json --gateway-agent-id memory-primary
   remnic bench run longmemeval --matrix baseline,real,openclaw-chain
   remnic bench compare base-run candidate-run
@@ -809,6 +837,10 @@ async function runBenchViaFallback(
     parsed.judgeProvider !== undefined ||
     parsed.judgeModel !== undefined ||
     parsed.judgeBaseUrl !== undefined ||
+    parsed.amaBenchJudgeProtocol !== undefined ||
+    parsed.amaBenchCrossJudgeProvider !== undefined ||
+    parsed.amaBenchCrossJudgeModel !== undefined ||
+    parsed.amaBenchCrossJudgeBaseUrl !== undefined ||
     parsed.disableThinking === true ||
     parsed.requestTimeout !== undefined
   ) {
@@ -2116,7 +2148,18 @@ async function runBenchViaPackage(
   let system: Awaited<ReturnType<PackageBenchExecutionPlan["createAdapter"]>> | undefined;
 
   try {
-    system = await plan.createAdapter(plan.runtime.adapterOptions);
+    const amaBenchProtocol = buildAmaBenchProtocolOptions(
+      benchModule,
+      parsed,
+      benchmarkId,
+      plan.runtime,
+    );
+    system = await plan.createAdapter({
+      ...plan.runtime.adapterOptions,
+      ...(amaBenchProtocol.primaryJudge
+        ? { judge: amaBenchProtocol.primaryJudge }
+        : {}),
+    });
     // `publishedLimit` (from `bench published --limit N`) takes
     // precedence over the implicit quick-mode limit of 1.
     const effectiveLimit =
@@ -2138,6 +2181,15 @@ async function runBenchViaPackage(
       systemProvider: plan.runtime.systemProvider,
       judgeProvider: plan.runtime.judgeProvider,
       remnicConfig: plan.runtime.effectiveRemnicConfig,
+      ...(amaBenchProtocol.judgeProtocol
+        ? { amaBenchJudgeProtocol: amaBenchProtocol.judgeProtocol }
+        : {}),
+      ...(amaBenchProtocol.crossJudge
+        ? { amaBenchCrossJudge: amaBenchProtocol.crossJudge }
+        : {}),
+      ...(amaBenchProtocol.crossJudgeProvider
+        ? { amaBenchCrossJudgeProvider: amaBenchProtocol.crossJudgeProvider }
+        : {}),
       system,
       onTaskComplete: (task, completed, total) => {
         partialTasks.push(task as import("@remnic/bench").TaskResult);
@@ -2160,7 +2212,7 @@ async function runBenchViaPackage(
     result.config.remnicConfig = plan.runtime.remnicConfig;
     const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
     if (parsed.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(JSON.stringify(benchModule.redactBenchmarkResultSecrets?.(result) ?? result, null, 2));
     } else {
       printBenchPackageSummary(result, writtenPath);
     }
@@ -2188,6 +2240,97 @@ async function runBenchViaPackage(
   } finally {
     await system?.destroy();
   }
+}
+
+function buildAmaBenchProtocolOptions(
+  benchModule: PackageBenchModule,
+  parsed: ParsedBenchArgs,
+  benchmarkId: string,
+  runtime: ResolvedBenchRuntimeProfile,
+): {
+  judgeProtocol?: "default" | "recommended";
+  primaryJudge?: unknown;
+  crossJudge?: unknown;
+  crossJudgeProvider?: PackageBenchProviderConfig | null;
+} {
+  if (benchmarkId !== "ama-bench") {
+    return {};
+  }
+
+  const judgeProtocol = parsed.amaBenchJudgeProtocol;
+  const primaryJudge = judgeProtocol === "recommended"
+    ? createAmaBenchRecommendedJudge(
+        benchModule,
+        runtime.judgeProvider,
+        "--ama-bench-judge-protocol recommended requires --judge-provider and --judge-model.",
+      )
+    : undefined;
+
+  const crossJudgeProvider = resolveAmaBenchCrossJudgeProvider(parsed, runtime.judgeProvider);
+  const crossJudge = crossJudgeProvider
+    ? createAmaBenchRecommendedJudge(
+        benchModule,
+        crossJudgeProvider,
+        "--ama-bench-cross-judge-model requires @remnic/bench to expose the AMA-Bench recommended judge.",
+      )
+    : undefined;
+
+  return {
+    judgeProtocol,
+    primaryJudge,
+    crossJudge,
+    crossJudgeProvider,
+  };
+}
+
+function createAmaBenchRecommendedJudge(
+  benchModule: PackageBenchModule,
+  provider: PackageBenchProviderConfig | null | undefined,
+  missingMessage: string,
+): unknown {
+  if (!provider) {
+    throw new Error(missingMessage);
+  }
+  if (!benchModule.createProviderBackedAmaBenchRecommendedJudge) {
+    throw new Error(
+      "Installed @remnic/bench runtime does not expose createProviderBackedAmaBenchRecommendedJudge().",
+    );
+  }
+  return benchModule.createProviderBackedAmaBenchRecommendedJudge(provider);
+}
+
+function resolveAmaBenchCrossJudgeProvider(
+  parsed: ParsedBenchArgs,
+  primaryJudgeProvider: PackageBenchProviderConfig | null,
+): PackageBenchProviderConfig | null {
+  if (!parsed.amaBenchCrossJudgeModel) {
+    return null;
+  }
+
+  const provider = parsed.amaBenchCrossJudgeProvider ?? primaryJudgeProvider?.provider;
+  if (!provider) {
+    throw new Error(
+      "--ama-bench-cross-judge-model requires --ama-bench-cross-judge-provider " +
+        "or an existing --judge-provider.",
+    );
+  }
+
+  return {
+    provider,
+    model: parsed.amaBenchCrossJudgeModel,
+    ...(parsed.amaBenchCrossJudgeBaseUrl ?? primaryJudgeProvider?.baseUrl
+      ? { baseUrl: parsed.amaBenchCrossJudgeBaseUrl ?? primaryJudgeProvider?.baseUrl }
+      : {}),
+    ...(parsed.amaBenchCrossJudgeApiKey ?? primaryJudgeProvider?.apiKey
+      ? { apiKey: parsed.amaBenchCrossJudgeApiKey ?? primaryJudgeProvider?.apiKey }
+      : {}),
+    ...(primaryJudgeProvider?.retryOptions
+      ? { retryOptions: primaryJudgeProvider.retryOptions }
+      : {}),
+    ...(primaryJudgeProvider?.disableThinking
+      ? { disableThinking: primaryJudgeProvider.disableThinking }
+      : {}),
+  };
 }
 
 function buildPartialBenchmarkResult(
@@ -2284,7 +2427,7 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
       const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
       writtenPaths.push(writtenPath);
       if (parsed.json) {
-        console.log(JSON.stringify(result, null, 2));
+        console.log(JSON.stringify(benchModule.redactBenchmarkResultSecrets?.(result) ?? result, null, 2));
       } else {
         printBenchPackageSummary(result, writtenPath);
       }

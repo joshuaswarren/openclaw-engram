@@ -12,6 +12,7 @@ export type BenchmarkTier = "published" | "remnic" | "custom";
 export type BenchmarkStatus = "ready" | "planned";
 export type BenchmarkCategory = "agentic" | "retrieval" | "conversational" | "ingestion";
 export type BenchRuntimeProfile = "baseline" | "real" | "openclaw-chain";
+export type AmaBenchJudgeProtocol = "default" | "recommended";
 /**
  * Built-in LLM providers supported by the bench harness.
  *
@@ -151,6 +152,7 @@ export interface BenchmarkResult {
     judgeProvider: ProviderConfig | null;
     adapterMode: string;
     remnicConfig: Record<string, unknown>;
+    benchmarkOptions?: Record<string, unknown>;
   };
   cost: {
     totalTokens: number;
@@ -210,6 +212,9 @@ export interface RunBenchmarkOptions {
   systemProvider?: ProviderConfig | null;
   judgeProvider?: ProviderConfig | null;
   remnicConfig?: Record<string, unknown>;
+  amaBenchJudgeProtocol?: AmaBenchJudgeProtocol;
+  amaBenchCrossJudge?: import("./adapters/types.js").BenchJudge;
+  amaBenchCrossJudgeProvider?: ProviderConfig | null;
 }
 
 export interface ResolvedRunBenchmarkOptions extends RunBenchmarkOptions {

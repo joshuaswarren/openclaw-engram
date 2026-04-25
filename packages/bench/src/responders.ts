@@ -28,6 +28,15 @@ const DEFAULT_JUDGE_SYSTEM_PROMPT = [
   "Use 1.00 for a fully correct answer, 0.00 for a fully incorrect answer, and fractional values for partial matches.",
 ].join(" ");
 
+const AMA_BENCH_RECOMMENDED_JUDGE_SYSTEM_PROMPT = [
+  "You are evaluating an AMA-Bench long-horizon memory question.",
+  "Decide whether the predicted answer correctly answers the question using the reference answer as ground truth.",
+  "Award 1 only when the predicted answer contains the same essential information as the reference answer.",
+  "Award 0 when the answer is wrong, missing, contradictory, or only vaguely related.",
+  "Ignore harmless wording differences, formatting differences, and extra explanation that does not change the answer.",
+  'Return only JSON: {"score":0 or 1,"reason":"short reason"}.',
+].join(" ");
+
 const SCORE_CUE_REGEX = /\b(score|rated|rating|grade|graded|result|overall|final)\b/;
 
 export interface GatewayResponderOptions {
@@ -123,6 +132,54 @@ export function createProviderBackedJudge(
   return createJudgeFromProvider(providerInstance ?? createProvider(config));
 }
 
+function createAmaBenchRecommendedJudgeFromProvider(provider: LlmProvider): BenchJudge {
+  async function scoreWithMetrics(
+    question: string,
+    predicted: string,
+    expected: string,
+  ): Promise<BenchJudgeResult> {
+    const completion = await provider.complete(
+      [
+        `QUESTION: ${question}`,
+        "",
+        `REFERENCE_ANSWER: ${expected}`,
+        "",
+        `PREDICTED_ANSWER: ${predicted}`,
+        "",
+        "Judge the predicted answer under the AMA-Bench binary accuracy protocol.",
+      ].join("\n"),
+      {
+        systemPrompt: AMA_BENCH_RECOMMENDED_JUDGE_SYSTEM_PROMPT,
+        temperature: 0,
+      },
+    );
+
+    return {
+      score: parseAmaBenchBinaryJudgeScore(completion.text),
+      tokens: completion.tokens,
+      latencyMs: completion.latencyMs,
+      model: completion.model,
+    };
+  }
+
+  return {
+    async score(question: string, predicted: string, expected: string): Promise<number> {
+      return (await scoreWithMetrics(question, predicted, expected)).score;
+    },
+    scoreWithMetrics,
+  };
+}
+
+export function createProviderBackedAmaBenchRecommendedJudge(
+  config: ProviderFactoryConfig,
+  providerInstance?: LlmProvider,
+): BenchJudge {
+  validateProviderConfig(config, "AMA-Bench recommended judge");
+  return createAmaBenchRecommendedJudgeFromProvider(
+    providerInstance ?? createProvider(config),
+  );
+}
+
 export function createStructuredJudgeFromProvider(
   provider: LlmProvider,
 ): StructuredJudge {
@@ -204,7 +261,7 @@ export function createGatewayResponder(
 
 function validateProviderConfig(
   config: ProviderFactoryConfig,
-  kind: "responder" | "judge",
+  kind: "responder" | "judge" | "AMA-Bench recommended judge",
 ): void {
   if (typeof config.model !== "string" || config.model.trim().length === 0) {
     throw new Error(`provider-backed ${kind} requires a non-empty model`);
@@ -252,6 +309,42 @@ function parseScalarJudgeScore(raw: string): number {
     }
   }
 
+  return -1;
+}
+
+function parseAmaBenchBinaryJudgeScore(raw: string): number {
+  const trimmed = raw.trim();
+  const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]) as { score?: unknown };
+      if (parsed.score === 0 || parsed.score === 1) {
+        return parsed.score;
+      }
+      if (parsed.score === "0" || parsed.score === "1") {
+        return Number(parsed.score);
+      }
+    } catch {
+      // Fall through to permissive parsing below.
+    }
+  }
+
+  const scalar = parseScalarJudgeScore(trimmed);
+  if (scalar === 0 || scalar === 1) {
+    return scalar;
+  }
+  if (scalar > 0.5) {
+    return 1;
+  }
+  if (scalar >= 0) {
+    return 0;
+  }
+  if (/\b(incorrect|no|false|fail)\b/i.test(trimmed)) {
+    return 0;
+  }
+  if (/\b(correct|yes|true|pass)\b/i.test(trimmed)) {
+    return 1;
+  }
   return -1;
 }
 
