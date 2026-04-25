@@ -225,6 +225,17 @@ The recall budget controls how much context Engram injects into each agent promp
 
 Note: `recallPipeline` controls ordering and can explicitly disable sections via `"enabled": false`. Unlisted sections default to enabled and are appended after the listed entries. To exclude a section, include it with `"enabled": false` rather than omitting it.
 
+## Coding Mode
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `codingMode.projectScope` | `true` | Auto-scope memory to the git project (stable origin-URL hash). Set to `false` to disable project-based namespace isolation. |
+| `codingMode.branchScope` | `false` | Additionally overlay the current branch on top of the project namespace. Project-level reads remain visible through `readFallbacks`. |
+| `codingMode.globalFallback` | `true` | Include the root/global namespace in recall read-fallbacks for project-scoped sessions. Global facts (framework bugs, library behavior, user preferences) surface across all projects. Set to `false` for strict project isolation. |
+| `extractionScopeClassificationEnabled` | `true` | Classify extracted facts as `"global"` or `"project"` scope. Global facts are promoted to the shared root namespace so they are visible across all projects. |
+
+See [Coding agent mode](coding-agent.md) for full details on project detection, `cwd` auto-resolution, `projectTag` for non-git sessions, and cross-project knowledge sharing.
+
 ## Native Knowledge
 
 | Setting | Default | Description |

@@ -74,6 +74,8 @@ Recall request fields:
 - `topK`
 - `mode` (`auto`, `no_recall`, `minimal`, `full`, `graph_mode`)
 - `includeDebug`
+- `cwd` (string, optional) — absolute path to the working directory. When provided and no coding context exists for the session, the server resolves git context automatically (see [Coding agent mode](coding-agent.md#project-detection)).
+- `projectTag` (string, optional) — project name for non-git sessions (e.g. `"blend-supply"`). Creates a `tag:<name>` coding context when no git repository is available.
 
 Recall response fields:
 
@@ -154,6 +156,8 @@ Request fields:
 - `messages` (array, required) — array of `{ role: "user" | "assistant", content: string }` objects; must be non-empty
 - `namespace` (string, optional) — target namespace; defaults to the resolved namespace from the principal
 - `skipExtraction` (boolean, optional) — when `true`, messages are archived in LCM but not sent through extraction
+- `cwd` (string, optional) — absolute path to the working directory. When provided and no coding context exists for the session, the server resolves git context automatically (see [Coding agent mode](coding-agent.md#project-detection)).
+- `projectTag` (string, optional) — project name for non-git sessions (e.g. `"blend-supply"`). Creates a `tag:<name>` coding context when no git repository is available.
 
 Response (HTTP 202):
 
@@ -228,7 +232,7 @@ openclaw engram access mcp-serve
 
 Available MCP tools:
 
-- `remnic.recall`
+- `remnic.recall` — accepts optional `cwd` and `projectTag` for automatic project detection
 - `remnic.recall_explain`
 - `remnic.memory_get`
 - `remnic.memory_timeline`
@@ -236,9 +240,10 @@ Available MCP tools:
 - `remnic.suggestion_submit`
 - `remnic.entity_get`
 - `remnic.review_queue_list`
-- `remnic.observe`
+- `remnic.observe` — accepts optional `cwd` and `projectTag` for automatic project detection
 - `remnic.lcm_search`
 - `remnic.day_summary`
+- `remnic.set_coding_context` — attach or clear a session's coding context; accepts a full `codingContext` object or a `projectTag` shorthand
 
 The legacy `engram.*` aliases remain available through the v1.x compatibility window.
 
@@ -253,6 +258,8 @@ Feed conversation messages into Remnic's memory pipeline (LCM archive + extracti
 - `messages` (array, required) — array of `{ role: "user" | "assistant", content: string }` objects
 - `namespace` (string, optional) — target namespace
 - `skipExtraction` (boolean, optional) — skip extraction, archive in LCM only
+- `cwd` (string, optional) — absolute working directory path for automatic git context resolution
+- `projectTag` (string, optional) — project name for non-git sessions (creates a `tag:<name>` coding context)
 
 **Returns:** `{ accepted, sessionKey, namespace, lcmArchived, extractionQueued }`
 
