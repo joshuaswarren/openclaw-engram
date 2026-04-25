@@ -434,7 +434,7 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
     );
   }
   if (
-    record.base_person !== undefined
+    record.base_person != null
     && !isValidBasePerson(record.base_person)
   ) {
     throw new Error(
@@ -450,7 +450,7 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
     ...(record.backgrounds === undefined
       ? {}
       : { backgrounds: record.backgrounds as string | string[] }),
-    ...(record.base_person === undefined
+    ...(record.base_person == null
       ? {}
       : { base_person: record.base_person as ArenaBasePerson }),
   };
@@ -907,18 +907,6 @@ function normalizePlanDayToken(token: string): string {
 function tokensEqual(left: string[], right: string[]): boolean {
   return left.length === right.length
     && left.every((token, index) => token === right[index]);
-}
-
-function containsTokenSequence(tokens: string[], sequence: string[]): boolean {
-  if (sequence.length === 0 || sequence.length > tokens.length) {
-    return false;
-  }
-  for (let index = 0; index <= tokens.length - sequence.length; index += 1) {
-    if (sequence.every((token, offset) => tokens[index + offset] === token)) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function tokenizePlanText(value: string): string[] {

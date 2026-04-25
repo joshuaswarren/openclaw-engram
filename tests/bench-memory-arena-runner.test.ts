@@ -294,6 +294,34 @@ test("runBenchmark treats null memory-arena base traveler plans as absent", asyn
   assert.doesNotMatch(task.actual, /Environment result:/);
 });
 
+test("runBenchmark treats null memory-arena base_person as absent metadata", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-null-base-person-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("trail mix"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "bundled_shopping.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      category: "bundled_shopping",
+      questions: ["Which snack did we agree to buy?"],
+      answers: ["trail mix"],
+      base_person: null,
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.actual, "trail mix");
+  assert.equal(task.scores.contains_answer, 1);
+});
+
 test("runBenchmark keeps memory-arena base traveler seed failures task-local", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-seed-failure-"));
   const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
