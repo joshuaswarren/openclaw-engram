@@ -64,7 +64,7 @@ test("searchVerifiedSemanticRules returns promoted rules whose source episode st
 
 test("searchVerifiedSemanticRules downgrades archived-source rules below the default recall threshold", async () => {
   const { memoryDir, storage } = await createSemanticRuleHarness();
-  const { sourceMemoryId } = await seedPromotedRule(memoryDir, storage);
+  const { ruleMemoryId, sourceMemoryId } = await seedPromotedRule(memoryDir, storage);
   const sourceMemory = await storage.getMemoryById(sourceMemoryId);
   assert.ok(sourceMemory);
   await storage.writeMemoryFrontmatter(sourceMemory, {
@@ -79,6 +79,48 @@ test("searchVerifiedSemanticRules downgrades archived-source rules below the def
   });
 
   assert.deepEqual(results, []);
+
+  const diagnosticResults = await searchVerifiedSemanticRules({
+    memoryDir,
+    query: "What rule says to wait for Cursor before merging?",
+    maxResults: 3,
+    minEffectiveConfidence: 0.1,
+  });
+  assert.equal(diagnosticResults.length, 1);
+  assert.equal(diagnosticResults[0]?.rule.frontmatter.id, ruleMemoryId);
+  assert.equal(diagnosticResults[0]?.verificationStatus, "source-memory-archived");
+  assert.equal(diagnosticResults[0]?.sourceMemoryId, sourceMemoryId);
+});
+
+test("searchVerifiedSemanticRules reports forgotten-source rules distinctly from archived sources", async () => {
+  const { memoryDir, storage } = await createSemanticRuleHarness();
+  const { ruleMemoryId, sourceMemoryId } = await seedPromotedRule(memoryDir, storage);
+  const sourceMemory = await storage.getMemoryById(sourceMemoryId);
+  assert.ok(sourceMemory);
+  await storage.writeMemoryFrontmatter(sourceMemory, {
+    status: "forgotten",
+    forgottenAt: "2026-03-09T00:00:00.000Z",
+    forgottenReason: "operator removed stale source",
+  });
+
+  const results = await searchVerifiedSemanticRules({
+    memoryDir,
+    query: "What rule says to wait for Cursor before merging?",
+    maxResults: 3,
+  });
+
+  assert.deepEqual(results, []);
+
+  const diagnosticResults = await searchVerifiedSemanticRules({
+    memoryDir,
+    query: "What rule says to wait for Cursor before merging?",
+    maxResults: 3,
+    minEffectiveConfidence: 0.1,
+  });
+  assert.equal(diagnosticResults.length, 1);
+  assert.equal(diagnosticResults[0]?.rule.frontmatter.id, ruleMemoryId);
+  assert.equal(diagnosticResults[0]?.verificationStatus, "source-memory-forgotten");
+  assert.equal(diagnosticResults[0]?.sourceMemoryId, sourceMemoryId);
 });
 
 test("semantic-rule-verify CLI command honors the verification feature flag", async () => {

@@ -191,6 +191,8 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.supersededBy) lines.push(`supersededBy: ${fm.supersededBy}`);
   if (fm.supersededAt) lines.push(`supersededAt: ${fm.supersededAt}`);
   if (fm.archivedAt) lines.push(`archivedAt: ${fm.archivedAt}`);
+  if (fm.forgottenAt) lines.push(`forgottenAt: ${fm.forgottenAt}`);
+  if (fm.forgottenReason) lines.push(`forgottenReason: ${JSON.stringify(fm.forgottenReason)}`);
   // Lifecycle policy fields
   if (fm.lifecycleState) lines.push(`lifecycleState: ${fm.lifecycleState}`);
   if (fm.verificationState) lines.push(`verificationState: ${fm.verificationState}`);
@@ -331,6 +333,21 @@ function parseLinkReasonValue(rawValue: string): string {
   } catch {
     return legacyValue;
   }
+}
+
+function parseFrontmatterStringValue(rawValue: string | undefined): string | undefined {
+  if (rawValue === undefined) return undefined;
+  const trimmed = rawValue.trim();
+  if (trimmed.length === 0) return undefined;
+  if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      return typeof parsed === "string" ? parsed : trimmed;
+    } catch {
+      return trimmed.slice(1, -1).replace(/\\"/g, '"');
+    }
+  }
+  return trimmed;
 }
 
 /**
@@ -624,6 +641,8 @@ function parseFrontmatter(
       supersededBy: fm.supersededBy || undefined,
       supersededAt: fm.supersededAt || undefined,
       archivedAt: fm.archivedAt || undefined,
+      forgottenAt: fm.forgottenAt || undefined,
+      forgottenReason: parseFrontmatterStringValue(fm.forgottenReason),
       lifecycleState: (fm.lifecycleState as LifecycleState) || undefined,
       verificationState: (fm.verificationState as VerificationState) || undefined,
       policyClass: (fm.policyClass as PolicyClass) || undefined,

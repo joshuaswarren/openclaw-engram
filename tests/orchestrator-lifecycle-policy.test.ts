@@ -47,6 +47,10 @@ test("runConsolidation applies lifecycle policy metadata and writes metrics", as
       lastAccessed: "2010-01-01T00:00:00.000Z",
       confidenceTier: "speculative",
     });
+    await storage.updateMemoryFrontmatter(ids[3], {
+      status: "archived",
+      archivedAt: "2026-04-25T00:00:00.000Z",
+    });
     await storage.updateMemoryFrontmatter(ids[4], {
       status: "superseded",
     });
@@ -71,6 +75,7 @@ test("runConsolidation applies lifecycle policy metadata and writes metrics", as
     assert.equal(metrics.memoriesEvaluated, evaluated.length);
     assert.equal(typeof metrics.memoriesUpdated, "number");
     assert.equal(typeof metrics.countsByLifecycleState, "object");
+    assert.equal(metrics.countsByLifecycleState.archived >= 1, true);
     assert.equal(typeof metrics.staleRatio, "number");
     assert.equal(typeof metrics.disputedRatio, "number");
   } finally {

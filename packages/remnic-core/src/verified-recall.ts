@@ -74,7 +74,7 @@ function resolveVerifiedEpisodeMemoriesFromMap(
     try {
       const memory = memoryById.get(memoryId);
       if (!memory) continue;
-      if (memory.frontmatter.status === "archived") continue;
+      if (memory.frontmatter.status === "archived" || memory.frontmatter.status === "forgotten") continue;
       if (memory.frontmatter.memoryKind !== "episode") continue;
       verified.push(memory);
     } catch {

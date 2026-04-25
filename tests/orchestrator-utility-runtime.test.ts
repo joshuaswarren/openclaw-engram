@@ -159,6 +159,86 @@ test("boostSearchResults excludes dream and procedural memories from generic rec
   }
 });
 
+test("boostSearchResults excludes forgotten memories even when returned by stale search indexes", async () => {
+  const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-forgotten-recall-filter-memory-"));
+  const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-forgotten-recall-filter-workspace-"));
+  try {
+    const config = parseConfig({
+      openaiApiKey: "sk-test",
+      memoryDir,
+      workspaceDir,
+      qmdEnabled: false,
+      recencyWeight: 0,
+      boostAccessCount: false,
+      feedbackEnabled: false,
+      negativeExamplesEnabled: false,
+      intentRoutingEnabled: false,
+      queryAwareIndexingEnabled: false,
+      lifecyclePolicyEnabled: false,
+      lifecycleFilterStaleEnabled: false,
+    });
+    const orchestrator = new Orchestrator(config) as any;
+    const memories = new Map<string, any>([
+      [
+        "/tmp/memory/facts/forgotten.md",
+        {
+          path: "/tmp/memory/facts/forgotten.md",
+          content: "Forgotten memory",
+          frontmatter: {
+            id: "forgotten",
+            category: "fact",
+            created: "2026-02-01T00:00:00.000Z",
+            updated: "2026-04-25T12:00:00.000Z",
+            source: "test",
+            confidence: 0.9,
+            confidenceTier: "explicit",
+            tags: [],
+            status: "forgotten",
+            forgottenAt: "2026-04-25T12:00:00.000Z",
+          },
+        },
+      ],
+      [
+        "/tmp/memory/facts/active.md",
+        {
+          path: "/tmp/memory/facts/active.md",
+          content: "Active memory",
+          frontmatter: {
+            id: "active",
+            category: "fact",
+            created: "2026-02-01T00:00:00.000Z",
+            updated: "2026-02-01T00:00:00.000Z",
+            source: "test",
+            confidence: 0.9,
+            confidenceTier: "explicit",
+            tags: [],
+            status: "active",
+          },
+        },
+      ],
+    ]);
+    orchestrator.storage = {
+      readMemoryByPath: async (path: string) => memories.get(path) ?? null,
+    };
+
+    const output = await orchestrator.boostSearchResults(
+      [
+        { path: "/tmp/memory/facts/forgotten.md", score: 0.9, docid: "forgotten", snippet: "forgotten" },
+        { path: "/tmp/memory/facts/active.md", score: 0.8, docid: "active", snippet: "active" },
+      ],
+      [],
+      undefined,
+      undefined,
+      { allowLifecycleFiltered: true, allowDedicatedSurface: true },
+    );
+
+    assert.deepEqual(output.map((entry: { docid: string }) => entry.docid), ["active"]);
+  } finally {
+    await rm(memoryDir, { recursive: true, force: true });
+    await rm(workspaceDir, { recursive: true, force: true });
+  }
+});
+
 test("boostSearchResults can opt dedicated surfaces back into explicit recall flows", async () => {
   const memoryDir = await mkdtemp(path.join(os.tmpdir(), "engram-dedicated-surface-opt-in-memory-"));
   const workspaceDir = await mkdtemp(path.join(os.tmpdir(), "engram-dedicated-surface-opt-in-workspace-"));

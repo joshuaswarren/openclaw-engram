@@ -666,6 +666,7 @@ export class CompoundingEngine {
     const existing = (await storage.readAllMemories()).find((memory) =>
       memory.frontmatter.category === candidate.category &&
       memory.frontmatter.status !== "archived" &&
+      memory.frontmatter.status !== "forgotten" &&
       canonicalPromotionContentKey(memory.content) === canonicalPromotionContentKey(persistedContent)
     );
     if (existing) {

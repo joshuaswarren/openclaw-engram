@@ -16,6 +16,7 @@ export interface SemanticRulePromotionSkip {
   reason:
     | "disabled"
     | "source-memory-missing"
+    | "source-memory-forgotten"
     | "source-memory-not-episode"
     | "no-explicit-rule"
     | "duplicate-rule";
@@ -103,7 +104,17 @@ export async function promoteSemanticRuleFromMemory(options: {
     });
     return report;
   }
-  if (sourceMemory.frontmatter.status === "archived" || sourceMemory.frontmatter.memoryKind !== "episode") {
+  if (sourceMemory.frontmatter.status === "forgotten") {
+    report.skipped.push({
+      sourceMemoryId: options.sourceMemoryId,
+      reason: "source-memory-forgotten",
+    });
+    return report;
+  }
+  if (
+    sourceMemory.frontmatter.status === "archived" ||
+    sourceMemory.frontmatter.memoryKind !== "episode"
+  ) {
     report.skipped.push({
       sourceMemoryId: options.sourceMemoryId,
       reason: "source-memory-not-episode",
@@ -125,6 +136,7 @@ export async function promoteSemanticRuleFromMemory(options: {
     (memory) =>
       memory.frontmatter.category === "rule" &&
       memory.frontmatter.status !== "archived" &&
+      memory.frontmatter.status !== "forgotten" &&
       canonicalizeRuleKey(memory.content) === ruleKey,
   );
   if (existingRule) {

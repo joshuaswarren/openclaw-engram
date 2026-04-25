@@ -102,7 +102,7 @@ export function getCachedEpisodeMap(baseDir: string, currentVersion: number): Ma
 export function setCachedEpisodeMap(baseDir: string, memories: MemoryFile[], version: number): Map<string, MemoryFile> {
   const map = new Map<string, MemoryFile>();
   for (const m of memories) {
-    if (m.frontmatter.status === "archived") continue;
+    if (m.frontmatter.status === "archived" || m.frontmatter.status === "forgotten") continue;
     if (m.frontmatter.memoryKind !== "episode") continue;
     map.set(m.frontmatter.id, m);
   }
@@ -124,7 +124,11 @@ export function setCachedRuleMemories(baseDir: string, memories: MemoryFile[], v
   const all: MemoryFile[] = [];
   for (const m of memories) {
     byId.set(m.frontmatter.id, m);
-    if (m.frontmatter.category === "rule" && m.frontmatter.status !== "archived") {
+    if (
+      m.frontmatter.category === "rule" &&
+      m.frontmatter.status !== "archived" &&
+      m.frontmatter.status !== "forgotten"
+    ) {
       all.push(m);
     }
   }

@@ -7,6 +7,7 @@ export type SemanticRuleVerificationStatus =
   | "verified"
   | "source-memory-missing"
   | "source-memory-archived"
+  | "source-memory-forgotten"
   | "source-memory-not-episode";
 
 export interface VerifiedSemanticRuleResult {
@@ -28,6 +29,8 @@ function verificationConfidenceMultiplier(status: SemanticRuleVerificationStatus
       return 0.45;
     case "source-memory-archived":
       return 0.4;
+    case "source-memory-forgotten":
+      return 0.3;
     case "source-memory-missing":
       return 0.35;
     default:
@@ -37,7 +40,10 @@ function verificationConfidenceMultiplier(status: SemanticRuleVerificationStatus
 
 function resolveVerificationStatus(sourceMemory: MemoryFile | undefined): SemanticRuleVerificationStatus {
   if (!sourceMemory) return "source-memory-missing";
-  if (sourceMemory.frontmatter.status === "archived") return "source-memory-archived";
+  if (sourceMemory.frontmatter.status === "archived") {
+    return "source-memory-archived";
+  }
+  if (sourceMemory.frontmatter.status === "forgotten") return "source-memory-forgotten";
   if (sourceMemory.frontmatter.memoryKind !== "episode") return "source-memory-not-episode";
   return "verified";
 }
@@ -115,7 +121,7 @@ export async function searchVerifiedSemanticRules(options: {
   const minEffectiveConfidence = options.minEffectiveConfidence ?? DEFAULT_MIN_EFFECTIVE_CONFIDENCE;
 
   const candidates: VerifiedSemanticRuleResult[] = [];
-  // ruleMemories is pre-filtered to category=rule, status!=archived
+  // ruleMemories is pre-filtered to category=rule and recall-hidden statuses.
   for (const memory of ruleMemories) {
     if (memory.frontmatter.source !== "semantic-rule-promotion") continue;
     const sourceMemoryId = memory.frontmatter.sourceMemoryId;

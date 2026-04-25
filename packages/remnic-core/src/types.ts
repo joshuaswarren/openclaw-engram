@@ -1648,7 +1648,22 @@ export interface BufferSurpriseEvent {
 }
 
 /** Memory status for lifecycle management */
-export type MemoryStatus = "active" | "pending_review" | "rejected" | "quarantined" | "superseded" | "archived";
+export type MemoryStatus =
+  | "active"
+  | "pending_review"
+  | "rejected"
+  | "quarantined"
+  | "superseded"
+  | "archived"
+  /**
+   * Operator explicitly forgot the memory (issue #686 PR 4/6).  Soft
+   * delete: the file stays on disk and a page-version snapshot is kept
+   * so the act is reversible during a configurable retention window
+   * (default 90 days), but the memory is excluded from recall, browse,
+   * and entity attribution.  After the retention window passes, a
+   * future maintenance cron will hard-delete forgotten memories.
+   */
+  | "forgotten";
 export type LifecycleState = "candidate" | "validated" | "active" | "stale" | "archived";
 export type VerificationState = "unverified" | "user_confirmed" | "system_inferred" | "disputed";
 export type PolicyClass = "ephemeral" | "durable" | "protected";
@@ -1683,7 +1698,7 @@ export interface MemoryFrontmatter {
   expiresAt?: string;
   /** IDs of parent memories this was derived from (lineage tracking) */
   lineage?: string[];
-  /** Memory status: active (default), pending_review, rejected, quarantined, superseded, or archived */
+  /** Memory status: active (default), pending_review, rejected, quarantined, superseded, archived, or forgotten */
   status?: MemoryStatus;
   /** ID of memory that superseded this one */
   supersededBy?: string;
@@ -1691,6 +1706,16 @@ export interface MemoryFrontmatter {
   supersededAt?: string;
   /** Timestamp when archived */
   archivedAt?: string;
+  /**
+   * Timestamp when the operator explicitly forgot this memory
+   * (issue #686 PR 4/6).  Set by `remnic forget <id>`.  Memories with
+   * `status === "forgotten"` are excluded from recall, browse, and
+   * entity attribution; the file remains on disk until the retention
+   * window passes.
+   */
+  forgottenAt?: string;
+  /** Optional human-readable reason captured by `remnic forget --reason`. */
+  forgottenReason?: string;
   /** Policy-driven lifecycle state used for retrieval eligibility/ranking. */
   lifecycleState?: LifecycleState;
   /** Verification provenance used by lifecycle policy. */

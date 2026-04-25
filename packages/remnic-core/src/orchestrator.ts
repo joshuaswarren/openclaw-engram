@@ -174,6 +174,7 @@ import {
   resolveLifecycleState,
   type LifecycleSignals,
 } from "./lifecycle.js";
+import { isActiveMemoryStatus } from "./memory-lifecycle-ledger-utils.js";
 import {
   indexMemoriesBatch,
   clearIndexes,
@@ -12110,10 +12111,8 @@ export class Orchestrator {
 
       // Bootstrap: index only active (non-archived, non-superseded) memories.
       // Incremental: index only the newly persisted IDs.
-      const isActive = (m: { frontmatter: { status?: string } }) =>
-        !m.frontmatter.status || m.frontmatter.status === "active";
       const pool = needsFullRebuild
-        ? allMemories.filter(isActive)
+        ? allMemories.filter((m) => isActiveMemoryStatus(m.frontmatter.status))
         : (() => {
             const idSet = new Set(persistedIds);
             return allMemories.filter((m) => idSet.has(m.frontmatter.id));
@@ -12500,7 +12499,8 @@ export class Orchestrator {
           .filter(
             (m) =>
               m.frontmatter.status !== "superseded" &&
-              m.frontmatter.status !== "archived",
+              m.frontmatter.status !== "archived" &&
+              m.frontmatter.status !== "forgotten",
           )
           .map((m) => ({
             path: m.path,
@@ -13005,7 +13005,10 @@ export class Orchestrator {
     const actionPriors = await this.buildLifecycleActionPriors();
 
     for (const memory of allMemories) {
-      if (memory.frontmatter.status === "superseded") {
+      if (
+        memory.frontmatter.status === "superseded" ||
+        memory.frontmatter.status === "forgotten"
+      ) {
         continue;
       }
       evaluatedCount += 1;
@@ -13181,7 +13184,7 @@ export class Orchestrator {
   ): Promise<void> {
     // Only active memories count toward the threshold
     const activeMemories = allMemories.filter(
-      (m) => !m.frontmatter.status || m.frontmatter.status === "active",
+      (m) => isActiveMemoryStatus(m.frontmatter.status),
     );
 
     if (activeMemories.length < this.config.summarizationTriggerCount) {
@@ -13276,7 +13279,7 @@ export class Orchestrator {
   ): Promise<void> {
     // Only extract from active memories
     const activeMemories = allMemories.filter(
-      (m) => !m.frontmatter.status || m.frontmatter.status === "active",
+      (m) => isActiveMemoryStatus(m.frontmatter.status),
     );
 
     if (activeMemories.length === 0) return;
@@ -14557,6 +14560,7 @@ export class Orchestrator {
     let lifecycleFilteredCount = 0;
     let temporalSupersededFilteredCount = 0;
     let dedicatedSurfaceFilteredCount = 0;
+    let forgottenFilteredCount = 0;
     const boosted: QmdSearchResult[] = [];
     const recencyWeight = this.effectiveRecencyWeight();
     for (const r of results) {
@@ -14564,6 +14568,11 @@ export class Orchestrator {
       let score = r.score;
 
       if (memory) {
+        if (memory.frontmatter.status === "forgotten") {
+          forgottenFilteredCount += 1;
+          continue;
+        }
+
         if (
           options?.allowLifecycleFiltered !== true &&
           shouldFilterLifecycleRecallCandidate(memory.frontmatter, {
@@ -14733,6 +14742,11 @@ export class Orchestrator {
         `dedicated surface filter removed ${dedicatedSurfaceFilteredCount} dream/procedural candidates from generic recall`,
       );
     }
+    if (forgottenFilteredCount > 0) {
+      log.debug(
+        `forgotten status filter removed ${forgottenFilteredCount} candidates from recall`,
+      );
+    }
 
     // Re-sort by boosted score
     return boosted.sort((a, b) => b.score - a.score);
@@ -14823,8 +14837,14 @@ export class Orchestrator {
       const existingMemory = await resultStorage.getMemoryById(memoryId);
       if (!existingMemory) continue;
 
-      // Skip already superseded memories
-      if (existingMemory.frontmatter.status === "superseded") continue;
+      // Skip memories already resolved or explicitly forgotten. Other
+      // non-active statuses remain valid contradiction candidates.
+      if (
+        existingMemory.frontmatter.status === "superseded" ||
+        existingMemory.frontmatter.status === "forgotten"
+      ) {
+        continue;
+      }
 
       // Verify contradiction with LLM
       const verification = await this.extraction.verifyContradiction(
@@ -14922,7 +14942,11 @@ export class Orchestrator {
       const resultStorage =
         await this.storageRouter.storageFor(resultNamespace);
       const memory = await resultStorage.getMemoryById(memoryId);
-      if (memory && memory.frontmatter.status !== "superseded") {
+      if (
+        memory &&
+        memory.frontmatter.status !== "superseded" &&
+        memory.frontmatter.status !== "forgotten"
+      ) {
         candidates.push({
           id: memory.frontmatter.id,
           content: memory.content,
