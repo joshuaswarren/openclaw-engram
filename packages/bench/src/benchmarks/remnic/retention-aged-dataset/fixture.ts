@@ -276,15 +276,36 @@ export function generateAgedDataset(
   );
   // Second pass: trim to MAX_TOTAL_QUERIES if rounding pushed us over.
   // Trim from the largest topics first so we don't drop sparse topics
-  // below the floor of 1. (Codex P2 review on PR #698.)
+  // below the floor of 1. If every topic is already at 1 and we're
+  // STILL over the cap (high-topic fixtures), drop the lowest-frequency
+  // topics entirely rather than emit > MAX_TOTAL_QUERIES queries.
+  // (Codex P2 reviews on PR #698.)
   let runningTotal = rawCounts.reduce((s, n) => s + n, 0);
   while (runningTotal > MAX_TOTAL_QUERIES) {
     let maxIdx = 0;
     for (let i = 1; i < rawCounts.length; i += 1) {
       if (rawCounts[i] > rawCounts[maxIdx]) maxIdx = i;
     }
-    if (rawCounts[maxIdx] <= 1) break; // safety: don't push any topic below 1.
-    rawCounts[maxIdx] -= 1;
+    if (rawCounts[maxIdx] > 1) {
+      rawCounts[maxIdx] -= 1;
+      runningTotal -= 1;
+      continue;
+    }
+    // All topics are at the floor of 1 — drop the smallest-share topics
+    // (the lowest topicId's memory count is largest by Pareto, so the
+    // last-rank topic with the smallest memory count is dropped first).
+    let smallestTopicMemoryCount = Number.POSITIVE_INFINITY;
+    let smallestTopicEntryIdx = -1;
+    for (let i = 0; i < rawCounts.length; i += 1) {
+      if (rawCounts[i] === 0) continue;
+      const topicMemoryCount = topicEntries[i][1].length;
+      if (topicMemoryCount < smallestTopicMemoryCount) {
+        smallestTopicMemoryCount = topicMemoryCount;
+        smallestTopicEntryIdx = i;
+      }
+    }
+    if (smallestTopicEntryIdx === -1) break;
+    rawCounts[smallestTopicEntryIdx] = 0;
     runningTotal -= 1;
   }
 
@@ -292,10 +313,31 @@ export function generateAgedDataset(
   for (let i = 0; i < topicEntries.length; i += 1) {
     const [topicId, ids] = topicEntries[i];
     const topicQueryCount = rawCounts[i];
+    if (topicQueryCount === 0) continue;
     // Choose the K most recently-touched memories as the bounded
-    // relevant set for queries on this topic. This makes recall@K a
-    // meaningful, tier-policy-sensitive metric.
-    const relevantSubset = [...ids].slice(0, RELEVANT_PER_QUERY);
+    // relevant set. The fixture appends to `ids` in generation order,
+    // not recency order, so we must sort by lastAccessed (falling back
+    // to created/updated for memories with no access history) before
+    // slicing. Without this sort, the "relevant" set is arbitrary early
+    // memories, which `rankMemories` (recency-tiebreaker) systematically
+    // misses, depressing recall scores and making the delta metric noisy
+    // about real tier-policy behavior. (Codex P1 review on PR #698.)
+    const memoryLookup = new Map<string, MemoryFile>();
+    for (const memory of memories) {
+      memoryLookup.set(memory.frontmatter.id, memory);
+    }
+    const recencyMs = (id: string): number => {
+      const m = memoryLookup.get(id);
+      if (!m) return 0;
+      return Date.parse(
+        m.frontmatter.lastAccessed
+          ?? m.frontmatter.updated
+          ?? m.frontmatter.created,
+      );
+    };
+    const relevantSubset = [...ids]
+      .sort((a, b) => recencyMs(b) - recencyMs(a))
+      .slice(0, RELEVANT_PER_QUERY);
     for (let q = 0; q < topicQueryCount; q += 1) {
       queries.push({
         // Per-topic instance index keeps duplicates within a topic
