@@ -1878,11 +1878,15 @@ export interface MemoryFile {
  * internals.
  *
  * Naming note: this is intentionally NOT the same as the existing
- * `observation-ledger` (`maintenance/observation-ledger-utils.ts`),
- * which records *lifecycle events* on memory files (status flips,
- * supersessions). The ledger logs primitive transitions; a
- * `MemoryObservation` describes the candidate that became (or didn't
- * become) a primitive in the first place. See
+ * `state/observation-ledger/` directory, which is telemetry storage
+ * for the extraction pipeline (turn-count aggregates rebuilt by
+ * `maintenance/rebuild-observations.ts` and judge verdict events
+ * appended by `extraction-judge-telemetry.ts`). Lifecycle events on
+ * primitives — status flips, supersessions, archival, forget — live
+ * in `state/memory-lifecycle-ledger.jsonl`, written by
+ * `StorageManager`. A `MemoryObservation` describes the in-flight
+ * candidate that became (or didn't become) a primitive; the ledger
+ * directory is how the pipeline reports on itself. See
  * `docs/trace-to-primitive.md` for the full pipeline walkthrough.
  */
 export interface MemoryObservation {
