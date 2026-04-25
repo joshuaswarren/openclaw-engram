@@ -175,10 +175,26 @@ test("R-1: writeEntity collapses same-name same-type entities to one canonical i
 // R-2: alias merge collapses distinct entities at index-build time
 // ──────────────────────────────────────────────────────────────────────
 
+// REGRESSION GUARD (Codex P1 review): single-token-of-multi-token-alias
+// match for normal usage. A query "Tell me about Alice-Example" must
+// still resolve `Alice-Example` (a person entity whose canonical alias
+// is two tokens "alice example"). This guards the alias-tightening fix
+// from being too aggressive.
+test("R-2 regression: single distinctive token still matches multi-token alias", async () => {
+  const { config, storage } = await buildHarness("contam-r2-regression");
+  await storage.writeEntity("Alice-Example", "person", [
+    "Alice-Example leads the launch review.",
+  ]);
+
+  const section = await buildSection(config, storage, "Tell me about Alice-Example");
+  assert.ok(section, "Alice-Example query should produce a hint section");
+  assert.match(section!, /target: Alice-Example \(person\)/);
+});
+
 // LEAK-FREE behavior asserted: query for Person-B1 must NOT surface
 // Person-A1's facts. Fixed by tightening `scoreAliasMatch` to require
-// ALL tokens of a multi-token alias appear in the query — see
-// `entity-retrieval.ts` change in this PR.
+// at least one DISTINCTIVE (non-affix) overlap token for multi-token
+// aliases — see `entity-retrieval.ts` change in this PR.
 test("R-2: query for Person-B1 does not surface Person-A1 (alias-token isolation)", async () => {
   const { config, storage } = await buildHarness("contam-r2");
 
@@ -648,6 +664,37 @@ test("R-10: focusMatchesMemory uses slug-exact match, not substring (no prefix l
     focusMatchesMemory(memoryAlice, focus!),
     true,
     "focus on Alice-Test should match memory tagged person-alice-test",
+  );
+
+  // REGRESSION GUARD (Codex P2 + cursor review): non-canonical stored
+  // entityRef forms must still match. The fixed implementation
+  // normalizes both sides through `normalizeEntityName`, so a
+  // memory written with the legacy display-name form `entityRef:
+  // person:Alice-Test` still matches a focus on `person:Alice-Test`.
+  const legacyMemory = makeMemory({
+    entityRef: "person:Alice-Test",
+    content: "internal: redacted",
+  });
+  assert.equal(
+    focusMatchesMemory(legacyMemory, focus!),
+    true,
+    "non-canonical legacy entityRef forms must still resolve via canonical-id comparison",
+  );
+  // REGRESSION GUARD (cursor review): type-prefix-in-name case. A
+  // memory whose stored entityRef is `project-project-alpha` (the
+  // un-stripped `focusToEntityRefSlug` form) must still match a
+  // canonical focus on `project:Project-Alpha` (which `normalizeEntityName`
+  // strips to `project-alpha`).
+  const projectFocus = parseBriefingFocus("project:Project-Alpha");
+  assert.ok(projectFocus);
+  const projectMemory = makeMemory({
+    entityRef: "project-project-alpha",
+    content: "redacted",
+  });
+  assert.equal(
+    focusMatchesMemory(projectMemory, projectFocus!),
+    true,
+    "type-prefix-in-name canonicalization must match across both forms",
   );
 
   // LEAK-FREE: a distinct entity that shares the prefix MUST NOT match.

@@ -19,7 +19,7 @@ import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { log } from "./logger.js";
-import { StorageManager } from "./storage.js";
+import { normalizeEntityName, StorageManager } from "./storage.js";
 import { readEnvVar, resolveHomeDir } from "./runtime/env.js";
 import type {
   BriefingActiveThread,
@@ -203,7 +203,7 @@ export function focusMatchesMemory(memory: MemoryFile, focus: BriefingFocus): bo
   // Including the entityRef in the raw haystack would re-introduce the
   // substring leak fixed below (#682 PR 2/3 R-10): a focus on
   // `Alice-Test` substring-hits the entityRef `person-alice-test-a1`.
-  // Entity attribution must go through the slug-exact path below.
+  // Entity attribution must go through the canonical-id path below.
   const rawHaystack = [
     memory.content,
     ...(memory.frontmatter.tags ?? []),
@@ -212,15 +212,35 @@ export function focusMatchesMemory(memory: MemoryFile, focus: BriefingFocus): bo
     .toLowerCase();
   if (rawHaystack.includes(needle)) return true;
 
-  // Slug match (#682 PR 2/3 R-10): require exact equality on the slug
-  // form, not substring `includes`. The substring form leaks across
-  // similarly-prefixed entities — a focus on `person:Alice-Test`
-  // (`person-alice-test`) would substring-match an unrelated entity
-  // tagged `person-alice-test-a1`. EntityRefs are produced by
-  // `normalizeEntityName(name, type)` which always emits the canonical
-  // slug, so exact equality is the right check.
-  const slug = focusToEntityRefSlug(focus);
-  return entityRef === slug;
+  // Canonical-id match (#682 PR 2/3 R-10). Normalize BOTH sides through
+  // `normalizeEntityName` so:
+  //   - `entityRef === slug` exact comparison no longer fails when the
+  //     stored ref is in a non-canonical form (e.g. `person:Alice-Test`
+  //     vs. `person-alice-test`) — both normalize to the same canonical id.
+  //   - `entityRef.includes(slug)` substring matching is replaced by
+  //     equality, so similarly-prefixed entities like
+  //     `person-alice-test-a1` no longer match a focus on
+  //     `person:Alice-Test`.
+  // This also handles the type-prefix-in-name case the cursor reviewer
+  // flagged: `normalizeEntityName` strips a duplicate type prefix so
+  // `Project-Alpha` of type `project` canonicalizes to `project-alpha`,
+  // and a focus on `project:Project-Alpha` does the same.
+  if (!entityRef) return false;
+  const focusCanonical = normalizeEntityName(focus.value, focus.type);
+  // Strip a leading `<type>:` or `<type>-` prefix from a legacy /
+  // non-canonical entityRef before normalizing — `normalizeEntityName`
+  // only strips `<type>-` so the colon-separated legacy form
+  // `person:Alice-Test` would otherwise double up.
+  const typePrefixes = [`${focus.type}:`, `${focus.type}-`];
+  let refForNormalize = entityRef;
+  for (const prefix of typePrefixes) {
+    if (refForNormalize.startsWith(prefix)) {
+      refForNormalize = refForNormalize.slice(prefix.length);
+      break;
+    }
+  }
+  const refCanonical = normalizeEntityName(refForNormalize, focus.type);
+  return refCanonical === focusCanonical;
 }
 
 export function focusMatchesEntity(entity: EntityFile, focus: BriefingFocus): boolean {
