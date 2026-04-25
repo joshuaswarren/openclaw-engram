@@ -2428,6 +2428,11 @@
         "default": "low",
         "description": "Minimum locally-scored importance level required to persist an extracted fact. Facts below this level are dropped before write and counted toward the importance_gated metric. Default \"low\" drops only trivial turn-level chatter (greetings, single-word replies); raise to \"normal\" or higher for a stricter gate."
       },
+      "extractionScopeClassificationEnabled": {
+        "type": "boolean",
+        "default": true,
+        "description": "When enabled, the extraction prompt instructs the LLM to classify each fact as 'project' (codebase-specific) or 'global' (cross-project knowledge). Global-scoped facts are promoted to the shared namespace so they are visible across all projects. Disable to restore pre-scope-classification behavior where all facts go to the session namespace."
+      },
       "extractionJudgeEnabled": {
         "type": "boolean",
         "default": false,

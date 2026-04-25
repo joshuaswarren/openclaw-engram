@@ -86,6 +86,13 @@ export const ExtractedFactSchema = z.object({
     .optional()
     .nullable()
     .describe("Optional proactive follow-up question that surfaced this fact."),
+  scope: z
+    .enum(["project", "global"])
+    .optional()
+    .nullable()
+    .describe(
+      'Scope classification: "global" for cross-project knowledge (framework bugs, library behavior, API patterns, user preferences, tool configs, general coding patterns); "project" for project-specific knowledge (file paths, env configs, deployment details, project workarounds). Defaults to "project" when a coding context is active.',
+    ),
   structuredAttributes: z
     .record(z.string(), z.string())
     .optional()

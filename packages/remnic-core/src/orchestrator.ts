@@ -11058,6 +11058,35 @@ export class Orchestrator {
         }
       }
 
+      // Scope-based namespace routing: when scope classification is enabled
+      // and the LLM tagged this fact as "global", route it to the shared
+      // namespace so cross-project knowledge is visible everywhere. Only
+      // applies when namespaces are enabled and the fact was not already
+      // routed to a specific namespace by a routing rule (routing rules
+      // take precedence). Rule 30: gated by extractionScopeClassificationEnabled.
+      if (
+        this.config.extractionScopeClassificationEnabled &&
+        this.config.namespacesEnabled &&
+        fact.scope === "global" &&
+        !routedRuleId
+      ) {
+        const currentNs = this.namespaceFromStorageDir(targetStorage.dir);
+        if (currentNs !== this.config.sharedNamespace) {
+          try {
+            targetStorage = await this.storageRouter.storageFor(
+              this.config.sharedNamespace,
+            );
+            log.debug(
+              `scope-routing: fact "${fact.content.slice(0, 60)}…" routed to shared namespace (scope=global)`,
+            );
+          } catch (scopeRouteErr) {
+            log.warn(
+              `scope-routing: failed to resolve shared namespace storage; writing to session namespace (fail-open): ${scopeRouteErr}`,
+            );
+          }
+        }
+      }
+
       // Procedures: fingerprint the full serialized body (title + steps), not
       // the title alone, so distinct step lists are not collapsed (issue #519).
       const canonicalContentForHash =
