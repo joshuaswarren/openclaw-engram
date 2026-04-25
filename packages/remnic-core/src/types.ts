@@ -531,6 +531,21 @@ export interface PluginConfig {
    */
   recallDirectAnswerEnabled: boolean;
   /**
+   * Disclosure auto-escalation policy (issue #677 PR 4/4).  When set to
+   * `"auto"`, recalls without an explicit caller-supplied disclosure
+   * escalate from `chunk` to `section` if the top-K confidence falls
+   * below {@link recallDisclosureEscalationThreshold}.  `raw` is never
+   * auto-selected — it requires an explicit caller request.  Default
+   * `"manual"` preserves pre-#677 behavior.
+   */
+  recallDisclosureEscalation: "manual" | "auto";
+  /**
+   * Top-K confidence threshold (in `[0, 1]`) below which auto-escalation
+   * promotes `chunk` → `section`.  Only consulted when
+   * {@link recallDisclosureEscalation} is `"auto"`.  Default `0.5`.
+   */
+  recallDisclosureEscalationThreshold: number;
+  /**
    * Graph-based retrieval tier via Personalized PageRank (issue #559 PR 4).
    * When true, recall builds a retrieval graph from memory frontmatter
    * and runs PPR, merging the result with QMD via MMR.  Default false —

@@ -1056,6 +1056,22 @@ export function parseConfig(raw: unknown): PluginConfig {
     // recallDirectAnswerEnabled=false.
     recallDirectAnswerEnabled:
       coerceBool(cfg.recallDirectAnswerEnabled) ?? true,
+    // Disclosure auto-escalation (issue #677 PR 4/4).  Default `manual`
+    // so pre-#677 callers see unchanged behavior.  Reject anything
+    // outside the allow-list rather than silently defaulting (CLAUDE.md
+    // rule 51).
+    recallDisclosureEscalation: (() => {
+      const raw = cfg.recallDisclosureEscalation;
+      if (raw === undefined || raw === null) return "manual" as const;
+      if (raw === "manual" || raw === "auto") return raw;
+      throw new Error(
+        `recallDisclosureEscalation must be "manual" or "auto" (got ${JSON.stringify(raw)}).`,
+      );
+    })(),
+    recallDisclosureEscalationThreshold: (() => {
+      const n = coerceNumber(cfg.recallDisclosureEscalationThreshold);
+      return n !== undefined && n >= 0 && n <= 1 ? n : 0.5;
+    })(),
     // Graph-based retrieval tier (issue #559 PR 4).  Default `false` —
     // the tier ships off pending the `retrieval-graph` bench in PR 5.
     recallGraphEnabled:

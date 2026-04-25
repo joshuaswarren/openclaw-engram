@@ -84,6 +84,7 @@ import type {
 } from "./types.js";
 import { DEFAULT_RECALL_DISCLOSURE, isRecallDisclosure } from "./types.js";
 import { estimateRecallTokens } from "./recall-xray.js";
+import { decideDisclosureEscalation } from "./recall-disclosure-escalation.js";
 import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
 import type { SemanticDedupLookup } from "./dedup/semantic.js";
@@ -1350,8 +1351,10 @@ export class EngramAccessService {
     // Disclosure depth (issue #677).  Default to `"chunk"` when omitted so
     // pre-#677 callers see unchanged behavior.  Reject explicitly invalid
     // string values per CLAUDE.md rule 51 (do not silently fall back).
-    const disclosure: RecallDisclosure = (() => {
-      if (request.disclosure === undefined || request.disclosure === null) {
+    const callerProvidedDisclosure =
+      request.disclosure !== undefined && request.disclosure !== null;
+    const requestedDisclosure: RecallDisclosure = (() => {
+      if (!callerProvidedDisclosure) {
         return DEFAULT_RECALL_DISCLOSURE;
       }
       if (!isRecallDisclosure(request.disclosure)) {
@@ -1476,6 +1479,34 @@ export class EngramAccessService {
     const effectiveNamespace = snapshot?.namespace
       ? this.resolveNamespace(snapshot.namespace)
       : namespace;
+    // Auto-escalation policy (issue #677 PR 4/4).  When the operator
+    // configured `recallDisclosureEscalation: "auto"` AND the caller
+    // did not explicitly choose a disclosure level AND recall produced
+    // a low-confidence result set (proxied by fill ratio: results
+    // returned / topK requested), we escalate the default `chunk`
+    // shape to `section` so the LLM gets richer context to compensate
+    // for ambiguous retrieval.  Manual mode and explicit caller
+    // disclosure both bypass the policy.  Documented in
+    // `recall-disclosure-escalation.ts` and unit-tested there.
+    // Use the caller's topK when provided, otherwise fall back to a
+    // sensible default that matches `conversationRecallTopK`'s
+    // documented baseline.  The exact value here only affects the
+    // confidence proxy; it does not change recall behavior.
+    const topKResolved =
+      typeof topK === "number" && topK > 0 ? topK : 5;
+    const resultsReturned = snapshot?.memoryIds?.length ?? 0;
+    const topKConfidence =
+      topKResolved > 0
+        ? Math.min(1, resultsReturned / topKResolved)
+        : undefined;
+    const escalationDecision = decideDisclosureEscalation({
+      mode: this.orchestrator.config.recallDisclosureEscalation,
+      threshold: this.orchestrator.config.recallDisclosureEscalationThreshold,
+      originalDisclosure: requestedDisclosure,
+      callerProvidedDisclosure,
+      topKConfidence,
+    });
+    const disclosure = escalationDecision.effective;
     const results = await this.serializeRecallResults(snapshot, disclosure, {
       query,
       sessionKey: request.sessionKey,
