@@ -73,7 +73,7 @@ test("codingMode.branchScope=false → no branch layering even when a branch is 
   // Namespace is the project scope only; no `branch:` segment.
   assert.equal(overlay!.namespace, "project-origin-aaaa");
   // globalFallback is true by default, so the root namespace appears in fallbacks.
-  assert.deepEqual(overlay!.readFallbacks, ["default"], "global fallback present when branchScope is off");
+  assert.deepEqual(overlay!.readFallbacks, [""], "global fallback present when branchScope is off");
 });
 
 test("codingMode.branchScope=true → namespace gains a branch segment and a project + root readFallback", () => {
@@ -86,7 +86,7 @@ test("codingMode.branchScope=true → namespace gains a branch segment and a pro
   // `feat-x` branch on the same project.
   assert.match(overlay!.namespace, /^project-origin-aaaa-branch-feat-x-[0-9a-f]{8}$/);
   // globalFallback is true by default, so both project and root appear.
-  assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa", "default"]);
+  assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa", ""]);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -106,7 +106,7 @@ test("branchScope=true + detached HEAD (branch=null) → collapses to project sc
   assert.ok(overlay);
   assert.equal(overlay!.namespace, "project-origin-bbbb");
   // Detached HEAD collapses to project scope; global fallback still included.
-  assert.deepEqual(overlay!.readFallbacks, ["default"]);
+  assert.deepEqual(overlay!.readFallbacks, [""]);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -178,8 +178,8 @@ test("branchScope=true: project-level memories remain visible via readFallbacks"
     "project-level memories must remain visible from any branch",
   );
   assert.ok(
-    overlay!.readFallbacks.includes("default"),
-    "global/root memories must remain visible from any branch (globalFallback)",
+    overlay!.readFallbacks.includes(""),
+    "global/root memories must remain visible from any branch (empty sentinel for combineNamespaces)",
   );
 });
 
@@ -243,7 +243,7 @@ test("describeCodingScope: project scope active → scope=project, namespace pop
   const desc = describeCodingScope(ctx, { projectScope: true, branchScope: false, globalFallback: true }, "default");
   assert.equal(desc.scope, "project");
   assert.equal(desc.effectiveNamespace, "project-origin-iiii");
-  assert.deepEqual(desc.readFallbacks, ["default"]);
+  assert.deepEqual(desc.readFallbacks, [""]);
   assert.equal(desc.disabledReason, null);
 });
 
@@ -265,7 +265,7 @@ test("describeCodingScope: branch scope active → scope=branch, fallbacks inclu
     desc.effectiveNamespace ?? "",
     /^project-origin-jjjj-branch-feat-x-[0-9a-f]{8}$/,
   );
-  assert.deepEqual(desc.readFallbacks, ["project-origin-jjjj", "default"]);
+  assert.deepEqual(desc.readFallbacks, ["project-origin-jjjj", ""]);
 });
 
 test("describeCodingScope: empty projectId → scope=none, reason=empty-project", () => {
