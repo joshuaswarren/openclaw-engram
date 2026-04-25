@@ -3535,6 +3535,67 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           if (!reportHasMachineReadableOutput(options)) console.log("OK");
         });
 
+      // Tier visibility (issue #686 PR 5/6) — operator-facing read-only
+      // surfaces for inspecting hot↔cold tier distribution and
+      // explaining why a single memory ended up where it did.
+      const tierCmd = cmd
+        .command("tier")
+        .description(
+          "Tier-distribution visibility (issue #686). `tier list` summarizes hot/cold counts and per-status breakdown; `tier explain <id>` shows the value-score components and tier-transition decision for a single memory.",
+        );
+      tierCmd
+        .command("list")
+        .description("Summarize tier distribution across all memories")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const { summarizeTiers, formatTierSummaryText } = await import(
+            "./maintenance/tier-stats.js"
+          );
+          const summary = await summarizeTiers(orchestrator.storage);
+          if (reportHasMachineReadableOutput(options)) {
+            console.log(JSON.stringify(summary, null, 2));
+          } else {
+            console.log(formatTierSummaryText(summary));
+          }
+        });
+      tierCmd
+        .command("explain")
+        .description("Explain the tier-transition decision for a single memory")
+        .argument("<id>", "Memory id to explain")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const idArg = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          const { explainTierForMemory, formatTierExplainText } = await import(
+            "./maintenance/tier-stats.js"
+          );
+          try {
+            const explain = await explainTierForMemory(
+              orchestrator.storage,
+              idArg,
+              orchestrator.config,
+            );
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify(explain, null, 2));
+            } else {
+              console.log(formatTierExplainText(explain));
+            }
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            if (reportHasMachineReadableOutput(options)) {
+              console.log(JSON.stringify({ ok: false, error: message }, null, 2));
+            } else {
+              console.error(
+                message.startsWith("tier explain:")
+                  ? message
+                  : `tier explain: ${message}`,
+              );
+            }
+            process.exitCode = 1;
+          }
+        });
+
       cmd
         .command("config-review")
         .description("Review Engram config defaults, recommendations, and contradictory settings")
