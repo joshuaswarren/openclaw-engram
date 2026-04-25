@@ -343,7 +343,7 @@ function parseAmaBenchBinaryJudgeScore(raw: string): number {
     return 0;
   }
   if (
-    /\b(?:not|never|isn'?t|wasn'?t|doesn'?t|didn'?t|cannot|can'?t)\s+(?:correct|true|pass(?:ed|es)?|a\s+match|the\s+same)\b/i.test(
+    /\b(?:not|never|isn'?t|wasn'?t|doesn'?t|didn'?t|cannot|can'?t)\b(?:\s+\w+){0,3}\s+(?:correct|true|pass(?:ed|es|ing)?|match(?:es|ed|ing)?|same)\b/i.test(
       trimmed,
     )
   ) {

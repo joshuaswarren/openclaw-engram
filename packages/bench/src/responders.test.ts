@@ -225,6 +225,13 @@ test("AMA-Bench recommended judge treats negated positive labels as incorrect", 
   );
 
   assert.equal(await passJudge.score("q", "predicted", "expected"), 0);
+
+  const adjectiveJudge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider("This is not a correct answer."),
+  );
+
+  assert.equal(await adjectiveJudge.score("q", "predicted", "expected"), 0);
 });
 
 test("provider-backed judge ignores date-like fractions and uses the trailing score", async () => {

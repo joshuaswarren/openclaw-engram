@@ -2318,9 +2318,7 @@ function resolveAmaBenchCrossJudgeProvider(
   const canInheritPrimaryTransport =
     parsed.amaBenchCrossJudgeProvider === undefined ||
     parsed.amaBenchCrossJudgeProvider === primaryJudgeProvider?.provider;
-  const inheritedBaseUrl = canInheritPrimaryTransport
-    ? primaryJudgeProvider?.baseUrl
-    : undefined;
+  const inheritedBaseUrl = primaryJudgeProvider?.baseUrl;
   const inheritedApiKey = canInheritPrimaryTransport
     ? primaryJudgeProvider?.apiKey
     : undefined;
