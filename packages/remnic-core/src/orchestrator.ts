@@ -100,6 +100,7 @@ import {
   normalizeSupersessionKey,
   shouldFilterSupersededFromRecall,
 } from "./temporal-supersession.js";
+import { isValidAsOf } from "./temporal-validity.js";
 import { RelevanceStore } from "./relevance.js";
 import { NegativeExampleStore } from "./negative.js";
 import {
@@ -564,6 +565,17 @@ export interface RecallInvocationOptions {
    * namespace-enabled deployments (CLAUDE.md rule 42).
    */
   principalOverride?: string;
+  /**
+   * Historical recall point (issue #680).  When set, the orchestrator
+   * filters out memories whose `valid_at` is after this timestamp OR
+   * whose `invalid_at` is at-or-before this timestamp, so callers see
+   * the corpus as it existed at `asOf`.  ISO 8601 string; comparisons
+   * use `Date.parse()` so timezone-aware values round-trip correctly
+   * (CLAUDE.md gotcha — never compare ISO strings lexicographically).
+   * Invalid values must be rejected at input boundaries (CLAUDE.md
+   * rule 51); the orchestrator does NOT silently fall back here.
+   */
+  asOf?: string;
 }
 
 type QueryAwarePrefilter = {
@@ -5530,6 +5542,17 @@ export class Orchestrator {
     options: RecallInvocationOptions = {},
   ): Promise<string> {
     const recallStart = Date.now();
+    // Issue #680 — historical recall.  Parse `options.asOf` once at the
+    // top of the recall so each boost-pass uses identical filter logic.
+    // Invalid values are rejected at input boundaries (CLI / HTTP / MCP)
+    // per CLAUDE.md rule 51; if a malformed value sneaks through here,
+    // we treat it as "no historical pin" rather than throwing inside
+    // recall — the upstream surfaces are the source of truth.
+    let asOfMs: number | undefined;
+    if (typeof options.asOf === "string" && options.asOf.length > 0) {
+      const parsed = Date.parse(options.asOf);
+      if (Number.isFinite(parsed)) asOfMs = parsed;
+    }
     const timings: Record<string, string> = {};
     const profileTraceId = this.profiler.startTrace("recall", sessionKey, {
       qmdEnabled: this.config.qmdEnabled,
@@ -8167,6 +8190,8 @@ export class Orchestrator {
         memoryResults,
         recallNamespaces,
         retrievalQuery,
+        undefined,
+        { asOfMs },
       );
 
       // Optional LLM reranking (default off). Fail-open if rerank fails/slow.
@@ -8367,6 +8392,8 @@ export class Orchestrator {
           scopedCandidates,
           recallNamespaces,
           retrievalQuery,
+          undefined,
+          { asOfMs },
         );
         // MMR runs on the pre-truncation pool so diverse candidates just
         // below the cutoff can be promoted into the injected set.
@@ -8415,6 +8442,7 @@ export class Orchestrator {
             queryAwarePrefilter,
             abortSignal: options.abortSignal,
             xrayPoolSizeSink: xrayColdPoolSink,
+            asOfMs,
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -8506,6 +8534,8 @@ export class Orchestrator {
         scopedCandidates,
         recallNamespaces,
         retrievalQuery,
+        undefined,
+        { asOfMs },
       );
       // MMR runs on the pre-truncation pool so diverse candidates just
       // below the cutoff can be promoted into the injected set.
@@ -8605,6 +8635,7 @@ export class Orchestrator {
               queryAwarePrefilter,
               abortSignal: options.abortSignal,
               xrayPoolSizeSink: xrayColdPoolSink,
+              asOfMs,
             });
             if (longTerm.length > 0) {
               recallSource = "cold_fallback";
@@ -8652,6 +8683,7 @@ export class Orchestrator {
                 recallNamespaces,
                 retrievalQuery,
                 preloadedMap,
+                { asOfMs },
               )
             ).sort((a, b) => b.score - a.score);
             // MMR runs on the pre-truncation pool so diverse candidates just
@@ -8702,6 +8734,7 @@ export class Orchestrator {
                 queryAwarePrefilter,
                 abortSignal: options.abortSignal,
                 xrayPoolSizeSink: xrayColdPoolSink,
+                asOfMs,
               });
               if (longTerm.length > 0) {
                 if (shouldPersistGraphSnapshot) {
@@ -8742,6 +8775,7 @@ export class Orchestrator {
             queryAwarePrefilter,
             abortSignal: options.abortSignal,
             xrayPoolSizeSink: xrayColdPoolSink,
+            asOfMs,
           });
           if (longTerm.length > 0) {
             if (shouldPersistGraphSnapshot) {
@@ -14231,6 +14265,8 @@ export class Orchestrator {
     recallMode: RecallPlanMode;
     queryAwarePrefilter?: QueryAwarePrefilter;
     abortSignal?: AbortSignal;
+    /** Issue #680 — historical recall point in ms-since-epoch. */
+    asOfMs?: number;
     /**
      * Optional out-parameter that receives the pre-MMR / pre-truncation
      * pool size captured inside the pipeline (issue #570 PR 1).  The
@@ -14328,7 +14364,7 @@ export class Orchestrator {
       options.recallNamespaces,
       options.prompt,
       undefined,
-      { allowLifecycleFiltered: true },
+      { allowLifecycleFiltered: true, asOfMs: options.asOfMs },
     );
 
     if (this.config.rerankEnabled && this.config.rerankProvider === "local") {
@@ -14489,6 +14525,14 @@ export class Orchestrator {
     options?: {
       allowLifecycleFiltered?: boolean;
       allowDedicatedSurface?: boolean;
+      /**
+       * Historical recall point in ms-since-epoch (issue #680).  When
+       * set, drops candidates that were not authoritative at this
+       * instant per `temporal-validity.isValidAsOf`.  Caller is
+       * responsible for parsing/validating the user-supplied ISO
+       * string at the input boundary (CLI / HTTP / MCP).
+       */
+      asOfMs?: number;
     },
   ): Promise<QmdSearchResult[]> {
     if (results.length === 0) return results;
@@ -14599,6 +14643,21 @@ export class Orchestrator {
         ) {
           temporalSupersededFilteredCount += 1;
           continue;
+        }
+
+        // Historical recall (issue #680): when the caller pinned the
+        // recall to a specific point in time, drop candidates that were
+        // not authoritative at that instant.  `as_of` overrides the
+        // supersession filter above — a fact that is currently
+        // superseded but was valid at `as_of` should still surface.
+        // The caller controls that override by setting
+        // `temporalSupersessionIncludeInRecall=true` for the as-of
+        // request, which is documented in `docs/temporal-recall.md`.
+        if (typeof options?.asOfMs === "number" && Number.isFinite(options.asOfMs)) {
+          if (!isValidAsOf(memory.frontmatter, options.asOfMs)) {
+            temporalSupersededFilteredCount += 1;
+            continue;
+          }
         }
 
         if (

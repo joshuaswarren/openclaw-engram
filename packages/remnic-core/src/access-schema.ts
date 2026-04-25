@@ -79,6 +79,13 @@ export const recallRequestSchema = z.object({
    * Creates a coding context with `projectId: "tag:<projectTag>"`.
    */
   projectTag: z.string().trim().min(1, "projectTag must be non-empty when provided").max(256).optional(),
+  /**
+   * Historical recall pin (issue #680).  ISO 8601 timestamp.  The
+   * schema only enforces the basic shape; the access service runs
+   * `Date.parse` and emits a structured 400 on malformed input
+   * (CLAUDE.md rule 51).
+   */
+  asOf: z.string().trim().min(1, "asOf must be a non-empty ISO 8601 timestamp").max(64).optional(),
 });
 
 export const recallExplainRequestSchema = z.object({

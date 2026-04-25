@@ -353,6 +353,18 @@ export async function applyTemporalSupersession(args: {
       );
       const supersededAt = new Date(maxMs).toISOString();
 
+      // Issue #680 — explicit fact lifecycle.  When the new fact
+      // supersedes this one, set the predecessor's `invalid_at` to the
+      // successor's `valid_at` (or `persistedCreatedAt` when no
+      // explicit `valid_at` is set).  Skip when the predecessor
+      // already carries an `invalid_at` so manual / earlier values
+      // are preserved (idempotent).
+      let invalidAtPatch: string | undefined;
+      if (!fresh.frontmatter.invalid_at) {
+        const newValidAt = newMemoryFile?.frontmatter.valid_at?.trim();
+        invalidAtPatch =
+          newValidAt && newValidAt.length > 0 ? newValidAt : persistedCreatedAt;
+      }
       const wrote = await args.storage.writeMemoryFrontmatter(
         fresh,
         {
@@ -360,6 +372,7 @@ export async function applyTemporalSupersession(args: {
           supersededBy: args.newMemoryId,
           supersededAt,
           updated: supersededAt,
+          ...(invalidAtPatch ? { invalid_at: invalidAtPatch } : {}),
         },
         {
           actor: "temporal-supersession",

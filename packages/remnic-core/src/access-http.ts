@@ -377,6 +377,15 @@ export class EngramAccessHttpServer {
       // silently overridden by a stale URL.  CLAUDE.md rule 51: invalid
       // query-param values throw, never fall back silently.
       const disclosure = this.resolveRecallDisclosure(body.disclosure, parsed);
+      // Issue #680 — historical recall pin.  Body field wins over the
+      // `?as_of=` query param so explicit JSON payloads are never
+      // silently overridden by a stale URL.  The service layer runs
+      // `Date.parse` validation and rejects malformed values with a
+      // structured 400 (CLAUDE.md rule 51).
+      const asOfQueryRaw = parsed.searchParams.get("as_of");
+      const asOf =
+        body.asOf ??
+        (asOfQueryRaw !== null && asOfQueryRaw.length > 0 ? asOfQueryRaw : undefined);
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
@@ -392,6 +401,7 @@ export class EngramAccessHttpServer {
         // Forward cwd/projectTag for auto git-context resolution (issue #569).
         cwd: body.cwd,
         projectTag: body.projectTag,
+        ...(asOf !== undefined ? { asOf } : {}),
       });
       this.respondJson(res, 200, response);
       return;

@@ -1707,6 +1707,25 @@ export interface MemoryFrontmatter {
   /** Timestamp when archived */
   archivedAt?: string;
   /**
+   * Explicit fact validity start (issue #680). ISO 8601 timestamp.
+   *
+   * When present, marks the moment at which the fact begins being
+   * "true" / authoritative.  When absent at read time, callers fall
+   * back to `created` so legacy memories written before #680 still
+   * participate in `as_of` recall filtering without a migration.
+   */
+  valid_at?: string;
+  /**
+   * Explicit fact validity end (issue #680). ISO 8601 timestamp.
+   *
+   * Set automatically by the temporal-supersession pipeline when a
+   * newer fact supersedes this one — the value is the superseder's
+   * `valid_at` (or `created` if no `valid_at` was set).  May also be
+   * set manually for facts that are known to expire at a specific
+   * point in time.
+   */
+  invalid_at?: string;
+  /**
    * Timestamp when the operator explicitly forgot this memory
    * (issue #686 PR 4/6).  Set by `remnic forget <id>`.  Memories with
    * `status === "forgotten"` are excluded from recall, browse, and

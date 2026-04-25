@@ -4225,6 +4225,10 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           "Output format: text (default) or json",
           "text",
         )
+        .option(
+          "--as-of <iso>",
+          "Historical recall pin (issue #680).  ISO 8601 timestamp; returns the corpus as it existed at this instant.",
+        )
         .action(async (...args: unknown[]) => {
           const query = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
           if (!query || query.trim().length === 0) {
@@ -4288,6 +4292,25 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             format = raw as "text" | "json";
           }
 
+          // Issue #680 — `--as-of` validation at the input boundary
+          // (CLAUDE.md rule 51 / gotcha #14).  A malformed value must
+          // throw with a clear message — silently defaulting to "no
+          // pin" would hide configuration mistakes.
+          let asOf: string | undefined;
+          if (options.asOf !== undefined) {
+            const raw = String(options.asOf).trim();
+            if (raw.length === 0) {
+              throw new Error("--as-of requires a non-empty ISO 8601 timestamp");
+            }
+            const parsedAsOf = Date.parse(raw);
+            if (!Number.isFinite(parsedAsOf)) {
+              throw new Error(
+                `invalid --as-of value: ${raw} (expected an ISO 8601 timestamp parseable by Date.parse)`,
+              );
+            }
+            asOf = raw;
+          }
+
           const accessService = new EngramAccessService(orchestrator);
           const response = await accessService.recall({
             query,
@@ -4295,6 +4318,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             ...(namespace !== undefined ? { namespace } : {}),
             ...(topK !== undefined ? { topK } : {}),
             ...(disclosure !== undefined ? { disclosure } : {}),
+            ...(asOf !== undefined ? { asOf } : {}),
           });
 
           if (format === "json") {

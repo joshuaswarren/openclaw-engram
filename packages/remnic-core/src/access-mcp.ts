@@ -115,6 +115,11 @@ export class EngramMcpServer {
             disclosure: { type: "string", enum: ["chunk", "section", "raw"] },
             cwd: { type: "string", description: "Working directory for auto git-context resolution." },
             projectTag: { type: "string", description: "Project tag for non-git project scoping (e.g. 'blend-supply')." },
+            asOf: {
+              type: "string",
+              description:
+                "Historical recall pin (issue #680).  ISO 8601 timestamp; when set, the recall returns the corpus as it existed at this instant.",
+            },
           },
           required: ["query"],
           additionalProperties: false,
@@ -1222,6 +1227,14 @@ export class EngramMcpServer {
         if ("projectTag" in args && args.projectTag !== undefined && args.projectTag !== null && typeof args.projectTag !== "string") {
           throw new EngramAccessInputError("projectTag must be a string");
         }
+        // Issue #680 — historical recall pin. Reject non-string asOf
+        // values up-front so a malformed payload (e.g. `asOf: 1234`)
+        // surfaces as a structured input error here rather than being
+        // silently coerced to undefined and dropped.  The service layer
+        // performs `Date.parse` validation on the string value.
+        if ("asOf" in args && args.asOf !== undefined && args.asOf !== null && typeof args.asOf !== "string") {
+          throw new EngramAccessInputError("asOf must be a string (ISO 8601 timestamp)");
+        }
         const response = await this.service.recall({
           query: typeof args.query === "string" ? args.query : "",
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
@@ -1232,6 +1245,7 @@ export class EngramMcpServer {
           disclosure,
           cwd: typeof args.cwd === "string" ? args.cwd : undefined,
           projectTag: typeof args.projectTag === "string" ? args.projectTag : undefined,
+          asOf: typeof args.asOf === "string" ? args.asOf : undefined,
         });
 
         if (this.shouldEmitCitations(mcpSessionId)) {
