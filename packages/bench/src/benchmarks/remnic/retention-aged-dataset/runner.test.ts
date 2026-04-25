@@ -153,38 +153,33 @@ test("aged-dataset Pareto sampler produces a long-tail distribution (no clamping
     seed: 0xa686,
     nowIso: "2026-04-25T12:00:00.000Z",
   });
-  // Count memories per topic.
-  const counts: number[] = new Array(16).fill(0);
-  for (const m of fixture.memories) {
-    // The topic is encoded by the first tag; recover it from the keyword
-    // list match.
-    const tag = m.frontmatter.tags?.[0] ?? "";
-    // Find which topic this tag maps to: the topic-keyword grid uses
-    // index % 16 for slot 0; we just need *some* indicator. The simplest
-    // reliable check is that the highest-rank topic does not dominate —
-    // if the previous Pareto-clamp bug were back, topic 15 would be a
-    // second hotspot rivaling topic 0.
-    void tag;
-  }
-  // Pull topicId via the queries' relevantMemoryIds → frontmatter id mapping
-  // would be expensive; instead, infer per-topic counts from the queries
-  // that the fixture emits (which use ids grouped by topic).
-  const queryCountsByTopic: number[] = new Array(16).fill(0);
+  // Per-topic memory counts come straight from the queries' relevantMemoryIds
+  // (each query carries the full memory-id list for its topic).
+  const memoriesByTopic: number[] = new Array(16).fill(0);
   for (const q of fixture.queries) {
-    queryCountsByTopic[q.topicId] = q.relevantMemoryIds.length;
+    memoriesByTopic[q.topicId] = q.relevantMemoryIds.length;
   }
-  // Topic 0 (highest-frequency) should have the most memories.
-  // Topic 15 (lowest) should have *strictly* fewer than topic 0.
-  // The previous clamped Pareto would have made topic 15 a second
-  // hotspot — possibly tying or exceeding topic 0.
+  // Topic 0 (highest-frequency) must have more memories than topic 15
+  // (lowest). The previous clamped Pareto would have made topic 15 a
+  // second hotspot rivaling topic 0.
   assert.ok(
-    queryCountsByTopic[0] > queryCountsByTopic[15],
-    `topic 0 must dominate over topic 15: topic0=${queryCountsByTopic[0]} topic15=${queryCountsByTopic[15]}`,
+    memoriesByTopic[0] > memoriesByTopic[15],
+    `topic 0 must dominate over topic 15: topic0=${memoriesByTopic[0]} topic15=${memoriesByTopic[15]}`,
   );
-  // And the distribution should be reasonably monotonic — there shouldn't
-  // be a spike at the last index.
+  // And the last rank must not be a second hotspot.
   assert.ok(
-    queryCountsByTopic[15] <= queryCountsByTopic[0] / 2,
-    `last-rank topic must not be a second hotspot: topic0=${queryCountsByTopic[0]} topic15=${queryCountsByTopic[15]}`,
+    memoriesByTopic[15] <= memoriesByTopic[0] / 2,
+    `last-rank topic must not be a second hotspot: topic0=${memoriesByTopic[0]} topic15=${memoriesByTopic[15]}`,
+  );
+
+  // Query-count distribution must also reflect the Pareto skew (P1 fix):
+  // topic 0 should drive proportionally more queries than topic 15.
+  const queriesByTopic: number[] = new Array(16).fill(0);
+  for (const q of fixture.queries) {
+    queriesByTopic[q.topicId] += 1;
+  }
+  assert.ok(
+    queriesByTopic[0] > queriesByTopic[15],
+    `query workload must Pareto-weight topic 0 above topic 15: topic0=${queriesByTopic[0]} topic15=${queriesByTopic[15]}`,
   );
 });

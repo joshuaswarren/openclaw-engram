@@ -252,20 +252,32 @@ export function generateAgedDataset(
   //
   // We cap the multiplier per topic at `MAX_QUERIES_PER_TOPIC` to keep
   // total task count tractable in `quick` mode.
-  const MAX_QUERIES_PER_TOPIC = 8;
+  // Build a Pareto-weighted query workload. Total queries scale with
+  // total memory count so each topic's share of the workload is
+  // proportional to its share of the corpus. With size=2000 and a
+  // Pareto-skewed corpus (topic 0 ≈ 695 memories, topic 15 ≈ 26), this
+  // yields topic 0 ≈ 70 queries and topic 15 ≈ 3 queries — a clean
+  // Pareto-weighted workload. The saturating `min(8, ceil(n/4))` formula
+  // collapsed both extremes onto the cap, losing the Pareto signal.
+  // (Codex P1 review on PR #698.)
+  //
+  // We cap total queries to `MAX_TOTAL_QUERIES` so quick mode stays
+  // tractable. Each topic gets at least 1 query.
+  const MAX_TOTAL_QUERIES = 200;
+  const totalMemoryCount = memories.length;
+  const totalShare = Math.min(MAX_TOTAL_QUERIES, Math.max(1, totalMemoryCount));
   const queries: AgedQuery[] = [];
   for (const [topicId, ids] of memoriesByTopic.entries()) {
-    const topicQueryCount = Math.min(
-      MAX_QUERIES_PER_TOPIC,
-      Math.max(1, Math.ceil(ids.length / 4)),
+    const topicQueryCount = Math.max(
+      1,
+      Math.round((ids.length / Math.max(1, totalMemoryCount)) * totalShare),
     );
     for (let q = 0; q < topicQueryCount; q += 1) {
       queries.push({
-        // Include the per-topic instance index so duplicates within a
-        // topic stay distinguishable. Other bench runners use unique
-        // taskIds; downstream consumers (reporters, dedup, storage)
-        // key on taskId, so collisions would silently collapse rows.
-        // (Codex review on PR #698.)
+        // Per-topic instance index keeps duplicates within a topic
+        // distinguishable. Downstream consumers (reporters, dedup,
+        // storage) key on taskId, so collisions would silently collapse
+        // rows.
         id: `topic-${topicId}-${q}`,
         text: `${topicWord(topicId, 0)} ${topicWord(topicId, 1)}`,
         topicId,
