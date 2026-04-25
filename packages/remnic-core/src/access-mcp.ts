@@ -1321,15 +1321,29 @@ export class EngramMcpServer {
           budget = parsed;
         }
         // Forward disclosure depth so the recallXray telemetry table is
-        // populated for MCP callers (issue #677 PR 3/4).  Treat empty
-        // string as absent (matches HTTP `?disclosure=` handling) so
-        // the two surfaces don't diverge on the same pathological
-        // input.  Non-empty strings flow through to the service's
-        // strict allow-list validator (which throws on unknown values).
-        const disclosure =
-          typeof args.disclosure === "string" && args.disclosure.length > 0
-            ? args.disclosure
-            : undefined;
+        // populated for MCP callers (issue #677 PR 3/4).  Reject
+        // non-string types explicitly (matches the strict input
+        // contract used elsewhere in this handler — see `budget` /
+        // `disclosure` in engram.recall around line 1198 — and the
+        // HTTP path's 400-on-bad-disclosure handling).  Treat empty
+        // string as absent so HTTP `?disclosure=` and MCP align on
+        // the same observable contract for that pathological input.
+        // Non-empty strings flow through to the service's strict
+        // allow-list validator (which throws on unknown values).
+        let disclosure: string | undefined;
+        if (
+          "disclosure" in args &&
+          args.disclosure !== undefined &&
+          args.disclosure !== null &&
+          args.disclosure !== ""
+        ) {
+          if (typeof args.disclosure !== "string") {
+            throw new Error(
+              "engram.recall_xray: disclosure must be a string (one of: chunk, section, raw)",
+            );
+          }
+          disclosure = args.disclosure;
+        }
         return this.service.recallXray({
           query,
           sessionKey,
