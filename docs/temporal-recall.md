@@ -19,6 +19,23 @@ so legacy memories written before #680 participate in `as_of` filtering
 without a backfill migration. When `invalidAt` is absent, the fact is
 considered authoritative through "now".
 
+### Legacy supersession boundaries (approximate)
+
+For memories with `status: "superseded"` written before #680 — which
+have `supersededAt` populated but no `invalidAt` — the read-time
+filter falls back to `supersededAt` as `effectiveInvalidAt`. This
+keeps legacy predecessors out of historical recall once they were
+clearly retired, without requiring a backfill.
+
+The fallback is approximate: `supersededAt` reflects when the
+supersession *write* fired, which can post-date the successor's true
+`validAt` if consolidation ran on a delayed cadence. So a legacy
+predecessor may appear in `as_of` recall slightly longer than its
+successor's actual replacement instant. New data (post-#680) writes
+`invalidAt` directly from the successor's `validAt`, so this
+imprecision applies only to data written before the temporal-lifecycle
+schema landed.
+
 ## How `invalid_at` gets populated
 
 The temporal supersession pipeline (`temporal-supersession.ts`) already
