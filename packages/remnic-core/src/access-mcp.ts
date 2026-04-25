@@ -115,6 +115,16 @@ export class EngramMcpServer {
             disclosure: { type: "string", enum: ["chunk", "section", "raw"] },
             cwd: { type: "string", description: "Working directory for auto git-context resolution." },
             projectTag: { type: "string", description: "Project tag for non-git project scoping (e.g. 'blend-supply')." },
+            tags: {
+              type: "array",
+              items: { type: "string" },
+              description: "Filter recall results to memories whose frontmatter tags match (issue #689).",
+            },
+            tagMatch: {
+              type: "string",
+              enum: ["any", "all"],
+              description: "Tag-filter match mode. 'any' (default) admits results with at least one filter tag; 'all' requires every filter tag.",
+            },
           },
           required: ["query"],
           additionalProperties: false,
@@ -1222,6 +1232,24 @@ export class EngramMcpServer {
         if ("projectTag" in args && args.projectTag !== undefined && args.projectTag !== null && typeof args.projectTag !== "string") {
           throw new EngramAccessInputError("projectTag must be a string");
         }
+        // Tag filter (issue #689).  Reject malformed `tags` / `tagMatch`
+        // up front rather than silently dropping (CLAUDE.md rule 51).
+        let tags: string[] | undefined;
+        if ("tags" in args && args.tags !== undefined && args.tags !== null) {
+          if (!Array.isArray(args.tags) || !args.tags.every((t) => typeof t === "string")) {
+            throw new EngramAccessInputError("tags must be an array of strings");
+          }
+          tags = args.tags;
+        }
+        let tagMatch: "any" | "all" | undefined;
+        if ("tagMatch" in args && args.tagMatch !== undefined && args.tagMatch !== null) {
+          if (typeof args.tagMatch !== "string" || (args.tagMatch !== "any" && args.tagMatch !== "all")) {
+            throw new EngramAccessInputError(
+              `tagMatch must be one of: any, all (got: ${String(args.tagMatch)})`,
+            );
+          }
+          tagMatch = args.tagMatch;
+        }
         const response = await this.service.recall({
           query: typeof args.query === "string" ? args.query : "",
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
@@ -1232,6 +1260,8 @@ export class EngramMcpServer {
           disclosure,
           cwd: typeof args.cwd === "string" ? args.cwd : undefined,
           projectTag: typeof args.projectTag === "string" ? args.projectTag : undefined,
+          ...(tags !== undefined ? { tags } : {}),
+          ...(tagMatch !== undefined ? { tagMatch } : {}),
         });
 
         if (this.shouldEmitCitations(mcpSessionId)) {

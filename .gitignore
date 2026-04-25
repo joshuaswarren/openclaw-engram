@@ -53,3 +53,4 @@ THEORY.MD
 logs/
 *.tgz
 irc-debug.ts
+.subagents/
