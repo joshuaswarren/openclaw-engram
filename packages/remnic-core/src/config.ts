@@ -566,9 +566,13 @@ export function parseConfig(raw: unknown): PluginConfig {
   // `coerceBool` treats "false"/"0"/"no"/"off" as false (CLAUDE.md #36).
   const codingProjectScopeRaw = coerceBool(rawCodingMode.projectScope);
   const codingBranchScopeRaw = coerceBool(rawCodingMode.branchScope);
+  const codingGlobalFallbackRaw = coerceBool(rawCodingMode.globalFallback);
   const codingMode: CodingModeConfig = {
     projectScope: codingProjectScopeRaw === undefined ? true : codingProjectScopeRaw,
     branchScope: codingBranchScopeRaw === true,
+    // Default true — project-scoped sessions include the root namespace in
+    // read fallbacks so globally useful memories remain visible. CLAUDE.md #30.
+    globalFallback: codingGlobalFallbackRaw === undefined ? true : codingGlobalFallbackRaw,
   };
 
   const memoryDir =

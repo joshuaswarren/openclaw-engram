@@ -45,6 +45,7 @@ function makeOrchestrator(codingMode: Partial<CodingModeConfig> = {}): Orchestra
     codingMode: {
       projectScope: true,
       branchScope: true,
+      globalFallback: true,
       ...codingMode,
     },
   } as unknown as PluginConfig;
@@ -71,10 +72,11 @@ test("codingMode.branchScope=false → no branch layering even when a branch is 
   assert.ok(overlay);
   // Namespace is the project scope only; no `branch:` segment.
   assert.equal(overlay!.namespace, "project-origin-aaaa");
-  assert.deepEqual(overlay!.readFallbacks, [], "no fallbacks when branch scope is off");
+  // globalFallback is true by default, so the root namespace appears in fallbacks.
+  assert.deepEqual(overlay!.readFallbacks, [""], "global fallback present when branchScope is off");
 });
 
-test("codingMode.branchScope=true → namespace gains a branch segment and a project readFallback", () => {
+test("codingMode.branchScope=true → namespace gains a branch segment and a project + root readFallback", () => {
   const orch = makeOrchestrator({ branchScope: true });
   orch.setCodingContextForSession("session-A", contextFor("origin:aaaa", "feat/x"));
   const overlay = orch.applyCodingRecallOverlay("session-A");
@@ -83,14 +85,15 @@ test("codingMode.branchScope=true → namespace gains a branch segment and a pro
   // disambiguating hash is appended to keep it distinct from a literal
   // `feat-x` branch on the same project.
   assert.match(overlay!.namespace, /^project-origin-aaaa-branch-feat-x-[0-9a-f]{8}$/);
-  assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa"]);
+  // globalFallback is true by default, so both project and root appear.
+  assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa", ""]);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
 // Detached HEAD — no branch segment
 // ──────────────────────────────────────────────────────────────────────────
 
-test("branchScope=true + detached HEAD (branch=null) → collapses to project scope", () => {
+test("branchScope=true + detached HEAD (branch=null) → collapses to project scope with global fallback", () => {
   const orch = makeOrchestrator({ branchScope: true });
   const ctx: CodingContext = {
     projectId: "origin:bbbb",
@@ -102,7 +105,8 @@ test("branchScope=true + detached HEAD (branch=null) → collapses to project sc
   const overlay = orch.applyCodingRecallOverlay("session-A");
   assert.ok(overlay);
   assert.equal(overlay!.namespace, "project-origin-bbbb");
-  assert.deepEqual(overlay!.readFallbacks, []);
+  // Detached HEAD collapses to project scope; global fallback still included.
+  assert.deepEqual(overlay!.readFallbacks, [""]);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -173,6 +177,10 @@ test("branchScope=true: project-level memories remain visible via readFallbacks"
     overlay!.readFallbacks.includes("project-origin-eeee"),
     "project-level memories must remain visible from any branch",
   );
+  assert.ok(
+    overlay!.readFallbacks.includes(""),
+    "global/root memories must remain visible from any branch (empty sentinel for combineNamespaces)",
+  );
 });
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -213,7 +221,7 @@ test("projectScope=false defeats branchScope=true (master gate — CLAUDE.md #30
 // ──────────────────────────────────────────────────────────────────────────
 
 test("describeCodingScope: no context → scope=none, reason=no-context", () => {
-  const desc = describeCodingScope(null, { projectScope: true, branchScope: false });
+  const desc = describeCodingScope(null, { projectScope: true, branchScope: false, globalFallback: true });
   assert.equal(desc.scope, "none");
   assert.equal(desc.disabledReason, "no-context");
   assert.equal(desc.effectiveNamespace, null);
@@ -221,7 +229,7 @@ test("describeCodingScope: no context → scope=none, reason=no-context", () => 
 
 test("describeCodingScope: projectScope=false → scope=none, reason=disabled", () => {
   const ctx = contextFor("origin:hhhh", "main");
-  const desc = describeCodingScope(ctx, { projectScope: false, branchScope: false });
+  const desc = describeCodingScope(ctx, { projectScope: false, branchScope: false, globalFallback: true });
   assert.equal(desc.scope, "none");
   assert.equal(desc.disabledReason, "disabled");
   // Raw context fields are still surfaced so operators can see what would
@@ -230,25 +238,34 @@ test("describeCodingScope: projectScope=false → scope=none, reason=disabled", 
   assert.equal(desc.branch, "main");
 });
 
-test("describeCodingScope: project scope active → scope=project, namespace populated", () => {
+test("describeCodingScope: project scope active → scope=project, namespace populated, global fallback included", () => {
   const ctx = contextFor("origin:iiii", "main");
-  const desc = describeCodingScope(ctx, { projectScope: true, branchScope: false });
+  const desc = describeCodingScope(ctx, { projectScope: true, branchScope: false, globalFallback: true }, "default");
+  assert.equal(desc.scope, "project");
+  assert.equal(desc.effectiveNamespace, "project-origin-iiii");
+  assert.deepEqual(desc.readFallbacks, [""]);
+  assert.equal(desc.disabledReason, null);
+});
+
+test("describeCodingScope: project scope active, globalFallback=false → no root in fallbacks", () => {
+  const ctx = contextFor("origin:iiii", "main");
+  const desc = describeCodingScope(ctx, { projectScope: true, branchScope: false, globalFallback: false }, "default");
   assert.equal(desc.scope, "project");
   assert.equal(desc.effectiveNamespace, "project-origin-iiii");
   assert.deepEqual(desc.readFallbacks, []);
   assert.equal(desc.disabledReason, null);
 });
 
-test("describeCodingScope: branch scope active → scope=branch, fallbacks include project", () => {
+test("describeCodingScope: branch scope active → scope=branch, fallbacks include project and root", () => {
   const ctx = contextFor("origin:jjjj", "feat/x");
-  const desc = describeCodingScope(ctx, { projectScope: true, branchScope: true });
+  const desc = describeCodingScope(ctx, { projectScope: true, branchScope: true, globalFallback: true }, "default");
   assert.equal(desc.scope, "branch");
   // Lossy-sanitization hash appended for `/` in `feat/x`.
   assert.match(
     desc.effectiveNamespace ?? "",
     /^project-origin-jjjj-branch-feat-x-[0-9a-f]{8}$/,
   );
-  assert.deepEqual(desc.readFallbacks, ["project-origin-jjjj"]);
+  assert.deepEqual(desc.readFallbacks, ["project-origin-jjjj", ""]);
 });
 
 test("describeCodingScope: empty projectId → scope=none, reason=empty-project", () => {
@@ -258,7 +275,7 @@ test("describeCodingScope: empty projectId → scope=none, reason=empty-project"
     rootPath: "/work/proj",
     defaultBranch: "main",
   };
-  const desc = describeCodingScope(ctx, { projectScope: true, branchScope: false });
+  const desc = describeCodingScope(ctx, { projectScope: true, branchScope: false, globalFallback: true });
   assert.equal(desc.scope, "none");
   assert.equal(desc.disabledReason, "empty-project");
 });

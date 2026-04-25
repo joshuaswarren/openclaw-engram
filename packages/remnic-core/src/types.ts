@@ -286,6 +286,17 @@ export interface CodingModeConfig {
    * issue #569; declared here so the schema ships in one slice.)
    */
   branchScope: boolean;
+  /**
+   * When true (default), project-scoped and branch-scoped sessions include
+   * the root/default namespace in their read fallbacks so globally useful
+   * memories remain visible from any project. When false, project-scoped
+   * sessions only see their own namespace (strict isolation).
+   *
+   * CLAUDE.md #30: configuration gate for the recall fan-out to the root
+   * namespace. Does not affect writes — those always go to the project
+   * namespace only.
+   */
+  globalFallback: boolean;
 }
 
 /**

@@ -11,6 +11,7 @@ import test from "node:test";
 
 import {
   branchNamespaceName,
+  combineNamespaces,
   projectNamespaceName,
   resolveCodingNamespaceOverlay,
 } from "./coding-namespace.js";
@@ -31,6 +32,7 @@ function mode(overrides: Partial<CodingModeConfig> = {}): CodingModeConfig {
   return {
     projectScope: true,
     branchScope: false,
+    globalFallback: true,
     ...overrides,
   };
 }
@@ -198,8 +200,49 @@ test("resolveCodingNamespaceOverlay: empty projectId → null (defensive)", () =
 // resolveCodingNamespaceOverlay — project scope
 // ──────────────────────────────────────────────────────────────────────────
 
-test("resolveCodingNamespaceOverlay: projectScope=true → project overlay, no fallbacks", () => {
+test("resolveCodingNamespaceOverlay: projectScope=true + globalFallback=true (default) → includes empty sentinel", () => {
   const overlay = resolveCodingNamespaceOverlay(ctx({ projectId: "origin:deadbeef" }), mode());
+  assert.deepEqual(overlay, {
+    namespace: "project-origin-deadbeef",
+    readFallbacks: [""],
+    scope: "project",
+  });
+});
+
+test("resolveCodingNamespaceOverlay: projectScope=true + globalFallback=true + defaultNamespace → root in fallbacks", () => {
+  const overlay = resolveCodingNamespaceOverlay(
+    ctx({ projectId: "origin:deadbeef" }),
+    mode({ globalFallback: true }),
+    "default",
+  );
+  assert.deepEqual(overlay, {
+    namespace: "project-origin-deadbeef",
+    readFallbacks: [""],
+    scope: "project",
+  });
+});
+
+test("resolveCodingNamespaceOverlay: projectScope=true + globalFallback=true → empty-string sentinel combines to principal self", () => {
+  // Verifies the fix for the P1 double-combination bug: "" as fallback
+  // causes combineNamespaces(principal, "") to return the principal's own
+  // namespace, not "principal-default" which would miss global memories.
+  const overlay = resolveCodingNamespaceOverlay(
+    ctx({ projectId: "origin:deadbeef" }),
+    mode({ globalFallback: true }),
+    "default",
+  );
+  assert.equal(overlay!.readFallbacks.length, 1);
+  assert.equal(overlay!.readFallbacks[0], "");
+  assert.equal(combineNamespaces("alice", ""), "alice");
+  assert.equal(combineNamespaces("default", ""), "default");
+});
+
+test("resolveCodingNamespaceOverlay: projectScope=true + globalFallback=false → no root in fallbacks", () => {
+  const overlay = resolveCodingNamespaceOverlay(
+    ctx({ projectId: "origin:deadbeef" }),
+    mode({ globalFallback: false }),
+    "default",
+  );
   assert.deepEqual(overlay, {
     namespace: "project-origin-deadbeef",
     readFallbacks: [],
@@ -207,7 +250,7 @@ test("resolveCodingNamespaceOverlay: projectScope=true → project overlay, no f
   });
 });
 
-test("resolveCodingNamespaceOverlay: branchScope=true with branch=null → still project scope only", () => {
+test("resolveCodingNamespaceOverlay: branchScope=true with branch=null → project scope + global fallback", () => {
   const overlay = resolveCodingNamespaceOverlay(
     ctx({ projectId: "origin:aaaa0000", branch: null }),
     mode({ branchScope: true }),
@@ -215,27 +258,50 @@ test("resolveCodingNamespaceOverlay: branchScope=true with branch=null → still
   assert.ok(overlay);
   assert.equal(overlay!.scope, "project");
   assert.equal(overlay!.namespace, "project-origin-aaaa0000");
-  assert.deepEqual(overlay!.readFallbacks, []);
+  assert.deepEqual(overlay!.readFallbacks, [""]);
 });
 
 // ──────────────────────────────────────────────────────────────────────────
 // resolveCodingNamespaceOverlay — branch scope (PR 3 preview, but logic is here)
 // ──────────────────────────────────────────────────────────────────────────
 
-test("resolveCodingNamespaceOverlay: branchScope=true + branch set → branch overlay with project fallback", () => {
+test("resolveCodingNamespaceOverlay: branchScope=true + branch set + globalFallback=true → project + root fallbacks", () => {
   const overlay = resolveCodingNamespaceOverlay(
     ctx({ projectId: "origin:aaaa0000", branch: "feat/x" }),
     mode({ branchScope: true }),
   );
   assert.ok(overlay);
   assert.equal(overlay!.scope, "branch");
-  // `feat/x` is lossy under sanitization (`/` → `-`), so the branch
-  // namespace includes a deterministic hash suffix to keep it distinct
-  // from a literal `feat-x` branch on the same project.
   assert.match(
     overlay!.namespace,
     /^project-origin-aaaa0000-branch-feat-x-[0-9a-f]{8}$/,
   );
+  // globalFallback defaults to true → project + empty sentinel for global.
+  assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa0000", ""]);
+});
+
+test("resolveCodingNamespaceOverlay: branchScope=true + globalFallback=true + defaultNamespace → project and root fallbacks", () => {
+  const overlay = resolveCodingNamespaceOverlay(
+    ctx({ projectId: "origin:aaaa0000", branch: "feat/x" }),
+    mode({ branchScope: true, globalFallback: true }),
+    "generalist",
+  );
+  assert.ok(overlay);
+  assert.equal(overlay!.scope, "branch");
+  assert.match(
+    overlay!.namespace,
+    /^project-origin-aaaa0000-branch-feat-x-[0-9a-f]{8}$/,
+  );
+  assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa0000", ""]);
+});
+
+test("resolveCodingNamespaceOverlay: branchScope=true + globalFallback=false → only project fallback", () => {
+  const overlay = resolveCodingNamespaceOverlay(
+    ctx({ projectId: "origin:aaaa0000", branch: "feat/x" }),
+    mode({ branchScope: true, globalFallback: false }),
+    "generalist",
+  );
+  assert.ok(overlay);
   assert.deepEqual(overlay!.readFallbacks, ["project-origin-aaaa0000"]);
 });
 
@@ -244,6 +310,30 @@ test("resolveCodingNamespaceOverlay: branchScope=false → no branch layering ev
   assert.ok(overlay);
   assert.equal(overlay!.scope, "project");
   assert.ok(!overlay!.namespace.includes("branch:"));
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// resolveCodingNamespaceOverlay — globalFallback edge cases
+// ──────────────────────────────────────────────────────────────────────────
+
+test("resolveCodingNamespaceOverlay: globalFallback=true + empty defaultNamespace → still includes empty sentinel", () => {
+  // The sentinel "" tells combineNamespaces to return the principal base
+  // unchanged, regardless of what defaultNamespace is configured.
+  const overlay = resolveCodingNamespaceOverlay(
+    ctx({ projectId: "origin:deadbeef" }),
+    mode({ globalFallback: true }),
+    "   ",
+  );
+  assert.deepEqual(overlay!.readFallbacks, [""]);
+});
+
+test("resolveCodingNamespaceOverlay: globalFallback=true + custom defaultNamespace → empty sentinel (not the name)", () => {
+  const overlay = resolveCodingNamespaceOverlay(
+    ctx({ projectId: "origin:deadbeef" }),
+    mode({ globalFallback: true }),
+    "generalist",
+  );
+  assert.deepEqual(overlay!.readFallbacks, [""]);
 });
 
 // ──────────────────────────────────────────────────────────────────────────

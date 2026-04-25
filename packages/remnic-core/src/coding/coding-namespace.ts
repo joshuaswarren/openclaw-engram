@@ -252,10 +252,18 @@ export function branchNamespaceName(projectId: string, branch: string): string {
  * existing `defaultNamespaceForPrincipal(...)` result unchanged. This keeps
  * CLAUDE.md #30 (escape hatch): setting `codingMode.projectScope: false`
  * exactly restores pre-#569 behaviour at every call site.
+ *
+ * @param codingContext — git context from the connector
+ * @param config — coding mode flags (projectScope, branchScope, globalFallback)
+ * @param defaultNamespace — retained for call-site compatibility; no longer
+ *   used. The global fallback is expressed as an empty-string sentinel in
+ *   `readFallbacks`, which `combineNamespaces(principal, "")` resolves to the
+ *   principal's own namespace at the call site.
  */
 export function resolveCodingNamespaceOverlay(
   codingContext: CodingContext | null | undefined,
-  config: Pick<CodingModeConfig, "projectScope" | "branchScope">,
+  config: Pick<CodingModeConfig, "projectScope" | "branchScope" | "globalFallback">,
+  defaultNamespace?: string,
 ): CodingNamespaceOverlay | null {
   // No context supplied (session isn't in a git repo, or connector didn't
   // attach one) → no overlay.
@@ -271,24 +279,40 @@ export function resolveCodingNamespaceOverlay(
 
   const projectNs = projectNamespaceName(projectId);
 
+  // Root/global namespace fallback: when `globalFallback` is true, include
+  // the principal's self namespace in readFallbacks so cross-project knowledge
+  // remains visible. CLAUDE.md #30: the gate is `globalFallback` — set to
+  // false for strict project isolation.
+  //
+  // The fallback value is "" (empty string), NOT the defaultNamespace name.
+  // The orchestrator passes each fallback through combineNamespaces(principal, fallback),
+  // and combineNamespaces(base, "") returns base unchanged — yielding the
+  // principal's own namespace. Using the actual namespace name (e.g., "default")
+  // would produce "default-default" after combination, missing the target.
+  const includeRoot = config.globalFallback === true;
+
   // Branch-scope layering (PR 3):
   //   - only when config.branchScope is explicitly true
   //   - only when we actually have a branch (null in detached HEAD)
   //   - project namespace becomes a read fallback so project-level memories
   //     remain visible from any branch (deliberate asymmetry — branch writes
   //     don't leak up, but project reads leak down).
+  //   - when globalFallback is on, the root namespace is also appended so
+  //     globally useful memories surface in every branch.
   if (config.branchScope && typeof codingContext.branch === "string" && codingContext.branch.length > 0) {
     const branchNs = branchNamespaceName(projectId, codingContext.branch);
+    const fallbacks = [projectNs];
+    if (includeRoot) fallbacks.push("");
     return {
       namespace: branchNs,
-      readFallbacks: [projectNs],
+      readFallbacks: fallbacks,
       scope: "branch",
     };
   }
 
   return {
     namespace: projectNs,
-    readFallbacks: [],
+    readFallbacks: includeRoot ? [""] : [],
     scope: "project",
   };
 }
@@ -326,7 +350,8 @@ export interface CodingScopeDescription {
  */
 export function describeCodingScope(
   codingContext: CodingContext | null | undefined,
-  config: Pick<CodingModeConfig, "projectScope" | "branchScope">,
+  config: Pick<CodingModeConfig, "projectScope" | "branchScope" | "globalFallback">,
+  defaultNamespace?: string,
 ): CodingScopeDescription {
   const projectId = codingContext?.projectId ?? null;
   const branch = codingContext?.branch ?? null;
@@ -363,7 +388,7 @@ export function describeCodingScope(
     };
   }
 
-  const overlay = resolveCodingNamespaceOverlay(codingContext, config);
+  const overlay = resolveCodingNamespaceOverlay(codingContext, config, defaultNamespace);
   // Unreachable in practice given the guards above, but keep the return
   // shape consistent if the resolver grows new null branches later.
   if (!overlay) {
