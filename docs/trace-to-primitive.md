@@ -86,22 +86,27 @@ Observations are not yet persistent. Before they hit disk, consolidation runs (`
 - Does the corpus contain a contradicting earlier fact? → SUPERSEDE (the older fact gets `invalid_at` flipped via `temporal-supersession.ts`; the new one is added).
 - Genuinely new? → ADD.
 
-Each accepted observation is written by `storage.ts` as a `MemoryFile` with full YAML frontmatter:
+Each accepted observation is written by `storage.ts` as a `MemoryFile`. Illustrative subset of the keys `serializeFrontmatter` actually emits (the live serializer is the source of truth):
 
 ```yaml
 ---
 id: mem_018f9a...
 category: decision
 created: 2026-04-25T18:32:11Z
+updated: 2026-04-25T18:32:11Z
+source: extraction
 confidence: 0.95
 confidenceTier: high
 tags: ["release-cadence", "ops"]
-importance: 0.85
+importanceScore: 0.85
+importanceLevel: high
 status: active
 ---
 
 Cut releases every Tuesday.
 ```
+
+Importance is split into `importanceScore` (numeric in `[0, 1]`) and `importanceLevel` (categorical: `trivial` / `low` / `normal` / `high` / `critical`) on disk, and `updated` / `source` are always present alongside `id`, `category`, and `created`. See `serializeFrontmatter` in `packages/remnic-core/src/storage.ts` for the full key set.
 
 That `MemoryFile` is the **primitive**. Three primitives now exist where four hours of conversation used to be.
 
@@ -130,7 +135,7 @@ The trace is noise. The primitive is the product.
 | `remnic doctor` | *(future)* Will report observation throughput, judge acceptance rate, and the most recent `observedAt`. Today these signals live in the separate observation-ledger / judge stats paths; surfacing them in `doctor` is tracked as a follow-up. |
 | `recall` responses | `<oai-mem-citation>` blocks point at the primitive ids that came out the other end of the pipeline. |
 | `remnic tier list` / `tier explain` | Inspect what happened to primitives after they were written (issue #686). |
-| `observation-ledger` | A separate concept: this records *lifecycle events* on primitives (supersessions, archive, forget). It is **not** the observation stage of this pipeline — see the naming note below. |
+| `observation-ledger` | A separate concept: a JSONL telemetry directory (`state/observation-ledger/`) capturing turn-count aggregates (`maintenance/rebuild-observations.ts`) and judge verdict events (`extraction-judge-telemetry.ts`). Operator-observability data, distinct from the lifecycle-event ledger and from the `MemoryObservation` type — see the naming note below. |
 
 ## Naming note: observation vs observation-ledger
 
@@ -139,9 +144,9 @@ The trace is noise. The primitive is the product.
 | Term | Meaning |
 |------|---------|
 | `MemoryObservation` (this doc, public type) | The post-extraction, pre-storage candidate. The "observation" stage of Trace → Observation → Primitive. |
-| `observation-ledger` (`maintenance/observation-ledger-utils.ts`) | A JSONL log of *lifecycle events* on primitives — status flips, supersessions, archival, forgetting. Nothing to do with extraction. |
+| `observation-ledger` (`state/observation-ledger/` directory) | Telemetry storage for the extraction pipeline itself: turn-count aggregates rebuilt by `maintenance/rebuild-observations.ts` (`rebuilt-observations.jsonl`) and judge verdict events appended by `extraction-judge-telemetry.ts`. Operator-observability data, not lifecycle transitions. Lifecycle events on primitives (supersession, archive, forget) live in `state/memory-lifecycle-ledger/`. |
 
-The ledger logs what happens to primitives **after** they exist; an observation describes the candidate that **became** a primitive in the first place. We considered renaming the ledger to disambiguate but kept it for backward compatibility — operator tooling and crons reference the existing path. New code should reach for `MemoryObservation` when describing the extraction pipeline and `observation-ledger` only when describing the lifecycle event log.
+`MemoryObservation` is the in-flight candidate type; `observation-ledger` is the on-disk telemetry directory describing how that pipeline performed. They share a word but describe different layers — the type is what the pipeline produces, the ledger directory is how it reports on itself. We considered renaming the directory to disambiguate but kept it for backward compatibility (operator tooling and crons reference the existing path). New code should reach for `MemoryObservation` when describing the extraction pipeline and `observation-ledger` only when referring to that telemetry storage.
 
 ## References
 
