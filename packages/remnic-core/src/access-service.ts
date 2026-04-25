@@ -1666,6 +1666,14 @@ export class EngramAccessService {
       // and raw use full content.  Best-effort only — a missing
       // memory or read failure is silently dropped (CLAUDE.md rule 13).
       if (request.disclosure !== undefined) {
+        // Validate disclosure input — recallXray must reject invalid
+        // values rather than writing them straight into result metadata
+        // (Codex P2 review on PR #699).  Aligned with `recall()` above.
+        if (!isRecallDisclosure(request.disclosure)) {
+          throw new EngramAccessInputError(
+            `recallXray: disclosure must be one of: chunk, section, raw (got: ${String(request.disclosure)})`,
+          );
+        }
         const disclosure = request.disclosure;
         const namespace = snapshot.namespace
           ? this.resolveNamespace(snapshot.namespace)
@@ -1689,45 +1697,70 @@ export class EngramAccessService {
           rawExcerpts && rawExcerpts.length > 0
             ? rawExcerpts.map((e) => e.content).join("\n")
             : "";
-        // Excerpts attach to result[0] in the recall response — pin the
-        // attribution to the deterministic index here so concurrent
-        // execution inside the Promise.all map can't reassign which
-        // result gets credited (Cursor + Codex Medium review on PR #699).
-        const decorated = await Promise.all(
-          snapshot.results.map(async (result, index) => {
+        // Pre-load every memory in parallel so we can:
+        //   (a) re-attribute raw excerpts to the *first readable* result
+        //       rather than always to index 0 (Cursor Low review on PR
+        //       #699: a missing/unreadable result[0] orphaned the excerpt
+        //       budget); and
+        //   (b) include the metadata fields `shapeMemorySummary` actually
+        //       emits at every depth (id, path, category, status, created,
+        //       updated, tags, entityRef) in the token estimate, so the
+        //       summary reflects real spend rather than only payload-body
+        //       spend (Cursor Low review on PR #699).
+        const memoryByIndex = await Promise.all(
+          snapshot.results.map(async (result) => {
             try {
               const storage = await this.orchestrator.getStorage(namespace);
-              const memory = await storage.readMemoryByPath(result.path);
-              if (!memory) return result;
-              // Mirror `shapeMemorySummary` output exactly:
-              //   chunk   → preview only
-              //   section → preview + full content
-              //   raw     → preview + full content + (first result) rawExcerpts
-              // Earlier rev under-counted section/raw by omitting the
-              // preview emitted at every depth (Cursor Low review on
-              // PR #699).
-              const previewText = normalizeProjectionPreview(memory.content);
-              const parts: string[] = [previewText];
-              if (disclosure === "section" || disclosure === "raw") {
-                parts.push(memory.content);
-              }
-              if (
-                disclosure === "raw" &&
-                index === 0 &&
-                rawExcerptText.length > 0
-              ) {
-                parts.push(rawExcerptText);
-              }
-              return {
-                ...result,
-                disclosure,
-                estimatedTokens: estimateRecallTokens(parts.join("\n")),
-              };
+              return await storage.readMemoryByPath(result.path);
             } catch {
-              return result;
+              return null;
             }
           }),
         );
+        const firstReadableIndex = memoryByIndex.findIndex((m) => m !== null);
+        const baseDir =
+          (await this.orchestrator.getStorage(namespace)).dir;
+        const decorated = snapshot.results.map((result, index) => {
+          const memory = memoryByIndex[index];
+          if (!memory) return result;
+          // Build a representative shaped summary so the estimate
+          // counts every field `shapeMemorySummary` actually emits.
+          // The serialized JSON form is a close-enough proxy for the
+          // wire payload size.
+          const shaped = shapeMemorySummary(
+            memory,
+            baseDir,
+            disclosure,
+            disclosure === "raw" &&
+            index === firstReadableIndex &&
+            rawExcerpts &&
+            rawExcerpts.length > 0
+              ? rawExcerpts
+              : undefined,
+          );
+          return {
+            ...result,
+            disclosure,
+            estimatedTokens: estimateRecallTokens(JSON.stringify(shaped)),
+          };
+        });
+        // Edge case: every result was unreadable but rawExcerpts
+        // still has content — credit that spend to result[0] rather
+        // than dropping it on the floor.  Without this, the raw row
+        // in the per-disclosure summary under-reports spend whenever
+        // every memory file is missing/unreadable.
+        if (
+          disclosure === "raw" &&
+          firstReadableIndex === -1 &&
+          rawExcerptText.length > 0 &&
+          decorated.length > 0
+        ) {
+          decorated[0] = {
+            ...decorated[0]!,
+            disclosure,
+            estimatedTokens: estimateRecallTokens(rawExcerptText),
+          };
+        }
         return {
           snapshotFound: true,
           snapshot: { ...snapshot, results: decorated },
