@@ -10,6 +10,7 @@
 ## Architecture
 
 - [Overview](architecture/overview.md) — System design, components, storage layout
+- [Trace → Observation → Primitive](trace-to-primitive.md) — How Remnic compresses noisy session traces into durable memory primitives (issue #685)
 - [Retrieval Pipeline](architecture/retrieval-pipeline.md) — How recall works end-to-end
 - [Memory Lifecycle](architecture/memory-lifecycle.md) — Write, consolidation, expiry
 - [Graph Reasoning](architecture/graph-reasoning.md) — Opt-in graph traversal, assist, and explainability

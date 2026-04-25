@@ -879,6 +879,7 @@ export type {
   PluginConfig,
   GatewayConfig,
   MemoryFile,
+  MemoryObservation,
   MemoryCategory,
   MemoryScope,
   MemoryActionType,
