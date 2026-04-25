@@ -178,6 +178,20 @@ export function generateAgedDataset(
   ) {
     throw new Error(`topicCount must be a positive integer, got ${topicCount}`);
   }
+  // paretoAlpha and ageSkew must be finite positive numbers — otherwise
+  // the samplers silently produce degenerate corpora (collapsed topic
+  // distribution or collapsed ages) and the bench reports successful
+  // but useless results (Codex P2 review on PR #698).
+  if (!Number.isFinite(paretoAlpha) || paretoAlpha <= 0) {
+    throw new Error(
+      `paretoAlpha must be a finite positive number, got ${paretoAlpha}`,
+    );
+  }
+  if (!Number.isFinite(ageSkew) || ageSkew <= 0) {
+    throw new Error(
+      `ageSkew must be a finite positive number, got ${ageSkew}`,
+    );
+  }
   if (
     horizonDays <= 0 ||
     !Number.isFinite(horizonDays) ||
@@ -359,8 +373,21 @@ export function generateAgedDataset(
     // memories, which `rankMemories` (recency-tiebreaker) systematically
     // misses, depressing recall scores and making the delta metric noisy
     // about real tier-policy behavior. (Codex P1 review on PR #698.)
+    // Use the SAME tie-break the ranker applies (`id.localeCompare`)
+    // so the labeled relevant set and the ranker's top-K agree on
+    // which memories are "first" when timestamps tie.  Without this
+    // alignment, `accessCount === 0` entries that share `ageDays`
+    // ended up with a relevant set ordered by generation (stable sort
+    // input order) and a ranker output ordered by id, depressing
+    // recall@K through pure tie-break noise.  (Codex Medium review
+    // on PR #698.)  Mirror this exact comparator in
+    // `rankMemories` (runner.ts).
     const relevantSubset = [...ids]
-      .sort((a, b) => recencyMs(b) - recencyMs(a))
+      .sort((a, b) => {
+        const recencyDelta = recencyMs(b) - recencyMs(a);
+        if (recencyDelta !== 0) return recencyDelta;
+        return a.localeCompare(b);
+      })
       .slice(0, RELEVANT_PER_QUERY);
     for (let q = 0; q < topicQueryCount; q += 1) {
       queries.push({
