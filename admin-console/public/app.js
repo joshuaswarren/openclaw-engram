@@ -1,4 +1,25 @@
-const tokenKey = "engram.adminConsole.token";
+const tokenKey = "remnic.adminConsole.token";
+const legacyTokenKey = "engram.adminConsole.token";
+
+// One-time migration: copy any pre-existing token from the legacy
+// `engram.adminConsole.token` key over to the new `remnic.*` key so
+// existing operators are not logged out by the rename. Runs once on
+// load; the legacy key is removed only after the new key is written.
+function migrateLegacyToken() {
+  try {
+    const storage = window.sessionStorage;
+    if (!storage) return;
+    const current = storage.getItem(tokenKey);
+    if (current) return;
+    const legacy = storage.getItem(legacyTokenKey);
+    if (!legacy) return;
+    storage.setItem(tokenKey, legacy);
+    storage.removeItem(legacyTokenKey);
+  } catch {
+    // sessionStorage can throw in private/sandboxed contexts; ignore.
+  }
+}
+migrateLegacyToken();
 const browserState = {
   sort: "updated_desc",
   limit: 25,
@@ -584,8 +605,8 @@ async function promoteTrustZone(recordId, targetZone, dryRun) {
       recordId,
       targetZone,
       promotionReason: dryRun
-        ? `Previewed in Engram admin console for ${recordId}.`
-        : `Promoted in Engram admin console for ${recordId}.`,
+        ? `Previewed in Remnic admin console for ${recordId}.`
+        : `Promoted in Remnic admin console for ${recordId}.`,
       dryRun,
     }),
   });
@@ -639,7 +660,7 @@ async function connectAndBootstrap() {
   setStatus("authStatus", "Connecting...", "default");
   try {
     await fetchJson("/engram/v1/health");
-    setStatus("authStatus", "Connected to Engram access API.", "ok");
+    setStatus("authStatus", "Connected to Remnic access API.", "ok");
     await Promise.allSettled([
       loadMemoryBrowser(true),
       loadTrustZones(true),

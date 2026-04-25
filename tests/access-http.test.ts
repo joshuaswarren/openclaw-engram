@@ -573,7 +573,7 @@ test("access HTTP server serves admin console shell without auth and rejects inv
     const uiRes = await fetch(`${base}/engram/ui/`);
     assert.equal(uiRes.status, 200);
     const html = await uiRes.text();
-    assert.match(html, /Engram Admin Console/);
+    assert.match(html, /Remnic Admin Console/);
     assert.match(html, /Quality Dashboard/);
     assert.match(html, /Trust Zones/);
 
@@ -695,7 +695,7 @@ test("access HTTP server resolves the admin console shell independently of cwd",
     const uiRes = await fetch(`${base}/engram/ui/`);
     assert.equal(uiRes.status, 200);
     const html = await uiRes.text();
-    assert.match(html, /Engram Admin Console/);
+    assert.match(html, /Remnic Admin Console/);
   } finally {
     await server.stop();
     process.chdir(originalCwd);
