@@ -31,13 +31,20 @@ export type BeamQuestionMap = Record<string, BeamQuestion[]>;
 
 export interface BeamPlan {
   plan_id?: number | string;
-  chat?: BeamChatTurn[][] | BeamChatTurn[];
+  chat?: BeamChatTurn[][] | BeamChatTurn[] | BeamPlanChatMap[];
   [key: string]: unknown;
 }
 
+export interface BeamPlanChatBatch {
+  turns?: BeamChatTurn[][] | BeamChatTurn[];
+  [key: string]: unknown;
+}
+
+export type BeamPlanChatMap = Record<string, BeamPlanChatBatch[] | null>;
+
 export interface BeamConversation {
   conversation_id: string | number;
-  chat: BeamChatTurn[][] | BeamChatTurn[];
+  chat: BeamChatTurn[][] | BeamChatTurn[] | BeamPlanChatMap[];
   probing_questions: BeamQuestionMap | string;
   plans?: BeamPlan[];
   [key: string]: unknown;
