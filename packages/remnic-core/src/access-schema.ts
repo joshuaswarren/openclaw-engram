@@ -63,6 +63,15 @@ export const codingContextSchema = z
  */
 export const recallDisclosureSchema = z.enum(["chunk", "section", "raw"]);
 
+/**
+ * Tag-match semantics (issue #689). `any` (default when `tags` is provided
+ * and `tagMatch` is omitted) admits a result when it carries at least one
+ * of the filter tags. `all` requires every filter tag to be present.
+ * Schema rejects unknown values up front — never silently defaults
+ * (CLAUDE.md rule 51).
+ */
+export const tagMatchSchema = z.enum(["any", "all"]);
+
 export const recallRequestSchema = z.object({
   query: z.string().min(1, "query is required"),
   sessionKey: sessionKeySchema,
@@ -79,6 +88,17 @@ export const recallRequestSchema = z.object({
    * Creates a coding context with `projectId: "tag:<projectTag>"`.
    */
   projectTag: z.string().trim().min(1, "projectTag must be non-empty when provided").max(256).optional(),
+  /**
+   * Free-form recall tag filter (issue #689). When provided, recall results
+   * whose frontmatter `tags` do not match the filter are removed before the
+   * response is returned. Comparison is case-sensitive exact match.
+   */
+  tags: z.array(z.string().trim().min(1).max(256)).max(50).optional(),
+  /**
+   * Match mode for `tags` (issue #689). Defaults to `"any"` when `tags` is
+   * provided and `tagMatch` is omitted. Ignored when `tags` is absent.
+   */
+  tagMatch: tagMatchSchema.optional(),
 });
 
 export const recallExplainRequestSchema = z.object({

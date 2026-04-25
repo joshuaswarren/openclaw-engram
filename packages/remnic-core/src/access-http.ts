@@ -377,6 +377,38 @@ export class EngramAccessHttpServer {
       // silently overridden by a stale URL.  CLAUDE.md rule 51: invalid
       // query-param values throw, never fall back silently.
       const disclosure = this.resolveRecallDisclosure(body.disclosure, parsed);
+      // Tag filter (issue #689). Body fields take precedence; otherwise
+      // accept `?tag=...&tag=...&tag_match=...` so plain curl invocations
+      // can exercise the surface. Invalid `tag_match` throws (CLAUDE.md
+      // rule 51).
+      const bodyTags = Array.isArray((body as { tags?: unknown }).tags)
+        ? ((body as { tags?: string[] }).tags as string[])
+        : undefined;
+      const queryTags = parsed.searchParams.getAll("tag");
+      const tags = bodyTags && bodyTags.length > 0
+        ? bodyTags
+        : queryTags.length > 0
+          ? queryTags
+          : undefined;
+      const bodyTagMatch = (body as { tagMatch?: unknown }).tagMatch;
+      let tagMatch: "any" | "all" | undefined;
+      if (bodyTagMatch !== undefined) {
+        if (bodyTagMatch === "any" || bodyTagMatch === "all") {
+          tagMatch = bodyTagMatch;
+        }
+        // Schema validation already rejects malformed body values;
+        // we don't need to re-throw here.
+      } else {
+        const queryTagMatch = parsed.searchParams.get("tag_match");
+        if (queryTagMatch !== null) {
+          if (queryTagMatch !== "any" && queryTagMatch !== "all") {
+            throw new EngramAccessInputError(
+              `tag_match must be one of: any, all (got: ${queryTagMatch})`,
+            );
+          }
+          tagMatch = queryTagMatch;
+        }
+      }
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
@@ -392,6 +424,8 @@ export class EngramAccessHttpServer {
         // Forward cwd/projectTag for auto git-context resolution (issue #569).
         cwd: body.cwd,
         projectTag: body.projectTag,
+        ...(tags !== undefined ? { tags } : {}),
+        ...(tagMatch !== undefined ? { tagMatch } : {}),
       });
       this.respondJson(res, 200, response);
       return;

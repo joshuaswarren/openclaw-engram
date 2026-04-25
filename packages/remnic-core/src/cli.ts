@@ -4225,6 +4225,14 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           "Output format: text (default) or json",
           "text",
         )
+        .option(
+          "--tag <tag>",
+          "Filter recall results by tag. Repeatable; alternatively pass a comma-separated list (issue #689).",
+        )
+        .option(
+          "--tag-match <mode>",
+          "Tag-filter match mode: any (default) or all. Ignored when --tag is absent.",
+        )
         .action(async (...args: unknown[]) => {
           const query = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
           if (!query || query.trim().length === 0) {
@@ -4288,6 +4296,43 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             format = raw as "text" | "json";
           }
 
+          // Tag filter (issue #689). `--tag` accepts a comma-separated
+          // list; if the underlying parser surfaces multiple `--tag`
+          // invocations as an array we accept that too. Each entry is
+          // trimmed and deduped in declaration order. `--tag-match`
+          // accepts only "any" or "all"; reject typos loudly so a
+          // mis-typed `--tag-match every` doesn't silently default
+          // (CLAUDE.md rule 51).
+          let tags: string[] | undefined;
+          if (options.tag !== undefined) {
+            const raw = Array.isArray(options.tag)
+              ? options.tag
+              : [options.tag];
+            const cleaned: string[] = [];
+            const seen = new Set<string>();
+            for (const entry of raw) {
+              if (typeof entry !== "string") continue;
+              for (const part of entry.split(",")) {
+                const trimmed = part.trim();
+                if (trimmed.length === 0) continue;
+                if (seen.has(trimmed)) continue;
+                seen.add(trimmed);
+                cleaned.push(trimmed);
+              }
+            }
+            tags = cleaned.length > 0 ? cleaned : undefined;
+          }
+          let tagMatch: "any" | "all" | undefined;
+          if (options.tagMatch !== undefined) {
+            const raw = String(options.tagMatch).trim();
+            if (raw !== "any" && raw !== "all") {
+              throw new Error(
+                `invalid --tag-match value: ${String(options.tagMatch)} (expected one of: any, all)`,
+              );
+            }
+            tagMatch = raw;
+          }
+
           const accessService = new EngramAccessService(orchestrator);
           const response = await accessService.recall({
             query,
@@ -4295,6 +4340,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             ...(namespace !== undefined ? { namespace } : {}),
             ...(topK !== undefined ? { topK } : {}),
             ...(disclosure !== undefined ? { disclosure } : {}),
+            ...(tags !== undefined ? { tags } : {}),
+            ...(tagMatch !== undefined ? { tagMatch } : {}),
           });
 
           if (format === "json") {

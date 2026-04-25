@@ -84,6 +84,12 @@ import type {
 } from "./types.js";
 import { DEFAULT_RECALL_DISCLOSURE, isRecallDisclosure } from "./types.js";
 import { estimateRecallTokens } from "./recall-xray.js";
+import {
+  applyTagFilter,
+  normalizeTags,
+  parseTagMatch,
+  type TagMatchMode,
+} from "./recall-tag-filter.js";
 import { decideDisclosureEscalation } from "./recall-disclosure-escalation.js";
 import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
@@ -176,6 +182,19 @@ export interface EngramAccessRecallRequest {
    * explicit `codingContext`.
    */
   projectTag?: string;
+  /**
+   * Free-form recall tag filter (issue #689). When non-empty, recall results
+   * whose frontmatter `tags` do not match are removed from the response.
+   * Comparison is case-sensitive exact match against tags stored on each
+   * memory's frontmatter (see `storage.ts` and `docs/tags.md`).
+   */
+  tags?: string[];
+  /**
+   * Match mode for `tags` (issue #689). `"any"` (default when omitted)
+   * admits results that carry at least one filter tag. `"all"` requires
+   * every filter tag to be present. Ignored when `tags` is absent or empty.
+   */
+  tagMatch?: "any" | "all";
 }
 
 /**
@@ -1535,10 +1554,34 @@ export class EngramAccessService {
       topKConfidence,
     });
     const disclosure = escalationDecision.effective;
-    const results = await this.serializeRecallResults(snapshot, disclosure, {
+    let results = await this.serializeRecallResults(snapshot, disclosure, {
       query,
       sessionKey: request.sessionKey,
     });
+
+    // Tag filter (issue #689). Applied post-recall, post-serialization so
+    // the actual frontmatter tags are already loaded onto each result. When
+    // `tags` is absent or empty the filter is a no-op; an invalid `tagMatch`
+    // throws via `parseTagMatch` (CLAUDE.md rule 51).
+    const filterTags = normalizeTags(request.tags);
+    let tagMatchMode: TagMatchMode | undefined;
+    try {
+      tagMatchMode = parseTagMatch(request.tagMatch);
+    } catch (err) {
+      throw new EngramAccessInputError(
+        err instanceof Error ? err.message : String(err),
+      );
+    }
+    if (filterTags && filterTags.length > 0) {
+      const { results: admitted } = applyTagFilter(results, {
+        tags: filterTags,
+        tagMatch: tagMatchMode,
+      });
+      results = admitted;
+    }
+    const filteredMemoryIds = filterTags && filterTags.length > 0
+      ? results.map((r) => r.id)
+      : (snapshot?.memoryIds ?? []);
     const debug = await this.buildRecallDebug(
       snapshot,
       effectiveNamespace,
@@ -1584,8 +1627,10 @@ export class EngramAccessService {
       sessionKey: request.sessionKey,
       namespace: effectiveNamespace,
       context,
-      count: snapshot?.memoryIds.length ?? results.length,
-      memoryIds: snapshot?.memoryIds ?? [],
+      count: filterTags && filterTags.length > 0
+        ? results.length
+        : (snapshot?.memoryIds.length ?? results.length),
+      memoryIds: filteredMemoryIds,
       results,
       recordedAt: snapshot?.recordedAt,
       traceId: snapshot?.traceId,
@@ -1699,6 +1744,16 @@ export class EngramAccessService {
      * than staying empty when no caller wires the depth knob through.
      */
     disclosure?: RecallDisclosure;
+    /**
+     * Free-form recall tag filter (issue #689). Mirrors the field on
+     * `EngramAccessRecallRequest`. When non-empty, the captured X-ray
+     * snapshot's `results` are filtered down to memories whose
+     * frontmatter tags satisfy `tagMatch` ("any" by default), and a
+     * `tag-filter` entry is appended to `filters`.
+     */
+    tags?: string[];
+    /** Match mode for `tags`. See `EngramAccessRecallRequest.tagMatch`. */
+    tagMatch?: "any" | "all";
   }): Promise<{
     snapshotFound: boolean;
     snapshot?: import("./recall-xray.js").RecallXraySnapshot;
@@ -1815,16 +1870,59 @@ export class EngramAccessService {
           : {}),
       });
 
-      const snapshot = this.orchestrator.getLastXraySnapshot();
-      if (!snapshot) return { snapshotFound: false };
+      const rawSnapshot = this.orchestrator.getLastXraySnapshot();
+      if (!rawSnapshot) return { snapshotFound: false };
       // Re-check namespace after capture: the recall may have served
       // from a different namespace than the caller requested.  Drop
       // the snapshot rather than leak cross-tenant data (CLAUDE.md
       // rules 42 + 47).  The comparison is strict so a snapshot whose
       // namespace is `undefined` cannot bypass the scope the caller
       // asked for.
-      if (requestedNamespace && snapshot.namespace !== requestedNamespace) {
+      if (requestedNamespace && rawSnapshot.namespace !== requestedNamespace) {
         return { snapshotFound: false };
+      }
+      // Tag filter (issue #689). Mirrors `recall()` semantics — applied
+      // post-capture by reading each result's frontmatter tags and
+      // dropping non-matching results. Filter activity surfaces as a
+      // `tag-filter` entry in `snapshot.filters` so X-ray consumers can
+      // see the "considered → admitted" delta.
+      let snapshot = rawSnapshot;
+      const xrayFilterTags = normalizeTags(request.tags);
+      let xrayTagMatch: TagMatchMode | undefined;
+      try {
+        xrayTagMatch = parseTagMatch(request.tagMatch);
+      } catch (err) {
+        throw new EngramAccessInputError(
+          err instanceof Error ? err.message : String(err),
+        );
+      }
+      if (xrayFilterTags && xrayFilterTags.length > 0) {
+        const namespace = snapshot.namespace
+          ? this.resolveNamespace(snapshot.namespace)
+          : this.orchestrator.config.defaultNamespace;
+        const tagsByIndex = await Promise.all(
+          snapshot.results.map(async (result) => {
+            try {
+              const storage = await this.orchestrator.getStorage(namespace);
+              const memory = await storage.readMemoryByPath(result.path);
+              const t = memory?.frontmatter?.tags;
+              return Array.isArray(t) ? t.filter((x): x is string => typeof x === "string") : [];
+            } catch {
+              return [];
+            }
+          }),
+        );
+        const tagged = snapshot.results.map((result, index) => ({
+          result,
+          tags: tagsByIndex[index] ?? [],
+        }));
+        const { results: admittedTagged, trace } = applyTagFilter(tagged, {
+          tags: xrayFilterTags,
+          tagMatch: xrayTagMatch,
+        });
+        const admittedResults = admittedTagged.map((entry) => entry.result);
+        const filters = trace ? [...snapshot.filters, trace] : snapshot.filters;
+        snapshot = { ...snapshot, results: admittedResults, filters };
       }
       // Decorate per-result disclosure + token estimate when the caller
       // wired a depth knob (issue #677 PR 3/4 — codex review on #699
