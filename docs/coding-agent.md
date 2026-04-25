@@ -116,9 +116,11 @@ isolation that coding agents get automatically.
 ### Connector flow
 
 1. **Claude Code / Codex CLI** — session-start hooks detect git
-   context and post `set_coding_context`. As a fallback, every
-   `recall` and `observe` request also carries `cwd`, so if the hook
-   fails the server self-resolves.
+   context and post `set_coding_context`. The current shipped hooks
+   do **not** send `cwd` on `recall`/`observe` requests, so if the
+   startup context post fails, project scoping is inactive for that
+   session. Connectors that want auto-resolution can add `cwd` to
+   their request payloads; the server will resolve it on their behalf.
 2. **OpenClaw** — conversations pass `projectTag` on `recall` and
    `observe` requests when the operator tags a session with a project.
 3. **Cursor / generic MCP** — clients can pass `cwd` or `projectTag`
