@@ -67,6 +67,52 @@ export interface RecallTierExplain {
   sourceAnchors?: Array<{ path: string; lineRange?: [number, number] }>;
 }
 
+/**
+ * Recall disclosure depth (issue #677).  Selects how much content each
+ * recall result returns:
+ *
+ * - `"chunk"`   — semantic chunk excerpt (cheapest; default).
+ * - `"section"` — full markdown section / memory body (current pre-#677 behavior).
+ * - `"raw"`     — raw transcript / archive excerpts from `lcm/` when present.
+ *
+ * Disclosure is **orthogonal** to the retrieval-tier ladder
+ * (`RetrievalTier` / `RETRIEVAL_TIERS`).  The tier ladder controls *which
+ * pipeline stage served a result*; disclosure controls *how deep into the
+ * underlying memory the result reaches*.  A request can mix any retrieval
+ * tier with any disclosure depth.
+ *
+ * Default is `"chunk"` when the caller omits the field; this preserves the
+ * existing recall behavior because callers that did not request a disclosure
+ * level continue to receive the same chunk-shaped previews they always had.
+ * Surfaces (CLI / HTTP / MCP) and downstream telemetry are wired in later
+ * PRs of #677.
+ */
+export type RecallDisclosure = "chunk" | "section" | "raw";
+
+/**
+ * Ordered list of disclosure levels, cheapest to most expensive.  Used for
+ * validation, escalation policy comparisons, and future telemetry rollups.
+ * Treat this as the single source of truth — do not hard-code disclosure
+ * strings elsewhere.
+ */
+export const RECALL_DISCLOSURE_LEVELS: readonly RecallDisclosure[] = [
+  "chunk",
+  "section",
+  "raw",
+] as const;
+
+/**
+ * Default disclosure level when a caller omits `disclosure`.  Set to `chunk`
+ * so callers that did not opt in to deeper disclosure see the same
+ * preview-shaped behavior as before #677.
+ */
+export const DEFAULT_RECALL_DISCLOSURE: RecallDisclosure = "chunk";
+
+export function isRecallDisclosure(value: unknown): value is RecallDisclosure {
+  return typeof value === "string"
+    && (RECALL_DISCLOSURE_LEVELS as readonly string[]).includes(value);
+}
+
 export interface RecallSectionConfig {
   id: string;
   enabled?: boolean;
