@@ -318,6 +318,23 @@ test("AST audit: every fetchQmdMemoryResultsWithArtifactTopUp call resolves to h
         prop.name.text === "collection"
       ) {
         const init = prop.initializer;
+        // `collection: undefined` is semantically equivalent to omitting
+        // the property — treat as absent so future refactors that explicitly
+        // set undefined for clarity don't trip the audit.
+        if (init.kind === ts.SyntaxKind.UndefinedKeyword) {
+          return { kind: "absent" };
+        }
+        if (ts.isIdentifier(init) && init.text === "undefined") {
+          return { kind: "absent" };
+        }
+        if (init.kind === ts.SyntaxKind.NullKeyword) {
+          // `collection: null` is not a hot default; the search backend would
+          // still see a null collection. Surface as unknown for human review.
+          return {
+            kind: "unknown",
+            reason: "collection: null is ambiguous; review",
+          };
+        }
         if (ts.isStringLiteral(init) || ts.isNoSubstitutionTemplateLiteral(init)) {
           return { kind: "explicit", value: init.text };
         }
