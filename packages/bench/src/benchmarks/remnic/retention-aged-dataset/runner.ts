@@ -220,7 +220,7 @@ export async function runRetentionAgedDatasetBenchmark(
     const recallDelta = recallFull - recallHot;
 
     tasks.push({
-      taskId: `topic-${query.topicId}`,
+      taskId: query.id,
       question: query.text,
       expected: JSON.stringify({
         relevantCount: relevantIds.size,

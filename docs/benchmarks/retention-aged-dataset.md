@@ -58,14 +58,16 @@ by default; instead document findings in PR 3 and re-tune.
 
 ```bash
 # Quick mode (200 memories, 1y horizon — fast smoke).
-npx remnic bench run retention-aged-dataset --mode quick
+remnic bench run --quick retention-aged-dataset
 
-# Full mode (2000 memories, 2y horizon).
-npx remnic bench run retention-aged-dataset --mode full
+# Full mode (2000 memories, 2y horizon — the default when --quick is omitted).
+remnic bench run retention-aged-dataset
 ```
 
-Results emit JSON conforming to `BENCHMARK_RESULT_SCHEMA` like every
-other bench in `@remnic/bench`.
+The CLI surface uses the `--quick` flag (full mode is the default); other
+remnic benchmarks follow the same convention. Results emit JSON
+conforming to `BENCHMARK_RESULT_SCHEMA` like every other bench in
+`@remnic/bench`.
 
 ## Why synthetic
 

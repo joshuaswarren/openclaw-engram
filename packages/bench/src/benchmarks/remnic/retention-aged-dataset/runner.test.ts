@@ -131,3 +131,60 @@ test("aged-dataset bench produces non-empty aggregates", async () => {
     `aggregates must include recall_at_5_hot_only, got: ${keys.join(",")}`,
   );
 });
+
+test("aged-dataset bench emits unique taskId per task", async () => {
+  const result = await runRetentionAgedDatasetBenchmark(options());
+  const taskIds = result.results.tasks.map((t) => t.taskId);
+  const unique = new Set(taskIds);
+  assert.equal(
+    taskIds.length,
+    unique.size,
+    `taskIds must be unique; found ${taskIds.length - unique.size} duplicates among ${taskIds.length} tasks`,
+  );
+});
+
+test("aged-dataset Pareto sampler produces a long-tail distribution (no clamping artifact)", () => {
+  const fixture = generateAgedDataset({
+    size: 4000,
+    horizonDays: 365,
+    topicCount: 16,
+    paretoAlpha: 1.16,
+    ageSkew: 1.5,
+    seed: 0xa686,
+    nowIso: "2026-04-25T12:00:00.000Z",
+  });
+  // Count memories per topic.
+  const counts: number[] = new Array(16).fill(0);
+  for (const m of fixture.memories) {
+    // The topic is encoded by the first tag; recover it from the keyword
+    // list match.
+    const tag = m.frontmatter.tags?.[0] ?? "";
+    // Find which topic this tag maps to: the topic-keyword grid uses
+    // index % 16 for slot 0; we just need *some* indicator. The simplest
+    // reliable check is that the highest-rank topic does not dominate —
+    // if the previous Pareto-clamp bug were back, topic 15 would be a
+    // second hotspot rivaling topic 0.
+    void tag;
+  }
+  // Pull topicId via the queries' relevantMemoryIds → frontmatter id mapping
+  // would be expensive; instead, infer per-topic counts from the queries
+  // that the fixture emits (which use ids grouped by topic).
+  const queryCountsByTopic: number[] = new Array(16).fill(0);
+  for (const q of fixture.queries) {
+    queryCountsByTopic[q.topicId] = q.relevantMemoryIds.length;
+  }
+  // Topic 0 (highest-frequency) should have the most memories.
+  // Topic 15 (lowest) should have *strictly* fewer than topic 0.
+  // The previous clamped Pareto would have made topic 15 a second
+  // hotspot — possibly tying or exceeding topic 0.
+  assert.ok(
+    queryCountsByTopic[0] > queryCountsByTopic[15],
+    `topic 0 must dominate over topic 15: topic0=${queryCountsByTopic[0]} topic15=${queryCountsByTopic[15]}`,
+  );
+  // And the distribution should be reasonably monotonic — there shouldn't
+  // be a spike at the last index.
+  assert.ok(
+    queryCountsByTopic[15] <= queryCountsByTopic[0] / 2,
+    `last-rank topic must not be a second hotspot: topic0=${queryCountsByTopic[0]} topic15=${queryCountsByTopic[15]}`,
+  );
+});

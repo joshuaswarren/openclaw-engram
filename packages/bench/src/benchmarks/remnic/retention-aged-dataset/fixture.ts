@@ -39,6 +39,13 @@ export interface AgedDatasetGeneratorOptions {
 }
 
 export interface AgedQuery {
+  /**
+   * Unique per-query identifier across the entire fixture. Used as the
+   * task identifier in benchmark results; downstream consumers
+   * (reporters, dedup, storage) key on this so collisions would
+   * silently collapse rows.
+   */
+  id: string;
   /** Synthetic query text (topic-derived keywords). */
   text: string;
   /** ID of the topic this query targets. */
@@ -68,17 +75,32 @@ function mulberry32(seed: number): () => number {
 }
 
 /**
- * Generate a Pareto-distributed integer in [0, n).
+ * Generate a Zipf-distributed integer in [0, n).
  * Higher `alpha` = more skewed toward index 0.
+ *
+ * Uses a Zipf-style discrete distribution: P(rank=k) ∝ (k+1)^-alpha
+ * across k ∈ [0, n-1], sampled by inverse-CDF lookup. This produces a
+ * true long tail across all ranks; the previous Pareto-clamp approach
+ * collapsed high-tail samples onto the last index, creating an
+ * artificial second hotspot. (Codex P1 review on PR #698.)
  */
 function paretoIndex(rng: () => number, n: number, alpha: number): number {
-  // Inverse-CDF sampling on a discrete Pareto-like distribution.
-  const u = rng();
-  // Approximate Pareto: x = (1 - u)^(-1/alpha), normalized to [0, n).
-  const raw = Math.pow(1 - u, -1 / alpha);
-  // Map to [0, n) via floor; clamp.
-  const idx = Math.floor((raw - 1) * (n / 4));
-  return Math.max(0, Math.min(n - 1, idx));
+  if (n <= 1) return 0;
+  // Build a rank-weight array (cached per-call; n is small for our bench).
+  const weights: number[] = new Array(n);
+  let total = 0;
+  for (let k = 0; k < n; k += 1) {
+    const w = Math.pow(k + 1, -alpha);
+    weights[k] = w;
+    total += w;
+  }
+  const u = rng() * total;
+  let cum = 0;
+  for (let k = 0; k < n; k += 1) {
+    cum += weights[k];
+    if (u <= cum) return k;
+  }
+  return n - 1;
 }
 
 /**
@@ -239,6 +261,12 @@ export function generateAgedDataset(
     );
     for (let q = 0; q < topicQueryCount; q += 1) {
       queries.push({
+        // Include the per-topic instance index so duplicates within a
+        // topic stay distinguishable. Other bench runners use unique
+        // taskIds; downstream consumers (reporters, dedup, storage)
+        // key on taskId, so collisions would silently collapse rows.
+        // (Codex review on PR #698.)
+        id: `topic-${topicId}-${q}`,
         text: `${topicWord(topicId, 0)} ${topicWord(topicId, 1)}`,
         topicId,
         relevantMemoryIds: ids,
@@ -246,7 +274,10 @@ export function generateAgedDataset(
     }
   }
   // Sort by topicId for determinism, with stable ordering within a topic.
-  queries.sort((a, b) => a.topicId - b.topicId);
+  queries.sort((a, b) => {
+    if (a.topicId !== b.topicId) return a.topicId - b.topicId;
+    return a.id.localeCompare(b.id);
+  });
 
   return { options, memories, queries };
 }
