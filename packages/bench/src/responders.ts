@@ -314,8 +314,8 @@ function parseScalarJudgeScore(raw: string): number {
 
 function parseAmaBenchBinaryJudgeScore(raw: string): number {
   const trimmed = raw.trim();
-  const jsonMatch = trimmed.match(/\{[\s\S]*\}/);
-  if (jsonMatch) {
+  const jsonMatches = trimmed.matchAll(/\{[\s\S]*?\}/g);
+  for (const jsonMatch of jsonMatches) {
     try {
       const parsed = JSON.parse(jsonMatch[0]) as { score?: unknown };
       if (parsed.score === 0 || parsed.score === 1) {
@@ -325,7 +325,7 @@ function parseAmaBenchBinaryJudgeScore(raw: string): number {
         return Number(parsed.score);
       }
     } catch {
-      // Fall through to permissive parsing below.
+      // Keep scanning for a later score object.
     }
   }
 

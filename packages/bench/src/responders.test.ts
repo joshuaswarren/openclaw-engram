@@ -202,6 +202,15 @@ test("AMA-Bench recommended judge parses incorrect before correct", async () => 
   assert.equal(await judge.score("q", "predicted", "expected"), 0);
 });
 
+test("AMA-Bench recommended judge scans multiple JSON objects for score", async () => {
+  const judge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider('Reasoning object: {"note":"ignore"}\nFinal: {"score":1,"reason":"same fact"}'),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 1);
+});
+
 test("AMA-Bench recommended judge treats negated positive labels as incorrect", async () => {
   const judge = createProviderBackedAmaBenchRecommendedJudge(
     { provider: "openai", model: "qwen3-32b" },

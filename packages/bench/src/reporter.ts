@@ -6,11 +6,10 @@ import { execSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { LegacyBenchmarkResult } from "./adapters/types.js";
+import { isSecretKey } from "./security/secret-keys.js";
 import type { BenchmarkResult } from "./types.js";
 
 const REDACTED_SECRET = "[REDACTED]";
-const SECRET_KEY_PATTERN =
-  /(?:api[-_]?key|auth[-_]?token|access[-_]?token|refresh[-_]?token|secret|password|credential)/i;
 
 function sanitizeFilenameSegment(value: string): string {
   const sanitized = value.trim().replace(/[^a-zA-Z0-9._-]/g, "_");
@@ -32,7 +31,7 @@ function redactSecrets(value: unknown): unknown {
 
   const redacted: Record<string, unknown> = {};
   for (const [key, nestedValue] of Object.entries(value)) {
-    redacted[key] = SECRET_KEY_PATTERN.test(key)
+    redacted[key] = isSecretKey(key)
       ? REDACTED_SECRET
       : redactSecrets(nestedValue);
   }

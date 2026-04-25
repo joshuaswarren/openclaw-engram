@@ -39,6 +39,14 @@ function buildResult(): BenchmarkResult {
       remnicConfig: {
         nested: {
           authToken: "nested-token",
+          bearerToken: "bearer-token",
+          privateKey: "private-key",
+          sessionToken: "session-token",
+          authorization: "Bearer auth-header",
+          token: "plain-token",
+          secretary: "office-role",
+          passwordless: true,
+          credentialingOrg: "board",
         },
       },
     },
@@ -70,6 +78,39 @@ test("redactBenchmarkResultSecrets redacts provider and nested secret fields", (
     (redacted.config.remnicConfig.nested as { authToken?: string }).authToken,
     "[REDACTED]",
   );
+  assert.equal(
+    (redacted.config.remnicConfig.nested as { bearerToken?: string }).bearerToken,
+    "[REDACTED]",
+  );
+  assert.equal(
+    (redacted.config.remnicConfig.nested as { privateKey?: string }).privateKey,
+    "[REDACTED]",
+  );
+  assert.equal(
+    (redacted.config.remnicConfig.nested as { sessionToken?: string }).sessionToken,
+    "[REDACTED]",
+  );
+  assert.equal(
+    (redacted.config.remnicConfig.nested as { authorization?: string }).authorization,
+    "[REDACTED]",
+  );
+  assert.equal(
+    (redacted.config.remnicConfig.nested as { token?: string }).token,
+    "[REDACTED]",
+  );
+  assert.equal(
+    (redacted.config.remnicConfig.nested as { secretary?: string }).secretary,
+    "office-role",
+  );
+  assert.equal(
+    (redacted.config.remnicConfig.nested as { passwordless?: boolean }).passwordless,
+    true,
+  );
+  assert.equal(
+    (redacted.config.remnicConfig.nested as { credentialingOrg?: string })
+      .credentialingOrg,
+    "board",
+  );
   assert.equal(redacted.config.systemProvider?.provider, "ollama");
   assert.equal(redacted.config.systemProvider?.model, "gemma4:31b-cloud");
 });
@@ -80,9 +121,14 @@ test("writeBenchmarkResult does not persist secret values", async () => {
     const filePath = await writeBenchmarkResult(buildResult(), dir);
     const raw = await readFile(filePath, "utf8");
 
-    assert.doesNotMatch(raw, /system-secret-key|judge-secret-key|nested-token/);
+    assert.doesNotMatch(
+      raw,
+      /system-secret-key|judge-secret-key|nested-token|bearer-token|private-key|session-token|auth-header|plain-token/,
+    );
     assert.match(raw, /"apiKey": "\[REDACTED\]"/);
     assert.match(raw, /"provider": "ollama"/);
+    assert.match(raw, /"secretary": "office-role"/);
+    assert.match(raw, /"credentialingOrg": "board"/);
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
