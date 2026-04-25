@@ -1037,6 +1037,45 @@ test("runBenchmark matches multi-token memory-arena plan day headers", async () 
   assert.equal(task.scores.soft_process_score, 1);
 });
 
+test("runBenchmark rejects incidental memory-arena day words without explicit headers", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-incidental-day-word-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("One traveler prefers seafood. Dinner: Coco Bambu, Dallas"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my day-one shared itinerary."],
+      answers: [[
+        {
+          days: "Day One",
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0);
+  assert.equal(task.scores.soft_process_score, 0);
+});
+
 test("runBenchmark parses compact day headers for memory-arena plan fields", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-compact-day-"));
   const datasetDir = path.join(tmpDir, "datasets", "memory-arena");

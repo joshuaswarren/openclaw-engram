@@ -854,7 +854,7 @@ function findPlanFieldTokenWindow(
     }
 
     const dayContext = expectedField.dayTokens.length > 0
-      ? findLastDayContext(predictedTokens, index, expectedField.dayTokens)
+      ? findLastDayContext(predictedTokens, index)
       : undefined;
     if (
       expectedField.dayTokens.length > 0
@@ -881,18 +881,8 @@ function findPlanFieldTokenWindow(
 function findLastDayContext(
   tokens: string[],
   beforeIndex: number,
-  expectedDayTokens: string[],
 ): { startIndex: number; dayTokens: string[] } | undefined {
   for (let index = beforeIndex - 1; index >= 0; index -= 1) {
-    const expectedSequence = matchExpectedDayTokensEndingAt(
-      tokens,
-      index,
-      expectedDayTokens,
-    );
-    if (expectedSequence !== undefined) {
-      return expectedSequence;
-    }
-
     const compactDayToken = extractCompactPlanDayToken(tokens[index]!);
     if (compactDayToken !== undefined) {
       return {
@@ -953,25 +943,6 @@ function extractCompactPlanDayToken(token: string): string | undefined {
   return match?.[1] === undefined
     ? undefined
     : normalizePlanDayToken(match[1]);
-}
-
-function matchExpectedDayTokensEndingAt(
-  tokens: string[],
-  endIndex: number,
-  expectedDayTokens: string[],
-): { startIndex: number; dayTokens: string[] } | undefined {
-  if (expectedDayTokens.length === 0) {
-    return undefined;
-  }
-  const startIndex = endIndex - expectedDayTokens.length + 1;
-  if (startIndex < 0) {
-    return undefined;
-  }
-  return expectedDayTokens.every(
-    (token, offset) => tokens[startIndex + offset] === token,
-  )
-    ? { startIndex, dayTokens: expectedDayTokens }
-    : undefined;
 }
 
 function normalizeStandalonePlanDayToken(token: string): string | undefined {

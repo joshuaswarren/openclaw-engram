@@ -782,6 +782,39 @@ test("runBenchmark rejects out-of-range amemgym option numbers before text fallb
   assert.equal(task.details?.scoredAnswer, "3");
 });
 
+test("runBenchmark rejects out-of-range plain-text amemgym option numbers before text fallback", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-out-of-range-plain-choice-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("3 3 bedrooms"));
+  const dataset = createDatasetProfile();
+  dataset[0]!.periods[0]!.state.city = "3 bedrooms";
+  dataset[0]!.periods[0]!.updates.city = "3 bedrooms";
+  dataset[0]!.periods[0]!.sessions[0]!.exposed_states.city = "3 bedrooms";
+  dataset[0]!.qas[0]!.answer_choices = [
+    { state: ["3 bedrooms"], answer: "3 bedrooms" },
+    { state: ["4 bedrooms"], answer: "4 bedrooms" },
+  ];
+
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(dataset),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.expected, "3 bedrooms");
+  assert.equal(task.scores.qa_accuracy, 0);
+  assert.equal(task.details?.selectedChoiceIndex, null);
+  assert.equal(task.details?.scoredAnswer, "3 3 bedrooms");
+});
+
 test("runBenchmark blocks text fallback for numeric-prefixed amemgym contradictions", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-number-text-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");

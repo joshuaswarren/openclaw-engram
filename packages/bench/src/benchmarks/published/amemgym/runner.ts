@@ -282,9 +282,11 @@ function parseAMemGymChoice(
   if (plainTextOption !== undefined) {
     const index = plainTextOption.selectedNumber - 1;
     const choice = qa.answer_choices[index];
+    if (!choice) {
+      return undefined;
+    }
     if (
-      choice
-      && plainOptionTextMatchesChoice(plainTextOption.choiceText, choice.answer)
+      plainOptionTextMatchesChoice(plainTextOption.choiceText, choice.answer)
     ) {
       return { index, choice };
     }
