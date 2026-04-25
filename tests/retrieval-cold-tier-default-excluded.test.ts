@@ -302,14 +302,43 @@ test("AST audit: every fetchQmdMemoryResultsWithArtifactTopUp call resolves to h
     };
   }
 
+  function propertyNameMatches(
+    name: import("typescript").PropertyName,
+    target: string,
+  ): boolean {
+    if (ts.isIdentifier(name)) return name.text === target;
+    if (ts.isStringLiteral(name) || ts.isNoSubstitutionTemplateLiteral(name)) {
+      return name.text === target;
+    }
+    if (ts.isNumericLiteral(name)) return name.text === target;
+    // Computed property names (`[someExpr]`) are not statically resolvable.
+    return false;
+  }
+
   function resolveObjectLiteral(
     obj: import("typescript").ObjectLiteralExpression,
   ): Resolution {
+    // Detect computed property names — we cannot statically know if the
+    // computed key is "collection". Force unknown so the audit re-runs.
+    for (const prop of obj.properties) {
+      if (
+        (ts.isPropertyAssignment(prop) ||
+          ts.isShorthandPropertyAssignment(prop) ||
+          ts.isMethodDeclaration(prop) ||
+          ts.isGetAccessorDeclaration(prop) ||
+          ts.isSetAccessorDeclaration(prop)) &&
+        ts.isComputedPropertyName(prop.name)
+      ) {
+        return {
+          kind: "unknown",
+          reason: "computed property name in options object; cannot statically audit",
+        };
+      }
+    }
     for (const prop of obj.properties) {
       if (
         ts.isPropertyAssignment(prop) &&
-        ts.isIdentifier(prop.name) &&
-        prop.name.text === "collection"
+        propertyNameMatches(prop.name, "collection")
       ) {
         const init = prop.initializer;
         // `collection: undefined` is semantically equivalent to omitting
@@ -484,15 +513,81 @@ test("AST audit: this.config.qmdColdCollection is read only inside applyColdFall
     return "<top-level>";
   }
 
-  const reads: { fn: string; line: number }[] = [];
+  const reads: { fn: string; line: number; form: string }[] = [];
+  function recordRead(
+    node: import("typescript").Node,
+    form: string,
+  ): void {
+    const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+    reads.push({ fn: enclosingFunctionName(node), line: line + 1, form });
+  }
   function visit(node: import("typescript").Node) {
+    // 1. Dot-access form: `this.config.qmdColdCollection`,
+    //    `cfg.qmdColdCollection`, etc.
     if (
       ts.isPropertyAccessExpression(node) &&
       ts.isIdentifier(node.name) &&
       node.name.text === "qmdColdCollection"
     ) {
-      const { line } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
-      reads.push({ fn: enclosingFunctionName(node), line: line + 1 });
+      recordRead(node, "property-access");
+    }
+    // 2. Bracket-access form: `config["qmdColdCollection"]`.
+    if (
+      ts.isElementAccessExpression(node) &&
+      (ts.isStringLiteral(node.argumentExpression) ||
+        ts.isNoSubstitutionTemplateLiteral(node.argumentExpression)) &&
+      node.argumentExpression.text === "qmdColdCollection"
+    ) {
+      recordRead(node, "element-access");
+    }
+    // 3. Object destructuring form: `const { qmdColdCollection } = ...` or
+    //    `const { qmdColdCollection: foo } = ...`.
+    if (
+      ts.isBindingElement(node) &&
+      ((ts.isIdentifier(node.name) &&
+        !node.propertyName &&
+        node.name.text === "qmdColdCollection") ||
+        (node.propertyName &&
+          ts.isIdentifier(node.propertyName) &&
+          node.propertyName.text === "qmdColdCollection") ||
+        (node.propertyName &&
+          (ts.isStringLiteral(node.propertyName) ||
+            ts.isNoSubstitutionTemplateLiteral(node.propertyName)) &&
+          node.propertyName.text === "qmdColdCollection"))
+    ) {
+      recordRead(node, "destructure-binding");
+    }
+    // 4. Object-pattern shorthand inside a property assignment, e.g.
+    //    `({ qmdColdCollection } = obj)` (assignment-pattern form).
+    if (
+      ts.isShorthandPropertyAssignment(node) &&
+      node.name.text === "qmdColdCollection"
+    ) {
+      // Only count when the parent is an ObjectLiteralExpression USED AS an
+      // assignment target; otherwise this is a literal write, not a read.
+      // The parent walk catches this when ObjectLiteralExpression is the
+      // left side of a BinaryExpression with the assignment token.
+      let p: import("typescript").Node | undefined = node.parent;
+      while (p) {
+        if (
+          ts.isBinaryExpression(p) &&
+          p.operatorToken.kind === ts.SyntaxKind.EqualsToken
+        ) {
+          // `{ qmdColdCollection } = expr` — destructuring assignment read.
+          recordRead(node, "destructure-shorthand");
+          break;
+        }
+        if (
+          ts.isObjectLiteralExpression(p) ||
+          ts.isParenthesizedExpression(p) ||
+          ts.isAsExpression(p) ||
+          ts.isSatisfiesExpression(p)
+        ) {
+          p = p.parent;
+          continue;
+        }
+        break;
+      }
     }
     ts.forEachChild(node, visit);
   }
@@ -513,7 +608,7 @@ test("AST audit: this.config.qmdColdCollection is read only inside applyColdFall
     violations,
     [],
     `qmdColdCollection read outside the allow-list — review and add to allowedFns if intentional:\n${violations
-      .map((v) => `  line ${v.line} in ${v.fn}`)
+      .map((v) => `  line ${v.line} in ${v.fn} (${v.form})`)
       .join("\n")}`,
   );
   // Require at least one read inside applyColdFallbackPipeline specifically.
