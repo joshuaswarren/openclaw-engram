@@ -11,8 +11,10 @@ import type {
   MemoryActionEvent,
   MemoryFile,
   MemoryStatus,
+  RecallDisclosure,
   TranscriptEntry,
 } from "./types.js";
+import { isRecallDisclosure, RECALL_DISCLOSURE_LEVELS } from "./types.js";
 import { chunkContent } from "./chunking.js";
 import { rescoreMemoryImportance } from "./importance.js";
 import { exportJsonBundle } from "./transfer/export-json.js";
@@ -4058,6 +4060,150 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             return;
           }
           if (!reportHasMachineReadableOutput(options)) console.log("OK");
+        });
+
+      cmd
+        .command("recall")
+        .description(
+          "Run a recall against memory.  Pass --disclosure to control payload depth (chunk|section|raw).  Part of #677.",
+        )
+        .argument("<query>", "Query to recall against")
+        .option(
+          "--disclosure <level>",
+          `Disclosure depth (one of: ${RECALL_DISCLOSURE_LEVELS.join(", ")}).  Defaults to chunk.`,
+        )
+        .option(
+          "--namespace <ns>",
+          "Namespace to scope the recall to (defaults to configured namespace)",
+        )
+        .option(
+          "--session <key>",
+          "Session key (used for session-scoped raw transcript excerpts when --disclosure=raw)",
+        )
+        .option(
+          "--top-k <n>",
+          "Maximum number of memory results to include (positive integer)",
+        )
+        .option(
+          "--format <fmt>",
+          "Output format: text (default) or json",
+          "text",
+        )
+        .action(async (...args: unknown[]) => {
+          const query = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
+          if (!query || query.trim().length === 0) {
+            throw new Error("missing required argument: <query>");
+          }
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+
+          // Disclosure validation (CLAUDE.md rule 51): explicit values
+          // must be on the allow-list; otherwise reject loudly so a typo
+          // (e.g. --disclosure full) does not silently default to chunk.
+          let disclosure: RecallDisclosure | undefined;
+          if (options.disclosure !== undefined) {
+            if (typeof options.disclosure !== "string" || !isRecallDisclosure(options.disclosure)) {
+              throw new Error(
+                `invalid --disclosure value: ${String(options.disclosure)} (expected one of: ${RECALL_DISCLOSURE_LEVELS.join(", ")})`,
+              );
+            }
+            disclosure = options.disclosure;
+          }
+
+          // Top-K validation: positive integer or undefined.  Reject
+          // strings that don't parse so the operator notices typos.
+          // `Number.parseInt` silently truncates floats and accepts
+          // trailing garbage (`3.7` -> 3, `10abc` -> 10), so we require
+          // an exact decimal-integer match before parsing.
+          let topK: number | undefined;
+          if (options.topK !== undefined) {
+            const raw = String(options.topK);
+            if (!/^\d+$/.test(raw)) {
+              throw new Error(`invalid --top-k value: ${raw} (expected positive integer)`);
+            }
+            const parsed = Number.parseInt(raw, 10);
+            if (!Number.isFinite(parsed) || parsed <= 0) {
+              throw new Error(`invalid --top-k value: ${raw} (expected positive integer)`);
+            }
+            topK = parsed;
+          }
+
+          const namespace =
+            typeof options.namespace === "string" && options.namespace.length > 0
+              ? options.namespace
+              : undefined;
+          const sessionKey =
+            typeof options.session === "string" && options.session.length > 0
+              ? options.session
+              : undefined;
+          // Strict --format validation: reject unrecognized values
+          // instead of silently defaulting (CLAUDE.md rule 51).
+          // Only "text" and "json" are supported; an absent flag falls
+          // back to "text" by intent, but `--format csv` (or anything
+          // else) must throw.  Mirrors --disclosure / --top-k strictness
+          // in the same handler.
+          let format: "text" | "json" = "text";
+          if (options.format !== undefined) {
+            const raw = String(options.format).toLowerCase();
+            if (raw !== "text" && raw !== "json") {
+              throw new Error(
+                `invalid --format value: ${String(options.format)} (expected one of: text, json)`,
+              );
+            }
+            format = raw as "text" | "json";
+          }
+
+          const accessService = new EngramAccessService(orchestrator);
+          const response = await accessService.recall({
+            query,
+            ...(sessionKey !== undefined ? { sessionKey } : {}),
+            ...(namespace !== undefined ? { namespace } : {}),
+            ...(topK !== undefined ? { topK } : {}),
+            ...(disclosure !== undefined ? { disclosure } : {}),
+          });
+
+          if (format === "json") {
+            console.log(JSON.stringify(response, null, 2));
+            return;
+          }
+
+          // Plain-text rendering.  Keep this terse — the JSON format is
+          // the canonical surface for tooling.  Per-result disclosure is
+          // shown inline so operators can confirm the requested depth
+          // was honored end-to-end.
+          console.log(`=== Recall: "${query}" ===`);
+          console.log(`namespace: ${response.namespace}`);
+          console.log(`disclosure: ${response.disclosure}`);
+          console.log(`results: ${response.count}`);
+          if (response.results.length === 0) {
+            console.log("(no results)");
+            return;
+          }
+          for (const r of response.results) {
+            console.log("");
+            console.log(`- ${r.path}`);
+            console.log(`  category: ${r.category}`);
+            if (r.tags.length > 0) {
+              console.log(`  tags: ${r.tags.join(", ")}`);
+            }
+            console.log(`  preview: ${r.preview}`);
+            if (r.content) {
+              console.log(`  content (${r.content.length} chars):`);
+              console.log(
+                r.content
+                  .split("\n")
+                  .map((line) => `    ${line}`)
+                  .join("\n"),
+              );
+            }
+            if (r.rawExcerpts && r.rawExcerpts.length > 0) {
+              console.log(`  raw excerpts (${r.rawExcerpts.length}):`);
+              for (const ex of r.rawExcerpts) {
+                console.log(
+                  `    [turn ${ex.turnIndex}, ${ex.role}] ${ex.content.slice(0, 200)}`,
+                );
+              }
+            }
+          }
         });
 
       cmd

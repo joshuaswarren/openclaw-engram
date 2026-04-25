@@ -273,6 +273,26 @@ export interface EngramAccessMemorySummary {
    * reserved for the auto-escalation policy that ships in PR 4/4.
    */
   disclosure?: RecallDisclosure;
+  /**
+   * Full memory content (markdown body) — populated when `disclosure` is
+   * `"section"` or `"raw"` (issue #677 PR 2/4).  At `"chunk"` depth callers
+   * only receive the short `preview`, preserving the cheap-by-default
+   * recall payload.  Browse/non-recall paths leave `content` undefined.
+   */
+  content?: string;
+  /**
+   * Raw transcript excerpts surfaced from the LCM archive when `disclosure`
+   * is `"raw"` and the LCM engine is enabled (issue #677 PR 2/4).  Each
+   * entry is a per-message excerpt sized by the LCM archive's
+   * configured excerpt window.  Empty array when LCM is disabled or has
+   * no matching transcript content.  Always omitted at chunk/section.
+   */
+  rawExcerpts?: Array<{
+    turnIndex: number;
+    role: string;
+    content: string;
+    sessionId: string;
+  }>;
 }
 
 export interface EngramAccessMemoryBrowseRequest {
@@ -683,6 +703,44 @@ function compareBrowseMemory(
   }
 }
 
+/**
+ * Pure helper that shapes a {@link EngramAccessMemorySummary} from a
+ * {@link MemoryFile} based on the requested disclosure depth (issue #677
+ * PR 2/4).  Extracted so the shaping invariants — chunk emits preview
+ * only, section attaches `content`, raw also surfaces `rawExcerpts` when
+ * the caller passes them — can be unit-tested without booting an
+ * orchestrator.
+ *
+ * Browse / non-recall paths pass `disclosure === undefined` so the
+ * `disclosure`, `content`, and `rawExcerpts` fields are all omitted —
+ * preserving the cheap-by-default browse projection.
+ */
+export function shapeMemorySummary(
+  memory: MemoryFile,
+  baseDir: string,
+  disclosure?: RecallDisclosure,
+  rawExcerpts?: EngramAccessMemorySummary["rawExcerpts"],
+): EngramAccessMemorySummary {
+  const includeFullContent =
+    disclosure === "section" || disclosure === "raw";
+  return {
+    id: memory.frontmatter.id,
+    path: memory.path,
+    category: memory.frontmatter.category,
+    status: inferMemoryStatus(memory.frontmatter, toMemoryPathRel(baseDir, memory.path)),
+    created: memory.frontmatter.created,
+    updated: memory.frontmatter.updated,
+    tags: normalizeProjectionTags(memory.frontmatter.tags),
+    entityRef: memory.frontmatter.entityRef,
+    preview: normalizeProjectionPreview(memory.content),
+    ...(disclosure !== undefined ? { disclosure } : {}),
+    ...(includeFullContent ? { content: memory.content } : {}),
+    ...(disclosure === "raw" && rawExcerpts !== undefined
+      ? { rawExcerpts }
+      : {}),
+  };
+}
+
 export class EngramAccessService {
   private readonly idempotency: AccessIdempotencyStore;
   private readonly idempotencyLocks = new Map<string, Promise<void>>();
@@ -821,6 +879,7 @@ export class EngramAccessService {
   private async serializeRecallResults(
     snapshot: LastRecallSnapshot | null,
     disclosure: RecallDisclosure,
+    rawContext: { query: string; sessionKey?: string } | null = null,
   ): Promise<EngramAccessMemorySummary[]> {
     if (!snapshot) return [];
     const namespace = snapshot.namespace ? this.resolveNamespace(snapshot.namespace) : this.orchestrator.config.defaultNamespace;
@@ -829,12 +888,35 @@ export class EngramAccessService {
     const results: EngramAccessMemorySummary[] = [];
     const seen = new Set<string>();
 
+    // Pre-fetch raw excerpts once when `disclosure === "raw"` so we don't
+    // hit the LCM archive per-result (issue #677 PR 2/4).  Excerpts are
+    // attached to the first result; per-result attribution is reserved
+    // for a future PR if/when the LCM index can be joined to memory ids.
+    // Coerce `null` (non-raw disclosure) to `undefined` so the optional
+    // serializer field is never explicitly `null`.
+    // Pass the resolved namespace so the LCM lookup can mirror the
+    // `${namespace}:${sessionKey}` prefix that `observe()` writes.
+    const rawExcerptsResult = await this.fetchRawExcerpts(
+      disclosure,
+      rawContext ? { ...rawContext, namespace } : null,
+    );
+    const rawExcerpts = rawExcerptsResult ?? undefined;
+
     for (const memoryPath of snapshot.resultPaths ?? []) {
       if (!memoryPath || seen.has(memoryPath)) continue;
       const memory = await storage.readMemoryByPath(memoryPath);
       if (!memory) continue;
       seen.add(memoryPath);
-      results.push(this.serializeMemorySummary(memory, storageDir, disclosure));
+      results.push(
+        this.serializeMemorySummary(
+          memory,
+          storageDir,
+          disclosure,
+          // Attach the (possibly empty) raw excerpts to the first raw
+          // result; subsequent results do not duplicate the array.
+          results.length === 0 ? rawExcerpts : undefined,
+        ),
+      );
     }
 
     if (results.length > 0) return results;
@@ -843,9 +925,73 @@ export class EngramAccessService {
       const memory = await storage.getMemoryById(memoryId);
       if (!memory || seen.has(memory.path)) continue;
       seen.add(memory.path);
-      results.push(this.serializeMemorySummary(memory, storageDir, disclosure));
+      results.push(
+        this.serializeMemorySummary(
+          memory,
+          storageDir,
+          disclosure,
+          results.length === 0 ? rawExcerpts : undefined,
+        ),
+      );
     }
     return results;
+  }
+
+  /**
+   * Fetch raw transcript excerpts from the LCM archive for `disclosure ===
+   * "raw"` recalls (issue #677 PR 2/4).  Returns `null` for non-raw recall
+   * depths, an empty array when LCM is disabled / not initialized / has no
+   * matches, and an array of LCM-side excerpts otherwise.  Errors are
+   * swallowed and treated as "no excerpts" so a failing LCM never breaks
+   * the recall response.
+   *
+   * Namespace handling: LCM archival prefixes non-default-namespace
+   * sessions with `${namespace}:${sessionKey}` (see `observe()` around
+   * line 2498), so the lookup must mirror that prefix or raw recalls in
+   * non-default namespaces miss their own excerpts.
+   */
+  private async fetchRawExcerpts(
+    disclosure: RecallDisclosure,
+    context: { query: string; sessionKey?: string; namespace?: string } | null,
+  ): Promise<EngramAccessMemorySummary["rawExcerpts"] | null> {
+    if (disclosure !== "raw") return null;
+    if (!context || !context.query) return [];
+    // Privacy guard: raw disclosure must be session-scoped.  Without a
+    // sessionKey, `lcm.searchContextFull(query, n, undefined)` searches
+    // across every archived session in the LCM store and would return
+    // excerpts from unrelated sessions (potentially crossing namespaces
+    // via their `${namespace}:${sessionKey}` prefix encoding).  Treat a
+    // missing sessionKey as "no excerpts" — callers asking for raw
+    // disclosure outside a session get an empty list, not a leak.
+    if (!context.sessionKey) return [];
+    const lcm = this.orchestrator.lcmEngine;
+    if (!lcm || !lcm.enabled) return [];
+    try {
+      const lcmSessionKey =
+        context.namespace &&
+        context.namespace !== this.orchestrator.config.defaultNamespace
+          ? `${context.namespace}:${context.sessionKey}`
+          : context.sessionKey;
+      const rows = await lcm.searchContextFull(
+        context.query,
+        // Cap the excerpt fanout so recall responses stay bounded.  Five
+        // matches is enough to anchor the model in the raw transcript
+        // without ballooning token spend; raw is meant as the escape
+        // hatch, not the default.
+        5,
+        lcmSessionKey,
+      );
+      return rows.map((r) => ({
+        turnIndex: r.turn_index,
+        role: r.role,
+        content: r.content,
+        sessionId: r.session_id,
+      }));
+    } catch {
+      // CLAUDE.md rule 13: never let an external subsystem (LCM/SQLite)
+      // crash the primary recall flow.
+      return [];
+    }
   }
 
   private async handleIdempotentWrite<T extends EngramAccessWriteResponse>(options: {
@@ -1232,7 +1378,10 @@ export class EngramAccessService {
     const effectiveNamespace = snapshot?.namespace
       ? this.resolveNamespace(snapshot.namespace)
       : namespace;
-    const results = await this.serializeRecallResults(snapshot, disclosure);
+    const results = await this.serializeRecallResults(snapshot, disclosure, {
+      query,
+      sessionKey: request.sessionKey,
+    });
     const debug = await this.buildRecallDebug(
       snapshot,
       effectiveNamespace,
@@ -2340,23 +2489,9 @@ export class EngramAccessService {
     memory: MemoryFile,
     baseDir: string,
     disclosure?: RecallDisclosure,
+    rawExcerpts?: EngramAccessMemorySummary["rawExcerpts"],
   ): EngramAccessMemorySummary {
-    return {
-      id: memory.frontmatter.id,
-      path: memory.path,
-      category: memory.frontmatter.category,
-      status: inferMemoryStatus(memory.frontmatter, toMemoryPathRel(baseDir, memory.path)),
-      created: memory.frontmatter.created,
-      updated: memory.frontmatter.updated,
-      tags: normalizeProjectionTags(memory.frontmatter.tags),
-      entityRef: memory.frontmatter.entityRef,
-      preview: normalizeProjectionPreview(memory.content),
-      // PR 1/4 of issue #677: recall paths pass an explicit disclosure;
-      // non-recall paths (browse / fallback) leave it undefined.  Section/
-      // raw payload shaping ships in PR 2; per-result divergence ships in
-      // PR 4 (auto-escalation).
-      ...(disclosure !== undefined ? { disclosure } : {}),
-    };
+    return shapeMemorySummary(memory, baseDir, disclosure, rawExcerpts);
   }
 
   async observe(request: EngramAccessObserveRequest): Promise<EngramAccessObserveResponse> {
