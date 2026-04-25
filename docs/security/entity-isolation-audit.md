@@ -90,14 +90,21 @@ appended to the recall payload.
 
 **Observable risks:**
 
-- **R-1 (same display name, same type):** two `person`-typed entities both
-  named "Alice-Test" with **distinct canonical ids** (e.g. seeded under
-  different ingestion paths or before alias merging) will both be scored as
-  high alias matches against a query "what about Alice-Test?". The current
-  `resolveExplicitCandidates()` returns **all** matching candidates and the
-  orchestrator's `maxHints` cap controls how many appear — but the candidate
-  list is sorted by score with **no canonical-id tie-break**, so the surfaced
-  hint may flip non-deterministically between the two entities.
+- **R-1 (same display name, same type — silent overwrite):** two
+  `person`-typed entities both named "Alice-Test" share the same canonical id
+  `person-alice-test` (because `normalizeEntityName(name, type)` is the only
+  key). `buildEntityMentionIndex()` puts each entry into the `entities` map
+  via `entities.set(canonicalId, …)` (entity-retrieval.ts:328) — so when two
+  on-disk entity files share that key, the second `set()` **silently
+  overwrites** the first. The losing entity's facts, timeline,
+  relationships, and structured sections become unreachable through the
+  hint surface for the remainder of the index lifetime, while the winning
+  entity is rendered as if it owned both bodies of evidence. The "winner" is
+  determined by `storage.readAllEntityFiles()` iteration order, which is
+  filesystem-dependent and therefore non-deterministic across hosts. Any
+  memory whose `frontmatter.entityRef` happens to match the canonical id is
+  then attached to the winner regardless of which on-disk entity originally
+  owned it.
 - **R-2 (alias collision):** if user-defined aliases in `config/aliases.json`
   map both `alice` and `alice-test` to `alice-test`, two distinct people whose
   facts were ingested under different aliases can collapse onto the same
@@ -374,7 +381,7 @@ contamination test suite (PR 2) and any resulting hardening (PR 3):
 
 | Risk | Scenario | Status after audit |
 | --- | --- | --- |
-| R-1 | Same display name, distinct canonical ids — non-deterministic candidate ordering | Test in PR 2; if fail, fix in PR 3 |
+| R-1 | Same display name + same type — silent overwrite in entity index | Test in PR 2; if fail, fix in PR 3 |
 | R-2 | Alias merge collapses distinct entities | Test in PR 2; documented limitation if fix would break legitimate merges |
 | R-3 | Recent-turn alias drag picks wrong entity for pronoun queries | Test in PR 2; documented as designed |
 | R-4 | Alias substring match across letter/digit boundaries | Test in PR 2; small fix in PR 3 if confirmed |
