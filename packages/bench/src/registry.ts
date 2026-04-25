@@ -131,6 +131,10 @@ import {
   contradictionDetectionDefinition,
   runContradictionDetectionBenchmark,
 } from "./benchmarks/remnic/contradiction-detection/runner.js";
+import {
+  retentionAgedDatasetDefinition,
+  runRetentionAgedDatasetBenchmark,
+} from "./benchmarks/remnic/retention-aged-dataset/runner.js";
 
 interface RegisteredBenchmark extends BenchmarkDefinition {
   run?: (options: ResolvedRunBenchmarkOptions) => Promise<BenchmarkResult>;
@@ -264,6 +268,10 @@ const REGISTERED_BENCHMARKS: RegisteredBenchmark[] = [
   {
     ...contradictionDetectionDefinition,
     run: runContradictionDetectionBenchmark,
+  },
+  {
+    ...retentionAgedDatasetDefinition,
+    run: runRetentionAgedDatasetBenchmark,
   },
 ];
 
