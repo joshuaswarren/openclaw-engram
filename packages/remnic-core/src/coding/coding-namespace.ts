@@ -255,9 +255,10 @@ export function branchNamespaceName(projectId: string, branch: string): string {
  *
  * @param codingContext — git context from the connector
  * @param config — coding mode flags (projectScope, branchScope, globalFallback)
- * @param defaultNamespace — the root/global namespace name (e.g. `"default"`)
- *   used as a read fallback when `globalFallback` is true. When omitted or
- *   empty, no root fallback is appended (preserves pre-globalFallback behavior).
+ * @param defaultNamespace — retained for call-site compatibility; no longer
+ *   used. The global fallback is expressed as an empty-string sentinel in
+ *   `readFallbacks`, which `combineNamespaces(principal, "")` resolves to the
+ *   principal's own namespace at the call site.
  */
 export function resolveCodingNamespaceOverlay(
   codingContext: CodingContext | null | undefined,
@@ -278,12 +279,17 @@ export function resolveCodingNamespaceOverlay(
 
   const projectNs = projectNamespaceName(projectId);
 
-  // Root/global namespace fallback: when `globalFallback` is true and a
-  // non-empty `defaultNamespace` was supplied, include the root namespace in
-  // readFallbacks so cross-project knowledge remains visible. CLAUDE.md #30:
-  // the gate is `globalFallback` — set to false for strict project isolation.
-  const rootNs = typeof defaultNamespace === "string" ? defaultNamespace.trim() : "";
-  const includeRoot = config.globalFallback === true && rootNs.length > 0;
+  // Root/global namespace fallback: when `globalFallback` is true, include
+  // the principal's self namespace in readFallbacks so cross-project knowledge
+  // remains visible. CLAUDE.md #30: the gate is `globalFallback` — set to
+  // false for strict project isolation.
+  //
+  // The fallback value is "" (empty string), NOT the defaultNamespace name.
+  // The orchestrator passes each fallback through combineNamespaces(principal, fallback),
+  // and combineNamespaces(base, "") returns base unchanged — yielding the
+  // principal's own namespace. Using the actual namespace name (e.g., "default")
+  // would produce "default-default" after combination, missing the target.
+  const includeRoot = config.globalFallback === true;
 
   // Branch-scope layering (PR 3):
   //   - only when config.branchScope is explicitly true
@@ -296,7 +302,7 @@ export function resolveCodingNamespaceOverlay(
   if (config.branchScope && typeof codingContext.branch === "string" && codingContext.branch.length > 0) {
     const branchNs = branchNamespaceName(projectId, codingContext.branch);
     const fallbacks = [projectNs];
-    if (includeRoot) fallbacks.push(rootNs);
+    if (includeRoot) fallbacks.push("");
     return {
       namespace: branchNs,
       readFallbacks: fallbacks,
@@ -306,7 +312,7 @@ export function resolveCodingNamespaceOverlay(
 
   return {
     namespace: projectNs,
-    readFallbacks: includeRoot ? [rootNs] : [],
+    readFallbacks: includeRoot ? [""] : [],
     scope: "project",
   };
 }
