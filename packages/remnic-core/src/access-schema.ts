@@ -72,6 +72,13 @@ export const recallRequestSchema = z.object({
   includeDebug: z.boolean().optional(),
   disclosure: recallDisclosureSchema.optional(),
   codingContext: codingContextSchema.optional(),
+  /** Working directory for auto git-context resolution (issue #569). */
+  cwd: z.string().trim().min(1, "cwd must be non-empty when provided").max(2048).optional(),
+  /**
+   * Arbitrary project tag for non-git-based project scoping (issue #569).
+   * Creates a coding context with `projectId: "tag:<projectTag>"`.
+   */
+  projectTag: z.string().trim().min(1, "projectTag must be non-empty when provided").max(256).optional(),
 });
 
 export const recallExplainRequestSchema = z.object({
@@ -103,6 +110,13 @@ export const observeRequestSchema = z.object({
   messages: z.array(messageSchema).min(1, "messages must be a non-empty array"),
   namespace: namespaceSchema,
   skipExtraction: z.boolean().optional(),
+  /** Working directory for auto git-context resolution (issue #569). */
+  cwd: z.string().trim().min(1, "cwd must be non-empty when provided").max(2048).optional(),
+  /**
+   * Arbitrary project tag for non-git-based project scoping (issue #569).
+   * Creates a coding context with `projectId: "tag:<projectTag>"`.
+   */
+  projectTag: z.string().trim().min(1, "projectTag must be non-empty when provided").max(256).optional(),
 });
 
 // ---------------------------------------------------------------------------
