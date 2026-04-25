@@ -272,15 +272,18 @@ short local `git` sequence, and posts an
 intentionally mirrors the pure logic of `resolveGitContext` in-shell
 so it does not round-trip through the daemon before the first recall.
 On any failure (`git` missing, cwd outside a repo, daemon unreachable)
-the `cwd` field on the subsequent `recall` request triggers server-side
-auto-resolution.
+it silently clears the context rather than blocking session startup.
+The server accepts `cwd` on `recall`/`observe` for auto-resolution,
+but the shipped hooks do not yet send it — a future hook update will
+close this gap.
 
 ### Codex CLI (ships today)
 
 The Codex CLI connector's session-start hook follows the same pattern:
 resolve the git context for the shell's cwd, post
-`engram.set_coding_context`, silently no-op on failure. The `cwd`
-fallback on `recall`/`observe` provides the same safety net. See
+`engram.set_coding_context`, silently no-op on failure. As with
+Claude Code, the shipped hooks do not yet send `cwd` on
+`recall`/`observe` as a fallback. See
 [`packages/plugin-codex/`](../packages/plugin-codex/) for the hook.
 
 ### OpenClaw (ships today)
