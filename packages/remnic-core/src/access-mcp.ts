@@ -211,6 +211,12 @@ export class EngramMcpServer {
               description:
                 "Optional positive-integer override for the recall character budget.",
             },
+            disclosure: {
+              type: "string",
+              enum: ["chunk", "section", "raw"],
+              description:
+                "Optional disclosure depth for X-ray telemetry (issue #677). When set, populates the per-disclosure token-spend summary on each result.",
+            },
           },
           required: ["query"],
           additionalProperties: false,
@@ -1315,10 +1321,15 @@ export class EngramMcpServer {
           budget = parsed;
         }
         // Forward disclosure depth so the recallXray telemetry table is
-        // populated for MCP callers (issue #677 PR 3/4).  Service does
-        // strict allow-list validation up front.
+        // populated for MCP callers (issue #677 PR 3/4).  Treat empty
+        // string as absent (matches HTTP `?disclosure=` handling) so
+        // the two surfaces don't diverge on the same pathological
+        // input.  Non-empty strings flow through to the service's
+        // strict allow-list validator (which throws on unknown values).
         const disclosure =
-          typeof args.disclosure === "string" ? args.disclosure : undefined;
+          typeof args.disclosure === "string" && args.disclosure.length > 0
+            ? args.disclosure
+            : undefined;
         return this.service.recallXray({
           query,
           sessionKey,
