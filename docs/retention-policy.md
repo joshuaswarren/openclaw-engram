@@ -74,9 +74,10 @@ applies the policy:
 | Cold-tier fallback (`qmdColdTierEnabled`)             | default `false` (opt-in) |
 | Recall-time stale filter (`lifecycleFilterStaleEnabled`) | default `false` (opt-in) |
 
-Automatic lifecycle migration requires both `lifecyclePolicyEnabled: true` and
-`qmdTierMigrationEnabled: true`. The default keeps pre-#686 behavior: lifecycle
-scoring and hot/cold migration stay off until explicitly enabled.
+Automatic hot/cold migration is gated by `qmdTierMigrationEnabled: true`.
+`lifecyclePolicyEnabled` controls the separate lifecycle scoring and metadata
+pass. Both default off, so fresh installs keep pre-#686 behavior until an
+operator explicitly enables the relevant path.
 
 ## Default-recall behavior (audit, #686 PR 1/6)
 
@@ -115,7 +116,7 @@ hot-only configuration.
 Run it via:
 
 ```bash
-remnic bench published retention-aged-dataset --quick
+remnic bench run --quick retention-aged-dataset
 ```
 
 The bench produces a structured report including `recall_at_5_delta` so
