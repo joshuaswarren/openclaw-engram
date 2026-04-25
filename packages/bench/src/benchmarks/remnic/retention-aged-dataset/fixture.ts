@@ -132,8 +132,18 @@ const TOPIC_KEYWORDS = [
 ];
 
 function topicWord(topicId: number, slot: number): string {
-  const kws = TOPIC_KEYWORDS[topicId % TOPIC_KEYWORDS.length];
-  return kws[slot % kws.length];
+  // Disambiguate distinct topics that wrap past the keyword table's
+  // length so query/content text stays unique even when topicCount
+  // exceeds 16.  (Codex P2 review on PR #698: bare modulo collapsed
+  // topic 0 and topic 16 to identical text, contaminating recall@K
+  // measurement at high topic counts.)  Format: keyword for the first
+  // wrap, keyword + "-N" for subsequent wraps where N is the wrap
+  // generation.
+  const tableLen = TOPIC_KEYWORDS.length;
+  const kws = TOPIC_KEYWORDS[topicId % tableLen];
+  const generation = Math.floor(topicId / tableLen);
+  const base = kws[slot % kws.length];
+  return generation === 0 ? base : `${base}-${generation}`;
 }
 
 /**
@@ -309,6 +319,24 @@ export function generateAgedDataset(
     runningTotal -= 1;
   }
 
+  // Hoist the memory id→file lookup out of the per-topic loop — it's
+  // identical for every topic, so building it once removes O(topics ×
+  // memories) work without changing semantics. (Cursor low-severity
+  // review on PR #698.)
+  const memoryLookup = new Map<string, MemoryFile>();
+  for (const memory of memories) {
+    memoryLookup.set(memory.frontmatter.id, memory);
+  }
+  const recencyMs = (id: string): number => {
+    const m = memoryLookup.get(id);
+    if (!m) return 0;
+    return Date.parse(
+      m.frontmatter.lastAccessed
+        ?? m.frontmatter.updated
+        ?? m.frontmatter.created,
+    );
+  };
+
   const queries: AgedQuery[] = [];
   for (let i = 0; i < topicEntries.length; i += 1) {
     const [topicId, ids] = topicEntries[i];
@@ -322,19 +350,6 @@ export function generateAgedDataset(
     // memories, which `rankMemories` (recency-tiebreaker) systematically
     // misses, depressing recall scores and making the delta metric noisy
     // about real tier-policy behavior. (Codex P1 review on PR #698.)
-    const memoryLookup = new Map<string, MemoryFile>();
-    for (const memory of memories) {
-      memoryLookup.set(memory.frontmatter.id, memory);
-    }
-    const recencyMs = (id: string): number => {
-      const m = memoryLookup.get(id);
-      if (!m) return 0;
-      return Date.parse(
-        m.frontmatter.lastAccessed
-          ?? m.frontmatter.updated
-          ?? m.frontmatter.created,
-      );
-    };
     const relevantSubset = [...ids]
       .sort((a, b) => recencyMs(b) - recencyMs(a))
       .slice(0, RELEVANT_PER_QUERY);

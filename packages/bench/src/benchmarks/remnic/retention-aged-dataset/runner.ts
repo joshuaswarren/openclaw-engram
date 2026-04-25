@@ -118,9 +118,17 @@ function rankMemories(query: string, memories: MemoryFile[]): MemoryFile[] {
       for (const tok of queryTokens) {
         if (haystackTokens.has(tok)) score += 1;
       }
-      // Tiebreak: more recent first.
+      // Tiebreak: more recent first, mirroring the fixture's
+      // `relevantMemoryIds` recency selection.  The fixture sorts by
+      // `lastAccessed ?? updated ?? created` (fixture.ts), so we MUST
+      // use the same fallback chain here — using only `updated ?? created`
+      // (the prior version) misalignned with the labeled relevant set
+      // when memories had a `lastAccessed` distinct from `updated`,
+      // artificially deflating recall@K.  (Codex P1 review on PR #698.)
       const recencyMs = Date.parse(
-        m.frontmatter.updated ?? m.frontmatter.created,
+        m.frontmatter.lastAccessed
+          ?? m.frontmatter.updated
+          ?? m.frontmatter.created,
       );
       return { memory: m, score, recencyMs };
     })
