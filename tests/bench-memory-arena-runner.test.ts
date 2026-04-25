@@ -920,6 +920,45 @@ test("runBenchmark matches weekday memory-arena plan day headers", async () => {
   assert.equal(task.scores.soft_process_score, 1);
 });
 
+test("runBenchmark rejects memory-arena fields under a nearer wrong weekday header", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-wrong-weekday-day-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Monday Dinner: Sushi Place. Tuesday Dinner: Coco Bambu, Dallas."),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my Monday shared itinerary."],
+      answers: [[
+        {
+          days: "Monday",
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0);
+  assert.equal(task.scores.soft_process_score, 0);
+});
+
 test("runBenchmark matches word-based memory-arena plan day headers", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-word-day-"));
   const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
@@ -935,6 +974,45 @@ test("runBenchmark matches word-based memory-arena plan day headers", async () =
       answers: [[
         {
           days: "Day One",
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 1);
+  assert.equal(task.scores.soft_process_score, 1);
+});
+
+test("runBenchmark matches multi-token memory-arena plan day headers", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-multi-token-day-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("First Day Dinner: Coco Bambu, Dallas"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my first-day shared itinerary."],
+      answers: [[
+        {
+          days: "First Day",
           current_city: "-",
           transportation: "-",
           breakfast: "-",

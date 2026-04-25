@@ -727,6 +727,30 @@ const WEEKDAY_PLAN_DAY_TOKENS = new Set([
   "saturday",
   "sunday",
 ]);
+const WORD_PLAN_DAY_TOKENS = new Set([
+  ...WEEKDAY_PLAN_DAY_TOKENS,
+  "zero",
+  "one",
+  "two",
+  "three",
+  "four",
+  "five",
+  "six",
+  "seven",
+  "eight",
+  "nine",
+  "ten",
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "fifth",
+  "sixth",
+  "seventh",
+  "eighth",
+  "ninth",
+  "tenth",
+]);
 
 function extractPlanFieldValues(answer: ArenaExpectedAnswer): PlanFieldExpectation[] {
   const planItems = Array.isArray(answer) ? answer : [answer];
@@ -860,6 +884,15 @@ function findLastDayContext(
   expectedDayTokens: string[],
 ): { startIndex: number; dayTokens: string[] } | undefined {
   for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const expectedSequence = matchExpectedDayTokensEndingAt(
+      tokens,
+      index,
+      expectedDayTokens,
+    );
+    if (expectedSequence !== undefined) {
+      return expectedSequence;
+    }
+
     const compactDayToken = extractCompactPlanDayToken(tokens[index]!);
     if (compactDayToken !== undefined) {
       return {
@@ -867,25 +900,23 @@ function findLastDayContext(
         dayTokens: [compactDayToken],
       };
     }
-    const standaloneDayToken = normalizeStandalonePlanDayToken(
-      tokens[index]!,
-      expectedDayTokens,
-    );
+    const standaloneDayToken = normalizeStandalonePlanDayToken(tokens[index]!);
     if (standaloneDayToken !== undefined) {
       return {
         startIndex: index,
         dayTokens: [standaloneDayToken],
       };
     }
+    const trailingDayContext = extractTrailingPlanDayContext(tokens, index);
+    if (trailingDayContext !== undefined) {
+      return trailingDayContext;
+    }
     if (
       index <= beforeIndex - 2
       && (tokens[index] === "day" || tokens[index] === "days")
       && tokens[index + 1]
     ) {
-      const dayToken = normalizeExplicitPlanDayToken(
-        tokens[index + 1]!,
-        expectedDayTokens,
-      );
+      const dayToken = normalizeExplicitPlanDayToken(tokens[index + 1]!);
       if (dayToken === undefined) {
         continue;
       }
@@ -924,30 +955,53 @@ function extractCompactPlanDayToken(token: string): string | undefined {
     : normalizePlanDayToken(match[1]);
 }
 
-function normalizeStandalonePlanDayToken(
-  token: string,
+function matchExpectedDayTokensEndingAt(
+  tokens: string[],
+  endIndex: number,
   expectedDayTokens: string[],
-): string | undefined {
-  return matchesSingleExpectedDayToken(token, expectedDayTokens)
-    && WEEKDAY_PLAN_DAY_TOKENS.has(token)
+): { startIndex: number; dayTokens: string[] } | undefined {
+  if (expectedDayTokens.length === 0) {
+    return undefined;
+  }
+  const startIndex = endIndex - expectedDayTokens.length + 1;
+  if (startIndex < 0) {
+    return undefined;
+  }
+  return expectedDayTokens.every(
+    (token, offset) => tokens[startIndex + offset] === token,
+  )
+    ? { startIndex, dayTokens: expectedDayTokens }
+    : undefined;
+}
+
+function normalizeStandalonePlanDayToken(token: string): string | undefined {
+  return WEEKDAY_PLAN_DAY_TOKENS.has(token)
     ? token
     : undefined;
 }
 
-function matchesSingleExpectedDayToken(
-  token: string,
-  expectedDayTokens: string[],
-): boolean {
-  return expectedDayTokens.length === 1 && expectedDayTokens[0] === token;
+function extractTrailingPlanDayContext(
+  tokens: string[],
+  dayTokenIndex: number,
+): { startIndex: number; dayTokens: string[] } | undefined {
+  const previousToken = tokens[dayTokenIndex - 1];
+  if (
+    previousToken === undefined
+    || (tokens[dayTokenIndex] !== "day" && tokens[dayTokenIndex] !== "days")
+    || !WORD_PLAN_DAY_TOKENS.has(previousToken)
+  ) {
+    return undefined;
+  }
+  return {
+    startIndex: dayTokenIndex - 1,
+    dayTokens: [previousToken, normalizePlanDayToken(tokens[dayTokenIndex]!)],
+  };
 }
 
-function normalizeExplicitPlanDayToken(
-  token: string,
-  expectedDayTokens: string[],
-): string | undefined {
+function normalizeExplicitPlanDayToken(token: string): string | undefined {
   const normalizedToken = normalizePlanDayToken(token);
   return /^\d+$/.test(token)
-    || matchesSingleExpectedDayToken(normalizedToken, expectedDayTokens)
+    || WORD_PLAN_DAY_TOKENS.has(normalizedToken)
     ? normalizedToken
     : undefined;
 }

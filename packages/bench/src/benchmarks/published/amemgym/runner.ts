@@ -358,7 +358,7 @@ function parseAMemGymPlainTextOptionNumber(
   }
 
   const labeledNumber = trimmedAnswer.match(
-    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s+(?<choiceText>\S.*)$/i,
+    /^(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s+(?<choiceText>\S.*)$/i,
   );
   if (labeledNumber) {
     return {
@@ -426,7 +426,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   }
 
   const labeledNumber = trimmedAnswer.match(
-    /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s*(?:\)(?!\s+\S))?(?<tail>\s*(?:\)\s+\S.*|\([^)]*\).*|because.*|[,.;:\-](?!\s*#?\d).*)?)$/i,
+    /^(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*(\d+)\s*(?:\)(?!\s+\S))?(?<tail>\s*(?:\)\s+\S.*|\([^)]*\).*|because.*|[,.;:\-](?!\s*#?\d).*)?)$/i,
   );
   if (labeledNumber) {
     const selectedNumber = Number.parseInt(labeledNumber[1]!, 10);
@@ -439,7 +439,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
 }
 
 function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
-  if (/^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*\d+/i.test(trimmedAnswer)) {
+  if (/^(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*(?:(?:the\s+)?(?:(?:correct|final|right)\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?::|#)?\s*)?\(?#?\s*\d+/i.test(trimmedAnswer)) {
     return true;
   }
   return /^\(?#?\s*\d+\s*\)?\s+(?!weeks?\b|days?\b|months?\b|years?\b|hours?\b|minutes?\b)/i.test(trimmedAnswer);
