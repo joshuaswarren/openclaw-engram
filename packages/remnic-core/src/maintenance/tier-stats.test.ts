@@ -188,6 +188,22 @@ test("explainTierForMemory: uses source scan tier instead of path substring", as
   assert.equal(explain.decision.currentTier, "hot");
 });
 
+test("explainTierForMemory: reports scoring confidence input", async () => {
+  const memory = makeMemory({
+    id: "explicit-confidence",
+    confidence: 0.2,
+    confidenceTier: "explicit",
+  });
+
+  const explain = await explainTierForMemory(
+    makeStorageStub([memory]) as never,
+    "explicit-confidence",
+    makeConfigStub(),
+  );
+
+  assert.equal(explain.signals.confidence, 1);
+});
+
 test("explainTierForMemory: applies utility runtime tier deltas", async () => {
   const memoryDir = await mkdtemp(path.join(tmpdir(), "remnic-tier-stats-"));
   try {

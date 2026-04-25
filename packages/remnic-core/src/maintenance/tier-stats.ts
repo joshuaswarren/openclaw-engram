@@ -17,6 +17,7 @@
 
 import type { StorageManager } from "../storage.js";
 import type { MemoryFile, PluginConfig } from "../types.js";
+import { computeLifecycleValueInputs } from "../lifecycle.js";
 import {
   computeTierValueScore,
   decideTierTransition,
@@ -134,6 +135,7 @@ export async function explainTierForMemory(
   }
   const { memory, tier: currentTier } = entry;
   const now = new Date();
+  const valueInputs = computeLifecycleValueInputs(memory, now);
   const valueScore = computeTierValueScore(memory, now);
   const policy = await tierRoutingPolicyFromConfig(config);
   const decision = decideTierTransition(memory, currentTier, policy, now);
@@ -148,8 +150,7 @@ export async function explainTierForMemory(
     valueScore,
     decision,
     signals: {
-      confidence:
-        typeof fm.confidence === "number" ? (fm.confidence as number) : 0,
+      confidence: valueInputs.confidence,
       accessCount:
         typeof fm.accessCount === "number" ? (fm.accessCount as number) : 0,
       lastAccessed:
