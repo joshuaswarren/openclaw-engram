@@ -7,11 +7,13 @@
  *  - The `isRecallDisclosure()` type guard.
  *  - The zod `recallRequestSchema` accept/reject behavior for the new
  *    `disclosure` field.
+ *  - The MCP `engram.recall` handler forwards `disclosure` to the service
+ *    layer instead of silently dropping it (regression for the
+ *    cursor[bot] / codex review feedback on PR #694).
  *
- * Surface-level tests (CLI / HTTP / MCP) live with their respective surface
- * suites and ship in PR 2/4.  Auto-escalation tests ship in PR 4/4.
- *
- * All fixtures are synthetic — no real user data.
+ * Full surface integration tests (HTTP path, CLI flag) ship with their
+ * respective surface work in PR 2/4.  Auto-escalation tests ship in
+ * PR 4/4.  All fixtures are synthetic — no real user data.
  */
 
 import assert from "node:assert/strict";
@@ -23,6 +25,8 @@ import {
   isRecallDisclosure,
 } from "./types.js";
 import { recallRequestSchema, validateRequest } from "./access-schema.js";
+import { EngramMcpServer } from "./access-mcp.js";
+import type { EngramAccessRecallRequest, EngramAccessService } from "./access-service.js";
 
 test("RECALL_DISCLOSURE_LEVELS is ordered chunk -> section -> raw", () => {
   // Order matters for future escalation policy comparisons (PR 4/4).  The
@@ -84,4 +88,84 @@ test("validateRequest('recall') surfaces disclosure validation errors with struc
     const fields = outcome.error.details.map((d) => d.field);
     assert.ok(fields.includes("disclosure"), `expected disclosure field error, got ${JSON.stringify(fields)}`);
   }
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// MCP handler must forward `disclosure` to the service layer.
+//
+// Regression coverage for the review feedback on PR #694: schema-level
+// validation alone is not enough — the handler must actually pass the
+// validated field through, otherwise callers see a silent default.
+// ──────────────────────────────────────────────────────────────────────────
+
+function makeMcpRecallSpyService(): {
+  service: EngramAccessService;
+  calls: EngramAccessRecallRequest[];
+} {
+  const calls: EngramAccessRecallRequest[] = [];
+  const service = {
+    briefingEnabled: false,
+    recall: (req: EngramAccessRecallRequest) => {
+      calls.push(req);
+      return Promise.resolve({
+        query: req.query,
+        sessionKey: req.sessionKey,
+        namespace: "default",
+        context: "",
+        count: 0,
+        memoryIds: [],
+        results: [],
+        fallbackUsed: false,
+        sourcesUsed: [],
+        disclosure: req.disclosure ?? DEFAULT_RECALL_DISCLOSURE,
+      });
+    },
+  } as unknown as EngramAccessService;
+  return { service, calls };
+}
+
+test("MCP engram.recall handler forwards explicit `disclosure` to the service", async () => {
+  const { service, calls } = makeMcpRecallSpyService();
+  const server = new EngramMcpServer(service);
+  await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "tools/call",
+    params: {
+      name: "engram.recall",
+      arguments: { query: "hello", disclosure: "raw" },
+    },
+  });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0]?.disclosure, "raw");
+});
+
+test("MCP engram.recall handler omits `disclosure` when caller does not supply it", async () => {
+  // The service layer owns default-application; the handler should pass
+  // `undefined` (not `"chunk"`) when the caller did not provide a value
+  // so the single source of truth stays in `EngramAccessService.recall()`.
+  const { service, calls } = makeMcpRecallSpyService();
+  const server = new EngramMcpServer(service);
+  await server.handleRequest({
+    jsonrpc: "2.0",
+    id: 2,
+    method: "tools/call",
+    params: { name: "engram.recall", arguments: { query: "hello" } },
+  });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0]?.disclosure, undefined);
+});
+
+test("MCP engram.recall inputSchema advertises the `disclosure` enum", () => {
+  // MCP clients with strict validation reject unknown fields; the
+  // tool-list schema must declare `disclosure` so legitimate clients
+  // can use it.
+  const { service } = makeMcpRecallSpyService();
+  const server = new EngramMcpServer(service);
+  const tools = (server as unknown as { tools: Array<{ name: string; inputSchema: { properties?: Record<string, unknown> } }> }).tools;
+  const recallTool = tools.find((t) => t.name === "engram.recall");
+  assert.ok(recallTool, "engram.recall tool should be registered");
+  const props = recallTool?.inputSchema?.properties as Record<string, { type?: string; enum?: string[] }> | undefined;
+  assert.ok(props && "disclosure" in props, "engram.recall inputSchema must declare 'disclosure'");
+  assert.deepStrictEqual(props?.disclosure?.enum, ["chunk", "section", "raw"]);
 });

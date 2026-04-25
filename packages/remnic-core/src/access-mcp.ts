@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { EngramAccessInputError, type EngramAccessService, type EngramAccessRecallResponse } from "./access-service.js";
 import { readEnvVar } from "./runtime/env.js";
-import type { RecallPlanMode } from "./types.js";
+import type { RecallDisclosure, RecallPlanMode } from "./types.js";
 import { validateBriefingFormat } from "./briefing.js";
 import { buildCitationGuidance, type CitationMetadata } from "./citations.js";
 
@@ -108,6 +108,11 @@ export class EngramMcpServer {
             topK: { type: "number" },
             mode: { type: "string", enum: ["auto", "no_recall", "minimal", "full", "graph_mode"] },
             includeDebug: { type: "boolean" },
+            // Recall disclosure depth (issue #677).  Default `chunk` when
+            // omitted.  Section/raw payload shaping ships in PR 2; this PR
+            // wires the field end-to-end so clients can already pass it
+            // without it being silently dropped.
+            disclosure: { type: "string", enum: ["chunk", "section", "raw"] },
           },
           required: ["query"],
           additionalProperties: false,
@@ -1172,6 +1177,15 @@ export class EngramMcpServer {
   private async callTool(name: string, args: Record<string, unknown>, effectivePrincipal?: string, mcpSessionId?: string): Promise<unknown> {
     switch (toLegacyToolName(name)) {
       case "engram.recall": {
+        // Forward `disclosure` only when the caller actually supplied it,
+        // so the service layer's default-application path stays the
+        // single source of truth.  Pass it through as a raw string when
+        // present; the service rejects unknown values via the shared
+        // `isRecallDisclosure` guard (CLAUDE.md rule 51).
+        const disclosure =
+          typeof args.disclosure === "string"
+            ? (args.disclosure as RecallDisclosure)
+            : undefined;
         const response = await this.service.recall({
           query: typeof args.query === "string" ? args.query : "",
           sessionKey: typeof args.sessionKey === "string" ? args.sessionKey : undefined,
@@ -1179,6 +1193,7 @@ export class EngramMcpServer {
           topK: typeof args.topK === "number" && Number.isFinite(args.topK) ? args.topK : undefined,
           mode: typeof args.mode === "string" ? args.mode as RecallPlanMode | "auto" : undefined,
           includeDebug: args.includeDebug === true,
+          disclosure,
         });
 
         if (this.shouldEmitCitations(mcpSessionId)) {

@@ -344,6 +344,12 @@ export class EngramAccessHttpServer {
         topK: body.topK,
         mode: body.mode as RecallPlanMode | "auto" | undefined,
         includeDebug: body.includeDebug === true,
+        // Forward the validated disclosure depth to the service layer
+        // (issue #677).  The zod schema accepts/rejects values; the
+        // service applies the chunk default when undefined.  Without
+        // this forwarding, callers passing `disclosure: "raw"` would
+        // silently get `chunk` back.
+        disclosure: body.disclosure,
         codingContext,
       });
       this.respondJson(res, 200, response);
