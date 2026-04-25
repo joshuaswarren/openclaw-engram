@@ -1488,18 +1488,19 @@ export class EngramAccessService {
     // for ambiguous retrieval.  Manual mode and explicit caller
     // disclosure both bypass the policy.  Documented in
     // `recall-disclosure-escalation.ts` and unit-tested there.
-    // Confidence-proxy denominator: prefer (in order):
-    //   1. The caller's explicit topK if supplied.
-    //   2. The orchestrator's actual applied top-K
-    //      (`snapshot.budgetsApplied.appliedTopK`) — this is the
-    //      authoritative number after planner/minimal-mode caps and
-    //      section caps have all narrowed the limit.
+    // Confidence-proxy denominator: priority order is
+    //   1. `snapshot.budgetsApplied.appliedTopK` (ALWAYS wins) — this is
+    //      the limit the orchestrator actually applied after planner /
+    //      minimal-mode / section-cap narrowing.  Codex P1 rounds 2+3
+    //      on #705 emphasize that even a caller's explicit `request.topK`
+    //      is wrong when the orchestrator caps below it (e.g. topK=50
+    //      but appliedTopK=3 makes a 2-hit recall actually 0.67, not
+    //      0.04).
+    //   2. The caller's explicit `topK` when the snapshot lacks
+    //      `budgetsApplied` (early-return paths, error cases).
     //   3. Config `qmdMaxResults` as a last-resort fallback.
-    // Codex P1 round 2 on #705: hardcoded `5` (round 1) and naïve
-    // `qmdMaxResults` (round 2) both ignored the dynamic per-call
-    // limit the orchestrator already records.  Floor at the observed
-    // result count so the ratio stays in [0, 1] even if config drifts
-    // below it.
+    // Floor at observed-results so the ratio stays in [0, 1] even if
+    // any of the signals drifts below the actual hit count.
     const resultsReturned = snapshot?.memoryIds?.length ?? 0;
     const appliedTopK = snapshot?.budgetsApplied?.appliedTopK;
     const configMaxResults =
@@ -1509,12 +1510,12 @@ export class EngramAccessService {
         ? this.orchestrator.config.qmdMaxResults
         : 0;
     const topKDenominator =
-      typeof topK === "number" && topK > 0
-        ? topK
-        : typeof appliedTopK === "number" &&
-            Number.isFinite(appliedTopK) &&
-            appliedTopK > 0
-          ? Math.max(appliedTopK, resultsReturned)
+      typeof appliedTopK === "number" &&
+      Number.isFinite(appliedTopK) &&
+      appliedTopK > 0
+        ? Math.max(appliedTopK, resultsReturned)
+        : typeof topK === "number" && topK > 0
+          ? Math.max(topK, resultsReturned)
           : Math.max(configMaxResults, resultsReturned, 1);
     const topKConfidence =
       topKDenominator > 0
