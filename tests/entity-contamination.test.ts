@@ -21,22 +21,18 @@ import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 
 import { parseConfig } from "../src/config.js";
-import {
-  buildEntityRecallSection,
-} from "../src/entity-retrieval.js";
+import { buildEntityRecallSection } from "../src/entity-retrieval.js";
 import { StorageManager, normalizeEntityName } from "../src/storage.js";
 import { focusMatchesMemory, parseBriefingFocus } from "../src/briefing.js";
 import {
-  FILTER_LABELS,
+  DIRECT_ANSWER_FILTER_LABELS as FILTER_LABELS,
   isDirectAnswerEligible,
+  extractGraphEdges,
+  runGraphRecall,
   type DirectAnswerCandidate,
   type DirectAnswerConfig,
-} from "../packages/remnic-core/src/direct-answer.js";
-import {
-  extractGraphEdges,
   type MemoryEdgeSource,
-} from "../packages/remnic-core/src/graph-retrieval.js";
-import { runGraphRecall } from "../packages/remnic-core/src/graph-recall.js";
+} from "@remnic/core";
 import type { MemoryFile, PluginConfig, TranscriptEntry } from "../src/types.js";
 
 // ── Harness ────────────────────────────────────────────────────────────
@@ -174,18 +170,17 @@ test("R-1: writeEntity collapses same-name same-type entities to one canonical i
 // R-2: alias merge collapses distinct entities at index-build time
 // ──────────────────────────────────────────────────────────────────────
 
-// FAILS TODAY: alias scoring uses token overlap (`scoreAliasMatch` ->
-// `tokenize`), so a query token "Person-A1" overlaps the "Person" token
-// shared by every Person-* alias. Two distinct same-prefix entities are
-// returned together. Fixed in PR 3 by tightening `scoreAliasMatch` to
-// reject partial-prefix matches that explain less than the alias.
-// Marked `todo` so CI stays green — PR 3 removes the `todo` and the test
-// goes from documented-failing to passing.
-test("R-2: aliases on a single entity do not pull in another entity's facts", { todo: true }, async () => {
+// PINNED CURRENT BEHAVIOR (bug). `scoreAliasMatch` uses token overlap
+// via `tokenize`, so a query token "Person-A1" partially overlaps the
+// "Person" token shared by every Person-* alias. The current bug: two
+// distinct same-prefix entities BOTH get returned. PR 3 inverts this
+// assertion (`doesNotMatch`) and tightens `scoreAliasMatch` so the
+// inverted assertion passes. Per Codex review, we pin the current
+// behavior with a `match` assertion rather than `todo` so CI cannot
+// silently regress in the same direction.
+test("R-2 (pinned bug): query for Person-B1 also surfaces Person-A1 due to shared 'person' token", async () => {
   const { config, storage } = await buildHarness("contam-r2");
 
-  // Two distinct entities. Person-A1 has alias "PA1"; Person-B1 has its own
-  // facts and a clearly separate canonical id.
   await storage.writeEntity("Person-A1", "person", [
     "Person-A1 owns Project-A1.",
     "Person-A1 prefers async standups.",
@@ -196,7 +191,6 @@ test("R-2: aliases on a single entity do not pull in another entity's facts", { 
   const personA1Canonical = normalizeEntityName("Person-A1", "person");
   await storage.addEntityAlias(personA1Canonical, "PA1");
 
-  // Memory tagged to Person-A1 must NOT surface when query asks about Person-B1.
   await storage.writeMemory(
     "fact",
     "Person-A1 confirmed ownership of Project-A1 in retro.",
@@ -205,17 +199,14 @@ test("R-2: aliases on a single entity do not pull in another entity's facts", { 
 
   const sectionForB = await buildSection(config, storage, "Who is Person-B1?");
   assert.ok(sectionForB);
+  // Person-B1 is correctly resolved as a target.
   assert.match(sectionForB!, /target: Person-B1 \(person\)/);
-  // Strong invariant: nothing about Person-A1 leaks into Person-B1's hints.
-  assert.doesNotMatch(
+  // BUG: Person-A1 also appears as a target. PR 3 will invert this to
+  // `doesNotMatch` and apply the alias-scoring tightening fix.
+  assert.match(
     sectionForB!,
-    /Person-A1/,
-    "Person-B1's hint section must not mention Person-A1",
-  );
-  assert.doesNotMatch(
-    sectionForB!,
-    /Project-A1/,
-    "Person-B1's hint section must not mention Project-A1",
+    /target: Person-A1 \(person\)/,
+    "R-2 bug today: query for Person-B1 surfaces Person-A1 due to shared 'person' token",
   );
 });
 
@@ -223,12 +214,11 @@ test("R-2: aliases on a single entity do not pull in another entity's facts", { 
 // R-3: recent-turn alias drag picks wrong entity for pronoun queries
 // ──────────────────────────────────────────────────────────────────────
 
-// FAILS TODAY: same root cause as R-2 — both Person-A1 and Person-B1
-// alias-match on the shared "person" token from prior transcript turns.
-// The audit documented R-3 as "designed" (most-recent-entity wins for
-// pronoun queries), but the partial-token alias bug surfaces both
-// entities. Fixed in PR 3 alongside R-2. Marked `todo`.
-test("R-3: pronoun query carries forward the most recent entity from transcript", { todo: true }, async () => {
+// PINNED CURRENT BEHAVIOR (bug). Same root cause as R-2 — partial-token
+// alias scoring surfaces both Person-A1 and Person-B1 on a pronoun
+// query because both entries share the "person" token from prior
+// transcript turns. PR 3 inverts the assertion and applies the fix.
+test("R-3 (pinned bug): pronoun query surfaces both transcript entities (alias token leak)", async () => {
   const { config, storage } = await buildHarness("contam-r3");
 
   await storage.writeEntity("Person-A1", "person", [
@@ -278,26 +268,19 @@ test("R-3: pronoun query carries forward the most recent entity from transcript"
     transcript,
   );
 
-  // The pronoun-follow-up surface MUST pick exactly the most recent person
-  // (B1). Strong assertions per Codex review: section must exist, must
-  // explicitly resolve Person-B1 as the target, must NOT resolve Person-A1
-  // as a separate target, and must surface only B1's facts.
-  assert.ok(section, "pronoun query must produce a hint section when transcript has entities");
+  // PINNED bug: a pronoun query produces a hint section that resolves
+  // BOTH Person-A1 and Person-B1 as separate targets. PR 3 inverts these
+  // to assert exactly one target (B1) and applies the fix.
+  assert.ok(section, "pronoun query must produce a hint section");
+  assert.match(
+    section!,
+    /target: Person-A1 \(person\)/,
+    "R-3 bug today: Person-A1 surfaces as a target alongside Person-B1",
+  );
   assert.match(
     section!,
     /target: Person-B1 \(person\)/,
-    "most recent entity (Person-B1) must be the resolved target",
-  );
-  assert.doesNotMatch(
-    section!,
-    /target: Person-A1 \(person\)/,
-    "Person-A1 must not appear as a separate resolved target",
-  );
-  assert.match(section!, /spicy food/, "Person-B1's facts must appear");
-  assert.doesNotMatch(
-    section!,
-    /vegetarian meals/,
-    "Person-A1's facts must not bleed into B1's hint",
+    "Person-B1 also surfaces (correctly — most recent)",
   );
 });
 
@@ -555,13 +538,10 @@ test("R-8: graph extractor treats normalized and un-normalized entity refs as di
 // R-9: multi-entity chunk citation attribution
 // ──────────────────────────────────────────────────────────────────────
 
-test("R-9: multi-entity memory exposes both entityRef and entityRefs[] for downstream attribution", async () => {
-  // A single memory describes facts about two entities. The frontmatter
-  // can carry one primary `entityRef` and (optionally) `entityRefs[]` for
-  // additional entities referenced by the chunk. Recall surfaces that
-  // attribute the *whole chunk* to the primary `entityRef` lose isolation
-  // for the secondary entities. The graph extractor preserves both —
-  // verify that.
+test("R-9: multi-entity chunk graph extractor preserves all referenced entities", () => {
+  // Layer 1: graph extractor — a memory with `entityRef` + `entityRefs[]`
+  // produces `mentions` edges to every referenced entity, so graph-tier
+  // recall can attribute the chunk to each.
   const memories: MemoryEdgeSource[] = [
     {
       id: "mem-multi",
@@ -574,23 +554,65 @@ test("R-9: multi-entity memory exposes both entityRef and entityRefs[] for downs
   const mentionTargets = new Set(
     edges.filter((edge) => edge.type === "mentions").map((edge) => edge.to),
   );
-
-  // All three entities must be reachable from this chunk via mentions
-  // edges so peer-profile and entity-recall code paths can attribute the
-  // chunk to each of the three entities.
   assert.ok(mentionTargets.has("person-person-a1"));
   assert.ok(mentionTargets.has("person-person-b1"));
   assert.ok(mentionTargets.has("project-project-a1"));
 });
 
+test("R-9 (attribution surface): multi-entity chunk attributes via primary entityRef only on focus match", () => {
+  // Layer 2: actual attribution surface — `focusMatchesMemory` reads
+  // ONLY `frontmatter.entityRef` (not `entityRefs[]`) for slug-form
+  // matching. A focus on a *secondary* entity matches via content/tags,
+  // not via the structured entity reference. This is the "primary
+  // entityRef wins" attribution gap from the audit's R-9.
+  const multiEntityMemory = makeMemory({
+    entityRef: "person-person-a1", // primary attribution
+    tags: [],
+    content: "Person-A1 introduced Person-B1 to Project-A1.",
+  });
+  // Add `entityRefs` to frontmatter directly (simulating extraction-time
+  // tagging of secondary entities).
+  (multiEntityMemory.frontmatter as Record<string, unknown>).entityRefs = [
+    "person-person-b1",
+    "project-project-a1",
+  ];
+
+  const focusOnA1 = parseBriefingFocus("person:Person-A1");
+  const focusOnB1 = parseBriefingFocus("person:Person-B1");
+  assert.ok(focusOnA1);
+  assert.ok(focusOnB1);
+
+  // Primary attribution: focus on A1 matches via slug entityRef.
+  assert.equal(focusMatchesMemory(multiEntityMemory, focusOnA1!), true);
+
+  // Secondary attribution: focus on B1 matches today only because the
+  // CONTENT contains "Person-B1", NOT because frontmatter.entityRefs
+  // includes it. Strip the content to prove the attribution surface
+  // ignores `entityRefs[]`.
+  const noContentMemory = makeMemory({
+    entityRef: "person-person-a1",
+    content: "internal: redacted",
+  });
+  (noContentMemory.frontmatter as Record<string, unknown>).entityRefs = [
+    "person-person-b1",
+    "project-project-a1",
+  ];
+  assert.equal(
+    focusMatchesMemory(noContentMemory, focusOnB1!),
+    false,
+    "R-9 attribution gap: focusMatchesMemory does NOT consult frontmatter.entityRefs[]",
+  );
+});
+
 // ──────────────────────────────────────────────────────────────────────
 // R-10: briefing focus substring match leaks across entity prefixes
 // ──────────────────────────────────────────────────────────────────────
-// FAILS TODAY: `focusMatchesMemory` uses `entityRef.includes(slug)`, a
-// substring test, so a focus on `person:Alice-Test` matches both
-// `person-alice-test` and `person-alice-test-a1`. Fixed in PR 3 by
-// switching to a slug-boundary-aware match. Marked `todo`.
-test("R-10: focusMatchesMemory substring-matches entityRef prefix across distinct entities (regression)", { todo: true }, () => {
+// PINNED CURRENT BEHAVIOR (bug). `focusMatchesMemory` uses
+// `entityRef.includes(slug)`, a substring test, so a focus on
+// `person:Alice-Test` matches both `person-alice-test` and
+// `person-alice-test-a1`. PR 3 inverts the second assertion and switches
+// to a slug-boundary-aware match.
+test("R-10 (pinned bug): focusMatchesMemory substring-matches entityRef prefix across distinct entities", () => {
   // Memory tagged to entity-prefix-a1 must not match a focus on entity-prefix.
   // Today the function uses `entityRef.includes(slug)`, so a focus on
   // `person:Alice-Test` matches both `person-alice-test` AND
@@ -615,13 +637,13 @@ test("R-10: focusMatchesMemory substring-matches entityRef prefix across distinc
     "focus on Alice-Test should match memory tagged person-alice-test",
   );
 
-  // Person Alice-Test-A1 (a different entity) MUST NOT match — but today
-  // it does, because the substring check matches the prefix.
-  // This assertion is RED today; PR 3 fixes the substring to exact match.
+  // PINNED bug: today the substring check matches the prefix, so
+  // memoryAliceA1 (a distinct entity) ALSO matches. PR 3 inverts to
+  // assert `false` and fixes the substring to a slug-boundary match.
   assert.equal(
     focusMatchesMemory(memoryAliceA1, focus!),
-    false,
-    "R-10: focus on Alice-Test must NOT match memory tagged person-alice-test-a1 (substring leak)",
+    true,
+    "R-10 bug today: focus on Alice-Test substring-matches person-alice-test-a1",
   );
 });
 
@@ -708,11 +730,11 @@ test("R-13: storage permits same-content memories under different entityRefs", a
 // Cross-entity recall isolation — end-to-end
 // ──────────────────────────────────────────────────────────────────────
 
-// FAILS TODAY: end-to-end manifestation of R-2's partial-token bug.
-// "Who is Person-A1?" alias-matches BOTH Person-A1 and Person-B1 because
-// both share the "person" token. Fixed in PR 3 by tightening alias
-// scoring. Marked `todo`.
-test("end-to-end: querying for Person-A1 never surfaces Person-B1's facts", { todo: true }, async () => {
+// PINNED CURRENT BEHAVIOR: end-to-end manifestation of R-2's partial-token
+// bug. "Who is Person-A1?" alias-matches BOTH Person-A1 and Person-B1
+// because both share the "person" token. PR 3 inverts the contamination
+// assertions and applies the alias-scoring fix.
+test("end-to-end (pinned bug): querying Person-A1 also surfaces Person-B1's hint section", async () => {
   const { config, storage } = await buildHarness("contam-e2e");
   await storage.writeEntity("Person-A1", "person", [
     "Person-A1 owns Project-A1.",
@@ -726,14 +748,15 @@ test("end-to-end: querying for Person-A1 never surfaces Person-B1's facts", { to
   const sectionA = await buildSection(config, storage, "Who is Person-A1?");
   assert.ok(sectionA);
   assert.match(sectionA!, /target: Person-A1 \(person\)/);
-  assert.doesNotMatch(sectionA!, /Person-B1/, "A's hint must not mention B");
-  assert.doesNotMatch(sectionA!, /Project-B1/, "A's hint must not mention B's project");
-  assert.doesNotMatch(sectionA!, /sync standups/, "A's hint must not include B's preference");
-
-  const sectionB = await buildSection(config, storage, "Who is Person-B1?");
-  assert.ok(sectionB);
-  assert.match(sectionB!, /target: Person-B1 \(person\)/);
-  assert.doesNotMatch(sectionB!, /Person-A1/, "B's hint must not mention A");
-  assert.doesNotMatch(sectionB!, /Project-A1/, "B's hint must not mention A's project");
-  assert.doesNotMatch(sectionB!, /async standups/, "B's hint must not include A's preference");
+  // Bug today: Person-B1 ALSO appears as a target. PR 3 inverts these.
+  assert.match(
+    sectionA!,
+    /target: Person-B1 \(person\)/,
+    "end-to-end bug today: Person-B1 surfaces alongside Person-A1",
+  );
+  assert.match(
+    sectionA!,
+    /Project-B1/,
+    "end-to-end bug today: B1's project leaks into A1's hint section",
+  );
 });
