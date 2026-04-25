@@ -168,10 +168,9 @@ summary (`cycles`, `scanned`, `migrated`, `promoted`, `demoted`, `errors`).
 `recall-explain` reports the most recent recall snapshot (or a session selected
 with `--session`) and can emit either text or JSON.
 
-## Cold tier opt-in
+## Cold QMD opt-in
 
-To turn on cold-tier fallback for callers that want the long-tail searched
-on demand:
+To search the cold QMD collection before archive fallback on hot misses:
 
 ```yaml
 # openclaw.json plugin config
@@ -179,7 +178,8 @@ qmdColdTierEnabled: true
 ```
 
 When enabled, `applyColdFallbackPipeline` queries the cold QMD collection only
-after the hot-tier search returns no results. Default off because the long-tail
+after the hot-tier search returns no results. If cold QMD is disabled or returns
+no hits, archive scan fallback can still run. Default off because the long-tail
 rarely contributes to a recall worth the latency.
 
 ## Configuration knobs
@@ -194,7 +194,7 @@ rarely contributes to a recall worth the latency.
 | `lifecycleMetricsEnabled`                 | mirrors policy         | Emit lifecycle metrics for inspection.        |
 | `lifecycleFilterStaleEnabled`             | `false`                | Filter stale lifecycle memories from recall.  |
 | `qmdTierMigrationEnabled`                 | `false`                | Enable value-aware hot/cold tier migration.   |
-| `qmdColdTierEnabled`                      | `false`                | Whether the cold-fallback pipeline runs.      |
+| `qmdColdTierEnabled`                      | `false`                | Query cold QMD before archive fallback.       |
 | `qmdColdCollection`                       | `openclaw-engram-cold` | QMD collection name for cold tier.            |
 
 See `docs/config-reference.md` for the full schema.
