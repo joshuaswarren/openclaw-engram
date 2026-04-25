@@ -9,7 +9,8 @@ import { log } from "./logger.js";
 import { EngramAccessInputError, type EngramAccessService } from "./access-service.js";
 import { EngramMcpServer } from "./access-mcp.js";
 import { validateRequest, type SchemaName, type SchemaTypeFor } from "./access-schema.js";
-import type { RecallPlanMode } from "./types.js";
+import type { RecallDisclosure, RecallPlanMode } from "./types.js";
+import { isRecallDisclosure } from "./types.js";
 import { isTrustZoneName, type TrustZoneName, type TrustZoneRecordKind, type TrustZoneSourceClass } from "./trust-zones.js";
 import { AdapterRegistry, type ResolvedIdentity } from "./adapters/index.js";
 import type { CitationEntry } from "./citations.js";
@@ -289,6 +290,34 @@ export class EngramAccessHttpServer {
     return bodyNamespace || undefined;
   }
 
+  /**
+   * Resolve the recall disclosure depth from the request (issue #677 PR
+   * 2/4).  Explicit body value wins; otherwise we accept a
+   * `?disclosure=...` query parameter so curl/browser tooling can use the
+   * three-tier surface without rewriting JSON.  Invalid query values
+   * throw `EngramAccessInputError` (CLAUDE.md rule 51 — no silent
+   * fallback).  An absent body field AND an absent query param yields
+   * `undefined`, which the service maps to `DEFAULT_RECALL_DISCLOSURE`.
+   */
+  private resolveRecallDisclosure(
+    bodyDisclosure: RecallDisclosure | undefined,
+    parsed: URL,
+  ): RecallDisclosure | undefined {
+    if (bodyDisclosure !== undefined) {
+      return bodyDisclosure;
+    }
+    const queryDisclosure = parsed.searchParams.get("disclosure");
+    if (queryDisclosure === null) {
+      return undefined;
+    }
+    if (!isRecallDisclosure(queryDisclosure)) {
+      throw new EngramAccessInputError(
+        `disclosure must be one of: chunk, section, raw (got: ${queryDisclosure})`,
+      );
+    }
+    return queryDisclosure;
+  }
+
   private async handle(req: IncomingMessage, res: ServerResponse, correlationId: string): Promise<void> {
     const parsed = new URL(req.url ?? "/", `http://${hostToUrlAuthority(this.host)}`);
     const pathname = parsed.pathname;
@@ -337,6 +366,12 @@ export class EngramAccessHttpServer {
       // attached context through the recall endpoint.
       const codingContext =
         "codingContext" in body ? body.codingContext : undefined;
+      // Disclosure resolution (issue #677 PR 2/4): accept the value from
+      // the validated body OR the `?disclosure=` query parameter, with
+      // the body taking precedence so an explicit JSON payload is never
+      // silently overridden by a stale URL.  CLAUDE.md rule 51: invalid
+      // query-param values throw, never fall back silently.
+      const disclosure = this.resolveRecallDisclosure(body.disclosure, parsed);
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
@@ -345,11 +380,9 @@ export class EngramAccessHttpServer {
         mode: body.mode as RecallPlanMode | "auto" | undefined,
         includeDebug: body.includeDebug === true,
         // Forward the validated disclosure depth to the service layer
-        // (issue #677).  The zod schema accepts/rejects values; the
-        // service applies the chunk default when undefined.  Without
-        // this forwarding, callers passing `disclosure: "raw"` would
-        // silently get `chunk` back.
-        disclosure: body.disclosure,
+        // (issue #677).  The zod schema accepts/rejects body values;
+        // `resolveRecallDisclosure()` validates the query-param fallback.
+        disclosure,
         codingContext,
       });
       this.respondJson(res, 200, response);
