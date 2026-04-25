@@ -1517,8 +1517,14 @@ export class EngramAccessService {
         : typeof topK === "number" && topK > 0
           ? Math.max(topK, resultsReturned)
           : Math.max(configMaxResults, resultsReturned, 1);
+    // When the recall produced no snapshot (sessionless / namespace
+    // mismatch / early-return path), there is no confidence signal to
+    // base escalation on.  Pass `undefined` so the helper takes its
+    // `no-top-k-confidence` branch instead of computing 0/N=0 and
+    // forcing auto-escalation on every sessionless caller (Codex P2
+    // review on PR #705).
     const topKConfidence =
-      topKDenominator > 0
+      snapshot && topKDenominator > 0
         ? Math.min(1, resultsReturned / topKDenominator)
         : undefined;
     const escalationDecision = decideDisclosureEscalation({
