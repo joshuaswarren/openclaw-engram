@@ -1670,16 +1670,51 @@ export class EngramAccessService {
         const namespace = snapshot.namespace
           ? this.resolveNamespace(snapshot.namespace)
           : this.orchestrator.config.defaultNamespace;
+        // Pre-fetch raw excerpts ONCE so the first raw-disclosure
+        // result's token estimate includes the LCM-side excerpt spend
+        // that `shapeMemorySummary` actually attaches in the recall
+        // response.  Without this, raw recalls systematically
+        // undercounted spend on the first result (Cursor Medium review
+        // on PR #699).  Excerpts are scoped to the same session +
+        // namespace as the recall.
+        const rawExcerpts =
+          disclosure === "raw"
+            ? await this.fetchRawExcerpts(disclosure, {
+                query,
+                ...(request.sessionKey ? { sessionKey: request.sessionKey } : {}),
+                namespace,
+              })
+            : null;
+        const rawExcerptText =
+          rawExcerpts && rawExcerpts.length > 0
+            ? rawExcerpts.map((e) => e.content).join("\n")
+            : "";
+        let firstRawDecorated = false;
         const decorated = await Promise.all(
           snapshot.results.map(async (result) => {
             try {
               const storage = await this.orchestrator.getStorage(namespace);
               const memory = await storage.readMemoryByPath(result.path);
               if (!memory) return result;
-              const renderedText =
+              const baseText =
                 disclosure === "chunk"
                   ? normalizeProjectionPreview(memory.content)
                   : memory.content;
+              // Match `shapeMemorySummary`'s rawExcerpts attribution:
+              // the helper attaches excerpts to the first raw result
+              // only.  We do the same here so the per-result token
+              // estimate matches what the response actually rendered.
+              let extraText = "";
+              if (
+                disclosure === "raw" &&
+                !firstRawDecorated &&
+                rawExcerptText.length > 0
+              ) {
+                extraText = rawExcerptText;
+                firstRawDecorated = true;
+              }
+              const renderedText =
+                extraText.length > 0 ? `${baseText}\n${extraText}` : baseText;
               return {
                 ...result,
                 disclosure,
