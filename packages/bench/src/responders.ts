@@ -314,10 +314,10 @@ function parseScalarJudgeScore(raw: string): number {
 
 function parseAmaBenchBinaryJudgeScore(raw: string): number {
   const trimmed = raw.trim();
-  const jsonMatches = trimmed.matchAll(/\{[\s\S]*?\}/g);
-  for (const jsonMatch of jsonMatches) {
+  const jsonCandidates = extractJsonObjects(trimmed);
+  for (const jsonCandidate of jsonCandidates.reverse()) {
     try {
-      const parsed = JSON.parse(jsonMatch[0]) as { score?: unknown };
+      const parsed = JSON.parse(jsonCandidate) as { score?: unknown };
       if (parsed.score === 0 || parsed.score === 1) {
         return parsed.score;
       }
@@ -339,7 +339,10 @@ function parseAmaBenchBinaryJudgeScore(raw: string): number {
   if (scalar >= 0) {
     return 0;
   }
-  if (/\b(incorrect|no|false|fail)\b/i.test(trimmed)) {
+  if (/^\s*no[.!]?\s*$/i.test(trimmed)) {
+    return 0;
+  }
+  if (/\b(incorrect|false|fail(?:ed|s)?)\b/i.test(trimmed)) {
     return 0;
   }
   if (
@@ -353,6 +356,52 @@ function parseAmaBenchBinaryJudgeScore(raw: string): number {
     return 1;
   }
   return -1;
+}
+
+function extractJsonObjects(raw: string): string[] {
+  const objects: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index];
+    if (start < 0) {
+      if (char === "{") {
+        start = index;
+        depth = 1;
+        inString = false;
+        escaped = false;
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === "\"") {
+      inString = true;
+    } else if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        objects.push(raw.slice(start, index + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return objects;
 }
 
 function isPlausibleScoreFraction(

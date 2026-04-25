@@ -211,6 +211,33 @@ test("AMA-Bench recommended judge scans multiple JSON objects for score", async 
   assert.equal(await judge.score("q", "predicted", "expected"), 1);
 });
 
+test("AMA-Bench recommended judge prefers the last scored JSON object", async () => {
+  const judge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider('Draft: {"score":0,"reason":"scratch"}\nFinal: {"score":1,"reason":"same fact"}'),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 1);
+});
+
+test("AMA-Bench recommended judge parses nested JSON score objects", async () => {
+  const judge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider('{"analysis":{"note":"nested braces are valid"},"score":1}'),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 1);
+});
+
+test("AMA-Bench recommended judge does not treat benign no-phrases as negative", async () => {
+  const judge = createProviderBackedAmaBenchRecommendedJudge(
+    { provider: "openai", model: "qwen3-32b" },
+    createFakeProvider("No issues found; the answer is correct."),
+  );
+
+  assert.equal(await judge.score("q", "predicted", "expected"), 1);
+});
+
 test("AMA-Bench recommended judge treats negated positive labels as incorrect", async () => {
   const judge = createProviderBackedAmaBenchRecommendedJudge(
     { provider: "openai", model: "qwen3-32b" },

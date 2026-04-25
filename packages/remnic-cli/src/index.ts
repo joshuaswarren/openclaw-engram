@@ -736,6 +736,82 @@ export function buildBenchRuntimeProfileRequest(
   };
 }
 
+const BENCH_STDOUT_REDACTED_SECRET = "[REDACTED]";
+const BENCH_STDOUT_EXACT_SECRET_KEYS: ReadonlySet<string> = new Set([
+  "authorization",
+  "password",
+  "secret",
+  "token",
+]);
+const BENCH_STDOUT_SECRET_KEY_SUFFIXES: ReadonlySet<string> = new Set([
+  "apikey",
+  "authtoken",
+  "accesstoken",
+  "refreshtoken",
+  "bearertoken",
+  "clientsecret",
+  "secretkey",
+  "privatekey",
+]);
+
+function redactBenchResultForStdout<T>(
+  benchModule: PackageBenchModule,
+  result: T,
+): T {
+  return benchModule.redactBenchmarkResultSecrets?.(result) ??
+    (redactBenchSecretsFallback(result) as T);
+}
+
+function redactBenchSecretsFallback(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => redactBenchSecretsFallback(item));
+  }
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value)) {
+    redacted[key] = isBenchSecretKey(key)
+      ? BENCH_STDOUT_REDACTED_SECRET
+      : redactBenchSecretsFallback(nestedValue);
+  }
+  return redacted;
+}
+
+function isBenchSecretKey(key: string): boolean {
+  const segments = key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[^a-z0-9]+/i)
+    .map((segment) => segment.trim().toLowerCase())
+    .filter(Boolean);
+  if (segments.length === 0) {
+    return false;
+  }
+
+  const normalized = segments.join("");
+  if (
+    BENCH_STDOUT_EXACT_SECRET_KEYS.has(normalized) ||
+    BENCH_STDOUT_SECRET_KEY_SUFFIXES.has(normalized)
+  ) {
+    return true;
+  }
+
+  const lastSegment = segments.at(-1);
+  if (lastSegment && BENCH_STDOUT_EXACT_SECRET_KEYS.has(lastSegment)) {
+    return true;
+  }
+
+  for (let width = 2; width <= Math.min(3, segments.length); width += 1) {
+    const candidate = segments.slice(-width).join("");
+    if (BENCH_STDOUT_SECRET_KEY_SUFFIXES.has(candidate)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function coerceBenchCategory(
   benchmarkId: string,
   category: string | undefined,
@@ -2213,7 +2289,7 @@ async function runBenchViaPackage(
     result.config.remnicConfig = plan.runtime.remnicConfig;
     const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
     if (parsed.json) {
-      console.log(JSON.stringify(benchModule.redactBenchmarkResultSecrets?.(result) ?? result, null, 2));
+      console.log(JSON.stringify(redactBenchResultForStdout(benchModule, result), null, 2));
     } else {
       printBenchPackageSummary(result, writtenPath);
     }
@@ -2435,7 +2511,7 @@ async function runCustomBenchViaPackage(parsed: ParsedBenchArgs): Promise<boolea
       const writtenPath = await benchModule.writeBenchmarkResult(result, outputDir);
       writtenPaths.push(writtenPath);
       if (parsed.json) {
-        console.log(JSON.stringify(benchModule.redactBenchmarkResultSecrets?.(result) ?? result, null, 2));
+        console.log(JSON.stringify(redactBenchResultForStdout(benchModule, result), null, 2));
       } else {
         printBenchPackageSummary(result, writtenPath);
       }
