@@ -163,7 +163,7 @@ Example doctor block (synthetic):
 
 When `codingMode.globalFallback` is `true` (the default), `readFallbacks`
 includes the principal's root namespace so that global facts surface
-during project-scoped recall. Set `globalFallback: false` for strict
+during project-scoped recall. Set `codingMode.globalFallback: false` for strict
 isolation where the fallback list is empty.
 
 When branch-scope is on:
