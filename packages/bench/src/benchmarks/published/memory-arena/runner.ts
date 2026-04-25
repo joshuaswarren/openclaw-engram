@@ -8,6 +8,7 @@ import path from "node:path";
 import {
   MEMORY_ARENA_SMOKE_FIXTURE,
   type ArenaAnswer,
+  type ArenaBasePerson,
   type ArenaExpectedAnswer,
   type ArenaTask,
   type DomainData,
@@ -62,6 +63,7 @@ export async function runMemoryArenaBenchmark(
       await options.system.reset();
 
       const sessionId = `arena-${domain}-${task.id}`;
+      await storeInitialTaskState(options, sessionId, task);
       for (
         let questionIndex = 0;
         questionIndex < task.questions.length;
@@ -104,11 +106,21 @@ export async function runMemoryArenaBenchmark(
           const { result: recalledText, durationMs } = await timed(async () =>
             options.system.recall(sessionId, question),
           );
-          const answered = await answerBenchmarkQuestion({
+          const benchmarkQuestion = formatMemoryArenaQuestion(
+            domain,
             question,
+            expectedAnswer,
+          );
+          const answered = await answerBenchmarkQuestion({
+            question: benchmarkQuestion,
             recalledText,
             responder: options.system.responder,
           });
+          const domainScores = scoreMemoryArenaDomainAnswer(
+            domain,
+            answered.finalAnswer,
+            expectedAnswer,
+          );
           const judgeResult = await llmJudgeScoreDetailed(
             options.system.judge,
             question,
@@ -119,6 +131,7 @@ export async function runMemoryArenaBenchmark(
           const scores: Record<string, number> = {
             f1: f1Score(answered.finalAnswer, expected),
             contains_answer: containsAnswer(answered.finalAnswer, expected),
+            ...domainScores,
           };
           if (judgeResult.score >= 0) {
             scores.llm_judge = judgeResult.score;
@@ -145,6 +158,7 @@ export async function runMemoryArenaBenchmark(
               taskId: task.id,
               subtaskIndex: questionIndex,
               category: task.category,
+              promptQuestion: benchmarkQuestion,
               recalledLength: recalledText.length,
               answeredLength: answered.finalAnswer.length,
               recalledText,
@@ -398,6 +412,14 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
       `${location} backgrounds must be a string or an array of strings when provided.`,
     );
   }
+  if (
+    record.base_person !== undefined
+    && !isValidBasePerson(record.base_person)
+  ) {
+    throw new Error(
+      `${location} base_person must be an object when provided.`,
+    );
+  }
 
   return {
     id: record.id as number,
@@ -407,6 +429,9 @@ function parseTask(line: string, filename: string, lineNumber: number): ArenaTas
     ...(record.backgrounds === undefined
       ? {}
       : { backgrounds: record.backgrounds as string | string[] }),
+    ...(record.base_person === undefined
+      ? {}
+      : { base_person: record.base_person as ArenaBasePerson }),
   };
 }
 
@@ -487,6 +512,12 @@ function isValidBackgrounds(backgrounds: unknown): backgrounds is string | strin
       && backgrounds.every((entry) => typeof entry === "string"));
 }
 
+function isValidBasePerson(basePerson: unknown): basePerson is ArenaBasePerson {
+  return Boolean(basePerson)
+    && typeof basePerson === "object"
+    && !Array.isArray(basePerson);
+}
+
 function scoredSubtaskCount(task: ArenaTask): number {
   return task.questions.filter((_, index) => shouldScoreSubtask(task, index)).length;
 }
@@ -513,6 +544,146 @@ function backgroundForSubtask(
       : undefined;
   }
   return undefined;
+}
+
+async function storeInitialTaskState(
+  options: ResolvedRunBenchmarkOptions,
+  sessionId: string,
+  task: ArenaTask,
+): Promise<void> {
+  if (!task.base_person) {
+    return;
+  }
+
+  const basePerson = task.base_person;
+  const name = typeof basePerson.name === "string" ? basePerson.name : "base traveler";
+  const query = typeof basePerson.query === "string" ? basePerson.query : "";
+  const plan = basePerson.daily_plans === undefined
+    ? ""
+    : answerToString(basePerson.daily_plans);
+
+  await options.system.store(sessionId, [
+    {
+      role: "user",
+      content: query.trim().length > 0
+        ? query
+        : `MemoryArena initial state for ${name}.`,
+    },
+    {
+      role: "assistant",
+      content: [
+        `MemoryArena initial finalized plan for ${name}.`,
+        query.trim().length > 0 ? `Base traveler request: ${query}` : "",
+        plan.trim().length > 0 ? `Environment result: ${plan}` : "",
+      ].filter((part) => part.length > 0).join("\n"),
+    },
+  ]);
+
+  try {
+    await options.system.drain?.();
+  } catch (drainErr) {
+    console.error(`  [WARN] memory-arena drain failed after initial task state: ${drainErr instanceof Error ? drainErr.message : String(drainErr)}`);
+  }
+}
+
+function formatMemoryArenaQuestion(
+  domain: string,
+  question: string,
+  expectedAnswer: ArenaExpectedAnswer,
+): string {
+  if (domain !== "group_travel_planner") {
+    return question;
+  }
+
+  const expectedDayCount = Array.isArray(expectedAnswer)
+    ? expectedAnswer.filter((entry) => isValidArenaAnswerObject(entry)).length
+    : 0;
+
+  return [
+    "You are a travel planner assistant in the MemoryArena Group Travel Planning task.",
+    "Use the supplied memory context containing the base traveler plan and previous travelers' finalized plans.",
+    "Generate the complete finalized plan for the current traveler, not just a short answer to one constraint.",
+    "Preserve the exact known flight, restaurant, attraction, and accommodation names from memory when they are required by JOIN or comparison constraints.",
+    expectedDayCount > 0
+      ? `Return ${expectedDayCount} day sections.`
+      : "Return all required day sections.",
+    "",
+    "Final output format:",
+    "=== Traveler Plan ===",
+    "Day 1:",
+    "Current City: ...",
+    "Transportation: ...",
+    "Breakfast: ...",
+    "Attraction: ...",
+    "Lunch: ...",
+    "Dinner: ...",
+    "Accommodation: ...",
+    "",
+    "Current traveler request:",
+    question,
+  ].join("\n");
+}
+
+function scoreMemoryArenaDomainAnswer(
+  domain: string,
+  predicted: string,
+  expectedAnswer: ArenaExpectedAnswer,
+): Record<string, number> {
+  if (domain !== "group_travel_planner") {
+    return {};
+  }
+
+  const expectedFields = extractPlanFieldValues(expectedAnswer);
+  if (expectedFields.length === 0) {
+    return {};
+  }
+
+  const normalizedPredicted = normalizePlanText(predicted);
+  const hits = expectedFields.filter((value) =>
+    normalizedPredicted.includes(normalizePlanText(value)),
+  ).length;
+
+  return {
+    soft_process_score: hits / expectedFields.length,
+    plan_field_recall: hits / expectedFields.length,
+  };
+}
+
+function extractPlanFieldValues(answer: ArenaExpectedAnswer): string[] {
+  if (!Array.isArray(answer)) {
+    return [];
+  }
+
+  const fields: string[] = [];
+  for (const item of answer) {
+    if (!isValidArenaAnswerObject(item)) {
+      continue;
+    }
+    for (const key of [
+      "current_city",
+      "transportation",
+      "breakfast",
+      "attraction",
+      "lunch",
+      "dinner",
+      "accommodation",
+    ]) {
+      const value = item[key];
+      if (typeof value === "string" && value.trim().length > 0 && value.trim() !== "-") {
+        fields.push(value);
+      }
+    }
+  }
+  return fields;
+}
+
+function normalizePlanText(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function storeCompletedSubtask(

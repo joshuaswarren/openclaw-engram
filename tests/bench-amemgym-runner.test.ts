@@ -5,6 +5,8 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import type {
   BenchMemoryAdapter,
+  BenchResponder,
+  BenchResponse,
   Message,
   SearchResult,
 } from "../packages/bench/src/index.js";
@@ -12,6 +14,11 @@ import { runBenchmark } from "../packages/bench/src/index.js";
 
 class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
+  responder?: BenchResponder;
+
+  constructor(responder?: BenchResponder) {
+    this.responder = responder;
+  }
 
   async store(sessionId: string, messages: Message[]): Promise<void> {
     const existing = this.sessions.get(sessionId) ?? [];
@@ -73,6 +80,19 @@ class FakeMemoryAdapter implements BenchMemoryAdapter {
   }
 
   async destroy(): Promise<void> {}
+}
+
+class FixedResponder implements BenchResponder {
+  constructor(private readonly text: string) {}
+
+  async respond(): Promise<BenchResponse> {
+    return {
+      text: this.text,
+      tokens: { input: 0, output: 0 },
+      latencyMs: 0,
+      model: "fixed",
+    };
+  }
 }
 
 function createDatasetProfile() {
@@ -161,6 +181,33 @@ test("runBenchmark executes amemgym in full mode from an explicit dataset file",
 
   assert.equal(result.results.tasks.length, 1);
   assert.equal(result.results.tasks[0]?.expected, "Seattle");
+});
+
+test("runBenchmark scores amemgym using the benchmark multiple-choice protocol", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-choice-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("1"));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(task.question, /Answer choices:/);
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.scores.contains_answer, 1);
+  assert.equal(task.details?.expectedChoiceIndex, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.selectedAnswer, "Seattle");
+  assert.equal(typeof result.results.aggregates.qa_accuracy?.mean, "number");
 });
 
 test("runBenchmark rejects amemgym full mode without datasetDir", async () => {

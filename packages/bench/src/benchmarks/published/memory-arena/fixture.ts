@@ -14,7 +14,15 @@ export interface ArenaTask {
   questions: string[];
   answers: ArenaExpectedAnswer[];
   backgrounds?: string | string[];
+  base_person?: ArenaBasePerson;
   category: string;
+}
+
+export interface ArenaBasePerson {
+  name?: string;
+  query?: string;
+  daily_plans?: ArenaExpectedAnswer;
+  [key: string]: unknown;
 }
 
 export interface DomainData {

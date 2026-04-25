@@ -40,15 +40,24 @@ const DATASET_FILENAMES = [
  * We pick the one matching the user's final state.
  */
 function findBestAnswer(qa: AMemGymQA, finalState: Record<string, string>): string {
+  const choice = findBestAnswerChoice(qa, finalState);
+  return choice?.choice.answer ?? qa.answer_choices[0]?.answer ?? "";
+}
+
+function findBestAnswerChoice(
+  qa: AMemGymQA,
+  finalState: Record<string, string>,
+): { index: number; choice: AMemGymQA["answer_choices"][number] } | undefined {
   for (const choice of qa.answer_choices) {
+    const index = qa.answer_choices.indexOf(choice);
     const requiredStates = choice.state;
     const matchValues = qa.required_info.map((key) => finalState[key]);
     if (requiredStates.length === matchValues.length &&
       requiredStates.every((s, i) => s === matchValues[i])) {
-      return choice.answer;
+      return { index, choice };
     }
   }
-  return qa.answer_choices[0]?.answer ?? "";
+  return undefined;
 }
 
 export const amemGymDefinition: BenchmarkDefinition = {
@@ -107,26 +116,34 @@ export async function runAMemGymBenchmark(
     ) {
       const qa = profile.qas[questionIndex]!;
       const taskResultId = `${profile.id}-q${questionIndex}`;
-      const expectedAnswer = findBestAnswer(qa, finalState);
+      const expectedChoice = findBestAnswerChoice(qa, finalState);
+      const expectedAnswer = expectedChoice?.choice.answer ?? findBestAnswer(qa, finalState);
+      const benchmarkQuestion = formatAMemGymQuestion(qa);
 
       try {
         const { result: recallText, durationMs } = await timed(async () => {
           return options.system.recall(sessionId, qa.query);
         });
         const answered = await answerBenchmarkQuestion({
-          question: qa.query,
+          question: benchmarkQuestion,
           recalledText: recallText,
           responder: options.system.responder,
         });
+        const selectedChoice = parseAMemGymChoice(answered.finalAnswer, qa);
+        const answerForScoring = selectedChoice?.choice.answer ?? answered.finalAnswer;
 
         const scores: Record<string, number> = {
-          f1: f1Score(answered.finalAnswer, expectedAnswer),
-          contains_answer: containsAnswer(answered.finalAnswer, expectedAnswer),
+          f1: f1Score(answerForScoring, expectedAnswer),
+          contains_answer: containsAnswer(answerForScoring, expectedAnswer),
+          qa_accuracy:
+            selectedChoice && expectedChoice && selectedChoice.index === expectedChoice.index
+              ? 1
+              : 0,
         };
         const judgeResult = await llmJudgeScoreDetailed(
           options.system.judge,
           qa.query,
-          answered.finalAnswer,
+          answerForScoring,
           expectedAnswer,
         );
         if (judgeResult.score >= 0) {
@@ -135,7 +152,7 @@ export async function runAMemGymBenchmark(
 
         tasks.push({
           taskId: taskResultId,
-          question: qa.query,
+          question: benchmarkQuestion,
           expected: expectedAnswer,
           actual: answered.finalAnswer,
           scores,
@@ -148,8 +165,15 @@ export async function runAMemGymBenchmark(
             profileId: profile.id,
             profileName: profile.user_profile.name,
             questionIndex,
+            originalQuery: qa.query,
             periodCount: profile.periods.length,
             requiredInfo: qa.required_info,
+            expectedChoiceIndex:
+              expectedChoice === undefined ? null : expectedChoice.index + 1,
+            selectedChoiceIndex:
+              selectedChoice === undefined ? null : selectedChoice.index + 1,
+            selectedAnswer:
+              selectedChoice === undefined ? null : selectedChoice.choice.answer,
             recalledLength: recallText.length,
             answeredLength: answered.finalAnswer.length,
             recalledText: recallText,
@@ -226,6 +250,61 @@ export async function runAMemGymBenchmark(
       hardware: process.arch,
     },
   };
+}
+
+function formatAMemGymQuestion(qa: AMemGymQA): string {
+  const choices = qa.answer_choices
+    .map((choice, index) => `${index + 1}. ${choice.answer}`)
+    .join("\n");
+
+  return [
+    qa.query,
+    "",
+    "Choose the single best answer using the user's current remembered state.",
+    "Return only the option number and no explanation.",
+    "",
+    "Answer choices:",
+    choices,
+  ].join("\n");
+}
+
+function parseAMemGymChoice(
+  rawAnswer: string,
+  qa: AMemGymQA,
+): { index: number; choice: AMemGymQA["answer_choices"][number] } | undefined {
+  const trimmed = rawAnswer.trim();
+  const leadingNumber = trimmed.match(/^(?:option|choice|answer)?\s*#?\s*(\d+)\b/i);
+  if (leadingNumber) {
+    const index = Number.parseInt(leadingNumber[1]!, 10) - 1;
+    const choice = qa.answer_choices[index];
+    if (choice) {
+      return { index, choice };
+    }
+  }
+
+  const normalizedAnswer = normalizeForChoiceMatch(rawAnswer);
+  for (let index = 0; index < qa.answer_choices.length; index += 1) {
+    const choice = qa.answer_choices[index]!;
+    const normalizedChoice = normalizeForChoiceMatch(choice.answer);
+    if (
+      normalizedChoice.length > 0
+      && (normalizedAnswer === normalizedChoice
+        || normalizedAnswer.includes(normalizedChoice))
+    ) {
+      return { index, choice };
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeForChoiceMatch(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\w\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function loadDataset(

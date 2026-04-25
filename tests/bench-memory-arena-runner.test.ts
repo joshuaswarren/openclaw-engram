@@ -150,6 +150,61 @@ test("runBenchmark preserves array-form memory-arena answers in full mode datase
   );
 });
 
+test("runBenchmark seeds memory-arena group travel with the base traveler plan", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-base-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. I want to join Jennifer for dinner."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "from Austin to Dallas",
+          transportation: "Flight Number: F1, from Austin to Dallas",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "Central Stay, Dallas",
+        },
+      ]],
+      base_person: {
+        name: "Jennifer",
+        query: "I am Jennifer. Plan my trip.",
+        daily_plans: [
+          {
+            days: 1,
+            current_city: "from Austin to Dallas",
+            transportation: "Flight Number: F1, from Austin to Dallas",
+            breakfast: "-",
+            attraction: "-",
+            lunch: "-",
+            dinner: "Coco Bambu, Dallas",
+            accommodation: "Central Stay, Dallas",
+          },
+        ],
+      },
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.match(task.actual, /initial finalized plan for Jennifer/);
+  assert.match(String(task.details?.promptQuestion), /complete finalized plan/);
+  assert.equal(task.scores.plan_field_recall, 1);
+  assert.equal(task.scores.soft_process_score, 1);
+});
+
 test("runBenchmark applies the memory-arena limit across the full benchmark, not once per domain file", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-global-limit-"));
   const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
