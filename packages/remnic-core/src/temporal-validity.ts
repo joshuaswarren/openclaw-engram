@@ -36,10 +36,23 @@ export function effectiveValidAt(fm: Pick<MemoryFrontmatter, "valid_at" | "creat
 }
 
 export function effectiveInvalidAt(
-  fm: Pick<MemoryFrontmatter, "invalid_at">,
+  fm: Pick<MemoryFrontmatter, "invalid_at" | "supersededAt" | "status">,
 ): string | undefined {
   const explicit = fm.invalid_at?.trim();
   if (explicit && explicit.length > 0) return explicit;
+  // Cursor Medium on PR #713: legacy data written before #680 has
+  // `status: superseded` and `supersededAt` populated by the
+  // pre-#680 supersession path, but no `invalid_at`. With the new
+  // as_of filter bypassing the supersession status check, those
+  // legacy predecessors would otherwise be treated as "always valid"
+  // and surface alongside their successors at every historical pin.
+  // Fall back to `supersededAt` so the half-open
+  // `[valid_at, invalid_at)` interval still terminates correctly for
+  // legacy supersedes without requiring a backfill migration.
+  if (fm.status === "superseded") {
+    const legacy = fm.supersededAt?.trim();
+    if (legacy && legacy.length > 0) return legacy;
+  }
   return undefined;
 }
 
@@ -55,7 +68,10 @@ export function effectiveInvalidAt(
  * malformed).
  */
 export function isValidAsOf(
-  fm: Pick<MemoryFrontmatter, "valid_at" | "invalid_at" | "created">,
+  fm: Pick<
+    MemoryFrontmatter,
+    "valid_at" | "invalid_at" | "created" | "supersededAt" | "status"
+  >,
   asOfMs: number,
 ): boolean {
   if (!Number.isFinite(asOfMs)) return true;
