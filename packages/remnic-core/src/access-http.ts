@@ -389,6 +389,9 @@ export class EngramAccessHttpServer {
         // `resolveRecallDisclosure()` validates the query-param fallback.
         disclosure,
         codingContext,
+        // Forward cwd/projectTag for auto git-context resolution (issue #569).
+        cwd: body.cwd,
+        projectTag: body.projectTag,
       });
       this.respondJson(res, 200, response);
       return;
@@ -529,6 +532,9 @@ export class EngramAccessHttpServer {
         namespace: this.resolveNamespace(req, body.namespace),
         authenticatedPrincipal: this.resolveRequestPrincipal(req),
         skipExtraction: body.skipExtraction === true,
+        // Forward cwd/projectTag for auto git-context resolution (issue #569).
+        cwd: body.cwd,
+        projectTag: body.projectTag,
       });
       this.recordWriteRateLimitHit();
       this.respondJson(res, 202, response);

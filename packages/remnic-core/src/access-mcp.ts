@@ -113,6 +113,8 @@ export class EngramMcpServer {
             // wires the field end-to-end so clients can already pass it
             // without it being silently dropped.
             disclosure: { type: "string", enum: ["chunk", "section", "raw"] },
+            cwd: { type: "string", description: "Working directory for auto git-context resolution." },
+            projectTag: { type: "string", description: "Project tag for non-git project scoping (e.g. 'blend-supply')." },
           },
           required: ["query"],
           additionalProperties: false,
@@ -133,7 +135,7 @@ export class EngramMcpServer {
       {
         name: "engram.set_coding_context",
         description:
-          "Attach a coding-agent context (project / branch) to a session so recall routes to a project- / branch-scoped namespace (issue #569). For MCP clients that do not ship cwd automatically (Cursor, generic agents, etc.). Also aliased as remnic.set_coding_context. Pass codingContext: null to clear.",
+          "Attach a coding-agent context (project / branch) to a session so recall routes to a project- / branch-scoped namespace (issue #569). For MCP clients that do not ship cwd automatically (Cursor, generic agents, etc.). Also aliased as remnic.set_coding_context. Pass codingContext: null to clear. Alternatively, pass just a projectTag for non-git project scoping (e.g. OpenClaw channels).",
         inputSchema: {
           type: "object",
           properties: {
@@ -156,10 +158,17 @@ export class EngramMcpServer {
                   additionalProperties: false,
                 },
               ],
-              description: "The context to attach, or null to clear.",
+              description: "The context to attach, or null to clear. Omit when using projectTag instead.",
+            },
+            projectTag: {
+              type: "string",
+              description:
+                "Arbitrary project tag for non-git project scoping (e.g. 'blend-supply'). " +
+                "Creates a coding context with projectId 'tag:<projectTag>'. " +
+                "Use instead of codingContext when the session isn't tied to a specific git repo.",
             },
           },
-          required: ["sessionKey", "codingContext"],
+          required: ["sessionKey"],
           additionalProperties: false,
         },
       },
@@ -392,6 +401,8 @@ export class EngramMcpServer {
             },
             namespace: { type: "string" },
             skipExtraction: { type: "boolean" },
+            cwd: { type: "string", description: "Working directory for auto git-context resolution." },
+            projectTag: { type: "string", description: "Project tag for non-git project scoping (e.g. 'blend-supply')." },
           },
           required: ["sessionKey", "messages"],
           additionalProperties: false,
@@ -1205,6 +1216,8 @@ export class EngramMcpServer {
           mode: typeof args.mode === "string" ? args.mode as RecallPlanMode | "auto" : undefined,
           includeDebug: args.includeDebug === true,
           disclosure,
+          cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+          projectTag: typeof args.projectTag === "string" ? args.projectTag : undefined,
         });
 
         if (this.shouldEmitCitations(mcpSessionId)) {
@@ -1230,6 +1243,30 @@ export class EngramMcpServer {
         // Validation lives in EngramAccessService.setCodingContext; any
         // EngramAccessInputError surfaces as a structured tool-call error.
         const sessionKey = typeof args.sessionKey === "string" ? args.sessionKey : "";
+        // Support projectTag as an alternative to full codingContext.
+        // When projectTag is provided and codingContext is absent, create
+        // a tag-based context (issue #569 wiring).
+        const hasProjectTag = typeof args.projectTag === "string" && args.projectTag.trim().length > 0;
+        const hasCodingContext = "codingContext" in args;
+        if (!hasCodingContext && hasProjectTag) {
+          const tag = (args.projectTag as string).trim();
+          this.service.setCodingContext({
+            sessionKey,
+            codingContext: {
+              projectId: `tag:${tag}`,
+              branch: null,
+              rootPath: `tag:${tag}`,
+              defaultBranch: null,
+            },
+          });
+          return { ok: true };
+        }
+        // Require at least one of codingContext or projectTag (CLAUDE.md #51).
+        if (!hasCodingContext && !hasProjectTag) {
+          throw new EngramAccessInputError(
+            "set_coding_context requires either codingContext or projectTag",
+          );
+        }
         const rawCtx = args.codingContext;
         let codingContext: {
           projectId: string;
@@ -1419,6 +1456,8 @@ export class EngramMcpServer {
           namespace: typeof args.namespace === "string" ? args.namespace : undefined,
           authenticatedPrincipal: effectivePrincipal,
           skipExtraction: args.skipExtraction === true,
+          cwd: typeof args.cwd === "string" ? args.cwd : undefined,
+          projectTag: typeof args.projectTag === "string" ? args.projectTag : undefined,
         });
       case "engram.lcm_search":
         return this.service.lcmSearch({

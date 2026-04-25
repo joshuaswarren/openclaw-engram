@@ -2,6 +2,7 @@ import { stat } from "node:fs/promises";
 import { AccessIdempotencyStore, hashAccessIdempotencyPayload } from "./access-idempotency.js";
 import { AccessAuditAdapter, type AccessAuditConfig, type AccessAuditResult } from "./access-audit.js";
 import type { AnomalyDetectorResult } from "./recall-audit-anomaly.js";
+import { resolveGitContext } from "./coding/git-context.js";
 import { WorkStorage } from "./work/storage.js";
 import {
   exportWorkBoardMarkdown,
@@ -156,6 +157,23 @@ export interface EngramAccessRecallRequest {
     rootPath: string;
     defaultBranch: string | null;
   } | null;
+  /**
+   * Working directory of the calling agent session. When provided and no
+   * `codingContext` is already attached to the session, the service resolves
+   * git context from this path and attaches it automatically. This enables
+   * Claude Code hooks (and any connector that knows its cwd) to get
+   * project-scoped memory without explicitly constructing a `codingContext`.
+   */
+  cwd?: string;
+  /**
+   * Arbitrary project tag for non-git-based project scoping. When provided,
+   * creates a `CodingContext` with `projectId: "tag:<projectTag>"`.
+   * Useful for OpenClaw sessions where the whole workspace is one git repo
+   * but different conversations correspond to different client projects.
+   * Takes precedence over `cwd`-based git resolution but NOT over an
+   * explicit `codingContext`.
+   */
+  projectTag?: string;
 }
 
 /**
@@ -550,6 +568,18 @@ export interface EngramAccessObserveRequest {
   namespace?: string;
   authenticatedPrincipal?: string;
   skipExtraction?: boolean;
+  /**
+   * Working directory of the calling agent session (issue #569 wiring).
+   * When provided and no `codingContext` is attached for this session,
+   * resolves git context from the path and attaches it so writes route to
+   * the correct project namespace.
+   */
+  cwd?: string;
+  /**
+   * Arbitrary project tag for non-git-based project scoping (issue #569).
+   * Creates a `CodingContext` with `projectId: "tag:<projectTag>"`.
+   */
+  projectTag?: string;
 }
 
 export interface EngramAccessObserveResponse {
@@ -1254,6 +1284,63 @@ export class EngramAccessService {
     });
   }
 
+  /**
+   * Auto-resolve and attach a coding context for a session when one is not
+   * already present. Resolves from `projectTag` (highest priority after
+   * explicit `codingContext`), then from `cwd` via git detection.
+   *
+   * This is a no-op when:
+   *   - `sessionKey` is missing
+   *   - the session already has a coding context attached
+   *   - codingMode.projectScope is disabled (CLAUDE.md #30)
+   *   - neither `cwd` nor `projectTag` is provided
+   *
+   * Never throws — git resolution failures are silently ignored because not
+   * being in a repo is a normal runtime state.
+   */
+  private async maybeAttachCodingContext(
+    sessionKey: string | undefined,
+    options: { cwd?: string; projectTag?: string },
+  ): Promise<void> {
+    if (!sessionKey) return;
+    // Respect the configuration gate (CLAUDE.md #30).
+    if (!this.orchestrator.config.codingMode?.projectScope) return;
+    // Don't overwrite an already-attached context.
+    if (this.orchestrator.getCodingContextForSession(sessionKey)) return;
+    // projectTag takes priority over cwd.
+    if (typeof options.projectTag === "string" && options.projectTag.trim().length > 0) {
+      const tag = options.projectTag.trim();
+      this.orchestrator.setCodingContextForSession(sessionKey, {
+        projectId: `tag:${tag}`,
+        branch: null,
+        rootPath: `tag:${tag}`,
+        defaultBranch: null,
+      });
+      return;
+    }
+    // cwd → git resolution
+    if (typeof options.cwd === "string" && options.cwd.trim().length > 0) {
+      try {
+        const gitCtx = await resolveGitContext(options.cwd);
+        if (gitCtx) {
+          this.setCodingContext({
+            sessionKey,
+            codingContext: {
+              projectId: gitCtx.projectId,
+              branch: gitCtx.branch,
+              rootPath: gitCtx.rootPath,
+              defaultBranch: gitCtx.defaultBranch,
+            },
+          });
+        }
+      } catch {
+        // Silently ignore git resolution failures — not being in a repo
+        // is normal. resolveGitContext itself never throws, but the
+        // setCodingContext validation might reject edge-case rootPaths.
+      }
+    }
+  }
+
   async recall(request: EngramAccessRecallRequest): Promise<EngramAccessRecallResponse> {
     const query = request.query.trim();
     if (query.length === 0) {
@@ -1279,6 +1366,16 @@ export class EngramAccessService {
       this.setCodingContext({
         sessionKey: request.sessionKey,
         codingContext: request.codingContext,
+      });
+    }
+    // Auto-resolve coding context from cwd/projectTag when no explicit
+    // codingContext was supplied (issue #569 wiring). This allows Claude
+    // Code hooks and OpenClaw connectors to get project-scoped memory
+    // transparently.
+    if (request.codingContext === undefined && request.sessionKey) {
+      await this.maybeAttachCodingContext(request.sessionKey, {
+        cwd: request.cwd,
+        projectTag: request.projectTag,
       });
     }
     const namespaceOverride = this.resolveRecallNamespace(request.namespace, request.sessionKey);
@@ -2509,6 +2606,14 @@ export class EngramAccessService {
         throw new EngramAccessInputError(`invalid message role: ${msg.role} (expected 'user' or 'assistant')`);
       }
     }
+
+    // Auto-resolve coding context from cwd/projectTag so observe writes
+    // route to the correct project namespace (rule 42: same namespace layer
+    // as recall).
+    await this.maybeAttachCodingContext(request.sessionKey, {
+      cwd: request.cwd,
+      projectTag: request.projectTag,
+    });
 
     const namespace = this.resolveWritableNamespace(
       request.namespace,
