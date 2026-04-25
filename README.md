@@ -50,6 +50,18 @@ Architecture rule: standalone Remnic is first-class. `@remnic/core`, `@remnic/se
 | Default OpenClaw memory doesn't scale | Hybrid search, lifecycle management, namespaces, and governance |
 | Third-party memory services cost money and share your data | Everything stays local — your filesystem, your rules |
 
+## Memory or context substrate? Both.
+
+There's a useful split in the AI-memory space between **memory backends** (extract facts → vector DB → retrieve relevant ones) and **context substrates** (structured human-readable context that accumulates across sessions and compounds over time). Most tools land firmly in one camp. Remnic does both.
+
+**The files are the source of truth.** Every memory is a markdown file with YAML frontmatter on your filesystem. You can `cat`, `grep`, edit, version-control, back up, and reason about your memory with standard tools. The hybrid search index (QMD: BM25 + vector + reranking) is downstream of the files — fully rebuildable from disk, never the source of truth itself.
+
+**The recall stays sharp.** Three retrieval tiers (chunk → section → raw transcript), feature-flagged graph retrieval with Personalized PageRank, memory-worth scoring that filters low-value facts before they reach the LLM, temporal supersession that keeps stale facts out of recall, and Recall X-ray so you can see exactly which tier produced each result and why.
+
+**It compounds.** Background consolidation (the "dreams" surface) merges duplicates, promotes recurring themes, and snapshots page versions on every overwrite. Provenance fields (`derived_from`, `derived_via`) track where every consolidated memory came from. Procedural memory (on by default) captures multi-step runbooks. The longer you use it, the better it gets — and you can always read exactly what it knows.
+
+**Camp 1 asks "what should the AI remember?" Remnic answers that.** **Camp 2 asks "what context should the AI work inside?" Remnic answers that too.**
+
 ## Quick install (OpenClaw)
 
 If you have OpenClaw installed, the fastest path to working Remnic memory is:
