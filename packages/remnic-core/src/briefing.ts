@@ -199,21 +199,28 @@ export function focusMatchesMemory(memory: MemoryFile, focus: BriefingFocus): bo
   const needle = focus.value.toLowerCase();
   const entityRef = (memory.frontmatter.entityRef ?? "").toLowerCase();
 
-  // Raw substring match across content and tags (preserves existing behaviour).
+  // Raw substring match across content and tags only — NOT the entityRef.
+  // Including the entityRef in the raw haystack would re-introduce the
+  // substring leak fixed below (#682 PR 2/3 R-10): a focus on
+  // `Alice-Test` substring-hits the entityRef `person-alice-test-a1`.
+  // Entity attribution must go through the slug-exact path below.
   const rawHaystack = [
     memory.content,
-    entityRef,
     ...(memory.frontmatter.tags ?? []),
   ]
     .join(" ")
     .toLowerCase();
   if (rawHaystack.includes(needle)) return true;
 
-  // Slug match: check whether the entityRef contains the slugged focus value.
-  // This catches typed focus tokens like `person:Jane Doe` whose slug form
-  // `"person-jane-doe"` matches an entityRef but the raw value never would.
+  // Slug match (#682 PR 2/3 R-10): require exact equality on the slug
+  // form, not substring `includes`. The substring form leaks across
+  // similarly-prefixed entities — a focus on `person:Alice-Test`
+  // (`person-alice-test`) would substring-match an unrelated entity
+  // tagged `person-alice-test-a1`. EntityRefs are produced by
+  // `normalizeEntityName(name, type)` which always emits the canonical
+  // slug, so exact equality is the right check.
   const slug = focusToEntityRefSlug(focus);
-  return entityRef.includes(slug);
+  return entityRef === slug;
 }
 
 export function focusMatchesEntity(entity: EntityFile, focus: BriefingFocus): boolean {

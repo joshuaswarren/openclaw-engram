@@ -153,8 +153,18 @@ function scoreAliasMatch(query: string, alias: string): number {
   if (containsPhrase(normalizedQuery, normalizedAlias)) return 8 + Math.min(normalizedAlias.split(/\s+/).length, 3);
   const queryTokens = new Set(tokenize(normalizedQuery));
   const aliasTokens = tokenize(normalizedAlias);
+  if (aliasTokens.length === 0) return 0;
   const overlap = aliasTokens.filter((token) => queryTokens.has(token)).length;
   if (overlap === 0) return 0;
+  // Cross-entity contamination guard (#682 PR 2/3 R-2): a multi-token
+  // alias must have ALL its tokens present in the query for the partial
+  // match to count. Otherwise an alias like "Person-A1" (tokens
+  // ["person", "a1"]) would partial-match a query for "Person-B1" via
+  // the shared "person" token alone, and the candidate ranking would
+  // surface both Person-A1 and Person-B1 for a query that named only
+  // one. Single-token aliases (like "Josh") still match by single-token
+  // overlap — that is the legitimate alias-shorthand path.
+  if (aliasTokens.length > 1 && overlap < aliasTokens.length) return 0;
   return overlap;
 }
 
