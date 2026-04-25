@@ -11036,6 +11036,7 @@ export class Orchestrator {
       let writeCategory = fact.category;
       let targetStorage = storage;
       let routedRuleId: string | undefined;
+      let routedNamespaceExplicit = false;
       if (routeRules.length > 0) {
         try {
           const routeText = `${fact.category} ${fact.tags.join(" ")} ${fact.content}`;
@@ -11046,6 +11047,7 @@ export class Orchestrator {
               writeCategory = selected.target.category;
             }
             if (selected.target.namespace) {
+              routedNamespaceExplicit = true;
               targetStorage = await this.storageRouter.storageFor(
                 selected.target.namespace,
               );
@@ -11055,6 +11057,37 @@ export class Orchestrator {
           log.warn(
             `routing evaluation failed; fail-open to extracted category/namespace: ${err}`,
           );
+        }
+      }
+
+      // Scope-based namespace routing: when scope classification is enabled
+      // and the LLM tagged this fact as "global", route it to the shared
+      // namespace so cross-project knowledge is visible everywhere. Only
+      // applies when namespaces are enabled and the fact was not already
+      // routed to a specific namespace by a routing rule (routing rules
+      // that set an explicit namespace take precedence; category-only rules
+      // do not block scope routing). Rule 30: gated by
+      // extractionScopeClassificationEnabled.
+      if (
+        this.config.extractionScopeClassificationEnabled &&
+        this.config.namespacesEnabled &&
+        fact.scope === "global" &&
+        !routedNamespaceExplicit
+      ) {
+        const currentNs = this.namespaceFromStorageDir(targetStorage.dir);
+        if (currentNs !== this.config.sharedNamespace) {
+          try {
+            targetStorage = await this.storageRouter.storageFor(
+              this.config.sharedNamespace,
+            );
+            log.debug(
+              `scope-routing: fact "${fact.content.slice(0, 60)}…" routed to shared namespace (scope=global)`,
+            );
+          } catch (scopeRouteErr) {
+            log.warn(
+              `scope-routing: failed to resolve shared namespace storage; writing to session namespace (fail-open): ${scopeRouteErr}`,
+            );
+          }
         }
       }
 

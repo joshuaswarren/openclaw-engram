@@ -215,6 +215,8 @@ export class ExtractionEngine {
             entityRef: typeof f?.entityRef === "string" ? f.entityRef : undefined,
             promptedByQuestion:
               typeof f?.promptedByQuestion === "string" ? f.promptedByQuestion : undefined,
+            scope:
+              f?.scope === "global" || f?.scope === "project" ? f.scope : undefined,
             structuredAttributes:
               f?.structuredAttributes && typeof f.structuredAttributes === "object" && !Array.isArray(f.structuredAttributes)
                 ? Object.fromEntries(
@@ -1222,7 +1224,8 @@ These are durable insights - capture them:
 - CRITICAL: Use canonical hyphenated entity names (e.g., "jane-doe" not "janedoe")
 - CRITICAL: NEVER extract the same fact twice - check for duplicates before adding to facts array
 - CRITICAL: NEVER extract cron job schedules, automation configurations, or system monitoring details (these are operational noise)
-- If uncertain about relevance, prefer NOT extracting
+- If uncertain about relevance, prefer NOT extracting${this.config.extractionScopeClassificationEnabled ? `
+- For each fact, set "scope" to "global" (cross-project knowledge: framework bugs, library behavior, user preferences, tool configs, general patterns) or "project" (codebase-specific: file paths, env configs, deployment details, project workarounds). When in doubt, prefer "project".` : ""}
 
 === Structured Attributes ===
 When a fact contains measurable, categorical, or precisely valued data, add a "structuredAttributes" object with key-value string pairs. This captures exact values for precise retrieval later.
@@ -1242,7 +1245,7 @@ Also generate:
 
 Output JSON:
 {
-  "facts": [{"category": "decision", "content": "Chose PostgreSQL over MongoDB for the user service", "importance": 8, "confidence": 0.9, "structuredAttributes": {"chosen": "PostgreSQL", "rejected": "MongoDB"}}, {"category": "procedure", "content": "When you cut a hotfix release, follow the checklist", "importance": 8, "confidence": 0.9, "procedureSteps": [{"order": 1, "intent": "Branch from main and cherry-pick the fix"}, {"order": 2, "intent": "Run CI and tag the release"}]}, {"category": "reasoning_trace", "content": "How I debugged the staging latency spike", "importance": 7, "confidence": 0.9, "reasoningTrace": {"steps": [{"order": 1, "description": "Checked CPU/memory dashboards — both were flat"}, {"order": 2, "description": "Ran a traceroute and saw retries against the cache tier"}, {"order": 3, "description": "Tailed cache-tier logs and spotted eviction storms"}], "finalAnswer": "Root cause was an undersized eviction policy on the session cache", "observedOutcome": "Increased cache size, p95 returned to baseline within 10 minutes"}}, {"category": "commitment", "content": "Must ship v2.0 API by end of March", "importance": 10, "confidence": 1.0, "structuredAttributes": {"deadline": "end of March", "deliverable": "v2.0 API"}}, {"category": "fact", "content": "The store backend uses Redis for session caching", "importance": 6, "confidence": 0.95, "entityRef": "project-acme-store"}, {"category": "principle", "content": "Always run migrations in a transaction to avoid partial schema updates", "importance": 8, "confidence": 0.9}],
+  "facts": [{"category": "decision", "content": "Chose PostgreSQL over MongoDB for the user service", "importance": 8, "confidence": 0.9, "scope": "project", "structuredAttributes": {"chosen": "PostgreSQL", "rejected": "MongoDB"}}, {"category": "procedure", "content": "When you cut a hotfix release, follow the checklist", "importance": 8, "confidence": 0.9, "scope": "project", "procedureSteps": [{"order": 1, "intent": "Branch from main and cherry-pick the fix"}, {"order": 2, "intent": "Run CI and tag the release"}]}, {"category": "reasoning_trace", "content": "How I debugged the staging latency spike", "importance": 7, "confidence": 0.9, "scope": "project", "reasoningTrace": {"steps": [{"order": 1, "description": "Checked CPU/memory dashboards — both were flat"}, {"order": 2, "description": "Ran a traceroute and saw retries against the cache tier"}, {"order": 3, "description": "Tailed cache-tier logs and spotted eviction storms"}], "finalAnswer": "Root cause was an undersized eviction policy on the session cache", "observedOutcome": "Increased cache size, p95 returned to baseline within 10 minutes"}}, {"category": "commitment", "content": "Must ship v2.0 API by end of March", "importance": 10, "confidence": 1.0, "scope": "project", "structuredAttributes": {"deadline": "end of March", "deliverable": "v2.0 API"}}, {"category": "fact", "content": "The store backend uses Redis for session caching", "importance": 6, "confidence": 0.95, "scope": "project", "entityRef": "project-acme-store"}, {"category": "principle", "content": "Always run migrations in a transaction to avoid partial schema updates", "importance": 8, "confidence": 0.9, "scope": "global"}],
   "entities": [{"name": "person-jane-doe", "type": "person", "facts": ["Works at Acme Corp", "Prefers Python over JavaScript"], "structuredSections": [{"key": "beliefs", "title": "Beliefs", "facts": ["Python is a better fit than JavaScript for backend work."]}]}, {"name": "project-acme-store", "type": "project", "facts": ["Built with Next.js", "Deployed on Vercel"]}],
   "profileUpdates": ["User prefers dark mode in all editors"],
   "questions": [{"question": "Which cloud provider hosts the staging environment?", "context": "Came up during deployment discussion", "priority": 0.5}],
@@ -1336,7 +1339,7 @@ ${truncatedConversation}`;
             this.buildExtractionInstructions(existingEntities) +
             `\n\nRespond with valid JSON matching this schema:
 {
-  "facts": [{"category": "decision", "content": "Chose React over Vue for the dashboard rewrite", "importance": 8, "confidence": 0.9, "tags": ["frontend"], "structuredAttributes": {"chosen": "React", "rejected": "Vue"}}, {"category": "fact", "content": "The API gateway uses rate limiting at 1000 req/min", "importance": 6, "confidence": 0.95, "tags": ["infra"], "entityRef": "project-dashboard", "structuredAttributes": {"rate_limit": "1000 req/min"}}, {"category": "reasoning_trace", "content": "How I chose the dashboard rewrite framework", "confidence": 0.9, "tags": ["frontend"], "reasoningTrace": {"steps": [{"order": 1, "description": "Listed constraints: SSR needed, team mostly JS"}, {"order": 2, "description": "Ran a spike in Vue 3 — worked, but ecosystem felt thin for our needs"}, {"order": 3, "description": "Ran the same spike in React — integrated faster with Next.js"}], "finalAnswer": "Picked React with Next.js for SSR + ecosystem fit"}}],
+  "facts": [{"category": "decision", "content": "Chose React over Vue for the dashboard rewrite", "importance": 8, "confidence": 0.9, "tags": ["frontend"], "scope": "project", "structuredAttributes": {"chosen": "React", "rejected": "Vue"}}, {"category": "fact", "content": "The API gateway uses rate limiting at 1000 req/min", "importance": 6, "confidence": 0.95, "tags": ["infra"], "scope": "project", "entityRef": "project-dashboard", "structuredAttributes": {"rate_limit": "1000 req/min"}}, {"category": "reasoning_trace", "content": "How I chose the dashboard rewrite framework", "confidence": 0.9, "tags": ["frontend"], "scope": "project", "reasoningTrace": {"steps": [{"order": 1, "description": "Listed constraints: SSR needed, team mostly JS"}, {"order": 2, "description": "Ran a spike in Vue 3 — worked, but ecosystem felt thin for our needs"}, {"order": 3, "description": "Ran the same spike in React — integrated faster with Next.js"}], "finalAnswer": "Picked React with Next.js for SSR + ecosystem fit"}}],
   "entities": [{"name": "person-sarah-chen", "type": "person", "facts": ["Leads the backend team", "Joined from Google in 2024"], "structuredSections": [{"key": "beliefs", "title": "Beliefs", "facts": ["Small teams should own whole systems."]}]}, {"name": "project-dashboard", "type": "project", "facts": ["React-based admin panel", "Deployed on AWS ECS"]}],
   "profileUpdates": ["User prefers TypeScript over plain JavaScript"],
   "questions": [{"question": "What database does the analytics service use?", "context": "Came up during discussion of migration plan", "priority": 0.5}],
@@ -1475,7 +1478,20 @@ Rules:
   * Implied (0.70-0.94): Strong contextual inference — user consistently does X, clear from conversation flow
   * Inferred (0.40-0.69): Pattern recognition — reasonable guess from limited evidence
   * Speculative (0.00-0.39): Tentative hypothesis — weak signal, needs future confirmation. Speculative memories auto-expire after 30 days if not confirmed.
-- For commitments: include any deadline or timeframe mentioned
+- For commitments: include any deadline or timeframe mentioned${this.config.extractionScopeClassificationEnabled ? `
+
+Scope classification:
+For each fact, set "scope" to one of:
+- "global" — knowledge that applies across projects: core framework/library bugs, API behavior patterns, user preferences (editor, language, style), tool configurations, general coding patterns, infrastructure knowledge, technology facts not tied to one codebase
+- "project" — knowledge specific to one codebase: file paths, environment configs, deployment details, project-specific workarounds, team/stakeholder info tied to one project, repo-specific conventions
+When in doubt, prefer "project" — it is safer to keep knowledge scoped narrowly.
+Examples:
+  "Magento 2.4.8 has a race condition in checkout" → "global"
+  "User prefers dark mode in all editors" → "global"
+  "The staging server is at staging.acme.com" → "project"
+  "The deploy script lives at scripts/deploy.sh" → "project"
+  "PostgreSQL 15 requires the uuid-ossp extension for gen_random_uuid()" → "global"
+  "The acme-store repo uses a custom Webpack config for SSR" → "project"` : ""}
 
 Entity creation rules (STRICT):
 - Only create entities for DURABLE things: real people, companies, products, tools, ongoing projects

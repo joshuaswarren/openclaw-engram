@@ -12,6 +12,20 @@ export type IdentityInjectionMode = "recovery_only" | "minimal" | "full";
 export type CaptureMode = "implicit" | "explicit" | "hybrid";
 export type MemoryOsPresetName = "conservative" | "balanced" | "research-max" | "local-llm-heavy";
 export type ExtractionPassSource = "base" | "proactive";
+/**
+ * Scope classification for extracted facts (issue #XXX).
+ *
+ * - `"project"` — knowledge specific to one codebase: file paths, environment
+ *   configs, deployment details, project-specific workarounds, team/stakeholder
+ *   info tied to one project.
+ * - `"global"` — knowledge that applies across projects: core framework bugs,
+ *   library behavior, API patterns, user preferences, tool configurations,
+ *   general coding patterns, infrastructure knowledge.
+ *
+ * Default is `"project"` when a coding context is active, `"global"` when no
+ * coding context is present.
+ */
+export type MemoryScope = "project" | "global";
 export type SlotMismatchMode = "error" | "warn" | "silent";
 export type CodexCompactionFlushMode = "signal" | "heuristic" | "auto";
 export type DreamingNarrativePromptStyle = "reflective" | "diary" | "analytical";
@@ -663,6 +677,14 @@ export interface PluginConfig {
   heartbeat: HeartbeatConfig;
   slotBehavior: SlotBehaviorConfig;
   codexCompat: CodexCompatConfig;
+  /**
+   * When true (default), the extraction prompt instructs the LLM to classify
+   * each fact as `"project"` or `"global"` scope. Global-scoped facts are
+   * promoted to the shared namespace so they are visible across all projects.
+   * When false, all facts go to whatever namespace the session is in (pre-
+   * scope-classification behavior). Rule 30: configuration gate.
+   */
+  extractionScopeClassificationEnabled: boolean;
   // Extraction judge (issue #376)
   /** Enable the LLM-as-judge fact-worthiness gate on extracted facts. Default false (opt-in). */
   extractionJudgeEnabled: boolean;
@@ -1803,6 +1825,13 @@ export interface ExtractedFact {
   entityRef?: string;
   source?: ExtractionPassSource;
   promptedByQuestion?: string;
+  /**
+   * Whether this fact is project-scoped or globally applicable.
+   * When `extractionScopeClassificationEnabled` is true, the extraction LLM
+   * classifies each fact. Default is `"project"` when a coding context is
+   * active, `"global"` when no coding context is present.
+   */
+  scope?: MemoryScope;
   /** Structured key-value attributes extracted from the content (e.g., product attributes, dates, quantities). */
   structuredAttributes?: Record<string, string>;
   /** When category is `procedure`, ordered steps with intents (persisted under procedures/). */

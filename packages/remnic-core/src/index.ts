@@ -868,6 +868,7 @@ export type {
   GatewayConfig,
   MemoryFile,
   MemoryCategory,
+  MemoryScope,
   MemoryActionType,
   MemoryActionEligibilityContext,
   MemoryActionEligibilitySource,

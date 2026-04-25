@@ -1643,6 +1643,11 @@ export function parseConfig(raw: unknown): PluginConfig {
       }
       return "low";
     })(),
+    // Extraction scope classification. When enabled, the extraction prompt
+    // asks the LLM to classify each fact as "project" or "global". Global
+    // facts are promoted to the shared namespace. Default true (rule 30 gate).
+    extractionScopeClassificationEnabled:
+      coerceBool(cfg.extractionScopeClassificationEnabled) !== false,
     // Extraction judge (issue #376). Opt-in LLM-as-judge fact-worthiness gate.
     extractionJudgeEnabled: cfg.extractionJudgeEnabled === true,
     extractionJudgeModel:
