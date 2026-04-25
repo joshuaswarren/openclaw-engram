@@ -705,6 +705,20 @@ interface PlanFieldExpectation {
   day?: string;
 }
 
+const PLAN_FIELD_KEYS = [
+  "current_city",
+  "transportation",
+  "breakfast",
+  "attraction",
+  "lunch",
+  "dinner",
+  "accommodation",
+] as const;
+
+const PLAN_FIELD_LABEL_TOKEN_SEQUENCES = PLAN_FIELD_KEYS
+  .map((key) => tokenizePlanText(key.replace(/_/g, " ")))
+  .sort((a, b) => b.length - a.length);
+
 function extractPlanFieldValues(answer: ArenaExpectedAnswer): PlanFieldExpectation[] {
   const planItems = Array.isArray(answer) ? answer : [answer];
   const fields: PlanFieldExpectation[] = [];
@@ -715,15 +729,7 @@ function extractPlanFieldValues(answer: ArenaExpectedAnswer): PlanFieldExpectati
     const day = typeof item.days === "string" || typeof item.days === "number"
       ? normalizePlanDayLabel(item.days)
       : undefined;
-    for (const key of [
-      "current_city",
-      "transportation",
-      "breakfast",
-      "attraction",
-      "lunch",
-      "dinner",
-      "accommodation",
-    ]) {
+    for (const key of PLAN_FIELD_KEYS) {
       const value = item[key];
       if (typeof value === "string" && value.trim().length > 0 && value.trim() !== "-") {
         fields.push({ value: value.trim(), fieldKey: key, day });
@@ -824,13 +830,13 @@ function findPlanFieldTokenWindow(
       continue;
     }
 
-    const context = predictedTokens.slice(
-      dayContext?.startIndex ?? Math.max(0, index - 32),
-      index,
-    );
+    const contextStart = dayContext?.startIndex ?? Math.max(0, index - 32);
     if (
       expectedField.fieldTokens.length > 0
-      && !containsTokenSequence(context, expectedField.fieldTokens)
+      && !tokensEqual(
+        findNearestPlanFieldLabel(predictedTokens, contextStart, index) ?? [],
+        expectedField.fieldTokens,
+      )
     ) {
       continue;
     }
@@ -860,6 +866,25 @@ function findLastDayContext(
         startIndex: index,
         dayTokens: [normalizePlanDayToken(tokens[index + 1]!)],
       };
+    }
+  }
+  return undefined;
+}
+
+function findNearestPlanFieldLabel(
+  tokens: string[],
+  startIndex: number,
+  beforeIndex: number,
+): string[] | undefined {
+  for (let endIndex = beforeIndex - 1; endIndex >= startIndex; endIndex -= 1) {
+    for (const labelTokens of PLAN_FIELD_LABEL_TOKEN_SEQUENCES) {
+      const labelStart = endIndex - labelTokens.length + 1;
+      if (labelStart < startIndex) {
+        continue;
+      }
+      if (labelTokens.every((token, offset) => tokens[labelStart + offset] === token)) {
+        return labelTokens;
+      }
     }
   }
   return undefined;
@@ -931,11 +956,11 @@ async function storeCompletedSubtask(
 }
 
 function scoreSubtaskSuccess(scores: Record<string, number>): number {
-  if (typeof scores.soft_process_score === "number") {
-    return scores.soft_process_score >= 1 ? 1 : 0;
-  }
   if (typeof scores.llm_judge === "number") {
     return scores.llm_judge >= 0.5 ? 1 : 0;
+  }
+  if (typeof scores.soft_process_score === "number") {
+    return scores.soft_process_score >= 1 ? 1 : 0;
   }
   if (scores.contains_answer === 1) {
     return 1;

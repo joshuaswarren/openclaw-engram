@@ -352,21 +352,24 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
     /^\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
   );
   if (bareNumber) {
-    if (mentionsAdditionalOptionNumber(bareNumber.groups?.tail ?? "")) {
+    const selectedNumber = Number.parseInt(bareNumber[1]!, 10);
+    if (mentionsConflictingOptionNumber(bareNumber.groups?.tail ?? "", selectedNumber)) {
       return undefined;
     }
-    return Number.parseInt(bareNumber[1]!, 10);
+    return selectedNumber;
   }
 
   const labeledNumber = trimmedAnswer.match(
     /^(?:the\s+)?(?:option|choice|answer)\s*(?:is\s*)?(?:(?:the\s+)?(?:option|choice|answer)\s*)?(?::|#)?\s*\(?#?\s*(\d+)\s*\)?(?<tail>\s*(?:because|[,.;:\-](?!\s*#?\d)).*)?$/i,
   );
-  if (labeledNumber && mentionsAdditionalOptionNumber(labeledNumber.groups?.tail ?? "")) {
-    return undefined;
+  if (labeledNumber) {
+    const selectedNumber = Number.parseInt(labeledNumber[1]!, 10);
+    if (mentionsConflictingOptionNumber(labeledNumber.groups?.tail ?? "", selectedNumber)) {
+      return undefined;
+    }
+    return selectedNumber;
   }
-  return labeledNumber
-    ? Number.parseInt(labeledNumber[1]!, 10)
-    : undefined;
+  return undefined;
 }
 
 function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
@@ -376,10 +379,23 @@ function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
   return /^\(?#?\s*\d+\s*\)?\s+(?!weeks?\b|days?\b|months?\b|years?\b|hours?\b|minutes?\b)/i.test(trimmedAnswer);
 }
 
-function mentionsAdditionalOptionNumber(value: string): boolean {
+function mentionsConflictingOptionNumber(
+  value: string,
+  selectedNumber: number,
+): boolean {
   const trimmed = value.trim();
-  return /\b(?:option|choice|answer)\s*#?\d+\b/i.test(trimmed)
-    || /^[,.;:\-]\s*(?:#?\d+\b|(?:or|maybe|possibly|probably|perhaps|alternatively)\s+#?\d+\b)/i.test(trimmed);
+  for (const match of trimmed.matchAll(/\b(?:option|choice|answer)\s*#?\s*(\d+)\b/gi)) {
+    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+      return true;
+    }
+  }
+
+  const punctuationNumber = trimmed.match(
+    /^[,.;:\-]\s*(?:#?(\d+)\b|(?:or|maybe|possibly|probably|perhaps|alternatively)\s+#?(\d+)\b)/i,
+  );
+  const ambiguousNumber = punctuationNumber?.[1] ?? punctuationNumber?.[2];
+  return ambiguousNumber !== undefined
+    && Number.parseInt(ambiguousNumber, 10) !== selectedNumber;
 }
 
 function normalizeForChoiceMatch(value: string): string {

@@ -5,6 +5,7 @@ import path from "node:path";
 import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import type {
   BenchMemoryAdapter,
+  BenchJudge,
   BenchResponder,
   BenchResponse,
   Message,
@@ -15,9 +16,11 @@ import { runBenchmark } from "../packages/bench/src/index.js";
 class FakeMemoryAdapter implements BenchMemoryAdapter {
   readonly sessions = new Map<string, Message[]>();
   responder?: BenchResponder;
+  judge?: BenchJudge;
 
-  constructor(responder?: BenchResponder) {
+  constructor(responder?: BenchResponder, judge?: BenchJudge) {
     this.responder = responder;
+    this.judge = judge;
   }
 
   async store(sessionId: string, messages: Message[]): Promise<void> {
@@ -92,6 +95,14 @@ class FixedResponder implements BenchResponder {
       latencyMs: 0,
       model: "fixed",
     };
+  }
+}
+
+class FixedJudge implements BenchJudge {
+  constructor(private readonly scoreValue: number) {}
+
+  async score(): Promise<number> {
+    return this.scoreValue;
   }
 }
 
@@ -725,6 +736,45 @@ test("runBenchmark rejects swapped-day memory-arena plan fields", async () => {
   assert.equal(task.scores.soft_process_score, 0);
 });
 
+test("runBenchmark rejects same-day memory-arena plan fields under the wrong nearest label", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-swapped-fields-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Day 1 Lunch: Sushi Place. Day 1 Dinner: Coco Bambu, Dallas."),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my one-day shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "Coco Bambu, Dallas",
+          dinner: "Sushi Place",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0);
+  assert.equal(task.scores.soft_process_score, 0);
+});
+
 test("runBenchmark normalizes string day labels for memory-arena plan fields", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-string-day-"));
   const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
@@ -811,6 +861,49 @@ test("runBenchmark parses compact day headers for memory-arena plan fields", asy
   const task = result.results.tasks[0]!;
   assert.equal(task.scores.plan_field_recall, 1);
   assert.equal(task.scores.soft_process_score, 1);
+});
+
+test("runBenchmark lets a positive memory-arena judge score pass despite soft plan diagnostics", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-judge-pass-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("The plan should include Coco Bambu, Dallas."),
+    new FixedJudge(1),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my one-day shared itinerary."],
+      answers: [[
+        {
+          days: 1,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 0);
+  assert.equal(task.scores.soft_process_score, 0);
+  assert.equal(task.scores.llm_judge, 1);
+  assert.equal(task.scores.process_score, 1);
+  assert.equal(task.scores.task_success_rate, 1);
 });
 
 test("runBenchmark scores object-form memory-arena group-travel plans by field", async () => {

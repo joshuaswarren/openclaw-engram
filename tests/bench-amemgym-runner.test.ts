@@ -355,6 +355,52 @@ test("runBenchmark accepts amemgym option-number rationales with non-option numb
   assert.equal(task.details?.scoredAnswer, "Seattle");
 });
 
+test("runBenchmark accepts amemgym option-number rationales that restate the same option", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-same-option-rationale-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("Answer: 1 because option 1 is Seattle."));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.qa_accuracy, 1);
+  assert.equal(task.details?.selectedChoiceIndex, 1);
+  assert.equal(task.details?.scoredAnswer, "Seattle");
+});
+
+test("runBenchmark rejects amemgym option-number rationales that mention a conflicting option", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-conflicting-option-rationale-"));
+  const datasetDir = path.join(tmpDir, "datasets", "amemgym");
+  const adapter = new FakeMemoryAdapter(new FixedResponder("Answer: 1 because option 2 is Denver."));
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "data.json"),
+    JSON.stringify(createDatasetProfile()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("amemgym", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.qa_accuracy, 0);
+  assert.equal(task.details?.selectedChoiceIndex, null);
+  assert.equal(task.details?.scoredAnswer, "Answer: 1 because option 2 is Denver.");
+});
+
 test("runBenchmark accepts comma-led amemgym option-number rationales with non-option numbers", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-amemgym-comma-rationale-number-"));
   const datasetDir = path.join(tmpDir, "datasets", "amemgym");
