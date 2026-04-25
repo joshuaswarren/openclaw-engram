@@ -11036,6 +11036,7 @@ export class Orchestrator {
       let writeCategory = fact.category;
       let targetStorage = storage;
       let routedRuleId: string | undefined;
+      let routedNamespaceExplicit = false;
       if (routeRules.length > 0) {
         try {
           const routeText = `${fact.category} ${fact.tags.join(" ")} ${fact.content}`;
@@ -11046,6 +11047,7 @@ export class Orchestrator {
               writeCategory = selected.target.category;
             }
             if (selected.target.namespace) {
+              routedNamespaceExplicit = true;
               targetStorage = await this.storageRouter.storageFor(
                 selected.target.namespace,
               );
@@ -11063,12 +11065,14 @@ export class Orchestrator {
       // namespace so cross-project knowledge is visible everywhere. Only
       // applies when namespaces are enabled and the fact was not already
       // routed to a specific namespace by a routing rule (routing rules
-      // take precedence). Rule 30: gated by extractionScopeClassificationEnabled.
+      // that set an explicit namespace take precedence; category-only rules
+      // do not block scope routing). Rule 30: gated by
+      // extractionScopeClassificationEnabled.
       if (
         this.config.extractionScopeClassificationEnabled &&
         this.config.namespacesEnabled &&
         fact.scope === "global" &&
-        !routedRuleId
+        !routedNamespaceExplicit
       ) {
         const currentNs = this.namespaceFromStorageDir(targetStorage.dir);
         if (currentNs !== this.config.sharedNamespace) {
