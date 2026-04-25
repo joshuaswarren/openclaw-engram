@@ -54,6 +54,15 @@ export const codingContextSchema = z
   })
   .nullable();
 
+/**
+ * Recall disclosure depth (issue #677).  Mirrors the `RecallDisclosure`
+ * type in `types.ts` — keep these in sync.  Default-application happens
+ * inside `EngramAccessService.recall()`; the schema only accepts/rejects.
+ * Invalid values throw a structured 400 instead of silently defaulting,
+ * per CLAUDE.md rule 51.
+ */
+export const recallDisclosureSchema = z.enum(["chunk", "section", "raw"]);
+
 export const recallRequestSchema = z.object({
   query: z.string().min(1, "query is required"),
   sessionKey: sessionKeySchema,
@@ -61,6 +70,7 @@ export const recallRequestSchema = z.object({
   topK: z.number().int().min(0).max(200).optional(),
   mode: z.enum(["auto", "no_recall", "minimal", "full", "graph_mode"]).optional(),
   includeDebug: z.boolean().optional(),
+  disclosure: recallDisclosureSchema.optional(),
   codingContext: codingContextSchema.optional(),
 });
 

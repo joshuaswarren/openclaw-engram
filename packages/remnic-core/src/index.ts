@@ -883,4 +883,12 @@ export type {
   BriefingResult,
   CalendarEvent,
   CalendarSource,
+  RecallDisclosure,
+} from "./types.js";
+
+// Recall disclosure depth (issue #677).
+export {
+  DEFAULT_RECALL_DISCLOSURE,
+  RECALL_DISCLOSURE_LEVELS,
+  isRecallDisclosure,
 } from "./types.js";

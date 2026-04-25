@@ -78,8 +78,10 @@ import type {
   MemoryLifecycleEvent,
   MemoryStatus,
   PluginConfig,
+  RecallDisclosure,
   RecallPlanMode,
 } from "./types.js";
+import { DEFAULT_RECALL_DISCLOSURE, isRecallDisclosure } from "./types.js";
 import type { LocalLlmClient } from "./local-llm.js";
 import type { FallbackLlmClient } from "./fallback-llm.js";
 import type { SemanticDedupLookup } from "./dedup/semantic.js";
@@ -133,6 +135,14 @@ export interface EngramAccessRecallRequest {
   mode?: RecallPlanMode | "auto";
   includeDebug?: boolean;
   /**
+   * Recall disclosure depth (issue #677).  Selects how much content each
+   * result returns: `"chunk"` (default), `"section"`, or `"raw"`.  Omitting
+   * this field is equivalent to passing `"chunk"` and preserves pre-#677
+   * behavior.  Surfaces (CLI / HTTP / MCP) and per-level token telemetry
+   * are wired in subsequent PRs of #677.
+   */
+  disclosure?: RecallDisclosure;
+  /**
    * Coding-agent context (issue #569). When a connector resolves a git
    * context for the session's cwd, it passes it here and the access service
    * attaches it to the orchestrator before recall so project- / branch-
@@ -176,6 +186,14 @@ export interface EngramAccessRecallResponse {
   plannerMode?: RecallPlanMode;
   fallbackUsed: boolean;
   sourcesUsed: string[];
+  /**
+   * Disclosure depth applied to this recall (issue #677).  Reflects the
+   * caller-requested level after defaulting; useful for surfaces that want
+   * to render a "served at depth X" hint without re-deriving it.  PR 1 of
+   * #677 wires this end-to-end for plumbing only — section/raw payload
+   * shaping ships in later PRs.
+   */
+  disclosure: RecallDisclosure;
   budgetsApplied?: LastRecallSnapshot["budgetsApplied"];
   auditAnomalies?: AnomalyDetectorResult;
   budgetWarning?: BudgetDecision;
@@ -247,6 +265,14 @@ export interface EngramAccessMemorySummary {
   tags: string[];
   entityRef?: string;
   preview: string;
+  /**
+   * Disclosure depth at which this result was served (issue #677).  Set by
+   * recall paths; omitted on non-recall surfaces (e.g. memory browse) where
+   * the concept does not apply.  PR 1 of #677 always reports the
+   * request-level disclosure on recall results; per-result divergence is
+   * reserved for the auto-escalation policy that ships in PR 4/4.
+   */
+  disclosure?: RecallDisclosure;
 }
 
 export interface EngramAccessMemoryBrowseRequest {
@@ -792,7 +818,10 @@ export class EngramAccessService {
       : undefined;
   }
 
-  private async serializeRecallResults(snapshot: LastRecallSnapshot | null): Promise<EngramAccessMemorySummary[]> {
+  private async serializeRecallResults(
+    snapshot: LastRecallSnapshot | null,
+    disclosure: RecallDisclosure,
+  ): Promise<EngramAccessMemorySummary[]> {
     if (!snapshot) return [];
     const namespace = snapshot.namespace ? this.resolveNamespace(snapshot.namespace) : this.orchestrator.config.defaultNamespace;
     const storage = await this.orchestrator.getStorage(namespace);
@@ -805,7 +834,7 @@ export class EngramAccessService {
       const memory = await storage.readMemoryByPath(memoryPath);
       if (!memory) continue;
       seen.add(memoryPath);
-      results.push(this.serializeMemorySummary(memory, storageDir));
+      results.push(this.serializeMemorySummary(memory, storageDir, disclosure));
     }
 
     if (results.length > 0) return results;
@@ -814,7 +843,7 @@ export class EngramAccessService {
       const memory = await storage.getMemoryById(memoryId);
       if (!memory || seen.has(memory.path)) continue;
       seen.add(memory.path);
-      results.push(this.serializeMemorySummary(memory, storageDir));
+      results.push(this.serializeMemorySummary(memory, storageDir, disclosure));
     }
     return results;
   }
@@ -1084,6 +1113,20 @@ export class EngramAccessService {
     if (query.length === 0) {
       throw new EngramAccessInputError("query is required");
     }
+    // Disclosure depth (issue #677).  Default to `"chunk"` when omitted so
+    // pre-#677 callers see unchanged behavior.  Reject explicitly invalid
+    // string values per CLAUDE.md rule 51 (do not silently fall back).
+    const disclosure: RecallDisclosure = (() => {
+      if (request.disclosure === undefined || request.disclosure === null) {
+        return DEFAULT_RECALL_DISCLOSURE;
+      }
+      if (!isRecallDisclosure(request.disclosure)) {
+        throw new EngramAccessInputError(
+          `disclosure must be one of: chunk, section, raw (got: ${String(request.disclosure)})`,
+        );
+      }
+      return request.disclosure;
+    })();
     // Attach any coding context shipped with the recall request BEFORE
     // namespace resolution so the overlay applies to this recall (issue #569).
     if (request.codingContext !== undefined && request.sessionKey) {
@@ -1189,7 +1232,7 @@ export class EngramAccessService {
     const effectiveNamespace = snapshot?.namespace
       ? this.resolveNamespace(snapshot.namespace)
       : namespace;
-    const results = await this.serializeRecallResults(snapshot);
+    const results = await this.serializeRecallResults(snapshot, disclosure);
     const debug = await this.buildRecallDebug(
       snapshot,
       effectiveNamespace,
@@ -1243,6 +1286,7 @@ export class EngramAccessService {
       plannerMode: snapshot?.plannerMode ?? mode,
       fallbackUsed: snapshot?.fallbackUsed ?? false,
       sourcesUsed: snapshot?.sourcesUsed ?? [],
+      disclosure,
       budgetsApplied: snapshot?.budgetsApplied,
       auditAnomalies,
       budgetWarning: budgetDecision.reason === "warn-over-soft" ? budgetDecision : undefined,
@@ -2292,7 +2336,11 @@ export class EngramAccessService {
     };
   }
 
-  private serializeMemorySummary(memory: MemoryFile, baseDir: string): EngramAccessMemorySummary {
+  private serializeMemorySummary(
+    memory: MemoryFile,
+    baseDir: string,
+    disclosure?: RecallDisclosure,
+  ): EngramAccessMemorySummary {
     return {
       id: memory.frontmatter.id,
       path: memory.path,
@@ -2303,6 +2351,11 @@ export class EngramAccessService {
       tags: normalizeProjectionTags(memory.frontmatter.tags),
       entityRef: memory.frontmatter.entityRef,
       preview: normalizeProjectionPreview(memory.content),
+      // PR 1/4 of issue #677: recall paths pass an explicit disclosure;
+      // non-recall paths (browse / fallback) leave it undefined.  Section/
+      // raw payload shaping ships in PR 2; per-result divergence ships in
+      // PR 4 (auto-escalation).
+      ...(disclosure !== undefined ? { disclosure } : {}),
     };
   }
 
