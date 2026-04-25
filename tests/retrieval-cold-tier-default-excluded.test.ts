@@ -617,8 +617,16 @@ test("AST audit: this.config.qmdColdCollection is read only inside applyColdFall
       .map((v) => `  line ${v.line} in ${v.fn}`)
       .join("\n")}`,
   );
+  // Require at least one read inside applyColdFallbackPipeline specifically.
+  // A weaker `reads.length >= 1` would be silently satisfied by a tier-
+  // migration read while applyColdFallbackPipeline hard-coded the cold
+  // collection name, breaking configurability while this audit stayed green.
+  // (Codex review on PR #693.)
+  const fallbackReads = reads.filter(
+    (r) => r.fn === "applyColdFallbackPipeline",
+  );
   assert.ok(
-    reads.length >= 1,
-    "at least one read of qmdColdCollection must exist (inside applyColdFallbackPipeline)",
+    fallbackReads.length >= 1,
+    `applyColdFallbackPipeline must read this.config.qmdColdCollection so the cold collection name remains configurable; found ${fallbackReads.length} reads in that function`,
   );
 });
