@@ -3,8 +3,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readFile, readdir } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readdir } from "node:fs/promises";
 import path from "node:path";
+import { createInterface } from "node:readline/promises";
 import type { Message } from "../../../adapters/types.js";
 import { answerBenchmarkQuestion } from "../../../answering.js";
 import type {
@@ -27,6 +29,8 @@ import {
   type BeamChatTurn,
   type BeamConversation,
   type BeamPlan,
+  type BeamPlanChatBatch,
+  type BeamPlanChatMap,
   type BeamQuestion,
   type BeamQuestionMap,
 } from "./fixture.js";
@@ -65,23 +69,21 @@ interface BeamSession {
   messages: Message[];
 }
 
+interface BeamDatasetSource {
+  totalTasks?: number;
+  entries(): AsyncIterable<BeamDatasetEntry>;
+}
+
 export async function runBeamBenchmark(
   options: ResolvedRunBenchmarkOptions,
 ): Promise<BenchmarkResult> {
   const dataset = await loadDataset(options.mode, options.datasetDir, options.limit);
   const tasks: TaskResult[] = [];
+  const totalTasks = dataset.totalTasks;
+  let entryCount = 0;
 
-  const totalTasks = dataset.reduce(
-    (sum, entry) =>
-      sum +
-      Object.values(normalizeQuestionMap(entry.conversation.probing_questions)).reduce(
-        (qSum, questions) => qSum + questions.length,
-        0,
-      ),
-    0,
-  );
-
-  for (const entry of dataset) {
+  for await (const entry of dataset.entries()) {
+    entryCount += 1;
     await options.system.reset();
 
     const questionMap = normalizeQuestionMap(entry.conversation.probing_questions);
@@ -195,6 +197,10 @@ export async function runBeamBenchmark(
     }
   }
 
+  if (entryCount === 0) {
+    throw new Error("BEAM dataset is empty after applying the requested limit.");
+  }
+
   const remnicVersion = await getRemnicVersion();
   const totalLatencyMs = tasks.reduce((sum, task) => sum + task.latencyMs, 0);
   const totalInputTokens = tasks.reduce((sum, task) => sum + task.tokens.input, 0);
@@ -244,13 +250,12 @@ async function loadDataset(
   mode: "full" | "quick",
   datasetDir: string | undefined,
   limit?: number,
-): Promise<BeamDatasetEntry[]> {
+): Promise<BeamDatasetSource> {
   const normalizedLimit = normalizeLimit(limit);
-  const ensureDatasetEntries = (entries: BeamDatasetEntry[]): BeamDatasetEntry[] => {
-    if (entries.length === 0) {
+  const ensureDatasetEntries = (entryCount: number): void => {
+    if (entryCount === 0) {
       throw new Error("BEAM dataset is empty after applying the requested limit.");
     }
-    return entries;
   };
 
   if (datasetDir) {
@@ -273,32 +278,13 @@ async function loadDataset(
       );
     }
 
-    const entries: BeamDatasetEntry[] = [];
-    let remainingLimit = normalizedLimit;
-    for (const filename of datasetFiles) {
-      if (remainingLimit === 0) {
-        break;
-      }
-
-      const raw = await readFile(path.join(datasetDir, filename), "utf8");
-      const scale = inferScaleFromFilename(filename);
-      const conversations = filename.endsWith(".jsonl")
-        ? parseJsonlDataset(raw, filename)
-        : parseJsonDataset(raw, filename);
-
-      const limitedConversations = applyLimit(conversations, remainingLimit);
-      entries.push(
-        ...limitedConversations.map((conversation) => ({
-          scale,
-          conversation,
-        })),
-      );
-      if (remainingLimit !== undefined) {
-        remainingLimit = Math.max(0, remainingLimit - limitedConversations.length);
-      }
+    if (normalizedLimit === 0) {
+      ensureDatasetEntries(0);
     }
 
-    return ensureDatasetEntries(entries);
+    return {
+      entries: () => iterateDatasetFiles(datasetDir, datasetFiles, normalizedLimit),
+    };
   }
 
   if (mode === "full") {
@@ -307,12 +293,23 @@ async function loadDataset(
     );
   }
 
-  return ensureDatasetEntries(
-    applyLimit(BEAM_SMOKE_FIXTURE, normalizedLimit).map((conversation) => ({
-      scale: "100K",
-      conversation,
-    })),
-  );
+  const conversations = applyLimit(BEAM_SMOKE_FIXTURE, normalizedLimit);
+  ensureDatasetEntries(conversations.length);
+
+  return {
+    totalTasks: conversations.reduce(
+      (sum, conversation) => sum + countQuestions(conversation),
+      0,
+    ),
+    entries: async function* entries() {
+      for (const conversation of conversations) {
+        yield {
+          scale: "100K",
+          conversation,
+        };
+      }
+    },
+  };
 }
 
 function compareDatasetFiles(left: string, right: string): number {
@@ -334,30 +331,213 @@ function inferScaleFromFilename(filename: string): string {
   return "unknown";
 }
 
-function parseJsonDataset(raw: string, filename: string): BeamConversation[] {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(
-      `BEAM dataset file ${filename} contains invalid JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+async function* iterateDatasetFiles(
+  datasetDir: string,
+  datasetFiles: string[],
+  limit: number | undefined,
+): AsyncIterable<BeamDatasetEntry> {
+  let remainingLimit = limit;
+  for (const filename of datasetFiles) {
+    const scale = inferScaleFromFilename(filename);
+    const filePath = path.join(datasetDir, filename);
+    const conversations = filename.endsWith(".jsonl")
+      ? streamJsonlDataset(filePath, filename, remainingLimit)
+      : streamJsonDataset(filePath, filename, remainingLimit);
 
-  if (!Array.isArray(parsed)) {
-    throw new Error(`BEAM dataset file ${filename} must contain an array of conversations.`);
+    for await (const conversation of conversations) {
+      yield {
+        scale,
+        conversation,
+      };
+      if (remainingLimit !== undefined) {
+        remainingLimit -= 1;
+      }
+    }
+    if (remainingLimit === 0) {
+      break;
+    }
   }
-
-  return parsed.map((conversation, index) =>
-    validateConversation(conversation, `${filename}[${index}]`),
-  );
 }
 
-function parseJsonlDataset(raw: string, filename: string): BeamConversation[] {
-  const conversations: BeamConversation[] = [];
-  raw.split("\n").forEach((line, lineIndex) => {
+async function* streamJsonDataset(
+  filePath: string,
+  filename: string,
+  limit: number | undefined,
+): AsyncIterable<BeamConversation> {
+  const stream = createReadStream(filePath, {
+    encoding: "utf8",
+    highWaterMark: 1024 * 1024,
+  });
+  let seenArrayStart = false;
+  let seenArrayEnd = false;
+  let collectingObject = false;
+  let inString = false;
+  let escaped = false;
+  let depth = 0;
+  let objectIndex = 0;
+  let yielded = 0;
+  let hasSeenArrayValue = false;
+  let expectingArrayValue = false;
+  let objectParts: string[] = [];
+
+  for await (const chunk of stream) {
+    let objectStart = collectingObject ? 0 : -1;
+
+    for (let index = 0; index < chunk.length; index += 1) {
+      const current = chunk[index]!;
+
+      if (!collectingObject) {
+        if (seenArrayEnd) {
+          if (/\s/.test(current)) {
+            continue;
+          }
+          throw new Error(
+            `BEAM dataset file ${filename} contains trailing content after the JSON array.`,
+          );
+        }
+
+        if (!seenArrayStart) {
+          if (/\s/.test(current)) {
+            continue;
+          }
+          if (current !== "[") {
+            throw new Error(
+              `BEAM dataset file ${filename} must contain a JSON array of conversations.`,
+            );
+          }
+          seenArrayStart = true;
+          expectingArrayValue = true;
+          continue;
+        }
+
+        if (/\s/.test(current)) {
+          continue;
+        }
+        if (current === ",") {
+          if (expectingArrayValue) {
+            throw new Error(
+              `BEAM dataset file ${filename} contains invalid comma placement near conversation ${objectIndex}.`,
+            );
+          }
+          expectingArrayValue = true;
+          continue;
+        }
+        if (current === "]") {
+          if (expectingArrayValue && hasSeenArrayValue) {
+            throw new Error(
+              `BEAM dataset file ${filename} contains invalid trailing comma near conversation ${objectIndex}.`,
+            );
+          }
+          seenArrayEnd = true;
+          continue;
+        }
+        if (current !== "{") {
+          throw new Error(
+            `BEAM dataset file ${filename} contains invalid JSON array content near conversation ${objectIndex}.`,
+          );
+        }
+        if (!expectingArrayValue) {
+          throw new Error(
+            `BEAM dataset file ${filename} is missing a comma before conversation ${objectIndex + 1}.`,
+          );
+        }
+
+        collectingObject = true;
+        inString = false;
+        escaped = false;
+        depth = 1;
+        objectParts = [];
+        objectStart = index;
+        continue;
+      }
+
+      if (inString) {
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (current === "\\") {
+          escaped = true;
+          continue;
+        }
+        if (current === "\"") {
+          inString = false;
+        }
+        continue;
+      }
+
+      if (current === "\"") {
+        inString = true;
+        continue;
+      }
+      if (current === "{") {
+        depth += 1;
+        continue;
+      }
+      if (current !== "}") {
+        continue;
+      }
+
+      depth -= 1;
+      if (depth === 0) {
+        objectParts.push(chunk.slice(objectStart, index + 1));
+        const rawObject = objectParts.join("");
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(rawObject);
+        } catch (error) {
+          throw new Error(
+            `BEAM dataset file ${filename} contains invalid JSON at conversation ${objectIndex}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        const conversation = validateConversation(parsed, `${filename}[${objectIndex}]`);
+        objectIndex += 1;
+        hasSeenArrayValue = true;
+        expectingArrayValue = false;
+        collectingObject = false;
+        objectParts = [];
+        objectStart = -1;
+        if (limit === undefined || yielded < limit) {
+          yield conversation;
+          yielded += 1;
+        }
+      }
+    }
+
+    if (collectingObject && objectStart >= 0) {
+      objectParts.push(chunk.slice(objectStart));
+    }
+  }
+
+  if (collectingObject) {
+    throw new Error(`BEAM dataset file ${filename} has an unterminated conversation object.`);
+  }
+  if (!seenArrayStart) {
+    throw new Error(
+      `BEAM dataset file ${filename} must contain a JSON array of conversations.`,
+    );
+  }
+  if (!seenArrayEnd) {
+    throw new Error(`BEAM dataset file ${filename} has an unterminated JSON array.`);
+  }
+}
+
+async function* streamJsonlDataset(
+  filePath: string,
+  filename: string,
+  limit: number | undefined,
+): AsyncIterable<BeamConversation> {
+  const lines = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  let yielded = 0;
+  let lineIndex = 0;
+
+  for await (const line of lines) {
+    lineIndex += 1;
     if (line.trim().length === 0) {
-      return;
+      continue;
     }
 
     let parsed: unknown;
@@ -365,15 +545,22 @@ function parseJsonlDataset(raw: string, filename: string): BeamConversation[] {
       parsed = JSON.parse(line);
     } catch (error) {
       throw new Error(
-        `BEAM dataset file ${filename} contains invalid JSON on line ${lineIndex + 1}: ${error instanceof Error ? error.message : String(error)}`,
+        `BEAM dataset file ${filename} contains invalid JSON on line ${lineIndex}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    conversations.push(
-      validateConversation(parsed, `${filename}:${lineIndex + 1}`),
-    );
-  });
+    const conversation = validateConversation(parsed, `${filename}:${lineIndex}`);
+    if (limit === undefined || yielded < limit) {
+      yield conversation;
+      yielded += 1;
+    }
+  }
+}
 
-  return conversations;
+function countQuestions(conversation: BeamConversation): number {
+  return Object.values(normalizeQuestionMap(conversation.probing_questions)).reduce(
+    (sum, questions) => sum + questions.length,
+    0,
+  );
 }
 
 function validateConversation(
@@ -393,7 +580,7 @@ function validateConversation(
       `BEAM conversation ${location} must include a string or integer conversation_id.`,
     );
   }
-  if (!isChatCollection(record.chat)) {
+  if (!isChatCollection(record.chat) && !isPlanChatMapCollection(record.chat)) {
     throw new Error(
       `BEAM conversation ${location} must include chat data as a list of turns or turn batches.`,
     );
@@ -415,7 +602,7 @@ function validateConversation(
   return record as unknown as BeamConversation;
 }
 
-function isChatCollection(value: unknown): value is BeamConversation["chat"] {
+function isChatCollection(value: unknown): value is BeamChatTurn[][] | BeamChatTurn[] {
   if (!Array.isArray(value)) {
     return false;
   }
@@ -432,6 +619,36 @@ function isChatCollection(value: unknown): value is BeamConversation["chat"] {
   }
 
   return false;
+}
+
+function isPlanChatMapCollection(value: unknown): value is BeamPlanChatMap[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((entry) => isPlanChatMap(entry))
+  );
+}
+
+function isPlanChatMap(value: unknown): value is BeamPlanChatMap {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.values(value).every(
+    (batches) =>
+      batches === null ||
+      (Array.isArray(batches) && batches.every((batch) => isPlanChatBatch(batch))),
+  );
+}
+
+function isPlanChatBatch(value: unknown): value is BeamPlanChatBatch {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    ((value as BeamPlanChatBatch).turns === undefined ||
+      isChatCollection((value as BeamPlanChatBatch).turns))
+  );
 }
 
 function isChatBatch(value: unknown): value is BeamChatTurn[] {
@@ -465,7 +682,9 @@ function isValidPlans(value: unknown): value is BeamPlan[] {
       (plan) =>
         !!plan &&
         typeof plan === "object" &&
-        (plan.chat === undefined || isChatCollection(plan.chat)),
+        (plan.chat === undefined ||
+          isChatCollection(plan.chat) ||
+          isPlanChatMapCollection(plan.chat)),
     )
   );
 }
@@ -489,17 +708,39 @@ function collectSessions(
   const conversationId = String(conversation.conversation_id);
   const sessions: BeamSession[] = [];
 
-  flattenChatCollection(conversation.chat).forEach((batch, batchIndex) => {
-    sessions.push({
-      sessionId: `beam-${scale}-${conversationId}-main-${batchIndex + 1}`,
-      messages: buildMessages(batch),
+  if (isPlanChatMapCollection(conversation.chat)) {
+    flattenPlanChatMapCollection(conversation.chat).forEach((batch) => {
+      sessions.push({
+        sessionId:
+          `beam-${scale}-${conversationId}-main-${batch.planId}-${batch.mapIndex + 1}-${batch.batchIndex + 1}-${batch.turnBatchIndex + 1}`,
+        messages: buildMessages(batch.turns),
+      });
     });
-  });
+  } else {
+    flattenChatCollection(conversation.chat).forEach((batch, batchIndex) => {
+      sessions.push({
+        sessionId: `beam-${scale}-${conversationId}-main-${batchIndex + 1}`,
+        messages: buildMessages(batch),
+      });
+    });
+  }
 
   (conversation.plans ?? []).forEach((plan, planIndex) => {
     if (!plan.chat) {
       return;
     }
+
+    if (isPlanChatMapCollection(plan.chat)) {
+      flattenPlanChatMapCollection(plan.chat).forEach((batch) => {
+        sessions.push({
+          sessionId:
+            `beam-${scale}-${conversationId}-plan-${String(plan.plan_id ?? planIndex)}-${batch.planId}-${batch.mapIndex + 1}-${batch.batchIndex + 1}-${batch.turnBatchIndex + 1}`,
+          messages: buildMessages(batch.turns),
+        });
+      });
+      return;
+    }
+
     flattenChatCollection(plan.chat).forEach((batch, batchIndex) => {
       sessions.push({
         sessionId:
@@ -513,12 +754,71 @@ function collectSessions(
 }
 
 function flattenChatCollection(
-  chat: BeamConversation["chat"],
+  chat: BeamChatTurn[][] | BeamChatTurn[],
 ): BeamChatTurn[][] {
   if (chat.length === 0) {
     return [];
   }
   return isChatTurn(chat[0]) ? [chat as BeamChatTurn[]] : (chat as BeamChatTurn[][]);
+}
+
+function flattenPlanChatMapCollection(
+  chat: BeamPlanChatMap[],
+): Array<{
+  planId: string;
+  mapIndex: number;
+  batchIndex: number;
+  turnBatchIndex: number;
+  turns: BeamChatTurn[];
+}> {
+  const batches: Array<{
+    planId: string;
+    mapIndex: number;
+    batchIndex: number;
+    turnBatchIndex: number;
+    turns: BeamChatTurn[];
+  }> = [];
+
+  chat.forEach((planMap, mapIndex) => {
+    Object.keys(planMap)
+      .sort(comparePlanIds)
+      .forEach((planId) => {
+        const planBatches = planMap[planId];
+        if (!planBatches) {
+          return;
+        }
+
+        planBatches.forEach((batch, batchIndex) => {
+          if (!batch.turns) {
+            return;
+          }
+
+          flattenChatCollection(batch.turns).forEach((turns, turnBatchIndex) => {
+            batches.push({
+              planId,
+              mapIndex,
+              batchIndex,
+              turnBatchIndex,
+              turns,
+            });
+          });
+        });
+      });
+  });
+
+  return batches;
+}
+
+function comparePlanIds(left: string, right: string): number {
+  const leftNumber = Number(left.match(/\d+/)?.[0] ?? Number.NaN);
+  const rightNumber = Number(right.match(/\d+/)?.[0] ?? Number.NaN);
+  if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber)) {
+    const numberDelta = leftNumber - rightNumber;
+    if (numberDelta !== 0) {
+      return numberDelta;
+    }
+  }
+  return left.localeCompare(right);
 }
 
 function buildMessages(turns: BeamChatTurn[]): Message[] {

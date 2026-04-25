@@ -155,6 +155,484 @@ test("runBenchmark loads beam full-mode datasets and includes 10M plan chats in 
   assert.equal(result.results.tasks[0]?.details.sessionCount, 2);
 });
 
+test("runBenchmark streams beam JSON arrays without misreading braces in strings", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-stream-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-stream-1",
+        chat: [
+          [
+            {
+              id: 1,
+              role: "user",
+              content:
+                "The literal marker is brace {alpha}, bracket [beta], and quote \"gamma\".",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "What is the literal marker?",
+              answer: "brace {alpha}, bracket [beta], and quote \"gamma\"",
+            },
+          ],
+        },
+      },
+      {
+        conversation_id: "beam-stream-2",
+        chat: [
+          [
+            {
+              id: 2,
+              role: "user",
+              content: "The backup owner is Priya.",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Who is the backup owner?",
+              answer: "Priya",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 2);
+  assert.equal(
+    result.results.tasks[0]?.actual.includes(
+      'brace {alpha}, bracket [beta], and quote "gamma"',
+    ),
+    true,
+  );
+  assert.equal(result.results.tasks[1]?.actual.includes("Priya"), true);
+});
+
+test("runBenchmark loads beam 10M plan-map chat shards", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-plan-map-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "10M.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-plan-map-1",
+        chat: [
+          {
+            "plan-2": null,
+            "plan-1": [
+              {
+                batch_number: 1,
+                turns: [
+                  [
+                    {
+                      id: 1,
+                      role: "user",
+                      content: "The 10M shard owner is Nia.",
+                    },
+                  ],
+                ],
+              },
+            ],
+          },
+        ],
+        plans: [
+          {
+            plan_id: "plan-1",
+            chat: [
+              [
+                {
+                  id: 2,
+                  role: "user",
+                  content: "The supplemental plan owner is Elias.",
+                },
+              ],
+            ],
+          },
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Who owns the 10M shard?",
+              answer: "Nia",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.actual.includes("Nia"), true);
+  assert.equal(result.results.tasks[0]?.details.sessionCount, 2);
+  assert.equal(
+    [...adapter.sessions.values()]
+      .flat()
+      .some((message) => message.content.includes("supplemental plan owner")),
+    true,
+  );
+});
+
+test("runBenchmark keeps plan chats when top-level beam chat is empty", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-empty-chat-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-empty-chat-1",
+        chat: [],
+        plans: [
+          {
+            plan_id: "plan-only",
+            chat: [
+              [
+                {
+                  id: 1,
+                  role: "user",
+                  content: "The plan-only answer is Rowan.",
+                },
+              ],
+            ],
+          },
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "What is the plan-only answer?",
+              answer: "Rowan",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.actual.includes("Rowan"), true);
+  assert.equal(result.results.tasks[0]?.details.sessionCount, 1);
+});
+
+test("runBenchmark orders same-number beam plan-map ids by stable secondary key", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-plan-order-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "10M.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-plan-order-1",
+        chat: [
+          {
+            "plan-1-b": [
+              {
+                batch_number: 1,
+                turns: [
+                  [
+                    {
+                      id: 2,
+                      role: "user",
+                      content: "The second same-number plan owner is Blake.",
+                    },
+                  ],
+                ],
+              },
+            ],
+            "plan-1-a": [
+              {
+                batch_number: 1,
+                turns: [
+                  [
+                    {
+                      id: 1,
+                      role: "user",
+                      content: "The first same-number plan owner is Avery.",
+                    },
+                  ],
+                ],
+              },
+            ],
+          },
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Who is the first same-number plan owner?",
+              answer: "Avery",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const sessionIds = [...adapter.sessions.keys()];
+  assert.equal(result.results.tasks[0]?.details.sessionCount, 2);
+  assert.equal(sessionIds[0]?.includes("plan-1-a"), true);
+  assert.equal(sessionIds[1]?.includes("plan-1-b"), true);
+  assert.equal(result.results.tasks[0]?.actual.includes("Avery"), true);
+});
+
+test("runBenchmark applies beam dataset limits while streaming arrays", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-limit-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-limit-1",
+        chat: [
+          [
+            {
+              id: 1,
+              role: "user",
+              content: "Only the first streamed conversation should run.",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Which streamed conversation should run?",
+              answer: "first",
+            },
+          ],
+        },
+      },
+      {
+        conversation_id: "beam-limit-2",
+        chat: [
+          [
+            {
+              id: 2,
+              role: "user",
+              content: "The second streamed conversation should be skipped.",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "Which streamed conversation should be skipped?",
+              answer: "second",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.details.conversationId, "beam-limit-1");
+  assert.equal(adapter.sessions.size, 1);
+});
+
+test("runBenchmark rejects malformed beam JSON array comma placement", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-commas-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  const validObject = JSON.stringify({
+    conversation_id: "beam-comma-1",
+    chat: [],
+    probing_questions: {
+      information_extraction: [
+        {
+          question: "What should this malformed dataset do?",
+          answer: "fail",
+        },
+      ],
+    },
+  });
+
+  for (const [filename, payload, expected] of [
+    ["100K-trailing.json", `[${validObject},]`, /invalid trailing comma/],
+    ["100K-double.json", `[${validObject},,${validObject}]`, /invalid comma placement/],
+    ["100K-missing.json", `[${validObject}${validObject}]`, /missing a comma/],
+  ] as const) {
+    await writeFile(path.join(datasetDir, filename), payload, "utf8");
+    await assert.rejects(
+      () =>
+        runBenchmark("beam", {
+          mode: "full",
+          datasetDir,
+          limit: 2,
+          system: adapter,
+        }),
+      expected,
+    );
+    await writeFile(path.join(datasetDir, filename), "[]", "utf8");
+  }
+});
+
+test("runBenchmark validates beam JSON tails after reaching a limit", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-limit-tail-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  const validObject = JSON.stringify({
+    conversation_id: "beam-limit-tail-1",
+    chat: [],
+    probing_questions: {
+      information_extraction: [
+        {
+          question: "What should this malformed tail do?",
+          answer: "fail",
+        },
+      ],
+    },
+  });
+
+  await writeFile(path.join(datasetDir, "100K.json"), `[${validObject},not-json]`, "utf8");
+
+  await assert.rejects(
+    () =>
+      runBenchmark("beam", {
+        mode: "full",
+        datasetDir,
+        limit: 1,
+        system: adapter,
+      }),
+    /invalid JSON array content/,
+  );
+});
+
+test("runBenchmark validates beam JSONL tails after reaching a limit", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-jsonl-tail-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  const validObject = JSON.stringify({
+    conversation_id: "beam-jsonl-tail-1",
+    chat: [],
+    probing_questions: {
+      information_extraction: [
+        {
+          question: "What should this malformed JSONL tail do?",
+          answer: "fail",
+        },
+      ],
+    },
+  });
+
+  await writeFile(path.join(datasetDir, "100K.jsonl"), `${validObject}\nnot-json\n`, "utf8");
+
+  await assert.rejects(
+    () =>
+      runBenchmark("beam", {
+        mode: "full",
+        datasetDir,
+        limit: 1,
+        system: adapter,
+      }),
+    /invalid JSON on line 2/,
+  );
+});
+
+test("runBenchmark stops reading later beam split files once the global limit is exhausted", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-beam-later-split-"));
+  const datasetDir = path.join(tmpDir, "datasets", "beam");
+  const adapter = new FakeMemoryAdapter();
+  await mkdir(datasetDir, { recursive: true });
+
+  await writeFile(
+    path.join(datasetDir, "100K.json"),
+    JSON.stringify([
+      {
+        conversation_id: "beam-later-split-1",
+        chat: [
+          [
+            {
+              id: 1,
+              role: "user",
+              content: "The limited split answer is Hazel.",
+            },
+          ],
+        ],
+        probing_questions: {
+          information_extraction: [
+            {
+              question: "What is the limited split answer?",
+              answer: "Hazel",
+            },
+          ],
+        },
+      },
+    ]),
+    "utf8",
+  );
+  await writeFile(path.join(datasetDir, "10M.json"), "[not-json]", "utf8");
+
+  const result = await runBenchmark("beam", {
+    mode: "full",
+    datasetDir,
+    limit: 1,
+    system: adapter,
+  });
+
+  assert.equal(result.results.tasks.length, 1);
+  assert.equal(result.results.tasks[0]?.actual.includes("Hazel"), true);
+});
+
 test("runBenchmark rejects beam full mode without datasetDir", async () => {
   const adapter = new FakeMemoryAdapter();
 
