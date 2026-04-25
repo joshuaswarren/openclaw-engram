@@ -8597,12 +8597,26 @@ export class Orchestrator {
             enabled: this.config.temporalSupersessionEnabled,
             includeInRecall: this.config.temporalSupersessionIncludeInRecall,
           };
+          // Cursor Medium on PR #713: when `as_of` is active, the
+          // recent-scan path used to strip every non-active status
+          // (including superseded) before `boostSearchResults` ran,
+          // so the as_of bypass inside boostSearchResults never had
+          // a chance to admit historically-valid records. Pass
+          // superseded candidates through here when as_of is active;
+          // boostSearchResults's `[valid_at, invalid_at)` evaluation
+          // is the authoritative gate. Other non-active statuses
+          // (archived, forgotten, rejected) stay excluded — historical
+          // recall is about supersession history, not about reviving
+          // records the operator explicitly dropped.
+          const asOfActive =
+            typeof asOfMs === "number" && Number.isFinite(asOfMs);
           const activeMemories = memories.filter(
             (m) => {
               if (isArtifactMemoryPath(m.path)) return false;
               const status = m.frontmatter.status;
               if (!status || status === "active") return true;
               if (status === "superseded") {
+                if (asOfActive) return true;
                 // Include superseded memory only if the canonical gate says
                 // NOT to filter it (kill switch off or audit mode on).
                 return !shouldFilterSupersededFromRecall(m.frontmatter, supersessionOptions);
