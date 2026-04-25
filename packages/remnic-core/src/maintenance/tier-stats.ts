@@ -59,25 +59,22 @@ export interface TierExplainResult {
   };
 }
 
-/**
- * Determine the on-disk tier of a memory by scanning its path for the
- * `cold/` segment that `tier-migration.ts` writes.  Mirrors the same
- * detection that `temporal-supersession.ts` uses around line 283.
- */
-function inferTier(memory: MemoryFile): MemoryTier {
-  return memory.path.includes("/cold/") || memory.path.includes("\\cold\\")
-    ? "cold"
-    : "hot";
+interface TierVisibleMemory {
+  memory: MemoryFile;
+  tier: MemoryTier;
 }
 
 async function readTierVisibleMemories(
   storage: StorageManager,
-): Promise<MemoryFile[]> {
+): Promise<TierVisibleMemory[]> {
   const [hotMemories, coldMemories] = await Promise.all([
     storage.readAllMemories(),
     storage.readAllColdMemories(),
   ]);
-  return [...hotMemories, ...coldMemories];
+  return [
+    ...hotMemories.map((memory) => ({ memory, tier: "hot" as const })),
+    ...coldMemories.map((memory) => ({ memory, tier: "cold" as const })),
+  ];
 }
 
 async function tierRoutingPolicyFromConfig(
@@ -108,8 +105,7 @@ export async function summarizeTiers(
     forgottenCount: 0,
     byCategory: {},
   };
-  for (const m of all) {
-    const tier = inferTier(m);
+  for (const { memory: m, tier } of all) {
     summary.byTier[tier] += 1;
     const status: string = m.frontmatter.status ?? "active";
     summary.byStatus[status] = (summary.byStatus[status] ?? 0) + 1;
@@ -132,14 +128,14 @@ export async function explainTierForMemory(
     throw new Error("tier explain: memory id is required and must be non-empty");
   }
   const all = await readTierVisibleMemories(storage);
-  const memory = all.find((m) => m.frontmatter.id === trimmed);
-  if (!memory) {
+  const entry = all.find(({ memory: m }) => m.frontmatter.id === trimmed);
+  if (!entry) {
     throw new Error(`tier explain: memory not found: ${trimmed}`);
   }
+  const { memory, tier: currentTier } = entry;
   const now = new Date();
   const valueScore = computeTierValueScore(memory, now);
   const policy = await tierRoutingPolicyFromConfig(config);
-  const currentTier = inferTier(memory);
   const decision = decideTierTransition(memory, currentTier, policy, now);
   const fm = memory.frontmatter as unknown as Record<string, unknown>;
   const importanceScore = memory.frontmatter.importance?.score;

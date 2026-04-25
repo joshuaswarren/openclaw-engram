@@ -107,6 +107,17 @@ test("summarizeTiers: defaults missing status to active", async () => {
   assert.equal(summary.byStatus.active, 1);
 });
 
+test("summarizeTiers: treats hot scan memories as hot even under cold-named roots", async () => {
+  const summary = await summarizeTiers(
+    makeStorageStub([
+      makeMemory({ id: "hot-cold-root" }, "/tmp/cold/remnic/facts/hot.md"),
+    ]) as never,
+  );
+
+  assert.equal(summary.byTier.hot, 1);
+  assert.equal(summary.byTier.cold, 0);
+});
+
 test("explainTierForMemory: finds cold memories and reports importance score", async () => {
   const coldMemory = makeMemory(
     {
@@ -159,6 +170,22 @@ test("explainTierForMemory: uses qmd tier migration policy for decisions", async
   assert.equal(explain.decision.nextTier, "cold");
   assert.equal(explain.decision.changed, true);
   assert.equal(explain.decision.reason, "value_below_demotion_threshold");
+});
+
+test("explainTierForMemory: uses source scan tier instead of path substring", async () => {
+  const memory = makeMemory(
+    { id: "hot-cold-root" },
+    "/tmp/cold/remnic/facts/hot.md",
+  );
+
+  const explain = await explainTierForMemory(
+    makeStorageStub([memory]) as never,
+    "hot-cold-root",
+    makeConfigStub(),
+  );
+
+  assert.equal(explain.currentTier, "hot");
+  assert.equal(explain.decision.currentTier, "hot");
 });
 
 test("explainTierForMemory: applies utility runtime tier deltas", async () => {
