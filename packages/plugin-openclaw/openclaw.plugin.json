@@ -3318,8 +3318,8 @@
       },
       "lifecyclePolicyEnabled": {
         "type": "boolean",
-        "default": false,
-        "description": "Enable lifecycle scoring/promotions during consolidation (v8.3)."
+        "default": true,
+        "description": "Enable the lifecycle policy engine (hot↔cold tier migration, value scoring, decay). Default true since #686 PR 3/6 — flipping enables the year-2 retention story by default. Set to false to opt out."
       },
       "lifecycleFilterStaleEnabled": {
         "type": "boolean",

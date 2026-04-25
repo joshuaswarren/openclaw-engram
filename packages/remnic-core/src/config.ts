@@ -44,6 +44,30 @@ const DEFAULT_WORKSPACE_DIR = path.join(
   "workspace",
 );
 
+// Coerce common string/number representations of a boolean to a real boolean.
+// Returns `undefined` when the value cannot be interpreted, so callers can
+// fall back to their own default. Guards against the "string `false` is
+// truthy" footgun (CLAUDE.md gotcha #36) when config values arrive from
+// CLI/env/JSON sources where booleans are sometimes string-typed.
+function coerceBooleanLike(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (value === 1) return true;
+    if (value === 0) return false;
+    return undefined;
+  }
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "on") {
+      return true;
+    }
+    if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") {
+      return false;
+    }
+  }
+  return undefined;
+}
+
 function resolveEnvVars(value: string): string {
   const resolved = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, envVar: string) => {
     const envValue = readEnvVar(envVar);
@@ -2025,8 +2049,19 @@ export function parseConfig(raw: unknown): PluginConfig {
     factArchivalProtectedCategories: Array.isArray(cfg.factArchivalProtectedCategories)
       ? (cfg.factArchivalProtectedCategories as any[]).filter((c) => typeof c === "string")
       : ["commitment", "preference", "decision", "principle", "procedure"],
-    // v8.3 lifecycle policy engine (default off)
-    lifecyclePolicyEnabled: cfg.lifecyclePolicyEnabled === true,
+    // Lifecycle policy engine (issue #686 PR 3/6 — flipped default to
+    // `true`).  Tier infrastructure (`tier-routing.ts`,
+    // `tier-migration.ts`, separate cold QMD collection) has shipped
+    // for several releases.  Default-on lets the year-2 retention
+    // story land for every install instead of staying gated behind
+    // an opt-in flag the typical operator never reaches.  Operators
+    // who need pre-#686 behavior (no automatic hot↔cold migration,
+    // no recall-time stale filtering) can set
+    // `lifecyclePolicyEnabled: false` explicitly. Coerce string/number
+    // boolean-likes (e.g. CLI `--config lifecyclePolicyEnabled=false`)
+    // before applying the default — otherwise an explicit false-ish
+    // input falls through and silently re-enables the policy.
+    lifecyclePolicyEnabled: coerceBooleanLike(cfg.lifecyclePolicyEnabled) ?? true,
     lifecycleFilterStaleEnabled: cfg.lifecycleFilterStaleEnabled === true,
     lifecyclePromoteHeatThreshold:
       typeof cfg.lifecyclePromoteHeatThreshold === "number"
@@ -2046,10 +2081,14 @@ export function parseConfig(raw: unknown): PluginConfig {
             typeof c === "string" && VALID_MEMORY_CATEGORIES.has(c),
         )
       : ["decision", "principle", "commitment", "preference", "procedure"],
+    // Mirror the *resolved* lifecyclePolicyEnabled default (not the
+    // raw input) — otherwise omitting both flags returns `false` for
+    // metrics even though the policy is enabled by default since
+    // #686 PR 3/6.
     lifecycleMetricsEnabled:
-      typeof cfg.lifecycleMetricsEnabled === "boolean"
-        ? cfg.lifecycleMetricsEnabled
-        : cfg.lifecyclePolicyEnabled === true,
+      coerceBooleanLike(cfg.lifecycleMetricsEnabled) ??
+      coerceBooleanLike(cfg.lifecyclePolicyEnabled) ??
+      true,
     // v8.3 proactive + policy learning (default off)
     proactiveExtractionEnabled: cfg.proactiveExtractionEnabled === true,
     contextCompressionActionsEnabled: cfg.contextCompressionActionsEnabled === true,
