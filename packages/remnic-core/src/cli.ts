@@ -219,7 +219,12 @@ interface CliProgram {
 
 interface CliCommand {
   description(desc: string): CliCommand;
-  option(flags: string, desc: string, defaultValue?: string): CliCommand;
+  option(
+    flags: string,
+    desc: string,
+    parserOrDefault?: string | ((value: string, prev: unknown) => unknown),
+    defaultValue?: unknown,
+  ): CliCommand;
   requiredOption(flags: string, desc: string, defaultValue?: string): CliCommand;
   argument(name: string, desc: string): CliCommand;
   action(fn: (...args: unknown[]) => Promise<void> | void): CliCommand;
@@ -4227,7 +4232,17 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         )
         .option(
           "--as-of <iso>",
-          "Historical recall pin (issue #680).  ISO 8601 timestamp; returns the corpus as it existed at this instant.",
+          "Historical recall pin (issue #680). ISO 8601 timestamp; returns the corpus as it existed at this instant.",
+        )
+        .option(
+          "--tag <tag>",
+          "Filter recall results by tag. Repeatable; alternatively pass a comma-separated list (issue #689).",
+          (val: string, prev: unknown) =>
+            Array.isArray(prev) ? [...(prev as string[]), val] : [val],
+        )
+        .option(
+          "--tag-match <mode>",
+          "Tag-filter match mode: any (default) or all. Ignored when --tag is absent.",
         )
         .action(async (...args: unknown[]) => {
           const query = typeof args[0] === "string" ? args[0] : String(args[0] ?? "");
@@ -4293,9 +4308,7 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
 
           // Issue #680 — `--as-of` validation at the input boundary
-          // (CLAUDE.md rule 51 / gotcha #14).  A malformed value must
-          // throw with a clear message — silently defaulting to "no
-          // pin" would hide configuration mistakes.
+          // (CLAUDE.md rule 51 / gotcha #14).
           let asOf: string | undefined;
           if (options.asOf !== undefined) {
             const raw = String(options.asOf).trim();
@@ -4311,6 +4324,38 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             asOf = raw;
           }
 
+          // Tag filter (issue #689). `--tag` accepts comma-separated
+          // and repeated invocations.
+          let tags: string[] | undefined;
+          if (options.tag !== undefined) {
+            const raw = Array.isArray(options.tag)
+              ? options.tag
+              : [options.tag];
+            const cleaned: string[] = [];
+            const seen = new Set<string>();
+            for (const entry of raw) {
+              if (typeof entry !== "string") continue;
+              for (const part of entry.split(",")) {
+                const trimmed = part.trim();
+                if (trimmed.length === 0) continue;
+                if (seen.has(trimmed)) continue;
+                seen.add(trimmed);
+                cleaned.push(trimmed);
+              }
+            }
+            tags = cleaned.length > 0 ? cleaned : undefined;
+          }
+          let tagMatch: "any" | "all" | undefined;
+          if (options.tagMatch !== undefined) {
+            const raw = String(options.tagMatch).trim();
+            if (raw !== "any" && raw !== "all") {
+              throw new Error(
+                `invalid --tag-match value: ${String(options.tagMatch)} (expected one of: any, all)`,
+              );
+            }
+            tagMatch = raw;
+          }
+
           const accessService = new EngramAccessService(orchestrator);
           const response = await accessService.recall({
             query,
@@ -4319,6 +4364,8 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             ...(topK !== undefined ? { topK } : {}),
             ...(disclosure !== undefined ? { disclosure } : {}),
             ...(asOf !== undefined ? { asOf } : {}),
+            ...(tags !== undefined ? { tags } : {}),
+            ...(tagMatch !== undefined ? { tagMatch } : {}),
           });
 
           if (format === "json") {

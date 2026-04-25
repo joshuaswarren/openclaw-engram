@@ -377,21 +377,10 @@ export class EngramAccessHttpServer {
       // silently overridden by a stale URL.  CLAUDE.md rule 51: invalid
       // query-param values throw, never fall back silently.
       const disclosure = this.resolveRecallDisclosure(body.disclosure, parsed);
-      // Issue #680 — historical recall pin.  Body field wins over the
-      // `?as_of=` query param so explicit JSON payloads are never
-      // silently overridden by a stale URL.  The service layer runs
-      // `Date.parse` validation and rejects malformed values with a
-      // structured 400 (CLAUDE.md rule 51).
+      // Issue #680 — historical recall pin (`asOf`). Body field wins
+      // over `?as_of=` query param. Empty query is rejected only when
+      // the body didn't supply a valid pin (codex P2 + cursor Medium).
       const asOfQueryRaw = parsed.searchParams.get("as_of");
-      // Body precedence (codex P2 + cursor Medium round 2): a valid
-      // `body.asOf` must take precedence over a stale or templated
-      // `?as_of=` query, including the empty-string case. Connectors
-      // that template URLs sometimes leave the param key with no
-      // value; those clients are sending the body as the source of
-      // truth and shouldn't be 400'd. Only reject the empty query
-      // value when the body did NOT supply a valid pin — that's the
-      // case where the operator was actually relying on the URL.
-      // CLAUDE.md rule 51 still applies in that branch.
       const bodyHasAsOf =
         typeof body.asOf === "string" && body.asOf.length > 0;
       if (
@@ -408,6 +397,42 @@ export class EngramAccessHttpServer {
         (asOfQueryRaw !== null && asOfQueryRaw.length > 0
           ? asOfQueryRaw
           : undefined);
+      // Tag filter (issue #689). Body presence wins over query params
+      // — explicit `tags: []` in body clears the filter even with
+      // stale `?tag=` URLs.
+      const bodyHasTagsField =
+        body !== null &&
+        typeof body === "object" &&
+        "tags" in (body as Record<string, unknown>);
+      const bodyTagsValue = bodyHasTagsField
+        ? (body as { tags?: unknown }).tags
+        : undefined;
+      const bodyTags = Array.isArray(bodyTagsValue)
+        ? (bodyTagsValue as string[])
+        : undefined;
+      const queryTags = parsed.searchParams.getAll("tag");
+      const tags = bodyHasTagsField
+        ? bodyTags
+        : queryTags.length > 0
+          ? queryTags
+          : undefined;
+      const bodyTagMatch = (body as { tagMatch?: unknown }).tagMatch;
+      let tagMatch: "any" | "all" | undefined;
+      if (bodyTagMatch !== undefined) {
+        if (bodyTagMatch === "any" || bodyTagMatch === "all") {
+          tagMatch = bodyTagMatch;
+        }
+      } else {
+        const queryTagMatch = parsed.searchParams.get("tag_match");
+        if (queryTagMatch !== null) {
+          if (queryTagMatch !== "any" && queryTagMatch !== "all") {
+            throw new EngramAccessInputError(
+              `tag_match must be one of: any, all (got: ${queryTagMatch})`,
+            );
+          }
+          tagMatch = queryTagMatch;
+        }
+      }
       const response = await this.service.recall({
         query: body.query ?? "",
         sessionKey: body.sessionKey,
@@ -424,6 +449,8 @@ export class EngramAccessHttpServer {
         cwd: body.cwd,
         projectTag: body.projectTag,
         ...(asOf !== undefined ? { asOf } : {}),
+        ...(tags !== undefined ? { tags } : {}),
+        ...(tagMatch !== undefined ? { tagMatch } : {}),
       });
       this.respondJson(res, 200, response);
       return;
