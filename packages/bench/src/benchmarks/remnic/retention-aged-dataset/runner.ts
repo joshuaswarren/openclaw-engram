@@ -91,27 +91,32 @@ const FULL_OPTIONS: AgedDatasetGeneratorOptions = {
   nowIso: "2026-04-25T12:00:00.000Z",
 };
 
-/**
- * Deterministic ranker — keyword-overlap on `content` + `tags`. Mirrors
- * the simple ranker style used in `retrieval-temporal/runner.ts`.
- */
-function rankMemories(query: string, memories: MemoryFile[]): MemoryFile[] {
-  const tokens = new Set(
-    query
+function tokenize(text: string): Set<string> {
+  return new Set(
+    text
       .toLowerCase()
       .split(/[^a-z0-9]+/)
       .filter(Boolean),
   );
+}
+
+/**
+ * Deterministic ranker — keyword-overlap on `content` + `tags` using
+ * **whole-word token matching**. Substring matching (the previous
+ * approach) caused cross-topic collisions in the fixture vocabulary
+ * (`eta` substring of `beta`, `zeta`, `theta`), perturbing top-K recall
+ * measurements. (Codex review on PR #698.)
+ */
+function rankMemories(query: string, memories: MemoryFile[]): MemoryFile[] {
+  const queryTokens = tokenize(query);
   return [...memories]
     .map((m) => {
-      const haystack = (
-        m.content +
-        " " +
-        (m.frontmatter.tags ?? []).join(" ")
-      ).toLowerCase();
+      const haystackTokens = tokenize(
+        (m.content + " " + (m.frontmatter.tags ?? []).join(" ")),
+      );
       let score = 0;
-      for (const tok of tokens) {
-        if (haystack.includes(tok)) score += 1;
+      for (const tok of queryTokens) {
+        if (haystackTokens.has(tok)) score += 1;
       }
       // Tiebreak: more recent first.
       const recencyMs = Date.parse(

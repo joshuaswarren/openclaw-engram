@@ -220,16 +220,32 @@ export function generateAgedDataset(
     perTopic.push(id);
   }
 
-  // Build queries — one per topic that has at least 1 memory.
+  // Build queries weighted by topic frequency. Topic memory counts are
+  // already Pareto-distributed (because memories are sampled with
+  // `paretoIndex`), so emitting one query per memory in a topic — rounded
+  // by a freq-floor cap so each topic gets at least one query but hot
+  // topics get proportionally more — yields aggregate scores that reflect
+  // realistic hot-topic-heavy traffic instead of weighting every topic
+  // equally. (Codex review on PR #698.)
+  //
+  // We cap the multiplier per topic at `MAX_QUERIES_PER_TOPIC` to keep
+  // total task count tractable in `quick` mode.
+  const MAX_QUERIES_PER_TOPIC = 8;
   const queries: AgedQuery[] = [];
   for (const [topicId, ids] of memoriesByTopic.entries()) {
-    queries.push({
-      text: `${topicWord(topicId, 0)} ${topicWord(topicId, 1)}`,
-      topicId,
-      relevantMemoryIds: ids,
-    });
+    const topicQueryCount = Math.min(
+      MAX_QUERIES_PER_TOPIC,
+      Math.max(1, Math.ceil(ids.length / 4)),
+    );
+    for (let q = 0; q < topicQueryCount; q += 1) {
+      queries.push({
+        text: `${topicWord(topicId, 0)} ${topicWord(topicId, 1)}`,
+        topicId,
+        relevantMemoryIds: ids,
+      });
+    }
   }
-  // Sort queries by topicId for determinism.
+  // Sort by topicId for determinism, with stable ordering within a topic.
   queries.sort((a, b) => a.topicId - b.topicId);
 
   return { options, memories, queries };
