@@ -549,6 +549,34 @@ test("runBenchmark surfaces MemBench recall@10 search failures", async () => {
   assert.equal(result.results.aggregates.membench_recall_at_10?.mean, -1);
 });
 
+test("runBenchmark includes official MemBench failure sentinels on task errors", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-task-error-"));
+  const datasetDir = path.join(tmpDir, "datasets", "membench");
+  const adapter = new FakeMemoryAdapter();
+  adapter.recall = async () => {
+    throw new Error("recall offline");
+  };
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "ThirdAgentDataLowLevel.json"),
+    JSON.stringify(createOfficialChoiceDataset()),
+    "utf8",
+  );
+
+  const result = await runBenchmark("membench", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.expected, "B");
+  assert.equal(task.scores.membench_accuracy, -1);
+  assert.equal(task.scores.membench_recall_at_10, -1);
+  assert.equal(result.results.aggregates.membench_accuracy?.mean, -1);
+  assert.equal(result.results.aggregates.membench_recall_at_10?.mean, -1);
+});
+
 test("runBenchmark does not infer MCQ choices from recalled text without a responder", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-membench-no-responder-"));
   const datasetDir = path.join(tmpDir, "datasets", "membench");

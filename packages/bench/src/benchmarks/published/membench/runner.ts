@@ -177,12 +177,21 @@ export async function runMemBenchBenchmark(
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       console.error(`  [WARN] membench task ${testCase.id} failed: ${message}`);
+      const scores: Record<string, number> = {
+        f1: -1,
+        contains_answer: -1,
+        llm_judge: -1,
+        membench_accuracy: -1,
+      };
+      if (testCase.targetStepIds && testCase.targetStepIds.length > 0) {
+        scores.membench_recall_at_10 = -1;
+      }
       tasks.push({
         taskId: testCase.id,
         question: testCase.question,
-        expected: testCase.answer,
+        expected: testCase.correctChoice ?? testCase.answer,
         actual: `(error: ${message})`,
-        scores: { f1: -1, contains_answer: -1, llm_judge: -1 },
+        scores,
         latencyMs: 0,
         tokens: { input: 0, output: 0 },
         details: { error: message },
