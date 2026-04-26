@@ -565,6 +565,81 @@ test("path traversal in record paths is rejected", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Duplicate normalized target paths are rejected before any write
+// ---------------------------------------------------------------------------
+
+test("manifest with two entries that normalize to the same target path is rejected before any write", async () => {
+  // Build a hand-crafted V2 bundle where two records have different `path`
+  // values that `path.join` normalises to the same absolute target:
+  //   "subdir/file.md"   →  <root>/subdir/file.md
+  //   "subdir/./file.md" →  <root>/subdir/file.md  (path.join collapses the .)
+  //
+  // The importer must catch this in phase 1 before writing anything to disk
+  // (Codex P1 thread on PR #741, line 188).
+  const { createHash } = await import("node:crypto");
+  function sha256hex(s: string): string {
+    return createHash("sha256").update(Buffer.from(s, "utf-8")).digest("hex");
+  }
+
+  const content1 = "first entry\n";
+  const content2 = "second entry\n";
+
+  const bundle = {
+    manifest: {
+      format: "openclaw-engram-export" as const,
+      schemaVersion: 2 as const,
+      createdAt: "2026-04-26T00:00:00.000Z",
+      pluginVersion: "9.9.9",
+      includesTranscripts: false,
+      files: [
+        {
+          path: "subdir/file.md",
+          sha256: sha256hex(content1),
+          bytes: Buffer.byteLength(content1, "utf-8"),
+        },
+        {
+          path: "subdir/./file.md",
+          sha256: sha256hex(content2),
+          bytes: Buffer.byteLength(content2, "utf-8"),
+        },
+      ],
+      capsule: {
+        id: "dup-path-cap",
+        version: "0.1.0",
+        schemaVersion: "taxonomy-v1",
+        parentCapsule: null,
+        description: "",
+        retrievalPolicy: { tierWeights: {}, directAnswerEnabled: false },
+        includes: {
+          taxonomy: false,
+          identityAnchors: false,
+          peerProfiles: false,
+          procedural: false,
+        },
+      },
+    },
+    records: [
+      { path: "subdir/file.md", content: content1 },
+      { path: "subdir/./file.md", content: content2 },
+    ],
+  };
+
+  const tmp = await mkdtemp(path.join(tmpdir(), "capsule-dup-path-"));
+  const archivePath = path.join(tmp, "dup-path.capsule.json.gz");
+  await writeFile(archivePath, gzipSync(Buffer.from(JSON.stringify(bundle), "utf-8")));
+
+  const dst = await makeEmptyMemoryDir();
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst }),
+    /two entries that resolve to the same target path/i,
+  );
+
+  // No files must have been written to dst.
+  const written = await listMemoryFiles(dst);
+  assert.deepEqual(written, [], "duplicate-path rejection must not leave partial writes");
+});
+
+// ---------------------------------------------------------------------------
 // Coverage: mode is selected once and applied uniformly
 // ---------------------------------------------------------------------------
 

@@ -203,6 +203,16 @@ export async function importCapsule(
   // assertIsDirectory call already threw, so this should always succeed.
   const rootReal = await realpath(rootAbs).catch(() => rootAbs);
 
+  // Tracks normalized target paths seen so far in phase 1.  Maps
+  // normalizedTargetAbs → first source path so the collision error can name
+  // both offending entries.  Two manifest entries whose computed target paths
+  // normalize to the same absolute path (e.g. `subdir/file.md` and
+  // `subdir/./file.md`, or differing case on case-insensitive filesystems)
+  // would both try to write the same file — the second would silently
+  // overwrite the first.  We reject the import up-front before any write
+  // (Codex P1 thread on PR #741, line 188).
+  const seenTargetPaths = new Map<string, string>();
+
   for (const rec of bundle.records) {
     // Checksum validation.
     const entry = manifestIndex.get(rec.path);
@@ -235,6 +245,22 @@ export async function importCapsule(
         `importCapsule: record path escapes target root: ${rec.path}`,
       );
     }
+
+    // Duplicate normalized target path detection (Codex P1 #741, line 188).
+    // `path.join` already normalises `.` segments (e.g. `subdir/./file.md` →
+    // `subdir/file.md`).  On case-insensitive filesystems, two paths that
+    // differ only in case would resolve to the same inode, so we use
+    // `targetAbs` (which is built on the realpath-resolved root) as the
+    // canonical form for dedup — the same form used for the containment check
+    // above, keeping both checks consistent.
+    const firstSourcePath = seenTargetPaths.get(targetAbs);
+    if (firstSourcePath !== undefined) {
+      throw new Error(
+        `importCapsule: manifest contains two entries that resolve to the same target path: ` +
+          `"${firstSourcePath}" and "${rec.path}" both map to "${targetRel}"`,
+      );
+    }
+    seenTargetPaths.set(targetAbs, rec.path);
   }
   // Detect manifest-only entries (missing record). Treat as corruption.
   for (const f of manifest.files) {
