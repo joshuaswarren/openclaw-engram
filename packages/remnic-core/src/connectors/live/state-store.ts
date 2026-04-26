@@ -121,7 +121,10 @@ function isConnectorStateShape(value: unknown): value is ConnectorState {
   const v = value as Record<string, unknown>;
   if (typeof v.id !== "string") return false;
   if (typeof v.lastSyncStatus !== "string") return false;
-  if (!["success", "error", "never"].includes(v.lastSyncStatus)) return false;
+  // Single source of truth — both read-shape and write-boundary checks must
+  // use the same allow-list, otherwise adding a new status would let writes
+  // succeed but immediately fail subsequent reads. (PR #724 review.)
+  if (!VALID_SYNC_STATUSES.has(v.lastSyncStatus as ConnectorSyncStatus)) return false;
   // totalDocsImported is a cumulative count — fractional values would corrupt
   // metrics on later increments. Mirror the boundary check in writeConnectorState.
   if (typeof v.totalDocsImported !== "number" || !Number.isInteger(v.totalDocsImported)) return false;
