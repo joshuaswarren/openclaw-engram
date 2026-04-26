@@ -453,6 +453,14 @@ export async function writePeer(memoryDir: string, peer: Peer): Promise<void> {
   if (typeof peer.updatedAt !== "string" || peer.updatedAt === "") {
     throw new Error("peer.updatedAt must be a non-empty ISO-8601 string");
   }
+  // Codex P2 round 8: reject non-string `peer.notes`. Without this,
+  // an untyped JS caller passing an object/number would silently
+  // coerce to "[object Object]"/"42" via lines.push(notes ?? "")
+  // and corrupt user-authored identity content. Notes are optional;
+  // omit by passing undefined (NOT null).
+  if (peer.notes !== undefined && typeof peer.notes !== "string") {
+    throw new Error("peer.notes must be a string when provided");
+  }
   // Codex P2 + cursor M: validate the peers root BEFORE mkdir so a
   // symlinked `peers/` root can't get its target mutated by the
   // recursive mkdir even though the post-check would later throw.
@@ -575,15 +583,13 @@ export async function appendInteractionLog(
   if (typeof entry.summary !== "string") {
     throw new Error("interaction entry must have a string summary");
   }
-  // Codex P2 round 6: optional sessionId must still be a string when
-  // present, otherwise formatLogEntry → sanitizeLogField throws an
-  // opaque TypeError after directory setup. Validate at the API
-  // boundary so the error is clear and fires before any I/O.
-  if (
-    entry.sessionId !== undefined &&
-    entry.sessionId !== null &&
-    typeof entry.sessionId !== "string"
-  ) {
+  // Codex P2 round 6: optional sessionId must be a string OR
+  // strictly `undefined` (omitted). Round 8 follow-up: `null` was
+  // previously treated as acceptable but silently dropped during
+  // formatting; reject it explicitly so the boundary fails fast on
+  // any non-string input, matching the "fail fast" pattern of the
+  // other validators in this module.
+  if (entry.sessionId !== undefined && typeof entry.sessionId !== "string") {
     throw new Error("interaction entry sessionId must be a string when provided");
   }
   await assertPeersRootNotSymlink(memoryDir);
