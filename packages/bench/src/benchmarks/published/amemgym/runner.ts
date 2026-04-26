@@ -269,7 +269,8 @@ function parseAMemGymChoice(
   qa: AMemGymQA,
 ): { index: number; choice: AMemGymQA["answer_choices"][number] } | undefined {
   const trimmed = rawAnswer.trim();
-  const selectedNumber = parseAMemGymOptionNumber(trimmed);
+  const optionCount = qa.answer_choices.length;
+  const selectedNumber = parseAMemGymOptionNumber(trimmed, optionCount);
   if (selectedNumber !== undefined) {
     const index = selectedNumber - 1;
     const choice = qa.answer_choices[index];
@@ -315,6 +316,7 @@ function parseAMemGymChoice(
     const hasConflictingOptionNumber = mentionsConflictingOptionNumber(
       removeFirstChoiceAnswerText(plainTextOption.choiceText, choice.answer),
       plainTextOption.selectedNumber,
+      optionCount,
     );
     if (
       !hasConflictingOptionNumber
@@ -511,13 +513,16 @@ function leadingNumericToken(value: string): string | undefined {
   return value.match(/^(\d+)\b/)?.[1];
 }
 
-function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
+function parseAMemGymOptionNumber(
+  trimmedAnswer: string,
+  optionCount: number,
+): number | undefined {
   const bareNumber = trimmedAnswer.match(
     /^\(?#?\s*(\d+)\s*(?:\)(?!\s+\S))?(?<tail>\s*(?:\)\s+\S.*|\([^)]*\).*|because.*|[,.;:\-](?!\s*#?\d).*)?)$/i,
   );
   if (bareNumber) {
     const selectedNumber = Number.parseInt(bareNumber[1]!, 10);
-    if (mentionsConflictingOptionNumber(bareNumber.groups?.tail ?? "", selectedNumber)) {
+    if (mentionsConflictingOptionNumber(bareNumber.groups?.tail ?? "", selectedNumber, optionCount)) {
       return undefined;
     }
     return selectedNumber;
@@ -528,7 +533,7 @@ function parseAMemGymOptionNumber(trimmedAnswer: string): number | undefined {
   );
   if (labeledNumber) {
     const selectedNumber = Number.parseInt(labeledNumber[1]!, 10);
-    if (mentionsConflictingOptionNumber(labeledNumber.groups?.tail ?? "", selectedNumber)) {
+    if (mentionsConflictingOptionNumber(labeledNumber.groups?.tail ?? "", selectedNumber, optionCount)) {
       return undefined;
     }
     return selectedNumber;
@@ -546,29 +551,30 @@ function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
 function mentionsConflictingOptionNumber(
   value: string,
   selectedNumber: number,
+  optionCount: number,
 ): boolean {
   const trimmed = value.trim();
   for (const match of trimmed.matchAll(/\b(?:option|choice|answer)\s*#?\s*(\d+)\b/gi)) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+    if (isConflictingOptionRef(match[1]!, selectedNumber, optionCount)) {
       return true;
     }
   }
   for (const match of trimmed.matchAll(/#\s*(\d+)\b/gi)) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+    if (isConflictingOptionRef(match[1]!, selectedNumber, optionCount)) {
       return true;
     }
   }
   for (const match of trimmed.matchAll(
     /\b(\d+)\s+(?:(?:might|may|could|would|should)\s+be\s+|is\s+(?:also\s+)?|also\s+)?(?:right|correct|valid|the\s+(?:answer|option|choice))\b/gi,
   )) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+    if (isConflictingOptionRef(match[1]!, selectedNumber, optionCount)) {
       return true;
     }
   }
   for (const match of trimmed.matchAll(
     /\b(?:or|maybe|possibly|probably|perhaps|alternatively)\s+#?\s*(\d+)\b/gi,
   )) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+    if (isConflictingOptionRef(match[1]!, selectedNumber, optionCount)) {
       return true;
     }
   }
@@ -578,7 +584,18 @@ function mentionsConflictingOptionNumber(
   );
   const ambiguousNumber = punctuationNumber?.[1] ?? punctuationNumber?.[2];
   return ambiguousNumber !== undefined
-    && Number.parseInt(ambiguousNumber, 10) !== selectedNumber;
+    && isConflictingOptionRef(ambiguousNumber, selectedNumber, optionCount);
+}
+
+function isConflictingOptionRef(
+  rawNumber: string,
+  selectedNumber: number,
+  optionCount: number,
+): boolean {
+  const optionNumber = Number.parseInt(rawNumber, 10);
+  return optionNumber >= 1
+    && optionNumber <= optionCount
+    && optionNumber !== selectedNumber;
 }
 
 function normalizeForChoiceMatch(value: string): string {
