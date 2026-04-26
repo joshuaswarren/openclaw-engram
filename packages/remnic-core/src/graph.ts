@@ -22,6 +22,13 @@ export interface GraphEdge {
   weight: number; // 1.0 default, decay applied during traversal
   label: string; // entity name, threadId, or matched causal phrase
   ts: string; // ISO timestamp of edge creation
+
+  // Issue #681 — edge confidence + reinforcement (PR 1/3: schema + primitive only).
+  // Both fields are optional so existing edges without confidence still validate.
+  // Treat a missing `confidence` as 1.0 (legacy behavior) at read sites.
+  // PR 2/3 wires the maintenance decay job; PR 3/3 weights PageRank traversal by confidence.
+  confidence?: number; // [0, 1]; missing = 1.0
+  lastReinforcedAt?: string; // ISO timestamp of most recent reinforcement
 }
 
 export interface GraphConfig {
