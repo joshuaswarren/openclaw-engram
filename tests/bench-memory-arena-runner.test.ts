@@ -959,6 +959,45 @@ test("runBenchmark prefers explicit memory-arena day markers over weekday labels
   assert.equal(task.scores.soft_process_score, 1);
 });
 
+test("runBenchmark prefers compact numeric memory-arena day markers over prior weekdays", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-compact-day-weekday-"));
+  const datasetDir = path.join(tmpDir, "datasets", "memory-arena");
+  const adapter = new FakeMemoryAdapter(
+    new FixedResponder("Monday Day2 Dinner: Coco Bambu, Dallas"),
+  );
+  await mkdir(datasetDir, { recursive: true });
+  await writeFile(
+    path.join(datasetDir, "group_travel_planner.jsonl"),
+    `${JSON.stringify({
+      id: 1,
+      questions: ["I am Eric. Generate my second-day shared itinerary."],
+      answers: [[
+        {
+          days: 2,
+          current_city: "-",
+          transportation: "-",
+          breakfast: "-",
+          attraction: "-",
+          lunch: "-",
+          dinner: "Coco Bambu, Dallas",
+          accommodation: "-",
+        },
+      ]],
+    })}\n`,
+    "utf8",
+  );
+
+  const result = await runBenchmark("memory-arena", {
+    mode: "full",
+    datasetDir,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.scores.plan_field_recall, 1);
+  assert.equal(task.scores.soft_process_score, 1);
+});
+
 test("runBenchmark matches weekday memory-arena plan day headers", async () => {
   const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-memory-arena-weekday-day-"));
   const datasetDir = path.join(tmpDir, "datasets", "memory-arena");

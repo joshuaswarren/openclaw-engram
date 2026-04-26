@@ -883,21 +883,6 @@ function findLastDayContext(
   beforeIndex: number,
 ): PlanDayContext | undefined {
   for (let index = beforeIndex - 1; index >= 0; index -= 1) {
-    const previousStandaloneDayToken = normalizeStandalonePlanDayToken(tokens[index - 1] ?? "");
-    if (previousStandaloneDayToken !== undefined) {
-      const precedingExplicitDayContext = extractPrecedingExplicitPlanDayContext(
-        tokens,
-        index - 1,
-      );
-      return {
-        startIndex: precedingExplicitDayContext?.startIndex ?? index - 1,
-        dayTokens: [previousStandaloneDayToken],
-        alternateDayTokens:
-          precedingExplicitDayContext === undefined
-            ? undefined
-            : [precedingExplicitDayContext.dayTokens],
-      };
-    }
     const compactDayToken = extractCompactPlanDayToken(tokens[index]!);
     if (compactDayToken !== undefined) {
       return {
@@ -905,12 +890,16 @@ function findLastDayContext(
         dayTokens: [compactDayToken],
       };
     }
-    const standaloneDayToken = normalizeStandalonePlanDayToken(tokens[index]!);
-    if (standaloneDayToken !== undefined) {
-      return {
-        startIndex: index,
-        dayTokens: [standaloneDayToken],
-      };
+    const previousStandaloneDayContext = buildStandalonePlanDayContext(
+      tokens,
+      index - 1,
+    );
+    if (previousStandaloneDayContext !== undefined) {
+      return previousStandaloneDayContext;
+    }
+    const standaloneDayContext = buildStandalonePlanDayContext(tokens, index);
+    if (standaloneDayContext !== undefined) {
+      return standaloneDayContext;
     }
     const precedingExplicitDayContext = extractPrecedingExplicitPlanDayContext(
       tokens,
@@ -955,6 +944,28 @@ function dayContextMatches(
     || (context.alternateDayTokens ?? []).some((tokens) =>
       tokensEqual(tokens, expectedDayTokens),
     );
+}
+
+function buildStandalonePlanDayContext(
+  tokens: string[],
+  index: number,
+): PlanDayContext | undefined {
+  const standaloneDayToken = normalizeStandalonePlanDayToken(tokens[index] ?? "");
+  if (standaloneDayToken === undefined) {
+    return undefined;
+  }
+  const precedingExplicitDayContext = extractPrecedingExplicitPlanDayContext(
+    tokens,
+    index,
+  );
+  return {
+    startIndex: precedingExplicitDayContext?.startIndex ?? index,
+    dayTokens: [standaloneDayToken],
+    alternateDayTokens:
+      precedingExplicitDayContext === undefined
+        ? undefined
+        : [precedingExplicitDayContext.dayTokens],
+  };
 }
 
 function findNearestPlanFieldLabel(

@@ -291,6 +291,7 @@ function parseAMemGymChoice(
     const hasConflictingOptionNumber = mentionsConflictingOptionNumber(
       plainTextOption.choiceText,
       plainTextOption.selectedNumber,
+      { allowBareHashOption: false },
     );
     if (
       !hasConflictingOptionNumber
@@ -468,6 +469,7 @@ function looksLikeChoiceNumberAttempt(trimmedAnswer: string): boolean {
 function mentionsConflictingOptionNumber(
   value: string,
   selectedNumber: number,
+  options: { allowBareHashOption?: boolean } = {},
 ): boolean {
   const trimmed = value.trim();
   for (const match of trimmed.matchAll(/\b(?:option|choice|answer)\s*#?\s*(\d+)\b/gi)) {
@@ -475,11 +477,11 @@ function mentionsConflictingOptionNumber(
       return true;
     }
   }
-  for (const match of trimmed.matchAll(
-    /#\s*(\d+)\b(?=[^#]*(?:might|may|could|would|should|right|correct|valid|answer|option|choice)\b)/gi,
-  )) {
-    if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
-      return true;
+  if (options.allowBareHashOption !== false) {
+    for (const match of trimmed.matchAll(/#\s*(\d+)\b/gi)) {
+      if (Number.parseInt(match[1]!, 10) !== selectedNumber) {
+        return true;
+      }
     }
   }
   for (const match of trimmed.matchAll(
