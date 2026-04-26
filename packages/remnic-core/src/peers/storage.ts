@@ -29,8 +29,10 @@ async function openNoFollow(file: string, flags: number): Promise<import("node:f
   return fs.open(file, flags | fsConstants.O_NOFOLLOW);
 }
 
-/** Read a file, refusing to follow symlinks at the kernel level. */
+/** Read a file, refusing to follow symlinks at the kernel level
+ * AND verifying parent-dir inode stability (codex P1 round 9). */
 async function readFileNoFollow(file: string): Promise<string> {
+  await assertParentDirInodeStable(file);
   const fh = await openNoFollow(file, fsConstants.O_RDONLY);
   try {
     return await fh.readFile("utf8");
@@ -39,8 +41,50 @@ async function readFileNoFollow(file: string): Promise<string> {
   }
 }
 
-/** Overwrite a file, refusing to follow symlinks at the kernel level. */
+/**
+ * Codex P1 round 9: O_NOFOLLOW only protects the FINAL path
+ * component, so a parent-directory swap mid-flight (peers/<id>
+ * unlinked + replaced with a symlink between assertPeerDirNotEscaped
+ * and the open) could still write outside memoryDir. Without
+ * `openat` (Node has no stable JS binding for it), the best
+ * pure-Node mitigation is to:
+ *   1. Open the parent directory with O_DIRECTORY | O_NOFOLLOW so
+ *      WE hold the original-inode handle.
+ *   2. fstat the parent handle and compare its (dev, inode) against
+ *      lstat of the parent path. If they diverge, a swap happened
+ *      between mkdir and now — abort.
+ *   3. Then do the symlink-rejecting open of the file.
+ * This narrows the race window to the few microseconds between the
+ * fstat/lstat compare and the open. Fully closing the race needs
+ * `openat`, which is tracked as a follow-up.
+ */
+async function assertParentDirInodeStable(filePath: string): Promise<void> {
+  const parent = path.dirname(filePath);
+  const dh = await fs.open(
+    parent,
+    fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW,
+  );
+  try {
+    const fstatInfo = await dh.stat();
+    const lstatInfo = await fs.lstat(parent);
+    if (fstatInfo.ino !== lstatInfo.ino || fstatInfo.dev !== lstatInfo.dev) {
+      throw new Error(
+        `parent directory "${parent}" was swapped between checks (inode mismatch)`,
+      );
+    }
+    if (lstatInfo.isSymbolicLink()) {
+      throw new Error(`parent directory "${parent}" is a symlink and is rejected`);
+    }
+  } finally {
+    await dh.close();
+  }
+}
+
+/** Overwrite a file, refusing to follow symlinks at the kernel level
+ * AND verifying the parent directory inode is stable across the open
+ * (codex P1 round 9). */
 async function writeFileNoFollow(file: string, data: string): Promise<void> {
+  await assertParentDirInodeStable(file);
   const fh = await openNoFollow(
     file,
     fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_TRUNC,
@@ -52,8 +96,10 @@ async function writeFileNoFollow(file: string, data: string): Promise<void> {
   }
 }
 
-/** Append to a file, refusing to follow symlinks at the kernel level. */
+/** Append to a file, refusing to follow symlinks AND verifying parent
+ * inode stability (codex P1 round 9). */
 async function appendFileNoFollow(file: string, data: string): Promise<void> {
+  await assertParentDirInodeStable(file);
   const fh = await openNoFollow(
     file,
     fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_APPEND,
@@ -810,11 +856,18 @@ export async function writePeerProfile(
       if (typeof r.signal !== "string" || r.signal === "") {
         throw new Error(`profile.provenance["${key}"][${i}].signal must be a non-empty string`);
       }
-      if (r.sourceSessionId !== undefined && typeof r.sourceSessionId !== "string") {
-        throw new Error(`profile.provenance["${key}"][${i}].sourceSessionId must be a string when provided`);
+      // Cursor M round 9: empty optional strings would round-trip lose
+      // (parsePeerProfile drops them on read). Reject at the boundary
+      // for consistency with other validators in this module.
+      if (r.sourceSessionId !== undefined) {
+        if (typeof r.sourceSessionId !== "string" || r.sourceSessionId === "") {
+          throw new Error(`profile.provenance["${key}"][${i}].sourceSessionId must be a non-empty string when provided`);
+        }
       }
-      if (r.note !== undefined && typeof r.note !== "string") {
-        throw new Error(`profile.provenance["${key}"][${i}].note must be a string when provided`);
+      if (r.note !== undefined) {
+        if (typeof r.note !== "string" || r.note === "") {
+          throw new Error(`profile.provenance["${key}"][${i}].note must be a non-empty string when provided`);
+        }
       }
     }
   }
