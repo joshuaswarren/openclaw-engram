@@ -107,6 +107,11 @@ import {
   type MemoryOutcomeKind,
   type RecordMemoryOutcomeResult,
 } from "./memory-worth-outcomes.js";
+import {
+  importCapsule as importCapsuleFn,
+  type ImportCapsuleOptions,
+  type ImportCapsuleResult,
+} from "./transfer/capsule-import.js";
 
 export class EngramAccessInputError extends Error {}
 
@@ -4070,5 +4075,29 @@ export class EngramAccessService {
         }
       };
     };
+  }
+
+  /**
+   * Import a capsule archive into the orchestrator's memory directory.
+   *
+   * Delegates directly to the standalone {@link importCapsuleFn} function.
+   * The `root` parameter defaults to the orchestrator's `memoryDir` when
+   * omitted, so callers that only have access to the service do not need to
+   * thread the config value through.
+   *
+   * `versioning` defaults to the orchestrator's page-versioning config so
+   * `mode: "overwrite"` automatically snapshots prior content without the
+   * caller having to construct the config object.
+   */
+  async capsuleImport(
+    opts: Omit<ImportCapsuleOptions, "root"> & { root?: string },
+  ): Promise<ImportCapsuleResult> {
+    const root = opts.root ?? this.orchestrator.config.memoryDir;
+    const versioning = opts.versioning ?? {
+      enabled: this.orchestrator.config.versioningEnabled,
+      maxVersionsPerPage: this.orchestrator.config.versioningMaxPerPage,
+      sidecarDir: this.orchestrator.config.versioningSidecarDir,
+    };
+    return importCapsuleFn({ ...opts, root, versioning });
   }
 }
