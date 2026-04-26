@@ -798,6 +798,13 @@ function resetGraphView() {
 /** Last rendered snapshot, kept for re-draw on resize / pan / zoom. */
 let graphData = null; // { nodes, edges }
 
+/**
+ * Guard flag: canvas interaction listeners (mouse/wheel) must be attached
+ * exactly once during pane initialisation. Without this, every graph refresh
+ * stacks another set of listeners that all fire simultaneously.
+ */
+let graphInteractionsAttached = false;
+
 /** Node radius derived from score (clamped). */
 function nodeRadius(score) {
   return Math.max(5, Math.min(14, 5 + score * 9));
@@ -916,8 +923,15 @@ function hideGraphTooltip() {
   if (tip) tip.style.display = "none";
 }
 
-/** Wire pan / zoom / tooltip mouse handlers onto the canvas. */
+/** Wire pan / zoom / tooltip mouse handlers onto the canvas.
+ *  Must be called once per canvas lifetime; subsequent calls are no-ops.
+ */
 function attachGraphInteractions(canvas) {
+  // Attach only once — re-attaching on every refresh stacks duplicate
+  // listeners that each fire on the same event (Codex P2 / Cursor review).
+  if (graphInteractionsAttached) return;
+  graphInteractionsAttached = true;
+
   // Pan.
   let dragging = false;
   let dragStart = { x: 0, y: 0 };
