@@ -620,11 +620,16 @@ export async function appendInteractionLog(
   entry: PeerInteractionLogEntry,
 ): Promise<string> {
   assertValidPeerId(peerId);
-  if (typeof entry.timestamp !== "string" || entry.timestamp === "") {
-    throw new Error("interaction entry must have a non-empty timestamp");
+  // Codex P2 round 10: trim() before the empty check matches what
+  // sanitizeLogField does at format time. A whitespace-only
+  // `timestamp` or `kind` would previously pass validation and then
+  // be normalized to "" later, producing an entry like `- [] ()`
+  // that breaks downstream parsers.
+  if (typeof entry.timestamp !== "string" || entry.timestamp.trim() === "") {
+    throw new Error("interaction entry must have a non-whitespace timestamp");
   }
-  if (typeof entry.kind !== "string" || entry.kind === "") {
-    throw new Error("interaction entry must have a non-empty kind");
+  if (typeof entry.kind !== "string" || entry.kind.trim() === "") {
+    throw new Error("interaction entry must have a non-whitespace kind");
   }
   if (typeof entry.summary !== "string") {
     throw new Error("interaction entry must have a string summary");
@@ -723,12 +728,36 @@ function parsePeerProfile(raw: string, peerId: string): PeerProfile {
   if (typeof updatedAt !== "string" || updatedAt === "") {
     throw new Error(`peer profile for "${peerId}" is missing updatedAt`);
   }
-  const fieldsObj =
-    typeof payload.fields === "object" && payload.fields !== null ? payload.fields : {};
-  const provenanceObj =
-    typeof payload.provenance === "object" && payload.provenance !== null
-      ? payload.provenance
-      : {};
+  // Codex P2 round 10: a malformed `fields: "wat"` or
+  // `provenance: 42` previously coerced to {} and silently dropped
+  // the section. That contradicts the "malformed files throw"
+  // contract — the file IS malformed, not just empty. Reject loudly.
+  // `undefined` is still tolerated (an older profile file might omit
+  // the section entirely).
+  let fieldsObj: object;
+  if (payload.fields === undefined) {
+    fieldsObj = {};
+  } else if (
+    typeof payload.fields === "object" &&
+    payload.fields !== null &&
+    !Array.isArray(payload.fields)
+  ) {
+    fieldsObj = payload.fields;
+  } else {
+    throw new Error(`peer profile for "${peerId}" has malformed fields section`);
+  }
+  let provenanceObj: object;
+  if (payload.provenance === undefined) {
+    provenanceObj = {};
+  } else if (
+    typeof payload.provenance === "object" &&
+    payload.provenance !== null &&
+    !Array.isArray(payload.provenance)
+  ) {
+    provenanceObj = payload.provenance;
+  } else {
+    throw new Error(`peer profile for "${peerId}" has malformed provenance section`);
+  }
   // Coerce values defensively. We never trust the on-disk shape.
   // Codex P1: skip prototype-pollution keys explicitly. We don't use
   // null-prototype objects in the returned shape because callers
