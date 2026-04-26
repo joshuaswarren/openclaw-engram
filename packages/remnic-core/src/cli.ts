@@ -7637,6 +7637,216 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           console.log(renderStatusReport(report));
         });
 
+      // ── Peer Registry subcommand (issue #679 PR 4/5) ────────────────────
+      const peerCmd = cmd.command("peer").description("Manage the peer registry (issue #679).");
+
+      peerCmd
+        .command("list")
+        .description("List all registered peers")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const options = (args[0] ?? {}) as Record<string, unknown>;
+          const { listPeers } = await import("./peers/index.js");
+          const peers = await listPeers(orchestrator.config.memoryDir);
+          if (options.json === true) {
+            console.log(JSON.stringify({ peers }, null, 2));
+            return;
+          }
+          if (peers.length === 0) {
+            console.log("No peers registered.");
+            return;
+          }
+          console.log(`${peers.length} peer(s):\n`);
+          for (const p of peers) {
+            console.log(`  ${p.id} (${p.kind})  ${p.displayName}`);
+            console.log(`    created: ${p.createdAt}  updated: ${p.updatedAt}`);
+          }
+        });
+
+      peerCmd
+        .command("show <id>")
+        .description("Show a peer's identity record")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          const peersShow = await import("./peers/index.js");
+          const validateIdShow: (id: unknown) => void = peersShow.assertValidPeerId;
+          try {
+            validateIdShow(id);
+          } catch (err) {
+            console.error(`Invalid peer id: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          const peer = await peersShow.readPeer(orchestrator.config.memoryDir, id);
+          if (!peer) {
+            console.error(`Peer "${id}" not found.`);
+            process.exit(1);
+          }
+          if (options.json === true) {
+            console.log(JSON.stringify(peer, null, 2));
+            return;
+          }
+          console.log(`Peer: ${peer.id}`);
+          console.log(`  Kind:         ${peer.kind}`);
+          console.log(`  Display name: ${peer.displayName}`);
+          console.log(`  Created:      ${peer.createdAt}`);
+          console.log(`  Updated:      ${peer.updatedAt}`);
+          if (peer.notes) {
+            console.log(`  Notes:\n${peer.notes.split("\n").map((l) => `    ${l}`).join("\n")}`);
+          }
+        });
+
+      peerCmd
+        .command("set <id>")
+        .description("Create or update a peer identity record")
+        .option("--kind <kind>", "Peer kind: self | human | agent | integration (only on first write)", "human")
+        .option("--display-name <name>", "Human-readable display name")
+        .option("--notes <text>", "Optional free-form markdown notes")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          const peersSet = await import("./peers/index.js");
+          const validateIdSet: (id: unknown) => void = peersSet.assertValidPeerId;
+          try {
+            validateIdSet(id);
+          } catch (err) {
+            console.error(`Invalid peer id: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          const memoryDir = orchestrator.config.memoryDir;
+          const now = new Date().toISOString();
+          const existing = await peersSet.readPeer(memoryDir, id);
+          const ALLOWED_KINDS = new Set(["self", "human", "agent", "integration"]);
+          let peer: import("./peers/types.js").Peer;
+          let created: boolean;
+          if (!existing) {
+            const kind = (typeof options.kind === "string" ? options.kind : "human");
+            if (!ALLOWED_KINDS.has(kind)) {
+              console.error(`Invalid kind "${kind}". Must be one of: ${[...ALLOWED_KINDS].join(", ")}`);
+              process.exit(1);
+            }
+            peer = {
+              id,
+              kind: kind as import("./peers/types.js").PeerKind,
+              displayName: typeof options.displayName === "string" ? options.displayName : id,
+              createdAt: now,
+              updatedAt: now,
+              ...(typeof options.notes === "string" ? { notes: options.notes } : {}),
+            };
+            created = true;
+          } else {
+            peer = {
+              id: existing.id,
+              kind: existing.kind,
+              createdAt: existing.createdAt,
+              updatedAt: now,
+              displayName: typeof options.displayName === "string" ? options.displayName : existing.displayName,
+              ...(options.notes !== undefined
+                ? { notes: options.notes as string }
+                : existing.notes !== undefined
+                  ? { notes: existing.notes }
+                  : {}),
+            };
+            created = false;
+          }
+          await peersSet.writePeer(memoryDir, peer);
+          if (options.json === true) {
+            console.log(JSON.stringify({ ok: true, created, peer }, null, 2));
+            return;
+          }
+          console.log(`${created ? "Created" : "Updated"} peer "${id}".`);
+        });
+
+      peerCmd
+        .command("delete <id>")
+        .description("Delete a peer's identity record (idempotent; directory and profile are preserved)")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          const peersDelete = await import("./peers/index.js");
+          const validateIdDelete: (id: unknown) => void = peersDelete.assertValidPeerId;
+          try {
+            validateIdDelete(id);
+          } catch (err) {
+            console.error(`Invalid peer id: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          const { promises: fsP } = await import("node:fs");
+          const pathM = await import("node:path");
+          const identityFile = pathM.join(orchestrator.config.memoryDir, "peers", id, "identity.md");
+          let deleted = false;
+          try {
+            await fsP.unlink(identityFile);
+            deleted = true;
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+              console.error(`Failed to delete peer: ${(err as Error).message}`);
+              process.exit(1);
+            }
+          }
+          if (options.json === true) {
+            console.log(JSON.stringify({ ok: true, deleted }, null, 2));
+            return;
+          }
+          console.log(deleted ? `Deleted peer "${id}".` : `Peer "${id}" not found (no-op).`);
+        });
+
+      peerCmd
+        .command("profile <id>")
+        .description("Show the evolving cognitive profile for a peer")
+        .option("--json", "Emit machine-readable JSON only")
+        .action(async (...args: unknown[]) => {
+          const id = typeof args[0] === "string" ? args[0] : "";
+          const options = (args[1] ?? {}) as Record<string, unknown>;
+          if (!id) {
+            console.error("peer id is required");
+            process.exit(1);
+          }
+          const peersProfile = await import("./peers/index.js");
+          const validateIdProfile: (id: unknown) => void = peersProfile.assertValidPeerId;
+          try {
+            validateIdProfile(id);
+          } catch (err) {
+            console.error(`Invalid peer id: ${(err as Error).message}`);
+            process.exit(1);
+          }
+          const profile = await peersProfile.readPeerProfile(orchestrator.config.memoryDir, id);
+          if (!profile) {
+            console.error(`No profile found for peer "${id}". The profile is written by the async reasoner.`);
+            process.exit(1);
+          }
+          if (options.json === true) {
+            console.log(JSON.stringify(profile, null, 2));
+            return;
+          }
+          console.log(`Profile for peer: ${id}`);
+          console.log(`  Updated: ${profile.updatedAt}`);
+          const fieldKeys = Object.keys(profile.fields);
+          if (fieldKeys.length === 0) {
+            console.log("  No profile fields yet.");
+          } else {
+            for (const k of fieldKeys) {
+              console.log(`  ${k}:`);
+              console.log(`    ${profile.fields[k]}`);
+            }
+          }
+        });
+
       // ── Console subcommand (issue #688) ─────────────────────────────────
       // PR 1/3 (#721) shipped the structured engine-state aggregator
       // and the `--state-only` flag (one-shot JSON snapshot). PR 2/3

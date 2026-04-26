@@ -1119,6 +1119,70 @@ export class EngramAccessHttpServer {
       return;
     }
 
+    // ── Peer Registry endpoints (issue #679 PR 4/5) ──────────────────────────
+    //   GET    /engram/v1/peers              — list all peers
+    //   GET    /engram/v1/peers/:id          — get one peer
+    //   PUT    /engram/v1/peers/:id          — upsert (create/update)
+    //   DELETE /engram/v1/peers/:id          — delete (idempotent)
+    //   GET    /engram/v1/peers/:id/profile  — get peer profile
+    if (req.method === "GET" && pathname === "/engram/v1/peers") {
+      const result = await this.service.peerList();
+      this.respondJson(res, 200, result);
+      return;
+    }
+
+    const peerProfileMatch = /^\/engram\/v1\/peers\/([^/]+)\/profile$/.exec(pathname);
+    if (peerProfileMatch) {
+      if (req.method !== "GET") {
+        this.respondJson(res, 405, { error: "method_not_allowed", code: "method_not_allowed" });
+        return;
+      }
+      const peerId = decodeURIComponent(peerProfileMatch[1] ?? "");
+      const result = await this.service.peerProfileGet(peerId);
+      if (!result.found) {
+        this.respondJson(res, 404, { error: "peer_profile_not_found", code: "peer_profile_not_found" });
+        return;
+      }
+      this.respondJson(res, 200, result);
+      return;
+    }
+
+    const peerIdMatch = /^\/engram\/v1\/peers\/([^/]+)$/.exec(pathname);
+    if (peerIdMatch) {
+      const peerId = decodeURIComponent(peerIdMatch[1] ?? "");
+
+      if (req.method === "GET") {
+        const result = await this.service.peerGet(peerId);
+        if (!result.found) {
+          this.respondJson(res, 404, { error: "peer_not_found", code: "peer_not_found" });
+          return;
+        }
+        this.respondJson(res, 200, result);
+        return;
+      }
+
+      if (req.method === "PUT") {
+        const body = await this.readJsonBody(req) as Record<string, unknown>;
+        const result = await this.service.peerSet({
+          id: peerId,
+          kind: typeof body.kind === "string" ? body.kind : undefined,
+          displayName: typeof body.displayName === "string" ? body.displayName : undefined,
+          notes: typeof body.notes === "string" ? body.notes : undefined,
+        });
+        this.respondJson(res, result.created ? 201 : 200, result);
+        return;
+      }
+
+      if (req.method === "DELETE") {
+        const result = await this.service.peerDelete(peerId);
+        this.respondJson(res, 200, result);
+        return;
+      }
+
+      this.respondJson(res, 405, { error: "method_not_allowed", code: "method_not_allowed" });
+      return;
+    }
+
     this.respondJson(res, 404, { error: "not_found", code: "not_found" });
   }
 

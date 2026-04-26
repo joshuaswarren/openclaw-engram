@@ -126,6 +126,40 @@ function createFakeService(): EngramAccessService {
       reviewQueue: [{ memoryId: "fact-1", reasonCode: "disputed_memory" }],
     }),
     briefingEnabled: true,
+    peerList: async () => ({
+      peers: [
+        {
+          id: "alice",
+          kind: "human",
+          displayName: "Alice",
+          createdAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+        },
+      ],
+    }),
+    peerGet: async (id: string) => ({
+      found: true,
+      peer: {
+        id,
+        kind: "human",
+        displayName: "Alice",
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+    }),
+    peerSet: async ({ id }: { id: string }) => ({
+      ok: true,
+      created: true,
+      peer: {
+        id,
+        kind: "human",
+        displayName: id,
+        createdAt: "2026-04-01T00:00:00.000Z",
+        updatedAt: "2026-04-01T00:00:00.000Z",
+      },
+    }),
+    peerDelete: async () => ({ ok: true, deleted: true }),
+    peerProfileGet: async () => ({ found: false }),
   } as unknown as EngramAccessService;
 }
 
@@ -224,6 +258,11 @@ test("MCP server advertises tools and dispatches recall", async () => {
     "engram.review_resolve",
     "engram.contradiction_scan_run",
     "engram.graph_edge_decay_run",
+    "engram.peer_list",
+    "engram.peer_get",
+    "engram.peer_set",
+    "engram.peer_delete",
+    "engram.peer_profile_get",
   ];
   const canonicalListed = legacyListed.map((name) => name.replace(/^engram\./, "remnic."));
   assert.deepEqual(listed, legacyListed.flatMap((name, index) => [canonicalListed[index], name]));
