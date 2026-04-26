@@ -804,7 +804,8 @@ function normalizeQaPairs(
       correctChoice: correctChoice ?? undefined,
       questionTime: firstString(item.time, item.question_time, item.questionTime) ?? undefined,
       ...parseTargetStepRefs(targetRefSource?.value, coordinateIndex, {
-        treatSingleArrayAsCoordinate: targetRefSource?.kind === "coordinates",
+        treatSingleArrayAsCoordinate: targetRefSource?.kind === "coordinates"
+          || targetRefSource?.treatSingleArrayAsCoordinate === true,
       }),
     });
   }
@@ -814,9 +815,17 @@ function normalizeQaPairs(
 
 function resolveTargetRefSource(
   item: Record<string, unknown>,
-): { value: unknown; kind: "ids" | "coordinates" } | undefined {
+): {
+  value: unknown;
+  kind: "ids" | "coordinates";
+  treatSingleArrayAsCoordinate?: boolean;
+} | undefined {
   if (hasUsableTargetIdRef(item.target_step_id)) {
-    return { value: item.target_step_id, kind: "ids" };
+    return {
+      value: item.target_step_id,
+      kind: "ids",
+      treatSingleArrayAsCoordinate: Array.isArray(item.target_step_id),
+    };
   }
   if (hasUsableTargetIdRef(item.target_step_ids)) {
     return { value: item.target_step_ids, kind: "ids" };
