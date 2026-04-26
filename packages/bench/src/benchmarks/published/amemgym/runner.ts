@@ -288,6 +288,14 @@ function parseAMemGymChoice(
     if (!choice) {
       return undefined;
     }
+    if (
+      plainOptionTextExactlyMatchesChoice(
+        plainTextOption.choiceText,
+        choice.answer,
+      )
+    ) {
+      return { index, choice };
+    }
     const hasConflictingOptionNumber = mentionsConflictingOptionNumber(
       plainTextOption.choiceText,
       plainTextOption.selectedNumber,
@@ -403,6 +411,17 @@ function plainOptionTextMatchesChoice(
       normalizedChoiceText === normalizedChoiceAnswer
       || containsNormalizedPhrase(normalizedChoiceText, normalizedChoiceAnswer)
     );
+}
+
+function plainOptionTextExactlyMatchesChoice(
+  choiceText: string,
+  choiceAnswer: string,
+): boolean {
+  const normalizedChoiceText = normalizeForChoiceMatch(choiceText);
+  const normalizedChoiceAnswer = normalizeForChoiceMatch(choiceAnswer);
+  return normalizedChoiceText.length > 0
+    && normalizedChoiceAnswer.length > 0
+    && normalizedChoiceText === normalizedChoiceAnswer;
 }
 
 function containsNormalizedPhrase(haystack: string, needle: string): boolean {
