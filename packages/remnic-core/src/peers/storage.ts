@@ -639,9 +639,13 @@ export async function appendInteractionLog(
   // are both rejected explicitly: the previous behavior silently
   // dropped them during formatting, which reinterprets invalid input
   // instead of failing fast like other validators in this module.
+  // Codex P2 round 12: trim() before the empty check matches what
+  // sanitizeLogField does at format time. Whitespace-only sessionId
+  // would otherwise pass validation and produce a `session=` token
+  // with an empty value that breaks downstream log parsers.
   if (entry.sessionId !== undefined) {
-    if (typeof entry.sessionId !== "string" || entry.sessionId === "") {
-      throw new Error("interaction entry sessionId must be a non-empty string when provided");
+    if (typeof entry.sessionId !== "string" || entry.sessionId.trim() === "") {
+      throw new Error("interaction entry sessionId must be a non-whitespace string when provided");
     }
   }
   await assertPeersRootNotSymlink(memoryDir);
