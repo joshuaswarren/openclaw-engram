@@ -3864,6 +3864,12 @@ export class EngramAccessService {
         );
         return null;
       }
+      // Both `canonical` (realpath of candidate) and `namespaceRootReal`
+      // (realpath of storage.dir) are fully resolved here, so the
+      // containment check above is comparing apples-to-apples even when
+      // storage.dir (= storage.baseDir) is itself a symlink to the real
+      // directory.  Pass `canonical` — not the pre-realpath `candidate` —
+      // so the storage read also uses the stable real path.
       const memory = await storage.readMemoryByPath(canonical);
       if (!memory) return null;
       const fm = memory.frontmatter;
@@ -3873,8 +3879,13 @@ export class EngramAccessService {
         updated: fm.updated,
       };
     };
+    // Use the realpath-resolved namespace root for the edge-file read so
+    // the JSONL location is stable whether storage.dir is a direct path
+    // or a symlink.  namespaceRootReal was computed via `fs.realpath`
+    // above; using it here keeps both the graph-file I/O and the loadNode
+    // containment check on the same resolved base path.
     return buildGraphSnapshot({
-      memoryDir: storage.dir,
+      memoryDir: namespaceRootReal,
       graphConfig: {
         entityGraphEnabled: cfg.entityGraphEnabled === true,
         timeGraphEnabled: cfg.timeGraphEnabled === true,
