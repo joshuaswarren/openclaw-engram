@@ -114,9 +114,18 @@ export interface PeerInteractionLogEntry {
  *   - First and last character must be `[A-Za-z0-9]`
  *   - Interior may contain `.`, `_`, `-` in addition to alphanumerics
  *   - No leading or trailing dot/dash/underscore
- *   - No consecutive dots or dashes (enforced separately for clarity)
+ *   - No consecutive separators (`..`, `--`, `__`, `.-`, etc.)
+ *
+ * Cursor Medium: previously the regex allowed `a..b` even though the
+ * docs claimed otherwise — a separate JS-side check enforced the rule
+ * but the standalone PATTERN was wrong for any external consumer
+ * relying on it. Tighten the regex itself so PEER_ID_PATTERN is the
+ * single source of truth: an alphanumeric, optionally followed by
+ * groups of (one separator + one-or-more alphanumerics), with the
+ * final group ending on an alphanumeric. Negative lookahead-free so
+ * it works in any JS engine.
  */
-export const PEER_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+export const PEER_ID_PATTERN = /^[A-Za-z0-9](?:[._-]?[A-Za-z0-9]+)*$/;
 
 /** Maximum length for `Peer.id`. */
 export const PEER_ID_MAX_LENGTH = 64;

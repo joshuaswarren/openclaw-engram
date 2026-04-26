@@ -136,7 +136,16 @@ function interactionsPath(memoryDir: string, peerId: string): string {
 // behaviour deterministic and easy to validate.
 
 function escapeYamlString(value: string): string {
-  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  // Cursor Medium: must escape newlines / carriage returns / tabs so a
+  // value like `displayName: "first\nsecond"` doesn't blow up the
+  // line-oriented parsePeerFrontmatter. Backslash → `\\`, double-quote
+  // → `\"`, newline → `\n`, carriage return → `\r`, tab → `\t`.
+  return `"${value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")}"`;
 }
 
 function unescapeYamlString(quoted: string): string {
@@ -149,6 +158,21 @@ function unescapeYamlString(quoted: string): string {
       const next = body[i + 1];
       if (next === "\\" || next === '"') {
         out += next;
+        i++;
+        continue;
+      }
+      if (next === "n") {
+        out += "\n";
+        i++;
+        continue;
+      }
+      if (next === "r") {
+        out += "\r";
+        i++;
+        continue;
+      }
+      if (next === "t") {
+        out += "\t";
         i++;
         continue;
       }
@@ -258,9 +282,18 @@ export async function readPeer(
   if (createdAt === "") {
     throw new Error(`peer "${peerId}" is missing createdAt`);
   }
-  // Strip leading blank lines (frontmatter close inserts one) and any
-  // trailing whitespace. Internal whitespace is preserved verbatim.
-  const trimmedBody = body.replace(/^\s+/, "").replace(/\s+$/, "");
+  // Codex P2 + CodeQL: previously used `body.replace(/^\s+/, "")`
+  // which stripped ALL leading whitespace — including indentation in
+  // notes. The `\s+` patterns also flagged as polynomial-regex risk
+  // (CodeQL alert #74) because they can backtrack on adversarial
+  // inputs. Strip exactly one leading separator newline and one
+  // trailing newline — internal AND user-authored leading
+  // indentation are preserved verbatim, and the regex is bounded.
+  let trimmedBody = body;
+  if (trimmedBody.startsWith("\r\n")) trimmedBody = trimmedBody.slice(2);
+  else if (trimmedBody.startsWith("\n")) trimmedBody = trimmedBody.slice(1);
+  if (trimmedBody.endsWith("\r\n")) trimmedBody = trimmedBody.slice(0, -2);
+  else if (trimmedBody.endsWith("\n")) trimmedBody = trimmedBody.slice(0, -1);
   return {
     id: peerId,
     kind,
@@ -324,11 +357,16 @@ export async function listPeers(memoryDir: string): Promise<Peer[]> {
     }
     let stat;
     try {
-      stat = await fs.stat(path.join(root, name));
+      // Codex P1: use `lstat` so we don't follow symlinks. A
+      // `peers/<valid-id>` symlink pointing at an arbitrary directory
+      // would otherwise let listPeers (and the readPeer that
+      // follows) traverse outside the peers root.
+      stat = await fs.lstat(path.join(root, name));
     } catch {
       continue;
     }
-    if (!stat.isDirectory()) continue;
+    // Skip symlinks entirely — only real directories are peers.
+    if (!stat.isDirectory() || stat.isSymbolicLink()) continue;
     let peer: Peer | null = null;
     try {
       peer = await readPeer(memoryDir, name);
@@ -347,14 +385,28 @@ export async function listPeers(memoryDir: string): Promise<Peer[]> {
 // Interaction log (append-only)
 // ──────────────────────────────────────────────────────────────────────
 
+function sanitizeLogField(value: string): string {
+  // Cursor Medium: every interaction-log field — not just summary —
+  // must collapse newlines so a malicious or buggy `timestamp` /
+  // `kind` / `sessionId` value can't break the one-line-per-entry
+  // invariant the append-only log relies on. Replace CR/LF/Tab with
+  // a single space; trim leading/trailing whitespace.
+  return value.replace(/[\r\n\t]+/g, " ").trim();
+}
+
 function formatLogEntry(entry: PeerInteractionLogEntry): string {
   // One line per entry. We use a leading bullet so the file remains
   // readable as ordinary markdown. Order: timestamp, kind, optional
-  // session id, summary. Newlines in the summary are escaped to keep
-  // each entry on a single line — preserves monotonic append semantics.
-  const safeSummary = entry.summary.replace(/\r?\n/g, " ");
-  const session = entry.sessionId ? ` session=${entry.sessionId}` : "";
-  return `- [${entry.timestamp}] (${entry.kind})${session} ${safeSummary}`;
+  // session id, summary. ALL fields are passed through `sanitizeLogField`
+  // so a stray newline anywhere can't shatter the append-only invariant
+  // (cursor Medium on PR #723).
+  const ts = sanitizeLogField(entry.timestamp);
+  const kind = sanitizeLogField(entry.kind);
+  const summary = sanitizeLogField(entry.summary);
+  const session = entry.sessionId
+    ? ` session=${sanitizeLogField(entry.sessionId)}`
+    : "";
+  return `- [${ts}] (${kind})${session} ${summary}`;
 }
 
 /**
