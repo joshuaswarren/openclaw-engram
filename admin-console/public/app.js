@@ -1193,6 +1193,13 @@ async function loadMemoryGraph() {
 
   setStatus("graphStatus", "Fetching graph snapshot...");
 
+  // Invalidate any in-flight search and reset highlight/panel state *before*
+  // the await so stale runGraphSearch() continuations are rejected even if the
+  // snapshot fetch is slow or fails.
+  graphSearchToken += 1;
+  graphHighlightIds = new Map();
+  closeGraphNodePanel();
+
   const params = new URLSearchParams();
   const limit = $("graphLimit")?.value?.trim();
   const focus = $("graphFocusNodeId")?.value?.trim();
@@ -1209,12 +1216,6 @@ async function loadMemoryGraph() {
 
   const nodes = Array.isArray(snapshot.nodes) ? snapshot.nodes : [];
   const edges = Array.isArray(snapshot.edges) ? snapshot.edges : [];
-
-  // Always reset highlights, invalidate in-flight searches, and close panel
-  // at the start of every reload — so stale state never persists.
-  graphSearchToken += 1;
-  graphHighlightIds = new Map();
-  closeGraphNodePanel();
 
   if (nodes.length === 0) {
     graphData = null;
@@ -1250,17 +1251,6 @@ async function loadMemoryGraph() {
   for (const edge of edges) {
     edge._srcNode = nodeIndex.get(edge.source) ?? null;
     edge._tgtNode = nodeIndex.get(edge.target) ?? null;
-  }
-
-  // Pre-bind each node's frontmatter memory ID from snapshot metadata so
-  // drill-through works for every node, not just those matched by a search.
-  // `node.metadata.memoryId` is the field the graph-snapshot endpoint sets
-  // when it can resolve the node back to a stored memory record.
-  // Any later runGraphSearch() result will overwrite this with the recall-
-  // result ID (which may be more precise), but this ensures non-searched
-  // nodes also open with a valid memory-detail fetch.
-  for (const n of nodes) {
-    n._memoryId = n.metadata?.memoryId || null;
   }
 
   graphData = { nodes, edges };
