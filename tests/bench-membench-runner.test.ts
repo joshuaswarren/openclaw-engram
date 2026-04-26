@@ -105,6 +105,7 @@ function createDatasetCases() {
       ],
       question: "Which city did I move to last spring?",
       answer: "Lisbon",
+      targetStepCoordinates: [[0, 0]],
     },
   ];
 }
@@ -185,7 +186,7 @@ function createOfficialParticipantDataset() {
             question: "Which movie preference should the assistant remember?",
             choices: ["Toy Story", "Alien (1979)", "Heat", "Jaws"],
             answer: "Alien (1979)",
-            target_step_id: [[0, 1]],
+            target_step_coordinates: [[0, 1]],
           },
         },
       ],
@@ -253,6 +254,7 @@ test("runBenchmark executes membench in full mode from an explicit dataset file"
   assert.equal(result.results.tasks.length, 1);
   assert.equal(result.results.tasks[0]?.expected, "Lisbon");
   assert.equal(result.results.tasks[0]?.details.scenario, "participant");
+  assert.deepEqual(result.results.tasks[0]?.details.targetStepCoordinates, [[0, 0]]);
 });
 
 test("runBenchmark accepts upstream MemBench export filenames in full mode", async () => {

@@ -542,6 +542,10 @@ function normalizeFlatCase(
       correctChoice: record.correctChoice ?? record.correct_choice,
       questionTime: record.questionTime ?? record.question_time ?? record.time,
       targetStepIds: record.targetStepIds ?? record.target_step_ids ?? record.target_step_id,
+      targetStepCoordinates:
+        record.targetStepCoordinates
+        ?? record.target_step_coordinates
+        ?? record.target_step_coordinate,
     },
     location,
   );
@@ -765,7 +769,11 @@ function normalizeQaPairs(
       correctChoice: correctChoice ?? undefined,
       questionTime: firstString(item.time, item.question_time, item.questionTime) ?? undefined,
       ...parseTargetStepRefs(
-        item.target_step_id ?? item.target_step_ids ?? item.targetStepIds,
+        item.target_step_id
+        ?? item.target_step_ids
+        ?? item.targetStepIds
+        ?? item.target_step_coordinates
+        ?? item.targetStepCoordinates,
         coordinateIndex,
       ),
     });
