@@ -183,33 +183,59 @@ export async function buildGraphSnapshot(opts: {
     return aKey < bKey ? -1 : 1;
   });
 
-  // Resolve metadata for every endpoint we may need, after time + focus
-  // filtering but BEFORE the limit so the category filter applies to the
-  // pre-trimmed neighborhood.  Cap the load surface at 2× max-limit to
-  // bound worst-case memory reads.
-  const candidatePaths = collectEndpointPaths(sortedEdges).slice(
-    0,
-    GRAPH_SNAPSHOT_MAX_LIMIT * 2,
-  );
-  const metadata = await loadMetadataMap(candidatePaths, opts.loadNode);
+  // Streaming category + limit pass.  Metadata is loaded lazily per
+  // endpoint with a memoization cache (`metadata`) so we never re-read the
+  // same memory file twice, never read more than `2 × limit` files, and
+  // never silently drop matching edges because a static cap fired before
+  // the category filter saw them — the bug Cursor flagged on PR #734
+  // when the pre-limit edge set referenced more than `2 × MAX_LIMIT`
+  // unique nodes.
+  const metadata = new Map<string, GraphSnapshotNodeMetadata | null>();
+  const trimmedEdges: GraphEdge[] = [];
 
-  // Category filter — applied per edge, requiring BOTH endpoints to match.
-  // Endpoints with no metadata are kept only when no filter is active
-  // (matches admin-pane intent: a category filter is an allow-list).
-  const categoryFilteredEdges = categoryFilter === null
-    ? sortedEdges
-    : sortedEdges.filter((edge) => {
-        const fromMeta = metadata.get(edge.from);
-        const toMeta = metadata.get(edge.to);
-        if (!fromMeta || !toMeta) return false;
-        return categoryFilter.has(fromMeta.category) && categoryFilter.has(toMeta.category);
-      });
+  const ensureMetadata = async (relPath: string): Promise<GraphSnapshotNodeMetadata | null> => {
+    if (metadata.has(relPath)) return metadata.get(relPath) ?? null;
+    let resolved: GraphSnapshotNodeMetadata | null = null;
+    try {
+      resolved = await opts.loadNode(relPath);
+    } catch {
+      // Loader errors are best-effort — leave the path absent so it
+      // falls through to the basename label / "unknown" category.
+      resolved = null;
+    }
+    metadata.set(relPath, resolved);
+    return resolved;
+  };
 
-  // Apply limit AFTER all filters (we want the most recent N edges that
-  // survive every filter, not the most recent N raw edges).
-  const trimmedEdges = categoryFilteredEdges.slice(0, limit);
+  for (const edge of sortedEdges) {
+    if (trimmedEdges.length >= limit) break;
+    if (categoryFilter !== null) {
+      const fromMeta = await ensureMetadata(edge.from);
+      const toMeta = await ensureMetadata(edge.to);
+      if (!fromMeta || !toMeta) continue;
+      if (
+        !categoryFilter.has(fromMeta.category)
+        || !categoryFilter.has(toMeta.category)
+      ) {
+        continue;
+      }
+    } else {
+      // Even without a category filter we still want labels / kinds for
+      // the surfaced nodes, so warm the metadata cache for this edge.
+      // The cache is bounded by `2 × limit` because we stop iterating
+      // once `trimmedEdges` reaches `limit`.
+      await ensureMetadata(edge.from);
+      await ensureMetadata(edge.to);
+    }
+    trimmedEdges.push(edge);
+  }
 
-  const nodes = buildNodeIndex(trimmedEdges, metadata);
+  const resolvedMetadata = new Map<string, GraphSnapshotNodeMetadata>();
+  for (const [key, value] of metadata) {
+    if (value) resolvedMetadata.set(key, value);
+  }
+
+  const nodes = buildNodeIndex(trimmedEdges, resolvedMetadata);
   const edges: GraphSnapshotEdge[] = trimmedEdges.map((edge) => ({
     source: edge.from,
     target: edge.to,
@@ -242,43 +268,6 @@ function normalizeCategoryFilter(
     throw new Error("graphSnapshot: categories must contain at least one non-empty value");
   }
   return cleaned;
-}
-
-function collectEndpointPaths(edges: GraphEdge[]): string[] {
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const edge of edges) {
-    if (!seen.has(edge.from)) {
-      seen.add(edge.from);
-      ordered.push(edge.from);
-    }
-    if (!seen.has(edge.to)) {
-      seen.add(edge.to);
-      ordered.push(edge.to);
-    }
-  }
-  return ordered;
-}
-
-async function loadMetadataMap(
-  paths: string[],
-  loadNode: GraphSnapshotNodeLoader,
-): Promise<Map<string, GraphSnapshotNodeMetadata>> {
-  const out = new Map<string, GraphSnapshotNodeMetadata>();
-  // Sequential loads keep the I/O footprint predictable; the upper bound is
-  // 2 × GRAPH_SNAPSHOT_MAX_LIMIT.  Switching to bounded parallelism is a
-  // future tuning knob — the on-disk metadata is cached by `StorageManager`.
-  for (const relPath of paths) {
-    try {
-      const meta = await loadNode(relPath);
-      if (meta) out.set(relPath, meta);
-    } catch {
-      // Loader errors are best-effort — leave the path absent so it falls
-      // through to the basename label / "unknown" category.  We never let
-      // metadata I/O fail the whole snapshot.
-    }
-  }
-  return out;
 }
 
 function buildNodeIndex(

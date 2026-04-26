@@ -242,6 +242,183 @@ test("buildGraphSnapshot since filter drops older edges", async () => {
   }
 });
 
+test("buildGraphSnapshot streaming category filter does not silently truncate large edge sets", async () => {
+  // Regression for the Cursor Bugbot finding on PR #734: the previous
+  // implementation pre-loaded metadata for the first 2× MAX_LIMIT unique
+  // node ids and then applied the category filter on the cached map.  When
+  // the relevant matching edges referenced nodes whose metadata fell
+  // outside that window, those edges were silently dropped.  The streaming
+  // implementation now lazy-loads metadata per edge and walks until either
+  // (a) the limit is reached, or (b) the edge stream is exhausted — so
+  // late-stream matches survive.
+  const dir = await makeFixtureDir();
+  try {
+    // Build many `decision` edges first (these will be dropped by the
+    // `fact` allow-list) and then a single `fact` edge near the end.
+    const baseTs = Date.UTC(2026, 3, 20, 0, 0);
+    for (let i = 0; i < 50; i += 1) {
+      await appendEdge(dir, {
+        from: `decisions/2026-04-20/d${i}.md`,
+        to: `decisions/2026-04-20/d${i + 1}.md`,
+        type: "entity",
+        weight: 1.0,
+        label: "noise",
+        ts: new Date(baseTs + i * 1000).toISOString(),
+      });
+    }
+    await appendEdge(dir, {
+      from: "facts/2026-04-20/alpha.md",
+      to: "facts/2026-04-20/beta.md",
+      type: "entity",
+      weight: 1.0,
+      label: "real",
+      ts: new Date(baseTs - 60_000).toISOString(),
+    });
+    const loadNode = async (relPath: string) => {
+      if (relPath.startsWith("facts/")) {
+        return { category: "fact", label: relPath };
+      }
+      return { category: "decision", label: relPath };
+    };
+    const snapshot = await buildGraphSnapshot({
+      memoryDir: dir,
+      graphConfig: {
+        entityGraphEnabled: true,
+        timeGraphEnabled: true,
+        causalGraphEnabled: true,
+      },
+      request: { categories: ["fact"], limit: 10 },
+      loadNode,
+    });
+    // The streaming filter must surface the single `fact` edge even though
+    // it sorts after 50 `decision` edges.
+    assert.equal(snapshot.edges.length, 1);
+    assert.equal(snapshot.edges[0]!.source, "facts/2026-04-20/alpha.md");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("graphSnapshot loader rejects path traversal in edge endpoints", async () => {
+  // Regression for the codex P1 finding on PR #734: a malformed edge with
+  // an absolute path or `../` traversal must not read memory files from
+  // outside the resolved namespace.  We replicate the access-service's
+  // path-guarded loader against two sibling directories and confirm
+  // (a) the benign endpoint resolves, (b) the absolute-path endpoint is
+  // rejected, (c) the `..` traversal endpoint is rejected — even though
+  // the file at the traversal target exists on disk and would otherwise
+  // be readable.
+  const root = await mkdtemp(path.join(os.tmpdir(), "engram-graph-snapshot-traversal-"));
+  try {
+    const nsA = path.join(root, "ns-a");
+    const nsB = path.join(root, "ns-b");
+    await mkdir(path.join(nsA, "facts", "2026-04-20"), { recursive: true });
+    await mkdir(nsB, { recursive: true });
+
+    await writeFile(
+      path.join(nsA, "facts", "2026-04-20", "alpha.md"),
+      "---\nid: alpha\ncategory: fact\nupdated: 2026-04-20T00:00:00.000Z\n---\nalpha\n",
+      "utf-8",
+    );
+    const secretPath = path.join(nsB, "secret.md");
+    await writeFile(
+      secretPath,
+      "---\nid: secret\ncategory: secret\n---\nsecret\n",
+      "utf-8",
+    );
+
+    // Replicate the access-service loader.  The path guard rejects
+    // absolute paths and `..` traversals.
+    const namespaceRoot = path.resolve(nsA);
+    const namespaceRootWithSep = namespaceRoot.endsWith(path.sep)
+      ? namespaceRoot
+      : namespaceRoot + path.sep;
+    const callsToReadFile: string[] = [];
+    const fs = await import("node:fs/promises");
+    const guardedLoader = async (relPath: string) => {
+      if (path.isAbsolute(relPath)) return null;
+      const candidate = path.resolve(namespaceRoot, relPath);
+      if (candidate !== namespaceRoot && !candidate.startsWith(namespaceRootWithSep)) {
+        return null;
+      }
+      callsToReadFile.push(candidate);
+      try {
+        const raw = await fs.readFile(candidate, "utf-8");
+        const fm = raw.match(/category:\s*(\w+)/);
+        return {
+          category: fm?.[1] ?? "unknown",
+          label: path.basename(candidate, path.extname(candidate)),
+        };
+      } catch {
+        return null;
+      }
+    };
+
+    // Drive `buildGraphSnapshot` with three edges: benign / absolute /
+    // traversing.  The metadata for the secret memory must never be
+    // read — assert via both the snapshot kind AND the recorded read
+    // attempts.
+    await appendEdge(nsA, {
+      from: "facts/2026-04-20/alpha.md",
+      to: "facts/2026-04-20/alpha.md",
+      type: "entity",
+      weight: 1.0,
+      label: "self-loop",
+      ts: "2026-04-20T12:00:00.000Z",
+    });
+    await appendEdge(nsA, {
+      from: "facts/2026-04-20/alpha.md",
+      to: secretPath,
+      type: "entity",
+      weight: 1.0,
+      label: "absolute",
+      ts: "2026-04-20T12:01:00.000Z",
+    });
+    await appendEdge(nsA, {
+      from: "facts/2026-04-20/alpha.md",
+      to: "../ns-b/secret.md",
+      type: "entity",
+      weight: 1.0,
+      label: "traversal",
+      ts: "2026-04-20T12:02:00.000Z",
+    });
+
+    const snapshot = await buildGraphSnapshot({
+      memoryDir: nsA,
+      graphConfig: {
+        entityGraphEnabled: true,
+        timeGraphEnabled: true,
+        causalGraphEnabled: true,
+      },
+      request: {},
+      loadNode: guardedLoader,
+    });
+
+    // Benign alpha resolves.
+    const alpha = snapshot.nodes.find((n) => n.id === "facts/2026-04-20/alpha.md");
+    assert.ok(alpha, "alpha node should be present");
+    assert.equal(alpha!.kind, "fact");
+    // Absolute / traversal endpoints surface as orphan nodes with
+    // `kind: "unknown"` — the loader returned null for them.
+    const absoluteNode = snapshot.nodes.find((n) => n.id === secretPath);
+    const traversalNode = snapshot.nodes.find((n) => n.id === "../ns-b/secret.md");
+    assert.ok(absoluteNode);
+    assert.ok(traversalNode);
+    assert.equal(absoluteNode!.kind, "unknown");
+    assert.equal(traversalNode!.kind, "unknown");
+    // Critically: we never attempted to read the secret file on disk.
+    for (const call of callsToReadFile) {
+      assert.ok(
+        call.startsWith(namespaceRootWithSep) || call === namespaceRoot,
+        `file read escaped namespace: ${call}`,
+      );
+      assert.ok(!call.includes("secret.md"), `secret file must never be read: ${call}`);
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("buildGraphSnapshot rejects empty categories array", async () => {
   const dir = await makeFixtureDir();
   try {
@@ -536,7 +713,3 @@ test("MCP graph_snapshot rejects non-numeric limit at the boundary", async () =>
   }
 });
 
-// Suppress unused-import warning for `mkdir` / `writeFile` (kept for future
-// fixture extensions that exercise the orchestrator-backed loader).
-void mkdir;
-void writeFile;
