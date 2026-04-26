@@ -13,7 +13,7 @@
  * without pulling in the transfer pipeline.
  */
 
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { importCapsule, type ImportCapsuleResult } from "./capsule-import.js";
 import type { CapsuleParent, ExportManifestV2 } from "./types.js";
@@ -121,11 +121,20 @@ export async function forkCapsule(opts: ForkCapsuleOptions): Promise<ForkCapsule
   await assertIsDirectory(rootAbs);
 
   // --- 3. Reject duplicate forkId ---
+  // Treat ANY existing filesystem entry at `forks/<forkId>` as occupied:
+  // directory, regular file, or symlink. A previous version of this check
+  // only rejected directories, so a stray file at the path would slip past
+  // and `importCapsule` would still write under `forks/<sourceCapsule>/...`.
+  // The later `mkdir`/`writeFile` for the breadcrumb would then fail,
+  // leaving a partial fork import after reporting an error — violating the
+  // documented "reject before any write" contract (Codex P2 #751 round 2).
+  // `lstat` (not `stat`) is intentional so a symlink at the path is detected
+  // even if its target is missing or otherwise unreadable.
   const forkDirAbs = path.join(rootAbs, "forks", opts.forkId);
-  const forkDirExists = await directoryExists(forkDirAbs);
-  if (forkDirExists) {
+  const forkEntryExists = await pathEntryExists(forkDirAbs);
+  if (forkEntryExists) {
     throw new Error(
-      `forkCapsule: fork directory already exists — forkId "${opts.forkId}" is already in use at: ${forkDirAbs}`,
+      `forkCapsule: fork path already exists — forkId "${opts.forkId}" is already in use at: ${forkDirAbs}`,
     );
   }
 
@@ -221,13 +230,30 @@ export async function readForkLineage(
     return null;
   }
   const rootAbs = path.resolve(targetRoot);
-  const lineagePath = path.join(rootAbs, "forks", forkId, "lineage.json");
-  // Defensive containment check: even though CAPSULE_ID_PATTERN forbids `/`
-  // and `..`, an attacker who somehow bypasses the regex would still be
-  // caught here. `path.relative` returns a `..`-prefixed string when the
-  // target escapes the root.
-  const rel = path.relative(rootAbs, lineagePath);
+  // Resolve the root via realpath up-front so the symlink-safe containment
+  // check below compares against the canonical path. If realpath fails
+  // (root does not exist or is unreadable) we fall back to the lexical
+  // root; the read will then return null for a missing breadcrumb anyway.
+  const rootReal = await realpath(rootAbs).catch(() => rootAbs);
+
+  const lineagePath = path.join(rootReal, "forks", forkId, "lineage.json");
+  // Defensive lexical containment check: even though CAPSULE_ID_PATTERN
+  // forbids `/` and `..`, an attacker who somehow bypasses the regex would
+  // still be caught here. `path.relative` returns a `..`-prefixed string
+  // when the target escapes the root.
+  const rel = path.relative(rootReal, lineagePath);
   if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    return null;
+  }
+
+  // Symlink-safe containment check (Codex P2 #751 round 2).
+  // The lexical check above cannot detect a symlinked `forks/<forkId>`
+  // directory whose target is outside the memory root. We resolve the
+  // nearest existing ancestor of the breadcrumb path via realpath (which
+  // follows symlinks), re-append the non-existent suffix, and verify the
+  // result still lives under the real root. Mirrors the
+  // `assertRealpathInsideRoot` pattern used by capsule-import.ts.
+  if (!(await isLineagePathContained(rootReal, lineagePath))) {
     return null;
   }
   const raw = await readFile(lineagePath, "utf-8").catch(() => null);
@@ -274,7 +300,57 @@ async function assertIsDirectory(absPath: string): Promise<void> {
   }
 }
 
-async function directoryExists(absPath: string): Promise<boolean> {
-  const st = await stat(absPath).catch(() => null);
-  return st !== null && st.isDirectory();
+/**
+ * Return true when ANY filesystem entry exists at {@link absPath} —
+ * directory, regular file, symlink (even broken), or other special file.
+ * Uses `lstat` so a symlink at the path is detected regardless of whether
+ * its target resolves. Used by the duplicate-forkId check so a stray file
+ * cannot bypass the "reject before any write" guarantee (Codex P2 #751).
+ */
+async function pathEntryExists(absPath: string): Promise<boolean> {
+  const st = await lstat(absPath).catch(() => null);
+  return st !== null;
+}
+
+/**
+ * Symlink-safe containment check for {@link readForkLineage}.
+ *
+ * Walks from {@link lineagePath} toward {@link rootReal} until it finds a
+ * path component that exists on disk, resolves that prefix via `realpath`
+ * (which follows symlinks), then re-appends the non-existent suffix and
+ * verifies the resulting canonical path is still inside {@link rootReal}.
+ *
+ * This catches the case where any subdirectory in the path is a symlink
+ * pointing outside the intended root. Returns `true` when the path is
+ * safely contained, `false` otherwise.
+ *
+ * Mirrors the `assertRealpathInsideRoot` helper in `capsule-import.ts`.
+ * Returning a boolean (rather than throwing) keeps the contract aligned
+ * with `readForkLineage`'s "return null on any safety failure" pattern.
+ */
+async function isLineagePathContained(
+  rootReal: string,
+  lineagePath: string,
+): Promise<boolean> {
+  let existing = lineagePath;
+  const suffix: string[] = [];
+  while (existing !== path.dirname(existing)) {
+    const st = await lstat(existing).catch(() => null);
+    if (st !== null) break;
+    suffix.unshift(path.basename(existing));
+    existing = path.dirname(existing);
+  }
+
+  // If we walked all the way to the filesystem root without finding
+  // anything that exists, the path is harmless (no symlinks to follow).
+  // The subsequent readFile will simply fail and return null.
+  const existingReal = await realpath(existing).catch(() => existing);
+  const targetReal = suffix.length > 0 ? path.join(existingReal, ...suffix) : existingReal;
+
+  const rel = path.relative(rootReal, targetReal);
+  if (rel === "") return true;
+  if (rel === "..") return false;
+  if (rel.startsWith(`..${path.sep}`)) return false;
+  if (path.isAbsolute(rel)) return false;
+  return true;
 }

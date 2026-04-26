@@ -6721,6 +6721,64 @@ function resolveRequiredValueFlag(
 }
 
 /**
+ * Parse `remnic capsule fork` argv into its required parts.
+ *
+ * Exported for testability (Codex P2 #751).
+ *
+ * Returns `{ sourceArchive, targetRoot, forkId }` on success.
+ * Returns `{ error: string }` when a required argument is missing or when a
+ * flag value is used as a positional (the classic `--target /path` with
+ * omitted `<source-archive>` would treat `/path` as the archive when using a
+ * naïve `filter((a) => !a.startsWith("--"))` approach — this parser skips
+ * value-taking flag pairs so that cannot happen).
+ *
+ * Does NOT call `process.exit` — callers handle the error shape.
+ */
+export function parseCapsuleForkArgs(
+  args: string[],
+): { sourceArchive: string; targetRoot: string; forkId: string } | { error: string } {
+  // Extract flag values first.
+  const targetRoot = resolveRequiredValueFlag(args, "--target");
+  const forkId = resolveRequiredValueFlag(args, "--fork-id");
+
+  if (!targetRoot) {
+    return { error: "capsule fork requires --target <dir>" };
+  }
+  if (!forkId) {
+    return { error: "capsule fork requires --fork-id <id>" };
+  }
+
+  // Walk argv skipping value-taking flag pairs so their values are not
+  // included as positionals. Each known value-taking flag (`--target`,
+  // `--fork-id`) consumes the next token unless the value is inline
+  // (`--flag=value`). Unknown flags are treated as bare (no value
+  // consumption) — defensive against future flag additions.
+  const VALUE_TAKING_FLAGS = new Set(["--target", "--fork-id"]);
+  const positionals: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const tok = args[i];
+    if (tok.startsWith("--")) {
+      if (!tok.includes("=") && VALUE_TAKING_FLAGS.has(tok)) {
+        i += 1; // skip the value token that belongs to this flag
+      }
+      continue;
+    }
+    positionals.push(tok);
+  }
+
+  const sourceArchive = positionals[0];
+  if (!sourceArchive) {
+    return {
+      error:
+        "capsule fork requires a source archive path.\n" +
+        "Usage: remnic capsule fork <source-archive> --target <root> --fork-id <id>",
+    };
+  }
+
+  return { sourceArchive, targetRoot, forkId };
+}
+
+/**
  * Parse training:export CLI flags. Rejects unknown values and missing
  * flag values instead of silently defaulting, per CLAUDE.md #14/#51.
  *
@@ -7465,49 +7523,14 @@ Options:
           break;
         }
 
-        // Resolve flags first so we can identify their value tokens and
-        // exclude them from positionals (Codex P2 #751: a naïve
-        // `filter((a) => !a.startsWith("--"))` would still keep `--target`'s
-        // VALUE in the positional list, so an omitted `<source-archive>`
-        // would silently grab the target dir instead of erroring out).
-        const targetRoot = resolveRequiredValueFlag(capsuleArgs, "--target");
-        const forkId = resolveRequiredValueFlag(capsuleArgs, "--fork-id");
-
-        if (!targetRoot) {
-          console.error("ERROR: capsule fork requires --target <dir>");
+        // Delegate to the exported parser so the positional/flag separation
+        // logic is independently testable (Codex P2 #751).
+        const forkParsed = parseCapsuleForkArgs(capsuleArgs);
+        if ("error" in forkParsed) {
+          console.error(`ERROR: ${forkParsed.error}`);
           process.exit(1);
         }
-        if (!forkId) {
-          console.error("ERROR: capsule fork requires --fork-id <id>");
-          process.exit(1);
-        }
-
-        // Positional: walk argv skipping value-taking flag pairs. The first
-        // remaining non-flag token is the source archive. Each known
-        // value-taking flag (`--target`, `--fork-id`) consumes the next
-        // token. Unknown flags are skipped as bare flags (no value
-        // consumption) — defensive against future flag additions.
-        const VALUE_TAKING_FLAGS = new Set(["--target", "--fork-id"]);
-        const positionals: string[] = [];
-        for (let i = 0; i < capsuleArgs.length; i++) {
-          const tok = capsuleArgs[i];
-          if (tok.startsWith("--")) {
-            // `--flag=value` shape carries its value inline; otherwise the
-            // next arg is the value (and must be skipped).
-            if (!tok.includes("=") && VALUE_TAKING_FLAGS.has(tok)) {
-              i += 1; // skip the value token
-            }
-            continue;
-          }
-          positionals.push(tok);
-        }
-
-        const sourceArchive = positionals[0];
-        if (!sourceArchive) {
-          console.error("ERROR: capsule fork requires a source archive path.");
-          console.error("Usage: remnic capsule fork <source-archive> --target <root> --fork-id <id>");
-          process.exit(1);
-        }
+        const { sourceArchive, targetRoot, forkId } = forkParsed;
 
         try {
           const result = await forkCapsule({

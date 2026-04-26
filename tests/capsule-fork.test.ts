@@ -19,6 +19,7 @@ import {
   readForkLineage,
   type ForkLineage,
 } from "../packages/remnic-core/src/transfer/capsule-fork.js";
+import { parseCapsuleForkArgs } from "../packages/remnic-cli/src/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -352,4 +353,68 @@ test("readForkLineage: rejects forkId values longer than 64 chars", async () => 
   const dir = await makeEmptyDir();
   const result = await readForkLineage(dir, "a".repeat(65));
   assert.equal(result, null);
+});
+
+// ---------------------------------------------------------------------------
+// Test 9: parseCapsuleForkArgs — flag-value separation (Codex P2 #751)
+// ---------------------------------------------------------------------------
+//
+// A naïve `filter((a) => !a.startsWith("--"))` keeps flag values in the
+// positional list. If `<source-archive>` is omitted the target dir value
+// `/path` becomes `sourceArchive`, silently bypassing the required-arg check.
+// parseCapsuleForkArgs must skip value-taking flag pairs correctly.
+
+test("parseCapsuleForkArgs: parses canonical argv correctly", () => {
+  const result = parseCapsuleForkArgs([
+    "archive.capsule.json.gz",
+    "--target",
+    "/tmp/root",
+    "--fork-id",
+    "my-fork",
+  ]);
+  assert.ok(!("error" in result), `expected success, got error: ${"error" in result ? result.error : ""}`);
+  if (!("error" in result)) {
+    assert.equal(result.sourceArchive, "archive.capsule.json.gz");
+    assert.equal(result.targetRoot, "/tmp/root");
+    assert.equal(result.forkId, "my-fork");
+  }
+});
+
+test("parseCapsuleForkArgs: flags before positional still parsed correctly", () => {
+  const result = parseCapsuleForkArgs([
+    "--target",
+    "/tmp/root",
+    "--fork-id",
+    "my-fork",
+    "archive.capsule.json.gz",
+  ]);
+  assert.ok(!("error" in result));
+  if (!("error" in result)) {
+    assert.equal(result.sourceArchive, "archive.capsule.json.gz");
+    assert.equal(result.targetRoot, "/tmp/root");
+    assert.equal(result.forkId, "my-fork");
+  }
+});
+
+test("parseCapsuleForkArgs: flag value NOT treated as positional when archive is missing", () => {
+  // The key regression: `--target /path archive-omitted` must produce an
+  // error, not silently set sourceArchive to "/path".
+  const result = parseCapsuleForkArgs(["--target", "/tmp/root", "--fork-id", "my-fork"]);
+  assert.ok("error" in result, "should return an error when source archive is omitted");
+  assert.ok(
+    result.error.includes("source archive") || result.error.includes("capsule fork"),
+    `error message should mention source archive, got: ${result.error}`,
+  );
+});
+
+test("parseCapsuleForkArgs: missing --target returns error", () => {
+  const result = parseCapsuleForkArgs(["archive.capsule.json.gz", "--fork-id", "my-fork"]);
+  assert.ok("error" in result);
+  assert.ok(result.error.includes("--target"), `expected --target in error, got: ${result.error}`);
+});
+
+test("parseCapsuleForkArgs: missing --fork-id returns error", () => {
+  const result = parseCapsuleForkArgs(["archive.capsule.json.gz", "--target", "/tmp/root"]);
+  assert.ok("error" in result);
+  assert.ok(result.error.includes("--fork-id"), `expected --fork-id in error, got: ${result.error}`);
 });
