@@ -203,14 +203,14 @@ export async function importCapsule(
   // assertIsDirectory call already threw, so this should always succeed.
   const rootReal = await realpath(rootAbs).catch(() => rootAbs);
 
-  // Tracks normalized target paths seen so far in phase 1.  Maps
-  // normalizedTargetAbs → first source path so the collision error can name
+  // Tracks normalized, case-folded target paths seen so far in phase 1.  Maps
+  // targetAbs.toLowerCase() → first source path so the collision error can name
   // both offending entries.  Two manifest entries whose computed target paths
   // normalize to the same absolute path (e.g. `subdir/file.md` and
-  // `subdir/./file.md`, or differing case on case-insensitive filesystems)
-  // would both try to write the same file — the second would silently
-  // overwrite the first.  We reject the import up-front before any write
-  // (Codex P1 thread on PR #741, line 188).
+  // `subdir/./file.md`, or differing case on case-insensitive filesystems such
+  // as macOS and Windows) would both try to write the same inode — the second
+  // would silently overwrite the first.  We reject the import up-front before
+  // any write (Codex P2 thread on PR #741, line 283).
   const seenTargetPaths = new Map<string, string>();
 
   for (const rec of bundle.records) {
@@ -272,21 +272,40 @@ export async function importCapsule(
     // including fork mode whose rebase prefix may itself traverse a symlink.
     await assertRealpathInsideRoot(rootReal, targetAbs, rec.path);
 
-    // Duplicate normalized target path detection (Codex P1 #741, line 188).
+    // Target-file symlink check (Codex P1 #741 round 4, line 260).
+    // `assertRealpathInsideRoot` resolves the nearest existing *ancestor* to
+    // catch symlinked parent directories, but if the TARGET FILE itself already
+    // exists and is a symlink, that check passes (the parent is real) while the
+    // write would silently follow the symlink to a path outside root.  We
+    // therefore lstat the target directly: if it exists and is a symlink we
+    // reject the record up-front.  For new files the parent-canonicalization
+    // performed above is sufficient; no realpath of a non-existent file is
+    // needed.
+    const targetLstat = await lstat(targetAbs).catch(() => null);
+    if (targetLstat !== null && targetLstat.isSymbolicLink()) {
+      throw new Error(
+        `importCapsule: record target is a symlink and cannot be written to safely: ${rec.path}`,
+      );
+    }
+
+    // Duplicate normalized target path detection (Codex P2 #741, line 283).
     // `path.join` already normalises `.` segments (e.g. `subdir/./file.md` →
-    // `subdir/file.md`).  On case-insensitive filesystems, two paths that
-    // differ only in case would resolve to the same inode, so we use
-    // `targetAbs` (which is built on the realpath-resolved root) as the
-    // canonical form for dedup — the same form used for the containment check
-    // above, keeping both checks consistent.
-    const firstSourcePath = seenTargetPaths.get(targetAbs);
+    // `subdir/file.md`).  On case-insensitive filesystems (macOS default,
+    // Windows), two paths that differ only in case would resolve to the same
+    // inode.  We fold the dedup key to lowercase so that `subdir/File.md` and
+    // `subdir/file.md` are detected as duplicates before any write occurs.
+    // This is intentionally unconditional: the cost of an extra `.toLowerCase()`
+    // on case-sensitive filesystems is negligible, and a defensive lowercase
+    // is far simpler than probing filesystem case-sensitivity at runtime.
+    const dedupKey = targetAbs.toLowerCase();
+    const firstSourcePath = seenTargetPaths.get(dedupKey);
     if (firstSourcePath !== undefined) {
       throw new Error(
         `importCapsule: manifest contains two entries that resolve to the same target path: ` +
           `"${firstSourcePath}" and "${rec.path}" both map to "${targetRel}"`,
       );
     }
-    seenTargetPaths.set(targetAbs, rec.path);
+    seenTargetPaths.set(dedupKey, rec.path);
   }
   // Detect manifest-only entries (missing record). Treat as corruption.
   for (const f of manifest.files) {

@@ -885,3 +885,151 @@ test("unknown mode string is rejected before any file is written", async () => {
   const files = await listMemoryFiles(dst);
   assert.deepEqual(files, []);
 });
+
+// ---------------------------------------------------------------------------
+// Codex P1 round 4 (#741 line 260): target file that is itself a symlink
+// is rejected even when parent directories are real.
+// Two sub-cases:
+//   (a) symlink target is outside root — previously caught by assertRealpathInsideRoot;
+//       new lstat check catches it first.
+//   (b) symlink target is INSIDE root — assertRealpathInsideRoot would pass but
+//       a write would silently redirect to the symlink's destination, altering a
+//       different memory file. The new lstat check must catch this too.
+// ---------------------------------------------------------------------------
+
+test("import rejects a record whose target path is a symlink pointing outside root", async () => {
+  // Build a normal capsule with one record at `facts/secret.md`.
+  const { archivePath } = await exportTo(
+    [{ rel: "facts/secret.md", content: "should not follow symlink\n" }],
+    "file-symlink-outside-cap",
+  );
+
+  const dst = await makeEmptyMemoryDir();
+
+  // Create a real file adjacent to `dst` (the "outside" target).
+  const outside = await mkdtemp(path.join(tmpdir(), "capsule-file-outside-"));
+  const outsideFile = path.join(outside, "victim.md");
+  await writeFile(outsideFile, "original content\n", "utf-8");
+
+  // Plant a symlink at the exact target path: dst/facts/secret.md → outsideFile.
+  // Parent directory is real; only the file itself is a symlink.
+  const factsDir = path.join(dst, "facts");
+  await mkdir(factsDir, { recursive: true });
+  await symlink(outsideFile, path.join(factsDir, "secret.md"));
+
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst }),
+    /target is a symlink|escapes target root/i,
+  );
+
+  // The outside file must be untouched.
+  const afterContent = await readFile(outsideFile, "utf-8");
+  assert.equal(afterContent, "original content\n", "symlink-outside write must not occur");
+});
+
+test("import rejects a record whose target path is a symlink pointing inside root (intra-root redirect)", async () => {
+  // Scenario: dst/facts/secret.md is a symlink → dst/other/existing.md (both
+  // inside root). assertRealpathInsideRoot passes because the resolved path is
+  // inside root, but the write would silently overwrite `other/existing.md`.
+  // The lstat-based target-file check must reject this up-front (Codex P1
+  // round 4, line 260).
+  const { archivePath } = await exportTo(
+    [{ rel: "facts/secret.md", content: "intra-root redirect\n" }],
+    "file-symlink-intra-cap",
+  );
+
+  const dst = await makeEmptyMemoryDir();
+
+  // Create both dirs and the "victim" inside root.
+  const factsDir = path.join(dst, "facts");
+  const otherDir = path.join(dst, "other");
+  await mkdir(factsDir, { recursive: true });
+  await mkdir(otherDir, { recursive: true });
+  const victimFile = path.join(otherDir, "existing.md");
+  await writeFile(victimFile, "victim content\n", "utf-8");
+
+  // Plant symlink: dst/facts/secret.md → dst/other/existing.md (both inside root).
+  await symlink(victimFile, path.join(factsDir, "secret.md"));
+
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst }),
+    /target is a symlink/i,
+  );
+
+  // The victim file must be untouched.
+  const afterContent = await readFile(victimFile, "utf-8");
+  assert.equal(afterContent, "victim content\n", "intra-root symlink write must not occur");
+});
+
+// ---------------------------------------------------------------------------
+// Codex P2 round 4 (#741 line 283): case-folded duplicate detection catches
+// case-only collisions on case-insensitive filesystems.
+// ---------------------------------------------------------------------------
+
+test("manifest with two entries that differ only in case is rejected before any write", async () => {
+  // On case-insensitive filesystems (macOS default, Windows), `subdir/File.md`
+  // and `subdir/file.md` refer to the same inode.  The dedup check must fold
+  // case when building its key so both variants are caught regardless of the
+  // filesystem's actual case-sensitivity setting (Codex P2 #741 round 4).
+  const { createHash } = await import("node:crypto");
+  function sha256hex(s: string): string {
+    return createHash("sha256").update(Buffer.from(s, "utf-8")).digest("hex");
+  }
+
+  const content1 = "lowercase entry\n";
+  const content2 = "uppercase entry\n";
+
+  const bundle = {
+    manifest: {
+      format: "openclaw-engram-export" as const,
+      schemaVersion: 2 as const,
+      createdAt: "2026-04-26T00:00:00.000Z",
+      pluginVersion: "9.9.9",
+      includesTranscripts: false,
+      files: [
+        {
+          path: "subdir/file.md",
+          sha256: sha256hex(content1),
+          bytes: Buffer.byteLength(content1, "utf-8"),
+        },
+        {
+          path: "subdir/File.md",
+          sha256: sha256hex(content2),
+          bytes: Buffer.byteLength(content2, "utf-8"),
+        },
+      ],
+      capsule: {
+        id: "case-dup-cap",
+        version: "0.1.0",
+        schemaVersion: "taxonomy-v1",
+        parentCapsule: null,
+        description: "",
+        retrievalPolicy: { tierWeights: {}, directAnswerEnabled: false },
+        includes: {
+          taxonomy: false,
+          identityAnchors: false,
+          peerProfiles: false,
+          procedural: false,
+        },
+      },
+    },
+    records: [
+      { path: "subdir/file.md", content: content1 },
+      { path: "subdir/File.md", content: content2 },
+    ],
+  };
+
+  const tmp = await mkdtemp(path.join(tmpdir(), "capsule-case-dup-"));
+  const archivePath = path.join(tmp, "case-dup.capsule.json.gz");
+  await writeFile(archivePath, gzipSync(Buffer.from(JSON.stringify(bundle), "utf-8")));
+
+  const dst = await makeEmptyMemoryDir();
+  await assert.rejects(
+    importCapsule({ archivePath, root: dst }),
+    /two entries that resolve to the same target path/i,
+  );
+
+  // No files must have been written to dst.
+  const written = await listMemoryFiles(dst);
+  assert.deepEqual(written, [], "case-fold duplicate rejection must not leave partial writes");
+});
