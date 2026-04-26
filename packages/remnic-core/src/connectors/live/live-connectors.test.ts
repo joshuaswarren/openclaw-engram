@@ -493,7 +493,118 @@ test("state store: rejects negative totalDocsImported", async (t) => {
         lastSyncStatus: "never",
         totalDocsImported: -1,
       }),
-    /non-negative/,
+    /non-negative integer/,
+  );
+});
+
+test("state store: rejects fractional totalDocsImported (PR #724 review)", async (t) => {
+  // P2 review: cumulative doc count must be an integer; fractional values
+  // would propagate through later increments and corrupt metrics.
+  const memoryDir = makeMemoryDir(t);
+  await assert.rejects(
+    () =>
+      writeConnectorState(memoryDir, "drive", {
+        id: "drive",
+        cursor: null,
+        lastSyncAt: null,
+        lastSyncStatus: "never",
+        totalDocsImported: 3.7,
+      }),
+    /non-negative integer/,
+  );
+  // And the read-shape check must reject a hand-crafted file with a float.
+  const dir = path.join(memoryDir, "state", "connectors");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, "drive.json"),
+    JSON.stringify({
+      id: "drive",
+      cursor: null,
+      lastSyncAt: null,
+      lastSyncStatus: "never",
+      totalDocsImported: 3.7,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+  await assert.rejects(
+    () => readConnectorState(memoryDir, "drive"),
+    /does not match ConnectorState shape/,
+  );
+});
+
+test("state store: refuses symlinked state file (PR #724 review)", async (t) => {
+  // P1 review: a symlink at <memoryDir>/state/connectors/<id>.json must be
+  // refused, not silently followed. Otherwise readConnectorState consumes
+  // arbitrary outside JSON and writeConnectorState overwrites an arbitrary
+  // outside file.
+  if (process.platform === "win32") return; // symlink semantics differ on Windows
+  const memoryDir = makeMemoryDir(t);
+  // Set up a parallel target file outside the memory root.
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "remnic-live-outside-"));
+  t.after(() => {
+    try {
+      fs.rmSync(outside, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+  const outsideFile = path.join(outside, "evil.json");
+  fs.writeFileSync(
+    outsideFile,
+    JSON.stringify({
+      id: "drive",
+      cursor: null,
+      lastSyncAt: null,
+      lastSyncStatus: "never",
+      totalDocsImported: 999,
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+  // Plant the symlink where the connector state would live.
+  const dir = path.join(memoryDir, "state", "connectors");
+  fs.mkdirSync(dir, { recursive: true });
+  const linkPath = path.join(dir, "drive.json");
+  fs.symlinkSync(outsideFile, linkPath);
+
+  await assert.rejects(
+    () => readConnectorState(memoryDir, "drive"),
+    /symlink/,
+  );
+  await assert.rejects(
+    () =>
+      writeConnectorState(memoryDir, "drive", {
+        id: "drive",
+        cursor: null,
+        lastSyncAt: null,
+        lastSyncStatus: "never",
+        totalDocsImported: 0,
+      }),
+    /symlink/,
+  );
+});
+
+test("state store: refuses symlinked state directory (PR #724 review)", async (t) => {
+  if (process.platform === "win32") return;
+  const memoryDir = makeMemoryDir(t);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), "remnic-live-outside-dir-"));
+  t.after(() => {
+    try {
+      fs.rmSync(outside, { recursive: true, force: true });
+    } catch {
+      // ignore
+    }
+  });
+  // Plant a symlink at <memoryDir>/state/connectors -> outside dir.
+  fs.mkdirSync(path.join(memoryDir, "state"), { recursive: true });
+  fs.symlinkSync(outside, path.join(memoryDir, "state", "connectors"));
+
+  await assert.rejects(
+    () => listConnectorStates(memoryDir),
+    /symlink/,
+  );
+  await assert.rejects(
+    () => readConnectorState(memoryDir, "drive"),
+    /symlink/,
   );
 });
 

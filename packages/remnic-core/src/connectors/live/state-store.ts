@@ -122,7 +122,10 @@ function isConnectorStateShape(value: unknown): value is ConnectorState {
   if (typeof v.id !== "string") return false;
   if (typeof v.lastSyncStatus !== "string") return false;
   if (!["success", "error", "never"].includes(v.lastSyncStatus)) return false;
-  if (typeof v.totalDocsImported !== "number" || !Number.isFinite(v.totalDocsImported)) return false;
+  // totalDocsImported is a cumulative count — fractional values would corrupt
+  // metrics on later increments. Mirror the boundary check in writeConnectorState.
+  if (typeof v.totalDocsImported !== "number" || !Number.isInteger(v.totalDocsImported)) return false;
+  if (v.totalDocsImported < 0) return false;
   if (typeof v.updatedAt !== "string") return false;
   if (v.lastSyncAt !== null && typeof v.lastSyncAt !== "string") return false;
   if (v.cursor !== null) {
@@ -137,16 +140,72 @@ function isConnectorStateShape(value: unknown): value is ConnectorState {
 }
 
 /**
+ * Reject any path component along `<memoryDir>/state/connectors/<id>.json`
+ * that is a symlink. Without this guard, a symlink in any of those
+ * components would let `fs.readFile` escape the memory root and consume an
+ * arbitrary outside file as cursor state — silently poisoning sync state and
+ * violating the project-wide rule against symlink traversal.
+ *
+ * `lstat` is used (not `stat`) so we observe the link itself rather than its
+ * target. Missing components are tolerated — the caller's `readFile` /
+ * `mkdir` will surface ENOENT in its normal way.
+ *
+ * (PR #724 review.)
+ */
+async function assertNoSymlinkOnPath(memoryDir: string, filePath: string): Promise<void> {
+  const expandedRoot = expandTildePath(memoryDir);
+  // Normalize so `..` segments can't bypass the prefix check below.
+  const root = path.resolve(expandedRoot);
+  const target = path.resolve(filePath);
+  const rel = path.relative(root, target);
+  // path.relative() yields a "../..." prefix when target escapes root.
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw new Error(
+      `connector state path ${target} escapes memory root ${root}`,
+    );
+  }
+  // Walk every component from root to target (inclusive) and lstat each.
+  const segments = rel.length === 0 ? [] : rel.split(path.sep);
+  let current = root;
+  const componentsToCheck = [current];
+  for (const seg of segments) {
+    current = path.join(current, seg);
+    componentsToCheck.push(current);
+  }
+  for (const component of componentsToCheck) {
+    let stat: import("node:fs").Stats;
+    try {
+      stat = await fs.lstat(component);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        // Not yet created — that's fine; caller's readFile/mkdir handles it.
+        continue;
+      }
+      throw err;
+    }
+    if (stat.isSymbolicLink()) {
+      throw new Error(
+        `connector state path component ${component} is a symlink; refusing to follow`,
+      );
+    }
+  }
+}
+
+/**
  * Read the persisted state for a single connector.
  *
  * Returns `null` if the file does not exist (ENOENT). Throws on any other
  * I/O error or on shape mismatch — operators should see corruption loudly.
+ *
+ * Rejects symlinks anywhere on the path so a planted symlink can't redirect
+ * reads outside the memory root. (PR #724 review.)
  */
 export async function readConnectorState(
   memoryDir: string,
   id: string,
 ): Promise<ConnectorState | null> {
   const filePath = resolveConnectorStatePath(memoryDir, id);
+  await assertNoSymlinkOnPath(memoryDir, filePath);
   let raw: string;
   try {
     raw = await fs.readFile(filePath, "utf-8");
@@ -225,9 +284,13 @@ export async function writeConnectorState(
       );
     }
   }
-  if (!Number.isFinite(state.totalDocsImported) || state.totalDocsImported < 0) {
+  if (
+    typeof state.totalDocsImported !== "number" ||
+    !Number.isInteger(state.totalDocsImported) ||
+    state.totalDocsImported < 0
+  ) {
     throw new Error(
-      `writeConnectorState(): totalDocsImported must be a non-negative finite number`,
+      `writeConnectorState(): totalDocsImported must be a non-negative integer`,
     );
   }
   if (state.lastSyncError !== undefined && typeof state.lastSyncError !== "string") {
@@ -249,8 +312,11 @@ export async function writeConnectorState(
   };
 
   const dir = resolveConnectorsDir(memoryDir);
-  await fs.mkdir(dir, { recursive: true });
   const targetPath = path.join(dir, `${id}.json`);
+  // Reject planted symlinks before mkdir/write so a redirected target can't
+  // overwrite an arbitrary file outside the memory root. (PR #724 review.)
+  await assertNoSymlinkOnPath(memoryDir, targetPath);
+  await fs.mkdir(dir, { recursive: true });
   const tmpPath = `${targetPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   const body = `${JSON.stringify(finalState, null, 2)}\n`;
@@ -288,6 +354,10 @@ export async function writeConnectorState(
  */
 export async function listConnectorStates(memoryDir: string): Promise<ConnectorState[]> {
   const dir = resolveConnectorsDir(memoryDir);
+  // Refuse to enumerate through a symlinked state directory — a planted
+  // symlink at <memoryDir>/state or <memoryDir>/state/connectors would
+  // otherwise let reads escape the memory root. (PR #724 review.)
+  await assertNoSymlinkOnPath(memoryDir, dir);
   let entries: string[];
   try {
     entries = await fs.readdir(dir);
