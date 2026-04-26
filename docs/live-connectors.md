@@ -206,30 +206,89 @@ schedule.
 | `pollIntervalMs` | `300000` (5 min) | Min `1000`, max `86400000` (24h). |
 | `folderIds` | `[]` | Drive folder ids to scope import. Empty = all accessible. |
 
+### Notion (`notion`) — issue #683 PR 3/N
+
+Imports Notion database page content into Remnic on a poll schedule using the
+Notion REST API (no `@notionhq/client` dependency).
+
+- **Auth:** integration token from `connectors.notion.token`.  Populate from a
+  secret store — never commit a real value.
+- **Scope:** `databaseIds` limits import to the listed Notion databases.  Empty
+  array = connector does nothing (safe default).
+- **Cursor semantics:** per-page high-water mark stored as a JSON string.  First
+  sync seeds the watermark without importing history.
+- **Idempotency:** `source.externalId = page.id`, `source.externalRevision =
+  last_edited_time`.
+
+```jsonc
+{
+  "connectors": {
+    "notion": {
+      "enabled": true,
+      "token": "${NOTION_INTEGRATION_TOKEN}",
+      "databaseIds": ["<database-id>"],
+      "pollIntervalMs": 300000
+    }
+  }
+}
+```
+
+| Key | Default | Notes |
+|-----|---------|-------|
+| `enabled` | `false` | Master gate. |
+| `token` | `""` | Notion integration token. Populate from a secret store. |
+| `databaseIds` | `[]` | Notion database ids to import.  Empty = do nothing. |
+| `pollIntervalMs` | `300000` (5 min) | Min `1000`, max `86400000` (24h). |
+
+## CLI surface (`remnic connectors`)
+
+Three subcommands ship in issue #683 PR 6/N.  Full reference:
+[docs/connectors.md](./connectors.md).
+
+```bash
+# List all configured connectors: enabled state, last poll, last error
+remnic connectors list
+
+# Same data, JSON by default (for scripting/automation)
+remnic connectors status
+
+# Manually trigger one incremental sync for an operator debug pass
+remnic connectors run google-drive
+remnic connectors run notion
+```
+
+All three accept `--format text|markdown|json`.  `status` defaults to `json`;
+the others default to `text`.
+
 ## What's deferred
 
-- **Other concrete connectors** — Notion, Gmail, GitHub (PRs 3–5).
 - **Maintenance scheduler integration** — wiring connectors into the periodic
   sync loop (separate PR).
-- **CLI surface** — `remnic connector list/status/sync/disable` (PR 6).
 - **OAuth helpers and credential storage** — keychain-backed storage is
-  still TODO; the Drive connector currently reads its credential triple
-  directly from the validated config.
+  still TODO; connectors currently read credentials directly from the
+  validated config.
 
 ## File map
 
 ```
-packages/remnic-core/src/connectors/live/
-├── framework.ts             # LiveConnector interface + ConnectorConfig/Cursor/Document
-├── registry.ts              # LiveConnectorRegistry (pure, in-memory)
-├── state-store.ts           # readConnectorState / writeConnectorState / listConnectorStates
-├── google-drive.ts          # Google Drive connector (#683 PR 2/N)
-├── google-drive.test.ts     # Drive connector tests (mocked client)
-├── index.ts                 # Public barrel
-└── live-connectors.test.ts
+packages/remnic-core/src/
+├── connectors-cli.ts            # remnic connectors CLI helpers (PR 6/N)
+└── connectors/live/
+    ├── framework.ts             # LiveConnector interface + ConnectorConfig/Cursor/Document
+    ├── registry.ts              # LiveConnectorRegistry (pure, in-memory)
+    ├── state-store.ts           # readConnectorState / writeConnectorState / listConnectorStates
+    ├── google-drive.ts          # Google Drive connector (PR 2/N)
+    ├── google-drive.test.ts
+    ├── notion.ts                # Notion connector (PR 3/N)
+    ├── notion.test.ts
+    ├── index.ts                 # Public barrel
+    └── live-connectors.test.ts
+
+tests/cli/
+└── connectors.test.ts           # Unit tests for connectors-cli.ts helpers
 ```
 
-The new framework lives under `connectors/live/` because the parent
+The framework lives under `connectors/live/` because the parent
 `connectors/` directory is already scoped to the existing Codex marketplace
 integration (`codex-marketplace.ts`, `codex-materialize-runner.ts`,
 `codex-materialize.ts`). Keep the namespaces distinct.

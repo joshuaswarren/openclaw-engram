@@ -213,6 +213,24 @@ import {
   renderPatternExplain,
   renderPatternsList,
 } from "./patterns-cli.js";
+import {
+  parseConnectorsListOptions,
+  parseConnectorsRunName,
+  parseConnectorsStatusOptions,
+  renderConnectorsList,
+  renderConnectorsRunResult,
+  type ConnectorRow,
+  type ConnectorRunResult,
+} from "./connectors-cli.js";
+import {
+  listConnectorStates,
+  GOOGLE_DRIVE_CONNECTOR_ID,
+  NOTION_CONNECTOR_ID,
+  createGoogleDriveConnector,
+  validateGoogleDriveConfig,
+  createNotionConnector,
+  validateNotionConfig,
+} from "./connectors/live/index.js";
 
 interface CliApi {
   registerCli(
@@ -4587,6 +4605,292 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
           }
           console.log(renderPatternExplain(detail, parsed.format));
         });
+
+      // ── Connectors subcommand (issue #683 PR 6/N) ────────────────────────
+      // `remnic connectors list` — show all configured live connectors with
+      //   their enabled state, last poll time, and last error.
+      // `remnic connectors status` — same data, defaults to JSON for scripting.
+      // `remnic connectors run <name>` — manually trigger a single
+      //   `syncIncremental()` pass for the named connector (operator debug).
+      //
+      // Pure-function helpers live in `connectors-cli.ts` so this handler
+      // stays thin and the logic is unit-testable without booting an
+      // orchestrator (CLAUDE.md rules 14 + 51).  Connector state is read from
+      // `<memoryDir>/state/connectors/<id>.json` via `listConnectorStates`.
+      {
+        /**
+         * Build the list of known connector rows from parsed config +
+         * persisted state.  Adding a new built-in connector here is a
+         * one-liner: add a row with the connector's id, display name, and
+         * enabled flag from `orchestrator.config.connectors`.
+         */
+        async function buildConnectorRows(): Promise<ConnectorRow[]> {
+          const states = await listConnectorStates(
+            orchestrator.config.memoryDir,
+          );
+          const stateMap = new Map(states.map((s) => [s.id, s]));
+          const builtIn: Array<{
+            id: string;
+            displayName: string;
+            enabled: boolean;
+          }> = [
+            {
+              id: GOOGLE_DRIVE_CONNECTOR_ID,
+              displayName: "Google Drive",
+              enabled: orchestrator.config.connectors.googleDrive.enabled,
+            },
+            {
+              id: NOTION_CONNECTOR_ID,
+              displayName: "Notion",
+              enabled: orchestrator.config.connectors.notion.enabled,
+            },
+          ];
+          return builtIn.map((c) => ({
+            id: c.id,
+            displayName: c.displayName,
+            enabled: c.enabled,
+            state: stateMap.get(c.id) ?? null,
+          }));
+        }
+
+        const connectorsCmd = cmd
+          .command("connectors")
+          .description(
+            "Manage live connectors (Google Drive, Notion, …). Subcommands: list, status, run. See docs/live-connectors.md.",
+          );
+
+        connectorsCmd
+          .command("list")
+          .description(
+            "List all configured live connectors with their enabled state, last poll time, and last error.",
+          )
+          .option(
+            "--format <fmt>",
+            "Output format: text (default), markdown, or json",
+          )
+          .action(async (...args: unknown[]) => {
+            const options = (args[0] ?? {}) as Record<string, unknown>;
+            let parsed;
+            try {
+              parsed = parseConnectorsListOptions(options);
+            } catch (err) {
+              process.stderr.write(
+                `connectors list: ${err instanceof Error ? err.message : String(err)}\n`,
+              );
+              process.exitCode = 2;
+              return;
+            }
+            const rows = await buildConnectorRows();
+            console.log(renderConnectorsList(rows, parsed.format));
+          });
+
+        connectorsCmd
+          .command("status")
+          .description(
+            "Print connector status. Defaults to JSON output for scripting. Use --format text|markdown to override.",
+          )
+          .option(
+            "--format <fmt>",
+            "Output format: json (default), text, or markdown",
+          )
+          .action(async (...args: unknown[]) => {
+            const options = (args[0] ?? {}) as Record<string, unknown>;
+            let parsed;
+            try {
+              parsed = parseConnectorsStatusOptions(options);
+            } catch (err) {
+              process.stderr.write(
+                `connectors status: ${err instanceof Error ? err.message : String(err)}\n`,
+              );
+              process.exitCode = 2;
+              return;
+            }
+            const rows = await buildConnectorRows();
+            console.log(renderConnectorsList(rows, parsed.format));
+          });
+
+        connectorsCmd
+          .command("run")
+          .description(
+            "Manually trigger one incremental sync pass for the named connector. Operator debug surface.",
+          )
+          .argument("<name>", "Connector id (e.g. google-drive, notion)")
+          .option(
+            "--format <fmt>",
+            "Output format: text (default), markdown, or json",
+          )
+          .action(async (...args: unknown[]) => {
+            const rawName = args[0];
+            const options = (args[1] ?? {}) as Record<string, unknown>;
+            let name: string;
+            try {
+              name = parseConnectorsRunName(rawName);
+            } catch (err) {
+              process.stderr.write(
+                `connectors run: ${err instanceof Error ? err.message : String(err)}\n`,
+              );
+              process.exitCode = 2;
+              return;
+            }
+            // Validate --format early so we can error before doing I/O.
+            let format: "text" | "markdown" | "json";
+            try {
+              format = parseConnectorsStatusOptions({
+                format: options.format,
+              }).format === "json" && options.format === undefined
+                ? "text"  // run defaults to text, not json
+                : parseConnectorsListOptions({ format: options.format }).format;
+            } catch (err) {
+              process.stderr.write(
+                `connectors run: ${err instanceof Error ? err.message : String(err)}\n`,
+              );
+              process.exitCode = 2;
+              return;
+            }
+
+            // Route to the matching built-in connector.
+            const cfg = orchestrator.config.connectors;
+            let runResult: ConnectorRunResult;
+            if (name === GOOGLE_DRIVE_CONNECTOR_ID) {
+              if (!cfg.googleDrive.enabled) {
+                process.stderr.write(
+                  `connectors run: connector "${name}" is disabled. Set connectors.googleDrive.enabled=true in config.\n`,
+                );
+                process.exitCode = 1;
+                return;
+              }
+              let validatedCfg;
+              try {
+                validatedCfg = validateGoogleDriveConfig(cfg.googleDrive);
+              } catch (err) {
+                process.stderr.write(
+                  `connectors run: invalid config for "${name}": ${err instanceof Error ? err.message : String(err)}\n`,
+                );
+                process.exitCode = 1;
+                return;
+              }
+              const connector = createGoogleDriveConnector();
+              const { readConnectorState } = await import(
+                "./connectors/live/state-store.js"
+              );
+              const state = await readConnectorState(
+                orchestrator.config.memoryDir,
+                name,
+              );
+              try {
+                const syncResult = await connector.syncIncremental({
+                  cursor: state?.cursor ?? null,
+                  // GoogleDriveConnectorConfig is narrower than ConnectorConfig
+                  // (no index signature) but is structurally compatible at
+                  // runtime. Double-cast via unknown to satisfy the interface.
+                  config: validatedCfg as unknown as Record<string, unknown>,
+                });
+                runResult = { docsImported: syncResult.newDocs.length };
+                // Persist updated state.
+                const { writeConnectorState } = await import(
+                  "./connectors/live/state-store.js"
+                );
+                await writeConnectorState(orchestrator.config.memoryDir, name, {
+                  id: name,
+                  cursor: syncResult.nextCursor,
+                  lastSyncAt: new Date().toISOString(),
+                  lastSyncStatus: "success",
+                  totalDocsImported:
+                    (state?.totalDocsImported ?? 0) + syncResult.newDocs.length,
+                });
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                runResult = { docsImported: 0, error: msg };
+                const { writeConnectorState } = await import(
+                  "./connectors/live/state-store.js"
+                );
+                await writeConnectorState(orchestrator.config.memoryDir, name, {
+                  id: name,
+                  cursor: state?.cursor ?? null,
+                  lastSyncAt: new Date().toISOString(),
+                  lastSyncStatus: "error",
+                  lastSyncError: msg,
+                  totalDocsImported: state?.totalDocsImported ?? 0,
+                });
+              }
+            } else if (name === NOTION_CONNECTOR_ID) {
+              if (!cfg.notion.enabled) {
+                process.stderr.write(
+                  `connectors run: connector "${name}" is disabled. Set connectors.notion.enabled=true in config.\n`,
+                );
+                process.exitCode = 1;
+                return;
+              }
+              let validatedCfg;
+              try {
+                validatedCfg = validateNotionConfig(cfg.notion);
+              } catch (err) {
+                process.stderr.write(
+                  `connectors run: invalid config for "${name}": ${err instanceof Error ? err.message : String(err)}\n`,
+                );
+                process.exitCode = 1;
+                return;
+              }
+              const connector = createNotionConnector();
+              const { readConnectorState } = await import(
+                "./connectors/live/state-store.js"
+              );
+              const state = await readConnectorState(
+                orchestrator.config.memoryDir,
+                name,
+              );
+              try {
+                const syncResult = await connector.syncIncremental({
+                  cursor: state?.cursor ?? null,
+                  // NotionConnectorConfig is narrower than ConnectorConfig (no
+                  // index signature) but is structurally compatible at runtime.
+                  // Double-cast via unknown to satisfy the interface boundary.
+                  config: validatedCfg as unknown as Record<string, unknown>,
+                });
+                runResult = { docsImported: syncResult.newDocs.length };
+                const { writeConnectorState } = await import(
+                  "./connectors/live/state-store.js"
+                );
+                await writeConnectorState(orchestrator.config.memoryDir, name, {
+                  id: name,
+                  cursor: syncResult.nextCursor,
+                  lastSyncAt: new Date().toISOString(),
+                  lastSyncStatus: "success",
+                  totalDocsImported:
+                    (state?.totalDocsImported ?? 0) + syncResult.newDocs.length,
+                });
+              } catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                runResult = { docsImported: 0, error: msg };
+                const { writeConnectorState } = await import(
+                  "./connectors/live/state-store.js"
+                );
+                await writeConnectorState(orchestrator.config.memoryDir, name, {
+                  id: name,
+                  cursor: state?.cursor ?? null,
+                  lastSyncAt: new Date().toISOString(),
+                  lastSyncStatus: "error",
+                  lastSyncError: msg,
+                  totalDocsImported: state?.totalDocsImported ?? 0,
+                });
+              }
+            } else {
+              process.stderr.write(
+                `connectors run: unknown connector "${name}". Known connectors: ${GOOGLE_DRIVE_CONNECTOR_ID}, ${NOTION_CONNECTOR_ID}.\n`,
+              );
+              process.exitCode = 1;
+              return;
+            }
+
+            const output = renderConnectorsRunResult(name, runResult, format);
+            if (runResult.error !== undefined) {
+              process.stderr.write(output + "\n");
+              process.exitCode = 1;
+            } else {
+              console.log(output);
+            }
+          });
+      }
 
       cmd
         .command("benchmark-validate")
