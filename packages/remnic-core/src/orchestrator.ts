@@ -124,6 +124,7 @@ import {
   buildXraySnapshot,
   type RecallFilterTrace,
   type RecallXrayResult,
+  type RecallXrayScoreDecomposition,
   type RecallXraySnapshot,
   type RecallXrayServedBy,
 } from "./recall-xray.js";
@@ -5846,6 +5847,11 @@ export class Orchestrator {
     let recalledMemoryCount = 0;
     let recalledMemoryIds: string[] = [];
     let recalledMemoryPaths: string[] = [];
+    // Boosted QmdSearchResult array for the serving branch (issue #687 PR 3/4).
+    // Populated alongside recalledMemoryPaths so the X-ray capture can read
+    // per-result explain data (e.g. reinforcementBoost) from the result that
+    // was actually served.
+    let xrayRecalledResults: QmdSearchResult[] = [];
     // Per-branch pre-limit candidate pool size for the X-ray filter
     // trace (issue #570 PR 1).  `recalledMemoryCount` is assigned
     // AFTER MMR + truncation so using it alone would make the
@@ -8557,6 +8563,7 @@ export class Orchestrator {
         recalledMemoryPaths = memoryResults
           .map((result) => result.path)
           .filter(Boolean);
+        xrayRecalledResults = memoryResults;
         impressionRecorded = true;
       } else if (!confidenceGateRejected) {
         // Only attempt fallback paths if the confidence gate did NOT fire.
@@ -8624,6 +8631,7 @@ export class Orchestrator {
           recalledMemoryPaths = scoped
             .map((result) => result.path)
             .filter(Boolean);
+          xrayRecalledResults = scoped;
           impressionRecorded = true;
         } else {
           const longTerm = await this.applyColdFallbackPipeline({
@@ -8661,6 +8669,7 @@ export class Orchestrator {
             recalledMemoryPaths = longTerm
               .map((result) => result.path)
               .filter(Boolean);
+            xrayRecalledResults = longTerm;
             impressionRecorded = true;
           }
         }
@@ -8766,6 +8775,7 @@ export class Orchestrator {
         recalledMemoryPaths = scoped
           .map((result) => result.path)
           .filter(Boolean);
+        xrayRecalledResults = scoped;
         impressionRecorded = true;
       } else {
         const memories =
@@ -8862,6 +8872,7 @@ export class Orchestrator {
               recalledMemoryPaths = longTerm
                 .map((result) => result.path)
                 .filter(Boolean);
+              xrayRecalledResults = longTerm;
               impressionRecorded = true;
             }
           } else {
@@ -8930,6 +8941,7 @@ export class Orchestrator {
               recalledMemoryPaths = recent
                 .map((result) => result.path)
                 .filter(Boolean);
+              xrayRecalledResults = recent;
               impressionRecorded = true;
             } else {
               const longTerm = await this.applyColdFallbackPipeline({
@@ -8968,6 +8980,7 @@ export class Orchestrator {
                 recalledMemoryPaths = longTerm
                   .map((result) => result.path)
                   .filter(Boolean);
+                xrayRecalledResults = longTerm;
                 impressionRecorded = true;
               }
             }
@@ -9008,6 +9021,7 @@ export class Orchestrator {
             recalledMemoryPaths = longTerm
               .map((result) => result.path)
               .filter(Boolean);
+            xrayRecalledResults = longTerm;
             impressionRecorded = true;
           }
         }
@@ -9221,15 +9235,32 @@ export class Orchestrator {
           const match = p.match(/([^/]+)\.md$/);
           return match ? match[1] ?? null : null;
         };
+        // Build a path → QmdSearchResult index so we can pull per-result
+        // explain data (e.g. reinforcementBoost) from the result that
+        // boostSearchResults annotated before surfacing to xray.
+        const xrayResultByPath = new Map<string, QmdSearchResult>(
+          xrayRecalledResults.map((xr) => [xr.path, xr]),
+        );
         const results: RecallXrayResult[] = [];
         for (const recalledPath of recalledMemoryPaths) {
           const derivedId = idFromPath(recalledPath);
           if (!derivedId) continue;
+          const xrayResult = xrayResultByPath.get(recalledPath);
+          const scoreDecomposition: RecallXrayScoreDecomposition = {
+            final: xrayResult?.score ?? 0,
+          };
+          if (
+            xrayResult?.explain?.reinforcementBoost !== undefined &&
+            xrayResult.explain.reinforcementBoost > 0
+          ) {
+            scoreDecomposition.reinforcementBoost =
+              xrayResult.explain.reinforcementBoost;
+          }
           results.push({
             memoryId: derivedId,
             path: recalledPath,
             servedBy,
-            scoreDecomposition: { final: 0 },
+            scoreDecomposition,
             admittedBy: [],
           });
         }
@@ -14992,6 +15023,33 @@ export class Orchestrator {
           this.utilityRuntimeValues,
           lifecycleDelta >= 0 ? "boost" : "suppress",
         );
+
+        // Reinforcement recall boost (issue #687 PR 3/4).
+        // Applies an additive score bonus proportional to how many times the
+        // pattern-reinforcement job has promoted this memory as a canonical.
+        // Formula: min(reinforcement_count * weight, max).
+        // Gated by reinforcementRecallBoostEnabled (default false).
+        let reinforcementBoost = 0;
+        if (
+          this.config.reinforcementRecallBoostEnabled &&
+          typeof memory.frontmatter.reinforcement_count === "number" &&
+          memory.frontmatter.reinforcement_count > 0
+        ) {
+          reinforcementBoost = Math.min(
+            memory.frontmatter.reinforcement_count *
+              this.config.reinforcementRecallBoostWeight,
+            this.config.reinforcementRecallBoostMax,
+          );
+          score += reinforcementBoost;
+        }
+        if (reinforcementBoost > 0) {
+          boosted.push({
+            ...r,
+            score,
+            explain: { ...(r.explain ?? {}), reinforcementBoost },
+          });
+          continue;
+        }
       }
 
       boosted.push({ ...r, score });

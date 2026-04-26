@@ -2176,6 +2176,25 @@
         "default": ["preference", "fact", "decision"],
         "description": "Memory categories the pattern-reinforcement job considers. Skips procedural memories so it stays disjoint from procedural mining. Default: preference, fact, decision."
       },
+      "reinforcementRecallBoostEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "When true, memories with reinforcement_count frontmatter receive an additive recall score boost (issue #687 PR 3/4). Default: false (opt-in)."
+      },
+      "reinforcementRecallBoostWeight": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.05,
+        "description": "Score bonus per unit of reinforcement_count (weight * count, capped at max). Range [0, 1]. Default: 0.05."
+      },
+      "reinforcementRecallBoostMax": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1,
+        "default": 0.3,
+        "description": "Maximum additive reinforcement boost per result. Range [0, 1]. Default: 0.3."
+      },
       "temporalSupersessionEnabled": {
         "type": "boolean",
         "default": true,
