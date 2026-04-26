@@ -240,6 +240,12 @@ function createOfficialPairedCoordinateDataset() {
               target_step_id: [3, 7],
             },
             {
+              question: "Which one-item target id array should remain scalar?",
+              choices: ["blue mug", "green notebook", "yellow folder", "silver watch"],
+              answer: "B",
+              target_step_id: [3],
+            },
+            {
               question: "Which invalid coordinate should not be remapped?",
               choices: ["blue mug", "green notebook", "yellow folder", "silver watch"],
               answer: "B",
@@ -555,7 +561,7 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
     system: adapter,
   });
 
-  assert.equal(result.results.tasks.length, 6);
+  assert.equal(result.results.tasks.length, 7);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepCoordinates, [[0, 0, 1]]);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepIds, [1]);
   assert.equal(result.results.tasks[0]?.scores.membench_recall_at_10, 1);
@@ -566,12 +572,13 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
   assert.deepEqual(result.results.tasks[2]?.details?.targetStepIds, [2]);
   assert.equal(result.results.tasks[2]?.scores.membench_recall_at_10, 0);
   assert.deepEqual(result.results.tasks[3]?.details?.targetStepIds, [3, 7]);
-  assert.deepEqual(result.results.tasks[4]?.details?.targetStepCoordinates, [[0, 99]]);
-  assert.equal(result.results.tasks[4]?.details?.targetStepIds, undefined);
-  assert.equal(result.results.tasks[4]?.scores.membench_recall_at_10, undefined);
-  assert.equal(result.results.tasks[5]?.details?.targetStepCoordinates, undefined);
+  assert.deepEqual(result.results.tasks[4]?.details?.targetStepIds, [3]);
+  assert.deepEqual(result.results.tasks[5]?.details?.targetStepCoordinates, [[0, 99]]);
   assert.equal(result.results.tasks[5]?.details?.targetStepIds, undefined);
   assert.equal(result.results.tasks[5]?.scores.membench_recall_at_10, undefined);
+  assert.equal(result.results.tasks[6]?.details?.targetStepCoordinates, undefined);
+  assert.equal(result.results.tasks[6]?.details?.targetStepIds, undefined);
+  assert.equal(result.results.tasks[6]?.scores.membench_recall_at_10, undefined);
 });
 
 test("runBenchmark accepts flat MCQ cases with choices and correctChoice only", async () => {

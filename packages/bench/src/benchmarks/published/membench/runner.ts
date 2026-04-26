@@ -1108,8 +1108,7 @@ function aggregateMemBenchOfficialBreakdowns(
           [errorMetricName]: task.scores.membench_accuracy < 0 ? 1 : 0,
         }));
       return [...accuracyScores, ...errorScores];
-    })
-    .flat();
+    });
 
   return aggregateTaskScores(breakdownScores);
 }
@@ -1259,7 +1258,7 @@ function parseTargetStepRefs(
         const mapped = coordinateIndex?.get(coordinateKey(numeric));
         if (mapped !== undefined) {
           candidates.add(mapped);
-        } else if (!options.treatSingleArrayAsCoordinate) {
+        } else if (!options.treatSingleArrayAsCoordinate || options.fallbackArrayTupleToIds) {
           candidates.add(numeric[0]!);
         }
       }
