@@ -34,3 +34,19 @@ export {
   type ConnectorState,
   type ConnectorSyncStatus,
 } from "./state-store.js";
+
+export {
+  GOOGLE_DRIVE_CONNECTOR_ID,
+  GOOGLE_DRIVE_CURSOR_KIND,
+  DEFAULT_POLL_INTERVAL_MS as GOOGLE_DRIVE_DEFAULT_POLL_INTERVAL_MS,
+  createGoogleDriveConnector,
+  defaultGoogleDriveClientFactory,
+  validateGoogleDriveConfig,
+  type DriveChange,
+  type DriveChangesPage,
+  type DriveFileMetadata,
+  type GoogleDriveClient,
+  type GoogleDriveClientFactory,
+  type GoogleDriveConnectorConfig,
+  type GoogleDriveSyncResult,
+} from "./google-drive.js";

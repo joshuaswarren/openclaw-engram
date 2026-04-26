@@ -1308,6 +1308,11 @@ export interface PluginConfig {
   // Codex CLI connector settings (install-time)
   codex: CodexConnectorConfig;
 
+  // Live connectors (issue #683). Concrete implementations live under
+  // packages/remnic-core/src/connectors/live/. Each child block maps to one
+  // connector. All defaults are off — operators opt in.
+  connectors: LiveConnectorsConfig;
+
   // MECE Taxonomy (#366)
   /** Enable the MECE taxonomy knowledge directory. Default false. */
   taxonomyEnabled: boolean;
@@ -1509,6 +1514,49 @@ export interface CodexConnectorConfig {
    * this is useful for integration tests and non-default installs.
    */
   codexHome: string | null;
+}
+
+/**
+ * Container for live-connector config blocks (issue #683 PR 2/N).
+ *
+ * Lives at `connectors.*` rather than the top level so future connectors
+ * (Notion, Gmail, GitHub) can slot in without bloating `PluginConfig`.
+ *
+ * Every child block must default to `enabled: false` per CLAUDE.md gotcha
+ * #30 (escape hatch by default) and gotcha #48 (least-privileged enum
+ * defaults). Concrete connectors are also expected to short-circuit at
+ * registration time when their credentials are not populated.
+ */
+export interface LiveConnectorsConfig {
+  /** Google Drive live connector (issue #683 PR 2/N). */
+  googleDrive: GoogleDriveLiveConnectorConfig;
+}
+
+/**
+ * Operator-facing config for the Google Drive live connector. The connector
+ * module itself defines a separate, *validated* `GoogleDriveConnectorConfig`
+ * shape (frozen, post-validation). This interface is the pre-validation
+ * shape that `parseConfig` round-trips through.
+ *
+ * `clientId` / `clientSecret` / `refreshToken` are stored as strings here so
+ * the schema can ship in `openclaw.plugin.json` and operators can populate
+ * them from a secret store (e.g. an env-substituted plist or systemd
+ * EnvironmentFile). They MUST NEVER be committed to source. The repo-wide
+ * privacy policy in CLAUDE.md applies.
+ */
+export interface GoogleDriveLiveConnectorConfig {
+  /** Master gate. Default false — operators must opt in explicitly. */
+  enabled: boolean;
+  /** OAuth2 client id. Populate from a secret store; never commit. */
+  clientId: string;
+  /** OAuth2 client secret. Populate from a secret store; never commit. */
+  clientSecret: string;
+  /** OAuth2 refresh token. Populate from a secret store; never commit. */
+  refreshToken: string;
+  /** Poll interval in ms. Default 300000 (5 min); min 1000; max 86400000 (24h). */
+  pollIntervalMs: number;
+  /** Optional folder-id scope. Empty array = all accessible files. */
+  folderIds: string[];
 }
 
 export interface BootstrapOptions {

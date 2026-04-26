@@ -2394,6 +2394,106 @@ export function parseConfig(raw: unknown): PluginConfig {
       return { installExtension, codexHome };
     })(),
 
+    // Live connectors (issue #683 PR 2/N).
+    //
+    // Per CLAUDE.md gotcha #30 and #48, every concrete connector ships
+    // disabled-by-default and the parser MUST reject malformed top-level
+    // shapes loudly (gotcha #51) rather than silently producing an empty
+    // object.
+    //
+    // We do NOT validate credential strings here — the connector module
+    // re-validates on every sync pass via `validateGoogleDriveConfig`.
+    // That keeps secret-store-driven values (which may legitimately be
+    // empty until the operator runs setup) round-trippable through the
+    // config layer without crashing the orchestrator at boot.
+    connectors: (() => {
+      if (
+        cfg.connectors !== undefined &&
+        (cfg.connectors === null ||
+          typeof cfg.connectors !== "object" ||
+          Array.isArray(cfg.connectors))
+      ) {
+        throw new Error(
+          `connectors must be an object (got ${JSON.stringify(cfg.connectors)}). ` +
+            `Use connectors: {} to opt out of every live connector.`,
+        );
+      }
+      const rawConnectors =
+        cfg.connectors && typeof cfg.connectors === "object" && !Array.isArray(cfg.connectors)
+          ? (cfg.connectors as Record<string, unknown>)
+          : {};
+      // googleDrive (#683 PR 2/N)
+      if (
+        rawConnectors.googleDrive !== undefined &&
+        (rawConnectors.googleDrive === null ||
+          typeof rawConnectors.googleDrive !== "object" ||
+          Array.isArray(rawConnectors.googleDrive))
+      ) {
+        throw new Error(
+          `connectors.googleDrive must be an object (got ${JSON.stringify(rawConnectors.googleDrive)}).`,
+        );
+      }
+      const rawDrive =
+        rawConnectors.googleDrive &&
+        typeof rawConnectors.googleDrive === "object" &&
+        !Array.isArray(rawConnectors.googleDrive)
+          ? (rawConnectors.googleDrive as Record<string, unknown>)
+          : {};
+      const driveEnabled = coerceBool(rawDrive.enabled) === true;
+      const driveClientId =
+        typeof rawDrive.clientId === "string" ? rawDrive.clientId : "";
+      const driveClientSecret =
+        typeof rawDrive.clientSecret === "string" ? rawDrive.clientSecret : "";
+      const driveRefreshToken =
+        typeof rawDrive.refreshToken === "string" ? rawDrive.refreshToken : "";
+      const drivePollCoerced = coerceNumber(rawDrive.pollIntervalMs);
+      let drivePollIntervalMs = 300_000;
+      if (drivePollCoerced !== undefined) {
+        if (
+          !Number.isFinite(drivePollCoerced) ||
+          !Number.isInteger(drivePollCoerced) ||
+          drivePollCoerced < 1_000 ||
+          drivePollCoerced > 86_400_000
+        ) {
+          throw new Error(
+            `connectors.googleDrive.pollIntervalMs must be an integer in [1000, 86400000] ms (got ${JSON.stringify(rawDrive.pollIntervalMs)})`,
+          );
+        }
+        drivePollIntervalMs = drivePollCoerced;
+      }
+      let driveFolderIds: string[] = [];
+      if (rawDrive.folderIds !== undefined) {
+        if (!Array.isArray(rawDrive.folderIds)) {
+          throw new Error(
+            `connectors.googleDrive.folderIds must be an array of strings (got ${typeof rawDrive.folderIds})`,
+          );
+        }
+        const seen = new Set<string>();
+        for (const value of rawDrive.folderIds) {
+          if (typeof value !== "string") {
+            throw new Error(
+              `connectors.googleDrive.folderIds entries must be strings; found ${typeof value}`,
+            );
+          }
+          const trimmed = value.trim();
+          if (trimmed.length === 0) continue;
+          if (seen.has(trimmed)) continue;
+          seen.add(trimmed);
+          driveFolderIds.push(trimmed);
+        }
+      }
+      return {
+        googleDrive: {
+          enabled: driveEnabled,
+          clientId: driveClientId,
+          clientSecret: driveClientSecret,
+          refreshToken: driveRefreshToken,
+          pollIntervalMs: drivePollIntervalMs,
+          folderIds: driveFolderIds,
+        },
+      };
+    })(),
+
     // MECE Taxonomy (#366)
     // Coerce string booleans from CLI (e.g. --config taxonomyEnabled=true) — gotcha #36
     taxonomyEnabled: coerceBool(cfg.taxonomyEnabled) ?? false,
