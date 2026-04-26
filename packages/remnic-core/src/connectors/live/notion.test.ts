@@ -947,6 +947,152 @@ test("validateConfig is enforced again on every sync pass", async () => {
 // Network-layer transient error
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Codex/Cursor review regressions (PR #744)
+// ---------------------------------------------------------------------------
+
+test("skipped empty pages record their revision so they aren't re-fetched on every poll", async () => {
+  // Codex P2: empty/too-large branches must update page watermark.
+  const page = makeSyntheticPage(PAGE_ID_1, "2026-04-26T08:00:00.000Z");
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes(`/databases/${DB_ID_A}/query`),
+      respond: () => ({
+        status: 200,
+        data: { results: [page], has_more: false, next_cursor: null },
+      }),
+    },
+    {
+      match: (url) => url.includes("/blocks/"),
+      respond: () => ({
+        status: 200,
+        data: { results: [], has_more: false, next_cursor: null },
+      }),
+    },
+  ]);
+
+  const connector = createNotionConnector({ fetchFn });
+  const config = connector.validateConfig({ token: SYNTHETIC_TOKEN, databaseIds: [DB_ID_A] });
+  const cursor = makeNotionCursor({ pages: {}, databases: {} });
+
+  const result = (await connector.syncIncremental({ cursor, config })) as NotionSyncResult;
+  assert.equal(result.skippedEmpty, 1);
+  // Page revision must be recorded so the next poll's "knownRevision >= lastEdited"
+  // check skips this page as `skippedUnchanged` rather than re-fetching it.
+  const payload = JSON.parse(result.nextCursor.value) as { pages: Record<string, string> };
+  assert.equal(payload.pages[PAGE_ID_1], "2026-04-26T08:00:00.000Z");
+});
+
+test("incremental sync preserves prior database watermark when has_more=true with no next_cursor (defensive bail)", async () => {
+  // Codex P1 / Cursor "Descending sort with page cap drops older edits":
+  // when the database is NOT fully drained for this pass (cap hit, abort,
+  // or a defensive bail on a malformed has_more=true response), advancing
+  // databases[dbId] to the highest seen last_edited_time would cause the
+  // next pass's `after` filter to skip older unprocessed pages forever.
+  // Verify we leave the database watermark at its previous value.
+  //
+  // We exercise this via the defensive-bail path: has_more=true with
+  // next_cursor=null. The connector breaks out of the page loop without
+  // marking the database fully drained.
+  const page = makeSyntheticPage(PAGE_ID_1, "2026-04-26T10:00:00.000Z");
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes(`/databases/${DB_ID_A}/query`),
+      respond: () => ({
+        status: 200,
+        data: { results: [page], has_more: true, next_cursor: null },
+      }),
+    },
+    {
+      match: (url) => url.includes("/blocks/"),
+      respond: () => ({
+        status: 200,
+        data: {
+          results: [
+            {
+              id: "blk",
+              type: "paragraph",
+              has_children: false,
+              paragraph: { rich_text: [{ plain_text: "body" }] },
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        },
+      }),
+    },
+  ]);
+
+  const connector = createNotionConnector({ fetchFn });
+  const config = connector.validateConfig({ token: SYNTHETIC_TOKEN, databaseIds: [DB_ID_A] });
+  const priorWatermark = "2026-04-25T00:00:00.000Z";
+  const cursor = makeNotionCursor({
+    pages: {},
+    databases: { [DB_ID_A]: priorWatermark },
+  });
+
+  const result = (await connector.syncIncremental({ cursor, config })) as NotionSyncResult;
+  // The page WAS imported and per-page watermark recorded.
+  assert.equal(result.newDocs.length, 1);
+  const payload = JSON.parse(result.nextCursor.value) as {
+    pages: Record<string, string>;
+    databases: Record<string, string>;
+  };
+  assert.equal(payload.pages[PAGE_ID_1], "2026-04-26T10:00:00.000Z");
+  // Database watermark NOT advanced because we didn't fully drain — the
+  // next pass will retry the same `after` filter and pick up the older
+  // pages we missed.
+  assert.equal(payload.databases[DB_ID_A], priorWatermark);
+});
+
+test("incremental sync advances database watermark when fully drained", async () => {
+  // Counterpart to the test above: when the database IS fully drained
+  // (has_more=false), the database watermark MUST advance to the latest
+  // last_edited_time we saw, otherwise we'd re-query the same window
+  // forever.
+  const page = makeSyntheticPage(PAGE_ID_1, "2026-04-26T10:00:00.000Z");
+  const fetchFn = makeFetch([
+    {
+      match: (url) => url.includes(`/databases/${DB_ID_A}/query`),
+      respond: () => ({
+        status: 200,
+        data: { results: [page], has_more: false, next_cursor: null },
+      }),
+    },
+    {
+      match: (url) => url.includes("/blocks/"),
+      respond: () => ({
+        status: 200,
+        data: {
+          results: [
+            {
+              id: "blk",
+              type: "paragraph",
+              has_children: false,
+              paragraph: { rich_text: [{ plain_text: "body" }] },
+            },
+          ],
+          has_more: false,
+          next_cursor: null,
+        },
+      }),
+    },
+  ]);
+
+  const connector = createNotionConnector({ fetchFn });
+  const config = connector.validateConfig({ token: SYNTHETIC_TOKEN, databaseIds: [DB_ID_A] });
+  const cursor = makeNotionCursor({
+    pages: {},
+    databases: { [DB_ID_A]: "2026-04-25T00:00:00.000Z" },
+  });
+
+  const result = (await connector.syncIncremental({ cursor, config })) as NotionSyncResult;
+  assert.equal(result.newDocs.length, 1);
+  const payload = JSON.parse(result.nextCursor.value) as { databases: Record<string, string> };
+  // Drained → watermark advances.
+  assert.equal(payload.databases[DB_ID_A], "2026-04-26T10:00:00.000Z");
+});
+
 test("a network ECONNRESET on database query re-throws as transient", async () => {
   const fetchFn: NotionFetchFn = async () => {
     throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });

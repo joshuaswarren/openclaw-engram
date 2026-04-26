@@ -848,6 +848,21 @@ async function incrementalSync(
     const dbWatermark = payload.databases[dbId];
     let notionCursor: string | undefined = undefined;
     let latestInDb = dbWatermark ?? "";
+    // Track whether we fully drained this database during the pass.
+    //
+    // Why this matters (codex review P1): we sort the query descending by
+    // `last_edited_time` and filter `after: dbWatermark`. If we hit
+    // MAX_PAGES_PER_PASS or get aborted mid-database, the pages we
+    // *haven't* seen yet are *older* than the ones we have seen. Advancing
+    // `databases[dbId]` to the highest `last_edited_time` we saw would set
+    // the next pass's `after` filter past those still-pending older pages
+    // and skip them forever (they only resurface if re-edited).
+    //
+    // Solution: only persist the new database watermark when the database
+    // was fully drained for this pass. If we cut off early, leave
+    // `databases[dbId]` at its previous value so the next pass re-queries
+    // the same `after` filter and finishes the leftovers.
+    let databaseFullyDrained = false;
 
     while (true) {
       throwIfAborted(signal);
@@ -886,6 +901,7 @@ async function incrementalSync(
         has_more?: boolean;
       };
 
+      let cutoffMidPage = false;
       for (const notionPage of pageResp.results ?? []) {
         throwIfAborted(signal);
         totalConsumed++;
@@ -913,8 +929,16 @@ async function incrementalSync(
 
         if (doc === "too-large") {
           skippedTooLarge++;
+          // Codex review P2: record the revision so we don't re-fetch this
+          // oversized page on every subsequent poll. If the page shrinks
+          // below the limit on a future edit, `last_edited_time` will
+          // advance and the watermark check above will let it through.
+          updatedPages[pageId] = lastEdited;
         } else if (doc === "empty") {
           skippedEmpty++;
+          // Codex review P2: same reasoning as too-large — record the
+          // revision so we don't re-fetch an empty page indefinitely.
+          updatedPages[pageId] = lastEdited;
         } else if (doc !== null) {
           newDocs.push(doc);
           // Advance watermarks.
@@ -923,23 +947,47 @@ async function incrementalSync(
             latestInDb = lastEdited;
           }
         } else {
-          // null = terminal skip (404/403). Don't advance the page watermark;
-          // there's nothing to retry but we also don't want to re-attempt
-          // unless the page comes back or permissions change, so we still
-          // record the version to avoid repeated skip attempts.
+          // null = terminal skip (404/403). Record the version so we
+          // don't repeatedly attempt a permanently-inaccessible page.
           updatedPages[pageId] = lastEdited;
         }
 
-        if (totalConsumed >= MAX_PAGES_PER_PASS) break;
+        if (totalConsumed >= MAX_PAGES_PER_PASS) {
+          cutoffMidPage = true;
+          break;
+        }
       }
 
-      if (!pageResp.has_more || typeof pageResp.next_cursor !== "string" || pageResp.next_cursor === null) {
+      if (cutoffMidPage) {
+        // Hit the per-pass cap inside this database's results. The
+        // database is NOT fully drained; leave its watermark intact so
+        // the next pass re-queries the same `after` filter.
         break;
       }
-      notionCursor = pageResp.next_cursor;
+
+      if (pageResp.has_more === true) {
+        // Notion claims there are more pages.
+        if (typeof pageResp.next_cursor === "string" && pageResp.next_cursor.length > 0) {
+          // Continue paging.
+          notionCursor = pageResp.next_cursor;
+          continue;
+        }
+        // Defensive bail: has_more=true but no usable next_cursor. We do
+        // NOT mark the database fully drained — the next pass must retry
+        // the same `after` filter and pick up whatever we missed.
+        break;
+      }
+      // has_more is false (or absent): the database is fully drained for
+      // this pass. Safe to advance the database watermark below.
+      databaseFullyDrained = true;
+      break;
     }
 
-    if (latestInDb) updatedDatabases[dbId] = latestInDb;
+    // Only advance the database watermark when we fully drained the
+    // database. See the long comment above on `databaseFullyDrained`.
+    if (databaseFullyDrained && latestInDb) {
+      updatedDatabases[dbId] = latestInDb;
+    }
   }
 
   const nextCursor = makeCursor({ pages: updatedPages, databases: updatedDatabases });
