@@ -23,11 +23,14 @@
  *     network access.
  *
  *   - **Cursor semantics.** High-water mark is the highest `internalDate`
- *     (Unix epoch milliseconds as a string) seen across all successfully
- *     processed messages. Stored as a single ISO 8601 string in the cursor
- *     value. On first sync (cursor=null) we record "now" as the watermark
- *     WITHOUT importing anything — mirrors Drive's getStartPageToken
- *     bootstrap and keeps "first install" from re-ingesting history.
+ *     (Unix epoch milliseconds as a string) seen across all processed messages.
+ *     Stored as an exact epoch-ms numeric string (`watermarkMs`) in the cursor
+ *     value — NOT as an ISO 8601 string — to preserve sub-second precision and
+ *     prevent the `after:<sec>` Gmail query from re-returning messages that
+ *     fall in the same second as the watermark. On first sync (cursor=null) we
+ *     record "now" as the watermark WITHOUT importing anything — mirrors
+ *     Drive's getStartPageToken bootstrap and keeps "first install" from
+ *     re-ingesting history.
  *
  *   - **Polling.** `users.messages.list` with `q: "after:<internalDate/1000>
  *     <userQuery>"` retrieves message ids newer than the watermark. We then
@@ -41,11 +44,16 @@
  *     id and `externalRevision` is `internalDate` (epoch ms string), so
  *     downstream dedup can recognise repeat fetches if the cursor is rewound.
  *
- *   - **Watermark advancement.** The high-water mark advances only when a
- *     message is SUCCESSFULLY processed. If a transient error stops the
- *     pass mid-batch, the cursor is NOT advanced so the next poll retries
- *     the same batch. This mirrors Drive's contract (CLAUDE.md gotcha: never
- *     advance cursor past unprocessed transient failures).
+ *   - **Watermark advancement.** The high-water mark advances only when the
+ *     full message list is drained without hitting the per-pass cap. Skipped
+ *     messages (empty/too-large/inaccessible) are recorded in a `skippedIds`
+ *     set in the cursor and bypassed on future polls without stalling the
+ *     watermark. Sub-second duplicate messages (re-returned by Gmail's
+ *     second-granular `after:` filter) are suppressed via a `seenIds` map.
+ *     If a transient error stops the pass mid-batch, the cursor is NOT
+ *     advanced so the next poll retries the same batch — mirrors Drive's
+ *     contract (CLAUDE.md gotcha: never advance cursor past unprocessed
+ *     transient failures).
  *
  *   - **Privacy.** No message content, subject, or headers are ever logged.
  *     Message counts and ids may be logged. OAuth credentials are never
@@ -383,12 +391,52 @@ function pickHttpStatus(e: {
 // ---------------------------------------------------------------------------
 
 /**
- * Cursor payload. A single ISO 8601 watermark — the `internalDate` (converted
- * from epoch-ms to Date) of the most recently processed message.
+ * Cursor payload v2.
+ *
+ * Precision fix (Cursor thread PRRT_kwDORJXyws59sa42): we now store the
+ * watermark as an exact epoch-millisecond numeric string (`watermarkMs`)
+ * rather than an ISO 8601 string. This prevents precision loss: ISO encodes
+ * ms, but `after:<sec>` in the Gmail query truncates to seconds, so messages
+ * whose `internalDate` falls within `[floor(watermarkMs/1000)*1000,
+ * watermarkMs)` were returned by the `after:` filter on the next poll and
+ * re-fetched. Storing the exact ms lets us short-circuit those duplicates via
+ * the `seenIds` map below.
+ *
+ * Backward compatibility: old cursors stored `watermarkIso`. The parser
+ * accepts both and converts `watermarkIso` to `watermarkMs` on first read.
+ *
+ * Skipped-message stall fix (Cursor thread PRRT_kwDORJXyws59sa43): the
+ * `skippedIds` set records message ids that were permanently skipped (empty
+ * body, too-large, or inaccessible / 404). On every subsequent poll, any
+ * message in `skippedIds` is silently bypassed without consuming the pass cap
+ * or stalling the watermark. This mirrors what the Notion connector does with
+ * its `pages` revision map (#744).
+ *
+ * `seenIds` (sub-second dedup map): maps message id → internalDate ms string
+ * for every message processed in the same second as the current watermark.
+ * Cleared when the watermark advances past that second boundary. Prevents
+ * re-importing duplicates that appear in the `after:floor(watermarkMs/1000)`
+ * window because Gmail's `after:` operator is second-granular.
  */
 interface GmailCursorPayload {
-  /** ISO 8601 timestamp of the highest internalDate seen. */
-  watermarkIso: string;
+  /**
+   * Exact epoch-millisecond watermark (as a numeric string, e.g. "1745000000500").
+   * Empty string means "unset" (pre-bootstrap cursors should not exist).
+   */
+  watermarkMs: string;
+  /**
+   * Set of message ids permanently skipped due to empty body, oversize, or
+   * inaccessibility. Never re-fetched regardless of watermark state.
+   * Stored as a plain object (map<id, true>) for JSON round-trip safety.
+   */
+  skippedIds: Record<string, true>;
+  /**
+   * Sub-second dedup map: message id → internalDate ms string for messages
+   * processed within the same second as the current watermark. Used to skip
+   * duplicates returned by the second-granular `after:` Gmail filter.
+   * Cleared when the watermark advances into a new second.
+   */
+  seenIds: Record<string, string>;
 }
 
 function makeCursor(payload: GmailCursorPayload): ConnectorCursor {
@@ -416,8 +464,34 @@ function parseCursorPayload(cursor: ConnectorCursor): GmailCursorPayload {
     throw new Error(`gmail: cursor value does not match GmailCursorPayload shape`);
   }
   const p = parsed as Record<string, unknown>;
-  const watermarkIso = typeof p.watermarkIso === "string" ? p.watermarkIso : "";
-  return { watermarkIso };
+
+  // Backward compat: old cursors stored `watermarkIso` (ISO 8601 string).
+  // Convert to epoch-ms string on first read so we never lose precision going
+  // forward. New cursors store `watermarkMs` directly.
+  let watermarkMs = "";
+  if (typeof p.watermarkMs === "string" && p.watermarkMs.length > 0) {
+    watermarkMs = p.watermarkMs;
+  } else if (typeof p.watermarkIso === "string" && p.watermarkIso.length > 0) {
+    // Legacy conversion: ISO → epoch ms.
+    const ms = new Date(p.watermarkIso as string).getTime();
+    if (Number.isFinite(ms) && ms > 0) {
+      watermarkMs = String(ms);
+    }
+  }
+
+  // skippedIds: tolerate missing key (old cursors lack it).
+  let skippedIds: Record<string, true> = {};
+  if (typeof p.skippedIds === "object" && p.skippedIds !== null && !Array.isArray(p.skippedIds)) {
+    skippedIds = p.skippedIds as Record<string, true>;
+  }
+
+  // seenIds: tolerate missing key (old cursors lack it).
+  let seenIds: Record<string, string> = {};
+  if (typeof p.seenIds === "object" && p.seenIds !== null && !Array.isArray(p.seenIds)) {
+    seenIds = p.seenIds as Record<string, string>;
+  }
+
+  return { watermarkMs, skippedIds, seenIds };
 }
 
 /**
@@ -713,10 +787,13 @@ export function createGmailConnector(
       // First-sync bootstrap: record "now" as the watermark and return
       // without importing anything. Mirrors Drive's getStartPageToken pattern.
       if (args.cursor === null) {
-        const nowIso = new Date().toISOString();
         const bootstrapResult: GmailSyncResult = {
           newDocs: [],
-          nextCursor: makeCursor({ watermarkIso: nowIso }),
+          nextCursor: makeCursor({
+            watermarkMs: String(Date.now()),
+            skippedIds: {},
+            seenIds: {},
+          }),
           skippedInaccessible: 0,
           skippedEmpty: 0,
           skippedTooLarge: 0,
@@ -754,18 +831,26 @@ async function incrementalSync(
   let skippedTooLarge = 0;
   let totalConsumed = 0;
 
-  // Convert ISO watermark to epoch-milliseconds (preserved in full) and to
-  // epoch-seconds for the Gmail `after:` operator. Cursor bug fix (Cursor
-  // Medium review): preserve the original millisecond precision in
-  // `currentWatermarkMs` so that `highWaterMs` is never initialized to a
-  // truncated value — a message between the truncated and original value would
-  // appear to advance the watermark backward.
-  let afterEpochSec = 0;
+  // --- Precision fix (Thread 1 / PRRT_kwDORJXyws59sa42) ---
+  //
+  // Watermark is now stored as exact epoch-milliseconds (`watermarkMs`).
+  // The Gmail `after:<n>` operator accepts epoch seconds, so we truncate to
+  // seconds for the query — but this means messages in the same second as the
+  // watermark are returned again by Gmail. We guard against re-importing them
+  // by checking each returned message id against `seenIds` (populated from the
+  // cursor) and comparing its `internalDate` against the exact ms watermark.
+  //
+  // Advance the watermark only forward; never let it go backward regardless
+  // of clock skew or out-of-order internalDate values from Gmail.
   let currentWatermarkMs = 0;
-  if (cursorPayload.watermarkIso.length > 0) {
-    const ms = new Date(cursorPayload.watermarkIso).getTime();
+  let afterEpochSec = 0;
+  if (cursorPayload.watermarkMs.length > 0) {
+    const ms = Number(cursorPayload.watermarkMs);
     if (Number.isFinite(ms) && ms > 0) {
       currentWatermarkMs = ms;
+      // Epoch-seconds for the Gmail `after:` query operator. Using floor (not
+      // ceil) ensures we do not skip messages in the same second as the
+      // watermark that were not yet seen; dedup is handled by `seenIds`.
       afterEpochSec = Math.floor(ms / 1000);
     }
   }
@@ -773,10 +858,21 @@ async function incrementalSync(
   // Build the Gmail search query: combine watermark filter with user query.
   const listQuery = buildListQuery(afterEpochSec, config.query);
 
-  // Track the highest internalDate seen (in ms) across all processed messages
-  // (including skipped-empty and skipped-too-large, which are immutable on
-  // Gmail and would otherwise stall the watermark forever — Cursor Medium
-  // review fix). Initialize from the original full-precision watermark.
+  // Sub-second dedup (Thread 1): carry over seenIds from the previous cursor.
+  // These are message ids already processed within the same second as the
+  // current watermark. We skip them if Gmail re-returns them.
+  // Cleared in the next cursor when the watermark advances into a new second.
+  const seenIds: Record<string, string> = { ...cursorPayload.seenIds };
+
+  // Skipped-message stall fix (Thread 2 / PRRT_kwDORJXyws59sa43): carry over
+  // permanently-skipped message ids from the previous cursor. These are
+  // messages that were empty, too-large, or inaccessible. They will never
+  // become processable (Gmail messages are immutable), so we bypass them
+  // without counting them toward the pass cap or stalling the watermark.
+  const skippedIds: Record<string, true> = { ...cursorPayload.skippedIds };
+
+  // Track the highest internalDate seen (in ms) across all non-skipped
+  // messages. Initialized to the current watermark so it only ever advances.
   let highWaterMs = currentWatermarkMs;
 
   let pageToken: string | undefined = undefined;
@@ -813,6 +909,21 @@ async function incrementalSync(
     for (const ref of messages) {
       throwIfAborted(signal);
 
+      // Thread 2: if this id was permanently skipped in a prior pass, skip
+      // it again without consuming the per-pass cap. The message is immutable
+      // and will never become processable.
+      if (skippedIds[ref.id]) {
+        continue;
+      }
+
+      // Thread 1 (sub-second dedup): if this id was already processed in the
+      // same second-window as the current watermark, skip it. This prevents
+      // re-importing messages that Gmail re-returns because `after:` is
+      // second-granular but our watermark has sub-second precision.
+      if (seenIds[ref.id] !== undefined) {
+        continue;
+      }
+
       if (totalConsumed >= MAX_MESSAGES_PER_PASS) {
         // Hit the per-pass cap mid-page. Do NOT advance the watermark — the
         // remaining messages in this window must be retried on the next poll.
@@ -832,14 +943,17 @@ async function incrementalSync(
 
       if (doc === "inaccessible") {
         skippedInaccessible++;
-        // Terminal: don't re-fetch. We don't have the internalDate so we
-        // cannot advance the watermark based on this message.
+        // Terminal: don't re-fetch this id. Record it in skippedIds so future
+        // polls bypass it without hitting the API again (Thread 2 fix).
+        skippedIds[ref.id] = true;
       } else if (doc !== null && typeof doc === "object" && "kind" in doc) {
         // SkippedWithDate: empty or too-large. Gmail messages are immutable,
-        // so record the internalDate to advance the watermark past them and
-        // prevent re-fetching forever (Cursor Medium review fix).
+        // so record the id in skippedIds (Thread 2 fix) to prevent re-fetching
+        // on every subsequent poll, AND update highWaterMs with the message's
+        // internalDate so the watermark can advance past it when fully drained.
         if (doc.kind === "empty") skippedEmpty++;
         else skippedTooLarge++;
+        skippedIds[ref.id] = true;
         const skippedMs = Number(doc.internalDate);
         if (Number.isFinite(skippedMs) && skippedMs > highWaterMs) {
           highWaterMs = skippedMs;
@@ -853,6 +967,9 @@ async function incrementalSync(
           if (Number.isFinite(msgMs) && msgMs > highWaterMs) {
             highWaterMs = msgMs;
           }
+          // Thread 1: record this id in seenIds so same-second re-queries
+          // don't re-import it. seenIds maps id → internalDate ms string.
+          seenIds[ref.id] = successDoc.source.externalRevision;
         }
       }
     }
@@ -868,18 +985,37 @@ async function incrementalSync(
     break;
   }
 
-  // Only advance the watermark when we fully drained the list (no cap hit, no
-  // premature abort). If we stopped early, preserve the existing watermark so
-  // the next poll re-queries the same `after:` window and processes the
-  // remaining messages. This mirrors Notion's databaseFullyDrained contract.
-  // Compare against `currentWatermarkMs` (full-precision ms) not against the
-  // truncated `afterEpochSec * 1000` to avoid a backward regression.
-  const nextWatermarkIso =
-    listFullyDrained && !capHit && highWaterMs > currentWatermarkMs
-      ? new Date(highWaterMs).toISOString()
-      : cursorPayload.watermarkIso;
+  // --- Watermark advancement ---
+  //
+  // Only advance when we fully drained the list (no cap hit, no premature
+  // abort). Compare against the exact ms watermark (not the truncated
+  // afterEpochSec * 1000) to prevent backward regression on clock skew.
+  //
+  // When the watermark advances into a new second (floor(highWaterMs/1000) >
+  // floor(currentWatermarkMs/1000)), clear seenIds — those sub-second entries
+  // are no longer relevant since the new `after:` query will use a higher
+  // epoch-second and won't return those old messages anymore.
+  let nextWatermarkMs: string;
+  let nextSeenIds: Record<string, string>;
 
-  const nextCursor = makeCursor({ watermarkIso: nextWatermarkIso });
+  if (listFullyDrained && !capHit && highWaterMs > currentWatermarkMs) {
+    nextWatermarkMs = String(highWaterMs);
+    // Clear seenIds if the watermark crossed a second boundary; otherwise
+    // carry forward the updated seenIds (still needed for sub-second dedup).
+    const prevSec = Math.floor(currentWatermarkMs / 1000);
+    const newSec = Math.floor(highWaterMs / 1000);
+    nextSeenIds = newSec > prevSec ? {} : seenIds;
+  } else {
+    // Watermark unchanged — keep exact ms string and carry seenIds forward.
+    nextWatermarkMs = cursorPayload.watermarkMs;
+    nextSeenIds = seenIds;
+  }
+
+  const nextCursor = makeCursor({
+    watermarkMs: nextWatermarkMs,
+    skippedIds,
+    seenIds: nextSeenIds,
+  });
 
   return {
     newDocs,

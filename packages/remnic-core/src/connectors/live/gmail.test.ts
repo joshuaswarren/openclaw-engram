@@ -277,9 +277,11 @@ test("first sync (cursor=null) returns no docs and seeds the cursor with now", a
   assert.deepEqual(result.newDocs, []);
   assert.equal(result.nextCursor.kind, GMAIL_CURSOR_KIND);
 
-  // Cursor value should be JSON with a watermarkIso near "now".
-  const payload = JSON.parse(result.nextCursor.value) as { watermarkIso: string };
-  const watermarkMs = new Date(payload.watermarkIso).getTime();
+  // Cursor must store watermarkMs (epoch-ms string), NOT watermarkIso (Thread 1).
+  const payload = JSON.parse(result.nextCursor.value) as { watermarkMs: string; watermarkIso?: string };
+  assert.ok(typeof payload.watermarkMs === "string", "cursor must have watermarkMs");
+  assert.equal(payload.watermarkIso, undefined, "cursor must NOT have watermarkIso (use watermarkMs)");
+  const watermarkMs = Number(payload.watermarkMs);
   assert.ok(watermarkMs >= before, "watermark should be >= before");
   assert.ok(watermarkMs <= after + 100, "watermark should be <= after");
 });
@@ -299,9 +301,10 @@ test("incremental sync emits ConnectorDocument entries for new messages", async 
   ]);
   const connector = createGmailConnector({ fetchFn });
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  // Use new watermarkMs format.
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(Number(T1) - 1000).toISOString() }),
+    value: JSON.stringify({ watermarkMs: String(Number(T1) - 1000), skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -329,16 +332,17 @@ test("watermark advances to the highest internalDate of successfully processed m
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
   const result = await connector.syncIncremental({ cursor, config });
 
-  const payload = JSON.parse(result.nextCursor.value) as { watermarkIso: string };
-  const watermarkMs = new Date(payload.watermarkIso).getTime();
+  // Watermark must be stored as epoch-ms string (Thread 1 precision fix).
+  const payload = JSON.parse(result.nextCursor.value) as { watermarkMs: string };
+  assert.ok(typeof payload.watermarkMs === "string", "cursor must use watermarkMs");
   // Watermark should equal T3 (the highest internalDate).
-  assert.equal(watermarkMs, Number(T3));
+  assert.equal(Number(payload.watermarkMs), Number(T3));
 });
 
 // ---------------------------------------------------------------------------
@@ -383,7 +387,7 @@ test("watermark does NOT advance when nextPageToken present (partial drain)", as
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: initialWatermark }),
+    value: JSON.stringify({ watermarkMs: String(new Date(initialWatermark).getTime()), skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -409,16 +413,15 @@ test("watermark advances when list is fully drained (no nextPageToken)", async (
   const initialWatermark = new Date(Number(T1) - 1000).toISOString();
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: initialWatermark }),
+    value: JSON.stringify({ watermarkMs: String(new Date(initialWatermark).getTime()), skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
   const result = await connector.syncIncremental({ cursor, config });
 
-  const payload = JSON.parse(result.nextCursor.value) as { watermarkIso: string };
-  const watermarkMs = new Date(payload.watermarkIso).getTime();
-  // Watermark should advance to T3 (the highest).
-  assert.equal(watermarkMs, Number(T3));
+  const payload = JSON.parse(result.nextCursor.value) as { watermarkMs: string };
+  // Watermark should advance to T3 (the highest), stored as epoch-ms string.
+  assert.equal(Number(payload.watermarkMs), Number(T3));
 });
 
 // ---------------------------------------------------------------------------
@@ -436,7 +439,7 @@ test("watermark does NOT advance when all messages are inaccessible (404)", asyn
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: initialWatermark }),
+    value: JSON.stringify({ watermarkMs: String(new Date(initialWatermark).getTime()), skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -445,8 +448,9 @@ test("watermark does NOT advance when all messages are inaccessible (404)", asyn
   // No docs, watermark unchanged.
   assert.equal(result.newDocs.length, 0);
   assert.equal(result.skippedInaccessible, 2);
-  const payload = JSON.parse(result.nextCursor.value) as { watermarkIso: string };
-  assert.equal(payload.watermarkIso, initialWatermark);
+  const payload = JSON.parse(result.nextCursor.value) as { watermarkMs: string };
+  // Watermark must remain at T1 (epoch ms).
+  assert.equal(Number(payload.watermarkMs), Number(T1));
 });
 
 // ---------------------------------------------------------------------------
@@ -465,7 +469,7 @@ test("a 404 on a single message skips it without stopping the pass", async () =>
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -488,7 +492,7 @@ test("a 403 permission-denied is terminal (skip-and-continue)", async () => {
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -523,7 +527,7 @@ test("a transient 429 re-throws and the cursor does NOT advance", async () => {
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -550,7 +554,7 @@ test("a transient 503 re-throws", async () => {
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -575,7 +579,7 @@ test("an AbortError raised mid-fetch re-throws", async () => {
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -600,7 +604,7 @@ test("a network-layer ECONNRESET re-throws as transient", async () => {
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -642,7 +646,7 @@ test("syncIncremental honors abortSignal between messages", async () => {
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -673,7 +677,7 @@ test("messages with empty body are skipped (skippedEmpty)", async () => {
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -705,7 +709,7 @@ test("watermark advances past empty messages on full drain (immutable skip)", as
   const initialWatermark = new Date(Number(T1)).toISOString();
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: initialWatermark }),
+    value: JSON.stringify({ watermarkMs: String(new Date(initialWatermark).getTime()), skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -715,9 +719,8 @@ test("watermark advances past empty messages on full drain (immutable skip)", as
   assert.equal(result.newDocs.length, 1);
   // Watermark should advance to T3 (the empty message's internalDate) so the
   // next poll does not re-fetch it.
-  const payload = JSON.parse(result.nextCursor.value) as { watermarkIso: string };
-  const watermarkMs = new Date(payload.watermarkIso).getTime();
-  assert.equal(watermarkMs, Number(T3), "watermark must advance past immutable empty message");
+  const payload = JSON.parse(result.nextCursor.value) as { watermarkMs: string };
+  assert.equal(Number(payload.watermarkMs), Number(T3), "watermark must advance past immutable empty message");
 });
 
 // ---------------------------------------------------------------------------
@@ -783,7 +786,7 @@ test("validateConfig is enforced again on every sync pass", async () => {
   const badConfig = { clientId: "ok", clientSecret: "ok", refreshToken: "" } as unknown as import("./framework.js").ConnectorConfig;
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -855,7 +858,7 @@ test("incremental sync extracts text/plain from multipart/alternative messages",
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -888,7 +891,7 @@ test("incremental sync extracts plain text from HTML when no text/plain part exi
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -917,7 +920,7 @@ test("OAuth2 token exchange failure propagates as transient error", async () => 
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -941,7 +944,7 @@ test("OAuth2 token exchange 401 failure (invalid credentials) also throws", asyn
   const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
   const cursor: ConnectorCursor = {
     kind: GMAIL_CURSOR_KIND,
-    value: JSON.stringify({ watermarkIso: new Date(0).toISOString() }),
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
     updatedAt: "2026-04-25T00:00:00.000Z",
   };
 
@@ -949,4 +952,284 @@ test("OAuth2 token exchange 401 failure (invalid credentials) also throws", asyn
     connector.syncIncremental({ cursor, config }),
     /OAuth2 token exchange failed/,
   );
+});
+
+// ---------------------------------------------------------------------------
+// Thread 1 regression: watermark precision — sub-second messages
+// ---------------------------------------------------------------------------
+
+test("cursor stores watermarkMs as epoch-ms string, not ISO (Thread 1 precision)", async () => {
+  // Watermark with sub-second precision (ms digit is non-zero).
+  const preciseMs = "1745000000500"; // epoch ms ending in 500 ms
+  const msg = makeMessage("msg-precise-1", preciseMs, "precise message");
+
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    listHandler([makeMessageRef("msg-precise-1")]),
+    getHandler({ "msg-precise-1": msg }),
+  ]);
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkMs: String(Number(preciseMs) - 1000), skippedIds: {}, seenIds: {} }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = await connector.syncIncremental({ cursor, config });
+
+  const payload = JSON.parse(result.nextCursor.value) as Record<string, unknown>;
+  // Must store exact ms, not an ISO string.
+  assert.ok(typeof payload.watermarkMs === "string", "cursor must use watermarkMs");
+  assert.equal(payload.watermarkIso, undefined, "cursor must NOT use watermarkIso");
+  // Must preserve sub-second precision: the stored value must equal the exact
+  // internalDate ms, not a truncation to the second boundary.
+  assert.equal(
+    Number(payload.watermarkMs as string),
+    Number(preciseMs),
+    "watermark must preserve sub-second precision (not truncated to second)",
+  );
+});
+
+test("sub-second messages in seenIds are not re-imported on the next poll (Thread 1)", async () => {
+  // Two messages with internalDate within the same second: 1745000000200 and
+  // 1745000000800. After poll 1 both are processed and watermark = 1745000000800.
+  // Poll 2 queries after:1745000000 (same second floor). Both message ids must
+  // be skipped via seenIds — not re-imported.
+  const msA = "1745000000200";
+  const msB = "1745000000800"; // highest — becomes watermark after poll 1
+  const msgA = makeMessage("msg-subsec-a", msA, "sub-second message A");
+  const msgB = makeMessage("msg-subsec-b", msB, "sub-second message B");
+
+  // --- Poll 1: process both messages ---
+  const fetchFn1 = makeFetch([
+    tokenHandler(),
+    listHandler([makeMessageRef("msg-subsec-a"), makeMessageRef("msg-subsec-b")]),
+    getHandler({ "msg-subsec-a": msgA, "msg-subsec-b": msgB }),
+  ]);
+  const connector1 = createGmailConnector({ fetchFn: fetchFn1 });
+  const config = connector1.validateConfig({ ...SYNTHETIC_CREDS });
+  // Watermark starts within the SAME second as msA and msB (floor=1745000000).
+  // Use 50ms before msA — this puts the initial watermark in second 1745000000
+  // so the watermark advance from initial to msB stays within the same second
+  // and seenIds are NOT cleared (they're still needed for sub-second dedup).
+  const initialWatermarkMs = String(Number(msA) - 50); // 1745000000150, floor=1745000000
+  const startCursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkMs: initialWatermarkMs, skippedIds: {}, seenIds: {} }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result1 = await connector1.syncIncremental({ cursor: startCursor, config });
+  assert.equal(result1.newDocs.length, 2, "poll 1 should import both messages");
+
+  // The cursor after poll 1 must carry seenIds for both messages (same-second dedup).
+  const cursor1Payload = JSON.parse(result1.nextCursor.value) as {
+    watermarkMs: string;
+    seenIds: Record<string, string>;
+  };
+  assert.equal(Number(cursor1Payload.watermarkMs), Number(msB), "watermark after poll 1 must be msB");
+  // All three timestamps (initial, msA, msB) are in the same second (floor=1745000000),
+  // so seenIds must NOT be cleared — they're retained for same-second dedup.
+  assert.equal(
+    Math.floor(Number(initialWatermarkMs) / 1000),
+    Math.floor(Number(msB) / 1000),
+    "test invariant: initial watermark and msB must be in the same second",
+  );
+  assert.ok(
+    cursor1Payload.seenIds["msg-subsec-a"] !== undefined,
+    "seenIds must include msg-subsec-a for sub-second dedup",
+  );
+  assert.ok(
+    cursor1Payload.seenIds["msg-subsec-b"] !== undefined,
+    "seenIds must include msg-subsec-b for sub-second dedup",
+  );
+
+  // --- Poll 2: same messages returned by Gmail (after: is second-granular) ---
+  let getCallCount = 0;
+  const fetchFn2 = makeFetch([
+    tokenHandler(),
+    // Gmail re-returns the same two messages because after:floor(msB/1000) includes them.
+    listHandler([makeMessageRef("msg-subsec-a"), makeMessageRef("msg-subsec-b")]),
+    {
+      match: (url) => url.includes("format=full"),
+      respond: () => {
+        getCallCount++;
+        return { status: 200, data: msgA };
+      },
+    },
+  ]);
+  const connector2 = createGmailConnector({ fetchFn: fetchFn2 });
+  const result2 = await connector2.syncIncremental({ cursor: result1.nextCursor, config });
+
+  // Both messages must be skipped via seenIds — no new docs, no API get calls.
+  assert.equal(result2.newDocs.length, 0, "poll 2 must not re-import same-second messages");
+  assert.equal(getCallCount, 0, "poll 2 must not call messages.get for seenIds messages");
+});
+
+test("backward-compat: old watermarkIso cursor is migrated to watermarkMs (Thread 1)", async () => {
+  // An old cursor stored watermarkIso. The parser must convert it to watermarkMs
+  // and the next cursor must use watermarkMs (never write watermarkIso back).
+  const isoWatermark = new Date(Number(T1)).toISOString();
+  const msg = makeMessage("msg-compat-1", T2, "compat migration test");
+
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    listHandler([makeMessageRef("msg-compat-1")]),
+    getHandler({ "msg-compat-1": msg }),
+  ]);
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  // Old cursor format (no watermarkMs, no skippedIds, no seenIds).
+  const legacyCursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkIso: isoWatermark }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = await connector.syncIncremental({ cursor: legacyCursor, config });
+
+  assert.equal(result.newDocs.length, 1, "should still import messages from legacy cursor");
+  const nextPayload = JSON.parse(result.nextCursor.value) as Record<string, unknown>;
+  assert.ok(typeof nextPayload.watermarkMs === "string", "next cursor must use watermarkMs");
+  assert.equal(nextPayload.watermarkIso, undefined, "next cursor must not use watermarkIso");
+  assert.equal(Number(nextPayload.watermarkMs as string), Number(T2), "watermark must advance to T2");
+});
+
+// ---------------------------------------------------------------------------
+// Thread 2 regression: skipped messages recorded in skippedIds
+// ---------------------------------------------------------------------------
+
+test("empty message id is recorded in skippedIds (Thread 2)", async () => {
+  const emptyMsg: GmailMessage = {
+    id: "msg-empty-skip",
+    internalDate: T1,
+    payload: { mimeType: "text/plain", body: { data: "" } },
+  };
+
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    listHandler([makeMessageRef("msg-empty-skip")]),
+    getHandler({ "msg-empty-skip": emptyMsg }),
+  ]);
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GmailSyncResult;
+  assert.equal(result.skippedEmpty, 1);
+
+  // The cursor must record the empty message id in skippedIds.
+  const nextPayload = JSON.parse(result.nextCursor.value) as { skippedIds: Record<string, unknown> };
+  assert.ok(
+    nextPayload.skippedIds["msg-empty-skip"] === true,
+    "empty message id must be in skippedIds",
+  );
+});
+
+test("too-large message id is recorded in skippedIds (Thread 2)", async () => {
+  // Build a message whose body exceeds MAX_TEXT_BYTES (2 MB).
+  const largeBody = "x".repeat(2 * 1024 * 1024 + 1);
+  const largeMsg: GmailMessage = {
+    id: "msg-toolarge-skip",
+    internalDate: T1,
+    payload: {
+      mimeType: "text/plain",
+      body: { data: Buffer.from(largeBody, "utf-8").toString("base64url") },
+    },
+  };
+
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    listHandler([makeMessageRef("msg-toolarge-skip")]),
+    getHandler({ "msg-toolarge-skip": largeMsg }),
+  ]);
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GmailSyncResult;
+  assert.equal(result.skippedTooLarge, 1);
+
+  const nextPayload = JSON.parse(result.nextCursor.value) as { skippedIds: Record<string, unknown> };
+  assert.ok(
+    nextPayload.skippedIds["msg-toolarge-skip"] === true,
+    "too-large message id must be in skippedIds",
+  );
+});
+
+test("inaccessible (404) message id is recorded in skippedIds (Thread 2)", async () => {
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    listHandler([makeMessageRef("msg-404-skip")]),
+    getHandler({}, { "msg-404-skip": 404 }),
+  ]);
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({ watermarkMs: "0", skippedIds: {}, seenIds: {} }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GmailSyncResult;
+  assert.equal(result.skippedInaccessible, 1);
+
+  const nextPayload = JSON.parse(result.nextCursor.value) as { skippedIds: Record<string, unknown> };
+  assert.ok(
+    nextPayload.skippedIds["msg-404-skip"] === true,
+    "inaccessible message id must be in skippedIds",
+  );
+});
+
+test("skippedIds messages are not re-fetched on subsequent polls (Thread 2 stall fix)", async () => {
+  // Poll 2 has the empty message id already in skippedIds from poll 1.
+  // We verify messages.get is never called for it and it does not consume the cap.
+  const goodMsg = makeMessage("msg-good-skip-bypass", T2, "good content for next poll");
+
+  let getCallsForSkipped = 0;
+  const fetchFn = makeFetch([
+    tokenHandler(),
+    listHandler([
+      makeMessageRef("msg-empty-already-skipped"),
+      makeMessageRef("msg-good-skip-bypass"),
+    ]),
+    {
+      match: (url) => url.includes("format=full"),
+      respond: (url) => {
+        if (url.includes("msg-empty-already-skipped")) {
+          getCallsForSkipped++;
+        }
+        return { status: 200, data: goodMsg };
+      },
+    },
+  ]);
+  const connector = createGmailConnector({ fetchFn });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  // Cursor carries the previously-skipped id in skippedIds.
+  const cursor: ConnectorCursor = {
+    kind: GMAIL_CURSOR_KIND,
+    value: JSON.stringify({
+      watermarkMs: String(Number(T1) - 1000),
+      skippedIds: { "msg-empty-already-skipped": true },
+      seenIds: {},
+    }),
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = (await connector.syncIncremental({ cursor, config })) as GmailSyncResult;
+
+  // Only the new good message is imported.
+  assert.equal(result.newDocs.length, 1, "only the new good message should be imported");
+  assert.equal(result.newDocs[0].source.externalId, "msg-good-skip-bypass");
+  assert.equal(result.skippedEmpty, 0, "skipped-id messages must not count toward skippedEmpty again");
+  assert.equal(getCallsForSkipped, 0, "messages.get must NOT be called for ids in skippedIds");
 });
