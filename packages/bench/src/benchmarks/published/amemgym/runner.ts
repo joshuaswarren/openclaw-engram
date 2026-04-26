@@ -293,6 +293,10 @@ function parseAMemGymChoice(
         plainTextOption.choiceText,
         choice.answer,
       )
+      || plainOptionTextSafelyExtendsChoice(
+        plainTextOption.choiceText,
+        choice.answer,
+      )
     ) {
       return { index, choice };
     }
@@ -422,6 +426,32 @@ function plainOptionTextExactlyMatchesChoice(
   return normalizedChoiceText.length > 0
     && normalizedChoiceAnswer.length > 0
     && normalizedChoiceText === normalizedChoiceAnswer;
+}
+
+function plainOptionTextSafelyExtendsChoice(
+  choiceText: string,
+  choiceAnswer: string,
+): boolean {
+  const normalizedChoiceAnswer = normalizeForChoiceMatch(choiceAnswer);
+  return choiceHasNumericAlternative(normalizedChoiceAnswer)
+    && startsWithNormalizedPhrase(
+      normalizeForChoiceMatch(choiceText),
+      normalizedChoiceAnswer,
+    );
+}
+
+function choiceHasNumericAlternative(normalizedChoiceAnswer: string): boolean {
+  return /\b\d+\s+(?:or|to)\s+\d+\b/.test(normalizedChoiceAnswer)
+    || /\bor\s+\d+\b/.test(normalizedChoiceAnswer);
+}
+
+function startsWithNormalizedPhrase(haystack: string, needle: string): boolean {
+  const haystackTokens = haystack.split(" ").filter((token) => token.length > 0);
+  const needleTokens = needle.split(" ").filter((token) => token.length > 0);
+  if (needleTokens.length === 0 || needleTokens.length > haystackTokens.length) {
+    return false;
+  }
+  return needleTokens.every((token, index) => haystackTokens[index] === token);
 }
 
 function containsNormalizedPhrase(haystack: string, needle: string): boolean {
