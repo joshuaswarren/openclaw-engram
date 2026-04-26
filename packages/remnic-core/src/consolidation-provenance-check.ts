@@ -21,7 +21,10 @@ import path from "node:path";
 import { access, readdir, readFile, stat } from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import type { StorageManager } from "./storage.js";
-import { isConsolidationOperator } from "./consolidation-operator.js";
+import {
+  DERIVED_FROM_MEMORY_ID_RE,
+  isConsolidationOperator,
+} from "./consolidation-operator.js";
 // Import the canonical `sidecarKey` from page-versioning (PR #634
 // review, cursor Medium) so a future key-format change stays in
 // lock-step with the doctor scan.
@@ -391,7 +394,14 @@ export async function runConsolidationProvenanceCheck(options: {
             continue;
           }
           if (!derivedFrom!.includes(tok)) {
-            if (!/^(.+):(\d+)$/u.test(tok)) {
+            // Accept either the snapshot format `<path>:<version>` or
+            // a bare memory id (issue #687 PR 2/4 — pattern
+            // reinforcement uses ID-shaped entries).  PR #730
+            // review feedback, Codex P2.
+            if (
+              !/^(.+):(\d+)$/u.test(tok) &&
+              !DERIVED_FROM_MEMORY_ID_RE.test(tok)
+            ) {
               report.issues.push({
                 memoryPath: memory.path,
                 memoryId: fm.id,
@@ -414,6 +424,25 @@ export async function runConsolidationProvenanceCheck(options: {
 
     if (hasFrom) {
       for (const entry of derivedFrom!) {
+        // Pattern-reinforcement (issue #687 PR 2/4) records source
+        // memory IDs directly in `derived_from` rather than
+        // page-versioning snapshot references.  Memory IDs may
+        // contain `:` for namespace-prefixed forms like
+        // `global:fact-abc-123`, but never `/` or `.` — those remain
+        // exclusive to snapshot paths (PR #730 review feedback,
+        // Codex P1).  For ID-shaped entries we skip the snapshot
+        // file check entirely — but ONLY when the operator is
+        // `pattern-reinforcement`, which is the sole operator that
+        // legitimately stores IDs rather than snapshot references.
+        // Allowing the bypass for split/merge/update would weaken
+        // validation on those existing consolidation paths (PR #730
+        // review, Codex P2).
+        if (
+          derivedVia === "pattern-reinforcement" &&
+          DERIVED_FROM_MEMORY_ID_RE.test(entry)
+        ) {
+          continue;
+        }
         const resolved = resolveSnapshotPath(memoryDir, sidecarDir, entry);
         if (!resolved.ok) {
           report.issues.push({

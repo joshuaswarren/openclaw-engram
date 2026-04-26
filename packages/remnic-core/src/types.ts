@@ -831,6 +831,37 @@ export interface PluginConfig {
    * `chooseConsolidationOperator`.  Issue #561 PR 3.
    */
   operatorAwareConsolidationEnabled: boolean;
+  // Pattern reinforcement (issue #687 PR 2/4)
+  /**
+   * When true, the pattern-reinforcement maintenance job runs on its
+   * configured cadence and clusters duplicate non-procedural memories
+   * by normalized content.  Clusters with `>= patternReinforcementMinCount`
+   * members produce a canonical (most-recent) memory tagged with
+   * `reinforcement_count` + `last_reinforced_at`; the older duplicates
+   * are marked `superseded` and pointed at the canonical.  Default
+   * `false` — opt-in until bench validation lands.
+   */
+  patternReinforcementEnabled: boolean;
+  /**
+   * Minimum interval (ms) between pattern-reinforcement runs.  Default
+   * `7 * 24 * 60 * 60 * 1000` (7 days).  Set to `0` to disable cadence
+   * gating (useful for tests / manual invocation).
+   */
+  patternReinforcementCadenceMs: number;
+  /**
+   * Minimum cluster size before pattern reinforcement promotes a
+   * canonical and supersedes duplicates.  Default `3`.  Clamped to
+   * `>= 2` at config-parse time — a "cluster of 1" is just a single
+   * memory and a "cluster of 0" is meaningless.
+   */
+  patternReinforcementMinCount: number;
+  /**
+   * Memory categories the pattern-reinforcement job considers.
+   * Default `["preference", "fact", "decision"]`.  The job
+   * intentionally skips procedural memories so it stays disjoint from
+   * the procedural mining pipeline.
+   */
+  patternReinforcementCategories: string[];
   /**
    * Async peer profile reasoner — issue #679 PR 2/5.
    *
@@ -1920,12 +1951,35 @@ export interface MemoryFrontmatter {
    */
   derived_from?: string[];
   /**
-   * Which consolidation operator produced this memory (issue #561).  See
-   * `ConsolidationOperator` in `semantic-consolidation.ts` for the
-   * operator algebra.  Absent on memories that were not produced by a
-   * consolidation pass.
+   * Which consolidation operator produced this memory (issue #561,
+   * extended in #687).  See `ConsolidationOperator` in
+   * `semantic-consolidation.ts` for the operator algebra.  Absent on
+   * memories that were not produced by a consolidation pass.
+   *
+   * `"pattern-reinforcement"` (issue #687 PR 2/4) tags memories that
+   * were promoted to canonical by the pattern-reinforcement
+   * maintenance job after observing the same content across
+   * multiple sessions.
    */
-  derived_via?: "split" | "merge" | "update";
+  derived_via?: "split" | "merge" | "update" | "pattern-reinforcement";
+  /**
+   * Number of source memories that reinforced this canonical memory
+   * (issue #687 PR 2/4).  Set by the pattern-reinforcement
+   * maintenance job when it clusters duplicate memories and promotes
+   * the most recent member to canonical.  Counts the cluster size at
+   * the time of the run; subsequent runs update this monotonically.
+   *
+   * Always a positive integer when present.  Absent on memories that
+   * have not been touched by pattern reinforcement.
+   */
+  reinforcement_count?: number;
+  /**
+   * ISO 8601 timestamp recording the most recent pattern-reinforcement
+   * run that touched this memory (issue #687 PR 2/4).  Updated each
+   * time the cluster size grows.  Absent when `reinforcement_count`
+   * is absent.
+   */
+  last_reinforced_at?: string;
 }
 
 /** Memory link relationship types */

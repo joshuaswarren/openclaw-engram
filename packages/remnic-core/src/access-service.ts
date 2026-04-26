@@ -28,6 +28,7 @@ import {
   runMemoryGovernance,
 } from "./maintenance/memory-governance.js";
 import { runProcedureMining } from "./procedural/procedure-miner.js";
+import type { PatternReinforcementResult } from "./maintenance/pattern-reinforcement.js";
 import {
   computeProcedureStats,
   type ProcedureStatsReport,
@@ -2740,6 +2741,72 @@ export class EngramAccessService {
       clustersProcessed: result.clustersProcessed,
       proceduresWritten: result.proceduresWritten,
       skippedReason: result.skippedReason,
+    };
+  }
+
+  /**
+   * Run the pattern-reinforcement maintenance job (issue #687 PR 2/4).
+   *
+   * Cluster duplicate non-procedural memories and reinforce the
+   * canonical (most-recent) member.  Gated on
+   * `patternReinforcementEnabled` — when disabled, returns
+   * `{ ran: false, skippedReason: "disabled" }` so the cron payload
+   * surface in CI logs cleanly.
+   *
+   * Resolves the namespace via the same writable path used by
+   * `procedureMiningRun` so cross-tenant writes are impossible
+   * (CLAUDE.md rule 42).
+   *
+   * Delegates the run to `orchestrator.runPatternReinforcement` so
+   * the cadence floor (`patternReinforcementCadenceMs`) is enforced
+   * uniformly across cron + MCP paths (PR #730 review feedback,
+   * Codex P2).  Accepts `force: true` for ad-hoc operator runs that
+   * must bypass the cadence floor — mirrors the pattern used by
+   * other maintenance MCP tools.
+   */
+  async patternReinforcementRun(
+    request: {
+      namespace?: string;
+      authenticatedPrincipal?: string;
+      force?: boolean;
+    } = {},
+    principal?: string,
+  ): Promise<{
+    namespace: string;
+    ran: boolean;
+    skippedReason?: "disabled" | "cadence";
+    clustersFound: number;
+    canonicalsUpdated: number;
+    duplicatesSuperseded: number;
+    result?: PatternReinforcementResult;
+  }> {
+    const resolvedNamespace = this.resolveWritableNamespace(
+      request.namespace,
+      undefined,
+      request.authenticatedPrincipal ?? principal,
+    );
+    const outcome = await this.orchestrator.runPatternReinforcement({
+      namespace: resolvedNamespace,
+      force: request.force === true,
+    });
+    if (!outcome.ran) {
+      return {
+        namespace: resolvedNamespace,
+        ran: false,
+        skippedReason: outcome.skippedReason,
+        clustersFound: 0,
+        canonicalsUpdated: 0,
+        duplicatesSuperseded: 0,
+      };
+    }
+    const result = outcome.result!;
+    return {
+      namespace: resolvedNamespace,
+      ran: true,
+      clustersFound: result.clustersFound,
+      canonicalsUpdated: result.canonicalsUpdated,
+      duplicatesSuperseded: result.duplicatesSuperseded,
+      result,
     };
   }
 

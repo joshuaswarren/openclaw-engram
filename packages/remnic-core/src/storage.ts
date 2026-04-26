@@ -293,10 +293,27 @@ function serializeFrontmatter(fm: MemoryFrontmatter): string {
   if (fm.derived_via !== undefined) {
     if (!isConsolidationOperator(fm.derived_via)) {
       throw new Error(
-        `serializeFrontmatter: invalid derived_via ${JSON.stringify(fm.derived_via)} — expected one of "split" | "merge" | "update"`,
+        `serializeFrontmatter: invalid derived_via ${JSON.stringify(fm.derived_via)} — expected one of "split" | "merge" | "update" | "pattern-reinforcement"`,
       );
     }
     lines.push(`derived_via: ${fm.derived_via}`);
+  }
+  // Pattern-reinforcement metadata (issue #687 PR 2/4).  Emit only when
+  // present so memories never touched by reinforcement round-trip
+  // unchanged; matches the `archivedAt` / `forgottenAt` precedent.
+  if (fm.reinforcement_count !== undefined) {
+    if (
+      !Number.isInteger(fm.reinforcement_count) ||
+      fm.reinforcement_count <= 0
+    ) {
+      throw new Error(
+        `serializeFrontmatter: reinforcement_count must be a positive integer (got ${JSON.stringify(fm.reinforcement_count)})`,
+      );
+    }
+    lines.push(`reinforcement_count: ${fm.reinforcement_count}`);
+  }
+  if (fm.last_reinforced_at) {
+    lines.push(`last_reinforced_at: ${fm.last_reinforced_at}`);
   }
   lines.push("---");
   return lines.join("\n");
@@ -366,6 +383,22 @@ function parseMemoryWorthCounterField(raw: string | undefined): number | undefin
   if (trimmed.length === 0) return undefined;
   const n = Number(trimmed);
   if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) return undefined;
+  return n;
+}
+
+/**
+ * Parse the pattern-reinforcement counter (issue #687 PR 2/4) from its
+ * raw YAML string form.  Returns `undefined` for missing, blank,
+ * non-positive, or non-integer values so a corrupt stored counter
+ * fails safely.  Pair with the `reinforcement_count > 0 && integer`
+ * assertion on the write path in `serializeFrontmatter`.
+ */
+function parseReinforcementCountField(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return undefined;
+  const n = Number(trimmed);
+  if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) return undefined;
   return n;
 }
 
@@ -685,6 +718,13 @@ function parseFrontmatter(
       // PR; no code produces these fields yet.
       derived_from,
       derived_via,
+      // Pattern-reinforcement metadata (issue #687 PR 2/4).  Parse
+      // permissively: invalid values (negative, non-integer, blank
+      // ISO-strings) are dropped to undefined so a corrupt frontmatter
+      // never poisons downstream scoring.  Validation lives on the
+      // write path in serializeFrontmatter.
+      reinforcement_count: parseReinforcementCountField(fm.reinforcement_count),
+      last_reinforced_at: fm.last_reinforced_at || undefined,
     },
     content,
   };

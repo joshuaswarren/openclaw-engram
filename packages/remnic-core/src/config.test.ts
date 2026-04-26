@@ -494,6 +494,61 @@ test("parseConfig codingMode: unknown object shape falls back to defaults", () =
   assert.equal(result.codingMode.branchScope, false);
 });
 
+// Pattern reinforcement (issue #687 PR 2/4)
+
+test("parseConfig: pattern reinforcement defaults are off, weekly, minCount=3, std categories", () => {
+  const result = parseConfig({ openaiApiKey: "sk-test" });
+  assert.equal(result.patternReinforcementEnabled, false);
+  assert.equal(result.patternReinforcementCadenceMs, 7 * 24 * 60 * 60 * 1000);
+  assert.equal(result.patternReinforcementMinCount, 3);
+  assert.deepEqual(result.patternReinforcementCategories, [
+    "preference",
+    "fact",
+    "decision",
+  ]);
+});
+
+test("parseConfig: patternReinforcementEnabled accepts string-coerced booleans", () => {
+  const t = parseConfig({ openaiApiKey: "sk-test", patternReinforcementEnabled: "true" });
+  assert.equal(t.patternReinforcementEnabled, true);
+  const f = parseConfig({ openaiApiKey: "sk-test", patternReinforcementEnabled: "false" });
+  assert.equal(f.patternReinforcementEnabled, false);
+});
+
+test("parseConfig: patternReinforcementMinCount clamps to >= 2", () => {
+  const r0 = parseConfig({ openaiApiKey: "sk-test", patternReinforcementMinCount: 0 });
+  assert.equal(r0.patternReinforcementMinCount, 2);
+  const r1 = parseConfig({ openaiApiKey: "sk-test", patternReinforcementMinCount: 1 });
+  assert.equal(r1.patternReinforcementMinCount, 2);
+  const r5 = parseConfig({ openaiApiKey: "sk-test", patternReinforcementMinCount: 5 });
+  assert.equal(r5.patternReinforcementMinCount, 5);
+});
+
+test("parseConfig: patternReinforcementCadenceMs honors documented disable=0", () => {
+  const r = parseConfig({ openaiApiKey: "sk-test", patternReinforcementCadenceMs: 0 });
+  assert.equal(r.patternReinforcementCadenceMs, 0);
+});
+
+test("parseConfig: patternReinforcementCategories filters non-string entries", () => {
+  const r = parseConfig({
+    openaiApiKey: "sk-test",
+    patternReinforcementCategories: ["preference", 42, "  ", "fact"],
+  });
+  assert.deepEqual(r.patternReinforcementCategories, ["preference", "fact"]);
+});
+
+test("parseConfig: non-array patternReinforcementCategories falls back to defaults", () => {
+  const r = parseConfig({
+    openaiApiKey: "sk-test",
+    patternReinforcementCategories: "preference,fact",
+  });
+  assert.deepEqual(r.patternReinforcementCategories, [
+    "preference",
+    "fact",
+    "decision",
+  ]);
+});
+
 // ── #683 PR 2/N: connectors.googleDrive parsing.
 
 test("parseConfig connectors defaults: googleDrive disabled with empty creds", () => {

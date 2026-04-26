@@ -496,3 +496,179 @@ test("runConsolidationProvenanceCheck uses last derived_via when key appears mul
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+// ─── PR #730 Codex P2: pattern-reinforcement provenance ──────────────────────
+
+test("runConsolidationProvenanceCheck accepts ID-shaped derived_from entries (pattern-reinforcement)", async () => {
+  // Pattern-reinforcement (issue #687 PR 2/4) records source memory IDs
+  // directly in `derived_from` rather than `<path>:<version>` snapshot
+  // refs.  Memory IDs cannot contain `:` or `/`, so they unambiguously
+  // distinguish from the snapshot form.  The provenance scanner must
+  // recognize both shapes — flagging memory IDs as "missing snapshot"
+  // would generate spurious noise on every reinforced canonical.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-mem-id-"));
+  try {
+    const storage = await seedStorage(dir);
+
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+
+    const id = "fact-reinforced";
+    const filePath = path.join(factDir, `${id}.md`);
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-04-20T01:00:00.000Z",
+      "updated: 2026-04-20T01:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      'tags: ["reinforced"]',
+      // Two bare memory IDs — pattern-reinforcement provenance shape.
+      'derived_from: ["m-abc123-xy", "m-def456-zy"]',
+      "derived_via: pattern-reinforcement",
+      "---",
+      "",
+      "canonical body",
+      "",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    assert.equal(
+      report.issues.length,
+      0,
+      `bare memory-id derived_from entries should not be flagged; got ${JSON.stringify(report.issues)}`,
+    );
+    assert.equal(report.withProvenance, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+// ─── PR #730 Thread 3: ID-style bypass scoped to pattern-reinforcement ──────
+
+test("runConsolidationProvenanceCheck requires snapshot refs for non-pattern-reinforcement operators (PR #730 Thread 3)", async () => {
+  // The ID-style bypass (skip snapshot-file check for DERIVED_FROM_MEMORY_ID_RE
+  // entries) must ONLY apply when `derived_via === "pattern-reinforcement"`.
+  // For legacy consolidation operators (split/merge/update), ID-shaped entries
+  // are not valid — they should still require a `<path>:<version>` snapshot
+  // reference.  Allowing the bypass for all operators weakens validation on
+  // existing consolidation paths (PR #730 review, Codex P2).
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-id-scope-"));
+  try {
+    const storage = await seedStorage(dir);
+
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+
+    // A memory that uses `derived_via: merge` (a legacy operator) but
+    // records bare memory IDs in `derived_from` — this is invalid for
+    // the merge operator, which must use snapshot refs.
+    const id = "fact-merge-with-ids";
+    const filePath = path.join(factDir, `${id}.md`);
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-04-20T01:00:00.000Z",
+      "updated: 2026-04-20T01:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      // Bare memory IDs — valid only for pattern-reinforcement, not merge.
+      'derived_from: ["m-abc123-xy", "m-def456-zy"]',
+      "derived_via: merge",
+      "---",
+      "",
+      "canonical body",
+      "",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    // The ID-shaped entries must NOT be silently bypassed for "merge".
+    // They should surface as missing-snapshot issues because the merge
+    // operator expects `<path>:<version>` references, and these bare IDs
+    // don't match that shape (they match the ID regex but not the
+    // snapshot format).
+    const issues = report.issues.filter((i) => i.memoryId === id);
+    assert.ok(
+      issues.length >= 1,
+      `merge-operator memory with bare IDs should produce issues; got ${JSON.stringify(issues)}`,
+    );
+    // Specifically: these are not snapshot refs so they should produce
+    // a missing_snapshot or malformed_entry issue, NOT be silently passed.
+    const flagged = issues.filter(
+      (i) =>
+        i.kind === "derived_from_missing_snapshot" ||
+        i.kind === "derived_from_malformed_entry",
+    );
+    assert.ok(
+      flagged.length >= 1,
+      `expected snapshot/malformed issues for merge+ID entries; got ${JSON.stringify(issues)}`,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("runConsolidationProvenanceCheck still flags malformed snapshot entries when ID-shaped entries are also present", async () => {
+  // Mixed list — one valid memory id, one malformed snapshot ref.
+  // The scanner must still surface the malformed entry while ignoring
+  // the bare id.
+  const dir = await mkdtemp(path.join(os.tmpdir(), "remnic-prov-mixed-id-"));
+  try {
+    const storage = await seedStorage(dir);
+
+    const day = "2026-04-20";
+    const factDir = path.join(dir, "facts", day);
+    await mkdir(factDir, { recursive: true });
+
+    const id = "fact-mixed";
+    const filePath = path.join(factDir, `${id}.md`);
+    const raw = [
+      "---",
+      `id: ${id}`,
+      "category: fact",
+      "created: 2026-04-20T01:00:00.000Z",
+      "updated: 2026-04-20T01:00:00.000Z",
+      "source: semantic-consolidation",
+      "confidence: 0.8",
+      "confidenceTier: implied",
+      'tags: ["reinforced"]',
+      // First entry is a bare memory id (accepted), second points at a
+      // missing snapshot (must still be flagged).
+      'derived_from: ["m-abc123-xy", "facts/ghost.md:99"]',
+      "derived_via: pattern-reinforcement",
+      "---",
+      "",
+      "canonical body",
+      "",
+    ].join("\n");
+    await writeFile(filePath, raw, "utf-8");
+
+    const report = await runConsolidationProvenanceCheck({ storage, memoryDir: dir });
+    const missing = report.issues.filter(
+      (i) => i.kind === "derived_from_missing_snapshot",
+    );
+    assert.equal(missing.length, 1);
+    assert.ok(missing[0].detail.includes("facts/ghost.md:99"));
+    // The bare memory id must not be flagged.
+    const malformed = report.issues.filter(
+      (i) =>
+        i.kind === "derived_from_malformed_entry" &&
+        i.detail.includes("m-abc123-xy"),
+    );
+    assert.equal(
+      malformed.length,
+      0,
+      `bare memory id must not be flagged as malformed; got ${JSON.stringify(report.issues)}`,
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});

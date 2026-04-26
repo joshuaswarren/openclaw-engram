@@ -5,6 +5,7 @@ const DAY_SUMMARY_CRON_ID = "engram-day-summary";
 const GOVERNANCE_CRON_ID = "engram-nightly-governance";
 const PROCEDURAL_MINING_CRON_ID = "engram-procedural-mining";
 const CONTRADICTION_SCAN_CRON_ID = "engram-contradiction-scan";
+const PATTERN_REINFORCEMENT_CRON_ID = "engram-pattern-reinforcement";
 const GRAPH_EDGE_DECAY_CRON_ID = "engram-graph-edge-decay";
 
 type CronJobsShape =
@@ -258,6 +259,53 @@ export async function ensureContradictionScanCron(
       thinking: "off",
       message:
         "You are OpenClaw automation. Call tool `engram.contradiction_scan_run` with empty params. " +
+        "If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
+    },
+    delivery: { mode: "none" },
+  }));
+}
+
+export async function ensurePatternReinforcementCron(
+  jobsPath: string,
+  options: {
+    timezone: string;
+    agentId?: string;
+    /**
+     * Cron expression. Default `"53 4 * * 0"` — Sunday 04:53 in the
+     * configured timezone, deliberately offset from sibling crons
+     * (`23 2 * * *`, `17 3 * * *`, `37 3 * * *`) so the maintenance
+     * passes don't pile up on the same minute.
+     */
+    scheduleExpr?: string;
+  },
+): Promise<{ created: boolean; jobId: string }> {
+  const scheduleExpr =
+    typeof options.scheduleExpr === "string" && options.scheduleExpr.trim().length > 0
+      ? options.scheduleExpr.trim()
+      : "53 4 * * 0";
+  const agentId =
+    typeof options.agentId === "string" && options.agentId.trim().length > 0
+      ? options.agentId.trim()
+      : "main";
+
+  return ensureCronJob(jobsPath, PATTERN_REINFORCEMENT_CRON_ID, () => ({
+    id: PATTERN_REINFORCEMENT_CRON_ID,
+    agentId,
+    name: "Remnic Pattern Reinforcement (weekly)",
+    enabled: true,
+    schedule: {
+      kind: "cron",
+      expr: scheduleExpr,
+      tz: options.timezone,
+    },
+    sessionTarget: "isolated",
+    wakeMode: "now",
+    payload: {
+      kind: "agentTurn",
+      timeoutSeconds: 900,
+      thinking: "off",
+      message:
+        "You are OpenClaw automation. Call tool `engram.pattern_reinforcement_run` with empty params. " +
         "If successful output exactly NO_REPLY. On error output one concise line. Do NOT use message tool.",
     },
     delivery: { mode: "none" },

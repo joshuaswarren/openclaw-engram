@@ -1562,6 +1562,35 @@ export function parseConfig(raw: unknown): PluginConfig {
     // wiring keeps working without operator-aware prompts.
     operatorAwareConsolidationEnabled:
       coerceBool(cfg.operatorAwareConsolidationEnabled) ?? false,
+    // Pattern reinforcement (issue #687 PR 2/4).  Defaults: off, weekly
+    // cadence, min cluster size 3, target categories preference / fact
+    // / decision.  All bounds clamped at parse time so invalid inputs
+    // (negative numbers, non-arrays, non-strings) fail safe to defaults
+    // rather than crash the job.
+    patternReinforcementEnabled:
+      coerceBool(cfg.patternReinforcementEnabled) ?? false,
+    patternReinforcementCadenceMs: (() => {
+      const raw = coerceNumber(cfg.patternReinforcementCadenceMs);
+      if (raw === undefined || !Number.isFinite(raw)) {
+        return 7 * 24 * 60 * 60 * 1000;
+      }
+      // Allow 0 to disable cadence gating; otherwise clamp to >= 0.
+      return Math.max(0, Math.floor(raw));
+    })(),
+    patternReinforcementMinCount: (() => {
+      const raw = coerceNumber(cfg.patternReinforcementMinCount);
+      if (raw === undefined || !Number.isFinite(raw)) return 3;
+      // Clusters of 1 are degenerate; clusters of 2 are the minimum
+      // meaningful pattern.  Cap at a sane upper bound to prevent
+      // accidentally locking out the job entirely.
+      return Math.min(1000, Math.max(2, Math.floor(raw)));
+    })(),
+    patternReinforcementCategories: Array.isArray(cfg.patternReinforcementCategories)
+      ? (cfg.patternReinforcementCategories as unknown[])
+          .filter((v): v is string => typeof v === "string")
+          .map((v) => v.trim())
+          .filter((v) => v.length > 0)
+      : ["preference", "fact", "decision"],
     // Async peer profile reasoner (issue #679 PR 2/5). Defaults to
     // `false` (opt-in) per Gotchas #30/#48 — least-privileged default.
     // `coerceBool` handles "true"/"1"/"yes"/"on" CLI strings (Gotcha

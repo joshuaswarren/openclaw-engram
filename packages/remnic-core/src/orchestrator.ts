@@ -77,9 +77,14 @@ import {
   ensureNightlyGovernanceCron,
   ensureProceduralMiningCron,
   ensureContradictionScanCron,
+  ensurePatternReinforcementCron,
   ensureGraphEdgeDecayCron,
   graphEdgeDecayCadenceToCronExpr,
 } from "./maintenance/memory-governance-cron.js";
+import {
+  runPatternReinforcement,
+  type PatternReinforcementResult,
+} from "./maintenance/pattern-reinforcement.js";
 import { ModelRegistry } from "./model-registry.js";
 import { applyRuntimeRetrievalPolicy, expandQuery } from "./retrieval.js";
 import {
@@ -246,6 +251,7 @@ import {
   chooseConsolidationOperator,
   buildExtensionsBlockForConsolidation,
   materializeAfterSemanticConsolidation,
+  type SemanticConsolidationLlmOperator,
   type SemanticConsolidationResult,
 } from "./semantic-consolidation.js";
 import { chunkTranscriptEntries } from "./conversation-index/chunker.js";
@@ -1356,6 +1362,13 @@ export class Orchestrator {
   private lastTierMigrationRunAtMs = 0;
   private readonly conversationIndexLastUpdateAtMs = new Map<string, number>();
   private lastFileHygieneRunAtMs = 0;
+  // Pattern-reinforcement cadence gate (issue #687 PR 2/4).  Tracks the
+  // last successful run so `runPatternReinforcement` can short-circuit
+  // when the configured cadence has not elapsed.  Keyed by namespace
+  // so MCP-triggered runs in tenant A don't suppress runs in tenant B
+  // (PR #730 review feedback, Codex P2).  The default-tenant path
+  // uses the empty-string key.
+  private lastPatternReinforcementAtByNs = new Map<string, number>();
   private lastRecallFailureLogAtMs = 0;
   private lastRecallFailureAtMs = 0;
   private suppressedRecallFailures = 0;
@@ -2401,6 +2414,17 @@ export class Orchestrator {
       }
     }
 
+    // Auto-register pattern-reinforcement cron (issue #687 PR 2/4).
+    // Gated on the feature flag so memory-only users without the
+    // cron daemon installed never see a stray jobs.json mutation.
+    if (this.config.patternReinforcementEnabled) {
+      try {
+        await this.autoRegisterPatternReinforcementCron();
+      } catch (err) {
+        log.debug(`pattern reinforcement cron auto-register failed (non-fatal): ${err}`);
+      }
+    }
+
     // Auto-register graph-edge decay cron (gated by config — issue #681 PR 2/3).
     if (this.config.graphEdgeDecayEnabled) {
       try {
@@ -2646,6 +2670,87 @@ export class Orchestrator {
     }
   }
 
+  private async autoRegisterPatternReinforcementCron(): Promise<void> {
+    const home = resolveHomeDir();
+    const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
+    try {
+      if (!existsSync(jobsPath)) {
+        log.debug("pattern reinforcement cron: jobs.json not found, skipping auto-register");
+        return;
+      }
+      const created = await ensurePatternReinforcementCron(jobsPath, {
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      });
+      if (created.created) {
+        log.info(`pattern reinforcement cron auto-registered (${created.jobId})`);
+      } else {
+        log.debug("pattern reinforcement cron already exists, skipping auto-register");
+      }
+    } catch (err) {
+      log.debug(`pattern reinforcement cron auto-register error: ${err}`);
+    }
+  }
+
+  /**
+   * Run the pattern-reinforcement maintenance job (issue #687 PR 2/4).
+   *
+   * Cadence-gated on `patternReinforcementCadenceMs` so every caller
+   * (orchestrator cron path, MCP tool, CLI) shares a single floor —
+   * none can call this on a hot loop and burn the corpus.  When the
+   * feature is disabled or the cadence has not elapsed, returns a
+   * synthetic "skipped" result rather than throwing.
+   *
+   * Cadence tracking is per-namespace so a tenant-scoped MCP run in
+   * one namespace does not silence a cron run in another (PR #730
+   * review feedback, Codex P2).  Pass `force: true` for ad-hoc
+   * operator runs that must bypass the cadence floor — mirrors the
+   * pattern used by other maintenance MCP tools.
+   *
+   * `force` deliberately does NOT bypass the master
+   * `patternReinforcementEnabled` flag (PR #730 review feedback,
+   * Cursor Medium).  Operators who have explicitly disabled the
+   * feature must not have their corpus mutated by an MCP tool call —
+   * the only way to run the job is to enable the feature in config.
+   */
+  async runPatternReinforcement(options: {
+    force?: boolean;
+    namespace?: string;
+  } = {}): Promise<{
+    ran: boolean;
+    skippedReason?: "disabled" | "cadence";
+    namespace: string;
+    result?: PatternReinforcementResult;
+  }> {
+    const cadenceKey = options.namespace ?? "";
+    // Master switch: a disabled feature is never bypassed, even with
+    // force=true.  `force` only relaxes the cadence floor below.
+    if (!this.config.patternReinforcementEnabled) {
+      return { ran: false, skippedReason: "disabled", namespace: cadenceKey };
+    }
+    const cadence = this.config.patternReinforcementCadenceMs;
+    const lastAt = this.lastPatternReinforcementAtByNs.get(cadenceKey);
+    if (
+      !options.force &&
+      cadence > 0 &&
+      lastAt !== undefined &&
+      Date.now() - lastAt < cadence
+    ) {
+      return { ran: false, skippedReason: "cadence", namespace: cadenceKey };
+    }
+    const storage = options.namespace
+      ? await this.getStorage(options.namespace)
+      : this.storage;
+    const result = await runPatternReinforcement(storage, {
+      categories: this.config.patternReinforcementCategories,
+      minCount: this.config.patternReinforcementMinCount,
+    });
+    this.lastPatternReinforcementAtByNs.set(cadenceKey, Date.now());
+    log.debug(
+      `pattern reinforcement [ns=${cadenceKey || "(default)"}]: clusters=${result.clustersFound} canonicalsUpdated=${result.canonicalsUpdated} duplicatesSuperseded=${result.duplicatesSuperseded}`,
+    );
+    return { ran: true, result, namespace: cadenceKey };
+  }
+
   private async autoRegisterGraphEdgeDecayCron(): Promise<void> {
     const home = resolveHomeDir();
     const jobsPath = path.join(home, ".openclaw", "cron", "jobs.json");
@@ -2668,6 +2773,7 @@ export class Orchestrator {
       log.debug(`graph edge decay cron auto-register error: ${err}`);
     }
   }
+
 
   async applyBehaviorRuntimePolicy(
     state: BehaviorLoopPolicyState,
@@ -2936,8 +3042,13 @@ export class Orchestrator {
         // Operator-aware parse (issue #561 PR 3).  In legacy mode we fall
         // back to the plain-text parser and derive the operator from the
         // cluster-shape heuristic so `derived_via` still lands.
+        // Restricted to `SemanticConsolidationLlmOperator`
+        // (split/merge/update) — `pattern-reinforcement` joined the
+        // wider `ConsolidationOperator` type in #687 PR 2/4 but is
+        // reserved for the maintenance job and must never be assignable
+        // here (Cursor Bugbot review, PR #730).
         let canonicalContent: string;
-        let operator: "split" | "merge" | "update";
+        let operator: SemanticConsolidationLlmOperator;
         if (operatorAwareEnabled) {
           const parsed = parseOperatorAwareConsolidationResponse(
             response.content,
