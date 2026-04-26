@@ -13,6 +13,7 @@
 - [Trace → Observation → Primitive](trace-to-primitive.md) — How Remnic compresses noisy session traces into durable memory primitives (issue #685)
 - [Retrieval Pipeline](architecture/retrieval-pipeline.md) — How recall works end-to-end
 - [Memory Lifecycle](architecture/memory-lifecycle.md) — Write, consolidation, expiry
+- [Dreams: phased consolidation](dreams.md) — Light sleep / REM / deep sleep phase mapping over the existing maintenance pipeline (issue #678)
 - [Graph Reasoning](architecture/graph-reasoning.md) — Opt-in graph traversal, assist, and explainability
 - [Writing a Search Backend](writing-a-search-backend.md) — Build your own search adapter (v9.0)
 
