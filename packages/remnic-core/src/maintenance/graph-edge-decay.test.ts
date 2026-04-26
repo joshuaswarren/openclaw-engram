@@ -8,16 +8,18 @@ import path from "node:path";
 import test from "node:test";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 
-import { graphFilePath, graphsDir, type GraphEdge } from "../graph.js";
+import { appendEdge, graphFilePath, graphsDir, type GraphEdge } from "../graph.js";
 import {
   DEFAULT_DECAY_FLOOR,
   DEFAULT_DECAY_PER_WINDOW,
   DEFAULT_DECAY_WINDOW_MS,
 } from "../graph-edge-reinforcement.js";
 import {
+  discoverGraphNamespaceRoots,
   graphEdgeDecayStatusPath,
   readGraphEdgeDecayStatus,
   runGraphEdgeDecayMaintenance,
+  runGraphEdgeDecayMaintenanceAcrossNamespaces,
 } from "./graph-edge-decay.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -262,6 +264,145 @@ test("disabled flag is honored by the parsed config (default = false)", async ()
   assert.equal(parseConfig({ graphEdgeDecayEnabled: "off" }).graphEdgeDecayEnabled, false);
   assert.equal(parseConfig({ graphEdgeDecayEnabled: true }).graphEdgeDecayEnabled, true);
   assert.equal(parseConfig({ graphEdgeDecayEnabled: "true" }).graphEdgeDecayEnabled, true);
+});
+
+test("concurrent appendEdge calls during a decay run preserve every appended edge", async () => {
+  // Issue #729 / Codex P1, line 224: the decay rewrite must hold the
+  // same write lock as `appendEdge` so an ingestion that lands between
+  // the read-snapshot and the rewrite is not silently dropped.
+  await withTempDir(async (memoryDir) => {
+    // Seed an existing edge that the decay run will scan.
+    await seedEdges(memoryDir, [midDecayEdge()]);
+
+    const concurrentAppends = 25;
+    const decayPromise = runGraphEdgeDecayMaintenance(memoryDir, {
+      now: "2026-04-25T00:00:00.000Z",
+    });
+
+    // Fire many concurrent appends while the decay rewrite is in flight.
+    // Without the per-file lock, some of these would be lost when the
+    // decay job's snapshot replaces the file.
+    const appendPromises: Promise<void>[] = [];
+    for (let i = 0; i < concurrentAppends; i += 1) {
+      appendPromises.push(
+        appendEdge(memoryDir, {
+          from: `facts/2026-04-22/append-${i}.md`,
+          to: `facts/2026-04-22/target.md`,
+          type: "entity",
+          weight: 1,
+          label: `concurrent-append-${i}`,
+          ts: "2026-04-22T00:00:00.000Z",
+          confidence: 1,
+          lastReinforcedAt: "2026-04-22T00:00:00.000Z",
+        }),
+      );
+    }
+
+    await Promise.all([decayPromise, ...appendPromises]);
+
+    const final = await readEdgesFile(memoryDir);
+    const appendedLabels = new Set(
+      final
+        .map((e) => e.label)
+        .filter((l) => typeof l === "string" && l.startsWith("concurrent-append-")),
+    );
+    assert.equal(
+      appendedLabels.size,
+      concurrentAppends,
+      `expected ${concurrentAppends} concurrent-append-* edges to survive, found ${appendedLabels.size}`,
+    );
+    // The pre-seeded edge must still be present too.
+    const preserved = final.some((e) => e.label === "mid-label");
+    assert.ok(preserved, "expected pre-seeded mid-decay edge to remain after concurrent run");
+  });
+});
+
+test("read failures other than ENOENT surface as a thrown error", async () => {
+  // Issue #729 / Codex P1, line 120: the decay job must distinguish
+  // ENOENT (no edges yet) from real I/O outages so operators see a
+  // failed run rather than silent zero-count "success" telemetry.
+  await withTempDir(async (memoryDir) => {
+    await mkdir(graphsDir(memoryDir), { recursive: true });
+    const filePath = graphFilePath(memoryDir, "entity");
+    // Replace the file location with a directory so readFile gets EISDIR
+    // (a non-ENOENT error path that previously was silently swallowed).
+    await mkdir(filePath, { recursive: true });
+
+    await assert.rejects(
+      runGraphEdgeDecayMaintenance(memoryDir, { now: "2026-04-25T00:00:00.000Z" }),
+      (err: unknown) => {
+        if (!(err instanceof Error)) return false;
+        const code = (err as NodeJS.ErrnoException).code;
+        return code !== "ENOENT";
+      },
+    );
+  });
+});
+
+test("namespace discovery enumerates default + every safe subdir under namespaces/", async () => {
+  // Codex P2 / gotcha #42: the multi-root runner must reach every
+  // namespace storage root, not just `memoryDir`.
+  await withTempDir(async (memoryDir) => {
+    await mkdir(path.join(memoryDir, "namespaces", "team-alpha"), { recursive: true });
+    await mkdir(path.join(memoryDir, "namespaces", "team-beta"), { recursive: true });
+
+    const enabled = await discoverGraphNamespaceRoots(memoryDir, {
+      namespacesEnabled: true,
+      defaultNamespace: "default",
+    });
+    const enabledNames = new Set(enabled.map((r) => r.namespace));
+    assert.ok(enabledNames.has("default"));
+    assert.ok(enabledNames.has("team-alpha"));
+    assert.ok(enabledNames.has("team-beta"));
+    const alphaRoot = enabled.find((r) => r.namespace === "team-alpha")?.storageRoot;
+    assert.equal(alphaRoot, path.join(memoryDir, "namespaces", "team-alpha"));
+
+    // namespacesEnabled=false returns only the default root.
+    const disabled = await discoverGraphNamespaceRoots(memoryDir, {
+      namespacesEnabled: false,
+      defaultNamespace: "default",
+    });
+    assert.equal(disabled.length, 1);
+    assert.equal(disabled[0].namespace, "default");
+    assert.equal(disabled[0].storageRoot, memoryDir);
+  });
+});
+
+test("multi-root decay runs against every namespace storage root", async () => {
+  // Issue #729 / Codex P2: the MCP handler previously only ran decay
+  // against memoryDir, leaving non-default namespace graphs un-decayed.
+  await withTempDir(async (memoryDir) => {
+    // Seed default namespace at memoryDir.
+    await seedEdges(memoryDir, [midDecayEdge({ label: "default-ns-edge" })]);
+    // Seed a team-alpha namespace under memoryDir/namespaces/team-alpha.
+    const alphaRoot = path.join(memoryDir, "namespaces", "team-alpha");
+    await mkdir(graphsDir(alphaRoot), { recursive: true });
+    await writeFile(
+      graphFilePath(alphaRoot, "entity"),
+      JSON.stringify(midDecayEdge({ label: "alpha-ns-edge" })) + "\n",
+      "utf-8",
+    );
+
+    const results = await runGraphEdgeDecayMaintenanceAcrossNamespaces(memoryDir, {
+      namespacesEnabled: true,
+      defaultNamespace: "default",
+      now: "2026-04-25T00:00:00.000Z",
+    });
+
+    const byNamespace = new Map(results.map((r) => [r.namespace, r]));
+    assert.ok(byNamespace.has("default"), "default namespace must be in results");
+    assert.ok(byNamespace.has("team-alpha"), "team-alpha namespace must be in results");
+
+    const defaultResult = byNamespace.get("default")!;
+    const alphaResult = byNamespace.get("team-alpha")!;
+    assert.ok(defaultResult.telemetry, "default namespace must have telemetry");
+    assert.ok(alphaResult.telemetry, "team-alpha namespace must have telemetry");
+    assert.equal(defaultResult.telemetry!.edgesTotal, 1);
+    assert.equal(alphaResult.telemetry!.edgesTotal, 1);
+    // Both seeded mid-decay edges should have actually been decayed.
+    assert.equal(defaultResult.telemetry!.edgesDecayed, 1);
+    assert.equal(alphaResult.telemetry!.edgesDecayed, 1);
+  });
 });
 
 // Suppress unused-import warning for `DAY_MS` when `node --test` strips it.

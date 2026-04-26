@@ -16,6 +16,7 @@
 
 import {
   mkdir,
+  readdir,
   readFile,
   rename,
   writeFile,
@@ -33,9 +34,12 @@ import {
 import {
   graphFilePath,
   graphsDir,
+  readEdgesStrict,
+  withGraphWriteLock,
   type GraphEdge,
   type GraphType,
 } from "../graph.js";
+import { isSafeRouteNamespace } from "../routing/engine.js";
 
 /** Default visibility threshold for the "below visibility" telemetry counter. */
 export const DEFAULT_VISIBILITY_THRESHOLD = 0.2;
@@ -102,25 +106,6 @@ async function writeJsonlAtomic(filePath: string, edges: GraphEdge[]): Promise<v
   await rename(tempPath, filePath);
 }
 
-async function readEdgesIfPresent(filePath: string): Promise<GraphEdge[]> {
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const edges: GraphEdge[] = [];
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        edges.push(JSON.parse(trimmed) as GraphEdge);
-      } catch {
-        // Skip corrupt lines — same fail-open posture as `readEdges` in graph.ts.
-      }
-    }
-    return edges;
-  } catch {
-    return [];
-  }
-}
-
 /**
  * Run a single decay pass over every edge type.
  *
@@ -163,66 +148,86 @@ export async function runGraphEdgeDecayMaintenance(
 
   for (const type of GRAPH_TYPES) {
     const filePath = graphFilePath(memoryDir, type);
-    const edges = await readEdgesIfPresent(filePath);
-    const updated: GraphEdge[] = new Array(edges.length);
 
-    let typeDecayed = 0;
-    let typeBelow = 0;
-    let typeChangedAny = false;
+    // Hold the per-graph-file write lock across BOTH the read-snapshot
+    // and the atomic rewrite so concurrent `appendEdge()` calls cannot
+    // sneak in between (issue #729 / Codex P1, line 224). Without this
+    // lock the snapshot rewrite would silently drop any edge appended
+    // by extraction during the same window. Read failures other than
+    // ENOENT are surfaced via `readEdgesStrict` so I/O outages cannot
+    // be reported as "no edges to decay" (Codex P1, line 120).
+    const {
+      typeDecayed,
+      typeBelow,
+      typeTotal,
+    } = await withGraphWriteLock(filePath, async () => {
+      const edges = await readEdgesStrict(memoryDir, type);
+      const updated: GraphEdge[] = new Array(edges.length);
 
-    for (let i = 0; i < edges.length; i += 1) {
-      const edge = edges[i];
-      const before = readEdgeConfidence(edge);
-      const decayed = decayEdgeConfidence(edge, ranAt, { windowMs, perWindow, floor });
-      const after = readEdgeConfidence(decayed);
+      let localDecayed = 0;
+      let localBelow = 0;
+      let localChangedAny = false;
 
-      // Only count as "decayed" when the confidence actually dropped.
-      // `decayEdgeConfidence` may return an unchanged copy (still inside
-      // the grace window, or already at/below the floor) — those are
-      // visited but not decayed.
-      if (after < before) {
-        typeDecayed += 1;
-        edgesDecayed += 1;
-        const drop = before - after;
-        const label = typeof edge.label === "string" ? edge.label : "";
-        // Skip empty labels in the top list — surfacing them produces
-        // a meaningless "" entry that crowds the report.
-        if (label.length > 0) {
-          const prev = dropByLabel.get(label);
-          if (prev) {
-            prev.totalDrop += drop;
-            prev.edgeCount += 1;
-          } else {
-            dropByLabel.set(label, { totalDrop: drop, edgeCount: 1 });
+      for (let i = 0; i < edges.length; i += 1) {
+        const edge = edges[i];
+        const before = readEdgeConfidence(edge);
+        const decayed = decayEdgeConfidence(edge, ranAt, { windowMs, perWindow, floor });
+        const after = readEdgeConfidence(decayed);
+
+        // Only count as "decayed" when the confidence actually dropped.
+        // `decayEdgeConfidence` may return an unchanged copy (still inside
+        // the grace window, or already at/below the floor) — those are
+        // visited but not decayed.
+        if (after < before) {
+          localDecayed += 1;
+          const drop = before - after;
+          const label = typeof edge.label === "string" ? edge.label : "";
+          // Skip empty labels in the top list — surfacing them produces
+          // a meaningless "" entry that crowds the report.
+          if (label.length > 0) {
+            const prev = dropByLabel.get(label);
+            if (prev) {
+              prev.totalDrop += drop;
+              prev.edgeCount += 1;
+            } else {
+              dropByLabel.set(label, { totalDrop: drop, edgeCount: 1 });
+            }
           }
         }
+        if (after < visibilityThreshold) {
+          localBelow += 1;
+        }
+        updated[i] = decayed;
+        // Detect any structural change (confidence OR lastReinforcedAt anchor advance)
+        // so we only rewrite the JSONL when there's something to persist.
+        if (
+          decayed.confidence !== edge.confidence ||
+          decayed.lastReinforcedAt !== edge.lastReinforcedAt
+        ) {
+          localChangedAny = true;
+        }
       }
-      if (after < visibilityThreshold) {
-        typeBelow += 1;
-        edgesBelowVisibilityThreshold += 1;
-      }
-      updated[i] = decayed;
-      // Detect any structural change (confidence OR lastReinforcedAt anchor advance)
-      // so we only rewrite the JSONL when there's something to persist.
-      if (
-        decayed.confidence !== edge.confidence ||
-        decayed.lastReinforcedAt !== edge.lastReinforcedAt
-      ) {
-        typeChangedAny = true;
-      }
-    }
 
-    edgesTotal += edges.length;
+      if (!dryRun && localChangedAny && edges.length > 0) {
+        await writeJsonlAtomic(filePath, updated);
+      }
+
+      return {
+        typeDecayed: localDecayed,
+        typeBelow: localBelow,
+        typeTotal: edges.length,
+      };
+    });
+
+    edgesDecayed += typeDecayed;
+    edgesBelowVisibilityThreshold += typeBelow;
+    edgesTotal += typeTotal;
     perType.push({
       type,
-      edgesTotal: edges.length,
+      edgesTotal: typeTotal,
       edgesDecayed: typeDecayed,
       edgesBelowVisibilityThreshold: typeBelow,
     });
-
-    if (!dryRun && typeChangedAny && edges.length > 0) {
-      await writeJsonlAtomic(filePath, updated);
-    }
   }
 
   // Stable secondary key on label keeps ordering deterministic when two
@@ -288,4 +293,102 @@ export async function readGraphEdgeDecayStatus(
   } catch {
     return null;
   }
+}
+
+/**
+ * Per-namespace telemetry record returned by
+ * {@link runGraphEdgeDecayMaintenanceAcrossNamespaces}. Each entry
+ * pairs the namespace name with its decay telemetry (or an error
+ * string if that namespace's run failed). Allows operators to spot
+ * I/O outages on a single namespace without masking the rest.
+ */
+export interface GraphEdgeDecayNamespaceResult {
+  namespace: string;
+  storageRoot: string;
+  telemetry?: GraphEdgeDecayTelemetry;
+  error?: string;
+}
+
+/**
+ * Discover every namespace storage root that may contain graph files.
+ *
+ * Returns a list of `{ namespace, storageRoot }` entries:
+ *   - The default namespace at `memoryDir` (always present).
+ *   - Each subdirectory under `memoryDir/namespaces/` that passes
+ *     `isSafeRouteNamespace`.
+ *
+ * Per gotcha #42: read paths must enumerate the same namespace layer
+ * as write paths so non-default namespaces don't get skipped during
+ * maintenance. Issue #729 / Codex P2.
+ */
+export async function discoverGraphNamespaceRoots(
+  memoryDir: string,
+  options: { namespacesEnabled: boolean; defaultNamespace: string },
+): Promise<{ namespace: string; storageRoot: string }[]> {
+  const seen = new Map<string, string>();
+  // Default namespace always lives at memoryDir (NamespaceStorageRouter
+  // falls back to memoryDir when memoryDir/namespaces/<default> does
+  // not exist).
+  seen.set(options.defaultNamespace, memoryDir);
+
+  if (!options.namespacesEnabled) {
+    return [...seen.entries()].map(([namespace, storageRoot]) => ({ namespace, storageRoot }));
+  }
+
+  const namespacesDir = path.join(memoryDir, "namespaces");
+  let entries: import("node:fs").Dirent[];
+  try {
+    entries = await readdir(namespacesDir, { withFileTypes: true });
+  } catch {
+    // No namespaces dir yet — only the default namespace exists.
+    return [...seen.entries()].map(([namespace, storageRoot]) => ({ namespace, storageRoot }));
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    if (!isSafeRouteNamespace(entry.name)) continue;
+    const root = path.join(namespacesDir, entry.name);
+    seen.set(entry.name, root);
+  }
+
+  return [...seen.entries()].map(([namespace, storageRoot]) => ({ namespace, storageRoot }));
+}
+
+/**
+ * Run the decay maintenance pass against every namespace storage root.
+ *
+ * In namespaces-enabled deployments, non-default namespaces store
+ * their graph JSONLs under `memoryDir/namespaces/<ns>/state/graphs/`,
+ * so a single-root run only updates the default namespace and silently
+ * skips the rest (issue #729 / Codex P2).
+ *
+ * Failures in one namespace do not block other namespaces; per-root
+ * errors are surfaced in the `error` field of each result.
+ */
+export async function runGraphEdgeDecayMaintenanceAcrossNamespaces(
+  memoryDir: string,
+  options: GraphEdgeDecayOptions & {
+    namespacesEnabled: boolean;
+    defaultNamespace: string;
+  },
+): Promise<GraphEdgeDecayNamespaceResult[]> {
+  const { namespacesEnabled, defaultNamespace, ...decayOptions } = options;
+  const roots = await discoverGraphNamespaceRoots(memoryDir, {
+    namespacesEnabled,
+    defaultNamespace,
+  });
+
+  const results: GraphEdgeDecayNamespaceResult[] = [];
+  for (const { namespace, storageRoot } of roots) {
+    try {
+      const telemetry = await runGraphEdgeDecayMaintenance(storageRoot, decayOptions);
+      results.push({ namespace, storageRoot, telemetry });
+    } catch (err) {
+      results.push({
+        namespace,
+        storageRoot,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  return results;
 }

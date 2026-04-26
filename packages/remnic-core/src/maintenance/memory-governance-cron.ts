@@ -288,10 +288,15 @@ export async function ensureGraphEdgeDecayCron(
       ? options.agentId.trim()
       : "main";
 
+  const scheduleLabel = graphEdgeDecayScheduleLabel(scheduleExpr);
+
   return ensureCronJob(jobsPath, GRAPH_EDGE_DECAY_CRON_ID, () => ({
     id: GRAPH_EDGE_DECAY_CRON_ID,
     agentId,
-    name: "Remnic Graph Edge Decay (weekly)",
+    // Schedule label reflects the actual cron expression (`daily` /
+    // `weekly` / `custom`) so cron dashboards do not show "weekly"
+    // when the schedule is in fact daily — Cursor review on PR #729.
+    name: `Remnic Graph Edge Decay (${scheduleLabel})`,
     enabled: true,
     schedule: {
       kind: "cron",
@@ -315,10 +320,9 @@ export async function ensureGraphEdgeDecayCron(
 /**
  * Pick a cron expression that approximates a cadence in milliseconds.
  *
- * - cadence < 1 day → daily at 04:13 (sub-daily cadence is not natively
+ * - cadence < 7 days → daily at 04:13 (sub-daily cadence is not natively
  *   expressible in 5-field cron without `*\/N` patterns; daily is the
  *   safe upper bound that won't trip the cron more often than requested).
- * - 1 day ≤ cadence < 7 days → daily at 04:13.
  * - cadence ≥ 7 days → weekly on Sunday 04:13.
  *
  * Operators who need finer-grained control should set `scheduleExpr`
@@ -329,7 +333,17 @@ export function graphEdgeDecayCadenceToCronExpr(cadenceMs: number): string {
     return "13 4 * * 0";
   }
   const day = 24 * 60 * 60 * 1000;
-  if (cadenceMs < day) return "13 4 * * *";
   if (cadenceMs < 7 * day) return "13 4 * * *";
   return "13 4 * * 0";
+}
+
+/**
+ * Derive a human-friendly schedule label ("daily" / "weekly" / "custom")
+ * for the given cron expression. Used to keep the cron job name in
+ * sync with the actual schedule (Cursor review on PR #729).
+ */
+function graphEdgeDecayScheduleLabel(scheduleExpr: string): string {
+  if (scheduleExpr === "13 4 * * *") return "daily";
+  if (scheduleExpr === "13 4 * * 0") return "weekly";
+  return "custom";
 }

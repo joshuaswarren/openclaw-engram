@@ -66,33 +66,102 @@ export async function ensureGraphsDir(memoryDir: string): Promise<void> {
   await mkdir(graphsDir(memoryDir), { recursive: true });
 }
 
+// ---------------------------------------------------------------------------
+// Per-graph-file write lock (gotcha #40 promise-chain pattern).
+//
+// Both the append path (`appendEdge`) and the rewrite path used by the
+// decay maintenance job must serialize on the same lock keyed by the
+// JSONL file path. Without this, an extraction can append a new edge
+// between the decay job's read-snapshot and rewrite, silently dropping
+// the appended edge during active traffic (issue #729 / Codex P1).
+// ---------------------------------------------------------------------------
+const graphWriteLocks = new Map<string, Promise<void>>();
+
+/**
+ * Run `fn` while holding the write lock for the given graph JSONL file.
+ *
+ * The lock is keyed by absolute file path so concurrent writes to
+ * different graph types proceed independently. The chain recovers from
+ * rejection (gotcha #40) so a single I/O failure does not poison all
+ * future writers, but the original error is still surfaced to the
+ * caller of `withGraphWriteLock`.
+ */
+export function withGraphWriteLock<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
+  const prev = graphWriteLocks.get(filePath) ?? Promise.resolve();
+  const next = prev.then(fn, fn);
+  graphWriteLocks.set(
+    filePath,
+    next.then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+  return next;
+}
+
 export async function appendEdge(memoryDir: string, edge: GraphEdge): Promise<void> {
   await ensureGraphsDir(memoryDir);
+  const filePath = graphFilePath(memoryDir, edge.type);
   const line = JSON.stringify(edge) + "\n";
-  await appendFile(graphFilePath(memoryDir, edge.type), line, "utf8");
+  await withGraphWriteLock(filePath, async () => {
+    await appendFile(filePath, line, "utf8");
+  });
+}
+
+function isNodeError(err: unknown): err is NodeJS.ErrnoException {
+  return typeof err === "object" && err !== null && "code" in err;
+}
+
+function parseEdgesJsonl(raw: string): GraphEdge[] {
+  const edges: GraphEdge[] = [];
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      edges.push(JSON.parse(trimmed) as GraphEdge);
+    } catch {
+      // skip corrupt lines — fail-open for partial JSONL recovery
+    }
+  }
+  return edges;
 }
 
 /**
  * Read all edges of a given type from the JSONL file.
- * Returns [] if the file doesn't exist or is corrupt (fail-open).
+ * Returns [] if the file doesn't exist or any read error occurs (fail-open).
+ *
+ * Production traversal callers (recall/PageRank) depend on this fail-open
+ * posture so a temporarily missing or unreadable graph file never blocks
+ * a recall. Maintenance jobs that need to distinguish ENOENT from real
+ * I/O failures must use {@link readEdgesStrict} instead.
  */
 export async function readEdges(memoryDir: string, type: GraphType): Promise<GraphEdge[]> {
   const filePath = graphFilePath(memoryDir, type);
   try {
     const raw = await readFile(filePath, "utf8");
-    const edges: GraphEdge[] = [];
-    for (const line of raw.split("\n")) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      try {
-        edges.push(JSON.parse(trimmed) as GraphEdge);
-      } catch {
-        // skip corrupt lines
-      }
-    }
-    return edges;
+    return parseEdgesJsonl(raw);
   } catch {
     return [];
+  }
+}
+
+/**
+ * Same as {@link readEdges} but only swallows `ENOENT`; all other read
+ * errors (`EACCES`, `EIO`, …) are propagated. Used by the graph-edge
+ * decay maintenance job so I/O outages surface as a failed run instead
+ * of being silently reported as "no edges to decay" (issue #729 /
+ * Codex P1, line 120).
+ */
+export async function readEdgesStrict(memoryDir: string, type: GraphType): Promise<GraphEdge[]> {
+  const filePath = graphFilePath(memoryDir, type);
+  try {
+    const raw = await readFile(filePath, "utf8");
+    return parseEdgesJsonl(raw);
+  } catch (err) {
+    if (isNodeError(err) && err.code === "ENOENT") {
+      return [];
+    }
+    throw err;
   }
 }
 

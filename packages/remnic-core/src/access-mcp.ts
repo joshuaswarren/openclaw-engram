@@ -1880,18 +1880,27 @@ export class EngramMcpServer {
             reason: "graphEdgeDecayEnabled is false",
           };
         }
-        const { runGraphEdgeDecayMaintenance } = await import(
+        const { runGraphEdgeDecayMaintenanceAcrossNamespaces } = await import(
           "./maintenance/graph-edge-decay.js"
         );
         const dryRun = args.dryRun === true;
-        const telemetry = await runGraphEdgeDecayMaintenance(this.service.memoryDir, {
-          windowMs: cfg.graphEdgeDecayWindowMs,
-          perWindow: cfg.graphEdgeDecayPerWindow,
-          floor: cfg.graphEdgeDecayFloor,
-          visibilityThreshold: cfg.graphEdgeDecayVisibilityThreshold,
-          dryRun,
-        });
-        return telemetry;
+        // Codex P2 / gotcha #42: enumerate every namespace storage root
+        // so non-default namespaces (memoryDir/namespaces/<ns>) also get
+        // confidence decay applied. Returns a list of per-namespace
+        // results — each with telemetry or an error string.
+        const results = await runGraphEdgeDecayMaintenanceAcrossNamespaces(
+          this.service.memoryDir,
+          {
+            windowMs: cfg.graphEdgeDecayWindowMs,
+            perWindow: cfg.graphEdgeDecayPerWindow,
+            floor: cfg.graphEdgeDecayFloor,
+            visibilityThreshold: cfg.graphEdgeDecayVisibilityThreshold,
+            dryRun,
+            namespacesEnabled: cfg.namespacesEnabled === true,
+            defaultNamespace: cfg.defaultNamespace,
+          },
+        );
+        return { results };
       }
       default:
         throw new Error(`unknown tool: ${name}`);
