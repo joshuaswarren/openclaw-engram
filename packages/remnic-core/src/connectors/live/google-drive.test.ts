@@ -5,6 +5,7 @@ import {
   GOOGLE_DRIVE_CONNECTOR_ID,
   GOOGLE_DRIVE_CURSOR_KIND,
   createGoogleDriveConnector,
+  isTransientDriveError,
   validateGoogleDriveConfig,
   type DriveChange,
   type DriveChangesPage,
@@ -387,6 +388,235 @@ test("a single 404 in fetchDocument does not poison the whole pass", async () =>
     result.newDocs.map((d) => d.source.externalId).sort(),
     ["fileid-also-good", "fileid-good"],
   );
+});
+
+test("a 403 permission-denied is treated as terminal (skip-and-continue, cursor advances)", async () => {
+  // 403 mirrors 404: the file is inaccessible and won't become accessible
+  // by retrying. Skip-and-log is the right call. Cursor advance is fine.
+  const page: DriveChangesPage = {
+    changes: [
+      makeChange({ id: "fileid-good", mimeType: "text/plain" }),
+      makeChange({ id: "fileid-403", mimeType: "text/plain" }),
+    ],
+    newStartPageToken: "tok-end",
+  };
+  const client: GoogleDriveClient = {
+    async getStartPageToken() {
+      return { startPageToken: "seed" };
+    },
+    async listChanges() {
+      return page;
+    },
+    async exportFile() {
+      throw new Error("unexpected export call");
+    },
+    async getFileMedia({ fileId }) {
+      if (fileId === "fileid-403") {
+        throw Object.assign(new Error("permission denied"), {
+          response: { status: 403 },
+        });
+      }
+      return `MEDIA:${fileId}`;
+    },
+  };
+  const connector = createGoogleDriveConnector({ clientFactory: makeFactory(client) });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GOOGLE_DRIVE_CURSOR_KIND,
+    value: "p",
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  const result = await connector.syncIncremental({ cursor, config });
+  assert.equal(result.newDocs.length, 1);
+  assert.equal(result.newDocs[0].source.externalId, "fileid-good");
+  // Cursor MUST advance for terminal errors — there's nothing to retry.
+  assert.equal(result.nextCursor.value, "tok-end");
+});
+
+test("a transient 429 re-throws and the cursor does NOT advance", async () => {
+  // CLAUDE.md gotcha: silently swallowing transient errors permanently
+  // loses imports during outages. 429 must surface so the connector
+  // framework can back off and retry on the next poll using the
+  // pre-existing cursor.
+  const page: DriveChangesPage = {
+    changes: [
+      makeChange({ id: "fileid-good", mimeType: "text/plain" }),
+      makeChange({ id: "fileid-429", mimeType: "text/plain" }),
+      makeChange({ id: "fileid-never-tried", mimeType: "text/plain" }),
+    ],
+    newStartPageToken: "tok-end",
+  };
+  const client: GoogleDriveClient = {
+    async getStartPageToken() {
+      return { startPageToken: "seed" };
+    },
+    async listChanges() {
+      return page;
+    },
+    async exportFile() {
+      throw new Error("unexpected export call");
+    },
+    async getFileMedia({ fileId }) {
+      if (fileId === "fileid-429") {
+        throw Object.assign(new Error("rate limit exceeded"), {
+          response: { status: 429 },
+          code: 429,
+        });
+      }
+      return `MEDIA:${fileId}`;
+    },
+  };
+  const connector = createGoogleDriveConnector({ clientFactory: makeFactory(client) });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GOOGLE_DRIVE_CURSOR_KIND,
+    value: "prev-token",
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  await assert.rejects(
+    connector.syncIncremental({ cursor, config }),
+    /rate limit/,
+  );
+  // The cursor is NEVER persisted by the connector itself — the framework
+  // only writes nextCursor on a successful return. By throwing, we ensure
+  // the framework keeps `prev-token` as the persisted cursor and retries
+  // the same batch on the next poll. (We cannot directly assert "did not
+  // advance" inside the connector because nextCursor is only ever returned
+  // on success, but the contract is exactly that: throw → caller does not
+  // see a nextCursor → cursor cannot advance.)
+});
+
+test("a transient 503 re-throws", async () => {
+  const page: DriveChangesPage = {
+    changes: [makeChange({ id: "fileid-503", mimeType: "text/plain" })],
+    newStartPageToken: "tok-end",
+  };
+  const client: GoogleDriveClient = {
+    async getStartPageToken() {
+      return { startPageToken: "seed" };
+    },
+    async listChanges() {
+      return page;
+    },
+    async exportFile() {
+      throw new Error("unexpected export call");
+    },
+    async getFileMedia() {
+      throw Object.assign(new Error("service unavailable"), {
+        response: { status: 503 },
+      });
+    },
+  };
+  const connector = createGoogleDriveConnector({ clientFactory: makeFactory(client) });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GOOGLE_DRIVE_CURSOR_KIND,
+    value: "p",
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  await assert.rejects(
+    connector.syncIncremental({ cursor, config }),
+    /service unavailable/,
+  );
+});
+
+test("an AbortError raised mid-fetch re-throws", async () => {
+  const page: DriveChangesPage = {
+    changes: [makeChange({ id: "fileid-aborted", mimeType: "text/plain" })],
+    newStartPageToken: "tok-end",
+  };
+  const client: GoogleDriveClient = {
+    async getStartPageToken() {
+      return { startPageToken: "seed" };
+    },
+    async listChanges() {
+      return page;
+    },
+    async exportFile() {
+      throw new Error("unexpected export call");
+    },
+    async getFileMedia() {
+      throw Object.assign(new Error("request aborted"), { name: "AbortError" });
+    },
+  };
+  const connector = createGoogleDriveConnector({ clientFactory: makeFactory(client) });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GOOGLE_DRIVE_CURSOR_KIND,
+    value: "p",
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  await assert.rejects(
+    connector.syncIncremental({ cursor, config }),
+    /aborted/,
+  );
+});
+
+test("a network-layer ECONNRESET re-throws as transient", async () => {
+  const page: DriveChangesPage = {
+    changes: [makeChange({ id: "fileid-network", mimeType: "text/plain" })],
+    newStartPageToken: "tok-end",
+  };
+  const client: GoogleDriveClient = {
+    async getStartPageToken() {
+      return { startPageToken: "seed" };
+    },
+    async listChanges() {
+      return page;
+    },
+    async exportFile() {
+      throw new Error("unexpected export call");
+    },
+    async getFileMedia() {
+      // No HTTP status — pure network error.
+      throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+    },
+  };
+  const connector = createGoogleDriveConnector({ clientFactory: makeFactory(client) });
+  const config = connector.validateConfig({ ...SYNTHETIC_CREDS });
+  const cursor: ConnectorCursor = {
+    kind: GOOGLE_DRIVE_CURSOR_KIND,
+    value: "p",
+    updatedAt: "2026-04-25T00:00:00.000Z",
+  };
+
+  await assert.rejects(
+    connector.syncIncremental({ cursor, config }),
+    /socket hang up/,
+  );
+});
+
+test("isTransientDriveError classifies common error shapes", () => {
+  // Terminal — skip-and-continue.
+  assert.equal(isTransientDriveError({ status: 404 }), false);
+  assert.equal(isTransientDriveError({ response: { status: 403 } }), false);
+  assert.equal(isTransientDriveError({ response: { status: 400 } }), false);
+  assert.equal(isTransientDriveError({ response: { status: 410 } }), false);
+  // Transient — re-throw.
+  assert.equal(isTransientDriveError({ response: { status: 429 } }), true);
+  assert.equal(isTransientDriveError({ response: { status: 500 } }), true);
+  assert.equal(isTransientDriveError({ response: { status: 503 } }), true);
+  assert.equal(isTransientDriveError({ status: 504 }), true);
+  // GaxiosError-style string code.
+  assert.equal(isTransientDriveError({ code: "429" }), true);
+  assert.equal(isTransientDriveError({ code: "503" }), true);
+  // Network errors.
+  assert.equal(isTransientDriveError({ code: "ECONNRESET" }), true);
+  assert.equal(isTransientDriveError({ code: "ETIMEDOUT" }), true);
+  assert.equal(isTransientDriveError({ code: "ENOTFOUND" }), true);
+  assert.equal(isTransientDriveError({ code: "EAI_AGAIN" }), true);
+  // AbortError.
+  assert.equal(isTransientDriveError({ name: "AbortError" }), true);
+  // Bare Error with no metadata — conservatively transient.
+  assert.equal(isTransientDriveError(new Error("unknown")), true);
+  // Non-objects.
+  assert.equal(isTransientDriveError(null), false);
+  assert.equal(isTransientDriveError(undefined), false);
+  assert.equal(isTransientDriveError("oops"), false);
 });
 
 test("syncIncremental honors abortSignal between pages", async () => {

@@ -41,6 +41,7 @@ export {
   DEFAULT_POLL_INTERVAL_MS as GOOGLE_DRIVE_DEFAULT_POLL_INTERVAL_MS,
   createGoogleDriveConnector,
   defaultGoogleDriveClientFactory,
+  isTransientDriveError,
   validateGoogleDriveConfig,
   type DriveChange,
   type DriveChangesPage,
