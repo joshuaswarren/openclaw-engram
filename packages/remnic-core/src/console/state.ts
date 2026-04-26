@@ -318,8 +318,32 @@ async function readMaintenanceLedgerTail(
         continue;
       }
       const p = parsed as Record<string, unknown>;
-      const ts = typeof p.ts === "string" ? p.ts : "";
-      const category = typeof p.category === "string" ? p.category : "unknown";
+      // Codex P2: the canonical writers (`rebuildObservations` and
+      // `migrateObservations`) emit rows shaped like
+      // `{sessionKey, hour, turnCount, userTurns, assistantTurns,
+      // rebuiltAt}`, NOT `{ts, category}`. Map fields accordingly:
+      // `ts` derives from `hour` (or `rebuiltAt`), `category` falls
+      // back to a stable "observation" tag for canonical rows. Judge-
+      // verdict rows that DO have `ts`/`verdictKind` from
+      // `extraction-judge-telemetry.ts` are still picked up via the
+      // existing field-shape detection so both sources render in the
+      // tail.
+      const ts =
+        typeof p.ts === "string" && p.ts.length > 0
+          ? p.ts
+          : typeof p.hour === "string" && p.hour.length > 0
+            ? p.hour
+            : typeof p.rebuiltAt === "string" && p.rebuiltAt.length > 0
+              ? p.rebuiltAt
+              : "";
+      const category =
+        typeof p.category === "string" && p.category.length > 0
+          ? p.category
+          : typeof p.verdictKind === "string"
+            ? "judge-verdict"
+            : typeof p.turnCount === "number"
+              ? "observation"
+              : "unknown";
       const summary = summarizeLedgerEvent(p);
       events.push({ ts, category, summary });
     }
@@ -333,6 +357,7 @@ async function readMaintenanceLedgerTail(
 
 function summarizeLedgerEvent(p: Record<string, unknown>): string {
   const parts: string[] = [];
+  // Judge-verdict rows.
   if (typeof p.verdictKind === "string") parts.push(`verdict=${p.verdictKind}`);
   if (typeof p.reason === "string" && p.reason.length > 0) {
     const trimmed = p.reason.length > 80 ? `${p.reason.slice(0, 80)}…` : p.reason;
@@ -340,6 +365,19 @@ function summarizeLedgerEvent(p: Record<string, unknown>): string {
   }
   if (typeof p.candidateCategory === "string") {
     parts.push(`cat=${p.candidateCategory}`);
+  }
+  // Canonical rebuilt-observations rows (codex P2).
+  if (typeof p.sessionKey === "string" && p.sessionKey.length > 0) {
+    parts.push(`session=${p.sessionKey}`);
+  }
+  if (typeof p.turnCount === "number" && Number.isFinite(p.turnCount)) {
+    parts.push(`turns=${p.turnCount}`);
+  }
+  if (typeof p.userTurns === "number" && Number.isFinite(p.userTurns)) {
+    parts.push(`u=${p.userTurns}`);
+  }
+  if (typeof p.assistantTurns === "number" && Number.isFinite(p.assistantTurns)) {
+    parts.push(`a=${p.assistantTurns}`);
   }
   if (parts.length === 0) {
     return typeof p.category === "string" ? p.category : "event";
