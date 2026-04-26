@@ -171,3 +171,54 @@ test("missing ledger file is not an error", async () => {
     rmSync(baseDir, { recursive: true, force: true });
   }
 });
+
+test("maintenance ledger merges judge-verdicts + rebuilt-observations and picks globally most-recent rows", async () => {
+  const baseDir = mkdtempSync(path.join(tmpdir(), "console-state-merge-"));
+  try {
+    const ledgerDir = path.join(baseDir, "state", "observation-ledger");
+    mkdirSync(ledgerDir, { recursive: true });
+    // Verdicts file: ts-ordered append log with two events.
+    writeFileSync(
+      path.join(ledgerDir, "extraction-judge-verdicts.jsonl"),
+      [
+        JSON.stringify({ ts: "2026-04-25T10:00:00Z", verdictKind: "accept" }),
+        JSON.stringify({ ts: "2026-04-25T11:00:00Z", verdictKind: "reject" }),
+      ].join("\n") + "\n",
+    );
+    // Rebuilt-observations file: sorted by sessionKey/hour, NOT
+    // recency. Includes a row from a lexicographically-late session
+    // that's actually the OLDEST event, and a row from a
+    // lexicographically-early session that's the MOST-RECENT.
+    writeFileSync(
+      path.join(ledgerDir, "rebuilt-observations.jsonl"),
+      [
+        JSON.stringify({
+          sessionKey: "aardvark",
+          hour: "2026-04-25T12:00:00Z",
+          turnCount: 5,
+          rebuiltAt: "2026-04-25T12:30:00Z",
+        }),
+        JSON.stringify({
+          sessionKey: "zebra",
+          hour: "2026-04-25T08:00:00Z",
+          turnCount: 3,
+          rebuiltAt: "2026-04-25T08:30:00Z",
+        }),
+      ].join("\n") + "\n",
+    );
+    const snapshot = await gatherConsoleState(
+      makeOrchestrator({ config: { memoryDir: baseDir } }),
+    );
+    // Most-recent ts is the aardvark row at hour=2026-04-25T12:00:00Z.
+    // The byte-tail-only approach would have picked the zebra row
+    // because it sits last in the file. Streaming top-N visits every
+    // row and keeps the truly-most-recent.
+    const tail = snapshot.maintenanceLedgerTail;
+    assert.ok(tail.length >= 3);
+    const last = tail[tail.length - 1];
+    assert.equal(last.ts, "2026-04-25T12:00:00Z");
+    assert.deepEqual(snapshot.errors, []);
+  } finally {
+    rmSync(baseDir, { recursive: true, force: true });
+  }
+});

@@ -21,7 +21,8 @@
  * SSE live updates, and trace replay (PR 3/3) land separately.
  */
 
-import { promises as fs } from "node:fs";
+import { promises as fs, createReadStream } from "node:fs";
+import { createInterface } from "node:readline";
 import path from "node:path";
 
 /**
@@ -253,35 +254,115 @@ function readDedupRecent(
 }
 
 /**
- * Read the tail of a JSONL file capped at TAIL_BYTES so we never load
- * gigabytes into memory just to surface the most recent rows.
+ * Stream a JSONL file line-by-line, parse each row, project it into a
+ * console event, and keep only the `topN` most-recent items by `ts`
+ * (descending). Memory is bounded at O(2 * topN) regardless of file
+ * size — we sort-and-truncate whenever the working buffer grows past
+ * `2 * topN`. This satisfies BOTH:
+ *
+ *   1. "Don't load the whole file into memory" — streaming + bounded
+ *      buffer means a multi-GB ledger never blows up RAM.
+ *   2. "Don't miss recent rows just because the file isn't sorted by
+ *      recency" — `rebuilt-observations.jsonl` is written sorted by
+ *      `(sessionKey, hour)`, NOT by global ts, so a byte-tail-only
+ *      read silently dropped recent-but-lexicographically-earlier
+ *      sessions. Streaming top-N visits every row and keeps the
+ *      globally-most-recent ones.
+ *
+ * Returns an array sorted oldest-first within the top-N window. Rows
+ * with no parseable `ts` are dropped (they would otherwise compare
+ * undefined under any sort).
  */
-async function readJsonlTail(
+async function streamLedgerTopN<T extends { ts: string }>(
   ledgerPath: string,
-  tailBytes: number,
-): Promise<string | null> {
+  topN: number,
+  project: (parsed: Record<string, unknown>) => T | null,
+): Promise<T[]> {
+  let stream: ReturnType<typeof createReadStream>;
   try {
-    const stat = await fs.stat(ledgerPath);
-    const fileSize = stat.size;
-    if (fileSize <= tailBytes) {
-      return await fs.readFile(ledgerPath, "utf-8");
-    }
-    const fh = await fs.open(ledgerPath, "r");
-    try {
-      const offset = fileSize - tailBytes;
-      const buf = Buffer.alloc(tailBytes);
-      await fh.read(buf, 0, tailBytes, offset);
-      const slice = buf.toString("utf-8");
-      const firstNewline = slice.indexOf("\n");
-      return firstNewline >= 0 ? slice.slice(firstNewline + 1) : slice;
-    } finally {
-      await fh.close();
-    }
+    // `fs.access`-style probe so we can quietly return `[]` for
+    // ENOENT without hitting the readline error path.
+    await fs.stat(ledgerPath);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return null;
+    if (code === "ENOENT") return [];
     throw err;
   }
+  try {
+    stream = createReadStream(ledgerPath, { encoding: "utf-8" });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return [];
+    throw err;
+  }
+  const rl = createInterface({ input: stream, crlfDelay: Infinity });
+  const cap = Math.max(1, topN) * 2;
+  const buf: T[] = [];
+  const truncate = () => {
+    // Sort descending by ts, keep top-N, drop the rest.
+    buf.sort((a, b) => {
+      const aMs = Date.parse(a.ts);
+      const bMs = Date.parse(b.ts);
+      if (Number.isFinite(aMs) && Number.isFinite(bMs)) return bMs - aMs;
+      if (Number.isFinite(aMs)) return -1;
+      if (Number.isFinite(bMs)) return 1;
+      return 0;
+    });
+    if (buf.length > topN) buf.length = topN;
+  };
+  try {
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        continue;
+      }
+      const event = project(parsed as Record<string, unknown>);
+      if (event === null) continue;
+      // Drop rows we couldn't even date-stamp — they can't be sorted
+      // meaningfully against the rest of the corpus.
+      if (!event.ts || !Number.isFinite(Date.parse(event.ts))) continue;
+      buf.push(event);
+      if (buf.length >= cap) truncate();
+    }
+  } finally {
+    rl.close();
+    stream.close();
+  }
+  truncate();
+  return buf.reverse(); // oldest-first within the top-N window
+}
+
+function projectLedgerRow(p: Record<string, unknown>): ConsoleMaintenanceLedgerEvent | null {
+  // The two canonical writers produce different row shapes:
+  //   - extraction-judge-telemetry: `{ts, verdictKind, reason, candidateCategory, ...}`
+  //   - rebuild-observations / migrate-observations:
+  //     `{sessionKey, hour, turnCount, userTurns, assistantTurns, rebuiltAt}`
+  // Map both into the canonical {ts, category, summary} shape.
+  const ts =
+    typeof p.ts === "string" && p.ts.length > 0
+      ? p.ts
+      : typeof p.hour === "string" && p.hour.length > 0
+        ? p.hour
+        : typeof p.rebuiltAt === "string" && p.rebuiltAt.length > 0
+          ? p.rebuiltAt
+          : "";
+  const category =
+    typeof p.category === "string" && p.category.length > 0
+      ? p.category
+      : typeof p.verdictKind === "string"
+        ? "judge-verdict"
+        : typeof p.turnCount === "number"
+          ? "observation"
+          : "unknown";
+  const summary = summarizeLedgerEvent(p);
+  return { ts, category, summary };
 }
 
 async function readMaintenanceLedgerTail(
@@ -292,88 +373,39 @@ async function readMaintenanceLedgerTail(
     const memoryDir = orchestrator.config?.memoryDir;
     if (!memoryDir || typeof memoryDir !== "string") return [];
     const ledgerDir = path.join(memoryDir, "state", "observation-ledger");
-    // Codex P2 (round 2): read BOTH canonical ledger files and merge
-    // them. `extraction-judge-verdicts.jsonl` is the live verdict
-    // append-log written by extraction-judge-telemetry.ts;
-    // `rebuilt-observations.jsonl` is the periodic aggregate from
-    // maintenance/rebuild-observations.ts. Without the verdicts file,
-    // the snapshot misses recent judge events when no rebuild has
-    // run. Sort the merged set by `ts` descending afterward so the
-    // tail reflects global recency, not the on-disk row order
-    // (rebuilt rows are sorted by sessionKey/hour, not recency —
-    // codex P2 round 2).
-    const TAIL_BYTES = 256 * 1024;
-    const verdictsRaw = await readJsonlTail(
+    // Codex review converged on two competing constraints:
+    //   1. Don't load the whole file into memory (multi-GB ledgers
+    //      would OOM the console surface).
+    //   2. Don't miss recent rows just because the file isn't sorted
+    //      by recency (`rebuilt-observations.jsonl` is sorted by
+    //      sessionKey/hour, so byte-tail reads silently drop recent
+    //      lexicographically-earlier sessions).
+    // The right answer is a streaming bounded top-N: visit every row,
+    // but keep only the MAX_LEDGER_TAIL most-recent in memory at any
+    // time. Memory stays O(MAX_LEDGER_TAIL); recency ordering is
+    // globally correct.
+    const verdictsTopN = await streamLedgerTopN(
       path.join(ledgerDir, "extraction-judge-verdicts.jsonl"),
-      TAIL_BYTES,
+      MAX_LEDGER_TAIL,
+      projectLedgerRow,
     );
-    const rebuiltRaw = await readJsonlTail(
+    const rebuiltTopN = await streamLedgerTopN(
       path.join(ledgerDir, "rebuilt-observations.jsonl"),
-      TAIL_BYTES,
+      MAX_LEDGER_TAIL,
+      projectLedgerRow,
     );
-    if (verdictsRaw === null && rebuiltRaw === null) return [];
-    const events: ConsoleMaintenanceLedgerEvent[] = [];
-    const sources: Array<{ raw: string }> = [];
-    if (verdictsRaw !== null) sources.push({ raw: verdictsRaw });
-    if (rebuiltRaw !== null) sources.push({ raw: rebuiltRaw });
-    for (const { raw } of sources) {
-      const lines = raw.split("\n");
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(trimmed);
-        } catch {
-          continue;
-        }
-        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-          continue;
-        }
-        const p = parsed as Record<string, unknown>;
-      // Codex P2: the canonical writers (`rebuildObservations` and
-      // `migrateObservations`) emit rows shaped like
-      // `{sessionKey, hour, turnCount, userTurns, assistantTurns,
-      // rebuiltAt}`, NOT `{ts, category}`. Map fields accordingly:
-      // `ts` derives from `hour` (or `rebuiltAt`), `category` falls
-      // back to a stable "observation" tag for canonical rows. Judge-
-      // verdict rows that DO have `ts`/`verdictKind` from
-      // `extraction-judge-telemetry.ts` are still picked up via the
-      // existing field-shape detection so both sources render in the
-      // tail.
-      const ts =
-        typeof p.ts === "string" && p.ts.length > 0
-          ? p.ts
-          : typeof p.hour === "string" && p.hour.length > 0
-            ? p.hour
-            : typeof p.rebuiltAt === "string" && p.rebuiltAt.length > 0
-              ? p.rebuiltAt
-              : "";
-      const category =
-        typeof p.category === "string" && p.category.length > 0
-          ? p.category
-          : typeof p.verdictKind === "string"
-            ? "judge-verdict"
-            : typeof p.turnCount === "number"
-              ? "observation"
-              : "unknown";
-      const summary = summarizeLedgerEvent(p);
-        events.push({ ts, category, summary });
-      }
-    }
-    // Codex P2 round 2: rebuilt-observations rows are written sorted
-    // by sessionKey then hour, NOT by global recency. Sort the merged
-    // set by `ts` descending and take the most recent MAX_LEDGER_TAIL
-    // so the snapshot reflects what just happened, regardless of
-    // on-disk row order. Rows with no parseable `ts` sort last.
+    // Merge the two source top-N windows and select the global
+    // top-N. Both inputs already arrive oldest-first within their
+    // respective windows; sort the merged set descending by ts and
+    // take the most-recent MAX_LEDGER_TAIL.
+    const events: ConsoleMaintenanceLedgerEvent[] = [...verdictsTopN, ...rebuiltTopN];
+    if (events.length === 0) return [];
     events.sort((a, b) => {
-      const aMs = a.ts ? Date.parse(a.ts) : NaN;
-      const bMs = b.ts ? Date.parse(b.ts) : NaN;
-      const aOk = Number.isFinite(aMs);
-      const bOk = Number.isFinite(bMs);
-      if (aOk && bOk) return bMs - aMs;
-      if (aOk) return -1;
-      if (bOk) return 1;
+      const aMs = Date.parse(a.ts);
+      const bMs = Date.parse(b.ts);
+      if (Number.isFinite(aMs) && Number.isFinite(bMs)) return bMs - aMs;
+      if (Number.isFinite(aMs)) return -1;
+      if (Number.isFinite(bMs)) return 1;
       return 0;
     });
     const tail = events.slice(0, MAX_LEDGER_TAIL);
