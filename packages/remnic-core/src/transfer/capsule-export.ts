@@ -460,6 +460,7 @@ function buildCapsuleBlock(
     version: override?.version ?? "0.1.0",
     schemaVersion: override?.schemaVersion ?? "taxonomy-v1",
     parentCapsule: override?.parentCapsule ?? null,
+    parent: override?.parent ?? null,
     description: override?.description ?? "",
     retrievalPolicy: override?.retrievalPolicy ?? {
       tierWeights: {},

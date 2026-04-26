@@ -123,6 +123,9 @@ import {
   parseXrayCliOptions,
   renderXray,
   expandTildePath,
+  // capsule fork — issue #676 PR 4/6
+  forkCapsule,
+  readForkLineage,
 } from "@remnic/core";
 // @remnic/export-weclone is an optional install surface (training:export
 // only uses it). Load lazily so the CLI works without it — see
@@ -228,7 +231,8 @@ type CommandName =
   | "extensions"
   | "training:export"
   | "import"
-  | "xray";
+  | "xray"
+  | "capsule";
 
 type DaemonAction = "start" | "stop" | "restart" | "install" | "uninstall" | "status";
 type TokenAction = "generate" | "list" | "revoke";
@@ -7436,6 +7440,112 @@ Other:
       break;
     }
 
+    case "capsule": {
+      // `remnic capsule fork <source-archive> --target <root> --fork-id <id>`
+      // Issue #676 PR 4/6: formalise fork semantics — lineage breadcrumb +
+      // parent-capsule linkage.
+      const subAction = rest[0] ?? "help";
+      const capsuleArgs = rest.slice(1);
+
+      if (subAction === "fork") {
+        if (capsuleArgs.includes("--help") || capsuleArgs.includes("-h")) {
+          console.log(`Usage: remnic capsule fork <source-archive> --target <root> --fork-id <id>
+
+Fork a capsule archive into a memory root. Records are imported under
+forks/<source-capsule-id>/ and a lineage breadcrumb is written to
+forks/<fork-id>/lineage.json.
+
+Arguments:
+  <source-archive>         Path to a .capsule.json.gz archive
+
+Options:
+  --target <dir>           Target memory root (required)
+  --fork-id <id>           Unique fork identifier (required)
+  --help / -h              Show this help`);
+          break;
+        }
+
+        // Positional: first non-flag arg is the source archive.
+        const positionals = capsuleArgs.filter((a) => !a.startsWith("--"));
+        const sourceArchive = positionals[0];
+        if (!sourceArchive) {
+          console.error("ERROR: capsule fork requires a source archive path.");
+          console.error("Usage: remnic capsule fork <source-archive> --target <root> --fork-id <id>");
+          process.exit(1);
+        }
+
+        const targetRoot = resolveRequiredValueFlag(capsuleArgs, "--target");
+        const forkId = resolveRequiredValueFlag(capsuleArgs, "--fork-id");
+
+        if (!targetRoot) {
+          console.error("ERROR: capsule fork requires --target <dir>");
+          process.exit(1);
+        }
+        if (!forkId) {
+          console.error("ERROR: capsule fork requires --fork-id <id>");
+          process.exit(1);
+        }
+
+        try {
+          const result = await forkCapsule({
+            sourceArchive: expandTilde(sourceArchive),
+            targetRoot: expandTilde(targetRoot),
+            forkId,
+          });
+          const { lineage, lineagePath, importResult } = result;
+          console.log(`Fork complete.`);
+          console.log(`  Fork ID        : ${lineage.forkId}`);
+          console.log(`  Parent capsule : ${lineage.parent.capsuleId} @ ${lineage.parent.version}`);
+          console.log(`  Fork root      : ${lineage.parent.forkRoot}`);
+          console.log(`  Imported       : ${importResult.imported.length} records`);
+          console.log(`  Skipped        : ${importResult.skipped.length} records`);
+          console.log(`  Lineage        : ${lineagePath}`);
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(1);
+        }
+      } else if (subAction === "lineage") {
+        // `remnic capsule lineage --root <dir> --fork-id <id>`
+        // Read and print the lineage breadcrumb for a fork.
+        const forkId = resolveRequiredValueFlag(capsuleArgs, "--fork-id");
+        const root = resolveRequiredValueFlag(capsuleArgs, "--memory-dir") ??
+          resolveRequiredValueFlag(capsuleArgs, "--root");
+
+        if (!forkId) {
+          console.error("ERROR: capsule lineage requires --fork-id <id>");
+          process.exit(1);
+        }
+        if (!root) {
+          console.error("ERROR: capsule lineage requires --root <dir> or --memory-dir <dir>");
+          process.exit(1);
+        }
+
+        try {
+          const lineage = await readForkLineage(expandTilde(root), forkId);
+          if (!lineage) {
+            console.error(`No lineage breadcrumb found for fork "${forkId}" in ${root}`);
+            process.exit(1);
+          }
+          console.log(JSON.stringify(lineage, null, 2));
+        } catch (err) {
+          console.error(err instanceof Error ? err.message : String(err));
+          process.exit(1);
+        }
+      } else {
+        console.log(`Usage: remnic capsule <subcommand> [options]
+
+Subcommands:
+  fork <archive> --target <dir> --fork-id <id>
+      Fork a capsule archive into a memory root.
+
+  lineage --fork-id <id> --root <dir>
+      Print the lineage breadcrumb for a fork.
+
+Run 'remnic capsule <subcommand> --help' for subcommand details.`);
+      }
+      break;
+    }
+
     case "openclaw": {
       const subAction = rest[0] ?? "help";
       const args = rest.slice(1);
@@ -7556,6 +7666,12 @@ Usage:
   remnic import --adapter <name> --file <path> [--dry-run] [--batch-size <n>]
     Import memory from ChatGPT/Claude/Gemini/Mem0 exports (issue #568).
     Run 'remnic import --help' for the full adapter list.
+  remnic capsule fork <archive> --target <dir> --fork-id <id>
+    Fork a capsule archive into a memory root. Records land under
+    forks/<source-capsule-id>/ and a lineage breadcrumb is written to
+    forks/<fork-id>/lineage.json (issue #676 PR 4/6).
+  remnic capsule lineage --fork-id <id> --root <dir>
+    Print the fork lineage breadcrumb for a given fork id.
 
 Options:
   --json    Output in JSON format
