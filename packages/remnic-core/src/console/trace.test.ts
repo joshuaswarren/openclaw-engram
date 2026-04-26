@@ -274,6 +274,41 @@ test("recorder error path does not crash on poisoned writes", async () => {
   });
 });
 
+test("recorder close() drains pending writes (Codex P1 regression)", async () => {
+  // Regression for Codex review on PR #732: `close()` must NOT flip
+  // `closed = true` before draining the write chain. Queued writes
+  // begin with `if (closed) return;`, so flipping the flag first
+  // would silently drop frames the caller already enqueued via
+  // `append()` immediately before `close()`.
+  await withTempDir(async (dir) => {
+    const tracePath = path.join(dir, "trace.jsonl");
+    const recorder = await openTraceRecorder(tracePath);
+    // Fire-and-forget a batch of appends, then close immediately.
+    // Without the fix, several of these would be dropped.
+    const writes: Promise<void>[] = [];
+    for (let i = 0; i < 10; i++) {
+      writes.push(
+        recorder.append(
+          makeSnapshot({
+            capturedAt: `2026-04-26T00:00:${String(i).padStart(2, "0")}.000Z`,
+          }),
+        ),
+      );
+    }
+    // Do NOT await `writes` first — close concurrently with pending appends.
+    const closePromise = recorder.close();
+    await Promise.all(writes);
+    await closePromise;
+    const raw = await fs.readFile(tracePath, "utf-8");
+    const lines = raw.split("\n").filter((l) => l.length > 0);
+    assert.equal(
+      lines.length,
+      10,
+      "all queued writes must drain before close completes",
+    );
+  });
+});
+
 test("recorder serializes concurrent appends without interleaving", async () => {
   await withTempDir(async (dir) => {
     const tracePath = path.join(dir, "trace.jsonl");

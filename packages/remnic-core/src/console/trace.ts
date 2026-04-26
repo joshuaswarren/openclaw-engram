@@ -149,13 +149,20 @@ export async function openTraceRecorder(
     },
     close: async () => {
       if (closed) return;
-      closed = true;
+      // Codex P1: do NOT set `closed = true` before draining. Each
+      // queued write begins with `if (closed) return;`, so flipping the
+      // flag first would silently drop frames that callers already
+      // queued via `append()`. Drain the existing chain first so every
+      // already-queued write executes against the still-open handle,
+      // THEN flip `closed` to reject any further appends, THEN close
+      // the file handle. This honors the documented "drain pending
+      // writes" contract of `close()`.
       try {
-        // Drain any pending writes before closing the handle.
         await writeChain;
       } catch {
         // ignore — already in lastError
       }
+      closed = true;
       try {
         await handle.close();
       } catch (err) {
