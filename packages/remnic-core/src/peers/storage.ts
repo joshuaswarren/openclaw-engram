@@ -1062,3 +1062,110 @@ export async function readInteractionLogRaw(
     throw err;
   }
 }
+
+/**
+ * Inverse of `formatLogEntry`. Used by `readPeerInteractionLog` to
+ * convert the on-disk one-line bullet form back into a structured
+ * `PeerInteractionLogEntry`. Returns `null` for malformed lines so
+ * callers can keep the rest of the log even when a single entry was
+ * hand-edited or partially written.
+ *
+ * Format (must match `formatLogEntry` exactly):
+ *
+ *   - [TS] (KIND) session=SID SUMMARY
+ *   - [TS] (KIND) SUMMARY                  // session optional
+ *
+ * Whitespace inside SUMMARY is preserved verbatim. The parser is
+ * deliberately strict — anything that doesn't start with `- [` is
+ * rejected and dropped (the file is also markdown-friendly, so blank
+ * lines and stray prose are simply ignored).
+ */
+function parseLogLine(line: string): PeerInteractionLogEntry | null {
+  if (!line.startsWith("- [")) return null;
+  const tsClose = line.indexOf("]", 3);
+  if (tsClose === -1) return null;
+  const timestamp = line.slice(3, tsClose).trim();
+  if (timestamp === "") return null;
+  // Skip optional whitespace between `]` and `(`.
+  let cursor = tsClose + 1;
+  while (cursor < line.length && line[cursor] === " ") cursor += 1;
+  if (line[cursor] !== "(") return null;
+  const kindOpen = cursor;
+  const kindClose = line.indexOf(")", kindOpen + 1);
+  if (kindClose === -1) return null;
+  const kind = line.slice(kindOpen + 1, kindClose).trim();
+  if (kind === "") return null;
+  cursor = kindClose + 1;
+  let sessionId: string | undefined;
+  // Optional ` session=<id>` token. We tolerate any leading whitespace
+  // count; `formatLogEntry` always emits exactly one space, but
+  // operator-edited logs may diverge.
+  while (cursor < line.length && line[cursor] === " ") cursor += 1;
+  if (line.slice(cursor, cursor + "session=".length) === "session=") {
+    cursor += "session=".length;
+    const space = line.indexOf(" ", cursor);
+    const end = space === -1 ? line.length : space;
+    const sid = line.slice(cursor, end).trim();
+    if (sid.length > 0) sessionId = sid;
+    cursor = end;
+  }
+  // Remaining tail is the summary (possibly empty if the log was
+  // hand-edited; we still accept "" because `formatLogEntry` itself
+  // accepts an empty summary string).
+  while (cursor < line.length && line[cursor] === " ") cursor += 1;
+  const summary = line.slice(cursor);
+  return sessionId === undefined
+    ? { timestamp, kind, summary }
+    : { timestamp, kind, sessionId, summary };
+}
+
+/**
+ * Read the structured interaction log for a peer.
+ *
+ * Returns an empty array when the log file does not exist. Each line
+ * is parsed via `parseLogLine`; malformed lines are silently skipped
+ * so the reasoner can still derive profile fields from a partially
+ * corrupt log rather than aborting the whole pass.
+ *
+ * `options.limit` (when > 0) restricts the result to the most recent
+ * N entries. `options.afterTimestamp` (ISO-8601) filters out entries
+ * with `timestamp < afterTimestamp` (string compare is safe for
+ * canonical ISO-8601 form). Both filters are applied in order:
+ * timestamp first, then limit.
+ *
+ * Order: oldest → newest, matching the append-only on-disk order so
+ * downstream consumers can reason about temporal evolution without
+ * re-sorting.
+ */
+export async function readPeerInteractionLog(
+  memoryDir: string,
+  peerId: string,
+  options: { limit?: number; afterTimestamp?: string } = {},
+): Promise<PeerInteractionLogEntry[]> {
+  const raw = await readInteractionLogRaw(memoryDir, peerId);
+  if (raw === "") return [];
+  const entries: PeerInteractionLogEntry[] = [];
+  // Split on bare newlines; logs are written with a trailing `\n` per
+  // entry by `appendInteractionLog`, so the final element after split
+  // is typically the empty string. Both `\r\n` and `\n` are tolerated.
+  for (const lineRaw of raw.split(/\r?\n/)) {
+    const line = lineRaw.trimEnd();
+    if (line === "") continue;
+    const parsed = parseLogLine(line);
+    if (parsed === null) continue;
+    entries.push(parsed);
+  }
+  let filtered = entries;
+  if (typeof options.afterTimestamp === "string" && options.afterTimestamp.length > 0) {
+    const cutoff = options.afterTimestamp;
+    filtered = filtered.filter((e) => e.timestamp > cutoff);
+  }
+  // Gotcha #27: guard slice(-n) against n === 0 — `slice(-0)` returns
+  // the entire array. Treat 0 and negatives as "no limit applied".
+  if (typeof options.limit === "number" && options.limit > 0) {
+    if (filtered.length > options.limit) {
+      filtered = filtered.slice(filtered.length - options.limit);
+    }
+  }
+  return filtered;
+}

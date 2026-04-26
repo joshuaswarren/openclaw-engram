@@ -1552,6 +1552,29 @@ export function parseConfig(raw: unknown): PluginConfig {
     // wiring keeps working without operator-aware prompts.
     operatorAwareConsolidationEnabled:
       coerceBool(cfg.operatorAwareConsolidationEnabled) ?? false,
+    // Async peer profile reasoner (issue #679 PR 2/5). Defaults to
+    // `false` (opt-in) per Gotchas #30/#48 — least-privileged default.
+    // `coerceBool` handles "true"/"1"/"yes"/"on" CLI strings (Gotcha
+    // #36). Numeric thresholds clamp at zero (Gotcha #28 + #45 — 0
+    // is a documented disable value for both, so the schema minimum
+    // matches and we do NOT silently bump to 1).
+    peerProfileReasonerEnabled:
+      coerceBool(cfg.peerProfileReasonerEnabled) ?? false,
+    peerProfileReasonerModel:
+      typeof cfg.peerProfileReasonerModel === "string" &&
+      cfg.peerProfileReasonerModel.trim().length > 0
+        ? cfg.peerProfileReasonerModel.trim()
+        : "gpt-5.2",
+    peerProfileReasonerMinInteractions:
+      typeof cfg.peerProfileReasonerMinInteractions === "number" &&
+      Number.isFinite(cfg.peerProfileReasonerMinInteractions)
+        ? Math.max(0, Math.floor(cfg.peerProfileReasonerMinInteractions))
+        : 5,
+    peerProfileReasonerMaxFieldsPerRun:
+      typeof cfg.peerProfileReasonerMaxFieldsPerRun === "number" &&
+      Number.isFinite(cfg.peerProfileReasonerMaxFieldsPerRun)
+        ? Math.max(0, Math.floor(cfg.peerProfileReasonerMaxFieldsPerRun))
+        : 8,
     creationMemoryEnabled: cfg.creationMemoryEnabled === true,
     memoryUtilityLearningEnabled: cfg.memoryUtilityLearningEnabled === true,
     promotionByOutcomeEnabled: cfg.promotionByOutcomeEnabled === true,

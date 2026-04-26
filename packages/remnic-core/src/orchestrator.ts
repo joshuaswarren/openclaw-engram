@@ -3058,6 +3058,41 @@ export class Orchestrator {
       );
     }
 
+    // Issue #679 PR 2/5 — async peer profile reasoner runs as part of
+    // the REM phase, immediately after semantic consolidation. Gated
+    // on `peerProfileReasonerEnabled` (default false, opt-in). Wrapped
+    // in a try/catch because reasoner I/O (LLM call, peer-profile
+    // writes) must never abort the consolidation result. The reasoner
+    // itself also defends against partial failure — see profile-reasoner.ts.
+    if (this.config.peerProfileReasonerEnabled) {
+      try {
+        const { runPeerProfileReasoner } = await import("./peers/index.js");
+        const llm = new FallbackLlmClient(this.config.gatewayConfig);
+        const peerResult = await runPeerProfileReasoner({
+          memoryDir: this.config.memoryDir,
+          enabled: true,
+          llm,
+          model: this.config.peerProfileReasonerModel,
+          minInteractions: this.config.peerProfileReasonerMinInteractions,
+          maxFieldsPerRun: this.config.peerProfileReasonerMaxFieldsPerRun,
+          log: {
+            debug: (msg) => log.debug(msg),
+            info: (msg) => log.info(msg),
+            warn: (msg) => log.warn(msg),
+          },
+        });
+        log.info(
+          `[peer-profile-reasoner] complete: peers=${peerResult.peersConsidered}, processed=${peerResult.peersProcessed}, fields=${peerResult.fieldsApplied}`,
+        );
+      } catch (err) {
+        log.warn(
+          `[peer-profile-reasoner] post-consolidation hook failed (non-fatal): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
     return result;
   }
 

@@ -2912,6 +2912,28 @@
         "default": false,
         "description": "Opt in to operator-aware consolidation prompts so the LLM returns structured {operator, output} JSON and SPLIT/MERGE/UPDATE is recorded on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
       },
+      "peerProfileReasonerEnabled": {
+        "type": "boolean",
+        "default": false,
+        "description": "Enable the async peer profile reasoner (issue #679). Runs after semantic consolidation in the REM phase and updates per-peer profile.md files with provenance-tagged field updates derived from the peer's interaction log. Default off (opt-in)."
+      },
+      "peerProfileReasonerModel": {
+        "type": "string",
+        "default": "gpt-5.2",
+        "description": "Model identifier used by the peer profile reasoner. Logged for telemetry only — actual dispatch routes through the same FallbackLlmClient used by semantic consolidation."
+      },
+      "peerProfileReasonerMinInteractions": {
+        "type": "number",
+        "default": 5,
+        "minimum": 0,
+        "description": "Minimum new interaction-log entries a peer must accumulate since the previous reasoner run before being processed again. Set to 0 to consider every peer on every run."
+      },
+      "peerProfileReasonerMaxFieldsPerRun": {
+        "type": "number",
+        "default": 8,
+        "minimum": 0,
+        "description": "Hard cap on the total number of profile fields the reasoner will apply across all peers in a single run. Set to 0 to disable applying any fields."
+      },
       "creationMemoryEnabled": {
         "type": "boolean",
         "default": false,
@@ -4723,6 +4745,26 @@
       "label": "Operator-Aware Consolidation Prompt",
       "advanced": true,
       "help": "Opt in to operator-aware consolidation prompts (default off). When enabled, the LLM returns structured {operator, output} JSON and we record SPLIT/MERGE/UPDATE on derived_via. When disabled (default), derived_via still populates via the cluster-shape heuristic."
+    },
+    "peerProfileReasonerEnabled": {
+      "label": "Peer Profile Reasoner",
+      "advanced": true,
+      "help": "Enable the async peer profile reasoner (issue #679). Runs in the REM phase after semantic consolidation and updates per-peer profile.md files with provenance-tagged field updates derived from each peer's interaction log. Default off (opt-in)."
+    },
+    "peerProfileReasonerModel": {
+      "label": "Peer Profile Reasoner Model",
+      "advanced": true,
+      "help": "Model identifier the peer profile reasoner records on telemetry. Dispatch still routes through the FallbackLlmClient used by semantic consolidation."
+    },
+    "peerProfileReasonerMinInteractions": {
+      "label": "Peer Profile Reasoner Min Interactions",
+      "advanced": true,
+      "help": "Minimum new interaction-log entries a peer must accumulate since the previous reasoner run before being processed again. Set to 0 to consider every peer on every run."
+    },
+    "peerProfileReasonerMaxFieldsPerRun": {
+      "label": "Peer Profile Reasoner Max Fields Per Run",
+      "advanced": true,
+      "help": "Hard cap on the total number of profile fields the reasoner will apply across all peers in a single run. Set to 0 to disable applying any fields."
     },
     "creationMemoryEnabled": {
       "label": "Creation Memory",
