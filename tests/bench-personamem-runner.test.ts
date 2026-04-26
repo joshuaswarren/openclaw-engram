@@ -263,6 +263,71 @@ test("runBenchmark scores personamem with official-style MCQ accuracy when distr
   assert.match(promptSeen, /Final Answer: \[Letter\]/);
 });
 
+test("runBenchmark prefers explicit final MCQ answers over broad answer labels", async () => {
+  const tmpDir = await mkdtemp(path.join(os.tmpdir(), "remnic-bench-personamem-mcq-final-priority-"));
+  const datasetDir = path.join(tmpDir, "datasets", "personamem");
+  const benchmarkDir = path.join(datasetDir, "benchmark", "text");
+  const chatHistoryDir = path.join(datasetDir, "data", "chat_history_32k");
+  const adapter = new FakeMemoryAdapter({
+    async respond() {
+      return {
+        text: "My answer: After checking the memory, my final answer is B.",
+        tokens: { input: 10, output: 10 },
+        latencyMs: 3,
+        model: "fake-responder",
+      };
+    },
+  });
+  await mkdir(benchmarkDir, { recursive: true });
+  await mkdir(chatHistoryDir, { recursive: true });
+
+  await writeFile(
+    path.join(chatHistoryDir, "persona-1.json"),
+    JSON.stringify({
+      chat_history: [
+        {
+          role: "user",
+          content: "I like to journal every morning with a mug of Earl Grey tea.",
+        },
+      ],
+    }),
+    "utf8",
+  );
+
+  await writeFile(
+    path.join(benchmarkDir, "benchmark.csv"),
+    toCsv(
+      [
+        "persona_id",
+        "chat_history_32k_link",
+        "user_query",
+        "correct_answer",
+        "incorrect_answers",
+      ],
+      [
+        "persona-1",
+        "data/chat_history_32k/persona-1.json",
+        "{'role': 'user', 'content': 'Which tea do I usually drink while journaling?'}",
+        "Earl Grey",
+        JSON.stringify(["peppermint", "zebra"]),
+      ],
+    ),
+    "utf8",
+  );
+
+  const result = await runBenchmark("personamem", {
+    mode: "full",
+    datasetDir,
+    seed: 0,
+    system: adapter,
+  });
+
+  const task = result.results.tasks[0]!;
+  assert.equal(task.details?.correctMcqOption, "B");
+  assert.equal(task.details?.predictedMcqOption, "B");
+  assert.equal(task.scores.mcq_accuracy, 1);
+});
+
 test("runBenchmark rejects personamem full mode without datasetDir", async () => {
   const adapter = new FakeMemoryAdapter();
 

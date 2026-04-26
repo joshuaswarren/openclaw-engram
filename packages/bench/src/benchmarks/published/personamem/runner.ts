@@ -134,9 +134,11 @@ export async function runPersonaMemBenchmark(
         contains_answer: containsAnswer(answered.finalAnswer, sample.correctAnswer),
         search_hits: searchResults.length,
       };
+      const predictedMcqOption = mcq
+        ? extractMcqFinalAnswer(answered.finalAnswer)
+        : undefined;
       if (mcq) {
-        const predictedOption = extractMcqFinalAnswer(answered.finalAnswer);
-        scores.mcq_accuracy = predictedOption === mcq.correctOption ? 1 : 0;
+        scores.mcq_accuracy = predictedMcqOption === mcq.correctOption ? 1 : 0;
       }
       if (judgeResult.score >= 0) {
         scores.llm_judge = judgeResult.score;
@@ -171,9 +173,7 @@ export async function runPersonaMemBenchmark(
           evaluationQuestion,
           mcqOptions: mcq?.options,
           correctMcqOption: mcq?.correctOption,
-          predictedMcqOption: mcq
-            ? extractMcqFinalAnswer(answered.finalAnswer)
-            : undefined,
+          predictedMcqOption,
           recalledLength: recalledText.length,
           answeredLength: answered.finalAnswer.length,
           recalledText,
@@ -685,11 +685,11 @@ function extractMcqFinalAnswer(response: string): string | undefined {
     /\$\\boxed\{([A-Z])\}\$/i,
     /\\boxed\{([A-Z])\}/i,
     /final answer:\s*([A-Z])/i,
-    /answer:\s*([A-Z])/i,
     /final answer is\s*\$?\\boxed\{([A-Z])\}\$?/i,
     /final answer is\s*([A-Z])/i,
     /the answer is\s*\$?\\boxed\{([A-Z])\}\$?/i,
     /the answer is\s*([A-Z])/i,
+    /answer:\s*([A-Z])\b/i,
     /\b([A-Z])\.\s*$/i,
   ];
 
