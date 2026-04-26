@@ -219,6 +219,7 @@ import {
   parseConnectorsStatusOptions,
   renderConnectorsList,
   renderConnectorsRunResult,
+  runConnectorPollOnce,
   type ConnectorRow,
   type ConnectorRunResult,
 } from "./connectors-cli.js";
@@ -4767,33 +4768,35 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                 return;
               }
               const connector = createGoogleDriveConnector();
-              const { readConnectorState } = await import(
+              const { readConnectorState, writeConnectorState } = await import(
                 "./connectors/live/state-store.js"
               );
               const state = await readConnectorState(
                 orchestrator.config.memoryDir,
                 name,
               );
-              try {
-                const syncResult = await connector.syncIncremental({
-                  cursor: state?.cursor ?? null,
-                  // GoogleDriveConnectorConfig is narrower than ConnectorConfig
-                  // (no index signature) but is structurally compatible at
-                  // runtime. Double-cast via unknown to satisfy the interface.
-                  config: validatedCfg as unknown as Record<string, unknown>,
-                });
-                // Ingest fetched documents into the memory layer BEFORE
-                // advancing the cursor.  Reversing this order (cursor first,
-                // ingest second) would permanently skip documents on any
-                // failure between the two writes (P1 Codex review).
-                //
-                // Each ConnectorDocument is ingested as an assistant-role
-                // bulk-import turn so the extraction pipeline can distill it
-                // into memories.  The title (when present) is prepended as a
-                // Markdown heading so the extractor can use it as context.
-                if (syncResult.newDocs.length > 0) {
+              // runConnectorPollOnce enforces: ingest docs BEFORE advancing the
+              // cursor (CLAUDE.md gotcha #25 + #43).  If ingestFn throws, the
+              // catch branch in runConnectorPollOnce writes the OLD cursor so
+              // the next poll re-fetches the same document window.
+              runResult = await runConnectorPollOnce({
+                connectorId: name,
+                priorState: state,
+                syncFn: (cursor) =>
+                  connector.syncIncremental({
+                    cursor,
+                    // GoogleDriveConnectorConfig is narrower than ConnectorConfig
+                    // (no index signature) but is structurally compatible at
+                    // runtime. Double-cast via unknown to satisfy the interface.
+                    config: validatedCfg as unknown as Record<string, unknown>,
+                  }),
+                ingestFn: async (docs) => {
+                  // Each ConnectorDocument is ingested as an assistant-role
+                  // bulk-import turn so the extraction pipeline can distill it
+                  // into memories.  The title (when present) is prepended as a
+                  // Markdown heading so the extractor can use it as context.
                   const fetchedAt = new Date().toISOString();
-                  const turns = syncResult.newDocs.map((doc) => ({
+                  const turns = docs.map((doc) => ({
                     role: "assistant" as const,
                     content: doc.title
                       ? `# ${doc.title}\n\n${doc.content}`
@@ -4801,35 +4804,17 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                     timestamp: fetchedAt,
                   }));
                   await orchestrator.ingestBulkImportBatch(turns);
-                }
-                runResult = { docsImported: syncResult.newDocs.length };
-                // Persist cursor only after docs are safely ingested.
-                const { writeConnectorState } = await import(
-                  "./connectors/live/state-store.js"
-                );
-                await writeConnectorState(orchestrator.config.memoryDir, name, {
-                  id: name,
-                  cursor: syncResult.nextCursor,
-                  lastSyncAt: new Date().toISOString(),
-                  lastSyncStatus: "success",
-                  totalDocsImported:
-                    (state?.totalDocsImported ?? 0) + syncResult.newDocs.length,
-                });
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                runResult = { docsImported: 0, error: msg };
-                const { writeConnectorState } = await import(
-                  "./connectors/live/state-store.js"
-                );
-                await writeConnectorState(orchestrator.config.memoryDir, name, {
-                  id: name,
-                  cursor: state?.cursor ?? null,
-                  lastSyncAt: new Date().toISOString(),
-                  lastSyncStatus: "error",
-                  lastSyncError: msg,
-                  totalDocsImported: state?.totalDocsImported ?? 0,
-                });
-              }
+                },
+                writeCursorFn: async ({ cursor, lastSyncStatus, lastSyncError, totalDocsImported }) =>
+                  writeConnectorState(orchestrator.config.memoryDir, name, {
+                    id: name,
+                    cursor,
+                    lastSyncAt: new Date().toISOString(),
+                    lastSyncStatus,
+                    ...(lastSyncError !== undefined ? { lastSyncError } : {}),
+                    totalDocsImported,
+                  }),
+              });
             } else if (name === NOTION_CONNECTOR_ID) {
               if (!cfg.notion.enabled) {
                 process.stderr.write(
@@ -4849,26 +4834,30 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                 return;
               }
               const connector = createNotionConnector();
-              const { readConnectorState } = await import(
+              const { readConnectorState, writeConnectorState } = await import(
                 "./connectors/live/state-store.js"
               );
               const state = await readConnectorState(
                 orchestrator.config.memoryDir,
                 name,
               );
-              try {
-                const syncResult = await connector.syncIncremental({
-                  cursor: state?.cursor ?? null,
-                  // NotionConnectorConfig is narrower than ConnectorConfig (no
-                  // index signature) but is structurally compatible at runtime.
-                  // Double-cast via unknown to satisfy the interface boundary.
-                  config: validatedCfg as unknown as Record<string, unknown>,
-                });
-                // Ingest fetched documents before advancing cursor (P1 fix).
-                // Same pattern as the Drive block above.
-                if (syncResult.newDocs.length > 0) {
+              // runConnectorPollOnce enforces: ingest docs BEFORE advancing the
+              // cursor (CLAUDE.md gotcha #25 + #43).  Same guarantee as the
+              // Drive block above — if ingestFn throws, old cursor is kept.
+              runResult = await runConnectorPollOnce({
+                connectorId: name,
+                priorState: state,
+                syncFn: (cursor) =>
+                  connector.syncIncremental({
+                    cursor,
+                    // NotionConnectorConfig is narrower than ConnectorConfig (no
+                    // index signature) but is structurally compatible at runtime.
+                    // Double-cast via unknown to satisfy the interface boundary.
+                    config: validatedCfg as unknown as Record<string, unknown>,
+                  }),
+                ingestFn: async (docs) => {
                   const fetchedAt = new Date().toISOString();
-                  const turns = syncResult.newDocs.map((doc) => ({
+                  const turns = docs.map((doc) => ({
                     role: "assistant" as const,
                     content: doc.title
                       ? `# ${doc.title}\n\n${doc.content}`
@@ -4876,34 +4865,17 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
                     timestamp: fetchedAt,
                   }));
                   await orchestrator.ingestBulkImportBatch(turns);
-                }
-                runResult = { docsImported: syncResult.newDocs.length };
-                const { writeConnectorState } = await import(
-                  "./connectors/live/state-store.js"
-                );
-                await writeConnectorState(orchestrator.config.memoryDir, name, {
-                  id: name,
-                  cursor: syncResult.nextCursor,
-                  lastSyncAt: new Date().toISOString(),
-                  lastSyncStatus: "success",
-                  totalDocsImported:
-                    (state?.totalDocsImported ?? 0) + syncResult.newDocs.length,
-                });
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                runResult = { docsImported: 0, error: msg };
-                const { writeConnectorState } = await import(
-                  "./connectors/live/state-store.js"
-                );
-                await writeConnectorState(orchestrator.config.memoryDir, name, {
-                  id: name,
-                  cursor: state?.cursor ?? null,
-                  lastSyncAt: new Date().toISOString(),
-                  lastSyncStatus: "error",
-                  lastSyncError: msg,
-                  totalDocsImported: state?.totalDocsImported ?? 0,
-                });
-              }
+                },
+                writeCursorFn: async ({ cursor, lastSyncStatus, lastSyncError, totalDocsImported }) =>
+                  writeConnectorState(orchestrator.config.memoryDir, name, {
+                    id: name,
+                    cursor,
+                    lastSyncAt: new Date().toISOString(),
+                    lastSyncStatus,
+                    ...(lastSyncError !== undefined ? { lastSyncError } : {}),
+                    totalDocsImported,
+                  }),
+              });
             } else {
               process.stderr.write(
                 `connectors run: unknown connector "${name}". Known connectors: ${GOOGLE_DRIVE_CONNECTOR_ID}, ${NOTION_CONNECTOR_ID}.\n`,
