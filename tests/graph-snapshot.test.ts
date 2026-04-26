@@ -866,11 +866,19 @@ test(
         readsByPath.some((p) => p.endsWith(path.join("facts", "2026-04-20", "beta.md"))),
         `expected beta.md read, saw ${readsByPath.join(",")}`,
       );
-      // Resolved reads must remain inside the namespace root.
+      // Resolved reads must remain inside the namespace root.  The
+      // access-service loader canonicalizes the namespace root through
+      // `fs.realpath` (issue #691 PR 2/5 follow-up — codex P1 symlink
+      // bypass), so on platforms where the tmpdir is itself a symlink
+      // (macOS resolves `/var/folders/...` → `/private/var/folders/...`)
+      // we have to compare against the realpath form too.
+      const fs = await import("node:fs/promises");
+      const realDir = await fs.realpath(dir);
+      const realDirWithSep = realDir.endsWith(path.sep) ? realDir : realDir + path.sep;
       for (const p of readsByPath) {
         assert.ok(
-          p.startsWith(dir + path.sep) || p === dir,
-          `read path ${p} escaped namespace root ${dir}`,
+          p.startsWith(realDirWithSep) || p === realDir,
+          `read path ${p} escaped namespace root ${realDir}`,
         );
       }
     } finally {
@@ -879,8 +887,111 @@ test(
   },
 );
 
-// Suppress unused-import warning for `mkdir` / `writeFile` (kept for future
-// fixture extensions that exercise the orchestrator-backed loader).
-void mkdir;
-void writeFile;
+test(
+  "graphSnapshot loader rejects symlinked endpoints that escape the namespace",
+  async () => {
+    // Regression for the codex P1 follow-up on PR #734 (symlink bypass):
+    // the lexical containment check is insufficient because an
+    // in-namespace path can be a symlink to an out-of-namespace file.
+    // The loader must canonicalize via `fs.realpath` and reject
+    // resolved paths that escape the namespace root.
+    const root = await mkdtemp(path.join(os.tmpdir(), "engram-graph-snapshot-symlink-"));
+    try {
+      const ns = path.join(root, "ns");
+      const peer = path.join(root, "peer");
+      await mkdir(path.join(ns, "facts", "2026-04-20"), { recursive: true });
+      await mkdir(peer, { recursive: true });
+
+      // Out-of-namespace "secret" memory.
+      const secret = path.join(peer, "secret.md");
+      await writeFile(
+        secret,
+        "---\nid: secret\ncategory: secret\n---\nsecret\n",
+        "utf-8",
+      );
+
+      // In-namespace symlink that points at the secret.  A naive
+      // lexical guard would accept this because the symlink itself
+      // sits under the namespace root.
+      const fs = await import("node:fs/promises");
+      const symlinked = path.join(ns, "facts", "2026-04-20", "alpha.md");
+      await fs.symlink(secret, symlinked);
+
+      // Seed an edge that uses the symlinked path as both endpoints
+      // (a self-loop is enough to exercise the guard).
+      await appendEdge(ns, {
+        from: "facts/2026-04-20/alpha.md",
+        to: "facts/2026-04-20/alpha.md",
+        type: "entity",
+        weight: 1.0,
+        label: "symlink",
+        ts: "2026-04-20T12:00:00.000Z",
+      });
+
+      // Replicate the access-service realpath loader; verify the
+      // symlinked endpoint is rejected.
+      const namespaceRoot = await fs.realpath(ns);
+      const namespaceRootWithSep = namespaceRoot.endsWith(path.sep)
+        ? namespaceRoot
+        : namespaceRoot + path.sep;
+      const readsByPath: string[] = [];
+      const guardedLoader = async (relPath: string) => {
+        if (path.isAbsolute(relPath)) return null;
+        const candidate = path.resolve(namespaceRoot, relPath);
+        if (candidate !== namespaceRoot && !candidate.startsWith(namespaceRootWithSep)) {
+          return null;
+        }
+        let canonical: string;
+        try {
+          canonical = await fs.realpath(candidate);
+        } catch {
+          canonical = candidate;
+        }
+        if (canonical !== namespaceRoot && !canonical.startsWith(namespaceRootWithSep)) {
+          return null;
+        }
+        readsByPath.push(canonical);
+        // Real file read.
+        try {
+          const raw = await fs.readFile(canonical, "utf-8");
+          const m = raw.match(/category:\s*(\w+)/);
+          return {
+            category: m?.[1] ?? "unknown",
+            label: path.basename(canonical, path.extname(canonical)),
+          };
+        } catch {
+          return null;
+        }
+      };
+
+      const snapshot = await buildGraphSnapshot({
+        memoryDir: ns,
+        graphConfig: {
+          entityGraphEnabled: true,
+          timeGraphEnabled: true,
+          causalGraphEnabled: true,
+        },
+        request: {},
+        loadNode: guardedLoader,
+      });
+
+      // The symlinked endpoint surfaces as an orphan node with
+      // `kind: "unknown"` because the realpath check rejected it.
+      const node = snapshot.nodes.find((n) => n.id === "facts/2026-04-20/alpha.md");
+      assert.ok(node, "symlinked node should still surface");
+      assert.equal(node!.kind, "unknown", "symlinked endpoint must NOT load secret metadata");
+
+      // We never read the secret file via the symlink.
+      for (const readPath of readsByPath) {
+        assert.ok(
+          !readPath.includes("secret.md"),
+          `secret file must never be read via symlink: ${readPath}`,
+        );
+      }
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 
