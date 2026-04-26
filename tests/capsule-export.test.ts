@@ -365,6 +365,54 @@ test("capsule overrides flow into the manifest", async () => {
   assert.equal(result.manifest.capsule.includes.taxonomy, true);
 });
 
+test("partial nested capsule override deep-merges with defaults (codex P2)", async () => {
+  // Codex P2 (#731): doc contract says `capsule` may be "any subset" but the
+  // prior code treated nested objects (`retrievalPolicy`, `includes`) as
+  // all-or-nothing. Passing only `includes.taxonomy = true` would drop the
+  // remaining required keys and trigger a Zod validation error. The
+  // deep-merge must preserve documented defaults for the unspecified leaves.
+  const root = await makeFixture([{ rel: "a.md", content: "a\n" }]);
+  const result = await exportCapsule({
+    name: "partial-overrides",
+    root,
+    capsule: {
+      // Only one nested leaf each — the rest must default cleanly.
+      includes: { taxonomy: true },
+      retrievalPolicy: { directAnswerEnabled: true },
+    },
+  });
+  assert.equal(result.manifest.capsule.includes.taxonomy, true);
+  assert.equal(result.manifest.capsule.includes.identityAnchors, false);
+  assert.equal(result.manifest.capsule.includes.peerProfiles, false);
+  assert.equal(result.manifest.capsule.includes.procedural, false);
+  assert.equal(
+    result.manifest.capsule.retrievalPolicy.directAnswerEnabled,
+    true,
+  );
+  assert.deepEqual(result.manifest.capsule.retrievalPolicy.tierWeights, {});
+});
+
+test("partial tierWeights override merges with empty default record", async () => {
+  // tierWeights is a record; a partial nested override that supplies it
+  // should still produce a valid CapsuleRetrievalPolicy (the empty default
+  // record satisfies the schema, and user keys spread on top).
+  const root = await makeFixture([{ rel: "a.md", content: "a\n" }]);
+  const result = await exportCapsule({
+    name: "partial-tier",
+    root,
+    capsule: {
+      retrievalPolicy: { tierWeights: { vector: 0.75 } },
+    },
+  });
+  assert.deepEqual(result.manifest.capsule.retrievalPolicy.tierWeights, {
+    vector: 0.75,
+  });
+  assert.equal(
+    result.manifest.capsule.retrievalPolicy.directAnswerEnabled,
+    false,
+  );
+});
+
 test("default outDir under root is excluded from the input scan (idempotent re-export)", async () => {
   const root = await makeFixture([
     { rel: "facts/a.md", content: "a\n" },

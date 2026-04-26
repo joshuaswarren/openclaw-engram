@@ -14,6 +14,8 @@ import {
   ExportBundleV2Schema,
   ExportManifestV2Schema,
   type CapsuleBlock,
+  type CapsuleIncludes,
+  type CapsuleRetrievalPolicy,
   type ExportBundleV2,
   type ExportManifestV2,
   type ExportMemoryRecordV1,
@@ -83,7 +85,13 @@ export interface ExportCapsuleOptions {
   peerIds?: readonly string[];
   outDir?: string;
   pluginVersion?: string;
-  capsule?: Partial<Omit<CapsuleBlock, "id">>;
+  /**
+   * The override is a deep-partial: callers may pass any subset of the
+   * top-level keys, and the nested `retrievalPolicy` / `includes` objects
+   * may themselves be partial. Missing leaves fall back to the
+   * conservative defaults documented in {@link buildCapsuleBlock}.
+   */
+  capsule?: CapsuleBlockOverride;
   now?: number;
 }
 
@@ -451,25 +459,61 @@ function shouldInclude(
  *  - `includes`          — all flags `false` until later PRs wire the
  *    sub-bundles in.
  */
+/**
+ * Deep-partial shape of {@link CapsuleBlock} (minus the caller-derived `id`).
+ * Each top-level key is optional, and the nested `retrievalPolicy` /
+ * `includes` objects are themselves deep-partial so callers can patch one
+ * leaf (e.g. only `includes.taxonomy`) without having to materialize all
+ * sibling keys. {@link buildCapsuleBlock} merges missing leaves from the
+ * documented defaults before zod parsing.
+ */
+export type CapsuleBlockOverride = Omit<
+  Partial<CapsuleBlock>,
+  "id" | "retrievalPolicy" | "includes"
+> & {
+  retrievalPolicy?: Partial<CapsuleRetrievalPolicy>;
+  includes?: Partial<CapsuleIncludes>;
+};
+
 function buildCapsuleBlock(
   name: string,
-  override: Partial<Omit<CapsuleBlock, "id">> | undefined,
+  override: CapsuleBlockOverride | undefined,
 ): CapsuleBlock {
+  // Deep-merge the nested objects so partial overrides (e.g. only
+  // `includes.taxonomy = true`) don't drop the remaining required keys and
+  // trigger a Zod validation error. The doc contract above ("any subset")
+  // applies recursively to retrievalPolicy and includes; without this merge
+  // those nested objects were all-or-nothing and contradicted the contract.
+  const retrievalPolicyDefaults = {
+    tierWeights: {} as Record<string, number>,
+    directAnswerEnabled: false,
+  };
+  const includesDefaults = {
+    taxonomy: false,
+    identityAnchors: false,
+    peerProfiles: false,
+    procedural: false,
+  };
   const merged: CapsuleBlock = {
     id: name,
     version: override?.version ?? "0.1.0",
     schemaVersion: override?.schemaVersion ?? "taxonomy-v1",
     parentCapsule: override?.parentCapsule ?? null,
     description: override?.description ?? "",
-    retrievalPolicy: override?.retrievalPolicy ?? {
-      tierWeights: {},
-      directAnswerEnabled: false,
+    retrievalPolicy: {
+      ...retrievalPolicyDefaults,
+      ...(override?.retrievalPolicy ?? {}),
+      // tierWeights is itself a record. Spread the override's record on top
+      // of the empty default rather than replacing the whole map; this lets
+      // callers add a single weight without having to repeat the full map.
+      tierWeights: {
+        ...retrievalPolicyDefaults.tierWeights,
+        ...(override?.retrievalPolicy?.tierWeights ?? {}),
+      },
     },
-    includes: override?.includes ?? {
-      taxonomy: false,
-      identityAnchors: false,
-      peerProfiles: false,
-      procedural: false,
+    includes: {
+      ...includesDefaults,
+      ...(override?.includes ?? {}),
     },
   };
   // Re-parse to surface invalid overrides with the same zod errors a caller
