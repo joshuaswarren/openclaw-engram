@@ -51,6 +51,13 @@ import type {
 } from "./orchestrator.js";
 import { parseEntityFile, StorageManager } from "./storage.js";
 import {
+  buildGraphSnapshot,
+  type GraphSnapshotRequest,
+  type GraphSnapshotResponse,
+  type GraphSnapshotNodeMetadata,
+} from "./graph-snapshot.js";
+import * as nodePath from "node:path";
+import {
   buildBriefing,
   FileCalendarSource,
   parseBriefingFocus,
@@ -3762,6 +3769,59 @@ export class EngramAccessService {
   async graphExplainLastRecall(namespace?: string): Promise<unknown> {
     const explanation = await this.orchestrator.explainLastGraphRecall({ namespace });
     return { explanation };
+  }
+
+  /**
+   * Read-only graph snapshot for the admin pane (issue #691 PR 2/5).
+   *
+   * Reads adjacency from the JSONL edge store written by `GraphIndex` and
+   * resolves node metadata via the namespaced storage manager.  Namespace
+   * resolution mirrors the read-side path used by `recall` /
+   * `procedureStats`, so multi-principal deployments can't leak edges from
+   * a peer namespace (CLAUDE.md rule 42).
+   */
+  async graphSnapshot(
+    request: GraphSnapshotRequest & { namespace?: string },
+    authenticatedPrincipal?: string,
+  ): Promise<GraphSnapshotResponse> {
+    const namespace = this.resolveReadableNamespace(
+      request.namespace,
+      authenticatedPrincipal,
+    );
+    const storage = await this.orchestrator.getStorage(namespace);
+    const cfg = this.orchestrator.config;
+    const loadNode = async (relPath: string): Promise<GraphSnapshotNodeMetadata | null> => {
+      // `GraphEdge.from` / `to` are storage-relative paths; resolve against
+      // the namespaced storage root so the metadata read honors namespace
+      // boundaries even when the same memory id exists in multiple
+      // namespaces.
+      const absPath = nodePath.isAbsolute(relPath)
+        ? relPath
+        : nodePath.join(storage.dir, relPath);
+      const memory = await storage.readMemoryByPath(absPath);
+      if (!memory) return null;
+      const fm = memory.frontmatter;
+      return {
+        category: fm.category ?? "unknown",
+        label: fm.id ?? nodePath.basename(absPath, nodePath.extname(absPath)),
+        updated: fm.updated,
+      };
+    };
+    return buildGraphSnapshot({
+      memoryDir: storage.dir,
+      graphConfig: {
+        entityGraphEnabled: cfg.entityGraphEnabled === true,
+        timeGraphEnabled: cfg.timeGraphEnabled === true,
+        causalGraphEnabled: cfg.causalGraphEnabled === true,
+      },
+      request: {
+        limit: request.limit,
+        since: request.since,
+        focusNodeId: request.focusNodeId,
+        categories: request.categories,
+      },
+      loadNode,
+    });
   }
 
   async memoryFeedback(request: {

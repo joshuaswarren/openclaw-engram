@@ -835,6 +835,30 @@ export class EngramMcpServer {
         },
       },
       {
+        // Graph snapshot for the admin pane (issue #691 PR 2/5).  Returns
+        // a read-only `{ nodes, edges, generatedAt }` view of the
+        // multi-graph adjacency, with the same filter knobs as the HTTP
+        // surface so connectors / CLI clients can hit either endpoint
+        // interchangeably.
+        name: "engram.graph_snapshot",
+        description: "Return a read-only graph snapshot (nodes + edges) for the admin pane. Filters: limit (default 500, max 5000), since (ISO timestamp), focusNodeId (restricts to neighborhood), categories (allow-list of memory categories).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            namespace: { type: "string" },
+            limit: { type: "number", description: "Maximum number of edges to return (default 500, max 5000)." },
+            since: { type: "string", description: "Inclusive lower bound on edge timestamp (ISO-8601)." },
+            focusNodeId: { type: "string", description: "When set, restrict the snapshot to the focus node and its neighbors." },
+            categories: {
+              type: "array",
+              items: { type: "string" },
+              description: "Optional category allow-list (e.g. ['fact', 'decision']).",
+            },
+          },
+          additionalProperties: false,
+        },
+      },
+      {
         name: "engram.memory_feedback",
         description: "Record relevance feedback (thumbs up/down) for a specific memory.",
         inputSchema: {
@@ -1761,6 +1785,51 @@ export class EngramMcpServer {
         return this.service.graphExplainLastRecall(
           typeof args.namespace === "string" ? args.namespace : undefined,
         );
+      case "engram.graph_snapshot": {
+        // Validate the typed inputs at the boundary — silently coercing
+        // unknown shapes (e.g. `limit: "200"`) would defeat the access
+        // service's tighter parser (CLAUDE.md rule 28 + 51).
+        if (args.limit !== undefined && typeof args.limit !== "number") {
+          throw new Error("engram.graph_snapshot: limit must be a number");
+        }
+        if (args.since !== undefined && typeof args.since !== "string") {
+          throw new Error("engram.graph_snapshot: since must be a string");
+        }
+        if (
+          args.focusNodeId !== undefined
+          && typeof args.focusNodeId !== "string"
+        ) {
+          throw new Error("engram.graph_snapshot: focusNodeId must be a string");
+        }
+        let categories: string[] | undefined;
+        if (args.categories !== undefined) {
+          if (!Array.isArray(args.categories)) {
+            throw new Error(
+              "engram.graph_snapshot: categories must be an array of strings",
+            );
+          }
+          categories = args.categories.map((value, index) => {
+            if (typeof value !== "string") {
+              throw new Error(
+                `engram.graph_snapshot: categories[${index}] must be a string`,
+              );
+            }
+            return value;
+          });
+        }
+        return this.service.graphSnapshot(
+          {
+            namespace: typeof args.namespace === "string" ? args.namespace : undefined,
+            limit: typeof args.limit === "number" ? args.limit : undefined,
+            since: typeof args.since === "string" ? args.since : undefined,
+            focusNodeId: typeof args.focusNodeId === "string"
+              ? args.focusNodeId
+              : undefined,
+            ...(categories !== undefined ? { categories } : {}),
+          },
+          effectivePrincipal,
+        );
+      }
       case "engram.memory_feedback":
         return this.service.memoryFeedback({
           memoryId: typeof args.memoryId === "string" ? args.memoryId : "",
