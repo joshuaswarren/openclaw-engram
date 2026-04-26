@@ -656,10 +656,13 @@ function appendTrajectoryTurn(
   speakerRoles: Map<string, Message["role"]>,
   nextSpeakerIndex: () => number,
 ): boolean {
-  const rememberCoordinate = () => {
-    coordinateIndex.set(coordinateKey(coordinate), turns.length);
-    if (coordinate.length === 1) {
-      coordinateIndex.set(coordinateKey([0, coordinate[0]!]), turns.length);
+  const rememberCoordinate = (
+    targetCoordinate: number[] = coordinate,
+    turnIndex = turns.length,
+  ) => {
+    coordinateIndex.set(coordinateKey(targetCoordinate), turnIndex);
+    if (targetCoordinate.length === 1) {
+      coordinateIndex.set(coordinateKey([0, targetCoordinate[0]!]), turnIndex);
     }
   };
 
@@ -691,11 +694,14 @@ function appendTrajectoryTurn(
   const userText = firstString(turn.user, turn.user_message);
   const assistantText = firstString(turn.agent, turn.assistant, turn.assistant_message);
   if (userText || assistantText) {
-    rememberCoordinate();
     if (userText) {
+      rememberCoordinate();
       turns.push({ role: "user", content: userText });
     }
     if (assistantText) {
+      rememberCoordinate(
+        userText ? pairedAssistantCoordinate(coordinate) : coordinate,
+      );
       turns.push({ role: "assistant", content: assistantText });
     }
     return true;
@@ -1136,6 +1142,15 @@ function parseTargetStepRefs(
 
 function coordinateKey(coordinate: number[]): string {
   return coordinate.join(":");
+}
+
+function pairedAssistantCoordinate(coordinate: number[]): number[] {
+  if (coordinate.length === 1) {
+    return [1, coordinate[0]!];
+  }
+
+  const [turnIndex, ...rest] = coordinate;
+  return [(turnIndex ?? 0) + 1, ...rest];
 }
 
 function normalizeLimit(limit: number | undefined): number | undefined {
