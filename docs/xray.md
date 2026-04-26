@@ -84,6 +84,7 @@ budget: 5284 / 8192 chars
     path: notes/perf-regression-2026-03.md
     score: final=0.6187 vector=0.4910 tier_prior=0.1500
     graph-path: recall-cache-ttl -> related-to -> perf-regression-2026-03
+    edge-confidences: 0.87
     admitted-by: namespace-scope, status-active, trust-zone, mmr-diversify
     audit-entry: audit-0e4a1d
 [4] notes/branch-observations — served-by=review-context
@@ -148,11 +149,21 @@ interface RecallXrayResult {
     | "review-context";
   scoreDecomposition: RecallXrayScoreDecomposition;
   graphPath?: string[];
+  graphEdgeConfidences?: number[]; // issue #681 PR 3/3 — aligned with graphPath
   auditEntryId?: string;
   admittedBy: string[];      // filters the candidate passed
   rejectedBy?: string;       // first filter that would have rejected
 }
 ```
+
+When the graph subsystem (`servedBy: "graph"`) produced a result, the X-ray
+optionally surfaces a `graphEdgeConfidences` array aligned with `graphPath`:
+each entry is the confidence of the edge between consecutive nodes, so the
+array length is always `graphPath.length - 1`. Operators use this to
+attribute floor-pruning and PageRank ranking decisions back to specific
+edges. See [`graph-reasoning.md`](architecture/graph-reasoning.md) for the
+underlying floor and iteration controls (`graphTraversalConfidenceFloor`,
+`graphTraversalPageRankIterations`).
 
 ### `RecallXrayScoreDecomposition` (lines 68-75)
 

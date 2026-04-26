@@ -2354,6 +2354,21 @@ export function parseConfig(raw: unknown): PluginConfig {
       Number.isFinite(cfg.graphEdgeDecayVisibilityThreshold)
         ? Math.max(0, Math.min(1, cfg.graphEdgeDecayVisibilityThreshold))
         : 0.2,
+    // Issue #681 PR 3/3 — confidence-aware traversal & PageRank refinement.
+    // Floor clamps to [0, 1] so misconfigured input cannot accept negative
+    // confidences or reject every edge. Iterations floors at 0 so a
+    // documented 0 disables PageRank refinement and BFS scores pass through.
+    graphTraversalConfidenceFloor:
+      typeof cfg.graphTraversalConfidenceFloor === "number" &&
+      Number.isFinite(cfg.graphTraversalConfidenceFloor)
+        ? Math.min(1, Math.max(0, cfg.graphTraversalConfidenceFloor))
+        : 0.2,
+    graphTraversalPageRankIterations:
+      typeof cfg.graphTraversalPageRankIterations === "number" &&
+      Number.isFinite(cfg.graphTraversalPageRankIterations) &&
+      cfg.graphTraversalPageRankIterations >= 0
+        ? Math.floor(cfg.graphTraversalPageRankIterations)
+        : 8,
     // v8.2: Temporal Memory Tree
     temporalMemoryTreeEnabled: cfg.temporalMemoryTreeEnabled === true,
     tmtHourlyMinMemories:

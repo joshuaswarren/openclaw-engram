@@ -13,6 +13,8 @@
 import { mkdir, appendFile, readFile } from "node:fs/promises";
 import * as path from "path";
 
+import { readEdgeConfidence } from "./graph-edge-reinforcement.js";
+
 export type GraphType = "entity" | "time" | "causal";
 
 export interface GraphEdge {
@@ -42,7 +44,25 @@ export interface GraphConfig {
   graphLateralInhibitionEnabled: boolean;
   graphLateralInhibitionBeta: number;
   graphLateralInhibitionTopM: number;
+  /**
+   * Issue #681 PR 3/3 — minimum edge confidence required for traversal.
+   * Edges with confidence below this floor are pruned. Legacy edges
+   * (no `confidence` field) are treated as 1.0 and always pass.
+   * Range `[0, 1]`. Default 0.2.
+   */
+  graphTraversalConfidenceFloor: number;
+  /**
+   * Issue #681 PR 3/3 — number of PageRank-style refinement iterations
+   * applied on top of BFS activation. Set to 0 to disable refinement
+   * and return raw BFS scores. Default 8.
+   */
+  graphTraversalPageRankIterations: number;
 }
+
+/** Default minimum edge confidence required for traversal (issue #681 PR 3/3). */
+export const DEFAULT_GRAPH_TRAVERSAL_CONFIDENCE_FLOOR = 0.2;
+/** Default PageRank-style refinement iteration count (issue #681 PR 3/3). */
+export const DEFAULT_GRAPH_TRAVERSAL_PAGERANK_ITERATIONS = 8;
 
 // Causal signal phrases — order matters (most specific first)
 export const CAUSAL_PHRASES = [
@@ -456,12 +476,23 @@ export class GraphIndex {
    * Spreading activation BFS (SYNAPSE-inspired).
    *
    * Starting from `seeds`, traverse the combined graph for up to `maxSteps` hops.
-   * Each candidate gets an activation score = edge.weight × decay^hop.
-   * Returns top-N candidate paths sorted by descending activation score.
+   * Each candidate gets an activation score = edge.weight × edgeConfidence × decay^hop.
    *
-   * @param seeds   - initial memory paths to expand from (e.g. QMD top results)
+   * Issue #681 PR 3/3 — confidence-aware traversal:
+   *   - Each edge's `weight` is multiplied by its `confidence` (legacy edges
+   *     missing `confidence` are treated as 1.0, preserving prior behavior).
+   *   - Edges with `confidence < graphTraversalConfidenceFloor` are pruned and
+   *     contribute neither activation nor downstream neighbors.
+   *   - When `graphTraversalPageRankIterations > 0`, an additional PageRank-
+   *     style refinement pass redistributes activation along confidence-weighted
+   *     edges, sharpening the ranking among multi-hop candidates.
+   *   - Per-result provenance includes the highest-confidence edge that landed
+   *     on each candidate, so the X-ray surface can attribute pruning and
+   *     ranking decisions back to specific edges.
+   *
+   * @param seeds    - initial memory paths to expand from (e.g. QMD top results)
    * @param maxSteps - max BFS hops (from config: maxGraphTraversalSteps)
-   * @returns Array of {path, score} sorted descending, not including seed paths
+   * @returns Array of {path, score, edgeConfidence, ...} sorted descending, not including seed paths
    */
   async spreadingActivation(
     seeds: string[],
@@ -473,17 +504,33 @@ export class GraphIndex {
     hopDepth: number;
     decayedWeight: number;
     graphType: "entity" | "time" | "causal";
+    /**
+     * Confidence of the edge that produced this candidate's recorded
+     * provenance (the strongest edge along the chosen entry path).
+     * In `[0, 1]`. Legacy edges without `confidence` surface as 1.0.
+     */
+    edgeConfidence: number;
   }>> {
     if (!this.cfg.multiGraphMemoryEnabled) return [];
     const steps = maxSteps ?? this.cfg.maxGraphTraversalSteps;
     const decay = this.cfg.graphActivationDecay;
+    // Clamp the configured floor into [0, 1] so misconfiguration cannot
+    // (a) admit edges with negative confidence or (b) reject every edge.
+    const floor = clampConfidenceFloor(this.cfg.graphTraversalConfidenceFloor);
+    const iterations = clampPageRankIterations(
+      this.cfg.graphTraversalPageRankIterations,
+    );
 
     try {
       const allEdges = await this.loadEdgesCached();
 
-      // Build adjacency index: from → edges, to → edges (bidirectional for entity/time, directional for causal)
+      // Build adjacency index: from → edges, to → edges (bidirectional for entity/time, directional for causal).
+      // Edges below the confidence floor are pruned at index time so neither
+      // direct activation nor downstream BFS expansion can re-introduce them.
       const adj = new Map<string, GraphEdge[]>();
       for (const edge of allEdges) {
+        const conf = readEdgeConfidence(edge);
+        if (conf < floor) continue;
         if (!adj.has(edge.from)) adj.set(edge.from, []);
         adj.get(edge.from)!.push(edge);
         // Entity and time edges are bidirectional
@@ -497,7 +544,13 @@ export class GraphIndex {
       const scores = new Map<string, number>(); // candidate path → accumulated activation score
       const provenance = new Map<
         string,
-        { seed: string; hopDepth: number; decayedWeight: number; graphType: "entity" | "time" | "causal" }
+        {
+          seed: string;
+          hopDepth: number;
+          decayedWeight: number;
+          graphType: "entity" | "time" | "causal";
+          edgeConfidence: number;
+        }
       >();
       const visited = new Set<string>(seeds);
 
@@ -511,7 +564,12 @@ export class GraphIndex {
         const edges = adj.get(node) ?? [];
         for (const edge of edges) {
           const neighbor = edge.to === node ? edge.from : edge.to;
-          const score = edge.weight * Math.pow(decay, hop + 1);
+          const conf = readEdgeConfidence(edge);
+          // Defense in depth: the adjacency build already drops sub-floor
+          // edges, but if a synthesized reverse edge ever bypassed that
+          // path, this guard keeps spreading activation honest.
+          if (conf < floor) continue;
+          const score = edge.weight * conf * Math.pow(decay, hop + 1);
 
           if (!seedSet.has(neighbor)) {
             const existing = scores.get(neighbor) ?? 0;
@@ -528,6 +586,7 @@ export class GraphIndex {
                 hopDepth: hop + 1,
                 decayedWeight: score,
                 graphType: edge.type,
+                edgeConfidence: conf,
               });
             }
           }
@@ -537,6 +596,19 @@ export class GraphIndex {
             queue.push([neighbor, hop + 1, sourceSeed]);
           }
         }
+      }
+
+      // Issue #681 PR 3/3 — optional PageRank-style refinement.
+      // Redistributes a node's accumulated activation along its outgoing
+      // edges, weighted by edge confidence. Damping is fixed at the
+      // canonical 0.85 so the ranking stays comparable across queries;
+      // the `iterations` knob bounds compute, not behavior shape.
+      if (iterations > 0 && scores.size > 1) {
+        applyPageRankRefinement(scores, adj, {
+          iterations,
+          floor,
+          damping: 0.85,
+        });
       }
 
       // Apply lateral inhibition if enabled (Synapse-inspired competitive suppression)
@@ -558,12 +630,120 @@ export class GraphIndex {
           hopDepth: provenance.get(p)?.hopDepth ?? 0,
           decayedWeight: provenance.get(p)?.decayedWeight ?? 0,
           graphType: provenance.get(p)?.graphType ?? "entity",
+          edgeConfidence: provenance.get(p)?.edgeConfidence ?? 1,
         }))
         .sort((a, b) => b.score - a.score);
     } catch (err) {
       const { log } = await import("./logger.js");
       log.warn(`[graph] spreadingActivation error: ${err}`);
       return [];
+    }
+  }
+}
+
+/**
+ * Clamp `graphTraversalConfidenceFloor` into the legal range `[0, 1]`.
+ * Non-finite or non-numeric values fall back to the documented default
+ * so misconfiguration cannot silently disable the floor or reject every edge.
+ *
+ * Exported for tests; call sites in `spreadingActivation` use it to make
+ * the contract explicit at every boundary.
+ */
+export function clampConfidenceFloor(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) {
+    return DEFAULT_GRAPH_TRAVERSAL_CONFIDENCE_FLOOR;
+  }
+  if (raw < 0) return 0;
+  if (raw > 1) return 1;
+  return raw;
+}
+
+/**
+ * Clamp `graphTraversalPageRankIterations` into a non-negative integer.
+ * Negative or non-finite values fall back to 0 (disable refinement) so
+ * misconfiguration cannot stall recall in an unbounded loop.
+ */
+export function clampPageRankIterations(raw: unknown): number {
+  if (typeof raw !== "number" || !Number.isFinite(raw)) return 0;
+  if (raw <= 0) return 0;
+  return Math.floor(raw);
+}
+
+/**
+ * PageRank-style refinement on top of the BFS activation map.
+ *
+ * Each iteration redistributes a fraction of every node's score along
+ * its outgoing edges, scaled by edge confidence. Confidence below
+ * `floor` is filtered out before redistribution, mirroring the BFS
+ * pruning rule. Mutates `scores` in place.
+ *
+ * Exported for tests; in production, call sites pass the same adjacency
+ * map already used by BFS so behavior stays consistent.
+ */
+export function applyPageRankRefinement(
+  scores: Map<string, number>,
+  adj: Map<string, GraphEdge[]>,
+  opts: { iterations: number; floor: number; damping: number },
+): void {
+  const { iterations, floor, damping } = opts;
+  if (iterations <= 0 || scores.size === 0) return;
+  const safeDamping = Math.min(1, Math.max(0, damping));
+
+  // Pre-compute confidence-weighted out-edge totals for normalization.
+  // Done once per refinement, not per iteration, since adjacency is
+  // immutable inside the loop.
+  //
+  // Codex P1 (#735): the denominator MUST be computed over the same
+  // eligible-neighbor set the iteration redistributes into — i.e.
+  // edges whose neighbor is in `scores`. Counting edges-to-seeds (or
+  // edges-to-unseen-nodes) in the denominator while dropping their
+  // flow during iteration leaks `safeDamping × score` every pass and
+  // collapses leaf candidates' scores instead of just re-ranking them.
+  const eligible = (edge: GraphEdge, fromNode: string): boolean => {
+    if (readEdgeConfidence(edge) < floor) return false;
+    const neighbor = edge.to === fromNode ? edge.from : edge.to;
+    return scores.has(neighbor);
+  };
+  const outboundTotal = new Map<string, number>();
+  for (const [node, edges] of adj.entries()) {
+    if (!scores.has(node)) continue; // only candidate nodes redistribute
+    let sum = 0;
+    for (const edge of edges) {
+      if (!eligible(edge, node)) continue;
+      sum += readEdgeConfidence(edge) * edge.weight;
+    }
+    if (sum > 0) outboundTotal.set(node, sum);
+  }
+
+  for (let i = 0; i < iterations; i += 1) {
+    const next = new Map<string, number>();
+    // Teleport / damping floor: every node retains `(1 - damping) * score`
+    // of its current activation so dangling nodes do not bleed to zero.
+    for (const [node, score] of scores) {
+      next.set(node, (1 - safeDamping) * score);
+    }
+    for (const [node, score] of scores) {
+      const outEdges = adj.get(node);
+      const total = outboundTotal.get(node);
+      // Dangling-node fallback: when a candidate has zero eligible
+      // outflow (no in-scores neighbors above the floor), the
+      // `safeDamping × score` portion would otherwise evaporate. Keep
+      // it on `node` so total mass is conserved and the score reflects
+      // the candidate's standing rather than its in-degree topology.
+      if (!outEdges || outEdges.length === 0 || !total || total <= 0) {
+        next.set(node, (next.get(node) ?? 0) + safeDamping * score);
+        continue;
+      }
+      for (const edge of outEdges) {
+        if (!eligible(edge, node)) continue;
+        const conf = readEdgeConfidence(edge);
+        const neighbor = edge.to === node ? edge.from : edge.to;
+        const flow = safeDamping * score * ((conf * edge.weight) / total);
+        next.set(neighbor, (next.get(neighbor) ?? 0) + flow);
+      }
+    }
+    for (const [node, score] of next) {
+      scores.set(node, score);
     }
   }
 }

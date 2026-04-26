@@ -1790,6 +1790,19 @@
         "default": 0.7,
         "description": "Per-hop activation decay factor (0-1). Default 0.7."
       },
+      "graphTraversalConfidenceFloor": {
+        "type": "number",
+        "default": 0.2,
+        "minimum": 0,
+        "maximum": 1,
+        "description": "Issue #681 PR 3/3: minimum edge confidence required for traversal during spreading activation. Edges below this floor are pruned and contribute neither activation nor downstream neighbors. Legacy edges without a confidence field are treated as 1.0. Range 0-1. Default 0.2."
+      },
+      "graphTraversalPageRankIterations": {
+        "type": "number",
+        "default": 8,
+        "minimum": 0,
+        "description": "Issue #681 PR 3/3: number of PageRank-style refinement iterations applied on top of the BFS spreading-activation scores. Each iteration redistributes a node's confidence-weighted activation along its outgoing edges. Set to 0 to disable refinement and use raw BFS scores. Default 8."
+      },
       "graphExpansionActivationWeight": {
         "type": "number",
         "default": 0.65,

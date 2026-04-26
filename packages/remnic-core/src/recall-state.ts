@@ -67,6 +67,13 @@ export interface GraphRecallExpandedEntry {
   hopDepth: number;
   decayedWeight: number;
   graphType: "entity" | "time" | "causal";
+  /**
+   * Issue #681 PR 3/3 — confidence of the edge that produced this entry's
+   * recorded provenance (strongest edge along the chosen entry path).
+   * Range `[0, 1]`. Optional so persisted snapshots from older builds
+   * round-trip through `clampGraphRecallExpandedEntries` without dropping.
+   */
+  edgeConfidence?: number;
 }
 
 export function clampGraphRecallExpandedEntries(
@@ -82,7 +89,7 @@ export function clampGraphRecallExpandedEntries(
         item.graphType === "entity" || item.graphType === "time" || item.graphType === "causal"
           ? item.graphType
           : "entity";
-      return {
+      const out: GraphRecallExpandedEntry = {
         path: typeof item.path === "string" ? item.path : "",
         score: typeof item.score === "number" && Number.isFinite(item.score) ? item.score : 0,
         namespace: typeof item.namespace === "string" ? item.namespace : "",
@@ -97,6 +104,16 @@ export function clampGraphRecallExpandedEntries(
             : 0,
         graphType,
       };
+      // Issue #681 PR 3/3: clamp `edgeConfidence` into [0, 1] when present.
+      // Older snapshots without the field round-trip cleanly via the
+      // optional shape; legacy callers always rendered as 1.0.
+      if (
+        typeof item.edgeConfidence === "number" &&
+        Number.isFinite(item.edgeConfidence)
+      ) {
+        out.edgeConfidence = Math.min(1, Math.max(0, item.edgeConfidence));
+      }
+      return out;
     })
     .filter((item) => item.path.length > 0 && item.namespace.length > 0)
     .slice(0, limit);
