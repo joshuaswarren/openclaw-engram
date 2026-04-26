@@ -231,6 +231,29 @@ test("runConsoleTui survives a renderer-side exception without freezing", async 
   assert.match(text, /remnic console/);
 });
 
+test("traceRecorder.append is invoked once per successful tick", async () => {
+  const stream = new CaptureStream();
+  const orchestrator = makeOrchestrator();
+  const appended: number[] = [];
+  const handle = runConsoleTui(orchestrator, {
+    refreshIntervalMs: 30,
+    output: stream,
+    installSigintHandler: false,
+    traceRecorder: {
+      append: async () => {
+        appended.push(Date.now());
+      },
+    },
+  });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  handle.stop();
+  await handle.done;
+  assert.ok(
+    appended.length >= 2,
+    `expected >= 2 trace appends, got ${appended.length}`,
+  );
+});
+
 test("stop() clears the interval and resolves done", async () => {
   const stream = new CaptureStream();
   const orchestrator = makeOrchestrator();

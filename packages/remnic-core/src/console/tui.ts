@@ -57,6 +57,16 @@ export interface RunConsoleTuiOptions {
    * the returned promise. Defaults to true. Tests typically pass false.
    */
   installSigintHandler?: boolean;
+  /**
+   * Optional trace recorder. When provided, every successfully
+   * gathered snapshot is appended to the recorder for later replay
+   * via `replayTrace`. Failed appends are surfaced through the
+   * recorder's `getLastError()` and never crash the loop (issue
+   * #688 PR 3/3).
+   */
+  traceRecorder?: {
+    append: (snapshot: ConsoleStateSnapshot) => Promise<void>;
+  };
 }
 
 export interface RunConsoleTuiHandle {
@@ -113,6 +123,18 @@ export function runConsoleTui(
         renderError = describeError(err);
       }
       if (stopped) return;
+      // Trace recording happens before render so an extremely slow
+      // disk write doesn't stretch the visual refresh interval. The
+      // recorder owns its own error capture; we deliberately do not
+      // surface trace failures inside the rendered frame because
+      // they're operator-side concerns, not engine-state.
+      if (snapshot && options.traceRecorder) {
+        try {
+          await options.traceRecorder.append(snapshot);
+        } catch {
+          // recorder.append is itself try/catched, but defense-in-depth.
+        }
+      }
       let frame: string;
       try {
         frame = renderFrame({ snapshot, renderError, now });
