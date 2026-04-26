@@ -4172,11 +4172,17 @@ export class EngramAccessService {
     const now = new Date().toISOString();
     const existing = await peers.readPeer(memoryDir, id);
 
-    const ALLOWED_KINDS = new Set(["self", "human", "agent", "integration"]);
+    // Cursor L (PR #756 round 2): single source of truth for allowed
+    // peer kinds — re-exported from `peers/storage.ts` so adding a
+    // new variant in one place automatically updates both the
+    // service-layer validator and the storage-layer write check.
+    // Previously the literal set was duplicated here, risking the
+    // confusing "service accepts but storage rejects" mismatch.
+    const ALLOWED_KINDS = peers.ALLOWED_PEER_KINDS;
     if (!existing) {
       // First write — require kind.
       const kind = input.kind ?? "human";
-      if (!ALLOWED_KINDS.has(kind)) {
+      if (!ALLOWED_KINDS.has(kind as import("./peers/types.js").PeerKind)) {
         throw new EngramAccessInputError(
           `peer kind must be one of ${[...ALLOWED_KINDS].join(", ")}`,
         );

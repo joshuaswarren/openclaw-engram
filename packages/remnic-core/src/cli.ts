@@ -7646,18 +7646,22 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
         .option("--json", "Emit machine-readable JSON only")
         .action(async (...args: unknown[]) => {
           const options = (args[0] ?? {}) as Record<string, unknown>;
-          const { listPeers } = await import("./peers/index.js");
-          const peers = await listPeers(orchestrator.config.memoryDir);
+          // Cursor L (PR #756 round 2): route through EngramAccessService
+          // for surface parity with HTTP/MCP. Future service-layer
+          // additions (logging, telemetry, caching, additional
+          // validation) on `peerList` automatically reach the CLI.
+          const peerListService = new EngramAccessService(orchestrator);
+          const result = await peerListService.peerList();
           if (options.json === true) {
-            console.log(JSON.stringify({ peers }, null, 2));
+            console.log(JSON.stringify(result, null, 2));
             return;
           }
-          if (peers.length === 0) {
+          if (result.peers.length === 0) {
             console.log("No peers registered.");
             return;
           }
-          console.log(`${peers.length} peer(s):\n`);
-          for (const p of peers) {
+          console.log(`${result.peers.length} peer(s):\n`);
+          for (const p of result.peers) {
             console.log(`  ${p.id} (${p.kind})  ${p.displayName}`);
             console.log(`    created: ${p.createdAt}  updated: ${p.updatedAt}`);
           }
@@ -7674,30 +7678,33 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.error("peer id is required");
             process.exit(1);
           }
-          const peersShow = await import("./peers/index.js");
-          const validateIdShow: (id: unknown) => void = peersShow.assertValidPeerId;
+          // Cursor L (PR #756 round 2): route through EngramAccessService
+          // for surface parity with HTTP/MCP. The service already wraps
+          // `assertValidPeerId` in its own EngramAccessInputError catch,
+          // so id validation continues to surface a clean error.
+          const peerShowService = new EngramAccessService(orchestrator);
           try {
-            validateIdShow(id);
+            const result = await peerShowService.peerGet(id);
+            if (!result.found) {
+              console.error(`Peer "${id}" not found.`);
+              process.exit(1);
+            }
+            const peer = result.peer;
+            if (options.json === true) {
+              console.log(JSON.stringify(peer, null, 2));
+              return;
+            }
+            console.log(`Peer: ${peer.id}`);
+            console.log(`  Kind:         ${peer.kind}`);
+            console.log(`  Display name: ${peer.displayName}`);
+            console.log(`  Created:      ${peer.createdAt}`);
+            console.log(`  Updated:      ${peer.updatedAt}`);
+            if (peer.notes) {
+              console.log(`  Notes:\n${peer.notes.split("\n").map((l) => `    ${l}`).join("\n")}`);
+            }
           } catch (err) {
-            console.error(`Invalid peer id: ${(err as Error).message}`);
+            console.error(`Failed to show peer: ${(err as Error).message}`);
             process.exit(1);
-          }
-          const peer = await peersShow.readPeer(orchestrator.config.memoryDir, id);
-          if (!peer) {
-            console.error(`Peer "${id}" not found.`);
-            process.exit(1);
-          }
-          if (options.json === true) {
-            console.log(JSON.stringify(peer, null, 2));
-            return;
-          }
-          console.log(`Peer: ${peer.id}`);
-          console.log(`  Kind:         ${peer.kind}`);
-          console.log(`  Display name: ${peer.displayName}`);
-          console.log(`  Created:      ${peer.createdAt}`);
-          console.log(`  Updated:      ${peer.updatedAt}`);
-          if (peer.notes) {
-            console.log(`  Notes:\n${peer.notes.split("\n").map((l) => `    ${l}`).join("\n")}`);
           }
         });
 
@@ -7789,33 +7796,35 @@ export function registerCli(api: CliApi, orchestrator: Orchestrator): void {
             console.error("peer id is required");
             process.exit(1);
           }
-          const peersProfile = await import("./peers/index.js");
-          const validateIdProfile: (id: unknown) => void = peersProfile.assertValidPeerId;
+          // Cursor L (PR #756 round 2): route through EngramAccessService
+          // for surface parity with HTTP/MCP. Future service-layer
+          // additions on `peerProfileGet` automatically reach the CLI.
+          const peerProfileService = new EngramAccessService(orchestrator);
           try {
-            validateIdProfile(id);
-          } catch (err) {
-            console.error(`Invalid peer id: ${(err as Error).message}`);
-            process.exit(1);
-          }
-          const profile = await peersProfile.readPeerProfile(orchestrator.config.memoryDir, id);
-          if (!profile) {
-            console.error(`No profile found for peer "${id}". The profile is written by the async reasoner.`);
-            process.exit(1);
-          }
-          if (options.json === true) {
-            console.log(JSON.stringify(profile, null, 2));
-            return;
-          }
-          console.log(`Profile for peer: ${id}`);
-          console.log(`  Updated: ${profile.updatedAt}`);
-          const fieldKeys = Object.keys(profile.fields);
-          if (fieldKeys.length === 0) {
-            console.log("  No profile fields yet.");
-          } else {
-            for (const k of fieldKeys) {
-              console.log(`  ${k}:`);
-              console.log(`    ${profile.fields[k]}`);
+            const result = await peerProfileService.peerProfileGet(id);
+            if (!result.found) {
+              console.error(`No profile found for peer "${id}". The profile is written by the async reasoner.`);
+              process.exit(1);
             }
+            const profile = result.profile;
+            if (options.json === true) {
+              console.log(JSON.stringify(profile, null, 2));
+              return;
+            }
+            console.log(`Profile for peer: ${id}`);
+            console.log(`  Updated: ${profile.updatedAt}`);
+            const fieldKeys = Object.keys(profile.fields);
+            if (fieldKeys.length === 0) {
+              console.log("  No profile fields yet.");
+            } else {
+              for (const k of fieldKeys) {
+                console.log(`  ${k}:`);
+                console.log(`    ${profile.fields[k]}`);
+              }
+            }
+          } catch (err) {
+            console.error(`Failed to show peer profile: ${(err as Error).message}`);
+            process.exit(1);
           }
         });
 

@@ -21,6 +21,7 @@ export { PEER_ID_PATTERN, PEER_ID_MAX_LENGTH } from "./types.js";
 
 export {
   PEERS_DIR_NAME,
+  ALLOWED_PEER_KINDS,
   assertValidPeerId,
   readPeer,
   writePeer,

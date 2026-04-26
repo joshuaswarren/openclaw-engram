@@ -125,12 +125,23 @@ import {
 // Validation
 // ──────────────────────────────────────────────────────────────────────
 
-const ALLOWED_KINDS: ReadonlySet<PeerKind> = new Set<PeerKind>([
+/**
+ * Canonical set of valid `PeerKind` values, exported as a single source
+ * of truth for callers that need to validate a kind value before
+ * delegating to `writePeer` (which performs the same check via
+ * `assertValidKind` below). Cursor L (PR #756 round 2): both
+ * `access-service.peerSet` and this module previously maintained
+ * independent literal sets. Adding a new variant in one place but not
+ * the other would produce confusing "service accepts but storage
+ * rejects" mismatches at runtime.
+ */
+export const ALLOWED_PEER_KINDS: ReadonlySet<PeerKind> = new Set<PeerKind>([
   "self",
   "human",
   "agent",
   "integration",
 ]);
+const ALLOWED_KINDS = ALLOWED_PEER_KINDS;
 
 /**
  * Validate a peer id. Throws `Error` with a descriptive message on failure.
