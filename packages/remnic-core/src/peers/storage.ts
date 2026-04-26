@@ -321,7 +321,13 @@ function emitPeerIdentity(peer: Peer): string {
   lines.push("");
   lines.push(peer.notes ?? "");
   // Trailing newline for POSIX friendliness.
-  return lines.join("\n").replace(/\n+$/, "\n") + "\n";
+  // CodeQL: the previous `replace(/\n+$/, "\n")` flagged as
+  // polynomial-regex risk because `\n+` can backtrack on long
+  // trailing-newline runs. Strip trailing newlines with a bounded
+  // loop instead — O(N) over the trailing-newline count, no regex.
+  let out = lines.join("\n");
+  while (out.endsWith("\n")) out = out.slice(0, -1);
+  return out + "\n";
 }
 
 // ──────────────────────────────────────────────────────────────────────
