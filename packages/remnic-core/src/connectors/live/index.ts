@@ -65,3 +65,22 @@ export {
   type NotionPage,
   type NotionSyncResult,
 } from "./notion.js";
+
+export {
+  GMAIL_CONNECTOR_ID,
+  GMAIL_CURSOR_KIND,
+  GMAIL_DEFAULT_POLL_INTERVAL_MS,
+  buildListQuery,
+  createGmailConnector,
+  internalDateToEpochSeconds,
+  internalDateToIso,
+  isTransientGmailError,
+  validateGmailConfig,
+  type GmailConnectorConfig,
+  type GmailFetchFn,
+  type GmailHeader,
+  type GmailMessage,
+  type GmailMessagePart,
+  type GmailMessageRef,
+  type GmailSyncResult,
+} from "./gmail.js";

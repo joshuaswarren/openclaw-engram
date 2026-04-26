@@ -2652,6 +2652,52 @@ export function parseConfig(raw: unknown): PluginConfig {
           notionDatabaseIds.push(trimmed);
         }
       }
+      // gmail (#683 PR 4/6)
+      if (
+        rawConnectors.gmail !== undefined &&
+        (rawConnectors.gmail === null ||
+          typeof rawConnectors.gmail !== "object" ||
+          Array.isArray(rawConnectors.gmail))
+      ) {
+        throw new Error(
+          `connectors.gmail must be an object (got ${JSON.stringify(rawConnectors.gmail)}).`,
+        );
+      }
+      const rawGmail =
+        rawConnectors.gmail &&
+        typeof rawConnectors.gmail === "object" &&
+        !Array.isArray(rawConnectors.gmail)
+          ? (rawConnectors.gmail as Record<string, unknown>)
+          : {};
+      const gmailEnabled = coerceBool(rawGmail.enabled) === true;
+      const gmailClientId =
+        typeof rawGmail.clientId === "string" ? rawGmail.clientId : "";
+      const gmailClientSecret =
+        typeof rawGmail.clientSecret === "string" ? rawGmail.clientSecret : "";
+      const gmailRefreshToken =
+        typeof rawGmail.refreshToken === "string" ? rawGmail.refreshToken : "";
+      const gmailUserId =
+        typeof rawGmail.userId === "string" && rawGmail.userId.trim().length > 0
+          ? rawGmail.userId.trim()
+          : "me";
+      const gmailQuery =
+        typeof rawGmail.query === "string" ? rawGmail.query : "in:inbox";
+      const gmailPollCoerced = coerceNumber(rawGmail.pollIntervalMs);
+      let gmailPollIntervalMs = 300_000;
+      if (gmailPollCoerced !== undefined) {
+        if (
+          !Number.isFinite(gmailPollCoerced) ||
+          !Number.isInteger(gmailPollCoerced) ||
+          gmailPollCoerced < 1_000 ||
+          gmailPollCoerced > 86_400_000
+        ) {
+          throw new Error(
+            `connectors.gmail.pollIntervalMs must be an integer in [1000, 86400000] ms (got ${JSON.stringify(rawGmail.pollIntervalMs)})`,
+          );
+        }
+        gmailPollIntervalMs = gmailPollCoerced;
+      }
+
       return {
         googleDrive: {
           enabled: driveEnabled,
@@ -2666,6 +2712,15 @@ export function parseConfig(raw: unknown): PluginConfig {
           token: notionToken,
           databaseIds: notionDatabaseIds,
           pollIntervalMs: notionPollIntervalMs,
+        },
+        gmail: {
+          enabled: gmailEnabled,
+          clientId: gmailClientId,
+          clientSecret: gmailClientSecret,
+          refreshToken: gmailRefreshToken,
+          userId: gmailUserId,
+          query: gmailQuery,
+          pollIntervalMs: gmailPollIntervalMs,
         },
       };
     })(),
