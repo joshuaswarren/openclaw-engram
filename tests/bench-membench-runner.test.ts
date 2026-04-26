@@ -239,6 +239,12 @@ function createOfficialPairedCoordinateDataset() {
               answer: "B",
               target_step_id: [3, 7],
             },
+            {
+              question: "Which invalid coordinate should not be remapped?",
+              choices: ["blue mug", "green notebook", "yellow folder", "silver watch"],
+              answer: "B",
+              target_step_coordinate: [0, 99],
+            },
           ],
         },
       ],
@@ -543,7 +549,7 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
     system: adapter,
   });
 
-  assert.equal(result.results.tasks.length, 4);
+  assert.equal(result.results.tasks.length, 5);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepCoordinates, [[0, 0, 1]]);
   assert.deepEqual(result.results.tasks[0]?.details?.targetStepIds, [1]);
   assert.equal(result.results.tasks[0]?.scores.membench_recall_at_10, 1);
@@ -554,6 +560,9 @@ test("runBenchmark maps singular and paired MemBench coordinate tuples without c
   assert.deepEqual(result.results.tasks[2]?.details?.targetStepIds, [2]);
   assert.equal(result.results.tasks[2]?.scores.membench_recall_at_10, 0);
   assert.deepEqual(result.results.tasks[3]?.details?.targetStepIds, [3, 7]);
+  assert.deepEqual(result.results.tasks[4]?.details?.targetStepCoordinates, [[0, 99]]);
+  assert.equal(result.results.tasks[4]?.details?.targetStepIds, undefined);
+  assert.equal(result.results.tasks[4]?.scores.membench_recall_at_10, undefined);
 });
 
 test("runBenchmark accepts flat MCQ cases with choices and correctChoice only", async () => {
@@ -684,8 +693,12 @@ test("runBenchmark includes official MemBench failure sentinels on task errors",
   assert.equal(result.results.aggregates.membench_accuracy?.mean, -1);
   assert.equal(result.results.aggregates.membench_recall_at_10?.mean, -1);
   assert.equal(
-    result.results.aggregates.membench_accuracy_factual_observation?.mean,
-    -1,
+    result.results.aggregates.membench_accuracy_factual_observation,
+    undefined,
+  );
+  assert.equal(
+    result.results.aggregates.membench_error_rate_factual_observation?.mean,
+    1,
   );
 });
 

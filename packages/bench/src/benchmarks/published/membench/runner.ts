@@ -393,6 +393,7 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
     questionTime,
     targetStepIds,
     targetStepCoordinates,
+    skipFlatCoordinateFallback,
   } = entry;
 
   if (typeof id !== "string" || id.length === 0) {
@@ -430,9 +431,11 @@ function parseCase(entry: unknown, location: string): MemBenchCase {
   const parsedCorrectChoice = parseCorrectChoice(correctChoice, rawAnswer, parsedChoices, location);
   const flatCoordinateIndex = buildFlatCoordinateIndex(turns.length);
   const idRefs = parseTargetStepRefs(targetStepIds, flatCoordinateIndex);
-  const coordinateRefs = parseTargetStepRefs(targetStepCoordinates, flatCoordinateIndex, {
-    treatSingleArrayAsCoordinate: true,
-  });
+  const coordinateRefs = parseTargetStepRefs(
+    targetStepCoordinates,
+    skipFlatCoordinateFallback === true ? undefined : flatCoordinateIndex,
+    { treatSingleArrayAsCoordinate: true },
+  );
   const targetRefs = {
     targetStepIds: idRefs.targetStepIds ?? coordinateRefs.targetStepIds,
     targetStepCoordinates: coordinateRefs.targetStepCoordinates ?? idRefs.targetStepCoordinates,
@@ -624,6 +627,7 @@ function normalizeTrajectoryQaRecord(
         questionTime: pair.questionTime,
         targetStepIds: pair.targetStepIds,
         targetStepCoordinates: pair.targetStepCoordinates,
+        skipFlatCoordinateFallback: true,
       },
       `${location}.qa[${index}]`,
     ),
@@ -1088,12 +1092,23 @@ function aggregateMemBenchOfficialBreakdowns(
       task.details?.memoryType === "reflective" && task.details?.scenario === "observation"],
   ];
   const breakdownScores = metrics
-    .map(([metricName, predicate]) =>
-      tasks
-        .filter(predicate)
-        .map((task) => ({ [metricName]: task.scores.membench_accuracy }))
-        .filter((score) => typeof Object.values(score)[0] === "number"),
-    )
+    .flatMap(([metricName, predicate]) => {
+      const categoryTasks = tasks.filter(predicate);
+      const accuracyScores = categoryTasks
+        .map((task) => task.scores.membench_accuracy)
+        .filter((score): score is number => typeof score === "number" && score >= 0)
+        .map((score) => ({ [metricName]: score }));
+      const errorMetricName = metricName.replace(
+        "membench_accuracy_",
+        "membench_error_rate_",
+      );
+      const errorScores = categoryTasks
+        .filter((task) => typeof task.scores.membench_accuracy === "number")
+        .map((task) => ({
+          [errorMetricName]: task.scores.membench_accuracy < 0 ? 1 : 0,
+        }));
+      return [...accuracyScores, ...errorScores];
+    })
     .flat();
 
   return aggregateTaskScores(breakdownScores);
